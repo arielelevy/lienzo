@@ -45,6 +45,7 @@ PYTHON = sys.executable
 NEEDS_NOTIFICATIONS = {"permission_prompt", "idle_prompt", "agent_needs_input",
                        "elicitation_dialog", "elicitation_url_dialog"}
 DEAD_GRACE_S = 60
+STALE_SESSION_H = 24          # al arrancar: tarjetas sin proceso y sin eventos hace mas de esto se purgan
 ATTACH_MAX_DAYS = 30
 LONG_TEXT = 500
 
@@ -374,6 +375,7 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "last_prompt": "", "last_reply": "", "started": now(),
         "last_event": None, "last_event_ts": None, "alive": True, "dead_since": None,
         "source": source, "hooked": source == "hook", "pending_id": None,
+        "typing": False,
     }
 
 
@@ -408,8 +410,11 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
     meta, ts = r["meta"], r["turns"]
     before = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error")})
     # el titulo de la transcripcion (ai-title / thread_name de Codex) siempre gana sobre el
-    # provisorio armado con la primera linea del pedido (title_source == "prompt")
-    if meta.get("title"):
+    # provisorio armado con la primera linea del pedido (title_source == "prompt"); el que puso
+    # el usuario a mano (title_source == "user", PUT /sessions/<sid>/title) no lo pisa nadie
+    if s.get("title_source") == "user":
+        pass
+    elif meta.get("title"):
         s["title"] = meta["title"]
         s["title_source"] = "transcript"
     elif s["agent"] == "codex" and (not s.get("title") or s.get("title_source") == "prompt"):
@@ -446,6 +451,24 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
             s["last_reply"] = s["last_error"]
     after = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error")})
     return before != after
+
+
+def set_title(s: dict, title: str) -> None:
+    """Titulo puesto por el usuario desde la UI. Vacio: vuelve a la logica automatica
+    (ai-title / thread_name de la transcripcion, o la primera linea del ultimo pedido)."""
+    title = short(title, 120)
+    if title:
+        s["title"] = title
+        s["title_source"] = "user"
+        return
+    s["title"] = None
+    s["title_source"] = None
+    refresh_from_transcript(s)
+    if not s.get("title"):
+        first = next((l.strip() for l in (s.get("last_prompt") or "").splitlines() if l.strip()), "")
+        if first:
+            s["title"] = short(first, 60)
+            s["title_source"] = "prompt"
 
 
 # --- eventos de hooks -------------------------------------------------------------
@@ -513,6 +536,7 @@ def apply_event(ev: dict) -> None:
                     s["title"] = short(first, 60)
                     s["title_source"] = "prompt"
             s["pending_id"] = None
+            s["typing"] = False   # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
         elif name == "Stop":
             set_state(s, "termino")
             if ev.get("last_assistant_message"):
@@ -705,7 +729,8 @@ def sweep_once() -> None:
             s["transcript_path"] = tpath
             s["cwd"] = s.get("cwd") or cwd
             s["repo"] = repo_of(s["cwd"])
-            s["title"] = None
+            if s.get("title_source") != "user":
+                s["title"] = None
             refresh_from_transcript(s)
             touch(s)
             log(f"barrido: pid {s['pid']} ahora con transcripcion {os.path.basename(tpath)}")
@@ -854,8 +879,9 @@ def read_screen(pid: int) -> dict:
 
 def screen_loop() -> None:
     """Cada 5 s, para las sesiones de Claude con terminal: que hay en la caja de entrada.
-    Si no es placeholder ni texto que el usuario esta tipeando (eso no se distingue: se toma
-    como sugerencia lo que aparece con la sesion en 'termino'), va a la tarjeta."""
+    Con la sesion ociosa (termino, o "te necesita" por idle) el texto es una sugerencia de Claude
+    y va a la tarjeta; con la sesion ocupada (corriendo, o te_necesita por permiso) es alguien
+    tipeando y solo se marca `typing`, para que el lienzo no le escriba encima."""
     while True:
         try:
             with lock:
@@ -864,14 +890,17 @@ def screen_loop() -> None:
             for s in items:
                 r = read_screen(s["pid"])
                 area = r.get("area") if r.get("ok") else None
-                sug = None
-                # sugerencia: texto en la caja con la sesion ociosa (termino, o "te necesita" por idle);
+                sug, typing = None, False
                 # medido: "❯ Guardá la revisión en docs/revision-backend.md" con la sesion en idle_prompt
                 idle = s["state"] == "termino" or (s["state"] == "te_necesita" and (s.get("needs") or {}).get("kind") == "idle")
-                if area and not area["placeholder"] and idle:
-                    sug = short(area["input"], 300)
-                if s.get("suggestion") != sug:
+                if area and not area["placeholder"]:
+                    if idle:
+                        sug = short(area["input"], 300)
+                    else:
+                        typing = True
+                if s.get("suggestion") != sug or bool(s.get("typing")) != typing:
                     s["suggestion"] = sug
+                    s["typing"] = typing
                     touch(s)
         except Exception:  # noqa: BLE001
             log(traceback.format_exc())
@@ -1136,6 +1165,31 @@ class Handler(BaseHTTPRequestHandler):
             log(traceback.format_exc())
             return self._json(500, {"error": str(e)})
 
+    def do_PUT(self):
+        parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
+        if not self._csrf_ok():
+            return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
+        if not self._authed():
+            return self._json(401, {"error": "hace falta iniciar sesion"})
+        try:
+            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "title":
+                d = self._json_body()
+                title = d.get("title")
+                if title is not None and not isinstance(title, str):
+                    return self._json(400, {"error": "title debe ser un texto"})
+                with lock:
+                    s = sessions.get(parts[1])
+                    if s is None:
+                        return self._json(404, {"error": "sesion desconocida"})
+                    set_title(s, title or "")
+                    touch(s)
+                log(f"titulo de {parts[1][:8]} -> {s['title']!r} ({s.get('title_source')})")
+                return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
+            return self._json(404, {"error": "ruta desconocida"})
+        except Exception as e:  # noqa: BLE001
+            log(traceback.format_exc())
+            return self._json(500, {"error": str(e)})
+
     def do_DELETE(self):
         parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
         if not self._csrf_ok():
@@ -1203,14 +1257,29 @@ class Handler(BaseHTTPRequestHandler):
 
 # --- arranque ---------------------------------------------------------------------------
 
-def load_sessions() -> None:
+def load_sessions() -> int:
+    """Carga sessions/*.json. Devuelve cuantas purgo: sin proceso vivo y sin eventos (o
+    arranque) hace mas de STALE_SESSION_H horas; las demas sin proceso quedan 'muerta' y se
+    van solas a los 60 s."""
+    limit = dt.datetime.now().astimezone() - dt.timedelta(hours=STALE_SESSION_H)
+    purged = 0
     for p in glob.glob(os.path.join(SESSIONS, "*.json")):
         try:
             with open(p, encoding="utf-8") as f:
                 s = json.load(f)
             s.setdefault("hooked", s.get("source") == "hook")
             s.setdefault("pending_id", None)
+            s.setdefault("typing", False)
             if not procs.agent_alive(s.get("pid")):
+                ref = s.get("last_event_ts") or s.get("started")
+                try:
+                    stale = not ref or dt.datetime.fromisoformat(ref) < limit
+                except ValueError:
+                    stale = True
+                if stale:
+                    os.remove(p)
+                    purged += 1
+                    continue
                 # sesion de una corrida anterior sin proceso: se muestra muerta y se va sola
                 s["alive"] = False
                 s["dead_since"] = s.get("dead_since") or now()
@@ -1218,6 +1287,7 @@ def load_sessions() -> None:
             sessions[s["session_id"]] = s
         except (OSError, ValueError, KeyError):
             continue
+    return purged
 
 
 def clean_attachments() -> None:
@@ -1274,7 +1344,7 @@ def main() -> int:
     a = ap.parse_args()
     for d in (EVENTS, PENDING, ANSWERS, ADJUNTOS, SESSIONS):
         os.makedirs(d, exist_ok=True)
-    load_sessions()
+    purged = load_sessions()
     links.load(lambda l: l.get("from") in sessions and l.get("to") in sessions)
     rules.load(lambda r: r.get("to") in sessions and (not r.get("from") or r["from"] in sessions))
     purge_stale_at_rules()
@@ -1290,7 +1360,12 @@ def main() -> int:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
     srv.daemon_threads = True
-    log(f"lienzo-server en http://127.0.0.1:{a.port}  sesiones={len(sessions)}  login={'si' if auth.configured() else 'no'}")
+    with lock:
+        n_alive = sum(1 for s in sessions.values() if s.get("alive"))
+        n_rules = sum(1 for r in rules.items if r.get("enabled"))
+        n_links = len(links.items)
+    log(f"lienzo-server en http://127.0.0.1:{a.port}  sesiones={len(sessions)} (vivas={n_alive}, purgadas={purged}"
+        f" de mas de {STALE_SESSION_H} h)  reglas_activas={n_rules}  links={n_links}  login={'si' if auth.configured() else 'no'}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

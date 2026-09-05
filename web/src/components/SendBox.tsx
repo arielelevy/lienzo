@@ -1,8 +1,13 @@
 import { useRef, useState } from "react";
 import { api } from "../api";
 import type { Session } from "../types";
+import "../card.css";
 
 const QUICK = ["Continuá", "sí", "no", "dale"];
+
+/** `typing` lo agrega el backend en paralelo (alguien esta escribiendo en esa terminal); todavia
+ *  no esta en Session, se lee como campo opcional. */
+const isTyping = (s: Session): boolean => !!(s as Session & { typing?: boolean }).typing;
 
 interface Props {
   session: Session;
@@ -33,6 +38,7 @@ export function SendBox({ session: s, toast }: Props) {
       return;
     }
     if (!t.trim() && attachments.length === 0) return;
+    if (isTyping(s) && !confirm("Están tipeando en esa terminal; lo que mandes se mezcla con lo que escriben. Enviar igual?")) return;
     setBusy(true);
     try {
       const r = await api.post<{ chars: number }>(`/sessions/${s.session_id}/send`, { text: t, attachments });
@@ -83,6 +89,11 @@ export function SendBox({ session: s, toast }: Props) {
         if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
       }}
     >
+      {isTyping(s) && (
+        <div className="typing-warn" role="alert">
+          ⌨ están tipeando en esa terminal; lo que mandes se mezcla
+        </div>
+      )}
       <div className="row quick">
         {QUICK.map((q) => (
           <button key={q} disabled={disabled} onClick={() => send(q)}>
