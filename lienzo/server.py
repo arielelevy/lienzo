@@ -135,10 +135,25 @@ def log(msg: str) -> None:
 
 
 def atomic_write(path: str, text: str) -> None:
-    tmp = path + ".tmp"
+    """Escritura atomica. El .tmp lleva el id del hilo: dos hilos que guardan la misma tarjeta a la
+    vez (consume_events bajo lock, liveness/screen_loop sin lock) chocaban en el mismo .tmp y
+    os.replace fallaba con WinError 32 (medido 2026-09-05 16:30). Y si Windows todavia tiene el
+    destino abierto por otro lector (antivirus, el otro hilo), se reintenta un poco."""
+    tmp = f"{path}.{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
-    os.replace(tmp, path)
+    for i in range(5):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == 4:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.05 * (i + 1))
 
 
 def short(s, n=300) -> str:
@@ -296,12 +311,98 @@ def connections_of(sid: str) -> dict:
 
 # --- reglas: "cuando termine" y "a una hora" ------------------------------------------
 
+def full_reply(s: dict, cap: int = 6000) -> str:
+    """Ultima respuesta completa, leida de la transcripcion (la tarjeta guarda 600 caracteres y una
+    revision entera no entra ahi). Si no se puede leer, lo que tiene la tarjeta."""
+    path = s.get("transcript_path")
+    if path and os.path.exists(path):
+        try:
+            ts = transcripts.turns(s["agent"], path, 1)["turns"]
+            if ts and ts[-1].get("final"):
+                return short(ts[-1]["final"], cap)
+        except Exception as e:  # noqa: BLE001
+            log(f"respuesta completa de {s['session_id'][:8]}: {e}")
+    return s.get("last_reply") or ""
+
+
 def render_template(tpl: str, s: dict | None) -> str:
     if not s:
         return tpl
     return (tpl.replace("{repo}", s.get("repo") or "").replace("{agente}", s.get("agent") or "")
             .replace("{titulo}", s.get("title") or "").replace("{pedido}", s.get("last_prompt") or "")
-            .replace("{respuesta}", s.get("last_reply") or ""))
+            .replace("{respuesta}", full_reply(s) if "{respuesta}" in tpl else ""))
+
+
+def load_config() -> dict:
+    """~/.lienzo/config.json (lo comparte con hook.py): ejemplos, wait, auto_continue."""
+    try:
+        with open(os.path.join(LIENZO, "config.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def limit_until_of(turn: dict) -> str | None:
+    """Si el turno termino con un aviso de limite de uso con hora ("try again at 7:57 PM"),
+    esa hora en ISO local; la referencia es cuando se escribio el aviso, no ahora."""
+    err = turn.get("error")
+    if not err:
+        return None
+    ref = None
+    for k in ("ts_end", "ts_start"):
+        raw = turn.get(k)
+        if not raw:
+            continue
+        try:
+            ref = dt.datetime.fromisoformat(str(raw))
+            break
+        except ValueError:
+            continue
+    if ref is not None and ref.tzinfo is None:
+        ref = ref.replace(tzinfo=dt.timezone.utc)
+    at = transcripts.limit_reset(err, ref)
+    return at.astimezone().isoformat(timespec="seconds") if at else None
+
+
+CONTINUE_TEXT = "Continuar"
+CONTINUE_DELAY_S = 60
+
+
+def ensure_continue_rule(s: dict) -> None:
+    """Una sesion avisa limite de uso con hora de vuelta: dejar programado "Continuar" un minuto
+    despues, una sola vez por aviso. Solo con "auto_continue": true en ~/.lienzo/config.json
+    (decision del autor: nada automatico sin tope; aca el tope es una regla de un disparo)."""
+    until = s.get("limit_until")
+    if not until or not load_config().get("auto_continue"):
+        return
+    if s.get("continue_scheduled_for") == until:
+        return  # este aviso ya se atendio; si el usuario borro la regla, no se vuelve a crear
+    try:
+        at = dt.datetime.fromisoformat(until) + dt.timedelta(seconds=CONTINUE_DELAY_S)
+    except ValueError:
+        return
+    if at < dt.datetime.now().astimezone() - dt.timedelta(minutes=5):
+        return  # aviso viejo: el cupo ya volvio, no hay nada que programar
+    at_iso = at.isoformat(timespec="seconds")
+
+    def near(r: dict) -> bool:
+        # mismo instante aunque el offset difiera (la UI guarda UTC, aca local): +-2 min
+        try:
+            return abs((dt.datetime.fromisoformat(r["at"]) - at).total_seconds()) <= 120
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    with lock:
+        s["continue_scheduled_for"] = until
+        for r in rules.items:
+            if r.get("kind") == "at" and r.get("to") == s["session_id"] and near(r):
+                return  # ya esta (manual o automatica, vigente o ya disparada)
+        rule = {"id": secrets.token_hex(6), "kind": "at", "from": None, "to": s["session_id"],
+                "text": CONTINUE_TEXT, "at": at_iso, "repeat": False, "max_fires": 1, "fired": 0,
+                "enabled": True, "created": now(), "auto": True}
+        rules.add(rule, cap=500)
+    log(f"regla automatica {rule['id']}: {s['agent']} {s['session_id'][:8]} sin cupo hasta {until}; "
+        f"'{CONTINUE_TEXT}' a las {at_iso}")
 
 
 def fire_rule(rule: dict) -> None:
@@ -460,7 +561,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         log(f"transcripcion {path}: {e}")
         return False
     meta, ts = r["meta"], r["turns"]
-    before = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error")})
+    before = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for")})
     # titulo de la transcripcion: ai-title de Claude, o thread_name del indice de Codex (solo se
     # busca si el que hay no sirve); la regla de que gana esta en choose_title, despues del turno
     tt = meta.get("title")
@@ -494,8 +595,13 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         s["last_error"] = short(t.get("error") or "", 300) or None
         if s["last_error"] and not t.get("final"):
             s["last_reply"] = s["last_error"]
+        # limite de uso con hora de vuelta: la tarjeta ofrece programar "Continuar" y, con
+        # auto_continue en config.json, queda programado solo (un disparo por aviso)
+        s["limit_until"] = limit_until_of(t)
+        if s["limit_until"]:
+            ensure_continue_rule(s)
     choose_title(s, tt)
-    after = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error")})
+    after = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for")})
     return before != after
 
 
@@ -1181,8 +1287,9 @@ class Handler(BaseHTTPRequestHandler):
                 if kind == "at":
                     try:
                         at = dt.datetime.fromisoformat(str(d.get("at")))
-                        if at.tzinfo is None:
-                            at = at.astimezone()
+                        # siempre en hora local: naive se asume local, aware (la UI manda UTC con Z)
+                        # se convierte, asi todas las reglas guardan `at` con el mismo offset
+                        at = at.astimezone()
                     except ValueError:
                         return self._json(400, {"error": "at debe ser una fecha ISO"})
                 text = str(d.get("text") or "")
@@ -1264,6 +1371,46 @@ class Handler(BaseHTTPRequestHandler):
                     touch(s)
                 log(f"titulo de {parts[1][:8]} -> {s['title']!r} ({s.get('title_source')})")
                 return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
+            if len(parts) == 2 and parts[0] == "rules":
+                # editar una conexion pendiente (doble click en la flecha): texto, hora, repeticion.
+                # Una programada que ya disparo se puede reprogramar: vuelve a quedar vigente.
+                d = self._json_body()
+                at = None
+                if d.get("at") is not None:
+                    try:
+                        at = dt.datetime.fromisoformat(str(d["at"]))
+                        # siempre en hora local: naive se asume local, aware (la UI manda UTC con Z)
+                        # se convierte, asi todas las reglas guardan `at` con el mismo offset
+                        at = at.astimezone()
+                    except ValueError:
+                        return self._json(400, {"error": "at debe ser una fecha ISO"})
+                if "text" in d and not isinstance(d["text"], str):
+                    return self._json(400, {"error": "text debe ser un texto"})
+                try:
+                    max_fires = max(1, min(int(d["max_fires"]), 50)) if d.get("max_fires") is not None else None
+                except (TypeError, ValueError):
+                    return self._json(400, {"error": "max_fires debe ser un numero"})
+                with lock:
+                    r = next((x for x in rules.items if x["id"] == parts[1]), None)
+                    if r is None:
+                        return self._json(404, {"error": "conexion desconocida"})
+                    if "text" in d:
+                        r["text"] = d["text"]
+                    if r.get("kind") == "at" and at is not None:
+                        r["at"] = at.isoformat(timespec="seconds")
+                        if not r.get("enabled"):
+                            r["enabled"] = True
+                            r["fired"] = 0
+                            r.pop("disabled_at", None)
+                    if r.get("kind") == "on_stop":
+                        if "repeat" in d:
+                            r["repeat"] = bool(d["repeat"])
+                        if max_fires is not None:
+                            r["max_fires"] = max_fires
+                    rules.save()
+                rules.publish()
+                log(f"regla {r['id']} editada: {r['kind']} -> {r['to'][:8]} {r.get('at') or ''} {short(r.get('text') or '', 60)!r}")
+                return self._json(200, r)
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:  # noqa: BLE001
             log(traceback.format_exc())

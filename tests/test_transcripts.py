@@ -129,3 +129,27 @@ def test_looks_like_error():
     assert tr.looks_like_error("You've hit your session limit · resets 2:40pm") is True
     assert tr.looks_like_error("Listo, la tabla quedo actualizada con 611 filas.") is False
     assert tr.looks_like_error("") is False
+
+
+# 6. limit_reset -----------------------------------------------------------------
+
+def test_limit_reset():
+    import datetime as dt
+    ref = dt.datetime(2026, 9, 5, 15, 28, tzinfo=dt.timezone(dt.timedelta(hours=-3)))
+    at = tr.limit_reset("You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
+                        "https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:57 PM.", ref)
+    assert at == ref.replace(hour=19, minute=57, second=0, microsecond=0)
+    # la referencia (fin del turno) puede quedar unos minutos despues de la hora: sigue siendo hoy
+    late = ref.replace(hour=20, minute=5)
+    assert tr.limit_reset("try again at 7:57 PM.", late) == ref.replace(hour=19, minute=57, second=0, microsecond=0)
+    # hora ya pasada respecto del aviso: es manana
+    at = tr.limit_reset("try again at 2:36 PM.", ref)
+    assert (at.day, at.hour, at.minute) == (6, 14, 36)
+    at = tr.limit_reset("try again at Sep 5th, 2026 3:08 AM.", ref)
+    assert (at.year, at.month, at.day, at.hour, at.minute) == (2026, 9, 5, 3, 8)
+    assert tr.limit_reset("try again in 2 hours 15 minutes", ref) == ref + dt.timedelta(hours=2, minutes=15)
+    assert tr.limit_reset("You've hit your session limit · resets 2:40pm", ref).hour == 14
+    assert tr.limit_reset("try again in a moment. If it persists, check https://status.claude.com.", ref) is None
+    assert tr.limit_reset("resets in `visualStyles` at level 2:", ref) is None
+    assert tr.limit_reset("Listo, la tabla quedo actualizada.", ref) is None
+    assert tr.limit_reset("", ref) is None
