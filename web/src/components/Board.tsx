@@ -106,11 +106,16 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       setDrag(null);
       if (to && to !== drag.from) onConnect(drag.from, to);
     };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrag(null); // soltar en cualquier lado o Esc cancela
+    };
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
+    document.addEventListener("keydown", key);
     return () => {
       document.removeEventListener("mousemove", move);
       document.removeEventListener("mouseup", up);
+      document.removeEventListener("keydown", key);
     };
   }, [drag?.from, onConnect]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -126,9 +131,14 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       <div className={`board ${drag ? "dragging" : ""}`} ref={boardRef}>
         <Arrows links={links} rules={rules} boardRef={boardRef} deps={[sessions, filter, selected]} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} />
         {drag && (
-          <svg className="arrows draglink">
-            <line x1={drag.x1} y1={drag.y1} x2={drag.x2} y2={drag.y2} />
-          </svg>
+          <>
+            <svg className="arrows draglink">
+              <line x1={drag.x1} y1={drag.y1} x2={drag.x2} y2={drag.y2} />
+            </svg>
+            <div className="draghint">
+              {drag.over ? `Soltá para conectar con ${sessions[drag.over]?.repo ?? ""}` : "Soltá sobre otra tarjeta para conectar · Esc cancela"}
+            </div>
+          </>
         )}
         {STATES.map(([k, label]) => {
           const list = byState(k);

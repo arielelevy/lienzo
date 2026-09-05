@@ -1,11 +1,15 @@
 # Lienzo
 
-Tablero para las sesiones de **Claude Code** y **Codex CLI** que corren en la terminal de
-VS Code. Una tarjeta por sesión, agrupadas por estado (corriendo, te necesita, terminó,
-muerta), con la conversación a un click, una caja para contestarles, aprobación de permisos
-sin ir a la terminal y acceso desde el celular con Microsoft Authenticator.
+Tablero para las sesiones de **Claude Code** y **Codex CLI** que corren en terminales de
+Windows: la integrada de VS Code, Windows Terminal, una PowerShell o un cmd sueltos. Una
+tarjeta por sesión, agrupadas por estado (corriendo, te necesita, terminó, muerta), con la
+conversación a un click, una caja para contestarles, aprobación de permisos sin ir a la
+terminal, conexiones entre sesiones y acceso desde el celular con Microsoft Authenticator.
 
 No hospeda terminales ni guarda historial propio: es un monitor con derecho a contestar.
+
+Las apps de escritorio de Claude y de Codex no tienen consola: sus sesiones se pueden ver
+(si disparan hooks) pero no se les puede escribir desde acá.
 
 ![Tablero](docs/img/tablero.png)
 
@@ -70,9 +74,11 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
 - **Permisos**: cuando una sesión pide permiso, la tarjeta muestra el comando y dos botones,
   Permitir y Denegar. Nunca "permitir siempre".
 - **Conectar sesiones**: arrastrá una tarjeta y soltala sobre otra (o usá "Reenviar a…" en el
-  panel). Se abre el reenvío con el destino elegido y la última respuesta de la sesión de
-  origen, con una plantilla editable (`{repo} {agente} {titulo} {pedido} {respuesta}`). Cada
-  reenvío dibuja una flecha entre las dos tarjetas. Es manual a propósito: dos agentes vinculados en los dos sentidos se
+  panel). Tres modos: *ahora* manda la última respuesta de A a B; *cuando A termine* la
+  manda al cerrar cada turno, una vez o hasta un tope; *a una hora* manda un texto fijo (por
+  defecto "Continuá") a una sesión, que puede ser la misma. Plantilla editable
+  (`{repo} {agente} {titulo} {pedido} {respuesta}`). Cada reenvío dibuja una flecha entre las
+  tarjetas; las conexiones pendientes se ven punteadas y con etiqueta. Esc cancela. Es manual a propósito: dos agentes vinculados en los dos sentidos se
   contestan hasta agotar los créditos.
 
 ![Reenviar a otra sesión](docs/img/reenviar.png)

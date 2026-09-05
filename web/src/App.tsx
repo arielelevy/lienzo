@@ -139,6 +139,17 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     };
   }, [refreshAuth]);
 
+  // Escape cierra lo que este abierto: dialogo de conexion, o panel
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (connect) setConnect(null);
+      else if (selectedRef.current) setSelected(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [connect]);
+
   // click fuera del panel (y fuera de una tarjeta) lo cierra
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -244,8 +255,11 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setConnect(null)}>
           <div className="gate-box wide connect">
             <h1>
-              Conectar <span className={`badge ${sessions[connect.from].agent}`}>{sessions[connect.from].agent}</span> {sessions[connect.from].repo}
-              {sessions[connect.from].title ? ` · ${sessions[connect.from].title}` : ""}
+              <span className={`badge ${sessions[connect.from].agent}`}>{sessions[connect.from].agent}</span>
+              {sessions[connect.from].title || sessions[connect.from].repo}
+              <span className="dim">→</span>
+              {sessions[connect.to] && <span className={`badge ${sessions[connect.to].agent}`}>{sessions[connect.to].agent}</span>}
+              {sessions[connect.to]?.title || sessions[connect.to]?.repo}
             </h1>
             <Forward
               from={sessions[connect.from]}
