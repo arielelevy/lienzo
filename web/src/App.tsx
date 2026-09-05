@@ -126,6 +126,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           return next;
         });
         if (selectedRef.current === m.session_id) setSelected(null);
+        setConnect((c) => (c && (c.from === m.session_id || c.to === m.session_id) ? null : c));
       } else if (m.type === "pending") {
         setPending(Object.fromEntries(m.pending.map((p) => [p.request_id, p])));
       } else if (m.type === "transcript") {
@@ -154,7 +155,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
       if (!selectedRef.current) return;
-      if (t.closest(".panel") || t.closest(".card") || t.closest(".toasts")) return;
+      if (t.closest(".panel") || t.closest(".card") || t.closest(".toasts") || t.closest(".gate")) return;
       setSelected(null);
     };
     document.addEventListener("mousedown", onDown);
@@ -204,6 +205,11 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     }
   }, [toast]);
 
+  // estables: Board los usa como dependencias de listeners de document
+  const deleteLink = useCallback((id: string) => api.del(`/links/${id}`).catch((e) => toast((e as Error).message, true)), [toast]);
+  const deleteRule = useCallback((id: string) => api.del(`/rules/${id}`).catch((e) => toast((e as Error).message, true)), [toast]);
+  const connectCards = useCallback((from: string, to: string) => setConnect({ from, to }), []);
+
   const sel = selected ? sessions[selected] : null;
 
   return (
@@ -230,7 +236,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           <button onClick={() => setShowTotp(true)} title="volver a ver el QR de Authenticator">🔑<span className="txt"> QR Authenticator</span></button>
         )}
         {authInfo.configured && !authInfo.local && (
-          <button onClick={() => api.post("/logout", {}).then(refreshAuth)} title="cerrar sesión en este dispositivo">Salir</button>
+          <button onClick={() => api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true))} title="cerrar sesión en este dispositivo">Salir</button>
         )}
       </header>
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} onClose={() => setShowQr(false)} />}
@@ -246,9 +252,9 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onDrop={drop}
         links={links}
         rules={rules}
-        onDeleteLink={(id) => api.del(`/links/${id}`).catch((e) => toast((e as Error).message, true))}
-        onDeleteRule={(id) => api.del(`/rules/${id}`).catch((e) => toast((e as Error).message, true))}
-        onConnect={(from, to) => setConnect({ from, to })}
+        onDeleteLink={deleteLink}
+        onDeleteRule={deleteRule}
+        onConnect={connectCards}
       />
       {connect && sessions[connect.from] && (
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setConnect(null)}>

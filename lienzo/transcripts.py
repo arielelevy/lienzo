@@ -46,15 +46,17 @@ def tail_lines(path: str, max_bytes: int = TAIL_BYTES) -> tuple[list[str], bool]
     lines = text.split("\n")
     if truncated:
         lines = lines[1:]  # primera linea parcial
-    return [l for l in lines if l.strip()], truncated
+    return [l.rstrip("\r") for l in lines if l.strip()], truncated
 
 
 def iter_json(lines):
     for l in lines:
         try:
-            yield json.loads(l)
+            d = json.loads(l)
         except ValueError:
             continue
+        if isinstance(d, dict):  # `null` o listas son JSON valido pero no lineas de transcripcion
+            yield d
 
 
 def _short(s: str, n: int) -> str:
@@ -67,7 +69,7 @@ def _first_line(s: str, n: int = 160) -> str:
 
 
 SYSTEM_PROMPT_TAGS = ("<task-notification>", "<system-reminder>", "<local-command-", "<command-name>",
-                      "<bash-input>", "<bash-stdout>", "<ide_", "<user-memory-input>")
+                      "<command-message>", "<bash-input>", "<bash-stdout>", "<ide_", "<user-memory-input>")
 
 
 ERROR_PATTERNS = ("You've hit your", "usage limit", "session limit", "rate limit", "API Error",
@@ -148,14 +150,19 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
         content = msg.get("content")
 
         if t == "user":
-            if isinstance(content, str):
-                if is_system_prompt(content):
-                    # aviso del sistema disfrazado de usuario: no abre turno, queda como nota
+            # pedido humano: string, o lista sin tool_result (imagen adjunta + texto, "Continue from
+            # where you left off" tras compactar). Las interrupciones y avisos del sistema no abren turno.
+            blocks = content if isinstance(content, list) else []
+            has_result = any(isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks)
+            human = content if isinstance(content, str) else (_content_text(content) if not has_result else None)
+            if human is not None:
+                if is_system_prompt(human) or human.startswith("[Request interrupted"):
                     turn = ensure_turn(ts)
-                    turn["blocks"].append({"kind": "user_text", "text": _short(content, 300)})
+                    turn["blocks"].append({"kind": "user_text", "text": _short(human, 300)})
                     continue
-                # pedido humano: nuevo turno
-                cur = _new_turn("claude", d.get("promptId") or d.get("uuid") or str(len(turns)), ts, content)
+                if cur is not None:
+                    cur["ended"] = True  # un pedido nuevo cierra el anterior aunque no haya turn_duration
+                cur = _new_turn("claude", d.get("promptId") or d.get("uuid") or str(len(turns)), ts, human or "(imagen)")
                 turns.append(cur)
                 continue
             if isinstance(content, list):
@@ -173,8 +180,6 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                         else:
                             turn["blocks"].append({"kind": "tool", "id": b.get("tool_use_id"), "name": "?",
                                                    "input": {}, "result": res})
-                    elif b.get("type") == "text":
-                        turn["blocks"].append({"kind": "user_text", "text": b.get("text", "")})
                 turn["ts_end"] = ts or turn["ts_end"]
             continue
 

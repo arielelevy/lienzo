@@ -26,6 +26,8 @@ interface Props {
   onConnect: (from: string, to: string) => void;
 }
 
+const canReceive = (s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
+
 interface Drag {
   from: string;
   x1: number;
@@ -97,14 +99,16 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       if (!board) return;
       const b = board.getBoundingClientRect();
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]");
-      const over = el && el.dataset.sid !== drag.from ? el.dataset.sid ?? null : null;
+      const cand = el && el.dataset.sid !== drag.from ? el.dataset.sid ?? null : null;
+      const over = cand && canReceive(sessions[cand]) ? cand : null;
       setDrag((d) => (d ? { ...d, x2: e.clientX - b.left, y2: e.clientY - b.top, over } : d));
     };
     const up = (e: MouseEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]");
       const to = el?.dataset.sid;
       setDrag(null);
-      if (to && to !== drag.from) onConnect(drag.from, to);
+      // soltar sobre una muerta, huerfana o sin consola no conecta: no habria a donde escribir
+      if (to && to !== drag.from && canReceive(sessions[to])) onConnect(drag.from, to);
     };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") setDrag(null); // soltar en cualquier lado o Esc cancela
@@ -179,9 +183,13 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         onDecide={onDecide}
                         onDrop={() => onDrop(s.session_id)}
                         onGrip={(e) => startDrag(s.session_id, e)}
-                        onPress={(e) => {
-                          pressRef.current = { sid: s.session_id, x: e.clientX, y: e.clientY };
-                        }}
+                        onPress={
+                          canReceive(s)
+                            ? (e) => {
+                                pressRef.current = { sid: s.session_id, x: e.clientX, y: e.clientY };
+                              }
+                            : undefined
+                        }
                       />
                     </div>
                   ))}

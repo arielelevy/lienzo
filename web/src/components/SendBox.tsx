@@ -95,22 +95,33 @@ export function SendBox({ session: s, toast }: Props) {
           <input ref={fileRef} type="file" multiple hidden onChange={(e) => e.target.files && upload(e.target.files)} />
         </label>
       </div>
-      <textarea
-        value={text}
-        disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send(text);
+      <div className="inputwrap">
+        {/* sugerencia leida de la terminal: gris detras del texto, Tab la acepta (como en Claude Code) */}
+        {!text && s.suggestion && !s.pending_id && <div className="ghost">{s.suggestion}<span className="tabhint">Tab</span></div>}
+        <textarea
+          value={text}
+          disabled={disabled}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Tab" && !text && s.suggestion) {
+              e.preventDefault();
+              setText(s.suggestion);
+              return;
+            }
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send(text);
+            }
+          }}
+          placeholder={
+            s.pending_id
+              ? "Hay un permiso pendiente: contestalo arriba"
+              : s.suggestion
+                ? ""
+                : "Mensaje para la sesión. Enter envía, Shift+Enter salto. Más de 500 caracteres o varias líneas viajan como adjunto .md"
           }
-        }}
-        placeholder={
-          s.pending_id
-            ? "Hay un permiso pendiente: contestalo arriba"
-            : "Mensaje para la sesión. Enter envía, Shift+Enter salto. Más de 500 caracteres o varias líneas viajan como adjunto .md"
-        }
-      />
+        />
+      </div>
       <div className="row">
         <div className="att">
           {attachments.map((a) => (

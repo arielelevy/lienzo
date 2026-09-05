@@ -84,7 +84,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .panel .body table { display: block; max-width: 100%; overflow-x: auto; }
 .send { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; background: var(--panel); }
 .send.drag { outline: 2px dashed var(--acc); }
-.send textarea { width: 100%; min-height: 64px; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
+.send .inputwrap { position: relative; background: var(--card); border-radius: 6px; }
+.send .ghost { position: absolute; left: 9px; top: 9px; right: 9px; color: var(--dim); font: inherit; pointer-events: none; white-space: pre-wrap; opacity: .75; }
+.send .ghost .tabhint { margin-left: 8px; font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; vertical-align: middle; }
+.send textarea { width: 100%; min-height: 64px; position: relative; background: transparent; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
 .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .quick button { font-size: 12px; padding: 4px 8px; }
 .att { font-size: 12px; color: var(--dim); }

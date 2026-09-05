@@ -384,7 +384,7 @@ def apply_event(ev: dict) -> None:
         s["hooked"] = True
         s["source"] = "hook"
         pid = ev.get("pid")
-        if pid and procs.alive(pid):
+        if pid and procs.agent_alive(pid):
             if s.get("pid") != pid:
                 # otra tarjeta (del barrido) con el mismo pid es la misma sesion
                 for other_sid, other in list(sessions.items()):
@@ -619,7 +619,7 @@ def sweep_once() -> None:
         with lock:
             if sid and sid in sessions:
                 s = sessions[sid]
-                if not s.get("pid") or not procs.alive(s["pid"]):
+                if not s.get("pid") or not procs.agent_alive(s["pid"]):
                     s["pid"] = p["pid"]
                     s["agent_exe"] = p["exe"]
                     s["alive"] = True
@@ -647,7 +647,7 @@ def liveness_loop(sweep_every: float) -> None:
                 items = list(sessions.values())
             for s in items:
                 changed = False
-                alive = procs.alive(s.get("pid")) if s.get("pid") else None
+                alive = procs.agent_alive(s.get("pid")) if s.get("pid") else None
                 if alive is False and s["alive"]:
                     s["alive"] = False
                     s["dead_since"] = now()
@@ -697,7 +697,7 @@ def save_attachment(sid: str, name: str, data: bytes) -> str:
 
 
 def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
-    if not s.get("pid") or not procs.alive(s["pid"]):
+    if not s.get("pid") or not procs.agent_alive(s["pid"]):
         return 409, {"ok": False, "error": "la sesion no tiene un PID vivo"}
     if s.get("orphan"):
         return 409, {"ok": False, "error": "la sesion perdio su terminal (huerfana): no hay consola donde escribir"}
@@ -767,7 +767,10 @@ def screen_loop() -> None:
                 r = read_screen(s["pid"])
                 area = r.get("area") if r.get("ok") else None
                 sug = None
-                if area and not area["placeholder"] and s["state"] == "termino":
+                # sugerencia: texto en la caja con la sesion ociosa (termino, o "te necesita" por idle);
+                # medido: "❯ Guardá la revisión en docs/revision-backend.md" con la sesion en idle_prompt
+                idle = s["state"] == "termino" or (s["state"] == "te_necesita" and (s.get("needs") or {}).get("kind") == "idle")
+                if area and not area["placeholder"] and idle:
                     sug = short(area["input"], 300)
                 if s.get("suggestion") != sug:
                     s["suggestion"] = sug
@@ -1096,7 +1099,7 @@ def load_sessions() -> None:
                 s = json.load(f)
             s.setdefault("hooked", s.get("source") == "hook")
             s.setdefault("pending_id", None)
-            if not procs.alive(s.get("pid")):
+            if not procs.agent_alive(s.get("pid")):
                 # sesion de una corrida anterior sin proceso: se muestra muerta y se va sola
                 s["alive"] = False
                 s["dead_since"] = s.get("dead_since") or now()

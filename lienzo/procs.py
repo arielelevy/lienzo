@@ -71,7 +71,8 @@ def cwd_of(pid: int) -> str | None:
         raw = read(buffer, length)
         if not raw:
             return None
-        return raw.decode("utf-16-le", errors="replace").rstrip("\\") or None
+        cwd = raw.decode("utf-16-le", errors="replace")
+        return (cwd.rstrip("\\") if len(cwd) > 3 else cwd) or None  # "C:\" se queda como esta
     finally:
         _k32.CloseHandle(h)
 
@@ -100,6 +101,11 @@ def alive(pid: int | None) -> bool:
         return bool(_k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == STILL_ACTIVE
     finally:
         _k32.CloseHandle(h)
+
+
+def agent_alive(pid: int | None) -> bool:
+    """Vivo Y sigue siendo un agente: un PID reciclado por otro programa no cuenta."""
+    return alive(pid) and agent_of(image_path(int(pid))) is not None
 
 
 def image_path(pid: int) -> str | None:
@@ -138,10 +144,11 @@ def is_tui(pid: int, cmdline: str | None = None) -> bool:
 
 _PS = r"""
 $ErrorActionPreference='SilentlyContinue'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new()
 $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate
 $byId = @{}; foreach ($p in $all) { $byId[$p.ProcessId] = $p }
 $out = @()
-foreach ($a in ($all | Where-Object { $_.Name -in @('claude.exe','codex.exe') })) {
+foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' })) {
   $par = $byId[$a.ParentProcessId]; $gp = if ($par) { $byId[$par.ParentProcessId] } else { $null }
   $out += [pscustomobject]@{
     pid = $a.ProcessId; exe = $a.ExecutablePath; cmd = $a.CommandLine
