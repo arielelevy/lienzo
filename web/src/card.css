@@ -1,0 +1,38 @@
+/* Estilos de la tarjeta y del digest que no viven en styles.css: pedido plegable, acciones
+   rapidas, copiar, renombrar, aviso de tipeo y el mini toast local (cuando el componente no
+   recibe el toast global por props). */
+
+/* pedido: una linea plegada, "…más" la abre */
+.card .prompt { display: flex; gap: 6px; align-items: baseline; max-height: none; }
+.card .prompt .ptext { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.card .prompt.open .ptext { white-space: pre-wrap; overflow: visible; text-overflow: clip; max-height: 14em; overflow-y: auto; }
+.card .prompt .more { flex: 0 0 auto; background: none; border: 0; padding: 0; color: var(--acc); font-size: 12px; cursor: pointer; line-height: inherit; }
+.card .prompt .more:hover { text-decoration: underline; border-color: transparent; }
+
+/* ultima respuesta con boton copiar */
+.card .replyrow { display: flex; gap: 4px; align-items: flex-start; margin-top: 6px; }
+.card .replyrow .reply { flex: 1 1 auto; min-width: 0; margin-top: 0; }
+.card .copy, .dg .copy { background: none; border: 0; padding: 0 3px; color: var(--dim); font-size: 13px; line-height: 1.3; cursor: pointer; opacity: .55; }
+.card .copy:hover, .dg .copy:hover { opacity: 1; color: var(--acc); border-color: transparent; }
+.card .copy:focus-visible, .dg .copy:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; opacity: 1; }
+
+/* acciones rapidas en sesiones ociosas */
+.card .quickact { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+.card .quickact button { font-size: 12px; padding: 3px 9px; border-radius: 12px; }
+.card .quickact .hint { font-size: 11px; color: var(--dim); }
+
+/* renombrar: input inline en el lugar del titulo */
+.card .title { cursor: text; }
+.card .title input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--acc); border-radius: 4px; padding: 2px 6px; font: inherit; font-weight: 600; }
+
+/* digest: encabezado de la respuesta final con copiar */
+.dg { position: relative; }
+.dg .frow { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* aviso de tipeo en la terminal destino */
+.send .typing-warn { background: #2a2410; border: 1px solid #5c4a12; color: #ffd77a; border-radius: 6px; padding: 6px 10px; font-size: 12.5px; }
+
+/* mini toast local: abajo dentro del contenedor, sin depender del toast global */
+.ctoast { position: absolute; left: 10px; bottom: 6px; background: var(--acc); color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 12px; z-index: 2; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,.4); animation: ctoast-in .15s ease-out; }
+.ctoast.err { background: var(--err); }
+@keyframes ctoast-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
