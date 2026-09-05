@@ -133,6 +133,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .gate { position: fixed; inset: 0; background: rgba(8, 10, 14, .85); display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px; }
 .gate-box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; }
 .gate-box.wide { width: min(620px, 100%); }
+.gate-box.connect { width: min(720px, 100%); padding: 16px 0 0; gap: 0; }
+.gate-box.connect h1 { padding: 0 16px 10px; display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.gate-box.connect .fwd { border: 0; border-top: 1px solid var(--line); border-radius: 0 0 12px 12px; padding: 12px 16px 16px; }
 .gate-box h1 { margin: 0 0 4px; font-size: 18px; }
 .gate-box label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--dim); }
 .gate-box input { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; font-size: 15px; }

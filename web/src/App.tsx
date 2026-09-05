@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type AuthInfo } from "./api";
 import { Board } from "./components/Board";
 import { Enroll } from "./components/Enroll";
+import { Forward } from "./components/Forward";
 import { Login } from "./components/Login";
 import { Panel } from "./components/Panel";
 import { Setup, TotpQr } from "./components/Setup";
@@ -60,6 +61,8 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [links, setLinks] = useState<Link[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [forwardTo, setForwardTo] = useState<string | null>(null);
+  // conexion por arrastre: solo el dialogo de conectar, sin abrir el panel de la sesion
+  const [connect, setConnect] = useState<{ from: string; to: string } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
@@ -235,11 +238,25 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         rules={rules}
         onDeleteLink={(id) => api.del(`/links/${id}`).catch((e) => toast((e as Error).message, true))}
         onDeleteRule={(id) => api.del(`/rules/${id}`).catch((e) => toast((e as Error).message, true))}
-        onConnect={(from, to) => {
-          setSelected(from);
-          setForwardTo(to);
-        }}
+        onConnect={(from, to) => setConnect({ from, to })}
       />
+      {connect && sessions[connect.from] && (
+        <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setConnect(null)}>
+          <div className="gate-box wide connect">
+            <h1>
+              Conectar <span className={`badge ${sessions[connect.from].agent}`}>{sessions[connect.from].agent}</span> {sessions[connect.from].repo}
+              {sessions[connect.from].title ? ` · ${sessions[connect.from].title}` : ""}
+            </h1>
+            <Forward
+              from={sessions[connect.from]}
+              others={Object.values(sessions).filter((s) => s.session_id !== connect.from && s.alive && s.pid)}
+              initialTarget={connect.to}
+              toast={toast}
+              onDone={() => setConnect(null)}
+            />
+          </div>
+        </div>
+      )}
       {sel && (
         <Panel
           key={sel.session_id}
