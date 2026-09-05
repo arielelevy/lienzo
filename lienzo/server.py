@@ -228,10 +228,14 @@ def fire_rule(rule: dict) -> None:
         rule["fired"] = rule.get("fired", 0) + 1
         rule["last_fired"] = now()
         rule["last_result"] = "ok" if code == 200 else str(res.get("error"))
-        if not rule.get("repeat") or rule["fired"] >= int(rule.get("max_fires") or 1):
+        exhausted = rule.get("repeat") and rule["fired"] >= int(rule.get("max_fires") or 1)
+        if not rule.get("repeat") or exhausted:
             rule["enabled"] = False
+            rule["disabled_at"] = now()
         rules.save()
     log(f"regla {rule['id']} ({rule['kind']}) -> {rule['to'][:8]}: {rule['last_result']}")
+    if exhausted:
+        log(f"regla {rule['id']} agotada ({rule['fired']}/{rule.get('max_fires')} disparos)")
     if code == 200 and src and src["session_id"] != dst["session_id"]:
         add_link(src["session_id"], dst["session_id"], text)
     rules.publish()
@@ -242,6 +246,15 @@ def fire_on_stop(sid: str) -> None:
     de 30 s para que dos sesiones conectadas en ambos sentidos no se contesten en bucle)."""
     due = []
     with lock:
+        s = sessions.get(sid)
+        has_rules = any(r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid for r in rules.items)
+        if s and has_rules:
+            if s.get("last_error"):
+                log(f"on_stop de {sid[:8]} no disparado: el turno termino con error ({short(s['last_error'], 80)})")
+                return
+            if (s.get("last_reply") or "").rstrip().endswith("?"):
+                log(f"on_stop de {sid[:8]} no disparado: la respuesta termina en pregunta al usuario")
+                return
         for r in rules.items:
             if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid:
                 last = r.get("last_fired")
@@ -269,11 +282,37 @@ def rules_loop() -> None:
                                 due.append(r)
                         except ValueError:
                             r["enabled"] = False
+                            r["disabled_at"] = now()
             for r in due:
                 fire_rule(r)
         except Exception:  # noqa: BLE001
             log(traceback.format_exc())
         time.sleep(5)
+
+
+def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
+    """Al arrancar: sacar las reglas 'a las HH:MM' que ya dispararon o quedaron deshabilitadas
+    hace mas de max_age_h horas. Las on_stop se conservan (viven con la sesion)."""
+    limit = dt.datetime.now().astimezone() - dt.timedelta(hours=max_age_h)
+
+    def stale(r: dict) -> bool:
+        if r.get("kind") != "at" or r.get("enabled"):
+            return False
+        ref = r.get("disabled_at") or r.get("last_fired") or r.get("created")
+        if not ref:
+            return True
+        try:
+            return dt.datetime.fromisoformat(ref) < limit
+        except ValueError:
+            return True
+
+    with lock:
+        n = sum(1 for r in rules.items if stale(r))
+        if n:
+            rules.items[:] = [r for r in rules.items if not stale(r)]
+            rules.save()
+    if n:
+        log(f"purgadas {n} reglas 'at' viejas (disparadas o deshabilitadas hace mas de {max_age_h:g} h)")
 
 
 def drop_session(sid: str, reason: str) -> None:
@@ -976,6 +1015,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(404, {"error": "sesion destino desconocida"})
                 if kind == "on_stop" and d.get("from") not in sessions:
                     return self._json(404, {"error": "sesion origen desconocida"})
+                if kind == "on_stop":
+                    with lock:
+                        inverse = next((r for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop"
+                                        and r.get("from") == d["to"] and r.get("to") == d["from"]), None)
+                    if inverse:
+                        return self._json(409, {"error": f"crearía un bucle {d['from'][:8]}↔{d['to'][:8]}: "
+                                                         f"ya existe la regla {inverse['id']} en sentido inverso"})
                 at = None
                 if kind == "at":
                     try:
@@ -1166,6 +1212,7 @@ def main() -> int:
     load_sessions()
     links.load(lambda l: l.get("from") in sessions and l.get("to") in sessions)
     rules.load(lambda r: r.get("to") in sessions and (not r.get("from") or r["from"] in sessions))
+    purge_stale_at_rules()
     clean_attachments()
     if not a.no_sweep:
         sweep_once()

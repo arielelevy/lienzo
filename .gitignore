@@ -16,3 +16,7 @@ Thumbs.db
 
 # documento interno de diseno (queda fuera del repo publico)
 DISENO.es.md
+
+# videos de la UI (pesados)
+docs/video/
+node_modules/
