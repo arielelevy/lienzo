@@ -138,7 +138,9 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       return best;
     };
     // el circulo clickeable va en el punto de la curva mas lejano a cualquier tarjeta (o sea, en el
-    // canal), para no robarle el click a una tarjeta; el centro desempata
+    // canal), para no robarle el click a una tarjeta; el centro desempata. Los circulos ya puestos
+    // (`taken`) cuentan como obstaculo, asi dos flechas que comparten canal no se pisan el glifo.
+    const taken: Pt[] = [];
     const cubic = (p0: Pt, p1: Pt, p2: Pt, p3: Pt) => {
       const d = `M ${p0[0]} ${p0[1]} C ${p1[0]} ${p1[1]}, ${p2[0]} ${p2[1]}, ${p3[0]} ${p3[1]}`;
       let x = (p0[0] + p3[0]) / 2;
@@ -149,7 +151,8 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
         const u = 1 - t;
         const px = u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0];
         const py = u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1];
-        const c = clearance(px, py);
+        let c = clearance(px, py);
+        for (const q of taken) c = Math.min(c, Math.hypot(px - q[0], py - q[1]) - 22);
         if (c > bestC + 0.5 || (Math.abs(c - bestC) <= 0.5 && Math.abs(t - 0.5) < Math.abs(bestT - 0.5))) {
           bestC = c;
           bestT = t;
@@ -157,6 +160,7 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
           y = py;
         }
       }
+      taken.push([x, y]);
       return { d, x, y };
     };
 
