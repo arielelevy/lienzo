@@ -11,7 +11,13 @@ No hospeda terminales ni guarda historial propio: es un monitor con derecho a co
 
 ## Cómo funciona
 
-Cuatro canales, cada uno por su lado:
+Al arrancar, y después cada 30 segundos, el server **recorre los procesos de la PC** y
+encuentra todas las terminales de Claude Code (`claude.exe`) y Codex CLI (`codex.exe`) que
+estén corriendo, aunque se hayan abierto antes de instalar nada: lee el directorio de
+trabajo de cada proceso, ubica su transcripción y arma la tarjeta. Descarta las apps de
+escritorio y las extensiones de VS Code, que usan los mismos nombres de ejecutable.
+
+Después, cuatro canales, cada uno por su lado:
 
 | Qué | Cómo |
 |---|---|
@@ -20,10 +26,9 @@ Cuatro canales, cada uno por su lado:
 | Mandar un mensaje | Inyección de teclas en la consola del proceso por PID (`AttachConsole` + `WriteConsoleInputW`). Funciona sin foco y aunque la pestaña esté oculta. Los adjuntos viajan como ruta en el texto. |
 | Contestar un permiso | El hook `PermissionRequest` es sincrónico: deja el pedido en una carpeta y espera hasta 60 s la respuesta que el tablero escribe. Si nadie contesta, el prompt aparece en la terminal como siempre. |
 
-Además: barrido de procesos para encontrar sesiones abiertas antes de instalar los hooks
-(con el directorio de trabajo leído del PEB del proceso), reenvío de la respuesta de una
-sesión a otra con plantilla (y una flecha entre las tarjetas), y una pestaña que muestra el
-texto visible de la terminal leído del buffer de consola.
+Además: reenvío de la respuesta de una sesión a otra con plantilla (arrastrando una tarjeta
+sobre otra, o desde el botón), con una flecha entre las tarjetas por cada reenvío, y una
+pestaña que muestra el texto visible de la terminal leído del buffer de consola.
 
 ![Panel de una sesión](docs/img/panel.png)
 
@@ -64,9 +69,10 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
   archivos e imágenes.
 - **Permisos**: cuando una sesión pide permiso, la tarjeta muestra el comando y dos botones,
   Permitir y Denegar. Nunca "permitir siempre".
-- **Reenviar a…**: manda la última respuesta de una sesión a otra, con una plantilla editable
-  (`{repo} {agente} {titulo} {pedido} {respuesta}`). Cada reenvío dibuja una flecha entre las
-  dos tarjetas. Es manual a propósito: dos agentes vinculados en los dos sentidos se
+- **Conectar sesiones**: arrastrá una tarjeta y soltala sobre otra (o usá "Reenviar a…" en el
+  panel). Se abre el reenvío con el destino elegido y la última respuesta de la sesión de
+  origen, con una plantilla editable (`{repo} {agente} {titulo} {pedido} {respuesta}`). Cada
+  reenvío dibuja una flecha entre las dos tarjetas. Es manual a propósito: dos agentes vinculados en los dos sentidos se
   contestan hasta agotar los créditos.
 
 ![Reenviar a otra sesión](docs/img/reenviar.png)

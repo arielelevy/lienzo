@@ -52,6 +52,10 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     };
     const up = () => {
       pressRef.current = null;
+      // el click (si lo hay) llega despues del mouseup; recien entonces se limpia la marca
+      setTimeout(() => {
+        draggedRef.current = false;
+      }, 0);
     };
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
