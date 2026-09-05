@@ -4,7 +4,17 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
-header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+header > .dot { margin: 0 4px 0 -4px; }
+header button.icon { padding: 5px 8px; font-size: 15px; line-height: 1; border-color: transparent; background: transparent; }
+header button.icon:hover, header button.icon[aria-expanded="true"] { background: var(--card); border-color: var(--line); }
+header .menu { position: relative; }
+header .dropdown { position: absolute; right: 0; top: calc(100% + 6px); min-width: 210px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,.45); z-index: 25; }
+header .dropdown button { background: none; border: 0; border-radius: 6px; text-align: left; padding: 8px 10px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+header .dropdown button:hover { background: var(--card); }
+header .dropdown .state { margin-left: auto; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
+header .dropdown .state.on { color: var(--run); }
+header .dropdown hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
 header h1 { font-size: 16px; margin: 0; letter-spacing: .5px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dead); display: inline-block; margin-right: 6px; }
 .dot.on { background: var(--run); }
@@ -20,8 +30,11 @@ button.allow { background: #1f6f3a; border-color: #2b9a51; }
 button.deny { background: #7a2323; border-color: #b23232; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
-/* gap ancho a proposito: es el canal por donde pasan las flechas entre columnas */
-.board { display: flex; gap: 56px; padding: 12px 16px; align-items: stretch; min-height: 60vh; position: relative; }
+/* el canal de 56 px por donde pasan las flechas existe solo entre columnas abiertas; las tiras
+   colapsadas van pegadas entre si y a lo que tengan al lado (8 px) */
+.board { display: flex; gap: 0; padding: 12px 16px; align-items: stretch; min-height: 60vh; position: relative; }
+.col + .col { margin-left: 56px; }
+.col.collapsed + .col, .col + .col.collapsed { margin-left: 8px; }
 .arrows { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; overflow: visible; }
 .arrows .arrow { pointer-events: none; }
 .arrows .line { fill: none; stroke: var(--acc); stroke-width: 2; opacity: .85; }
@@ -37,7 +50,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .arrows.hovering .arrow:not(.mine) { opacity: .12; }
 .arrows.hovering .arrow.mine .line { opacity: 1; }
 .arrows .arrow { transition: opacity .15s; }
-header button.off { opacity: .55; text-decoration: line-through; }
 .col { flex: 1 1 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-height: 120px; padding: 8px; }
 .col.collapsed { flex: 0 0 34px; padding: 0; display: flex; align-items: flex-start; justify-content: center; }
 .col.collapsed .vlabel { cursor: pointer; border-radius: 8px; }
@@ -177,12 +189,12 @@ header button.off { opacity: .55; text-decoration: line-through; }
 .gate-box .two p { margin: 4px 0 8px; }
 @media (max-width: 700px) { .gate-box .two { grid-template-columns: 1fr; } }
 a.btn { display: block; text-align: center; text-decoration: none; background: var(--acc); color: #fff; border-radius: 6px; padding: 10px; font-weight: 600; }
-header button.url { font-size: 12px; color: var(--acc); border-color: var(--acc); }
 /* busqueda + chips de agente en el header: filtran las tarjetas visibles, nada mas */
-header .search { display: flex; align-items: center; gap: 4px; }
-header .search input { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px; width: 200px; }
-header .search input:focus { outline: none; border-color: var(--acc); }
-header .search .chip { padding: 3px 9px; font-size: 11.5px; font-weight: 600; border-radius: 10px; opacity: .45; border-color: transparent; }
+header .search { display: flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid transparent; border-radius: 8px; padding: 2px 4px 2px 6px; }
+header .search:focus-within { border-color: var(--line); }
+header .search input { background: transparent; color: var(--fg); border: 0; padding: 4px 6px; font: inherit; font-size: 13px; width: 170px; }
+header .search input:focus { outline: none; }
+header .search .chip { padding: 2px 8px; font-size: 11px; font-weight: 600; border-radius: 10px; opacity: .45; border-color: transparent; background: transparent; }
 header .search .chip.on { opacity: 1; color: #fff; }
 header .search .chip.claude.on { background: var(--claude); }
 header .search .chip.codex.on { background: var(--codex); }
@@ -215,15 +227,16 @@ header .search .chip:not(.on) { text-decoration: line-through; }
 
 @media (max-width: 900px) {
   html, body { overflow-x: hidden; }
-  header { gap: 8px; padding: 8px 10px; }
+  header { gap: 6px; padding: 8px 10px; }
   header h1 { font-size: 15px; }
-  header .txt { display: none; }
-  header .search input { width: 110px; }
+  header .search { flex: 1; min-width: 0; }
+  header .search input { width: 100%; min-width: 0; }
   header .search .chip { display: none; }
-  header button { padding: 6px 9px; }
+  header .dropdown { min-width: 190px; }
   .filters { padding: 8px 10px 0; gap: 6px; }
   .filters button { flex: 1 1 auto; padding: 8px 6px; font-size: 13px; }
   .board { flex-direction: column; gap: 12px; padding: 8px 10px; min-height: 0; }
+  .col + .col, .col.collapsed + .col, .col + .col.collapsed { margin-left: 0; }
   .col, .col.collapsed { display: none; }
   .col.show { display: block; flex: 1 1 auto; padding: 0; background: transparent; border: 0; min-height: 0; }
   .col.show h2 { display: none; }
