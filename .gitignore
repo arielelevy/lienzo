@@ -1,0 +1,18 @@
+# dependencias y builds
+web/node_modules/
+web/dist/
+
+# python
+__pycache__/
+*.pyc
+
+# datos reales de sesiones (payloads de hooks con rutas y prompts)
+ejemplos/
+
+# locales
+*.log
+.env
+Thumbs.db
+
+# documento interno de diseno (queda fuera del repo publico)
+DISENO.es.md

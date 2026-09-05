@@ -1,0 +1,21 @@
+[project]
+name = "lienzo"
+version = "0.1.0"
+description = "Tablero para las sesiones de Claude Code y Codex CLI que corren en la terminal de VS Code (Windows)"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Ariel Levy" }]
+requires-python = ">=3.12"
+# Solo biblioteca estandar: ctypes, http.server, json, hashlib, hmac. Sin psutil, sin frameworks.
+dependencies = []
+
+[project.optional-dependencies]
+# Para las capturas de pantalla de la UI (docs/img) y pruebas de navegador.
+dev = ["playwright>=1.45"]
+
+[project.urls]
+Repository = "https://github.com/arielelevy/lienzo"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
