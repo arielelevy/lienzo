@@ -1,4 +1,5 @@
 import { ago, detail } from "../api";
+import { hhmm } from "../nl";
 import type { Pending, Rule, Session } from "../types";
 
 function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>): string {
@@ -9,7 +10,7 @@ function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>): str
     return o.title ? `${o.repo} · ${o.title.slice(0, 28)}` : `${o.repo} · ${o.session_id.slice(0, 8)}`;
   };
   if (r.kind === "at") {
-    const t = r.at ? new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "?";
+    const t = r.at ? hhmm(new Date(r.at)) : "?";
     if (r.to === sid) return r.from && r.from !== sid ? `⏰ ${t} → "${r.text}" (desde ${other(r.from)})` : `⏰ ${t} → "${r.text}"`;
     return `⏰ ${t} → "${r.text}" a ${other(r.to)}`;
   }
@@ -35,7 +36,18 @@ export function Card({ session: s, pending: p, rules = [], sessions = {}, onDele
   return (
     <div
       className={`card ${selected ? "sel" : ""}`}
+      role="button"
+      tabIndex={0}
+      aria-label={`${s.repo}: ${s.title || s.last_prompt || "sin título"}`}
+      aria-pressed={selected}
       onClick={onSelect}
+      onKeyDown={(e) => {
+        // Enter sobre la tarjeta misma abre el panel; los botones de adentro manejan su propio Enter
+        if (e.key === "Enter" && e.target === e.currentTarget) {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
       data-sid={s.session_id}
       onMouseDown={(e) => {
         // arrastre desde cualquier parte de la tarjeta, salvo controles y el agarre (que ya arrastra)
@@ -44,16 +56,18 @@ export function Card({ session: s, pending: p, rules = [], sessions = {}, onDele
         onPress?.(e);
       }}
     >
-      <span
+      <button
+        type="button"
         className="x"
         title="quitar tarjeta"
+        aria-label="quitar tarjeta"
         onClick={(e) => {
           e.stopPropagation();
           onDrop();
         }}
       >
         ✕
-      </span>
+      </button>
       <div className="top">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         <span className="repo">{s.repo}</span>
@@ -67,16 +81,18 @@ export function Card({ session: s, pending: p, rules = [], sessions = {}, onDele
       {rules.map((r) => (
         <div key={r.id} className="rule" title={r.kind === "at" ? "programado" : "cuando termine el turno"}>
           <span>{ruleLabel(r, s.session_id, sessions)}</span>
-          <span
+          <button
+            type="button"
             className="del"
             title="quitar"
+            aria-label="quitar conexión"
             onClick={(e) => {
               e.stopPropagation();
               if (confirm("Quitar esta conexión?")) onDeleteRule?.(r.id);
             }}
           >
             ✕
-          </span>
+          </button>
         </div>
       ))}
 
@@ -115,9 +131,12 @@ export function Card({ session: s, pending: p, rules = [], sessions = {}, onDele
         <span>{s.session_id.slice(0, 8)}</span>
       </div>
       {onGrip && s.alive && !s.orphan && !s.no_console && (
-        <span
+        <button
+          type="button"
           className="grip"
           title="arrastrá hasta otra tarjeta para reenviarle la última respuesta"
+          aria-label="arrastrar para conectar con otra tarjeta"
+          onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -125,7 +144,7 @@ export function Card({ session: s, pending: p, rules = [], sessions = {}, onDele
           }}
         >
           ⇢
-        </span>
+        </button>
       )}
     </div>
   );

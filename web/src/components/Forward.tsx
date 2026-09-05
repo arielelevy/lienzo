@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api } from "../api";
-import { parseConnection } from "../nl";
+import { hhmm as fmtHhmm, nextAt, parseConnection } from "../nl";
 import type { DigestResponse, Session } from "../types";
 
 const DEFAULT_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
@@ -35,10 +35,7 @@ function fill(tpl: string, s: Session, reply: string): string {
 function nextTimeIso(hhmm: string): string | null {
   const m = hhmm.match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return null;
-  const d = new Date();
-  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
-  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // ya paso hoy: manana
-  return d.toISOString();
+  return nextAt(Number(m[1]), Number(m[2])).toISOString(); // ya paso hoy: manana
 }
 
 interface Props {
@@ -65,10 +62,9 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const [text, setText] = useState(() => fill(loadTemplate(), from, from.last_reply || ""));
   const [atText, setAtText] = useState("Continuá");
   const [nativeText, setNativeText] = useState("");
-  const [hhmm, setHhmm] = useState(() => {
-    const d = new Date(Date.now() + 60 * 60 * 1000);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  });
+  const [hhmm, setHhmm] = useState(() => fmtHhmm(new Date(Date.now() + 60 * 60 * 1000)));
+  // si el usuario ya toco el texto, el digest que llega despues no lo pisa
+  const dirtyRef = useRef(false);
   const [repeat, setRepeat] = useState(false);
   const [maxFires, setMaxFires] = useState(5);
   const [busy, setBusy] = useState(false);
@@ -79,13 +75,18 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   }, [mode, target, from.session_id, others]);
 
   useEffect(() => {
+    let cancelled = false;
     api.get<DigestResponse>(`/sessions/${from.session_id}/digest?n=5`).then((d) => {
+      if (cancelled) return;
       const last = [...d.turns].reverse().find((t) => t.final && t.final.trim());
       if (last) {
         setReply(last.final);
-        setText(fill(template, from, last.final));
+        if (!dirtyRef.current) setText(fill(template, from, last.final));
       }
     }).catch(() => null);
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from.session_id]);
 
@@ -166,7 +167,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     if (p.kind === "none" || (p.kind !== "at" && !p.to)) return;
     setMode(p.kind);
     if (p.kind === "at") {
-      setHhmm(`${String(p.at.getHours()).padStart(2, "0")}:${String(p.at.getMinutes()).padStart(2, "0")}`);
+      setHhmm(fmtHhmm(p.at));
       setAtText(p.text);
       if (p.toSelf) setTarget(from.session_id);
       else if (p.to) setTarget(p.to.session_id);
@@ -268,7 +269,16 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
                 <summary className="small dim pointer">plantilla ({"{repo} {agente} {titulo} {pedido} {respuesta}"})</summary>
                 <textarea value={template} onChange={(e) => applyTemplate(e.target.value)} rows={3} />
               </details>
-              {mode === "now" && <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} />}
+              {mode === "now" && (
+                <textarea
+                  value={text}
+                  onChange={(e) => {
+                    dirtyRef.current = true;
+                    setText(e.target.value);
+                  }}
+                  rows={6}
+                />
+              )}
             </>
           )}
 

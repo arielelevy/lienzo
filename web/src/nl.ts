@@ -17,6 +17,17 @@ export type Parsed =
 
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
+/** HH:MM en hora local, con ceros a la izquierda. */
+export const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+
+/** La proxima vez que sean las h:m: hoy si todavia no paso, si no manana. */
+export function nextAt(h: number, m: number): Date {
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+  return d;
+}
+
 function findTarget(phrase: string, from: Session, others: Session[]): { to: Session | null; toSelf: boolean; rest: string } {
   const n = norm(phrase);
   // \b en JS es ASCII: "acá" no cierra palabra, por eso los limites se escriben a mano (\s|$)
@@ -50,10 +61,7 @@ function parseTime(n: string): { at: Date; rest: string } | null {
     if (m[3] === "pm" && h < 12) h += 12;
     if (m[3] === "am" && h === 12) h = 0;
     if (h > 23 || min > 59) return null;
-    const d = new Date();
-    d.setHours(h, min, 0, 0);
-    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-    return { at: d, rest: n.replace(m[0], " ") };
+    return { at: nextAt(h, min), rest: n.replace(m[0], " ") };
   }
   return null;
 }
@@ -76,7 +84,6 @@ export function parseConnection(phrase: string, from: Session, others: Session[]
   if (!raw) return { kind: "none", summary: "" };
   const n = norm(raw);
   const target = findTarget(raw, from, others);
-  const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   const name = (s: Session | null) => (s ? s.repo : null);
 
   if (/\b(cuando|al|cada vez que)\b.*\b(termin|acab|cierr)/.test(n) || /\b(al terminar|al acabar)\b/.test(n)) {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Arrows } from "./Arrows";
 import { Card } from "./Card";
 import type { Link, Pending, Rule, Session, State } from "../types";
@@ -70,10 +70,17 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const byState = (k: State) =>
-    Object.values(sessions)
-      .filter((s) => s.state === k)
-      .sort((a, b) => (a.repo + a.started).localeCompare(b.repo + b.started));
+  // una pasada por render: las sesiones agrupadas por estado y ordenadas por repo + inicio
+  const byState = useMemo(() => {
+    const g: Record<State, Session[]> = { corriendo: [], te_necesita: [], termino: [], muerta: [] };
+    for (const s of Object.values(sessions)) (g[s.state] ??= []).push(s);
+    for (const k of STATES.map(([k]) => k)) g[k].sort((a, b) => (a.repo + a.started).localeCompare(b.repo + b.started));
+    return g;
+  }, [sessions]);
+
+  // las flechas se recalculan cuando algo pudo mover una tarjeta
+  const versionRef = useRef(0);
+  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected]);
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
   // tarjeta se abre el reenvio con ese destino
@@ -128,12 +135,12 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       <div className="filters">
         {STATES.map(([k, label]) => (
           <button key={k} className={filter === k ? "on" : ""} onClick={() => onFilter(k)}>
-            {label} {byState(k).length}
+            {label} {byState[k].length}
           </button>
         ))}
       </div>
       <div className={`board ${drag ? "dragging" : ""}`} ref={boardRef}>
-        <Arrows links={links} rules={rules} boardRef={boardRef} deps={[sessions, filter, selected]} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} />
+        <Arrows links={links} rules={rules} boardRef={boardRef} version={arrowsVersion} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} />
         {drag && (
           <>
             <svg className="arrows draglink">
@@ -145,7 +152,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           </>
         )}
         {STATES.map(([k, label]) => {
-          const list = byState(k);
+          const list = byState[k];
           const collapsed = list.length === 0;
           return (
             <div key={k} className={`col ${k} ${collapsed ? "collapsed" : ""} ${filter === k ? "show" : ""}`}>
