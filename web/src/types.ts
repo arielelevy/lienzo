@@ -120,10 +120,13 @@ export interface Rule {
 }
 
 /** GET /sessions/<sid>/connections: lo que esa sesion mando/recibio y las reglas que la tocan.
- *  `other` ya viene armado por el server ("repo · titulo") para no depender del tablero. */
+ *  `other` ya viene armado por el server para no depender del tablero: hoy como objeto
+ *  {session_id, name: "repo · titulo"}; un server anterior lo mandaba como string. */
+export type OtherSession = string | { session_id: string | null; name: string };
+
 export interface ConnectionLink extends Link {
   rule_id?: string;
-  other: string;
+  other: OtherSession;
 }
 
 export interface ConnectionRule {
@@ -137,7 +140,7 @@ export interface ConnectionRule {
   fired: number;
   max_fires: number;
   last_fired?: string | null;
-  other: string;
+  other: OtherSession;
 }
 
 export interface ConnectionsResponse {

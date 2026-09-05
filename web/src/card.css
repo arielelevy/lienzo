@@ -19,7 +19,6 @@
 /* acciones rapidas en sesiones ociosas */
 .card .quickact { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
 .card .quickact button { font-size: 12px; padding: 3px 9px; border-radius: 12px; }
-.card .quickact .hint { font-size: 11px; color: var(--dim); }
 
 /* renombrar: input inline en el lugar del titulo */
 .card .title { cursor: text; }

@@ -42,13 +42,29 @@ export async function copyText(text: string, toast: ToastFn) {
   }
 }
 
+/** Nombre corto de una sesion: "repo · titulo" (titulo cortado a 24) o "repo · id" si no tiene. */
+export function shortName(o: Session | undefined, fallback = "otra sesión"): string {
+  if (!o) return fallback;
+  const t = (o.title || "").trim();
+  if (!t) return `${o.repo} · ${o.session_id.slice(0, 8)}`;
+  return `${o.repo} · ${t.length > 24 ? t.slice(0, 23).trimEnd() + "…" : t}`;
+}
+
+/** Reglas con la misma etiqueta agrupadas (×N), como maximo `max` grupos. */
+function groupRules(rules: Rule[], sid: string, sessions: Record<string, Session>, max = 3) {
+  const groups = new Map<string, { label: string; kind: Rule["kind"]; ids: string[] }>();
+  for (const r of rules) {
+    const label = ruleLabel(r, sid, sessions);
+    const g = groups.get(label);
+    if (g) g.ids.push(r.id);
+    else groups.set(label, { label, kind: r.kind, ids: [r.id] });
+  }
+  const all = [...groups.values()];
+  return { shown: all.slice(0, max), hidden: all.slice(max).reduce((n, g) => n + g.ids.length, 0) };
+}
+
 function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>): string {
-  // nombre corto de la otra sesion: el titulo si lo hay (dos sesiones del mismo repo se confunden)
-  const other = (id: string | null) => {
-    const o = id ? sessions[id] : undefined;
-    if (!o) return "?";
-    return o.title ? `${o.repo} · ${o.title.slice(0, 28)}` : `${o.repo} · ${o.session_id.slice(0, 8)}`;
-  };
+  const other = (id: string | null) => shortName(id ? sessions[id] : undefined, "?");
   if (r.kind === "at") {
     const t = r.at ? hhmm(new Date(r.at)) : "?";
     if (r.to === sid) return r.from && r.from !== sid ? `⏰ ${t} → "${r.text}" (desde ${other(r.from)})` : `⏰ ${t} → "${r.text}"`;
@@ -111,9 +127,11 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const recent = links
     .filter((l) => l.to === s.session_id && l.kind !== "native" && Date.now() - new Date(l.ts).getTime() < RECENT_MS)
     .sort((a, b) => b.ts.localeCompare(a.ts))[0];
-  const recentFrom = recent ? sessions[recent.from]?.repo ?? "otra sesión" : "";
+  // remitente como "repo · título" (varias sesiones comparten repo); título largo cortado a 24
+  const recentFrom = recent ? shortName(sessions[recent.from]) : "";
 
   const { head, cut } = foldPrompt(s.last_prompt);
+  const ruleGroups = groupRules(rules, s.session_id, sessions);
   const canWrite = !!s.alive && !s.orphan && !s.no_console;
   // ociosa: termino, o espera input en la terminal; con consola y sin permiso pendiente
   const idle = canWrite && !s.pending_id && !p && (s.state === "termino" || (s.state === "te_necesita" && s.needs?.kind === "idle"));
@@ -253,46 +271,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           ✓ informe de {recentFrom} hace {ago(recent.ts)}
         </div>
       )}
-      {s.last_error ? (
-        <div className="error">⚠ {s.last_error}</div>
-      ) : (
-        <div className="replyrow">
-          <div className="reply">{s.last_reply}</div>
-          {s.last_reply && (
-            <button
-              type="button"
-              className="copy"
-              title="copiar la última respuesta"
-              aria-label="copiar la última respuesta"
-              onClick={(e) => {
-                e.stopPropagation();
-                copyText(s.last_reply, toast);
-              }}
-            >
-              📋
-            </button>
-          )}
-        </div>
-      )}
-      {s.suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {s.suggestion}</div>}
-      {rules.map((r) => (
-        <div key={r.id} className="rule" title={r.kind === "at" ? "programado" : "cuando termine el turno"}>
-          <span>{ruleLabel(r, s.session_id, sessions)}</span>
-          <button
-            type="button"
-            className="del"
-            title="quitar"
-            aria-label="quitar conexión"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm("Quitar esta conexión?")) onDeleteRule?.(r.id);
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      ))}
-
+      {/* lo que pide la sesion va antes que la respuesta: Permitir/Denegar es lo primero visible */}
       {p ? (
         <div className="needs" onClick={(e) => e.stopPropagation()}>
           <b>Pide permiso: {p.tool_name}</b>
@@ -318,15 +297,61 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           </div>
         </div>
       ) : null}
-
+      {s.last_error ? (
+        <div className="error">⚠ {s.last_error}</div>
+      ) : (
+        <div className="replyrow">
+          <div className="reply">{s.last_reply}</div>
+          {s.last_reply && (
+            <button
+              type="button"
+              className="copy"
+              title="copiar la última respuesta"
+              aria-label="copiar la última respuesta"
+              onClick={(e) => {
+                e.stopPropagation();
+                copyText(s.last_reply, toast);
+              }}
+            >
+              📋
+            </button>
+          )}
+        </div>
+      )}
+      {s.suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {s.suggestion}</div>}
+      {ruleGroups.shown.map((g) => (
+        <div key={g.label} className="rule" title={g.kind === "at" ? "programado" : "cuando termine el turno"}>
+          <span>
+            {g.label}
+            {g.ids.length > 1 && <span className="dim"> ×{g.ids.length}</span>}
+          </span>
+          <button
+            type="button"
+            className="del"
+            title={g.ids.length > 1 ? `quitar las ${g.ids.length}` : "quitar"}
+            aria-label="quitar conexión"
+            onClick={(e) => {
+              e.stopPropagation();
+              const q = g.ids.length > 1 ? `Quitar estas ${g.ids.length} conexiones iguales?` : "Quitar esta conexión?";
+              if (confirm(q)) g.ids.forEach((id) => onDeleteRule?.(id));
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      {ruleGroups.hidden > 0 && (
+        <div className="rule dim small" title="abrí el panel, pestaña Conexiones, para ver todas">
+          +{ruleGroups.hidden} más
+        </div>
+      )}
       {idle && (
         <div className="quickact" onClick={(e) => e.stopPropagation()}>
           {QUICK.map((q) => (
-            <button key={q} type="button" disabled={busy} title={`enviar "${q}" a la terminal`} onClick={() => quickSend(q)}>
+            <button key={q} type="button" disabled={busy} title="se escribe en su terminal" onClick={() => quickSend(q)}>
               {q}
             </button>
           ))}
-          <span className="hint">directo a la terminal</span>
         </div>
       )}
 
