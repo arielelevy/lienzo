@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ago } from "../api";
-import { hhmm } from "../nl";
-import type { Link, Rule } from "../types";
+import { ago, api } from "../api";
+import { hhmm, nextAt } from "../nl";
+import type { Link, Rule, Session } from "../types";
 
 interface Props {
   links: Link[];
   rules: Rule[];
+  /** para saber en que columna esta una sesion cuya tarjeta no se ve (columna colapsada) */
+  sessions: Record<string, Session>;
   boardRef: React.RefObject<HTMLDivElement | null>;
   /** sube cuando cambian sesiones, filtro o seleccion: las tarjetas se movieron, hay que recalcular */
   version: number;
@@ -13,6 +15,19 @@ interface Props {
   hover: string | null;
   onDelete: (id: string) => void;
   onDeleteRule: (id: string) => void;
+  toast?: (msg: string, err?: boolean) => void;
+}
+
+/** Editor de una conexion pendiente, anclado al glifo de su flecha. */
+interface Edit {
+  id: string;
+  kind: Rule["kind"];
+  x: number;
+  y: number;
+  text: string;
+  time: string;
+  repeat: boolean;
+  maxFires: number;
 }
 
 interface Seg {
@@ -56,10 +71,50 @@ interface Rect {
  *  Las posiciones salen del DOM (data-sid) y se recalculan al cambiar sesiones, vinculos o tamano.
  *  Las curvas entre columnas viajan por el hueco entre los grupos de tarjetas vecinos; las de la
  *  misma columna hacen un arco corto por el costado con mas lugar. En pantalla angosta no hay flechas. */
-export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDeleteRule }: Props) {
+export function Arrows({ links, rules, sessions, boardRef, version, hover, onDelete, onDeleteRule, toast }: Props) {
   const [segs, setSegs] = useState<Seg[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [, setTick] = useState(0);
+  // doble click en el glifo de una regla: editarla en el lugar. El click simple (quitar) espera
+  // un poco para no confirmar dos veces antes de que llegue el doble click.
+  const [edit, setEdit] = useState<Edit | null>(null);
+  const [saving, setSaving] = useState(false);
+  const clickTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(clickTimer.current), []);
+  useEffect(() => {
+    // la regla que se estaba editando desaparecio (la borro otro, o disparo): cerrar
+    if (edit && !rules.some((r) => r.id === edit.id)) setEdit(null);
+  }, [rules, edit]);
+  const openEdit = (s: Seg) => {
+    const r = rules.find((x) => x.id === s.ids[0]);
+    if (!r) return;
+    setEdit({ id: r.id, kind: r.kind, x: s.x, y: s.y, text: r.text, time: r.at ? hhmm(new Date(r.at)) : "", repeat: r.repeat, maxFires: r.max_fires });
+  };
+  const saveEdit = async () => {
+    if (!edit) return;
+    const body: Record<string, unknown> = { text: edit.text };
+    if (edit.kind === "at") {
+      const m = edit.time.trim().match(/^(\d{1,2}):(\d{2})$/);
+      if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) {
+        toast?.("Hora inválida: usá HH:MM", true);
+        return;
+      }
+      body.at = nextAt(Number(m[1]), Number(m[2])).toISOString(); // ya paso hoy: manana
+    } else {
+      body.repeat = edit.repeat;
+      body.max_fires = edit.maxFires;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/rules/${edit.id}`, body);
+      toast?.(edit.kind === "at" ? `Reprogramada a las ${edit.time.trim()}` : "Conexión guardada");
+      setEdit(null);
+    } catch (e) {
+      toast?.(`No se pudo guardar: ${(e as Error).message}`, true);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const compute = () => {
     const board = boardRef.current;
@@ -75,6 +130,23 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
     for (const el of board.querySelectorAll<HTMLElement>("[data-sid]")) {
       const r = el.getBoundingClientRect();
       if (el.dataset.sid) rects.set(el.dataset.sid, { l: r.left - b.left, t: r.top - b.top, r: r.right - b.left, b: r.bottom - b.top });
+    }
+    // sesion en una columna colapsada (por ejemplo la tarjeta paso a "Terminó"): la flecha llega a
+    // la etiqueta vertical de esa tira en vez de perderse. Esos extremos van en `anchors`, aparte de
+    // `rects`: la tira no es una tarjeta, no cuenta como columna ni dos veces como obstaculo
+    const stripOf = (sid: string): Rect | undefined => {
+      const st = sessions[sid]?.state;
+      const el = st ? board.querySelector<HTMLElement>(`.col.${st}.collapsed .vlabel`) : null;
+      if (!el) return undefined;
+      const r = el.getBoundingClientRect();
+      return { l: r.left - b.left, t: r.top - b.top, r: r.right - b.left, b: r.bottom - b.top };
+    };
+    const anchors = new Map(rects);
+    for (const sid of new Set([...links.flatMap((l) => [l.from, l.to]), ...rules.flatMap((r) => [r.from, r.to])])) {
+      if (sid && !anchors.has(sid)) {
+        const r = stripOf(sid);
+        if (r) anchors.set(sid, r);
+      }
     }
     const cards = Array.from(rects.values());
     // "columnas" para las flechas = grupos de tarjetas con el mismo borde izquierdo (una columna
@@ -179,7 +251,7 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
     for (const g of groups.values()) {
       g.sort((a, c) => c.ts.localeCompare(a.ts)); // mas nuevo primero
       const newest = g[0];
-      if (!rects.has(newest.from) || !rects.has(newest.to)) continue;
+      if (!anchors.has(newest.from) || !anchors.has(newest.to)) continue;
       const native = newest.kind === "native";
       const n = g.length;
       const head = native
@@ -201,12 +273,12 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       });
     }
     for (const r of rules) {
-      if (!r.enabled || !r.from || r.from === r.to || !rects.has(r.from) || !rects.has(r.to)) continue;
+      if (!r.enabled || !r.from || r.from === r.to || !anchors.has(r.from) || !anchors.has(r.to)) continue;
       if (r.kind === "on_stop") {
-        items.push({ ids: [r.id], kind: "rule", from: r.from, to: r.to, old: false, glyph: "⏹", title: `cuando termine → manda su respuesta${r.repeat ? ` (${r.fired}/${r.max_fires})` : " (una vez)"}\n(click para quitar la conexión)` });
+        items.push({ ids: [r.id], kind: "rule", from: r.from, to: r.to, old: false, glyph: "⏹", title: `cuando termine → manda su respuesta${r.repeat ? ` (${r.fired}/${r.max_fires})` : " (una vez)"}\n(click quita · doble click edita)` });
       } else {
         const t = r.at ? hhmm(new Date(r.at)) : "?";
-        items.push({ ids: [r.id], kind: "rule", from: r.from, to: r.to, old: false, glyph: "⏰", title: `a las ${t} → "${r.text}"\n(click para quitar la conexión)` });
+        items.push({ ids: [r.id], kind: "rule", from: r.from, to: r.to, old: false, glyph: "⏰", title: `a las ${t} → "${r.text}"\n(click quita · doble click edita)` });
       }
     }
 
@@ -222,8 +294,8 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
     const slots = new Map<string, End[]>(); // `${sid}|${lado}` -> extremos que usan ese lado
     const sideOf: { exit: "l" | "r"; enter: "l" | "r"; same: boolean; arcX: number }[] = [];
     items.forEach((it, i) => {
-      const ra = rects.get(it.from)!;
-      const rc = rects.get(it.to)!;
+      const ra = anchors.get(it.from)!;
+      const rc = anchors.get(it.to)!;
       const ci = colOf(ra);
       const same = ci >= 0 && ci === colOf(rc); // misma columna: mismo grupo de borde izquierdo
       const ltr = ra.l < rc.l;
@@ -241,7 +313,7 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
     });
     const endY: { from: number; to: number }[] = items.map(() => ({ from: 0, to: 0 }));
     for (const [k, ends] of slots) {
-      const r = rects.get(k.split("|")[0])!;
+      const r = anchors.get(k.split("|")[0])!;
       ends.sort((a, c) => a.otherY - c.otherY);
       const n = ends.length;
       const span = Math.min((n - 1) * SLOT, Math.max(0, r.b - r.t - 20)); // no desbordar tarjetas bajas
@@ -254,8 +326,8 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
     // 3) las curvas
     const out: Seg[] = [];
     items.forEach((it, i) => {
-      const ra = rects.get(it.from)!;
-      const rc = rects.get(it.to)!;
+      const ra = anchors.get(it.from)!;
+      const rc = anchors.get(it.to)!;
       const { exit, enter, same, arcX } = sideOf[i];
       const y1 = endY[i].from;
       const y2 = endY[i].to;
@@ -291,15 +363,55 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useLayoutEffect(compute, [links, rules, version]);
+  // Recalcular cuando algo se movio sin que cambien props: una tarjeta que crece ("…más", chips,
+  // botones rapidos), una columna que cambia de ancho, tarjetas que aparecen o cambian de columna.
+  // El tablero solo no alcanza: con contenido mas bajo que su min-height no cambia de tamano.
   useEffect(() => {
-    const on = () => computeRef.current();
-    window.addEventListener("resize", on);
     const board = boardRef.current;
-    const ro = board && typeof ResizeObserver !== "undefined" ? new ResizeObserver(on) : null;
-    if (ro && board) ro.observe(board);
+    if (!board) return;
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        computeRef.current();
+      });
+    };
+    window.addEventListener("resize", schedule);
+    const observed = new Set<Element>();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    ro?.observe(board);
+    const watch = () => {
+      if (!ro) return;
+      for (const el of observed) {
+        if (!el.isConnected) {
+          ro.unobserve(el);
+          observed.delete(el);
+        }
+      }
+      for (const el of board.querySelectorAll("[data-sid], .col")) {
+        if (!observed.has(el)) {
+          ro.observe(el);
+          observed.add(el);
+        }
+      }
+    };
+    watch();
+    const elOf = (n: Node) => (n instanceof Element ? n : n.parentElement);
+    const mo =
+      typeof MutationObserver !== "undefined"
+        ? new MutationObserver((muts) => {
+            if (muts.every((m) => elOf(m.target)?.closest(".arrows"))) return; // nuestro propio svg
+            watch();
+            schedule();
+          })
+        : null;
+    mo?.observe(board, { childList: true, subtree: true });
     return () => {
-      window.removeEventListener("resize", on);
+      window.removeEventListener("resize", schedule);
       ro?.disconnect();
+      mo?.disconnect();
+      if (raf) cancelAnimationFrame(raf);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -321,6 +433,49 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
   // envio reciente: opaco 45 s, despues se desvanece hasta los 60 s
   const freshOpacity = (ts: number) => Math.max(0, Math.min(1, 1 - (now - ts - 45_000) / 15_000));
   return (
+    <>
+    {edit && (
+      <div
+        className="arrow-edit"
+        style={{ left: edit.x, top: edit.y }}
+        role="dialog"
+        aria-label="editar conexión"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Escape") setEdit(null);
+          else if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) {
+            e.preventDefault();
+            saveEdit();
+          }
+        }}
+      >
+        <div className="hd">{edit.kind === "at" ? "⏰ programada" : "⏹ cuando termine"}</div>
+        {edit.kind === "at" && (
+          <label>
+            hora (HH:MM)
+            <input autoFocus value={edit.time} placeholder="HH:MM" onChange={(e) => setEdit({ ...edit, time: e.target.value })} />
+          </label>
+        )}
+        <label>
+          {edit.kind === "at" ? "texto que se escribe" : "plantilla ({repo}, {titulo}, {pedido}, {respuesta})"}
+          <textarea rows={edit.kind === "at" ? 2 : 3} autoFocus={edit.kind !== "at"} value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} />
+        </label>
+        {edit.kind === "on_stop" && (
+          <label className="row">
+            <input type="checkbox" checked={edit.repeat} onChange={(e) => setEdit({ ...edit, repeat: e.target.checked })} />
+            repetir, hasta
+            <input type="number" min={1} max={50} disabled={!edit.repeat} value={edit.maxFires} onChange={(e) => setEdit({ ...edit, maxFires: Math.max(1, Math.min(50, Number(e.target.value) || 1)) })} />
+            veces
+          </label>
+        )}
+        <div className="btns">
+          <button type="button" onClick={() => setEdit(null)}>Cancelar</button>
+          <button type="button" className="ok" disabled={saving} onClick={saveEdit}>Guardar</button>
+        </div>
+      </div>
+    )}
     <svg className={`arrows ${hover ? "hovering" : ""}`} width={size.w} height={size.h} style={{ width: size.w, height: size.h }}>
       <defs>
         <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
@@ -349,9 +504,20 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
             <g
               onClick={() => {
                 if (s.fresh) return; // el envio reciente se va solo
-                const q = s.kind === "rule" ? "Quitar la conexión?" : "Quitar la flecha?";
-                if (!confirm(q)) return;
-                for (const id of s.ids) (s.kind === "rule" ? onDeleteRule : onDelete)(id);
+                window.clearTimeout(clickTimer.current);
+                clickTimer.current = window.setTimeout(() => {
+                  const q = s.kind === "rule" ? "Quitar la conexión?" : "Quitar la flecha?";
+                  if (!confirm(q)) return;
+                  for (const id of s.ids) (s.kind === "rule" ? onDeleteRule : onDelete)(id);
+                }, 280);
+              }}
+              onDoubleClick={() => {
+                window.clearTimeout(clickTimer.current);
+                if (s.kind !== "rule") {
+                  toast?.("Un envío ya hecho no se edita; click para quitar la flecha");
+                  return;
+                }
+                openEdit(s);
               }}
             >
               <title>{s.title}</title>
@@ -362,5 +528,6 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
         );
       })}
     </svg>
+    </>
   );
 }

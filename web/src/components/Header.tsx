@@ -10,7 +10,8 @@ interface Props {
   onQuery: (q: string) => void;
   agents: Record<Agent, boolean>;
   onAgents: (a: Record<Agent, boolean>) => void;
-  searchRef: React.RefObject<HTMLInputElement | null>;
+  /** el de App: useRef<HTMLInputElement>(null); con @types/react 18 el tipo va sin "| null" */
+  searchRef: React.RefObject<HTMLInputElement>;
   onSetup: () => void;
   onShowQr: () => void;
   onShowTotp: () => void;

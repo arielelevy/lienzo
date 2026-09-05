@@ -23,6 +23,10 @@ export interface Session {
   last_prompt: string;
   last_reply: string;
   last_error?: string | null;
+  /** aviso de limite de uso con hora de vuelta (ISO): la tarjeta ofrece programar "Continuar" */
+  limit_until?: string | null;
+  /** aviso de limite ya atendido por el server (regla automatica creada para ese limit_until) */
+  continue_scheduled_for?: string | null;
   started: string;
   last_event: string | null;
   alive: boolean;
@@ -32,6 +36,8 @@ export interface Session {
   no_console?: boolean;
   in_vscode?: boolean;
   suggestion?: string | null;
+  /** alguien esta escribiendo en esa terminal (lo detecta screen_loop): lo que se mande se mezcla */
+  typing?: boolean;
 }
 
 export interface Pending {

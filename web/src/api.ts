@@ -10,6 +10,8 @@ export const api = {
   get: <T,>(path: string) => fetch(path).then((r) => parse<T>(r)),
   post: <T,>(path: string, body: unknown) =>
     fetch(path, { method: "POST", headers: HEADERS, body: JSON.stringify(body) }).then((r) => parse<T>(r)),
+  put: <T,>(path: string, body: unknown) =>
+    fetch(path, { method: "PUT", headers: HEADERS, body: JSON.stringify(body) }).then((r) => parse<T>(r)),
   del: <T,>(path: string) => fetch(path, { method: "DELETE", headers: { "X-Lienzo": "1" } }).then((r) => parse<T>(r)),
   upload: (sid: string, file: File) =>
     fetch(`/sessions/${sid}/attach`, {
