@@ -200,9 +200,45 @@ def save_session(s: dict) -> None:
     atomic_write(os.path.join(SESSIONS, f"{s['session_id']}.json"), json.dumps(s, ensure_ascii=False, indent=1))
 
 
-def add_link(src: str, dst: str, text: str, kind: str = "send") -> None:
-    """kind: send (inyeccion) | native (canal Claude<->Claude por SendMessage)."""
-    links.add({"id": secrets.token_hex(6), "from": src, "to": dst, "ts": now(), "text": short(text, 160), "kind": kind})
+def add_link(src: str, dst: str, text: str, kind: str = "send", rule_id: str | None = None) -> None:
+    """kind: send (inyeccion manual) | native (canal Claude<->Claude por SendMessage) | rule (nacido de
+    una regla 'cuando termine' / 'a las HH:MM'; trae rule_id)."""
+    link = {"id": secrets.token_hex(6), "from": src, "to": dst, "ts": now(), "text": short(text, 160), "kind": kind}
+    if rule_id:
+        link["rule_id"] = rule_id
+    links.add(link)
+
+
+def session_name(sid: str | None) -> str:
+    """Nombre corto para mostrar: 'repo · titulo' (o lo que haya)."""
+    s = sessions.get(sid or "")
+    if s is None:
+        return (sid or "?")[:8]
+    repo, title = s.get("repo") or "?", (s.get("title") or "").strip()
+    return f"{repo} · {short(title, 60)}" if title else repo
+
+
+def connections_of(sid: str) -> dict:
+    """Vinculos y reglas donde `sid` es origen o destino, con la otra punta resuelta a nombre,
+    ordenados del mas nuevo al mas viejo."""
+    def decorate(x: dict, ts_key: str) -> dict:
+        out = dict(x)
+        out["direction"] = "out" if x.get("from") == sid else "in"
+        other = x.get("to") if out["direction"] == "out" else x.get("from")
+        out["other"] = {"session_id": other, "name": session_name(other) if other else "(hora fija)"}
+        out["_ts"] = x.get(ts_key) or ""
+        return out
+
+    with lock:
+        ls = [decorate(l, "ts") for l in links.items if sid in (l.get("from"), l.get("to"))]
+        rs = [decorate(r, "created") for r in rules.items if sid in (r.get("from"), r.get("to"))]
+    for coll in (ls, rs):
+        # fecha descendente; a igual fecha (mismo milisegundo), el agregado despues va primero
+        order = sorted(enumerate(coll), key=lambda ix: (ix[1]["_ts"], ix[0]), reverse=True)
+        coll[:] = [x for _, x in order]
+        for x in coll:
+            del x["_ts"]
+    return {"links": ls, "rules": rs}
 
 
 # --- reglas: "cuando termine" y "a una hora" ------------------------------------------
@@ -237,7 +273,7 @@ def fire_rule(rule: dict) -> None:
     if exhausted:
         log(f"regla {rule['id']} agotada ({rule['fired']}/{rule.get('max_fires')} disparos)")
     if code == 200 and src and src["session_id"] != dst["session_id"]:
-        add_link(src["session_id"], dst["session_id"], text)
+        add_link(src["session_id"], dst["session_id"], text, kind="rule", rule_id=rule["id"])
     rules.publish()
 
 
@@ -371,10 +407,16 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         return False
     meta, ts = r["meta"], r["turns"]
     before = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error")})
+    # el titulo de la transcripcion (ai-title / thread_name de Codex) siempre gana sobre el
+    # provisorio armado con la primera linea del pedido (title_source == "prompt")
     if meta.get("title"):
         s["title"] = meta["title"]
-    elif s["agent"] == "codex" and not s.get("title"):
-        s["title"] = transcripts.codex_title(s["session_id"])
+        s["title_source"] = "transcript"
+    elif s["agent"] == "codex" and (not s.get("title") or s.get("title_source") == "prompt"):
+        ct = transcripts.codex_title(s["session_id"])
+        if ct:
+            s["title"] = ct
+            s["title_source"] = "transcript"
     if meta.get("branch"):
         s["branch"] = meta["branch"]
     if meta.get("cwd") and not s.get("cwd"):
@@ -424,16 +466,26 @@ def apply_event(ev: dict) -> None:
         s["source"] = "hook"
         pid = ev.get("pid")
         if pid and procs.agent_alive(pid):
+            owner = None
             if s.get("pid") != pid:
-                # otra tarjeta (del barrido) con el mismo pid es la misma sesion
+                # otra tarjeta con el mismo pid: si es un placeholder del barrido (source sweep o
+                # id "pid-N") es la misma sesion y se reemplaza; si es una sesion real con hooks,
+                # el pid ya tiene duena y este evento no se lo lleva (una prueba manual del hook
+                # con otro session_id no debe borrar la sesion real ni sus reglas)
                 for other_sid, other in list(sessions.items()):
                     if other_sid != sid and other.get("pid") == pid:
-                        drop_session(other_sid, "duplicada por barrido")
-            s["pid"] = pid
-            s["agent_exe"] = ev.get("agent_exe")
-            # el panel de Claude Code de VS Code y las apps de escritorio disparan hooks pero no
-            # tienen consola: se ven y se leen, no se les escribe
-            s["no_console"] = not procs.is_tui(pid)
+                        if other.get("source") == "sweep" or other_sid.startswith("pid-"):
+                            drop_session(other_sid, "duplicada por barrido")
+                        else:
+                            owner = other_sid
+                if owner:
+                    log(f"pid {pid} ya pertenece a {owner[:8]}; evento {name} de {sid[:8]} no lo toma")
+            if not owner:
+                s["pid"] = pid
+                s["agent_exe"] = ev.get("agent_exe")
+                # el panel de Claude Code de VS Code y las apps de escritorio disparan hooks pero no
+                # tienen consola: se ven y se leen, no se les escribe
+                s["no_console"] = not procs.is_tui(pid)
         if ev.get("cwd") and (not s.get("cwd") or name == "SessionStart"):
             # el cwd de los hooks sigue al shell del agente (cambia con un cd de una tool);
             # el repo de la tarjeta se fija al arrancar y no baila
@@ -452,7 +504,14 @@ def apply_event(ev: dict) -> None:
         elif name == "UserPromptSubmit":
             set_state(s, "corriendo")
             if not transcripts.is_system_prompt(ev.get("prompt", "")):
-                s["last_prompt"] = short(unwrap_attachment(ev.get("prompt", "")), 500)
+                prompt = unwrap_attachment(ev.get("prompt", ""))
+                s["last_prompt"] = short(prompt, 500)
+                # sin ai-title todavia: la tarjeta se titula con la primera linea del pedido; el
+                # ai-title de la transcripcion lo pisa despues (refresh_from_transcript)
+                first = next((l.strip() for l in (prompt or "").splitlines() if l.strip()), "")
+                if first and (not s.get("title") or s.get("title_source") == "prompt"):
+                    s["title"] = short(first, 60)
+                    s["title_source"] = "prompt"
             s["pending_id"] = None
         elif name == "Stop":
             set_state(s, "termino")
@@ -947,6 +1006,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not s.get("pid") or s.get("orphan"):
                     return self._json(409, {"ok": False, "error": "sin consola que leer"})
                 return self._json(200, read_screen(s["pid"]))
+            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "connections":
+                with lock:
+                    known = parts[1] in sessions
+                if not known:
+                    return self._json(404, {"error": "sesion desconocida"})
+                return self._json(200, connections_of(parts[1]))
             if len(parts) == 3 and parts[0] == "sessions" and parts[2] in ("turns", "digest"):
                 with lock:
                     s = sessions.get(parts[1])
