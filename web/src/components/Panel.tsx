@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { ago, api } from "../api";
+import { hhmm } from "../nl";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
-import type { DigestResponse, Session, Turn, TurnsResponse } from "../types";
+import type { ConnectionsResponse, DigestResponse, Session, Turn, TurnsResponse } from "../types";
 
 interface Props {
   session: Session;
@@ -13,13 +14,74 @@ interface Props {
   toast: (msg: string, err?: boolean) => void;
 }
 
+const cut = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
+
+/** Pestana "Conexiones": dos listas, lo que paso (links) y lo que sigue armado (rules). */
+function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "old" | null }) {
+  if (conn === null) return <div className="empty">leyendo…</div>;
+  if (conn === "old") return <div className="empty">El server que corre no tiene esta ruta todavía: reiniciá el server.</div>;
+  const links = [...conn.links].sort((a, b) => b.ts.localeCompare(a.ts));
+  const rules = [...conn.rules].sort((a, b) => Number(b.enabled) - Number(a.enabled));
+  const ruleState = (r: ConnectionsResponse["rules"][number]) => {
+    if (!r.enabled) return "cumplida";
+    if (r.kind === "at") return r.at ? `a las ${hhmm(new Date(r.at))}` : "programada";
+    const n = r.max_fires > 1 ? ` ${r.fired}/${r.max_fires}` : r.fired ? " ya disparó" : "";
+    return `esperando que termine${n}${r.last_fired ? ` · última hace ${ago(r.last_fired)}` : ""}`;
+  };
+  return (
+    <div className="conns">
+      <h3>Recibido de / Enviado a</h3>
+      {links.length ? (
+        links.map((l) => {
+          const inbound = l.to === sid;
+          const dir = l.kind === "native" ? "⇄ canal con" : inbound ? "↙ recibido de" : "↗ enviado a";
+          return (
+            <div key={l.id} className={`conn ${inbound ? "in" : "out"}`} title={l.text}>
+              <div className="hd">
+                <span className="who">{dir} {l.other}</span>
+                <span className="dim small">hace {ago(l.ts)}{l.rule_id ? " · por regla" : ""}</span>
+              </div>
+              <div className="txt">{cut(l.text)}</div>
+            </div>
+          );
+        })
+      ) : (
+        <div className="empty">nada mandado ni recibido</div>
+      )}
+      <h3>Conexiones activas</h3>
+      {rules.length ? (
+        rules.map((r) => {
+          const outbound = r.from === sid;
+          const label = r.kind === "at"
+            ? `⏰ "${cut(r.text, 60)}" ${outbound ? "→ " + r.other : r.from && r.from !== sid ? "desde " + r.other : "a esta sesión"}`
+            : outbound
+              ? `⏹ al terminar → ${r.other}`
+              : `⏹ recibe de ${r.other} al terminar`;
+          return (
+            <div key={r.id} className={`conn rule ${r.enabled ? "" : "done"}`}>
+              <div className="hd">
+                <span className="who">{label}</span>
+                <span className="dim small">{ruleState(r)}</span>
+              </div>
+            </div>
+          );
+        })
+      ) : (
+        <div className="empty">ninguna regla toca esta sesión</div>
+      )}
+    </div>
+  );
+}
+
 export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }: Props) {
-  const [tab, setTab] = useState<"digest" | "chat" | "screen">("digest");
+  const [tab, setTab] = useState<"digest" | "chat" | "screen" | "conn">("digest");
   type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
   const [screen, setScreen] = useState<Screen | null>(null);
   // devuelve el resultado en vez de setearlo: el efecto decide si todavia aplica (cancelled)
   const fetchScreen = (): Promise<Screen> =>
     api.get<Screen>(`/sessions/${s.session_id}/screen`).catch((e) => ({ ok: false, error: (e as Error).message }));
+  // conexiones: null mientras carga; "old" si el server no tiene el endpoint todavia
+  const [conn, setConn] = useState<ConnectionsResponse | "old" | null>(null);
   const [digest, setDigest] = useState<DigestResponse | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -35,6 +97,19 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
         if (tab === "screen") {
           const r = await fetchScreen();
           if (!cancelled) setScreen(r);
+          return;
+        }
+        if (tab === "conn") {
+          try {
+            const c = await api.get<ConnectionsResponse>(`/sessions/${s.session_id}/connections`);
+            if (!cancelled) setConn(c);
+          } catch (e) {
+            // 404 = server anterior a la ruta; cualquier otro error va a la nota
+            if (!cancelled) {
+              if ((e as Error).message === "404") setConn("old");
+              else setNote(`error: ${(e as Error).message}`);
+            }
+          }
           return;
         }
         if (tab === "digest") {
@@ -81,6 +156,7 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
         <div className="tabs">
           <button className={tab === "digest" ? "on" : ""} onClick={() => setTab("digest")}>Destacados</button>
           <button className={tab === "chat" ? "on" : ""} onClick={() => setTab("chat")}>Conversación</button>
+          <button className={tab === "conn" ? "on" : ""} onClick={() => setTab("conn")} title="qué mandó, qué recibió y qué conexiones siguen activas">Conexiones</button>
           {s.agent === "claude" && !s.orphan && (
             <button className={tab === "screen" ? "on" : ""} onClick={() => setTab("screen")} title="texto visible de la terminal, leído del buffer">Pantalla</button>
           )}
@@ -105,6 +181,8 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
             </div>
             {screen?.ok ? <pre className="screen">{(screen.lines ?? []).join("\n")}</pre> : <div className="empty">{screen?.error || "leyendo…"}</div>}
           </>
+        ) : tab === "conn" ? (
+          <Connections sid={s.session_id} conn={conn} />
         ) : tab === "digest" ? (
           digest && digest.turns.length ? (
             digest.turns.map((t) => <Digest key={t.id} turn={t} />)

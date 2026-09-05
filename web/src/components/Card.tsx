@@ -1,6 +1,6 @@
 import { ago, detail } from "../api";
 import { hhmm } from "../nl";
-import type { Pending, Rule, Session } from "../types";
+import type { Link, Pending, Rule, Session } from "../types";
 
 function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>): string {
   // nombre corto de la otra sesion: el titulo si lo hay (dos sesiones del mismo repo se confunden)
@@ -22,6 +22,8 @@ interface Props {
   session: Session;
   pending?: Pending;
   rules?: Rule[];
+  /** reenvios que tocan a esta sesion (llegan por SSE); alimentan el chip "informe de" */
+  links?: Link[];
   sessions?: Record<string, Session>;
   onDeleteRule?: (id: string) => void;
   selected: boolean;
@@ -32,7 +34,14 @@ interface Props {
   onPress?: (e: React.MouseEvent) => void;
 }
 
-export function Card({ session: s, pending: p, rules = [], sessions = {}, onDeleteRule, selected, onSelect, onDecide, onDrop, onGrip, onPress }: Props) {
+const RECENT_MS = 30 * 60 * 1000;
+
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, onSelect, onDecide, onDrop, onGrip, onPress }: Props) {
+  // ultimo reenvio recibido en la ultima media hora: "ya te llego el informe de X"
+  const recent = links
+    .filter((l) => l.to === s.session_id && l.kind !== "native" && Date.now() - new Date(l.ts).getTime() < RECENT_MS)
+    .sort((a, b) => b.ts.localeCompare(a.ts))[0];
+  const recentFrom = recent ? sessions[recent.from]?.repo ?? "otra sesión" : "";
   return (
     <div
       className={`card ${selected ? "sel" : ""}`}
@@ -76,6 +85,11 @@ export function Card({ session: s, pending: p, rules = [], sessions = {}, onDele
       </div>
       <div className="title">{s.title || s.last_prompt || "(sin título)"}</div>
       {s.title && s.last_prompt && <div className="prompt">› {s.last_prompt}</div>}
+      {recent && (
+        <div className="chip" title={recent.text}>
+          ✓ informe de {recentFrom} hace {ago(recent.ts)}
+        </div>
+      )}
       {s.last_error ? <div className="error">⚠ {s.last_error}</div> : <div className="reply">{s.last_reply}</div>}
       {s.suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {s.suggestion}</div>}
       {rules.map((r) => (

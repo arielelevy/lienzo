@@ -67,6 +67,24 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [showThinking, setShowThinking] = useState(false);
   const [filter, setFilter] = useState<State>("corriendo");
   const [transcriptTick, setTranscriptTick] = useState(0);
+  // flechas visibles u ocultas, recordado por navegador
+  const [showArrows, setShowArrows] = useState(() => {
+    try {
+      return localStorage.getItem("lienzo.arrows") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleArrows = useCallback(() => {
+    setShowArrows((v) => {
+      try {
+        localStorage.setItem("lienzo.arrows", v ? "0" : "1");
+      } catch {
+        /* sin storage, no importa */
+      }
+      return !v;
+    });
+  }, []);
   const { toasts, toast } = useToasts();
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
@@ -228,6 +246,9 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <label className="dim small think" title="mostrar el pensamiento del agente en la conversación">
           <input type="checkbox" checked={showThinking} onChange={(e) => setShowThinking(e.target.checked)} /> 💭<span className="txt"> pensamiento</span>
         </label>
+        <button onClick={toggleArrows} className={showArrows ? "" : "off"} title={showArrows ? "ocultar las flechas entre tarjetas" : "mostrar las flechas entre tarjetas"} aria-pressed={showArrows}>
+          ↪<span className="txt"> Flechas</span>
+        </button>
         <button onClick={rescan} title="barrer procesos de VS Code">↻<span className="txt"> Rescan</span></button>
         {!authInfo.configured && authInfo.local && (
           <button onClick={onSetup} title="acceso desde el celular con Authenticator">📱<span className="txt"> Acceso remoto</span></button>
@@ -255,6 +276,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onDeleteLink={deleteLink}
         onDeleteRule={deleteRule}
         onConnect={connectCards}
+        showArrows={showArrows}
       />
       {connect && sessions[connect.from] && (
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setConnect(null)}>

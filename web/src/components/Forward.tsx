@@ -67,6 +67,10 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const dirtyRef = useRef(false);
   const [repeat, setRepeat] = useState(false);
   const [maxFires, setMaxFires] = useState(5);
+  // "yo": la primera sesion de Claude del tablero con el mismo repo que el origen (la que coordina).
+  // Si no existe, o es el mismo destino, el checkbox no aparece.
+  const me = useMemo(() => others.find((o) => o.agent === "claude" && o.repo === from.repo && o.session_id !== from.session_id), [others, from.repo, from.session_id]);
+  const [notifyMe, setNotifyMe] = useState(false);
   const [busy, setBusy] = useState(false);
   const targetSession = useMemo(() => targets.find((o) => o.session_id === target), [targets, target]);
 
@@ -125,15 +129,11 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         });
         toast(`${from.repo} va a abrir el canal con ${targetSession.repo}`);
       } else if (mode === "on_stop") {
-        await api.post("/rules", {
-          kind: "on_stop",
-          from: from.session_id,
-          to: targetSession.session_id,
-          text: template,
-          repeat,
-          max_fires: repeat ? maxFires : 1,
-        });
-        toast(`Cuando ${from.repo} termine, su respuesta va a ${targetSession.repo}`);
+        const rule = { kind: "on_stop", from: from.session_id, text: template, repeat, max_fires: repeat ? maxFires : 1 };
+        await api.post("/rules", { ...rule, to: targetSession.session_id });
+        const alsoMe = notifyMe && me && me.session_id !== targetSession.session_id ? me : null;
+        if (alsoMe) await api.post("/rules", { ...rule, to: alsoMe.session_id });
+        toast(`Cuando ${from.repo} termine, su respuesta va a ${targetSession.repo}${alsoMe ? " y a la coordinadora" : ""}`);
       } else {
         const at = nextTimeIso(hhmm);
         if (!at) {
@@ -292,6 +292,13 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
               </label>
               <input type="number" min={1} max={50} value={maxFires} disabled={!repeat} onChange={(e) => setMaxFires(Number(e.target.value))} style={{ width: 60 }} />
               <span className="small dim">veces</span>
+            </div>
+          )}
+          {mode === "on_stop" && me && me.session_id !== targetSession?.session_id && (
+            <div className="row">
+              <label className="small" title={`crea una segunda regla igual hacia ${me.repo} · ${me.title || me.session_id.slice(0, 8)}`}>
+                <input type="checkbox" checked={notifyMe} onChange={(e) => setNotifyMe(e.target.checked)} /> avisarme también acá ({me.title || me.repo})
+              </label>
             </div>
           )}
 

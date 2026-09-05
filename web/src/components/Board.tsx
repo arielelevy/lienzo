@@ -24,6 +24,8 @@ interface Props {
   onDeleteLink: (id: string) => void;
   onDeleteRule: (id: string) => void;
   onConnect: (from: string, to: string) => void;
+  /** boton del header: con muchas flechas conviene poder apagarlas */
+  showArrows: boolean;
 }
 
 const canReceive = (s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
@@ -37,9 +39,11 @@ interface Drag {
   over: string | null;
 }
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  // tarjeta bajo el mouse: Arrows resalta sus flechas y atenua las demas
+  const [hover, setHover] = useState<string | null>(null);
   // mousedown sobre el cuerpo de una tarjeta: es arrastre si se mueve mas de 8 px, si no es click
   const pressRef = useRef<{ sid: string; x: number; y: number } | null>(null);
   const draggedRef = useRef(false);
@@ -139,8 +143,16 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           </button>
         ))}
       </div>
-      <div className={`board ${drag ? "dragging" : ""}`} ref={boardRef}>
-        <Arrows links={links} rules={rules} boardRef={boardRef} version={arrowsVersion} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} />
+      <div
+        className={`board ${drag ? "dragging" : ""}`}
+        ref={boardRef}
+        onMouseOver={(e) => {
+          const sid = (e.target as HTMLElement).closest<HTMLElement>("[data-sid]")?.dataset.sid ?? null;
+          setHover((h) => (h === sid ? h : sid));
+        }}
+        onMouseLeave={() => setHover(null)}
+      >
+        {showArrows && <Arrows links={links} rules={rules} boardRef={boardRef} version={arrowsVersion} hover={hover} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} />}
         {drag && (
           <>
             <svg className="arrows draglink">
@@ -176,6 +188,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         session={s}
                         pending={s.pending_id ? pending[s.pending_id] : undefined}
                         rules={rules.filter((r) => r.enabled && (r.to === s.session_id || r.from === s.session_id))}
+                        links={links.filter((l) => l.to === s.session_id)}
                         sessions={sessions}
                         onDeleteRule={onDeleteRule}
                         selected={selected === s.session_id}
