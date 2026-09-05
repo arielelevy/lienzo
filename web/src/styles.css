@@ -121,6 +121,13 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fwd select { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; max-width: 100%; }
 .fwd textarea { width: 100%; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
 .fwd summary { list-style: none; }
+.fwd .modes label { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 13px; }
+.fwd .modes label.on { border-color: var(--acc); color: var(--acc); }
+.fwd input[type="time"], .fwd input[type="text"], .fwd input[type="number"] { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+.card .rule { margin-top: 6px; font-size: 12px; color: var(--acc); background: #1a2438; border-radius: 6px; padding: 4px 8px; display: flex; gap: 6px; align-items: center; }
+.card .rule .del { margin-left: auto; cursor: pointer; color: var(--dim); }
+.card .rule .del:hover { color: var(--dead); }
+.arrows .line.rule { stroke-dasharray: 7 5; opacity: .7; }
 .panel .ph button.on { border-color: var(--acc); color: var(--acc); }
 
 .gate { position: fixed; inset: 0; background: rgba(8, 10, 14, .85); display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px; }

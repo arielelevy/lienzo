@@ -55,10 +55,12 @@ enroll: dict | None = None
 ENROLL_S = 15 * 60
 
 LINKS_FILE = os.path.join(LIENZO, "links.json")
+RULES_FILE = os.path.join(LIENZO, "rules.json")
 
 lock = threading.RLock()
 sessions: dict[str, dict] = {}
-links: list[dict] = []        # reenvios entre sesiones: {id, from, to, ts, text}
+links: list[dict] = []        # reenvios hechos: {id, from, to, ts, text}
+rules: list[dict] = []        # conexiones pendientes: {id, from, to, kind: on_stop|at, text, at, repeat, max_fires, fired, enabled}
 pending: dict[str, dict] = {}
 clients: list[queue.Queue] = []
 transcript_stat: dict[str, tuple] = {}
@@ -157,12 +159,108 @@ def remove_links(pred) -> None:
         broadcast({"type": "links", "links": snapshot})
 
 
+# --- reglas: "cuando termine" y "a una hora" ------------------------------------------
+
+def save_rules() -> None:
+    try:
+        atomic_write(RULES_FILE, json.dumps(rules, ensure_ascii=False, indent=1))
+    except OSError:
+        pass
+
+
+def broadcast_rules() -> None:
+    with lock:
+        snapshot = list(rules)
+    broadcast({"type": "rules", "rules": snapshot})
+
+
+def render_template(tpl: str, s: dict | None) -> str:
+    if not s:
+        return tpl
+    return (tpl.replace("{repo}", s.get("repo") or "").replace("{agente}", s.get("agent") or "")
+            .replace("{titulo}", s.get("title") or "").replace("{pedido}", s.get("last_prompt") or "")
+            .replace("{respuesta}", s.get("last_reply") or ""))
+
+
+def fire_rule(rule: dict) -> None:
+    with lock:
+        src = sessions.get(rule.get("from") or "")
+        dst = sessions.get(rule["to"])
+    if dst is None:
+        remove_rules(lambda r: r["id"] == rule["id"])
+        return
+    text = render_template(rule.get("text") or "", src)
+    code, res = send_to_session(dst, text, [])
+    with lock:
+        rule["fired"] = rule.get("fired", 0) + 1
+        rule["last_fired"] = now()
+        rule["last_result"] = "ok" if code == 200 else str(res.get("error"))
+        if not rule.get("repeat") or rule["fired"] >= int(rule.get("max_fires") or 1):
+            rule["enabled"] = False
+        save_rules()
+    log(f"regla {rule['id']} ({rule['kind']}) -> {rule['to'][:8]}: {rule['last_result']}")
+    if code == 200 and src and src["session_id"] != dst["session_id"]:
+        add_link(src["session_id"], dst["session_id"], text)
+    broadcast_rules()
+
+
+def fire_on_stop(sid: str) -> None:
+    """La sesion `sid` cerro un turno: disparar sus reglas 'cuando termine' (con enfriamiento
+    de 30 s para que dos sesiones conectadas en ambos sentidos no se contesten en bucle)."""
+    due = []
+    with lock:
+        for r in rules:
+            if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid:
+                last = r.get("last_fired")
+                if last:
+                    try:
+                        if (dt.datetime.now().astimezone() - dt.datetime.fromisoformat(last)).total_seconds() < 30:
+                            continue
+                    except ValueError:
+                        pass
+                due.append(r)
+    for r in due:
+        fire_rule(r)
+
+
+def rules_loop() -> None:
+    while True:
+        try:
+            t = dt.datetime.now().astimezone()
+            due = []
+            with lock:
+                for r in rules:
+                    if r.get("enabled") and r.get("kind") == "at" and r.get("at"):
+                        try:
+                            if dt.datetime.fromisoformat(r["at"]) <= t:
+                                due.append(r)
+                        except ValueError:
+                            r["enabled"] = False
+            for r in due:
+                fire_rule(r)
+        except Exception:  # noqa: BLE001
+            log(traceback.format_exc())
+        time.sleep(5)
+
+
+def remove_rules(pred) -> None:
+    with lock:
+        before = len(rules)
+        rules[:] = [r for r in rules if not pred(r)]
+        changed = len(rules) != before
+        if changed:
+            save_rules()
+    if changed:
+        broadcast_rules()
+
+
 def drop_session(sid: str, reason: str) -> None:
     with lock:
         s = sessions.pop(sid, None)
     if s is None:
         return
     remove_links(lambda l: sid in (l["from"], l["to"]))
+    remove_rules(lambda r: sid in (r.get("from"), r["to"]))
     try:
         os.remove(os.path.join(SESSIONS, f"{sid}.json"))
     except OSError:
@@ -183,9 +281,13 @@ def new_session(sid: str, agent: str, source: str) -> dict:
 
 
 def set_state(s: dict, state: str) -> None:
-    if s["state"] != state:
+    prev = s["state"]
+    if prev != state:
         s["state"] = state
         s["state_since"] = now()
+        if state == "termino" and prev in ("corriendo", "te_necesita"):
+            # cierre de turno: reglas "cuando termine" (en otro hilo, el envio tarda)
+            threading.Thread(target=fire_on_stop, args=(s["session_id"],), daemon=True).start()
     if state != "te_necesita":
         s["needs"] = None
 
@@ -763,6 +865,9 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["links"]:
                 with lock:
                     return self._json(200, list(links))
+            if parts == ["rules"]:
+                with lock:
+                    return self._json(200, list(rules))
             if parts == ["events"]:
                 return self._sse()
             if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "screen":
@@ -847,6 +952,33 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["rescan"]:
                 threading.Thread(target=sweep_once, daemon=True).start()
                 return self._json(202, {"ok": True})
+            if parts == ["rules"]:
+                d = self._json_body()
+                kind = d.get("kind")
+                if kind not in ("on_stop", "at"):
+                    return self._json(400, {"error": "kind debe ser on_stop o at"})
+                if d.get("to") not in sessions:
+                    return self._json(404, {"error": "sesion destino desconocida"})
+                if kind == "on_stop" and d.get("from") not in sessions:
+                    return self._json(404, {"error": "sesion origen desconocida"})
+                at = None
+                if kind == "at":
+                    try:
+                        at = dt.datetime.fromisoformat(str(d.get("at")))
+                        if at.tzinfo is None:
+                            at = at.astimezone()
+                    except ValueError:
+                        return self._json(400, {"error": "at debe ser una fecha ISO"})
+                rule = {"id": secrets.token_hex(6), "kind": kind, "from": d.get("from") or None, "to": d["to"],
+                        "text": str(d.get("text") or ""), "at": at.isoformat(timespec="seconds") if at else None,
+                        "repeat": bool(d.get("repeat")), "max_fires": max(1, min(int(d.get("max_fires") or 1), 50)),
+                        "fired": 0, "enabled": True, "created": now()}
+                with lock:
+                    rules.append(rule)
+                    save_rules()
+                log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]} {rule.get('at') or ''}")
+                broadcast_rules()
+                return self._json(200, rule)
             if len(parts) == 2 and parts[0] == "pending":
                 d = self._json_body()
                 if d.get("decision") not in ("allow", "deny"):
@@ -889,6 +1021,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 2 and parts[0] == "links":
             remove_links(lambda l: l["id"] == parts[1])
             return self._json(200, {"ok": True})
+        if len(parts) == 2 and parts[0] == "rules":
+            remove_rules(lambda r: r["id"] == parts[1])
+            return self._json(200, {"ok": True})
         return self._json(404, {"error": "ruta desconocida"})
 
     def _file(self, path: str, ctype: str, cache: str = "no-store") -> None:
@@ -909,7 +1044,7 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             clients.append(q)
             snapshot = {"type": "snapshot", "sessions": list(sessions.values()), "pending": public_pending(),
-                        "links": list(links)}
+                        "links": list(links), "rules": list(rules)}
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -1019,6 +1154,11 @@ def main() -> int:
             links.extend(l for l in json.load(f) if l.get("from") in sessions and l.get("to") in sessions)
     except (OSError, ValueError):
         pass
+    try:
+        with open(RULES_FILE, encoding="utf-8") as f:
+            rules.extend(r for r in json.load(f) if r.get("to") in sessions and (not r.get("from") or r["from"] in sessions))
+    except (OSError, ValueError):
+        pass
     clean_attachments()
     if not a.no_sweep:
         sweep_once()
@@ -1026,6 +1166,7 @@ def main() -> int:
     threading.Thread(target=scan_pending, daemon=True).start()
     threading.Thread(target=liveness_loop, args=(0 if a.no_sweep else a.sweep_every,), daemon=True).start()
     threading.Thread(target=screen_loop, daemon=True).start()
+    threading.Thread(target=rules_loop, daemon=True).start()
     if a.remote:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)

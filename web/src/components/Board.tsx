@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Arrows } from "./Arrows";
 import { Card } from "./Card";
-import type { Link, Pending, Session, State } from "../types";
+import type { Link, Pending, Rule, Session, State } from "../types";
 
 export const STATES: [State, string][] = [
   ["corriendo", "Corriendo"],
@@ -20,7 +20,9 @@ interface Props {
   onDecide: (requestId: string, decision: "allow" | "deny") => void;
   onDrop: (sid: string) => void;
   links: Link[];
+  rules: Rule[];
   onDeleteLink: (id: string) => void;
+  onDeleteRule: (id: string) => void;
   onConnect: (from: string, to: string) => void;
 }
 
@@ -33,7 +35,7 @@ interface Drag {
   over: string | null;
 }
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, onDeleteLink, onConnect }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   // mousedown sobre el cuerpo de una tarjeta: es arrastre si se mueve mas de 8 px, si no es click
@@ -122,7 +124,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         ))}
       </div>
       <div className={`board ${drag ? "dragging" : ""}`} ref={boardRef}>
-        <Arrows links={links} boardRef={boardRef} deps={[sessions, filter, selected]} onDelete={onDeleteLink} />
+        <Arrows links={links} rules={rules} boardRef={boardRef} deps={[sessions, filter, selected]} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} />
         {drag && (
           <svg className="arrows draglink">
             <line x1={drag.x1} y1={drag.y1} x2={drag.x2} y2={drag.y2} />
@@ -152,6 +154,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                       <Card
                         session={s}
                         pending={s.pending_id ? pending[s.pending_id] : undefined}
+                        rules={rules.filter((r) => r.enabled && (r.to === s.session_id || r.from === s.session_id))}
+                        sessions={sessions}
+                        onDeleteRule={onDeleteRule}
                         selected={selected === s.session_id}
                         onSelect={() => {
                           // el click que cierra un arrastre no abre el panel

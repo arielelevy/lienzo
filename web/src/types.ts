@@ -101,9 +101,25 @@ export interface Link {
   text: string;
 }
 
+export interface Rule {
+  id: string;
+  kind: "on_stop" | "at";
+  from: string | null;
+  to: string;
+  text: string;
+  at: string | null;
+  repeat: boolean;
+  max_fires: number;
+  fired: number;
+  enabled: boolean;
+  last_fired?: string;
+  last_result?: string;
+}
+
 export type ServerEvent =
-  | { type: "snapshot"; sessions: Session[]; pending: Pending[]; links?: Link[] }
+  | { type: "snapshot"; sessions: Session[]; pending: Pending[]; links?: Link[]; rules?: Rule[] }
   | { type: "links"; links: Link[] }
+  | { type: "rules"; rules: Rule[] }
   | { type: "session"; session: Session }
   | { type: "removed"; session_id: string }
   | { type: "pending"; pending: Pending[] }

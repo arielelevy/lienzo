@@ -1,9 +1,22 @@
 import { ago, detail } from "../api";
-import type { Pending, Session } from "../types";
+import type { Pending, Rule, Session } from "../types";
+
+function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>): string {
+  const other = (id: string | null) => (id && sessions[id] ? sessions[id].repo : "?");
+  if (r.kind === "at") {
+    const t = r.at ? new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?";
+    return r.to === sid ? `⏰ ${t} → "${r.text}"` : `⏰ ${t} → "${r.text}" a ${other(r.to)}`;
+  }
+  const count = r.repeat ? ` (${r.fired}/${r.max_fires})` : "";
+  return r.from === sid ? `⏹ al terminar → ${other(r.to)}${count}` : `⏹ recibe de ${other(r.from)} al terminar${count}`;
+}
 
 interface Props {
   session: Session;
   pending?: Pending;
+  rules?: Rule[];
+  sessions?: Record<string, Session>;
+  onDeleteRule?: (id: string) => void;
   selected: boolean;
   onSelect: () => void;
   onDecide: (requestId: string, decision: "allow" | "deny") => void;
@@ -12,7 +25,7 @@ interface Props {
   onPress?: (e: React.MouseEvent) => void;
 }
 
-export function Card({ session: s, pending: p, selected, onSelect, onDecide, onDrop, onGrip, onPress }: Props) {
+export function Card({ session: s, pending: p, rules = [], sessions = {}, onDeleteRule, selected, onSelect, onDecide, onDrop, onGrip, onPress }: Props) {
   return (
     <div
       className={`card ${selected ? "sel" : ""}`}
@@ -45,6 +58,21 @@ export function Card({ session: s, pending: p, selected, onSelect, onDecide, onD
       <div className="prompt">› {s.last_prompt}</div>
       {s.last_error ? <div className="error">⚠ {s.last_error}</div> : <div className="reply">{s.last_reply}</div>}
       {s.suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {s.suggestion}</div>}
+      {rules.map((r) => (
+        <div key={r.id} className="rule" title={r.kind === "at" ? "programado" : "cuando termine el turno"}>
+          <span>{ruleLabel(r, s.session_id, sessions)}</span>
+          <span
+            className="del"
+            title="quitar"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm("Quitar esta conexión?")) onDeleteRule?.(r.id);
+            }}
+          >
+            ✕
+          </span>
+        </div>
+      ))}
 
       {p ? (
         <div className="needs" onClick={(e) => e.stopPropagation()}>

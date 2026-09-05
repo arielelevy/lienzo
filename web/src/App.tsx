@@ -7,7 +7,7 @@ import { Panel } from "./components/Panel";
 import { Setup, TotpQr } from "./components/Setup";
 import { Toasts, useToasts } from "./components/Toasts";
 import { UrlQr } from "./components/UrlQr";
-import type { Link, Pending, ServerEvent, Session, State } from "./types";
+import type { Link, Pending, Rule, ServerEvent, Session, State } from "./types";
 
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
@@ -58,6 +58,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [sessions, setSessions] = useState<Record<string, Session>>({});
   const [pending, setPending] = useState<Record<string, Pending>>({});
   const [links, setLinks] = useState<Link[]>([]);
+  const [rules, setRules] = useState<Rule[]>([]);
   const [forwardTo, setForwardTo] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -74,11 +75,12 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     // carga inicial directa, y sondeo cada 4 s mientras el stream no entregue nada (un proxy
     // que retiene el SSE no deja el tablero vacio)
     const load = () =>
-      Promise.all([api.get<Session[]>("/sessions"), api.get<Pending[]>("/pending"), api.get<Link[]>("/links")])
-        .then(([ss, ps, ls]) => {
+      Promise.all([api.get<Session[]>("/sessions"), api.get<Pending[]>("/pending"), api.get<Link[]>("/links"), api.get<Rule[]>("/rules")])
+        .then(([ss, ps, ls, rs]) => {
           setSessions(Object.fromEntries(ss.map((s) => [s.session_id, s])));
           setPending(Object.fromEntries(ps.map((p) => [p.request_id, p])));
           setLinks(ls);
+          setRules(rs);
           if (selectedRef.current) setTranscriptTick((t) => t + 1);
         })
         .catch(() => null);
@@ -107,9 +109,12 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         setSessions(Object.fromEntries(m.sessions.map((s) => [s.session_id, s])));
         setPending(Object.fromEntries(m.pending.map((p) => [p.request_id, p])));
         if (m.links) setLinks(m.links);
+        if (m.rules) setRules(m.rules);
         setTranscriptTick((t) => t + 1);
       } else if (m.type === "links") {
         setLinks(m.links);
+      } else if (m.type === "rules") {
+        setRules(m.rules);
       } else if (m.type === "session") {
         setSessions((prev) => ({ ...prev, [m.session.session_id]: m.session }));
       } else if (m.type === "removed") {
@@ -227,7 +232,9 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onDecide={decide}
         onDrop={drop}
         links={links}
+        rules={rules}
         onDeleteLink={(id) => api.del(`/links/${id}`).catch((e) => toast((e as Error).message, true))}
+        onDeleteRule={(id) => api.del(`/rules/${id}`).catch((e) => toast((e as Error).message, true))}
         onConnect={(from, to) => {
           setSelected(from);
           setForwardTo(to);
