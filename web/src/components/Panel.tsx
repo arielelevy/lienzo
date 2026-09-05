@@ -60,9 +60,13 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
   const loadMore = async () => {
     const first = turns[0];
     if (!first) return;
-    const d = await api.get<TurnsResponse>(`/sessions/${s.session_id}/turns?n=20&before=${first.id}`);
-    setTurns((prev) => [...d.turns, ...prev]);
-    setHasMore(d.has_more);
+    try {
+      const d = await api.get<TurnsResponse>(`/sessions/${s.session_id}/turns?n=20&before=${first.id}`);
+      setTurns((prev) => [...d.turns, ...prev]);
+      setHasMore(d.has_more);
+    } catch (e) {
+      toast(`No pude cargar más: ${(e as Error).message}`, true);
+    }
   };
 
   return (
@@ -83,8 +87,8 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
           </button>
         )}
         <button onClick={onClose}>✕</button>
-        <div className="pmeta dim small">
-          {s.cwd} · PID {s.pid ?? "?"} · {s.state} · {s.transcript_path || "sin transcripción"}
+        <div className="pmeta dim small" title={`${s.cwd ?? ""}\n${s.transcript_path ?? "sin transcripción"}`}>
+          {s.cwd} · PID {s.pid ?? "?"} · {s.state} · {s.transcript_path ? s.transcript_path.split(/[\\/]/).pop() : "sin transcripción"}
         </div>
       </div>
       <div className="body" ref={bodyRef}>

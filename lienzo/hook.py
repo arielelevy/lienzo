@@ -100,7 +100,8 @@ def find_agent_pid(max_hops: int = 8):
         parent, exe = proc_info(pid)
         name = os.path.basename(exe).lower() if exe else "?"
         chain.append(f"{name}({pid})")
-        if name in AGENT_EXES:
+        # el auto-update renombra el binario a claude.exe.old.<ts> y el proceso sigue con ese nombre
+        if any(name == a or name.startswith(a + ".") for a in AGENT_EXES):
             return pid, exe, chain
         if not parent or parent == pid:
             break
@@ -208,7 +209,8 @@ def main() -> int:
         "hook_ms": round((time.perf_counter() - T0) * 1000, 1),
     })
     safe_event = "".join(c for c in event if c.isalnum() or c in "-_")
-    name = f"{time.time_ns()}-{sid}-{safe_event}.json"
+    safe_sid = "".join(c for c in sid if c.isalnum() or c in "-_")[:64] or "nosid"
+    name = f"{time.time_ns()}-{safe_sid}-{safe_event}.json"
     atomic_write(os.path.join(EVENTS, name), json.dumps(data, ensure_ascii=False))
 
     if event != "PermissionRequest":

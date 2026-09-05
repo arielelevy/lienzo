@@ -35,7 +35,7 @@ export function Arrows({ links, rules, boardRef, deps, onDelete, onDeleteRule }:
       return;
     }
     const b = board.getBoundingClientRect();
-    setSize({ w: board.scrollWidth, h: board.scrollHeight });
+    setSize((prev) => (prev.w === board.scrollWidth && prev.h === board.scrollHeight ? prev : { w: board.scrollWidth, h: board.scrollHeight }));
     const out: Seg[] = [];
     const path = (from: string, to: string) => {
       const a = board.querySelector<HTMLElement>(`[data-sid="${from}"]`);
@@ -75,7 +75,8 @@ export function Arrows({ links, rules, boardRef, deps, onDelete, onDeleteRule }:
         out.push({ id: r.id, kind: "rule", ...p, glyph: "⏰", title: `a las ${t} → "${r.text}"\n(click para quitar la conexión)` });
       }
     }
-    setSegs(out);
+    // solo re-renderizar si algo cambio: compute corre cada 2 s y en cada render del tablero
+    setSegs((prev) => (JSON.stringify(prev) === JSON.stringify(out) ? prev : out));
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps

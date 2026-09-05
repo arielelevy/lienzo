@@ -54,7 +54,7 @@ k32.CloseHandle.argtypes = [wt.HANDLE]
 
 
 def read_screen(pid: int, whole_buffer: bool = False) -> dict:
-    if not procs.alive(pid):
+    if not procs.agent_alive(pid):
         return {"ok": False, "pid": pid, "error": "el proceso no existe"}
     k32.FreeConsole()
     if not k32.AttachConsole(pid):

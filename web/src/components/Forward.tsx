@@ -160,22 +160,30 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const parsed = useMemo(() => parseConnection(phrase, from, others), [phrase, from, others]);
   const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || !!parsed.to);
   useEffect(() => {
-    if (!parsedOk) return;
-    setMode(parsed.kind);
-    if (parsed.kind === "at") {
-      setHhmm(`${String(parsed.at.getHours()).padStart(2, "0")}:${String(parsed.at.getMinutes()).padStart(2, "0")}`);
-      setAtText(parsed.text);
-      if (parsed.toSelf) setTarget(from.session_id);
-      else if (parsed.to) setTarget(parsed.to.session_id);
-    } else if (parsed.to) {
-      setTarget(parsed.to.session_id);
-      if (parsed.kind === "on_stop") {
-        setRepeat(parsed.repeat);
-        setMaxFires(parsed.maxFires);
+    // solo cuando cambia la frase: `others`/`from` llegan nuevos con cada evento SSE y no deben
+    // pisar lo que el usuario ajusto a mano
+    const p = parseConnection(phrase, from, others);
+    if (p.kind === "none" || (p.kind !== "at" && !p.to)) return;
+    setMode(p.kind);
+    if (p.kind === "at") {
+      setHhmm(`${String(p.at.getHours()).padStart(2, "0")}:${String(p.at.getMinutes()).padStart(2, "0")}`);
+      setAtText(p.text);
+      if (p.toSelf) setTarget(from.session_id);
+      else if (p.to) setTarget(p.to.session_id);
+    } else if (p.to) {
+      setTarget(p.to.session_id);
+      if (p.kind === "on_stop") {
+        setRepeat(p.repeat);
+        setMaxFires(p.maxFires);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parsed]);
+  }, [phrase]);
+
+  // si el destino deja de ser Claude, el canal nativo no aplica
+  useEffect(() => {
+    if (mode === "native" && !(from.agent === "claude" && targetSession?.agent === "claude")) setMode("now");
+  }, [mode, from.agent, targetSession?.agent]);
 
   return (
     <div className="fwd">

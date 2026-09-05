@@ -110,7 +110,7 @@ def test_is_system_prompt():
 def test_tail_lines_truncado_descarta_parcial(tmp_path):
     p = tmp_path / "t.jsonl"
     rows = [f'{{"i": {i}, "pad": "{"x" * 50}"}}' for i in range(20)]
-    p.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    p.write_bytes(("\n".join(rows) + "\n").encode("utf-8"))  # LF puro, como los .jsonl reales
     lines, truncated = tr.tail_lines(str(p), max_bytes=200)
     assert truncated is True
     assert lines, "cola vacia"

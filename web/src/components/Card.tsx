@@ -61,7 +61,7 @@ export function Card({ session: s, pending: p, rules = [], sessions = {}, onDele
         <span className="right">{ago(s.state_since)}</span>
       </div>
       <div className="title">{s.title || s.last_prompt || "(sin título)"}</div>
-      <div className="prompt">› {s.last_prompt}</div>
+      {s.title && s.last_prompt && <div className="prompt">› {s.last_prompt}</div>}
       {s.last_error ? <div className="error">⚠ {s.last_error}</div> : <div className="reply">{s.last_reply}</div>}
       {s.suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {s.suggestion}</div>}
       {rules.map((r) => (

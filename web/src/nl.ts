@@ -19,17 +19,17 @@ const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,
 
 function findTarget(phrase: string, from: Session, others: Session[]): { to: Session | null; toSelf: boolean; rest: string } {
   const n = norm(phrase);
-  if (/\b(a esta( misma)?( sesion)?|a si misma|aca|a mi misma)\b/.test(n)) {
-    return { to: from, toSelf: true, rest: phrase.replace(/\b(a esta( misma)?( sesi[oó]n)?|a s[ií] misma|ac[aá]|a m[ií] misma)\b/i, " ") };
+  // \b en JS es ASCII: "acá" no cierra palabra, por eso los limites se escriben a mano (\s|$)
+  if (/(^|\s)(a esta( misma)?( sesion)?|a si misma|aca|a mi misma)(\s|$)/.test(n)) {
+    return { to: from, toSelf: true, rest: phrase.replace(/(^|\s)(a esta( misma)?( sesi[oó]n)?|a s[ií] misma|ac[aá]|a m[ií] misma)(?=\s|$)/i, " ") };
   }
-  // nombre de repo o de titulo despues de "a " / "para " / "hacia "
-  const m = n.match(/\b(?:a|para|hacia|pasale a|mandale a|decile a)\s+([a-z0-9_.-]+)/);
-  if (m) {
+  // nombre de repo o de titulo despues de "a " / "para " / "hacia ": todos los candidatos, no solo
+  // el primero ("a las 16 mandale el texto para MAPO" tiene "a las" antes de "para MAPO")
+  for (const m of n.matchAll(/(?:^|\s)(?:a|para|hacia|pasale a|mandale a|decile a)\s+([a-z0-9_.-]+)/g)) {
     const word = m[1];
-    if (!/^(las?|los?|una?|esta|esa|el)$/.test(word)) {
-      const hit = others.find((o) => norm(o.repo) === word) || others.find((o) => norm(o.repo).includes(word) || norm(o.title || "").includes(word));
-      if (hit) return { to: hit, toSelf: false, rest: phrase.replace(new RegExp(`\\b(?:a|para|hacia|pasale a|mandale a|decile a)\\s+${m[1]}`, "i"), " ") };
-    }
+    if (/^(las?|los?|una?|esta|esa|el)$/.test(word)) continue;
+    const hit = others.find((o) => norm(o.repo) === word) || others.find((o) => norm(o.repo).includes(word) || norm(o.title || "").includes(word));
+    if (hit) return { to: hit, toSelf: false, rest: phrase.replace(new RegExp(`(^|\\s)(?:a|para|hacia|pasale a|mandale a|decile a)\\s+${word}`, "i"), " ") };
   }
   return { to: null, toSelf: false, rest: phrase };
 }
@@ -92,10 +92,12 @@ export function parseConnection(phrase: string, from: Session, others: Session[]
     };
   }
 
-  // la hora se detecta sobre minusculas sin quitar acentos, asi el texto conserva "continuá"
-  const t = parseTime(target.rest.toLowerCase());
+  // la hora se detecta sobre minusculas sin quitar acentos (el texto conserva "continuá") y sin el
+  // texto entrecomillado, para que un "PR 42" adentro no se tome como hora
+  const q = quoted(raw);
+  const t = parseTime((q ? target.rest.replace(q, " ") : target.rest).toLowerCase());
   if (t) {
-    const text = quoted(raw) || cleanText(t.rest.replace(/\b(a las?|hs|pm|am)\b/g, " ")) || "Continuá";
+    const text = q || cleanText(t.rest.replace(/\b(a las?|hs|pm|am)\b/g, " ")) || "Continuá";
     // sin destino explicito, el dialogo conserva el que ya tenia (la tarjeta donde se solto)
     const dest = target.toSelf ? "esta sesión" : target.to ? name(target.to) : "el destino elegido";
     return { kind: "at", at: t.at, text, to: target.to, toSelf: target.toSelf, summary: `A las ${hhmm(t.at)} → "${text}" a ${dest}` };
