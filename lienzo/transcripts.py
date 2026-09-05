@@ -366,6 +366,7 @@ def turns(agent: str, path: str, n: int = 10, before: str | None = None, max_byt
 
 def digest_turn(turn: dict) -> dict:
     files, commands, errors, questions, reads = [], [], [], [], 0
+    peers: list[str] = []
     subagents = 0
     for b in turn["blocks"]:
         k = b["kind"]
@@ -392,6 +393,13 @@ def digest_turn(turn: dict) -> dict:
             for q in inp.get("questions") or []:
                 if isinstance(q, dict) and q.get("question"):
                     questions.append(q["question"])
+        elif name in ("SendMessage", "ListAgents"):
+            # canal nativo Claude<->Claude: a quien le hablo
+            to = inp.get("to") or inp.get("recipient")
+            if to:
+                peers.append(f"→ {to}: {_first_line(str(inp.get('message') or inp.get('content') or ''), 100)}")
+            elif name == "ListAgents":
+                peers.append("ListAgents")
         if res and res.get("is_error"):
             errors.append(f"{name}: {_first_line(res.get('text', ''))}")
     final = (turn.get("final") or "").strip()
@@ -407,7 +415,7 @@ def digest_turn(turn: dict) -> dict:
         "prompt": turn.get("prompt", ""),
         "final": _short(final, 600),
         "files": files, "commands": commands[:20], "errors": errors[:10],
-        "questions": questions, "reads": reads, "subagents": subagents,
+        "questions": questions, "peers": peers[:10], "reads": reads, "subagents": subagents,
         "tools": sum(1 for b in turn["blocks"] if b["kind"] == "tool"),
     }
 

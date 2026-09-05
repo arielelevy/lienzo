@@ -165,6 +165,26 @@ def repo_of(cwd: str | None) -> str:
     return os.path.basename((cwd or "").rstrip("\\/")) or "?"
 
 
+ATTACH_WRAPPER = "Leé el archivo adjunto y respondé:"
+
+
+def unwrap_attachment(prompt: str) -> str:
+    """Un texto largo viaja como 'Leé el archivo adjunto y respondé: Adjunto: <ruta>'. En la
+    tarjeta se muestra el contenido del adjunto, no el envoltorio."""
+    p = (prompt or "").strip()
+    if not p.startswith(ATTACH_WRAPPER):
+        return prompt
+    for part in p.split("Adjunto: ")[1:]:
+        path = part.strip().split(" Adjunto: ")[0].strip()
+        if path.lower().endswith(".md") and os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return f.read(600)
+            except OSError:
+                pass
+    return prompt
+
+
 def tool_detail(tool_name: str | None, tool_input) -> str:
     if not isinstance(tool_input, dict):
         return short(str(tool_input or ""), 200)
@@ -180,8 +200,9 @@ def save_session(s: dict) -> None:
     atomic_write(os.path.join(SESSIONS, f"{s['session_id']}.json"), json.dumps(s, ensure_ascii=False, indent=1))
 
 
-def add_link(src: str, dst: str, text: str) -> None:
-    links.add({"id": secrets.token_hex(6), "from": src, "to": dst, "ts": now(), "text": short(text, 160)})
+def add_link(src: str, dst: str, text: str, kind: str = "send") -> None:
+    """kind: send (inyeccion) | native (canal Claude<->Claude por SendMessage)."""
+    links.add({"id": secrets.token_hex(6), "from": src, "to": dst, "ts": now(), "text": short(text, 160), "kind": kind})
 
 
 # --- reglas: "cuando termine" y "a una hora" ------------------------------------------
@@ -389,7 +410,7 @@ def apply_event(ev: dict) -> None:
         elif name == "UserPromptSubmit":
             set_state(s, "corriendo")
             if not transcripts.is_system_prompt(ev.get("prompt", "")):
-                s["last_prompt"] = short(ev.get("prompt", ""), 500)
+                s["last_prompt"] = short(unwrap_attachment(ev.get("prompt", "")), 500)
             s["pending_id"] = None
         elif name == "Stop":
             set_state(s, "termino")
@@ -976,9 +997,13 @@ class Handler(BaseHTTPRequestHandler):
                 if parts[2] == "send":
                     d = self._json_body()
                     code, res = send_to_session(s, d.get("text", ""), list(d.get("attachments") or []))
-                    src = d.get("from")
-                    if code == 200 and src and src in sessions and src != s["session_id"]:
-                        add_link(src, s["session_id"], d.get("text", ""))
+                    src, link_to = d.get("from"), d.get("link_to")
+                    kind = "native" if d.get("native") else "send"
+                    if code == 200 and link_to and link_to in sessions and link_to != s["session_id"]:
+                        # canal nativo: se le habla a A para que abra conversacion con B; la flecha es A -> B
+                        add_link(s["session_id"], link_to, d.get("text", ""), kind)
+                    elif code == 200 and src and src in sessions and src != s["session_id"]:
+                        add_link(src, s["session_id"], d.get("text", ""), kind)
                     return self._json(code, res)
                 if parts[2] == "attach":
                     name = urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin")

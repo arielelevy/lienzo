@@ -9,8 +9,9 @@ function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>): str
     return o.title ? `${o.repo} · ${o.title.slice(0, 28)}` : `${o.repo} · ${o.session_id.slice(0, 8)}`;
   };
   if (r.kind === "at") {
-    const t = r.at ? new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?";
-    return r.to === sid ? `⏰ ${t} → "${r.text}"` : `⏰ ${t} → "${r.text}" a ${other(r.to)}`;
+    const t = r.at ? new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "?";
+    if (r.to === sid) return r.from && r.from !== sid ? `⏰ ${t} → "${r.text}" (desde ${other(r.from)})` : `⏰ ${t} → "${r.text}"`;
+    return `⏰ ${t} → "${r.text}" a ${other(r.to)}`;
   }
   const count = r.repeat ? ` (${r.fired}/${r.max_fires})` : "";
   return r.from === sid ? `⏹ al terminar → ${other(r.to)}${count}` : `⏹ recibe de ${other(r.from)} al terminar${count}`;
