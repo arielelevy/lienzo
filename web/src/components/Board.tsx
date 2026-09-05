@@ -26,7 +26,25 @@ interface Props {
   onConnect: (from: string, to: string) => void;
   /** boton del header: con muchas flechas conviene poder apagarlas */
   showArrows: boolean;
+  /** filtro del header: texto libre (repo, titulo, ultimo pedido) y agentes visibles */
+  query: string;
+  agents: Record<Session["agent"], boolean>;
 }
+
+export type Agent = Session["agent"];
+
+const COLLAPSE_KEY = "lienzo.collapsed";
+type Collapsed = Partial<Record<State, boolean>>;
+function loadCollapsed(): Collapsed {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY);
+    return raw ? (JSON.parse(raw) as Collapsed) : {};
+  } catch {
+    return {};
+  }
+}
+
+const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 const canReceive = (s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
 
@@ -39,7 +57,7 @@ interface Drag {
   over: string | null;
 }
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   // tarjeta bajo el mouse: Arrows resalta sus flechas y atenua las demas
@@ -74,17 +92,40 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // una pasada por render: las sesiones agrupadas por estado y ordenadas por repo + inicio
+  // una pasada por render: las sesiones que pasan el filtro del header, agrupadas por estado y
+  // ordenadas por repo + inicio. El filtro es solo visual: el server no se entera.
   const byState = useMemo(() => {
+    const q = norm(query.trim());
     const g: Record<State, Session[]> = { corriendo: [], te_necesita: [], termino: [], muerta: [] };
-    for (const s of Object.values(sessions)) (g[s.state] ??= []).push(s);
+    for (const s of Object.values(sessions)) {
+      if (!agents[s.agent]) continue;
+      if (q && !norm(`${s.repo} ${s.title ?? ""} ${s.last_prompt ?? ""}`).includes(q)) continue;
+      (g[s.state] ??= []).push(s);
+    }
     for (const k of STATES.map(([k]) => k)) g[k].sort((a, b) => (a.repo + a.started).localeCompare(b.repo + b.started));
     return g;
-  }, [sessions]);
+  }, [sessions, query, agents]);
+
+  // columnas colapsadas a la tira vertical. Sin eleccion guardada: "Terminó" arranca colapsada
+  // (pedido del autor) y las vacias tambien; el click en la tira expande, el click en el titulo
+  // colapsa, y la eleccion queda en localStorage.
+  const [collapsed, setCollapsed] = useState<Collapsed>(loadCollapsed);
+  const setCol = (k: State, v: boolean) => {
+    setCollapsed((prev) => {
+      const next = { ...prev, [k]: v };
+      try {
+        localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+      } catch {
+        /* sin storage, no importa */
+      }
+      return next;
+    });
+  };
+  const isCollapsed = (k: State, n: number) => collapsed[k] ?? (k === "termino" || n === 0);
 
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
-  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected]);
+  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, collapsed, query, agents]);
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
   // tarjeta se abre el reenvio con ese destino
@@ -165,23 +206,31 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         )}
         {STATES.map(([k, label]) => {
           const list = byState[k];
-          const collapsed = list.length === 0;
+          const col = isCollapsed(k, list.length);
           return (
-            <div key={k} className={`col ${k} ${collapsed ? "collapsed" : ""} ${filter === k ? "show" : ""}`}>
-              {collapsed ? (
+            <div key={k} className={`col ${k} ${col ? "collapsed" : ""} ${filter === k ? "show" : ""}`}>
+              {col ? (
                 <>
-                  <div className="vlabel">
+                  <div
+                    className="vlabel"
+                    role="button"
+                    tabIndex={0}
+                    title={`${label}: ${list.length} · click para expandir`}
+                    onClick={() => setCol(k, false)}
+                    onKeyDown={(e) => e.key === "Enter" && setCol(k, false)}
+                  >
                     <span>{label}</span>
-                    <span className="n">0</span>
+                    <span className="n">{list.length}</span>
                   </div>
-                  <div className="empty">nada acá</div>
+                  <div className="empty">{list.length ? `${list.length} ocultas` : "nada acá"}</div>
                 </>
               ) : (
                 <>
-                  <h2>
+                  <h2 title="click para colapsar la columna" onClick={() => setCol(k, true)}>
                     <span>{label}</span>
                     <span className="n">{list.length}</span>
                   </h2>
+                  {list.length === 0 && <div className="empty">nada acá</div>}
                   {list.map((s) => (
                     <div key={s.session_id} className={drag?.over === s.session_id ? "droptarget" : ""}>
                       <Card
