@@ -10,8 +10,6 @@ Para PermissionRequest ademas escribe ~/.lienzo/pending/<request_id>.json y espe
 ~/.lienzo/answers/<request_id>.json hasta LIENZO_WAIT segundos (60). Si llega con el
 nonce correcto imprime la decision en stdout; si no, sale 0 sin stdout (abstenerse).
 """
-import ctypes
-import ctypes.wintypes as wt
 import datetime as dt
 import json
 import os
@@ -22,12 +20,16 @@ import uuid
 
 T0 = time.perf_counter()
 
+try:
+    from . import procinfo
+except ImportError:  # corriendo como script (python lienzo/hook.py) o con lienzo/ en sys.path
+    import procinfo
+
 HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
 LIENZO = os.path.join(HOME, ".lienzo")
 EVENTS = os.path.join(LIENZO, "events")
 PENDING = os.path.join(LIENZO, "pending")
 ANSWERS = os.path.join(LIENZO, "answers")
-AGENT_EXES = ("claude.exe", "codex.exe")
 
 
 def now_iso() -> str:
@@ -49,59 +51,18 @@ def load_config() -> dict:
         return {}
 
 
-# --- cadena de procesos con ctypes (sin psutil) -----------------------------
-
-_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-_nt = ctypes.WinDLL("ntdll")
-PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-
-
-class _PBI(ctypes.Structure):
-    _fields_ = [
-        ("Reserved1", ctypes.c_void_p),
-        ("PebBaseAddress", ctypes.c_void_p),
-        ("Reserved2", ctypes.c_void_p * 2),
-        ("UniqueProcessId", ctypes.c_void_p),
-        ("InheritedFromUniqueProcessId", ctypes.c_void_p),
-    ]
-
-
-_k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
-_k32.OpenProcess.restype = wt.HANDLE
-_k32.CloseHandle.argtypes = [wt.HANDLE]
-_k32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
-_k32.QueryFullProcessImageNameW.restype = wt.BOOL
-_nt.NtQueryInformationProcess.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.ULONG, ctypes.POINTER(wt.ULONG)]
-
-
-def proc_info(pid: int):
-    """(parent_pid, ruta_del_ejecutable) o (None, None)."""
-    h = _k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-    if not h:
-        return None, None
-    try:
-        pbi = _PBI()
-        ret = wt.ULONG(0)
-        status = _nt.NtQueryInformationProcess(h, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), ctypes.byref(ret))
-        parent = int(pbi.InheritedFromUniqueProcessId or 0) if status == 0 else None
-        size = wt.DWORD(1024)
-        buf = ctypes.create_unicode_buffer(size.value)
-        exe = buf.value if _k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)) else None
-        return parent, exe
-    finally:
-        _k32.CloseHandle(h)
-
+# --- cadena de procesos (procinfo, ctypes sin psutil) -----------------------
 
 def find_agent_pid(max_hops: int = 8):
-    """Sube por los padres hasta encontrar claude.exe o codex.exe."""
+    """Sube por los padres hasta encontrar claude.exe o codex.exe (o el renombrado
+    claude.exe.old.<ts> que deja el auto-update)."""
     pid = os.getpid()
     chain = []
     for _ in range(max_hops):
-        parent, exe = proc_info(pid)
+        parent, exe = procinfo.proc_info(pid)
         name = os.path.basename(exe).lower() if exe else "?"
         chain.append(f"{name}({pid})")
-        # el auto-update renombra el binario a claude.exe.old.<ts> y el proceso sigue con ese nombre
-        if any(name == a or name.startswith(a + ".") for a in AGENT_EXES):
+        if procinfo.agent_of(exe):
             return pid, exe, chain
         if not parent or parent == pid:
             break
