@@ -29,6 +29,7 @@ export interface Session {
   source: "hook" | "sweep";
   pending_id: string | null;
   orphan?: boolean;
+  no_console?: boolean;
   in_vscode?: boolean;
   suggestion?: string | null;
 }
