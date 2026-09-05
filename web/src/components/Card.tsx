@@ -2,7 +2,12 @@ import { ago, detail } from "../api";
 import type { Pending, Rule, Session } from "../types";
 
 function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>): string {
-  const other = (id: string | null) => (id && sessions[id] ? sessions[id].repo : "?");
+  // nombre corto de la otra sesion: el titulo si lo hay (dos sesiones del mismo repo se confunden)
+  const other = (id: string | null) => {
+    const o = id ? sessions[id] : undefined;
+    if (!o) return "?";
+    return o.title ? `${o.repo} · ${o.title.slice(0, 28)}` : `${o.repo} · ${o.session_id.slice(0, 8)}`;
+  };
   if (r.kind === "at") {
     const t = r.at ? new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "?";
     return r.to === sid ? `⏰ ${t} → "${r.text}"` : `⏰ ${t} → "${r.text}" a ${other(r.to)}`;
