@@ -66,11 +66,17 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
 
 - **Tablero**: cuatro columnas por estado; las vacías se colapsan. Click en una tarjeta abre
   el panel con *Destacados* (por turno: pedido, respuesta, archivos tocados, comandos,
-  errores, preguntas), *Conversación* (la transcripción completa, con las herramientas
-  colapsadas) y *Pantalla* (el buffer de la terminal).
+  errores, preguntas, mensajes a otras sesiones), *Conversación* (la transcripción completa,
+  con las herramientas colapsadas), *Pantalla* (el buffer de la terminal) y *Conexiones*
+  (qué recibió, qué mandó, y las conexiones activas con su estado).
+- **Tarjeta**: título (el que Claude le pone a la sesión, o la primera línea del pedido),
+  último pedido, última respuesta, errores de límite de uso en rojo, un chip
+  "✓ informe de X hace N min" cuando otra sesión le mandó algo, y la sugerencia 💡 que la
+  terminal esté mostrando en ese momento.
 - **Enviar**: caja de texto al pie del panel. Enter manda. Más de 500 caracteres o varias
   líneas viajan como un `.md` adjunto y el agente lo lee por ruta. Se pueden arrastrar
-  archivos e imágenes.
+  archivos e imágenes. Si la terminal muestra una sugerencia, aparece en gris en la caja y
+  Tab la escribe, igual que en Claude Code.
 - **Permisos**: cuando una sesión pide permiso, la tarjeta muestra el comando y dos botones,
   Permitir y Denegar. Nunca "permitir siempre".
 - **Conectar sesiones**: arrastrá una tarjeta y soltala sobre otra (o "Conectar…" en el
@@ -87,7 +93,22 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
     canal. Vos les das el tema; ellas conversan.
 
   Cada reenvío dibuja una flecha entre las tarjetas; las conexiones pendientes se ven
-  punteadas con ⏹ o ⏰, el canal nativo con una flecha doble gruesa. Esc cancela. Es manual a propósito: dos agentes vinculados en los dos sentidos se
+  punteadas con ⏹ o ⏰, el canal nativo con una flecha doble gruesa. Las flechas pasan por
+  el canal entre columnas, se agrupan por par con un contador, las viejas se atenúan, y al
+  pasar el mouse sobre una tarjeta se resaltan las suyas. Un botón las oculta. Esc cancela.
+
+  El server rechaza una regla "cuando termine" que cierre un bucle A↔B, y no la dispara si
+  el turno terminó con error o con una pregunta para vos.
+
+## Delegar trabajo a varias sesiones
+
+El flujo que le da sentido al tablero: abrís dos o tres terminales de Claude Code, y desde el
+lienzo le mandás a cada una una tarea (texto largo, viaja como adjunto) conectada "cuando
+termine" hacia la sesión que coordina. Cada consola trabaja en sus archivos, y su informe
+final llega solo a la coordinadora al cerrar el turno. La coordinadora verifica, commitea y
+reparte la ronda siguiente. Este repo se construyó así: la mitad de los commits del 5 de
+septiembre los hicieron otras tres sesiones de Claude a partir de encargos y revisiones
+repartidos desde el propio lienzo. Es manual a propósito: dos agentes vinculados en los dos sentidos se
   contestan hasta agotar los créditos.
 
 ![Arrastrar una tarjeta sobre otra](docs/img/arrastre.png)
@@ -117,15 +138,21 @@ hace falta un túnel con nombre y un dominio en Cloudflare.
 ```
 lienzo/
   hook.py          hook único para los dos agentes; espera de permisos con nonce
+  procinfo.py      ctypes mínimo compartido: padre, imagen, vivo, agente
   transcripts.py   lectura por la cola de las transcripciones y digest por turno
   procs.py         liveness, barrido de procesos, cwd por PEB
   send.py          inyección de teclas por PID
   screen.py        lectura del buffer de consola por PID
   auth.py          TOTP (RFC 6238), cookies, freno de intentos
-  server.py        watcher, registro, máquina de estados, HTTP + SSE, túnel
+  server.py        watcher, registro, máquina de estados, reglas, HTTP + SSE, túnel
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
+tests/             pytest contra transcripciones reales y procesos vivos
 install.py         alta y baja de los hooks
 lienzo-server.cmd  arranque
+```
+
+```powershell
+python -m pytest tests -q      # 12 tests
 ```
 
 ## Qué es cada archivo de estado
@@ -150,7 +177,11 @@ lienzo-server.cmd  arranque
 - El stream de eventos (SSE) no pasa por el túnel rápido de Cloudflare; desde el celular el
   tablero se actualiza por sondeo cada 4 segundos.
 - Las sugerencias de prompt que muestra Claude Code no quedan en ningún archivo; se leen
-  del buffer de la terminal y el detector todavía es una heurística.
+  del buffer de la terminal cuando la sesión está ociosa. Si vos estás tipeando en esa
+  terminal, lo que escribís se ve como sugerencia hasta que lo mandás.
+- Los nombres internos con que las sesiones de Claude se ven entre sí (`lienzo-b7`) no se
+  pueden mapear al `session_id` desde afuera; el canal nativo lo resuelve la propia sesión
+  con `ListAgents`.
 - Una sesión cuya terminal se cerró (el proceso sigue, el shell padre murió) se muestra pero
   no acepta mensajes: no hay consola donde escribir.
 
