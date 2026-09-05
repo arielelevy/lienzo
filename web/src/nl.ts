@@ -96,11 +96,9 @@ export function parseConnection(phrase: string, from: Session, others: Session[]
   const t = parseTime(target.rest.toLowerCase());
   if (t) {
     const text = quoted(raw) || cleanText(t.rest.replace(/\b(a las?|hs|pm|am)\b/g, " ")) || "Continuá";
-    const to = target.to ?? from;
-    return {
-      kind: "at", at: t.at, text, to, toSelf: target.toSelf || !target.to,
-      summary: `A las ${hhmm(t.at)} → "${text}" a ${to.session_id === from.session_id ? "esta sesión" : name(to)}`,
-    };
+    // sin destino explicito, el dialogo conserva el que ya tenia (la tarjeta donde se solto)
+    const dest = target.toSelf ? "esta sesión" : target.to ? name(target.to) : "el destino elegido";
+    return { kind: "at", at: t.at, text, to: target.to, toSelf: target.toSelf, summary: `A las ${hhmm(t.at)} → "${text}" a ${dest}` };
   }
 
   if (/\b(ahora|ya)\b/.test(n) || target.to) {

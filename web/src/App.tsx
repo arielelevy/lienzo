@@ -60,8 +60,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [pending, setPending] = useState<Record<string, Pending>>({});
   const [links, setLinks] = useState<Link[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
-  const [forwardTo, setForwardTo] = useState<string | null>(null);
-  // conexion por arrastre: solo el dialogo de conectar, sin abrir el panel de la sesion
+  // dialogo de conectar (por arrastre o desde el boton del panel): flotante, sin abrir nada mas
   const [connect, setConnect] = useState<{ from: string; to: string } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -257,14 +256,18 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
             <h1>
               <span className={`badge ${sessions[connect.from].agent}`}>{sessions[connect.from].agent}</span>
               {sessions[connect.from].title || sessions[connect.from].repo}
-              <span className="dim">→</span>
-              {sessions[connect.to] && <span className={`badge ${sessions[connect.to].agent}`}>{sessions[connect.to].agent}</span>}
-              {sessions[connect.to]?.title || sessions[connect.to]?.repo}
+              {connect.to && sessions[connect.to] && (
+                <>
+                  <span className="dim">→</span>
+                  <span className={`badge ${sessions[connect.to].agent}`}>{sessions[connect.to].agent}</span>
+                  {sessions[connect.to].title || sessions[connect.to].repo}
+                </>
+              )}
             </h1>
             <Forward
               from={sessions[connect.from]}
               others={Object.values(sessions).filter((s) => s.session_id !== connect.from && s.alive && s.pid)}
-              initialTarget={connect.to}
+              initialTarget={connect.to || undefined}
               toast={toast}
               onDone={() => setConnect(null)}
             />
@@ -275,9 +278,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <Panel
           key={sel.session_id}
           session={sel}
-          others={Object.values(sessions).filter((s) => s.session_id !== sel.session_id && s.alive && s.pid)}
-          forwardTo={forwardTo}
-          onForwardHandled={() => setForwardTo(null)}
+          onConnect={() => setConnect({ from: sel.session_id, to: "" })}
           transcriptTick={transcriptTick}
           onClose={() => setSelected(null)}
           toast={toast}
