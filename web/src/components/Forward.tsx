@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import { parseConnection } from "../nl";
 import type { DigestResponse, Session } from "../types";
 
 const DEFAULT_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
@@ -133,8 +134,45 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
 
   const noOthers = !others.length && mode !== "at";
 
+  // "escribilo": una frase se interpreta como conexion y precarga los controles de abajo
+  const [phrase, setPhrase] = useState("");
+  const parsed = useMemo(() => parseConnection(phrase, from, others), [phrase, from, others]);
+  const applyParsed = () => {
+    if (parsed.kind === "none") return;
+    setMode(parsed.kind);
+    if (parsed.kind === "at") {
+      setHhmm(`${String(parsed.at.getHours()).padStart(2, "0")}:${String(parsed.at.getMinutes()).padStart(2, "0")}`);
+      setAtText(parsed.text);
+      setTarget(parsed.to ? parsed.to.session_id : from.session_id);
+    } else if (parsed.to) {
+      setTarget(parsed.to.session_id);
+      if (parsed.kind === "on_stop") {
+        setRepeat(parsed.repeat);
+        setMaxFires(parsed.maxFires);
+      }
+    }
+  };
+  const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || parsed.to);
+
   return (
     <div className="fwd">
+      <div className="row nl">
+        <input
+          type="text"
+          value={phrase}
+          onChange={(e) => setPhrase(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && parsedOk) {
+              e.preventDefault();
+              applyParsed();
+            }
+          }}
+          placeholder={`Escribilo: "continuá a las 16:00", "en 30 min seguí", "cuando termine mandale a ${others[0]?.repo ?? "MAPO"}"`}
+          style={{ flex: 1 }}
+        />
+        <button disabled={!parsedOk} onClick={applyParsed} title="cargar lo entendido en los controles de abajo">Interpretar</button>
+      </div>
+      {phrase && <div className={`small ${parsedOk ? "ok" : "dim"}`}>{parsedOk ? `Entendí: ${parsed.summary}` : parsed.summary}</div>}
       <div className="row modes">
         <label className={mode === "now" ? "on" : ""}>
           <input type="radio" checked={mode === "now"} onChange={() => setMode("now")} /> Ahora
