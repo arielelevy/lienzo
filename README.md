@@ -73,15 +73,26 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
   archivos e imágenes.
 - **Permisos**: cuando una sesión pide permiso, la tarjeta muestra el comando y dos botones,
   Permitir y Denegar. Nunca "permitir siempre".
-- **Conectar sesiones**: arrastrá una tarjeta y soltala sobre otra (o usá "Reenviar a…" en el
-  panel). Tres modos: *ahora* manda la última respuesta de A a B; *cuando A termine* la
-  manda al cerrar cada turno, una vez o hasta un tope; *a una hora* manda un texto fijo (por
-  defecto "Continuá") a una sesión, que puede ser la misma. Plantilla editable
-  (`{repo} {agente} {titulo} {pedido} {respuesta}`). Cada reenvío dibuja una flecha entre las
-  tarjetas; las conexiones pendientes se ven punteadas y con etiqueta. Esc cancela. Es manual a propósito: dos agentes vinculados en los dos sentidos se
+- **Conectar sesiones**: arrastrá una tarjeta y soltala sobre otra (o "Conectar…" en el
+  panel). Se abre un diálogo chico donde podés escribirlo en una frase, y se interpreta
+  mientras tipeás: "continuá a las 16:00", "en 30 min seguí", "cuando termine mandale a
+  MAPO", "cada vez que termine pasale a Teorema hasta 3 veces". Enter confirma. Cuatro modos:
+  - *Ahora*: manda la última respuesta de A a B, con plantilla editable
+    (`{repo} {agente} {titulo} {pedido} {respuesta}`).
+  - *Cuando A termine*: al cerrar cada turno, su respuesta va a B. Una vez o hasta un tope.
+  - *A una hora*: un texto fijo (por defecto "Continuá") a una sesión, que puede ser la
+    misma. Es el "seguí" para cuando vuelven los créditos.
+  - *Canal nativo* (sólo Claude ↔ Claude): A ubica a B con `ListAgents` y le habla con
+    `SendMessage`; los mensajes llegan aunque B esté trabajando y se responden por el mismo
+    canal. Vos les das el tema; ellas conversan.
+
+  Cada reenvío dibuja una flecha entre las tarjetas; las conexiones pendientes se ven
+  punteadas con ⏹ o ⏰, el canal nativo con una flecha doble gruesa. Esc cancela. Es manual a propósito: dos agentes vinculados en los dos sentidos se
   contestan hasta agotar los créditos.
 
-![Reenviar a otra sesión](docs/img/reenviar.png)
+![Arrastrar una tarjeta sobre otra](docs/img/arrastre.png)
+
+![Conectar escribiendo una frase](docs/img/conectar.png)
 
 ## Acceso desde el celular
 
@@ -115,6 +126,21 @@ lienzo/
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
 install.py         alta y baja de los hooks
 lienzo-server.cmd  arranque
+```
+
+## Qué es cada archivo de estado
+
+```
+~/.lienzo/
+  events/        eventos de hooks (el server los consume y borra)
+  pending/       permisos esperando respuesta
+  answers/       respuestas a permisos
+  adjuntos/      archivos y textos largos enviados a las sesiones
+  sessions/      una tarjeta por sesión
+  links.json     reenvíos hechos (flechas)
+  rules.json     conexiones pendientes (cuando termine, a una hora)
+  auth.json      clave TOTP del acceso remoto
+  lienzo.log
 ```
 
 ## Limitaciones conocidas
