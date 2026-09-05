@@ -15,8 +15,11 @@ interface Props {
 
 export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }: Props) {
   const [tab, setTab] = useState<"digest" | "chat" | "screen">("digest");
-  const [screen, setScreen] = useState<{ ok: boolean; lines?: string[]; cols?: number; error?: string } | null>(null);
-  const loadScreen = () => api.get<{ ok: boolean; lines?: string[]; cols?: number; error?: string }>(`/sessions/${s.session_id}/screen`).then(setScreen).catch((e) => setScreen({ ok: false, error: (e as Error).message }));
+  type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
+  const [screen, setScreen] = useState<Screen | null>(null);
+  // devuelve el resultado en vez de setearlo: el efecto decide si todavia aplica (cancelled)
+  const fetchScreen = (): Promise<Screen> =>
+    api.get<Screen>(`/sessions/${s.session_id}/screen`).catch((e) => ({ ok: false, error: (e as Error).message }));
   const [digest, setDigest] = useState<DigestResponse | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -30,7 +33,8 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
     (async () => {
       try {
         if (tab === "screen") {
-          await loadScreen();
+          const r = await fetchScreen();
+          if (!cancelled) setScreen(r);
           return;
         }
         if (tab === "digest") {
@@ -86,7 +90,7 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
             Conectar…
           </button>
         )}
-        <button onClick={onClose}>✕</button>
+        <button onClick={onClose} aria-label="cerrar panel" title="cerrar">✕</button>
         <div className="pmeta dim small" title={`${s.cwd ?? ""}\n${s.transcript_path ?? "sin transcripción"}`}>
           {s.cwd} · PID {s.pid ?? "?"} · {s.state} · {s.transcript_path ? s.transcript_path.split(/[\\/]/).pop() : "sin transcripción"}
         </div>
@@ -97,7 +101,7 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
             <div className="row" style={{ marginBottom: 8 }}>
               <span className="small dim">Buffer de la consola ({screen?.cols ?? "?"} columnas). No es la salida en vivo: es lo que hay pintado ahora.</span>
               <span className="sp" />
-              <button onClick={loadScreen}>↻ Refrescar</button>
+              <button onClick={() => fetchScreen().then(setScreen)}>↻ Refrescar</button>
             </div>
             {screen?.ok ? <pre className="screen">{(screen.lines ?? []).join("\n")}</pre> : <div className="empty">{screen?.error || "leyendo…"}</div>}
           </>

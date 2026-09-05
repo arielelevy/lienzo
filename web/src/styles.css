@@ -59,6 +59,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .card .needs code { display: block; white-space: pre-wrap; word-break: break-all; margin: 4px 0; color: #ffd77a; }
 .card .btns { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
 .card .meta { margin-top: 6px; font-size: 11px; color: var(--dim); display: flex; gap: 10px; flex-wrap: wrap; }
+/* .x, .grip y .del son <button> por accesibilidad, pero se ven como los glifos sueltos de antes */
+.card .x, .card .grip, .card .rule .del { background: none; border: 0; border-radius: 4px; line-height: 1; font: inherit; }
+.card .x:hover, .card .grip:hover, .card .rule .del:hover { border-color: transparent; }
+.card:focus-visible, .card .x:focus-visible, .card .grip:focus-visible, .card .rule .del:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
 .card .x { position: absolute; top: 6px; right: 8px; color: var(--dim); font-size: 12px; cursor: pointer; padding: 2px 5px; }
 .card .x:hover { color: var(--dead); }
 .card .grip { position: absolute; right: 8px; bottom: 6px; color: var(--dim); font-size: 15px; cursor: grab; padding: 0 4px; user-select: none; }
@@ -133,7 +137,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fwd .modes label.on { border-color: var(--acc); color: var(--acc); }
 .fwd input[type="time"], .fwd input[type="text"], .fwd input[type="number"] { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
 .card .rule { margin-top: 6px; font-size: 12px; color: var(--acc); background: #1a2438; border-radius: 6px; padding: 4px 8px; display: flex; gap: 6px; align-items: center; }
-.card .rule .del { margin-left: auto; cursor: pointer; color: var(--dim); }
+.card .rule .del { margin-left: auto; cursor: pointer; color: var(--dim); padding: 0 2px; }
 .card .rule .del:hover { color: var(--dead); }
 .arrows .line.rule { stroke-dasharray: 7 5; opacity: .7; }
 /* canal nativo Claude<->Claude: doble linea gruesa con punta en los dos extremos */
