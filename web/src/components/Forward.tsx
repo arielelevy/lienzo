@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { ago, api } from "../api";
 import { parseConnection } from "../nl";
 import type { DigestResponse, Session } from "../types";
 
 const DEFAULT_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
 const KEY = "lienzo.forward.template";
-type Mode = "now" | "on_stop" | "at";
+type Mode = "now" | "on_stop" | "at" | "native";
+
+/** Instruccion que se le inyecta a A para que abra el canal nativo de Claude Code con B.
+ *  Los nombres internos (lienzo-04, mapo-bf) no se pueden mapear desde afuera: A los resuelve
+ *  con ListAgents a partir del repo y el titulo de B. */
+function nativeInstruction(b: Session, text: string): string {
+  const who = b.title ? `"${b.title}" (repo ${b.repo})` : `repo ${b.repo}`;
+  return `Abrí un canal con otra sesión de Claude Code de esta máquina. Usá ListAgents y ubicá la sesión que corresponde a ${who}, que arrancó hace ${ago(b.started)}; no sos vos. Mandale con SendMessage lo siguiente y seguí la conversación por ese mismo canal (respondiéndole con SendMessage) hasta cerrar el tema; al final resumime acá qué quedó: ${text}`;
+}
 
 function loadTemplate(): string {
   try {
@@ -56,6 +64,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const [reply, setReply] = useState(from.last_reply || "");
   const [text, setText] = useState(() => fill(loadTemplate(), from, from.last_reply || ""));
   const [atText, setAtText] = useState("Continuá");
+  const [nativeText, setNativeText] = useState("");
   const [hhmm, setHhmm] = useState(() => {
     const d = new Date(Date.now() + 60 * 60 * 1000);
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -105,6 +114,15 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           from: from.session_id,
         });
         toast(`Enviado a ${targetSession.repo} (${r.chars} caracteres)`);
+      } else if (mode === "native") {
+        // se le habla a A (esta sesion) para que abra el canal con B; la flecha doble es A <-> B
+        await api.post(`/sessions/${from.session_id}/send`, {
+          text: nativeInstruction(targetSession, nativeText),
+          attachments: [],
+          link_to: targetSession.session_id,
+          native: true,
+        });
+        toast(`${from.repo} va a abrir el canal con ${targetSession.repo}`);
       } else if (mode === "on_stop") {
         await api.post("/rules", {
           kind: "on_stop",
@@ -121,7 +139,9 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           toast("Hora inválida", true);
           return;
         }
-        await api.post("/rules", { kind: "at", from: null, to: targetSession.session_id, text: atText, at });
+        // el origen queda registrado (si no es la misma sesion) para dibujar la flecha A -> B
+        const src = targetSession.session_id === from.session_id ? null : from.session_id;
+        await api.post("/rules", { kind: "at", from: src, to: targetSession.session_id, text: atText, at });
         toast(`A las ${hhmm} se manda "${atText}" a ${targetSession.repo}`);
       }
       onDone();
@@ -190,10 +210,16 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         <label className={mode === "at" ? "on" : ""}>
           <input type="radio" checked={mode === "at"} onChange={() => setMode("at")} /> A una hora
         </label>
+        {from.agent === "claude" && targetSession?.agent === "claude" && (
+          <label className={mode === "native" ? "on" : ""} title="las dos son Claude Code: pueden hablarse entre sí con SendMessage">
+            <input type="radio" checked={mode === "native"} onChange={() => setMode("native")} /> ⇄ Canal nativo
+          </label>
+        )}
       </div>
 
       <div className="small dim">
         {mode === "now" && "Manda ya la última respuesta de esta sesión a la otra, como si la tipearas ahí."}
+        {mode === "native" && "Las dos son Claude Code: esta sesión ubica a la otra con ListAgents y le habla con SendMessage. Los mensajes llegan aunque la otra esté trabajando, y se responden por el mismo canal. Vos les das el tema; ellas conversan."}
         {mode === "on_stop" && "Cada vez que esta sesión cierre un turno, su respuesta final se manda a la otra con la plantilla. Una vez, o hasta un tope."}
         {mode === "at" && "A la hora indicada se manda un texto fijo a la sesión elegida (puede ser esta misma). Sirve para el \"Continuá\" cuando vuelven los créditos."}
       </div>
@@ -214,7 +240,14 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
             </select>
           </div>
 
-          {mode === "at" ? (
+          {mode === "native" ? (
+            <textarea
+              value={nativeText}
+              onChange={(e) => setNativeText(e.target.value)}
+              rows={4}
+              placeholder="El tema de la conversación. Ej: “Revisá lo que hizo la otra sesión en web/src y acordá con ella los cambios; que ella los aplique.”"
+            />
+          ) : mode === "at" ? (
             <div className="row">
               <span className="small dim">Hora</span>
               <input type="time" value={hhmm} onChange={(e) => setHhmm(e.target.value)} />
@@ -246,12 +279,20 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
 
           <div className="row">
             <span className="small dim">
-              {mode === "now" ? "Si supera 500 caracteres viaja como adjunto .md" : "La regla se ve como flecha punteada; click en el círculo la quita"}
+              {mode === "now"
+                ? "Si supera 500 caracteres viaja como adjunto .md"
+                : mode === "native"
+                  ? "Queda una flecha doble entre las dos; el digest muestra los mensajes que se cruzan"
+                  : "La regla se ve como flecha punteada; click en el círculo la quita"}
             </span>
             <span className="sp" />
             <button onClick={onDone}>Cancelar</button>
-            <button className="primary" disabled={busy || !targetSession || (mode === "now" && !text.trim()) || (mode === "at" && !atText.trim())} onClick={submit}>
-              {mode === "now" ? "Enviar ahora" : mode === "on_stop" ? "Conectar" : "Programar"}
+            <button
+              className="primary"
+              disabled={busy || !targetSession || (mode === "now" && !text.trim()) || (mode === "at" && !atText.trim()) || (mode === "native" && !nativeText.trim())}
+              onClick={submit}
+            >
+              {mode === "now" ? "Enviar ahora" : mode === "on_stop" ? "Conectar" : mode === "native" ? "Abrir canal" : "Programar"}
             </button>
           </div>
         </>

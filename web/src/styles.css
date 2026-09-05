@@ -133,6 +133,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .card .rule .del { margin-left: auto; cursor: pointer; color: var(--dim); }
 .card .rule .del:hover { color: var(--dead); }
 .arrows .line.rule { stroke-dasharray: 7 5; opacity: .7; }
+/* canal nativo Claude<->Claude: doble linea gruesa con punta en los dos extremos */
+.arrows .line.native-outer { stroke: var(--acc); stroke-width: 7; opacity: .35; }
+.arrows .line.native { stroke-width: 2.5; opacity: 1; }
 .panel .ph button.on { border-color: var(--acc); color: var(--acc); }
 
 .gate { position: fixed; inset: 0; background: rgba(8, 10, 14, .85); display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px; }

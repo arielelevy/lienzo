@@ -46,6 +46,12 @@ export function Digest({ turn: t }: { turn: DigestTurn }) {
           {list(t.questions)}
         </>
       )}
+      {(t.peers?.length ?? 0) > 0 && (
+        <>
+          <div className="k">mensajes a otras sesiones</div>
+          {list(t.peers!)}
+        </>
+      )}
       <div className="stats">
         {t.tools} herramientas · {t.reads} lecturas
         {t.subagents ? ` · ${t.subagents} líneas de subagente` : ""}

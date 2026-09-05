@@ -76,6 +76,7 @@ export interface DigestTurn {
   commands: string[];
   errors: string[];
   questions: string[];
+  peers?: string[];
   reads: number;
   subagents: number;
   tools: number;
@@ -99,6 +100,7 @@ export interface Link {
   to: string;
   ts: string;
   text: string;
+  kind?: "send" | "native";
 }
 
 export interface Rule {

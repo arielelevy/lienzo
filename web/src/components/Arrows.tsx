@@ -13,7 +13,7 @@ interface Props {
 
 interface Seg {
   id: string;
-  kind: "link" | "rule";
+  kind: "link" | "rule" | "native";
   d: string;
   x: number;
   y: number;
@@ -57,12 +57,23 @@ export function Arrows({ links, rules, boardRef, deps, onDelete, onDeleteRule }:
     };
     for (const l of links) {
       const p = path(l.from, l.to);
-      if (p) out.push({ id: l.id, kind: "link", ...p, glyph: "↪", title: `reenvío hace ${ago(l.ts)}\n${l.text}\n(click para quitar la flecha)` });
+      if (!p) continue;
+      if (l.kind === "native") {
+        out.push({ id: l.id, kind: "native", ...p, glyph: "⇄", title: `canal nativo Claude↔Claude abierto hace ${ago(l.ts)}\n${l.text}\n(click para quitar la flecha)` });
+      } else {
+        out.push({ id: l.id, kind: "link", ...p, glyph: "↪", title: `reenvío hace ${ago(l.ts)}\n${l.text}\n(click para quitar la flecha)` });
+      }
     }
     for (const r of rules) {
-      if (!r.enabled || r.kind !== "on_stop" || !r.from || r.from === r.to) continue;
+      if (!r.enabled || !r.from || r.from === r.to) continue;
       const p = path(r.from, r.to);
-      if (p) out.push({ id: r.id, kind: "rule", ...p, glyph: "⏹", title: `cuando termine → manda su respuesta${r.repeat ? ` (${r.fired}/${r.max_fires})` : " (una vez)"}\n(click para quitar la conexión)` });
+      if (!p) continue;
+      if (r.kind === "on_stop") {
+        out.push({ id: r.id, kind: "rule", ...p, glyph: "⏹", title: `cuando termine → manda su respuesta${r.repeat ? ` (${r.fired}/${r.max_fires})` : " (una vez)"}\n(click para quitar la conexión)` });
+      } else {
+        const t = r.at ? new Date(r.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }) : "?";
+        out.push({ id: r.id, kind: "rule", ...p, glyph: "⏰", title: `a las ${t} → "${r.text}"\n(click para quitar la conexión)` });
+      }
     }
     setSegs(out);
   };
@@ -87,14 +98,18 @@ export function Arrows({ links, rules, boardRef, deps, onDelete, onDeleteRule }:
         <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
           <path d="M0,0 L10,4 L0,8 z" fill="var(--acc)" />
         </marker>
+        <marker id="arrowtail" markerWidth="10" markerHeight="8" refX="1" refY="4" orient="auto">
+          <path d="M10,0 L0,4 L10,8 z" fill="var(--acc)" />
+        </marker>
       </defs>
       {segs.map((s) => (
         <g key={s.id} className="arrow">
-          <path d={s.d} className={`line ${s.kind}`} markerEnd="url(#arrowhead)" />
+          {s.kind === "native" && <path d={s.d} className="line native-outer" />}
+          <path d={s.d} className={`line ${s.kind}`} markerEnd="url(#arrowhead)" markerStart={s.kind === "native" ? "url(#arrowtail)" : undefined} />
           <g
             onClick={() => {
-              if (!confirm(s.kind === "link" ? "Quitar la flecha?" : "Quitar la conexión?")) return;
-              (s.kind === "link" ? onDelete : onDeleteRule)(s.id);
+              if (!confirm(s.kind === "rule" ? "Quitar la conexión?" : "Quitar la flecha?")) return;
+              (s.kind === "rule" ? onDeleteRule : onDelete)(s.id);
             }}
           >
             <title>{s.title}</title>
