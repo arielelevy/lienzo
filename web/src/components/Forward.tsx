@@ -134,16 +134,19 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
 
   const noOthers = !others.length && mode !== "at";
 
-  // "escribilo": una frase se interpreta como conexion y precarga los controles de abajo
+  // "escribilo": la frase se interpreta mientras se escribe y mueve los controles de abajo;
+  // Enter crea la conexion directamente
   const [phrase, setPhrase] = useState("");
   const parsed = useMemo(() => parseConnection(phrase, from, others), [phrase, from, others]);
-  const applyParsed = () => {
-    if (parsed.kind === "none") return;
+  const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || !!parsed.to);
+  useEffect(() => {
+    if (!parsedOk) return;
     setMode(parsed.kind);
     if (parsed.kind === "at") {
       setHhmm(`${String(parsed.at.getHours()).padStart(2, "0")}:${String(parsed.at.getMinutes()).padStart(2, "0")}`);
       setAtText(parsed.text);
-      setTarget(parsed.to ? parsed.to.session_id : from.session_id);
+      if (parsed.toSelf) setTarget(from.session_id);
+      else if (parsed.to) setTarget(parsed.to.session_id);
     } else if (parsed.to) {
       setTarget(parsed.to.session_id);
       if (parsed.kind === "on_stop") {
@@ -151,8 +154,8 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         setMaxFires(parsed.maxFires);
       }
     }
-  };
-  const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || parsed.to);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsed]);
 
   return (
     <div className="fwd">
@@ -160,19 +163,23 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         <input
           type="text"
           value={phrase}
+          autoFocus
           onChange={(e) => setPhrase(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && parsedOk) {
+            if (e.key === "Enter" && parsedOk && !busy) {
               e.preventDefault();
-              applyParsed();
+              submit();
             }
           }}
           placeholder={`Escribilo: "continuá a las 16:00", "en 30 min seguí", "cuando termine mandale a ${others[0]?.repo ?? "MAPO"}"`}
           style={{ flex: 1 }}
         />
-        <button disabled={!parsedOk} onClick={applyParsed} title="cargar lo entendido en los controles de abajo">Interpretar</button>
       </div>
-      {phrase && <div className={`small ${parsedOk ? "ok" : "dim"}`}>{parsedOk ? `Entendí: ${parsed.summary}` : parsed.summary}</div>}
+      {phrase && (
+        <div className={`small ${parsedOk ? "ok" : "dim"}`}>
+          {parsedOk ? `Entendí: ${parsed.summary} · Enter para confirmar` : parsed.summary}
+        </div>
+      )}
       <div className="row modes">
         <label className={mode === "now" ? "on" : ""}>
           <input type="radio" checked={mode === "now"} onChange={() => setMode("now")} /> Ahora

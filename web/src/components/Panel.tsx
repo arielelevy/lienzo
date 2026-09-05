@@ -1,27 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Digest } from "./Digest";
-import { Forward } from "./Forward";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
 import type { DigestResponse, Session, Turn, TurnsResponse } from "../types";
 
 interface Props {
   session: Session;
-  others: Session[];
-  forwardTo?: string | null;
-  onForwardHandled?: () => void;
+  onConnect: () => void;
   transcriptTick: number;
   onClose: () => void;
   toast: (msg: string, err?: boolean) => void;
 }
 
-export function Panel({ session: s, others, forwardTo, onForwardHandled, transcriptTick, onClose, toast }: Props) {
+export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }: Props) {
   const [tab, setTab] = useState<"digest" | "chat" | "screen">("digest");
-  const [forwarding, setForwarding] = useState(!!forwardTo);
-  useEffect(() => {
-    if (forwardTo) setForwarding(true);
-  }, [forwardTo]);
   const [screen, setScreen] = useState<{ ok: boolean; lines?: string[]; cols?: number; error?: string } | null>(null);
   const loadScreen = () => api.get<{ ok: boolean; lines?: string[]; cols?: number; error?: string }>(`/sessions/${s.session_id}/screen`).then(setScreen).catch((e) => setScreen({ ok: false, error: (e as Error).message }));
   const [digest, setDigest] = useState<DigestResponse | null>(null);
@@ -84,26 +77,16 @@ export function Panel({ session: s, others, forwardTo, onForwardHandled, transcr
             <button className={tab === "screen" ? "on" : ""} onClick={() => setTab("screen")} title="texto visible de la terminal, leído del buffer">Pantalla</button>
           )}
         </div>
-        <button className={forwarding ? "on" : ""} onClick={() => setForwarding(!forwarding)} title="mandar la última respuesta a otra sesión">
-          Reenviar a…
-        </button>
+        {!s.orphan && s.alive && (
+          <button onClick={onConnect} title="conectar con otra sesión: ahora, cuando termine, o a una hora">
+            Conectar…
+          </button>
+        )}
         <button onClick={onClose}>✕</button>
         <div className="pmeta dim small">
           {s.cwd} · PID {s.pid ?? "?"} · {s.state} · {s.transcript_path || "sin transcripción"}
         </div>
       </div>
-      {forwarding && (
-        <Forward
-          from={s}
-          others={others}
-          initialTarget={forwardTo ?? undefined}
-          toast={toast}
-          onDone={() => {
-            setForwarding(false);
-            onForwardHandled?.();
-          }}
-        />
-      )}
       <div className="body" ref={bodyRef}>
         {tab === "screen" ? (
           <>

@@ -1046,7 +1046,8 @@ class Handler(BaseHTTPRequestHandler):
                     data = q.get(timeout=15)
                     chunk(f"data: {data}\n\n".encode("utf-8"))
                 except queue.Empty:
-                    chunk(b": ping\n\n")
+                    # evento real, no comentario: el navegador lo cuenta como "el stream sigue vivo"
+                    chunk(b'data: {"type": "ping"}\n\n')
         except (BrokenPipeError, ConnectionError, OSError):
             pass
         finally:
