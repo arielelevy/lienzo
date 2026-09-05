@@ -119,6 +119,32 @@ export interface Rule {
   last_result?: string;
 }
 
+/** GET /sessions/<sid>/connections: lo que esa sesion mando/recibio y las reglas que la tocan.
+ *  `other` ya viene armado por el server ("repo · titulo") para no depender del tablero. */
+export interface ConnectionLink extends Link {
+  rule_id?: string;
+  other: string;
+}
+
+export interface ConnectionRule {
+  id: string;
+  kind: "on_stop" | "at";
+  from: string | null;
+  to: string;
+  text: string;
+  at: string | null;
+  enabled: boolean;
+  fired: number;
+  max_fires: number;
+  last_fired?: string | null;
+  other: string;
+}
+
+export interface ConnectionsResponse {
+  links: ConnectionLink[];
+  rules: ConnectionRule[];
+}
+
 export type ServerEvent =
   | { type: "snapshot"; sessions: Session[]; pending: Pending[]; links?: Link[]; rules?: Rule[] }
   | { type: "links"; links: Link[] }
