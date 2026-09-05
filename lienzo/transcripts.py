@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import datetime as dt
 import re
 
 TAIL_BYTES = 2 * 1024 * 1024
@@ -83,6 +84,53 @@ def looks_like_error(text: str) -> bool:
     """Avisos de limite de uso o de API que Claude Code escribe como si fueran respuesta."""
     t = (text or "").strip()
     return 0 < len(t) < 400 and any(p.lower() in t.lower() for p in ERROR_PATTERNS)
+
+
+# "try again at 7:57 PM", "try again at Sep 5th, 2026 3:08 AM", "resets 2:40pm" (Claude)
+_RESET_AT_RE = re.compile(
+    r"(?:try again|resets?)\s+(?:at\s+)?"
+    r"(?:(?P<mon>[A-Za-z]{3})[a-z]*\.?\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?P<year>\d{4}),?\s+)?"
+    r"(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ampm>[AaPp]\.?[Mm])?", re.I)
+# "try again in 2 hours 15 minutes", "resets in 45 min"
+_RESET_IN_RE = re.compile(
+    r"(?:try again|resets?)\s+in\s+(?:(?P<h>\d+)\s*h(?:ours?|rs?)?\b)?[\s,]*(?:(?P<m>\d+)\s*m(?:in(?:ute)?s?)?\b)?", re.I)
+
+
+def limit_reset(text: str, ref: dt.datetime | None = None) -> dt.datetime | None:
+    """Hora en que vuelve el cupo, sacada de un aviso de limite de uso. `ref` es cuando se
+    escribio el aviso (con zona; sin ella, ahora): una hora sin fecha es la primera vez que
+    ocurre desde `ref`, asi "7:57 PM" leido a las 20:10 sigue siendo las 19:57 de hoy."""
+    t = text or ""
+    ref = (ref or dt.datetime.now()).astimezone()
+    m = _RESET_IN_RE.search(t)
+    if m and (m.group("h") or m.group("m")):
+        return ref + dt.timedelta(hours=int(m.group("h") or 0), minutes=int(m.group("m") or 0))
+    m = _RESET_AT_RE.search(t)
+    if not m:
+        return None
+    h, mi = int(m.group("h")), int(m.group("m") or 0)
+    ap = (m.group("ampm") or "").replace(".", "").lower()
+    if not ap and m.group("m") is None:
+        return None  # "try again 5" no es una hora
+    if ap == "pm" and h < 12:
+        h += 12
+    if ap == "am" and h == 12:
+        h = 0
+    if h > 23 or mi > 59:
+        return None
+    if m.group("mon"):
+        try:
+            mon = dt.datetime.strptime(m.group("mon").title(), "%b").month
+            return ref.replace(year=int(m.group("year")), month=mon, day=int(m.group("day")),
+                               hour=h, minute=mi, second=0, microsecond=0)
+        except ValueError:
+            return None
+    at = ref.replace(hour=h, minute=mi, second=0, microsecond=0)
+    # la referencia es el fin del turno, que puede quedar unos minutos despues del aviso: una hora
+    # apenas cumplida sigue siendo hoy, no manana
+    if at < ref - dt.timedelta(minutes=10):
+        at += dt.timedelta(days=1)
+    return at
 
 
 def is_system_prompt(text: str) -> bool:
