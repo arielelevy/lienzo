@@ -19,13 +19,15 @@ Estructura comun de un turno (los dos agentes):
       "ended": true,
       "error": None | "mensaje",
       "usage": {...} | None,
-      "extensions": 0        # items Extension de Codex (web.search, ...) contados, sin bloque
+      "extensions": 0,       # items Extension de Codex (web.search, ...) contados, sin bloque
+      "from_peer": "lienzo-b7"   # solo si el pedido vino de otra sesion de Claude (<cross-session-message>)
     }
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 
 TAIL_BYTES = 2 * 1024 * 1024
 FILE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"}
@@ -88,6 +90,23 @@ def is_system_prompt(text: str) -> bool:
     (avisos de tareas en background, recordatorios, salida de comandos locales)."""
     t = (text or "").lstrip()
     return t.startswith(SYSTEM_PROMPT_TAGS)
+
+
+_XSESSION_RE = re.compile(r"<cross-session-message\b([^>]*)>(.*?)</cross-session-message>", re.S)
+_ATTR_RE = re.compile(r'([\w-]+)="([^"]*)"')
+
+
+def peer_message(text: str) -> tuple[str, str] | None:
+    """Mensaje de otra sesion de Claude (SendMessage) que Claude Code inyecta como pedido de usuario:
+    'Another Claude session sent a message:\n<cross-session-message from="..." from-name="lienzo-b7" ...>
+    texto</cross-session-message>\n\nThis came from another Claude session...'. Devuelve (from_name, texto)
+    o None si no tiene esa forma."""
+    m = _XSESSION_RE.search(text or "")
+    if not m:
+        return None
+    attrs = dict(_ATTR_RE.findall(m.group(1)))
+    name = attrs.get("from-name") or attrs.get("from") or "otra sesión"
+    return name, m.group(2).strip()
 
 
 def _new_turn(agent: str, tid: str, ts: str | None, prompt: str = "") -> dict:
@@ -178,7 +197,13 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                     continue
                 if cur is not None:
                     cur["ended"] = True  # un pedido nuevo cierra el anterior aunque no haya turn_duration
+                peer = peer_message(human)
+                if peer:
+                    # pedido real de otra sesion de Claude: sin el XML ni el aviso de permisos que lo envuelve
+                    human = f"de {peer[0]}: {_short(peer[1], 2000)}"
                 cur = _new_turn("claude", d.get("promptId") or d.get("uuid") or str(len(turns)), ts, human or "(imagen)")
+                if peer:
+                    cur["from_peer"] = peer[0]
                 turns.append(cur)
                 continue
             if isinstance(content, list):
@@ -396,6 +421,9 @@ def turns(agent: str, path: str, n: int = 10, before: str | None = None, max_byt
 def digest_turn(turn: dict) -> dict:
     files, commands, errors, questions, reads = [], [], [], [], 0
     peers: list[str] = []
+    if turn.get("from_peer"):
+        body = (turn.get("prompt") or "").split(": ", 1)[-1]
+        peers.append(f"← {turn['from_peer']}: {_first_line(body, 100)}")
     subagents = 0
     for b in turn["blocks"]:
         k = b["kind"]
