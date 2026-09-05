@@ -18,7 +18,8 @@ Estructura comun de un turno (los dos agentes):
       "final": "ultimo texto del asistente en el turno",
       "ended": true,
       "error": None | "mensaje",
-      "usage": {...} | None
+      "usage": {...} | None,
+      "extensions": 0        # items Extension de Codex (web.search, ...) contados, sin bloque
     }
 """
 from __future__ import annotations
@@ -91,18 +92,33 @@ def is_system_prompt(text: str) -> bool:
 
 def _new_turn(agent: str, tid: str, ts: str | None, prompt: str = "") -> dict:
     return {"id": tid, "agent": agent, "ts_start": ts, "ts_end": ts, "prompt": prompt,
-            "blocks": [], "final": "", "ended": False, "error": None, "usage": None}
+            "blocks": [], "final": "", "ended": False, "error": None, "usage": None, "extensions": 0}
 
-
-# --- Claude Code -------------------------------------------------------------
 
 def _content_text(content) -> str:
+    """Texto de un `content` de Claude (str o lista de bloques) o de un item de Codex
+    (lista de {type: "Text"|"text"|..., text}). Une los bloques que traen `text`."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+        return "\n".join(b["text"] for b in content if isinstance(b, dict) and isinstance(b.get("text"), str))
     return ""
 
+
+def add_text(turn: dict, text: str, phase=None) -> None:
+    """Texto del asistente: bloque + actualiza `final` si no esta vacio."""
+    turn["blocks"].append({"kind": "text", "text": text or "", "phase": phase})
+    if (text or "").strip():
+        turn["final"] = text
+
+
+def set_prompt(turn: dict, text: str) -> None:
+    """Pedido humano; si el turno ya tenia prompt (varios UserMessage), lo acumula."""
+    text = text or ""
+    turn["prompt"] = (turn["prompt"] + "\n" + text).strip() if turn["prompt"] else text
+
+
+# --- Claude Code -------------------------------------------------------------
 
 def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
     lines, truncated = tail_lines(path, max_bytes)
@@ -110,7 +126,7 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
     turns: list[dict] = []
     cur: dict | None = None
     tools: dict[str, dict] = {}       # tool_use_id -> bloque tool
-    sidechain: dict[str, int] = {}    # turn id -> cantidad de lineas de subagente
+    sidechain: dict[str | None, int] = {}   # turn id -> lineas de subagente; None = antes del primer turno
 
     def ensure_turn(ts):
         nonlocal cur
@@ -142,7 +158,7 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
             continue
 
         if d.get("isSidechain"):
-            key = cur["id"] if cur else "parcial"
+            key = cur["id"] if cur else None
             sidechain[key] = sidechain.get(key, 0) + 1
             continue
 
@@ -193,12 +209,10 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                 continue
             k = b.get("type")
             if k == "text":
-                turn["blocks"].append({"kind": "text", "text": b.get("text", "")})
-                if b.get("text", "").strip():
-                    turn["final"] = b["text"]
-                    if looks_like_error(b["text"]):
-                        turn["error"] = _short(b["text"].strip(), 300)
-                        turn["ended"] = True
+                add_text(turn, b.get("text", ""))
+                if looks_like_error(b.get("text", "")):
+                    turn["error"] = _short(b["text"].strip(), 300)
+                    turn["ended"] = True
             elif k == "thinking":
                 turn["blocks"].append({"kind": "thinking", "text": b.get("thinking", "")})
             elif k == "tool_use":
@@ -207,6 +221,9 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                 tools[b.get("id")] = blk
                 turn["blocks"].append(blk)
 
+    if turns and sidechain.get(None):
+        # lineas de subagente anteriores al primer pedido: van al primer turno real
+        sidechain[turns[0]["id"]] = sidechain.get(turns[0]["id"], 0) + sidechain.pop(None)
     for tr in turns:
         n = sidechain.get(tr["id"])
         if n:
@@ -216,8 +233,11 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
 
 # --- Codex -------------------------------------------------------------------
 
-def _codex_item_text(item: dict) -> str:
-    return "\n".join(c.get("text", "") for c in item.get("content") or [] if isinstance(c, dict))
+def _codex_tool(item: dict, name: str, inp: dict, text: str = "", limit: int = 4000) -> dict:
+    """Bloque tool a partir de un item de Codex: falla si status != completed."""
+    failed = item.get("status") not in (None, "completed")
+    return {"kind": "tool", "id": item.get("id"), "name": name, "input": inp,
+            "result": {"text": _short(text or "", limit), "is_error": failed}}
 
 
 def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
@@ -280,13 +300,9 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
             item = p.get("item") or {}
             it = item.get("type")
             if it == "UserMessage":
-                text = _codex_item_text(item)
-                turn["prompt"] = (turn["prompt"] + "\n" + text).strip() if turn["prompt"] else text
+                set_prompt(turn, _content_text(item.get("content")))
             elif it == "AgentMessage":
-                text = _codex_item_text(item)
-                turn["blocks"].append({"kind": "text", "text": text, "phase": item.get("phase")})
-                if text.strip():
-                    turn["final"] = text
+                add_text(turn, _content_text(item.get("content")), item.get("phase"))
             elif it == "Reasoning":
                 text = "\n".join(item.get("summary_text") or [])
                 if text:
@@ -294,28 +310,36 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
             elif it == "CommandExecution":
                 parsed = item.get("parsed_cmd") or []
                 cmd = " ; ".join(c.get("cmd", "") for c in parsed if c.get("cmd")) or " ".join(item.get("command") or [])
+                blk = _codex_tool(item, "shell", {"command": cmd, "cwd": item.get("cwd")},
+                                  item.get("stdout") or item.get("stderr") or "")
                 code = item.get("exit_code")
-                failed = item.get("status") not in (None, "completed") or (isinstance(code, int) and code != 0)
-                turn["blocks"].append({"kind": "tool", "id": item.get("id"), "name": "shell",
-                                       "input": {"command": cmd, "cwd": item.get("cwd")},
-                                       "result": {"text": _short(item.get("stdout") or item.get("stderr") or "", 4000),
-                                                  "is_error": bool(failed)}})
+                if isinstance(code, int) and code != 0:
+                    blk["result"]["is_error"] = True
+                turn["blocks"].append(blk)
             elif it == "FileChange":
                 changes = item.get("changes") or {}
                 paths = [{"path": k, "type": (v or {}).get("type")} for k, v in changes.items()]
-                failed = item.get("status") not in (None, "completed")
-                turn["blocks"].append({"kind": "tool", "id": item.get("id"), "name": "apply_patch",
-                                       "input": {"paths": paths},
-                                       "result": {"text": _short(item.get("stdout") or item.get("stderr") or "", 2000),
-                                                  "is_error": bool(failed)}})
+                turn["blocks"].append(_codex_tool(item, "apply_patch", {"paths": paths},
+                                                  item.get("stdout") or item.get("stderr") or "", 2000))
+            elif it == "McpToolCall":
+                # {server, tool, arguments, status, result: {content: [{type: "text", text}]}, error?}
+                name = "/".join(x for x in (item.get("server"), item.get("tool")) if x) or "mcp"
+                res = item.get("result")
+                text = _content_text(res.get("content")) if isinstance(res, dict) else ""
+                err = item.get("error")
+                if err and not text:
+                    text = err.get("message") if isinstance(err, dict) else str(err)
+                turn["blocks"].append(_codex_tool(item, name, item.get("arguments") or {}, text))
+            elif it == "ImageView":
+                turn["blocks"].append(_codex_tool(item, "view_image", {"path": item.get("path")}))
+            elif it == "ContextCompaction":
+                turn["blocks"].append({"kind": "user_text", "text": "(compactación)"})
+            elif it == "Extension":     # web.search y similares: se cuentan, sin bloque
+                turn["extensions"] += 1
         elif pt == "user_message":      # forma vieja / importada
-            turn = turn_for(tid, ts)
-            turn["prompt"] = p.get("message", "")
+            set_prompt(turn_for(tid, ts), p.get("message", ""))
         elif pt == "agent_message":
-            turn = turn_for(tid, ts)
-            turn["blocks"].append({"kind": "text", "text": p.get("message", ""), "phase": p.get("phase")})
-            if (p.get("message") or "").strip():
-                turn["final"] = p["message"]
+            add_text(turn_for(tid, ts), p.get("message", ""), p.get("phase"))
         elif pt == "task_complete":
             turn = turn_for(tid, ts)
             turn["ended"] = True
@@ -421,6 +445,7 @@ def digest_turn(turn: dict) -> dict:
         "final": _short(final, 600),
         "files": files, "commands": commands[:20], "errors": errors[:10],
         "questions": questions, "peers": peers[:10], "reads": reads, "subagents": subagents,
+        "extensions": turn.get("extensions", 0),
         "tools": sum(1 for b in turn["blocks"] if b["kind"] == "tool"),
     }
 
