@@ -30,6 +30,16 @@ interface Edit {
   maxFires: number;
 }
 
+/** doble click en un envio ya hecho: no se edita, pero se ve que se mando y se puede reenviar */
+interface View {
+  ids: string[];
+  from: string;
+  to: string;
+  native: boolean;
+  x: number;
+  y: number;
+}
+
 interface Seg {
   /** ids de todos los links agrupados (o el id de la regla) */
   ids: string[];
@@ -113,6 +123,46 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       toast?.(`No se pudo guardar: ${(e as Error).message}`, true);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // envio ya hecho (o canal nativo): ver los mensajes del par y, si el destino tiene consola,
+  // mandar el ultimo de nuevo por POST /sessions/<to>/send
+  const [view, setView] = useState<View | null>(null);
+  const [resending, setResending] = useState(false);
+  useEffect(() => {
+    if (view && !view.ids.some((id) => links.some((l) => l.id === id))) setView(null); // se quito la flecha
+  }, [links, view]);
+  useEffect(() => {
+    // la vista no tiene inputs con foco, asi que Esc se escucha en el documento mientras esta abierta
+    if (!view) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setView(null);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [view]);
+  const openView = (s: Seg) => {
+    setEdit(null);
+    setView({ ids: s.ids, from: s.from, to: s.to, native: s.kind === "native", x: s.x, y: s.y });
+  };
+  const viewLinks = view ? links.filter((l) => view.ids.includes(l.id)).sort((a, c) => c.ts.localeCompare(a.ts)) : [];
+  const viewTarget = view ? sessions[view.to] : undefined;
+  const canResend = !!viewTarget && viewTarget.alive && !viewTarget.orphan && !viewTarget.no_console && !viewTarget.pending_id;
+  const nameOf = (sid: string) => {
+    const o = sessions[sid];
+    if (!o) return sid.slice(0, 8);
+    return o.title ? `${o.repo} · ${o.title.slice(0, 24)}` : `${o.repo} · ${sid.slice(0, 8)}`;
+  };
+  const resend = async () => {
+    if (!view || !viewLinks[0]) return;
+    setResending(true);
+    try {
+      const r = await api.post<{ chars: number }>(`/sessions/${view.to}/send`, { text: viewLinks[0].text, attachments: [] });
+      toast?.(`Reenviado a ${nameOf(view.to)} (${r.chars} caracteres)`);
+      setView(null);
+    } catch (e) {
+      toast?.(`No se pudo reenviar: ${(e as Error).message}`, true);
+    } finally {
+      setResending(false);
     }
   };
 
@@ -476,6 +526,45 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         </div>
       </div>
     )}
+    {view && (
+      <div
+        className="arrow-edit view"
+        style={{ left: view.x, top: view.y }}
+        role="dialog"
+        aria-label="envío hecho"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Escape") setView(null);
+        }}
+      >
+        <div className="hd">{view.native ? "⇄ canal nativo" : "↪ enviado"} · {nameOf(view.from)} → {nameOf(view.to)}</div>
+        <div className="msgs">
+          {viewLinks.slice(0, 5).map((l) => (
+            <div key={l.id} className="msg" title={l.text}>
+              <span className="dim">{hhmm(new Date(l.ts))}</span> {l.text}
+            </div>
+          ))}
+          {viewLinks.length > 5 && <div className="dim small">… y {viewLinks.length - 5} más</div>}
+        </div>
+        <div className="dim small">
+          {view.native
+            ? "Lo que se dijeron por el canal nativo no se reenvía desde acá."
+            : canResend
+              ? "Un envío hecho no se edita; se puede mandar de nuevo el último tal cual."
+              : "El destino no tiene consola donde escribir ahora."}
+        </div>
+        <div className="btns">
+          <button type="button" onClick={() => setView(null)}>Cerrar</button>
+          {!view.native && (
+            <button type="button" className="ok" disabled={resending || !canResend} onClick={resend} title="escribe el último texto otra vez en la terminal destino">
+              Mandar de nuevo
+            </button>
+          )}
+        </div>
+      </div>
+    )}
     <svg className={`arrows ${hover ? "hovering" : ""}`} width={size.w} height={size.h} style={{ width: size.w, height: size.h }}>
       <defs>
         <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
@@ -514,9 +603,10 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
               onDoubleClick={() => {
                 window.clearTimeout(clickTimer.current);
                 if (s.kind !== "rule") {
-                  toast?.("Un envío ya hecho no se edita; click para quitar la flecha");
+                  openView(s); // ver que se mando y, si hay donde, mandarlo de nuevo
                   return;
                 }
+                setView(null);
                 openEdit(s);
               }}
             >

@@ -250,12 +250,10 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   </h2>
                   {list.length === 0 && <div className="empty">nada acá</div>}
                   <div className="cards">
-                  {(wide ? [0, 1] : [null]).map((half) => {
-                    // columna ancha: dos subcolumnas independientes (no una grilla por filas), asi
-                    // cada tarjeta se apoya en la de arriba con el mismo aire aunque la de al lado
-                    // sea mas alta; el orden se reparte alternado para conservar el de la lista
-                    const items = half === null ? list : list.filter((_, j) => j % 2 === half);
-                    const nodes = items.map((s) => (
+                  {/* columna ancha: dos subcolumnas por CSS (column-count en .col.wide .cards), no por
+                      padres distintos: si una tarjeta cambiara de subcolumna React la remontaria y
+                      perderia su estado (pedido expandido, input de renombrar, toast) */}
+                  {list.map((s) => (
                     <div key={s.session_id} className={drag?.over === s.session_id ? "droptarget" : ""}>
                       <Card
                         session={s}
@@ -286,9 +284,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         }
                       />
                     </div>
-                    ));
-                    return half === null ? nodes : <div key={half} className="subcol">{nodes}</div>;
-                  })}
+                  ))}
                   </div>
                 </>
               )}
