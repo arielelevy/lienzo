@@ -387,18 +387,18 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <span className="sp" />
         {/* acceso desde el celular: URL del tunel y QR de Authenticator, juntos */}
         {authInfo.remote_url && authInfo.local && (
-          <button className="icon" title={`abrir en el celular: ${authInfo.remote_url.replace("https://", "")}`} aria-label="QR con la URL para el celular" onClick={() => setShowQr(true)}>
-            📱
+          <button className="icon lbl" title={`abrir en el celular: ${authInfo.remote_url.replace("https://", "")}`} aria-label="QR con la URL para el celular" onClick={() => setShowQr(true)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" /><circle cx="12" cy="18.2" r="1" fill="currentColor" /></svg><span className="txt">Celular</span>
           </button>
         )}
         {!authInfo.configured && authInfo.local && (
-          <button className="icon" onClick={onSetup} title="configurar el acceso desde el celular con Authenticator" aria-label="configurar acceso remoto">
-            🔐
+          <button className="icon lbl" onClick={onSetup} title="configurar el acceso desde el celular con Authenticator" aria-label="configurar acceso remoto">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.6 8 11 4.6-1.4 8-5.8 8-11V5l-8-3z" fill="#2f7be8" /><rect x="8.5" y="11" width="7" height="5.5" rx="1" fill="#fff" /><path d="M10 11V9.6a2 2 0 0 1 4 0V11" stroke="#fff" strokeWidth="1.6" fill="none" /></svg><span className="txt">Acceso remoto</span>
           </button>
         )}
         {authInfo.configured && authInfo.local && (
-          <button className="icon" onClick={() => setShowTotp(true)} title="volver a ver el QR de Authenticator" aria-label="QR de Authenticator">
-            🔑
+          <button className="icon lbl auth" onClick={() => setShowTotp(true)} title="QR de Microsoft Authenticator" aria-label="QR de Authenticator">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.6 8 11 4.6-1.4 8-5.8 8-11V5l-8-3z" fill="#2f7be8" /><rect x="8.5" y="11" width="7" height="5.5" rx="1" fill="#fff" /><path d="M10 11V9.6a2 2 0 0 1 4 0V11" stroke="#fff" strokeWidth="1.6" fill="none" /></svg><span className="txt">Authenticator</span>
           </button>
         )}
         <div className="menu" ref={menuRef}>
@@ -526,6 +526,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           </div>
         </div>
       )}
+      {sel && <div className="panel-backdrop" aria-hidden="true" />}
       {sel && (
         <Panel
           key={sel.session_id}

@@ -35,11 +35,10 @@ interface Seg {
 /** Lo que hay que dibujar, antes de saber por donde pasa. */
 type Item = Omit<Seg, "d" | "x" | "y">;
 
-const OLD_MS = 60 * 60 * 1000;
 /** un envio ya hecho se muestra este tiempo, como confirmacion visual, y despues desaparece */
 const FRESH_MS = 60_000;
 /** medio canal por defecto, si no se puede medir el hueco entre columnas abiertas */
-const HALF_GAP = 37;
+const HALF_GAP = 20; // la mitad del canal entre columnas (28 px) mas un poco de aire
 /** separacion vertical entre flechas que salen o entran por el mismo lado de una tarjeta */
 const SLOT = 14;
 const cut = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
@@ -55,8 +54,8 @@ interface Rect {
  *  at, punteadas) y el canal nativo Claude<->Claude (doble). Un envio comun se muestra 60 s con
  *  un fade, para confirmar que salio, y despues se va: lo enviado vive en la pestana Conexiones.
  *  Las posiciones salen del DOM (data-sid) y se recalculan al cambiar sesiones, vinculos o tamano.
- *  Las curvas entre columnas viajan por el hueco entre las columnas abiertas vecinas; las de la
- *  misma columna hacen un arco corto por la derecha. En pantalla angosta no hay flechas. */
+ *  Las curvas entre columnas viajan por el hueco entre los grupos de tarjetas vecinos; las de la
+ *  misma columna hacen un arco corto por el costado con mas lugar. En pantalla angosta no hay flechas. */
 export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDeleteRule }: Props) {
   const [segs, setSegs] = useState<Seg[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -78,24 +77,54 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       if (el.dataset.sid) rects.set(el.dataset.sid, { l: r.left - b.left, t: r.top - b.top, r: r.right - b.left, b: r.bottom - b.top });
     }
     const cards = Array.from(rects.values());
-    // columnas abiertas, de izquierda a derecha: el canal de una curva es el hueco entre la columna
-    // de salida y la siguiente abierta (las tiras colapsadas van pegadas y no cuentan)
-    const cols = Array.from(board.querySelectorAll<HTMLElement>(".col:not(.collapsed)"))
-      .map((el) => {
-        const r = el.getBoundingClientRect();
-        return { l: r.left - b.left, r: r.right - b.left };
-      })
-      .sort((a, c) => a.l - c.l);
-    const colOf = (rc: Rect) => {
-      const cx = (rc.l + rc.r) / 2;
-      return cols.findIndex((c) => cx >= c.l && cx <= c.r);
-    };
+    // "columnas" para las flechas = grupos de tarjetas con el mismo borde izquierdo (una columna
+    // ancha con dos subcolumnas cuenta como dos). El canal de una curva es el hueco entre el grupo
+    // de salida y el vecino; las tiras colapsadas son obstaculos, no columnas.
+    const cols: { l: number; r: number }[] = [];
+    for (const c of [...cards].sort((a, d) => a.l - d.l)) {
+      const last = cols[cols.length - 1];
+      if (last && Math.abs(c.l - last.l) < 40) {
+        last.r = Math.max(last.r, c.r);
+      } else {
+        cols.push({ l: c.l, r: c.r });
+      }
+    }
+    const colOf = (rc: Rect) => cols.findIndex((c) => Math.abs(rc.l - c.l) < 40);
     // x del medio del canal a la derecha (dir 1) o a la izquierda (dir -1) de la columna i
     const channelX = (i: number, dir: 1 | -1, fallback: number) => {
       const a = cols[i];
       const n = cols[i + dir];
       if (!a || !n) return fallback;
       return dir === 1 ? (a.r + n.l) / 2 : (n.r + a.l) / 2;
+    };
+    // espacio libre a un costado de la columna i hasta lo primero que haya: otra columna, una tira
+    // colapsada o el borde del tablero
+    const strips = Array.from(board.querySelectorAll<HTMLElement>(".col.collapsed")).map((el) => {
+      const r = el.getBoundingClientRect();
+      return { l: r.left - b.left, r: r.right - b.left };
+    });
+    const freeAt = (i: number, dir: 1 | -1) => {
+      const a = cols[i];
+      if (!a) return 0;
+      const walls = [...cols.filter((_, j) => j !== i), ...strips];
+      if (dir === 1) {
+        let x = board.scrollWidth;
+        for (const w of walls) if (w.l >= a.r - 1 && w.l < x) x = w.l;
+        return x - a.r;
+      }
+      let x = 0;
+      for (const w of walls) if (w.r <= a.l + 1 && w.r > x) x = w.r;
+      return a.l - x;
+    };
+    // arco entre dos tarjetas de la misma columna: por el costado con mas lugar (el canal vecino si
+    // lo hay, si no el margen del tablero); nunca por encima de una tarjeta
+    const sideArc = (i: number): { side: "l" | "r"; x: number } => {
+      const a = cols[i];
+      const fr = freeAt(i, 1);
+      const fl = freeAt(i, -1);
+      const side: "l" | "r" = fl > fr ? "l" : "r";
+      const bulge = Math.min(HALF_GAP, Math.max(20, (side === "r" ? fr : fl) / 2));
+      return { side, x: side === "r" ? a.r + bulge : a.l - bulge };
     };
     // distancia al borde de la tarjeta mas cercana; negativa si el punto cae adentro de una
     const clearance = (x: number, y: number) => {
@@ -131,13 +160,13 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       return { d, x, y };
     };
 
-    // 1) que hay que dibujar: canal nativo y envios recientes (agrupados por par y tipo), mas reglas
-    const now = Date.now();
+    // 1) que hay que dibujar: canal nativo y ultimo envio por par, mas reglas
     const items: Item[] = [];
     const groups = new Map<string, Link[]>();
     for (const l of links) {
+      // decision del autor: la flecha del ultimo mensaje entre cada par queda siempre (sin limite
+      // de tiempo); los anteriores del mismo par se agrupan en el contador
       const native = l.kind === "native";
-      if (!native && now - new Date(l.ts).getTime() >= FRESH_MS) continue; // ya enviado: no queda
       const k = `${native ? "n" : "s"}|${l.from}|${l.to}`;
       const g = groups.get(k);
       if (g) g.push(l);
@@ -152,7 +181,7 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       const head = native
         ? `canal nativo Claude↔Claude abierto hace ${ago(newest.ts)}`
         : n > 1
-          ? `${n} envíos recién hechos`
+          ? `último envío hace ${ago(newest.ts)} (${n} en total)`
           : `enviado hace ${ago(newest.ts)}`;
       const texts = g.slice(0, 5).map((l) => `• ${hhmm(new Date(l.ts))} ${cut(l.text)}`);
       if (n > 5) texts.push(`… y ${n - 5} más`);
@@ -161,10 +190,10 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
         kind: native ? "native" : "link",
         from: newest.from,
         to: newest.to,
-        old: native && now - new Date(newest.ts).getTime() > OLD_MS,
-        fresh: native ? undefined : new Date(newest.ts).getTime(),
+        old: false, // sin limite de tiempo: la ultima flecha del par se ve igual siempre
+        fresh: undefined,
         glyph: n > 1 ? `×${n}` : native ? "⇄" : "↪",
-        title: native ? `${head}\n${texts.join("\n")}\n(click para quitar la flecha)` : `${head}\n${texts.join("\n")}\n(desaparece sola; lo enviado queda en Conexiones)`,
+        title: `${head}\n${texts.join("\n")}\n(click para quitar la flecha)`,
       });
     }
     for (const r of rules) {
@@ -187,18 +216,17 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       y: number;
     }
     const slots = new Map<string, End[]>(); // `${sid}|${lado}` -> extremos que usan ese lado
-    const sideOf: { exit: "l" | "r"; enter: "l" | "r"; same: boolean }[] = [];
+    const sideOf: { exit: "l" | "r"; enter: "l" | "r"; same: boolean; arcX: number }[] = [];
     items.forEach((it, i) => {
       const ra = rects.get(it.from)!;
       const rc = rects.get(it.to)!;
-      const same = Math.abs(ra.l - rc.l) < 40; // misma columna: mismo borde izquierdo
+      const ci = colOf(ra);
+      const same = ci >= 0 && ci === colOf(rc); // misma columna: mismo grupo de borde izquierdo
       const ltr = ra.l < rc.l;
-      // misma columna: el lado es el del canal abierto (derecha si existe, si no izquierda)
-      const ci = same ? colOf(ra) : -1;
-      const sameSide: "l" | "r" = same && !cols[ci + 1] && cols[ci - 1] ? "l" : "r";
-      const exit: "l" | "r" = same ? sameSide : ltr ? "r" : "l";
-      const enter: "l" | "r" = same ? sameSide : ltr ? "l" : "r";
-      sideOf[i] = { exit, enter, same };
+      const arc = same ? sideArc(ci) : null;
+      const exit: "l" | "r" = arc ? arc.side : ltr ? "r" : "l";
+      const enter: "l" | "r" = arc ? arc.side : ltr ? "l" : "r";
+      sideOf[i] = { exit, enter, same, arcX: arc?.x ?? 0 };
       const push = (k: string, e: End) => {
         const arr = slots.get(k);
         if (arr) arr.push(e);
@@ -224,23 +252,16 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
     items.forEach((it, i) => {
       const ra = rects.get(it.from)!;
       const rc = rects.get(it.to)!;
-      const { exit, enter, same } = sideOf[i];
+      const { exit, enter, same, arcX } = sideOf[i];
       const y1 = endY[i].from;
       const y2 = endY[i].to;
       let p: { d: string; x: number; y: number };
       if (same) {
-        // misma columna: arco corto por el costado, del borde de un lado del origen al mismo lado del
-        // destino. Va por el canal abierto de la derecha si existe, si no por el de la izquierda, y
-        // si la columna esta sola (solo tiras al lado) bulge de 30 px a la derecha.
-        const ci = colOf(ra);
-        const right = cols[ci + 1] ? channelX(ci, 1, Math.max(ra.r, rc.r) + 30) : null;
-        const left = cols[ci - 1] ? channelX(ci, -1, Math.min(ra.l, rc.l) - 30) : null;
-        if (right !== null || left === null) {
-          const xr = right ?? Math.max(ra.r, rc.r) + 30;
-          p = cubic([ra.r, y1], [xr, y1], [xr, y2], [rc.r, y2]);
-        } else {
-          p = cubic([ra.l, y1], [left, y1], [left, y2], [rc.l, y2]);
-        }
+        // misma columna: arco corto por el costado con mas lugar, del borde de ese lado del origen
+        // al mismo borde del destino
+        const xa = exit === "r" ? ra.r : ra.l;
+        const xc = exit === "r" ? rc.r : rc.l;
+        p = cubic([xa, y1], [arcX, y1], [arcX, y2], [xc, y2]);
       } else {
         // columnas distintas: sale y entra por el canal entre columnas abiertas vecinas; los
         // controles quedan en el medio de cada canal (si las columnas son vecinas, coinciden y la

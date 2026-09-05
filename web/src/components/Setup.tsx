@@ -128,6 +128,12 @@ export function TotpQr({ onClose }: { onClose: () => void }) {
     api.get<{ otpauth: string; totp_secret: string }>("/totp").then(setData).catch((e) => setError((e as Error).message));
   }, []);
   const qr = useQr(data?.otpauth ?? null, 260);
+  // Esc cierra (el click afuera ya cierra por el onMouseDown del fondo)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="gate-box">
