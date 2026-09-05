@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { api, type AuthInfo } from "../api";
+import { UrlLink } from "./UrlQr";
 
 interface SetupResult {
   mode: "code" | "full";
@@ -87,20 +88,23 @@ export function Setup({ onClose }: Props) {
               </div>
               <div>
                 <div className="k">2 · Con la cámara del celular</div>
-                <p className="small">Abre el lienzo en el teléfono. Te pide el código de Authenticator y listo.</p>
+                <p className="small">
+                  Abre el lienzo en el teléfono.{" "}
+                  {res.mode === "full" ? "Te pide la passphrase y el código de Authenticator." : "Te pide el código de Authenticator y listo."}
+                </p>
                 {remoteUrl ? (
                   <>
                     {urlQr && <img src={urlQr} alt="QR URL" width={230} height={230} />}
-                    <pre className="pass small">{remoteUrl}</pre>
+                    <UrlLink url={remoteUrl} />
                   </>
                 ) : (
                   <div className="small dim">Esperando la URL del túnel…</div>
                 )}
               </div>
             </div>
-            {res.passphrase && (
+            {res.mode === "full" && res.passphrase && (
               <>
-                <div className="k">Passphrase (una sola vez)</div>
+                <div className="k">Passphrase (modo completo, se muestra una sola vez)</div>
                 <pre className="pass">{res.passphrase}</pre>
               </>
             )}
