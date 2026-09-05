@@ -36,6 +36,31 @@ interface Drag {
 export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, onDeleteLink, onConnect }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  // mousedown sobre el cuerpo de una tarjeta: es arrastre si se mueve mas de 8 px, si no es click
+  const pressRef = useRef<{ sid: string; x: number; y: number } | null>(null);
+  const draggedRef = useRef(false);
+
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const pr = pressRef.current;
+      if (!pr) return;
+      if (Math.hypot(e.clientX - pr.x, e.clientY - pr.y) > 8) {
+        pressRef.current = null;
+        draggedRef.current = true;
+        startDragAt(pr.sid, e.clientX, e.clientY);
+      }
+    };
+    const up = () => {
+      pressRef.current = null;
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    return () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const byState = (k: State) =>
     Object.values(sessions)
@@ -44,15 +69,19 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
   // tarjeta se abre el reenvio con ese destino
-  const startDrag = (sid: string, e: React.MouseEvent) => {
+  const startDragAt = (sid: string, cx: number, cy: number) => {
     const board = boardRef.current;
     if (!board) return;
     const b = board.getBoundingClientRect();
     const card = board.querySelector<HTMLElement>(`[data-sid="${sid}"]`);
     const r = card?.getBoundingClientRect();
-    const x1 = r ? r.right - b.left - 14 : e.clientX - b.left;
-    const y1 = r ? r.bottom - b.top - 14 : e.clientY - b.top;
-    setDrag({ from: sid, x1, y1, x2: e.clientX - b.left, y2: e.clientY - b.top, over: null });
+    const x1 = r ? r.right - b.left - 14 : cx - b.left;
+    const y1 = r ? r.bottom - b.top - 14 : cy - b.top;
+    setDrag({ from: sid, x1, y1, x2: cx - b.left, y2: cy - b.top, over: null });
+  };
+  const startDrag = (sid: string, e: React.MouseEvent) => {
+    draggedRef.current = true;
+    startDragAt(sid, e.clientX, e.clientY);
   };
 
   useEffect(() => {
@@ -120,10 +149,20 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         session={s}
                         pending={s.pending_id ? pending[s.pending_id] : undefined}
                         selected={selected === s.session_id}
-                        onSelect={() => onSelect(s.session_id)}
+                        onSelect={() => {
+                          // el click que cierra un arrastre no abre el panel
+                          if (draggedRef.current) {
+                            draggedRef.current = false;
+                            return;
+                          }
+                          onSelect(s.session_id);
+                        }}
                         onDecide={onDecide}
                         onDrop={() => onDrop(s.session_id)}
                         onGrip={(e) => startDrag(s.session_id, e)}
+                        onPress={(e) => {
+                          pressRef.current = { sid: s.session_id, x: e.clientX, y: e.clientY };
+                        }}
                       />
                     </div>
                   ))}

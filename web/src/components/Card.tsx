@@ -9,11 +9,22 @@ interface Props {
   onDecide: (requestId: string, decision: "allow" | "deny") => void;
   onDrop: () => void;
   onGrip?: (e: React.MouseEvent) => void;
+  onPress?: (e: React.MouseEvent) => void;
 }
 
-export function Card({ session: s, pending: p, selected, onSelect, onDecide, onDrop, onGrip }: Props) {
+export function Card({ session: s, pending: p, selected, onSelect, onDecide, onDrop, onGrip, onPress }: Props) {
   return (
-    <div className={`card ${selected ? "sel" : ""}`} onClick={onSelect} data-sid={s.session_id}>
+    <div
+      className={`card ${selected ? "sel" : ""}`}
+      onClick={onSelect}
+      data-sid={s.session_id}
+      onMouseDown={(e) => {
+        // arrastre desde cualquier parte de la tarjeta, salvo controles y el agarre (que ya arrastra)
+        const t = e.target as HTMLElement;
+        if (e.button !== 0 || t.closest("button, a, input, textarea, .x, .grip, code")) return;
+        onPress?.(e);
+      }}
+    >
       <span
         className="x"
         title="quitar tarjeta"
