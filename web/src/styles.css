@@ -20,7 +20,8 @@ button.allow { background: #1f6f3a; border-color: #2b9a51; }
 button.deny { background: #7a2323; border-color: #b23232; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
-.board { display: flex; gap: 12px; padding: 12px 16px; align-items: stretch; min-height: 60vh; position: relative; }
+/* gap ancho a proposito: es el canal por donde pasan las flechas entre columnas */
+.board { display: flex; gap: 56px; padding: 12px 16px; align-items: stretch; min-height: 60vh; position: relative; }
 .arrows { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; overflow: visible; }
 .arrows .arrow { pointer-events: none; }
 .arrows .line { fill: none; stroke: var(--acc); stroke-width: 2; opacity: .85; }
@@ -201,7 +202,7 @@ header button.url { font-size: 12px; color: var(--acc); border-color: var(--acc)
   header button { padding: 6px 9px; }
   .filters { padding: 8px 10px 0; gap: 6px; }
   .filters button { flex: 1 1 auto; padding: 8px 6px; font-size: 13px; }
-  .board { flex-direction: column; padding: 8px 10px; min-height: 0; }
+  .board { flex-direction: column; gap: 12px; padding: 8px 10px; min-height: 0; }
   .col, .col.collapsed { display: none; }
   .col.show { display: block; flex: 1 1 auto; padding: 0; background: transparent; border: 0; min-height: 0; }
   .col.show h2 { display: none; }
