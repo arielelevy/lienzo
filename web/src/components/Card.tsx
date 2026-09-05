@@ -111,9 +111,10 @@ export function Card({ session: s, pending: p, rules = [], sessions = {}, onDele
         <span>{s.source === "sweep" ? "barrido" : "hooks"}</span>
         {s.alive === false && <span>proceso muerto</span>}
         {s.orphan && <span className="warn" title="su terminal de VS Code se cerró; el proceso sigue pero no hay dónde escribirle">sin terminal</span>}
+        {s.no_console && !s.orphan && <span className="warn" title="panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe">sin consola</span>}
         <span>{s.session_id.slice(0, 8)}</span>
       </div>
-      {onGrip && s.alive && !s.orphan && (
+      {onGrip && s.alive && !s.orphan && !s.no_console && (
         <span
           className="grip"
           title="arrastrá hasta otra tarjeta para reenviarle la última respuesta"

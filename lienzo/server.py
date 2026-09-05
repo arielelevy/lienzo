@@ -392,6 +392,9 @@ def apply_event(ev: dict) -> None:
                         drop_session(other_sid, "duplicada por barrido")
             s["pid"] = pid
             s["agent_exe"] = ev.get("agent_exe")
+            # el panel de Claude Code de VS Code y las apps de escritorio disparan hooks pero no
+            # tienen consola: se ven y se leen, no se les escribe
+            s["no_console"] = not procs.is_tui(pid)
         if ev.get("cwd") and (not s.get("cwd") or name == "SessionStart"):
             # el cwd de los hooks sigue al shell del agente (cambia con un cd de una tool);
             # el repo de la tarjeta se fija al arrancar y no baila
@@ -698,6 +701,8 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
         return 409, {"ok": False, "error": "la sesion no tiene un PID vivo"}
     if s.get("orphan"):
         return 409, {"ok": False, "error": "la sesion perdio su terminal (huerfana): no hay consola donde escribir"}
+    if s.get("no_console"):
+        return 409, {"ok": False, "error": "esta sesion no tiene consola (panel de VS Code o app de escritorio): no se le puede escribir"}
     if s.get("pending_id"):
         return 409, {"ok": False, "error": "hay un permiso pendiente; contestalo primero"}
     text = (text or "").replace("\r", "")
@@ -1027,6 +1032,7 @@ class Handler(BaseHTTPRequestHandler):
             drop_session(parts[1], "borrada desde la UI")
             return self._json(200, {"ok": True})
         if len(parts) == 2 and parts[0] in ("links", "rules"):
+            log(f"{parts[0][:-1]} {parts[1]} borrada desde la UI ({self._client_ip()})")
             (links if parts[0] == "links" else rules).remove(lambda x: x["id"] == parts[1])
             return self._json(200, {"ok": True})
         return self._json(404, {"error": "ruta desconocida"})

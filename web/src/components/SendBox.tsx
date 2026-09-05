@@ -46,8 +46,18 @@ export function SendBox({ session: s, toast }: Props) {
     }
   };
 
-  const disabled = busy || !!s.pending_id || !s.alive || !!s.orphan;
+  const disabled = busy || !!s.pending_id || !s.alive || !!s.orphan || !!s.no_console;
 
+  if (s.no_console && !s.orphan) {
+    return (
+      <div className="send">
+        <div className="small dim">
+          Esta sesión corre en el panel de Claude Code de VS Code o en una app de escritorio: no tiene consola, así que se
+          puede leer pero no escribirle desde acá. Otra sesión de Claude sí puede hablarle con el canal nativo.
+        </div>
+      </div>
+    );
+  }
   if (s.orphan) {
     return (
       <div className="send">
