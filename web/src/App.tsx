@@ -94,6 +94,17 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [agents, setAgents] = useState<Record<Agent, boolean>>({ claude: true, codex: true });
   const searchRef = useRef<HTMLInputElement>(null);
   const [showHelp, setShowHelp] = useState(false);
+  // menu "⋯" del header: click afuera lo cierra
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -269,13 +280,14 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (showHelp) setShowHelp(false);
+      if (menuOpen) setMenuOpen(false);
+      else if (showHelp) setShowHelp(false);
       else if (connect) setConnect(null);
       else if (selectedRef.current) setSelected(null);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [connect, showHelp]);
+  }, [connect, showHelp, menuOpen]);
 
   // click fuera del panel (y fuera de una tarjeta) lo cierra
   useEffect(() => {
@@ -343,10 +355,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     <div className={showThinking ? "showthink" : ""}>
       <header>
         <h1>Lienzo</h1>
-        <span>
-          <span className={`dot ${connected ? "on" : ""}`} /> {!connected ? "reconectando" : polling ? "sondeo 4 s" : "en vivo"}
-        </span>
-        <span className="sp" />
+        <span className={`dot ${connected ? "on" : ""}`} title={!connected ? "reconectando" : polling ? "sondeo cada 4 s" : "en vivo"} aria-label={!connected ? "reconectando" : "conectado"} />
         <div className="search" role="search">
           <input
             ref={searchRef}
@@ -375,31 +384,76 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
             </button>
           ))}
         </div>
+        <span className="sp" />
+        {/* acceso desde el celular: URL del tunel y QR de Authenticator, juntos */}
         {authInfo.remote_url && authInfo.local && (
-          <button className="url" title="QR para abrir en el celular" onClick={() => setShowQr(true)}>
-            📱 <span className="txt">{authInfo.remote_url.replace("https://", "")}</span>
+          <button className="icon" title={`abrir en el celular: ${authInfo.remote_url.replace("https://", "")}`} aria-label="QR con la URL para el celular" onClick={() => setShowQr(true)}>
+            📱
           </button>
         )}
-        <label className="dim small think" title="mostrar el pensamiento del agente en la conversación">
-          <input type="checkbox" checked={showThinking} onChange={(e) => setShowThinking(e.target.checked)} /> 💭<span className="txt"> pensamiento</span>
-        </label>
-        <button onClick={toggleNotify} className={notify ? "" : "off"} title={notify ? "dejar de avisar con notificaciones del navegador" : "avisar con una notificación del navegador cuando una sesión pide permiso"} aria-pressed={notify}>
-          🔔<span className="txt"> Avisos</span>
-        </button>
-        <button onClick={toggleArrows} className={showArrows ? "" : "off"} title={showArrows ? "ocultar las flechas entre tarjetas" : "mostrar las flechas entre tarjetas"} aria-pressed={showArrows}>
-          ↪<span className="txt"> Flechas</span>
-        </button>
-        <button onClick={rescan} title="barrer procesos de VS Code">↻<span className="txt"> Rescan</span></button>
         {!authInfo.configured && authInfo.local && (
-          <button onClick={onSetup} title="acceso desde el celular con Authenticator">📱<span className="txt"> Acceso remoto</span></button>
+          <button className="icon" onClick={onSetup} title="configurar el acceso desde el celular con Authenticator" aria-label="configurar acceso remoto">
+            🔐
+          </button>
         )}
         {authInfo.configured && authInfo.local && (
-          <button onClick={() => setShowTotp(true)} title="volver a ver el QR de Authenticator">🔑<span className="txt"> QR Authenticator</span></button>
+          <button className="icon" onClick={() => setShowTotp(true)} title="volver a ver el QR de Authenticator" aria-label="QR de Authenticator">
+            🔑
+          </button>
         )}
-        {authInfo.configured && !authInfo.local && (
-          <button onClick={() => api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true))} title="cerrar sesión en este dispositivo">Salir</button>
-        )}
-        <button onClick={() => setShowHelp(true)} title="atajos de teclado" aria-label="atajos de teclado">?</button>
+        <div className="menu" ref={menuRef}>
+          <button className="icon" title="más" aria-label="más opciones" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
+            ⋯
+          </button>
+          {menuOpen && (
+            <div className="dropdown" role="menu">
+              <button role="menuitemcheckbox" aria-checked={notify} onClick={toggleNotify} title="notificación del navegador cuando una sesión pide permiso">
+                🔔 Avisos <span className={`state ${notify ? "on" : ""}`}>{notify ? "on" : "off"}</span>
+              </button>
+              <button role="menuitemcheckbox" aria-checked={showArrows} onClick={toggleArrows} title="flechas entre tarjetas">
+                ↪ Flechas <span className={`state ${showArrows ? "on" : ""}`}>{showArrows ? "on" : "off"}</span>
+              </button>
+              <button role="menuitemcheckbox" aria-checked={showThinking} onClick={() => setShowThinking((v) => !v)} title="mostrar el pensamiento del agente en la conversación">
+                💭 Pensamiento <span className={`state ${showThinking ? "on" : ""}`}>{showThinking ? "on" : "off"}</span>
+              </button>
+              <hr />
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  rescan();
+                }}
+                title="barrer procesos de VS Code"
+              >
+                ↻ Rescan
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setShowHelp(true);
+                }}
+              >
+                ? Atajos de teclado
+              </button>
+              {authInfo.configured && !authInfo.local && (
+                <>
+                  <hr />
+                  <button
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true));
+                    }}
+                    title="cerrar sesión en este dispositivo"
+                  >
+                    ⏏ Salir
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </header>
       {showHelp && (
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setShowHelp(false)}>

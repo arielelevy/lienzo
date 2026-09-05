@@ -26,15 +26,19 @@ interface Seg {
   y: number;
   title: string;
   glyph: string;
-  /** links: el mas nuevo tiene mas de una hora; se dibuja apagado y sin punta */
+  /** canal nativo con mas de una hora: se dibuja apagado y sin punta */
   old: boolean;
+  /** envio recien hecho: instante (ms) del envio; se muestra FRESH_MS y se desvanece */
+  fresh?: number;
 }
 
 /** Lo que hay que dibujar, antes de saber por donde pasa. */
 type Item = Omit<Seg, "d" | "x" | "y">;
 
 const OLD_MS = 60 * 60 * 1000;
-/** medio canal entre columnas: `.board { gap: 56px }` mas padding y borde de cada columna (~9 px por lado) */
+/** un envio ya hecho se muestra este tiempo, como confirmacion visual, y despues desaparece */
+const FRESH_MS = 60_000;
+/** medio canal por defecto, si no se puede medir el hueco entre columnas abiertas */
 const HALF_GAP = 37;
 /** separacion vertical entre flechas que salen o entran por el mismo lado de una tarjeta */
 const SLOT = 14;
@@ -47,14 +51,16 @@ interface Rect {
   b: number;
 }
 
-/** Flechas entre tarjetas: llenas por cada reenvio hecho (links, agrupados por par origen→destino),
- *  punteadas por cada conexion pendiente (rules). Las posiciones salen del DOM (data-sid) y se
- *  recalculan al cambiar sesiones, vinculos o tamano del tablero. Las curvas entre columnas viajan
- *  por el canal vacio que deja el gap; las de la misma columna hacen un arco corto por la derecha.
- *  En pantalla angosta no hay flechas. */
+/** Flechas entre tarjetas. En el tablero quedan solo las conexiones pendientes (reglas on_stop y
+ *  at, punteadas) y el canal nativo Claude<->Claude (doble). Un envio comun se muestra 60 s con
+ *  un fade, para confirmar que salio, y despues se va: lo enviado vive en la pestana Conexiones.
+ *  Las posiciones salen del DOM (data-sid) y se recalculan al cambiar sesiones, vinculos o tamano.
+ *  Las curvas entre columnas viajan por el hueco entre las columnas abiertas vecinas; las de la
+ *  misma columna hacen un arco corto por la derecha. En pantalla angosta no hay flechas. */
 export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDeleteRule }: Props) {
   const [segs, setSegs] = useState<Seg[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [, setTick] = useState(0);
 
   const compute = () => {
     const board = boardRef.current;
@@ -72,6 +78,25 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       if (el.dataset.sid) rects.set(el.dataset.sid, { l: r.left - b.left, t: r.top - b.top, r: r.right - b.left, b: r.bottom - b.top });
     }
     const cards = Array.from(rects.values());
+    // columnas abiertas, de izquierda a derecha: el canal de una curva es el hueco entre la columna
+    // de salida y la siguiente abierta (las tiras colapsadas van pegadas y no cuentan)
+    const cols = Array.from(board.querySelectorAll<HTMLElement>(".col:not(.collapsed)"))
+      .map((el) => {
+        const r = el.getBoundingClientRect();
+        return { l: r.left - b.left, r: r.right - b.left };
+      })
+      .sort((a, c) => a.l - c.l);
+    const colOf = (rc: Rect) => {
+      const cx = (rc.l + rc.r) / 2;
+      return cols.findIndex((c) => cx >= c.l && cx <= c.r);
+    };
+    // x del medio del canal a la derecha (dir 1) o a la izquierda (dir -1) de la columna i
+    const channelX = (i: number, dir: 1 | -1, fallback: number) => {
+      const a = cols[i];
+      const n = cols[i + dir];
+      if (!a || !n) return fallback;
+      return dir === 1 ? (a.r + n.l) / 2 : (n.r + a.l) / 2;
+    };
     // distancia al borde de la tarjeta mas cercana; negativa si el punto cae adentro de una
     const clearance = (x: number, y: number) => {
       let best = Infinity;
@@ -106,17 +131,20 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       return { d, x, y };
     };
 
-    // 1) que hay que dibujar: links agrupados por par origen→destino (y tipo), mas las reglas
+    // 1) que hay que dibujar: canal nativo y envios recientes (agrupados por par y tipo), mas reglas
+    const now = Date.now();
     const items: Item[] = [];
     const groups = new Map<string, Link[]>();
     for (const l of links) {
-      const k = `${l.kind === "native" ? "n" : "s"}|${l.from}|${l.to}`;
+      const native = l.kind === "native";
+      if (!native && now - new Date(l.ts).getTime() >= FRESH_MS) continue; // ya enviado: no queda
+      const k = `${native ? "n" : "s"}|${l.from}|${l.to}`;
       const g = groups.get(k);
       if (g) g.push(l);
       else groups.set(k, [l]);
     }
     for (const g of groups.values()) {
-      g.sort((a, b) => b.ts.localeCompare(a.ts)); // mas nuevo primero
+      g.sort((a, c) => c.ts.localeCompare(a.ts)); // mas nuevo primero
       const newest = g[0];
       if (!rects.has(newest.from) || !rects.has(newest.to)) continue;
       const native = newest.kind === "native";
@@ -124,8 +152,8 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       const head = native
         ? `canal nativo Claude↔Claude abierto hace ${ago(newest.ts)}`
         : n > 1
-          ? `${n} reenvíos, el último hace ${ago(newest.ts)}`
-          : `reenvío hace ${ago(newest.ts)}`;
+          ? `${n} envíos recién hechos`
+          : `enviado hace ${ago(newest.ts)}`;
       const texts = g.slice(0, 5).map((l) => `• ${hhmm(new Date(l.ts))} ${cut(l.text)}`);
       if (n > 5) texts.push(`… y ${n - 5} más`);
       items.push({
@@ -133,9 +161,10 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
         kind: native ? "native" : "link",
         from: newest.from,
         to: newest.to,
-        old: Date.now() - new Date(newest.ts).getTime() > OLD_MS,
+        old: native && now - new Date(newest.ts).getTime() > OLD_MS,
+        fresh: native ? undefined : new Date(newest.ts).getTime(),
         glyph: n > 1 ? `×${n}` : native ? "⇄" : "↪",
-        title: `${head}\n${texts.join("\n")}\n(click para quitar ${n > 1 ? "las flechas" : "la flecha"})`,
+        title: native ? `${head}\n${texts.join("\n")}\n(click para quitar la flecha)` : `${head}\n${texts.join("\n")}\n(desaparece sola; lo enviado queda en Conexiones)`,
       });
     }
     for (const r of rules) {
@@ -164,8 +193,11 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       const rc = rects.get(it.to)!;
       const same = Math.abs(ra.l - rc.l) < 40; // misma columna: mismo borde izquierdo
       const ltr = ra.l < rc.l;
-      const exit: "l" | "r" = same || ltr ? "r" : "l";
-      const enter: "l" | "r" = same ? "r" : ltr ? "l" : "r";
+      // misma columna: el lado es el del canal abierto (derecha si existe, si no izquierda)
+      const ci = same ? colOf(ra) : -1;
+      const sameSide: "l" | "r" = same && !cols[ci + 1] && cols[ci - 1] ? "l" : "r";
+      const exit: "l" | "r" = same ? sameSide : ltr ? "r" : "l";
+      const enter: "l" | "r" = same ? sameSide : ltr ? "l" : "r";
       sideOf[i] = { exit, enter, same };
       const push = (k: string, e: End) => {
         const arr = slots.get(k);
@@ -178,7 +210,7 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
     const endY: { from: number; to: number }[] = items.map(() => ({ from: 0, to: 0 }));
     for (const [k, ends] of slots) {
       const r = rects.get(k.split("|")[0])!;
-      ends.sort((a, b) => a.otherY - b.otherY);
+      ends.sort((a, c) => a.otherY - c.otherY);
       const n = ends.length;
       const span = Math.min((n - 1) * SLOT, Math.max(0, r.b - r.t - 20)); // no desbordar tarjetas bajas
       const step = n > 1 ? span / (n - 1) : 0;
@@ -197,17 +229,29 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
       const y2 = endY[i].to;
       let p: { d: string; x: number; y: number };
       if (same) {
-        // misma columna: arco corto por la derecha, del borde derecho del origen al del destino
-        const xr = Math.max(ra.r, rc.r) + 30;
-        p = cubic([ra.r, y1], [xr, y1], [xr, y2], [rc.r, y2]);
+        // misma columna: arco corto por el costado, del borde de un lado del origen al mismo lado del
+        // destino. Va por el canal abierto de la derecha si existe, si no por el de la izquierda, y
+        // si la columna esta sola (solo tiras al lado) bulge de 30 px a la derecha.
+        const ci = colOf(ra);
+        const right = cols[ci + 1] ? channelX(ci, 1, Math.max(ra.r, rc.r) + 30) : null;
+        const left = cols[ci - 1] ? channelX(ci, -1, Math.min(ra.l, rc.l) - 30) : null;
+        if (right !== null || left === null) {
+          const xr = right ?? Math.max(ra.r, rc.r) + 30;
+          p = cubic([ra.r, y1], [xr, y1], [xr, y2], [rc.r, y2]);
+        } else {
+          p = cubic([ra.l, y1], [left, y1], [left, y2], [rc.l, y2]);
+        }
       } else {
-        // columnas distintas: sale y entra por el canal; los controles quedan en el medio del gap
-        // (si las columnas son vecinas, los dos controles coinciden y la S vive entera en el canal)
+        // columnas distintas: sale y entra por el canal entre columnas abiertas vecinas; los
+        // controles quedan en el medio de cada canal (si las columnas son vecinas, coinciden y la
+        // S vive entera en el hueco)
         const x1 = exit === "r" ? ra.r : ra.l;
         const x2 = enter === "l" ? rc.l : rc.r;
-        const dir = exit === "r" ? 1 : -1;
+        const dir: 1 | -1 = exit === "r" ? 1 : -1;
         const half = Math.min(HALF_GAP, Math.abs(x2 - x1) / 2);
-        p = cubic([x1, y1], [x1 + dir * half, y1], [x2 - dir * half, y2], [x2, y2]);
+        const c1 = channelX(colOf(ra), dir, x1 + dir * half);
+        const c2 = channelX(colOf(rc), dir === 1 ? -1 : 1, x2 - dir * half);
+        p = cubic([x1, y1], [c1, y1], [c2, y2], [x2, y2]);
       }
       out.push({ ...it, ...p });
     });
@@ -235,7 +279,22 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // mientras haya envios recientes en pantalla: re-render cada 400 ms para el fade, y recompute
+  // cuando alguno cumple los 60 s (ahi desaparece)
+  useEffect(() => {
+    if (!segs.some((s) => s.fresh)) return;
+    const id = setInterval(() => {
+      const now = Date.now();
+      if (segs.some((s) => s.fresh && now - s.fresh >= FRESH_MS)) computeRef.current();
+      else setTick((t) => t + 1);
+    }, 400);
+    return () => clearInterval(id);
+  }, [segs]);
+
   if (!segs.length) return null;
+  const now = Date.now();
+  // envio reciente: opaco 45 s, despues se desvanece hasta los 60 s
+  const freshOpacity = (ts: number) => Math.max(0, Math.min(1, 1 - (now - ts - 45_000) / 15_000));
   return (
     <svg className={`arrows ${hover ? "hovering" : ""}`} width={size.w} height={size.h} style={{ width: size.w, height: size.h }}>
       <defs>
@@ -250,7 +309,11 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
         const mine = hover !== null && (s.from === hover || s.to === hover);
         const many = s.ids.length > 1;
         return (
-          <g key={s.ids[0]} className={`arrow ${s.old ? "old" : ""} ${mine ? "mine" : ""}`}>
+          <g
+            key={s.ids[0]}
+            className={`arrow ${s.old ? "old" : ""} ${mine ? "mine" : ""} ${s.fresh ? "fresh" : ""}`}
+            style={s.fresh ? { opacity: freshOpacity(s.fresh) } : undefined}
+          >
             {s.kind === "native" && <path d={s.d} className="line native-outer" />}
             <path
               d={s.d}
@@ -260,7 +323,8 @@ export function Arrows({ links, rules, boardRef, version, hover, onDelete, onDel
             />
             <g
               onClick={() => {
-                const q = s.kind === "rule" ? "Quitar la conexión?" : many ? `Quitar las ${s.ids.length} flechas de este par?` : "Quitar la flecha?";
+                if (s.fresh) return; // el envio reciente se va solo
+                const q = s.kind === "rule" ? "Quitar la conexión?" : "Quitar la flecha?";
                 if (!confirm(q)) return;
                 for (const id of s.ids) (s.kind === "rule" ? onDeleteRule : onDelete)(id);
               }}
