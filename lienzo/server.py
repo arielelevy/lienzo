@@ -12,6 +12,7 @@ import glob
 import json
 import os
 import queue
+import re
 import secrets
 import subprocess
 import sys
@@ -184,6 +185,57 @@ def unwrap_attachment(prompt: str) -> str:
             except OSError:
                 pass
     return prompt
+
+
+USELESS_TITLE_WORDS = ("adjunto", "archivo")
+USELESS_TITLE_RE = re.compile(r"^mensaje del \d{6,8}$")
+
+
+def bad_title(title) -> bool:
+    """Titulos que no dicen nada: vacio, el XML de un mensaje entre sesiones, o el ai-title que
+    Claude arma cuando el pedido llego como adjunto ('Leer archivo adjunto', 'Archivo adjunto
+    análisis', 'Mensaje del 20260905')."""
+    t = (title or "").strip().lower()
+    return not t or t.startswith("<") or any(w in t for w in USELESS_TITLE_WORDS) or bool(USELESS_TITLE_RE.match(t))
+
+
+def clean_prompt(prompt: str) -> str:
+    """Pedido tal como se muestra: mensaje entre sesiones sin el XML ('de lienzo-b7: ...'),
+    adjunto desenvuelto (contenido del .md en vez de 'Leé el archivo adjunto...')."""
+    pm = transcripts.peer_message(prompt or "")
+    if pm:
+        return f"de {pm[0]}: {pm[1]}"
+    return unwrap_attachment(prompt)
+
+
+def prompt_title(s: dict) -> str | None:
+    """Primera linea del ultimo pedido, si sirve de titulo (no el envoltorio del adjunto ni XML)."""
+    p = (s.get("last_prompt") or "").strip()
+    if not p or p.startswith(ATTACH_WRAPPER) or p.startswith("<"):
+        return None
+    first = next((l.strip() for l in p.splitlines() if l.strip()), "")
+    return short(first, 60) if first else None
+
+
+def choose_title(s: dict, transcript_title: str | None) -> None:
+    """Regla unica del titulo automatico. El puesto a mano (title_source 'user') no se toca.
+    Gana el ai-title / thread_name de la transcripcion, salvo que sea inutil (bad_title) y haya
+    un pedido del que sacar la primera linea: el caso de los pedidos que llegan como adjunto."""
+    if s.get("title_source") == "user":
+        return
+    lp = s.get("last_prompt") or ""
+    if lp.startswith(ATTACH_WRAPPER) or "<cross-session-message" in lp:
+        s["last_prompt"] = short(clean_prompt(lp), 500)   # tarjetas viejas: limpiar con el parser actual
+    pt = prompt_title(s)
+    cur, src = s.get("title"), s.get("title_source")
+    if transcript_title is None and src == "transcript" and not bad_title(cur):
+        return   # el ai-title quedo fuera de la cola leida: se conserva el que ya teniamos
+    if transcript_title and (not bad_title(transcript_title) or not pt):
+        s["title"], s["title_source"] = transcript_title, "transcript"
+    elif pt:
+        s["title"], s["title_source"] = pt, "prompt"
+    elif bad_title(cur):
+        s["title"], s["title_source"] = None, None
 
 
 def tool_detail(tool_name: str | None, tool_input) -> str:
@@ -409,19 +461,12 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         return False
     meta, ts = r["meta"], r["turns"]
     before = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error")})
-    # el titulo de la transcripcion (ai-title / thread_name de Codex) siempre gana sobre el
-    # provisorio armado con la primera linea del pedido (title_source == "prompt"); el que puso
-    # el usuario a mano (title_source == "user", PUT /sessions/<sid>/title) no lo pisa nadie
-    if s.get("title_source") == "user":
-        pass
-    elif meta.get("title"):
-        s["title"] = meta["title"]
-        s["title_source"] = "transcript"
-    elif s["agent"] == "codex" and (not s.get("title") or s.get("title_source") == "prompt"):
-        ct = transcripts.codex_title(s["session_id"])
-        if ct:
-            s["title"] = ct
-            s["title_source"] = "transcript"
+    # titulo de la transcripcion: ai-title de Claude, o thread_name del indice de Codex (solo se
+    # busca si el que hay no sirve); la regla de que gana esta en choose_title, despues del turno
+    tt = meta.get("title")
+    if not tt and s["agent"] == "codex" and s.get("title_source") != "user" and (
+            bad_title(s.get("title")) or s.get("title_source") != "transcript"):
+        tt = transcripts.codex_title(s["session_id"])
     if meta.get("branch"):
         s["branch"] = meta["branch"]
     if meta.get("cwd") and not s.get("cwd"):
@@ -438,7 +483,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
                 s["last_reply"] = f"usando {tools[-1]['name']}"
         else:
             if t.get("prompt") and not t["prompt"].startswith("(turno anterior"):
-                s["last_prompt"] = short(t["prompt"], 500)
+                s["last_prompt"] = short(clean_prompt(t["prompt"]), 500)
             if t.get("final"):
                 s["last_reply"] = short(t["final"], 600)
             elif not t.get("ended") and tools:
@@ -449,6 +494,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         s["last_error"] = short(t.get("error") or "", 300) or None
         if s["last_error"] and not t.get("final"):
             s["last_reply"] = s["last_error"]
+    choose_title(s, tt)
     after = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error")})
     return before != after
 
@@ -464,11 +510,27 @@ def set_title(s: dict, title: str) -> None:
     s["title"] = None
     s["title_source"] = None
     refresh_from_transcript(s)
-    if not s.get("title"):
-        first = next((l.strip() for l in (s.get("last_prompt") or "").splitlines() if l.strip()), "")
-        if first:
-            s["title"] = short(first, 60)
-            s["title_source"] = "prompt"
+    if s.get("title") is None:      # sin transcripcion: solo queda el pedido
+        choose_title(s, None)
+
+
+def recalc_title(s: dict) -> bool:
+    """Al arrancar: titulo y pedido con la regla actual (tarjetas viejas con el XML de un mensaje
+    entre sesiones, o con el ai-title 'Leer archivo adjunto'). Devuelve si cambio el titulo."""
+    if s.get("title_source") == "user":
+        return False
+    before = s.get("title")
+    tt = None
+    path = s.get("transcript_path")
+    if path and os.path.exists(path):
+        try:
+            tt = transcripts.turns(s["agent"], path, 1)["meta"].get("title")
+        except Exception as e:  # noqa: BLE001
+            log(f"transcripcion {path}: {e}")
+    if not tt and s.get("agent") == "codex":
+        tt = transcripts.codex_title(s["session_id"])
+    choose_title(s, tt)
+    return s.get("title") != before
 
 
 # --- eventos de hooks -------------------------------------------------------------
@@ -527,13 +589,12 @@ def apply_event(ev: dict) -> None:
         elif name == "UserPromptSubmit":
             set_state(s, "corriendo")
             if not transcripts.is_system_prompt(ev.get("prompt", "")):
-                prompt = unwrap_attachment(ev.get("prompt", ""))
-                s["last_prompt"] = short(prompt, 500)
-                # sin ai-title todavia: la tarjeta se titula con la primera linea del pedido; el
-                # ai-title de la transcripcion lo pisa despues (refresh_from_transcript)
-                first = next((l.strip() for l in (prompt or "").splitlines() if l.strip()), "")
-                if first and (not s.get("title") or s.get("title_source") == "prompt"):
-                    s["title"] = short(first, 60)
+                s["last_prompt"] = short(clean_prompt(ev.get("prompt", "")), 500)
+                # sin ai-title todavia (o con uno inutil): la tarjeta se titula con la primera linea
+                # del pedido; un ai-title que sirva lo pisa despues (refresh_from_transcript)
+                first = prompt_title(s)
+                if first and s.get("title_source") != "user" and (bad_title(s.get("title")) or s.get("title_source") == "prompt"):
+                    s["title"] = first
                     s["title_source"] = "prompt"
             s["pending_id"] = None
             s["typing"] = False   # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
@@ -1124,8 +1185,26 @@ class Handler(BaseHTTPRequestHandler):
                             at = at.astimezone()
                     except ValueError:
                         return self._json(400, {"error": "at debe ser una fecha ISO"})
+                text = str(d.get("text") or "")
+
+                def same_rule(r: dict) -> bool:
+                    if not r.get("enabled") or r.get("kind") != kind or r.get("to") != d["to"]:
+                        return False
+                    if (r.get("from") or None) != (d.get("from") or None) or (r.get("text") or "").strip() != text.strip():
+                        return False
+                    if kind != "at":
+                        return True
+                    try:
+                        return dt.datetime.fromisoformat(str(r.get("at"))) == at
+                    except ValueError:
+                        return False
+
+                with lock:
+                    dup = next((r for r in rules.items if same_rule(r)), None)
+                if dup:
+                    return self._json(409, {"error": "ya existe esa conexión", "rule_id": dup["id"]})
                 rule = {"id": secrets.token_hex(6), "kind": kind, "from": d.get("from") or None, "to": d["to"],
-                        "text": str(d.get("text") or ""), "at": at.isoformat(timespec="seconds") if at else None,
+                        "text": text, "at": at.isoformat(timespec="seconds") if at else None,
                         "repeat": bool(d.get("repeat")), "max_fires": max(1, min(int(d.get("max_fires") or 1), 50)),
                         "fired": 0, "enabled": True, "created": now()}
                 rules.add(rule, cap=500)
@@ -1257,10 +1336,10 @@ class Handler(BaseHTTPRequestHandler):
 
 # --- arranque ---------------------------------------------------------------------------
 
-def load_sessions() -> int:
-    """Carga sessions/*.json. Devuelve cuantas purgo: sin proceso vivo y sin eventos (o
-    arranque) hace mas de STALE_SESSION_H horas; las demas sin proceso quedan 'muerta' y se
-    van solas a los 60 s."""
+def load_sessions() -> tuple[int, int]:
+    """Carga sessions/*.json. Devuelve (purgadas, retituladas): purga las sin proceso vivo y sin
+    eventos (o arranque) hace mas de STALE_SESSION_H horas (las demas sin proceso quedan 'muerta'
+    y se van solas a los 60 s), y recalcula el titulo de las que quedan con la regla actual."""
     limit = dt.datetime.now().astimezone() - dt.timedelta(hours=STALE_SESSION_H)
     purged = 0
     for p in glob.glob(os.path.join(SESSIONS, "*.json")):
@@ -1287,7 +1366,12 @@ def load_sessions() -> int:
             sessions[s["session_id"]] = s
         except (OSError, ValueError, KeyError):
             continue
-    return purged
+    retitled = 0
+    for s in list(sessions.values()):
+        if recalc_title(s):
+            retitled += 1
+            save_session(s)
+    return purged, retitled
 
 
 def clean_attachments() -> None:
@@ -1304,7 +1388,6 @@ def tunnel_loop(port: int) -> None:
     """Camino A (§7.6.2): cloudflared publica 127.0.0.1:<port> en una URL https de trycloudflare.
     Solo se levanta si hay login configurado; sin auth.json no se expone nada."""
     global remote_url
-    import re
     if not os.path.exists(CLOUDFLARED):
         log(f"--remote: no encuentro {CLOUDFLARED} (winget install Cloudflare.cloudflared)")
         return
@@ -1344,7 +1427,7 @@ def main() -> int:
     a = ap.parse_args()
     for d in (EVENTS, PENDING, ANSWERS, ADJUNTOS, SESSIONS):
         os.makedirs(d, exist_ok=True)
-    purged = load_sessions()
+    purged, retitled = load_sessions()
     links.load(lambda l: l.get("from") in sessions and l.get("to") in sessions)
     rules.load(lambda r: r.get("to") in sessions and (not r.get("from") or r["from"] in sessions))
     purge_stale_at_rules()
@@ -1365,7 +1448,8 @@ def main() -> int:
         n_rules = sum(1 for r in rules.items if r.get("enabled"))
         n_links = len(links.items)
     log(f"lienzo-server en http://127.0.0.1:{a.port}  sesiones={len(sessions)} (vivas={n_alive}, purgadas={purged}"
-        f" de mas de {STALE_SESSION_H} h)  reglas_activas={n_rules}  links={n_links}  login={'si' if auth.configured() else 'no'}")
+        f" de mas de {STALE_SESSION_H} h, retituladas={retitled})  reglas_activas={n_rules}  links={n_links}"
+        f"  login={'si' if auth.configured() else 'no'}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

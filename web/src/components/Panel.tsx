@@ -1,10 +1,47 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { ago, api } from "../api";
 import { hhmm } from "../nl";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
-import type { ConnectionsResponse, DigestResponse, Session, Turn, TurnsResponse } from "../types";
+import type { ConnectionsResponse, DigestResponse, OtherSession, Session, Turn, TurnsResponse } from "../types";
+
+/** La otra punta de un vinculo o regla, en texto: el server la manda como objeto
+ *  {session_id, name}; uno anterior la mandaba como string. Nunca renderizar `other` crudo. */
+export function otherName(x: { other?: OtherSession | null }): string {
+  const o = x.other;
+  if (o == null) return "?";
+  if (typeof o === "string") return o;
+  if (typeof o === "object" && typeof o.name === "string") return o.name;
+  return "?";
+}
+
+/** Limite de error chico: un dato inesperado en una pestana muestra un aviso en vez de tirar
+ *  la app entera. `resetKey` cambia con la pestana o la sesion y vuelve a intentar. */
+class ErrorBoundary extends Component<{ resetKey: string; children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(e: unknown) {
+    return { error: (e as Error)?.message || String(e) };
+  }
+  componentDidCatch(e: unknown, info: ErrorInfo) {
+    console.error("panel:", e, info.componentStack);
+  }
+  componentDidUpdate(prev: { resetKey: string }) {
+    if (prev.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: null });
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="empty" role="alert">
+          no pude mostrar esto
+          <div className="small dim" style={{ marginTop: 4, wordBreak: "break-all" }}>{this.state.error}</div>
+          <button style={{ marginTop: 8 }} onClick={() => this.setState({ error: null })}>reintentar</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface Props {
   session: Session;
@@ -38,7 +75,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
           return (
             <div key={l.id} className={`conn ${inbound ? "in" : "out"}`} title={l.text}>
               <div className="hd">
-                <span className="who">{dir} {l.other}</span>
+                <span className="who">{dir} {otherName(l)}</span>
                 <span className="dim small">hace {ago(l.ts)}{l.rule_id ? " · por regla" : ""}</span>
               </div>
               <div className="txt">{cut(l.text)}</div>
@@ -52,11 +89,12 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
       {rules.length ? (
         rules.map((r) => {
           const outbound = r.from === sid;
+          const other = otherName(r);
           const label = r.kind === "at"
-            ? `⏰ "${cut(r.text, 60)}" ${outbound ? "→ " + r.other : r.from && r.from !== sid ? "desde " + r.other : "a esta sesión"}`
+            ? `⏰ "${cut(r.text, 60)}" ${outbound ? "→ " + other : r.from && r.from !== sid ? "desde " + other : "a esta sesión"}`
             : outbound
-              ? `⏹ al terminar → ${r.other}`
-              : `⏹ recibe de ${r.other} al terminar`;
+              ? `⏹ al terminar → ${other}`
+              : `⏹ recibe de ${other} al terminar`;
           return (
             <div key={r.id} className={`conn rule ${r.enabled ? "" : "done"}`}>
               <div className="hd">
@@ -172,6 +210,7 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
         </div>
       </div>
       <div className="body" ref={bodyRef}>
+        <ErrorBoundary resetKey={`${s.session_id}:${tab}:${transcriptTick}`}>
         {tab === "screen" ? (
           <>
             <div className="row" style={{ marginBottom: 8 }}>
@@ -185,7 +224,7 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
           <Connections sid={s.session_id} conn={conn} />
         ) : tab === "digest" ? (
           digest && digest.turns.length ? (
-            digest.turns.map((t) => <Digest key={t.id} turn={t} />)
+            digest.turns.map((t) => <Digest key={t.id} turn={t} toast={toast} />)
           ) : (
             <div className="empty">{note || "sin turnos"}</div>
           )
@@ -195,6 +234,7 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
             {turns.length ? turns.map((t) => <TurnView key={t.id} turn={t} />) : <div className="empty">{note || "sin turnos"}</div>}
           </>
         )}
+        </ErrorBoundary>
       </div>
       <SendBox session={s} toast={toast} />
     </div>
