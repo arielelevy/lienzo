@@ -52,6 +52,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .arrows .arrow { transition: opacity .15s; }
 .col { flex: 1 1 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-height: 120px; padding: 8px; }
 .col.collapsed { flex: 0 0 34px; padding: 0; display: flex; align-items: flex-start; justify-content: center; }
+/* columna ancha (pocas abiertas): las tarjetas en dos subcolumnas */
+.col.wide .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.col.wide .cards .card { margin-bottom: 0; }
 .col.collapsed .vlabel { cursor: pointer; border-radius: 8px; }
 .col.collapsed .vlabel:hover { background: var(--card); color: var(--fg); }
 .col.collapsed .vlabel:focus-visible { outline: 2px solid var(--acc); }
@@ -241,6 +244,8 @@ header .search .chip:not(.on) { text-decoration: line-through; }
   .col.show { display: block; flex: 1 1 auto; padding: 0; background: transparent; border: 0; min-height: 0; }
   .col.show h2 { display: none; }
   .col.show .vlabel { display: none; }
+  .col.wide .cards { display: block; }
+  .col.wide .cards .card { margin-bottom: 10px; }
   .col.show .empty { padding: 24px 8px; text-align: center; }
   .card { margin-bottom: 10px; }
   .panel { width: 100vw; }

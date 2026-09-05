@@ -123,6 +123,21 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   };
   const isCollapsed = (k: State, n: number) => collapsed[k] ?? (k === "termino" || n === 0);
 
+  // aprovechar el ancho: con una sola columna abierta sus tarjetas van en dos subcolumnas; con dos
+  // abiertas, la que tiene mas tarjetas (dos en ejecucion y una en "te necesita", por ejemplo)
+  const wideCols = useMemo(() => {
+    const open = STATES.map(([k]) => k).filter((k) => !isCollapsed(k, byState[k].length));
+    const out = new Set<State>();
+    if (open.length === 1) out.add(open[0]);
+    else if (open.length === 2) {
+      const [a, b] = open;
+      const na = byState[a].length, nb = byState[b].length;
+      if (na >= 2 || nb >= 2) out.add(na >= nb ? a : b);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collapsed, byState]);
+
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
   const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, collapsed, query, agents]);
@@ -207,8 +222,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         {STATES.map(([k, label]) => {
           const list = byState[k];
           const col = isCollapsed(k, list.length);
+          const wide = wideCols.has(k);
           return (
-            <div key={k} className={`col ${k} ${col ? "collapsed" : ""} ${filter === k ? "show" : ""}`}>
+            <div key={k} className={`col ${k} ${col ? "collapsed" : ""} ${wide ? "wide" : ""} ${filter === k ? "show" : ""}`} style={wide ? { flexGrow: 2 } : undefined}>
               {col ? (
                 <>
                   <div
@@ -231,6 +247,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                     <span className="n">{list.length}</span>
                   </h2>
                   {list.length === 0 && <div className="empty">nada acá</div>}
+                  <div className="cards">
                   {list.map((s) => (
                     <div key={s.session_id} className={drag?.over === s.session_id ? "droptarget" : ""}>
                       <Card
@@ -262,6 +279,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                       />
                     </div>
                   ))}
+                  </div>
                 </>
               )}
             </div>
