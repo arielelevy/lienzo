@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type AuthInfo } from "./api";
-import { Board } from "./components/Board";
+import { api, detail, type AuthInfo } from "./api";
+import { Board, type Agent } from "./components/Board";
 import { Enroll } from "./components/Enroll";
 import { Forward } from "./components/Forward";
 import { Login } from "./components/Login";
@@ -89,6 +89,114 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
 
+  // filtro visual del header: texto + agentes. "/" enfoca la caja, Esc la limpia.
+  const [query, setQuery] = useState("");
+  const [agents, setAgents] = useState<Record<Agent, boolean>>({ claude: true, codex: true });
+  const searchRef = useRef<HTMLInputElement>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      } else if (e.key === "?" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setShowHelp((v) => !v);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  // notificaciones del navegador: pedidos de permiso nuevos (pending) y tarjetas que pasan a
+  // "te necesita" por permiso. Se detectan por transicion contra el estado anterior; el primer
+  // snapshot solo inicializa, para no disparar una rafaga al abrir la pestana.
+  const [notify, setNotify] = useState(() => {
+    try {
+      return localStorage.getItem("lienzo.notify") === "1" && typeof Notification !== "undefined" && Notification.permission === "granted";
+    } catch {
+      return false;
+    }
+  });
+  const toggleNotify = useCallback(async () => {
+    if (typeof Notification === "undefined") {
+      toast("Este navegador no tiene notificaciones", true);
+      return;
+    }
+    if (notify) {
+      setNotify(false);
+      try {
+        localStorage.setItem("lienzo.notify", "0");
+      } catch {
+        /* sin storage, no importa */
+      }
+      return;
+    }
+    const perm = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+    if (perm !== "granted") {
+      toast("El navegador no dio permiso para notificar", true);
+      return;
+    }
+    setNotify(true);
+    try {
+      localStorage.setItem("lienzo.notify", "1");
+    } catch {
+      /* sin storage, no importa */
+    }
+    toast("Notificaciones activadas");
+  }, [notify, toast]);
+  const notifyRef = useRef(notify);
+  notifyRef.current = notify;
+  const seenPendingRef = useRef<Set<string> | null>(null);
+  const permNeedRef = useRef<Set<string> | null>(null);
+  // recien despues del primer render con datos se empieza a comparar: lo que ya estaba al abrir
+  // la pestana no es novedad
+  const armedRef = useRef(false);
+  const hasData = Object.keys(sessions).length > 0 || Object.keys(pending).length > 0;
+  const fire = useCallback((sid: string, title: string, body: string) => {
+    if (!notifyRef.current || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    try {
+      const n = new Notification(title, { body, tag: `lienzo-${sid}` });
+      n.onclick = () => {
+        window.focus();
+        setSelected(sid);
+        n.close();
+      };
+    } catch {
+      /* sin notificaciones (contexto inseguro, etc.) */
+    }
+  }, []);
+  useEffect(() => {
+    const ids = new Set(Object.keys(pending));
+    const prev = seenPendingRef.current;
+    seenPendingRef.current = ids;
+    if (!prev || !armedRef.current) return;
+    for (const p of Object.values(pending)) {
+      if (prev.has(p.request_id)) continue;
+      const s = sessions[p.session_id];
+      const who = s?.repo ?? p.agent;
+      fire(p.session_id, `${who} pide permiso: ${p.tool_name}`, detail(p.tool_input).slice(0, 200));
+    }
+  }, [pending, sessions, fire]);
+  useEffect(() => {
+    const now = new Set<string>();
+    for (const s of Object.values(sessions)) if (s.state === "te_necesita" && s.needs?.kind === "permission") now.add(s.session_id);
+    const prev = permNeedRef.current;
+    permNeedRef.current = now;
+    const armed = armedRef.current;
+    if (hasData) armedRef.current = true; // este render ya tiene datos: el proximo compara
+    if (!prev || !armed) return;
+    for (const sid of now) {
+      if (prev.has(sid)) continue;
+      const s = sessions[sid];
+      if (!s || s.pending_id) continue; // el pending ya avisa con mas detalle
+      fire(sid, `${s.repo} pide permiso: ${s.needs?.tool ?? ""}`.trim(), (s.needs?.detail ?? "").slice(0, 200));
+    }
+  }, [sessions, hasData, fire]);
+
   const lastMsgRef = useRef(0);
   const [polling, setPolling] = useState(false);
   useEffect(() => {
@@ -157,16 +265,17 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     };
   }, [refreshAuth]);
 
-  // Escape cierra lo que este abierto: dialogo de conexion, o panel
+  // Escape cierra lo que este abierto: ayuda, dialogo de conexion, o panel
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (connect) setConnect(null);
+      if (showHelp) setShowHelp(false);
+      else if (connect) setConnect(null);
       else if (selectedRef.current) setSelected(null);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [connect]);
+  }, [connect, showHelp]);
 
   // click fuera del panel (y fuera de una tarjeta) lo cierra
   useEffect(() => {
@@ -238,6 +347,34 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           <span className={`dot ${connected ? "on" : ""}`} /> {!connected ? "reconectando" : polling ? "sondeo 4 s" : "en vivo"}
         </span>
         <span className="sp" />
+        <div className="search" role="search">
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            placeholder="buscar  /"
+            aria-label="filtrar tarjetas por repo, título o último pedido"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                setQuery("");
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+          />
+          {(["claude", "codex"] as Agent[]).map((a) => (
+            <button
+              key={a}
+              className={`chip ${a} ${agents[a] ? "on" : ""}`}
+              aria-pressed={agents[a]}
+              title={agents[a] ? `ocultar sesiones de ${a}` : `mostrar sesiones de ${a}`}
+              onClick={() => setAgents((prev) => ({ ...prev, [a]: !prev[a] }))}
+            >
+              {a}
+            </button>
+          ))}
+        </div>
         {authInfo.remote_url && authInfo.local && (
           <button className="url" title="QR para abrir en el celular" onClick={() => setShowQr(true)}>
             📱 <span className="txt">{authInfo.remote_url.replace("https://", "")}</span>
@@ -246,6 +383,9 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <label className="dim small think" title="mostrar el pensamiento del agente en la conversación">
           <input type="checkbox" checked={showThinking} onChange={(e) => setShowThinking(e.target.checked)} /> 💭<span className="txt"> pensamiento</span>
         </label>
+        <button onClick={toggleNotify} className={notify ? "" : "off"} title={notify ? "dejar de avisar con notificaciones del navegador" : "avisar con una notificación del navegador cuando una sesión pide permiso"} aria-pressed={notify}>
+          🔔<span className="txt"> Avisos</span>
+        </button>
         <button onClick={toggleArrows} className={showArrows ? "" : "off"} title={showArrows ? "ocultar las flechas entre tarjetas" : "mostrar las flechas entre tarjetas"} aria-pressed={showArrows}>
           ↪<span className="txt"> Flechas</span>
         </button>
@@ -259,7 +399,35 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         {authInfo.configured && !authInfo.local && (
           <button onClick={() => api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true))} title="cerrar sesión en este dispositivo">Salir</button>
         )}
+        <button onClick={() => setShowHelp(true)} title="atajos de teclado" aria-label="atajos de teclado">?</button>
       </header>
+      {showHelp && (
+        <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setShowHelp(false)}>
+          <div className="gate-box help" role="dialog" aria-label="atajos">
+            <h1>Atajos</h1>
+            <dl>
+              <dt><kbd>Esc</kbd></dt>
+              <dd>cierra el panel, el diálogo de conectar o esta ayuda; en la búsqueda, la limpia</dd>
+              <dt><kbd>Tab</kbd></dt>
+              <dd>en la caja de envío, acepta la sugerencia gris leída de la terminal</dd>
+              <dt><kbd>/</kbd></dt>
+              <dd>enfoca la búsqueda (repo, título, último pedido)</dd>
+              <dt><kbd>?</kbd></dt>
+              <dd>muestra u oculta esta ayuda</dd>
+              <dt><kbd>Enter</kbd></dt>
+              <dd>sobre una tarjeta enfocada, abre su panel</dd>
+              <dt>arrastrar</dt>
+              <dd>una tarjeta sobre otra abre el diálogo de conectar con ese destino</dd>
+              <dt>click</dt>
+              <dd>en el título de una columna la colapsa a una tira; en la tira, la expande</dd>
+            </dl>
+            <div className="row">
+              <span className="sp" />
+              <button onClick={() => setShowHelp(false)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
       <Board
@@ -277,6 +445,8 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onDeleteRule={deleteRule}
         onConnect={connectCards}
         showArrows={showArrows}
+        query={query}
+        agents={agents}
       />
       {connect && sessions[connect.from] && (
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setConnect(null)}>

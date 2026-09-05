@@ -40,6 +40,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 header button.off { opacity: .55; text-decoration: line-through; }
 .col { flex: 1 1 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-height: 120px; padding: 8px; }
 .col.collapsed { flex: 0 0 34px; padding: 0; display: flex; align-items: flex-start; justify-content: center; }
+.col.collapsed .vlabel { cursor: pointer; border-radius: 8px; }
+.col.collapsed .vlabel:hover { background: var(--card); color: var(--fg); }
+.col.collapsed .vlabel:focus-visible { outline: 2px solid var(--acc); }
+.col h2 { cursor: pointer; }
+.col h2:hover .n { background: var(--acc); color: #fff; }
 .col.collapsed .empty { display: none; }
 .col.collapsed.show .empty { display: block; }
 .col .vlabel { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); padding: 10px 0; display: flex; gap: 8px; align-items: center; }
@@ -173,6 +178,20 @@ header button.off { opacity: .55; text-decoration: line-through; }
 @media (max-width: 700px) { .gate-box .two { grid-template-columns: 1fr; } }
 a.btn { display: block; text-align: center; text-decoration: none; background: var(--acc); color: #fff; border-radius: 6px; padding: 10px; font-weight: 600; }
 header button.url { font-size: 12px; color: var(--acc); border-color: var(--acc); }
+/* busqueda + chips de agente en el header: filtran las tarjetas visibles, nada mas */
+header .search { display: flex; align-items: center; gap: 4px; }
+header .search input { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px; width: 200px; }
+header .search input:focus { outline: none; border-color: var(--acc); }
+header .search .chip { padding: 3px 9px; font-size: 11.5px; font-weight: 600; border-radius: 10px; opacity: .45; border-color: transparent; }
+header .search .chip.on { opacity: 1; color: #fff; }
+header .search .chip.claude.on { background: var(--claude); }
+header .search .chip.codex.on { background: var(--codex); }
+header .search .chip:not(.on) { text-decoration: line-through; }
+/* overlay de atajos */
+.gate-box.help dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin: 0; font-size: 13px; }
+.gate-box.help dt { color: var(--dim); text-align: right; white-space: nowrap; }
+.gate-box.help dd { margin: 0; }
+.gate-box.help kbd { font: inherit; font-size: 12px; background: var(--card); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 6px; color: var(--fg); }
 
 .toasts { position: fixed; bottom: 16px; left: 16px; z-index: 20; display: flex; flex-direction: column; gap: 6px; }
 .toast { background: #222838; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; max-width: 60vw; }
@@ -199,6 +218,8 @@ header button.url { font-size: 12px; color: var(--acc); border-color: var(--acc)
   header { gap: 8px; padding: 8px 10px; }
   header h1 { font-size: 15px; }
   header .txt { display: none; }
+  header .search input { width: 110px; }
+  header .search .chip { display: none; }
   header button { padding: 6px 9px; }
   .filters { padding: 8px 10px 0; gap: 6px; }
   .filters button { flex: 1 1 auto; padding: 8px 6px; font-size: 13px; }
