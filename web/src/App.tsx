@@ -482,7 +482,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           </div>
         </div>
       )}
-      {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} onClose={() => setShowQr(false)} />}
+      {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
       <Board
         sessions={sessions}
@@ -498,6 +498,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onDeleteLink={deleteLink}
         onDeleteRule={deleteRule}
         onConnect={connectCards}
+        toast={toast}
         showArrows={showArrows}
         query={query}
         agents={agents}

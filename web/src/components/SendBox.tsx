@@ -5,9 +5,8 @@ import "../card.css";
 
 const QUICK = ["Continuá", "sí", "no", "dale"];
 
-/** `typing` lo agrega el backend en paralelo (alguien esta escribiendo en esa terminal); todavia
- *  no esta en Session, se lee como campo opcional. */
-const isTyping = (s: Session): boolean => !!(s as Session & { typing?: boolean }).typing;
+/** alguien esta escribiendo en esa terminal: lo que se mande se mezcla con lo suyo */
+const isTyping = (s: Session): boolean => !!s.typing;
 
 interface Props {
   session: Session;

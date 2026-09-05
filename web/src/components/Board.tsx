@@ -29,6 +29,8 @@ interface Props {
   /** filtro del header: texto libre (repo, titulo, ultimo pedido) y agentes visibles */
   query: string;
   agents: Record<Session["agent"], boolean>;
+  /** toast global para las acciones de la tarjeta (copiar, botones rapidos, renombrar) */
+  toast?: (msg: string, err?: boolean) => void;
 }
 
 export type Agent = Session["agent"];
@@ -57,7 +59,7 @@ interface Drag {
   over: string | null;
 }
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   // tarjeta bajo el mouse: Arrows resalta sus flechas y atenua las demas
@@ -208,7 +210,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         }}
         onMouseLeave={() => setHover(null)}
       >
-        {showArrows && <Arrows links={links} rules={rules} boardRef={boardRef} version={arrowsVersion} hover={hover} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} />}
+        {showArrows && <Arrows links={links} rules={rules} sessions={sessions} boardRef={boardRef} version={arrowsVersion} hover={hover} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} toast={toast} />}
         {drag && (
           <>
             <svg className="arrows draglink">
@@ -248,7 +250,12 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   </h2>
                   {list.length === 0 && <div className="empty">nada acá</div>}
                   <div className="cards">
-                  {list.map((s) => (
+                  {(wide ? [0, 1] : [null]).map((half) => {
+                    // columna ancha: dos subcolumnas independientes (no una grilla por filas), asi
+                    // cada tarjeta se apoya en la de arriba con el mismo aire aunque la de al lado
+                    // sea mas alta; el orden se reparte alternado para conservar el de la lista
+                    const items = half === null ? list : list.filter((_, j) => j % 2 === half);
+                    const nodes = items.map((s) => (
                     <div key={s.session_id} className={drag?.over === s.session_id ? "droptarget" : ""}>
                       <Card
                         session={s}
@@ -257,6 +264,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         links={links.filter((l) => l.to === s.session_id)}
                         sessions={sessions}
                         onDeleteRule={onDeleteRule}
+                        toast={toast}
                         selected={selected === s.session_id}
                         onSelect={() => {
                           // el click que cierra un arrastre no abre el panel
@@ -278,7 +286,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         }
                       />
                     </div>
-                  ))}
+                    ));
+                    return half === null ? nodes : <div key={half} className="subcol">{nodes}</div>;
+                  })}
                   </div>
                 </>
               )}

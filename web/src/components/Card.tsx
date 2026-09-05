@@ -136,6 +136,27 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   // ociosa: termino, o espera input en la terminal; con consola y sin permiso pendiente
   const idle = canWrite && !s.pending_id && !p && (s.state === "termino" || (s.state === "te_necesita" && s.needs?.kind === "idle"));
 
+  // limite de uso con hora de vuelta (Codex): un click deja programado "Continuar" un minuto
+  // despues; si ya hay una regla a esa hora (manual o automatica) el chip de abajo la muestra
+  const limitAt = s.limit_until ? new Date(new Date(s.limit_until).getTime() + 60_000) : null;
+  // 30 s de margen: si la regla ya disparo y el navegador va unos segundos adelantado, no se ofrece
+  // programar otra; y si el server ya la creo solo, tampoco
+  const limitPending = !!limitAt && limitAt.getTime() > Date.now() + 30_000 && s.continue_scheduled_for !== s.limit_until;
+  const hasContinue =
+    !!limitAt && rules.some((r) => r.kind === "at" && r.to === s.session_id && !!r.at && Math.abs(new Date(r.at).getTime() - limitAt.getTime()) < 5 * 60_000);
+  const scheduleContinue = async () => {
+    if (!limitAt) return;
+    setBusy(true);
+    try {
+      await api.post("/rules", { kind: "at", from: null, to: s.session_id, text: "Continuar", at: limitAt.toISOString() });
+      toast(`A las ${hhmm(limitAt)} se le escribe "Continuar"`);
+    } catch (e) {
+      toast(`No se pudo programar: ${(e as Error).message}`, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const quickSend = async (text: string) => {
     setBusy(true);
     try {
@@ -316,6 +337,18 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               📋
             </button>
           )}
+        </div>
+      )}
+      {limitPending && !hasContinue && canWrite && limitAt && (
+        <div className="limitrow" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            disabled={busy}
+            title={`a las ${hhmm(limitAt)} se escribe "Continuar" en su terminal (un minuto después de que vuelva el cupo)`}
+            onClick={scheduleContinue}
+          >
+            ⏰ Continuar a las {hhmm(limitAt)}
+          </button>
         </div>
       )}
       {s.suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {s.suggestion}</div>}

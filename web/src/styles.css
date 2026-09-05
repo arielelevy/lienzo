@@ -53,10 +53,24 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .arrows.hovering .arrow:not(.mine) { opacity: .12; }
 .arrows.hovering .arrow.mine .line { opacity: 1; }
 .arrows .arrow { transition: opacity .15s; }
+/* editor de una conexion: doble click en el circulo de la flecha */
+.arrow-edit { position: absolute; z-index: 6; transform: translate(-50%, 14px); background: var(--panel); border: 1px solid var(--acc); border-radius: 10px; padding: 10px 12px; width: 270px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+.arrow-edit .hd { color: var(--acc); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+.arrow-edit label { display: flex; flex-direction: column; gap: 3px; color: var(--dim); font-size: 11.5px; }
+.arrow-edit label.row { flex-direction: row; align-items: center; gap: 6px; }
+.arrow-edit input, .arrow-edit textarea { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; font-size: 12.5px; }
+.arrow-edit textarea { resize: vertical; }
+.arrow-edit input[type=number] { width: 58px; }
+.arrow-edit .btns { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
+.arrow-edit .btns button { font-size: 12px; padding: 3px 10px; border-radius: 12px; }
+.arrow-edit .btns .ok { color: var(--acc); border-color: var(--acc); }
 .col { flex: 1 1 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-height: 120px; padding: 8px; }
 .col.collapsed { flex: 0 0 34px; padding: 0; display: flex; align-items: flex-start; justify-content: center; }
 /* columna ancha (pocas abiertas): las tarjetas en dos subcolumnas */
-.col.wide .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
+/* dos subcolumnas independientes (no una grilla por filas): el aire vertical entre tarjetas es
+   siempre el mismo que en una columna simple (8 px), aunque la de al lado sea mas alta */
+.col.wide .cards { display: flex; gap: 24px; align-items: flex-start; } /* canal para el glifo de las flechas */
+.col.wide .cards .subcol { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .col.wide .cards .card { margin-bottom: 0; }
 .col.collapsed .vlabel { cursor: pointer; border-radius: 8px; }
 .col.collapsed .vlabel:hover { background: var(--card); color: var(--fg); }
@@ -78,7 +92,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; position: relative; }
 .card:hover { border-color: var(--acc); }
 .card.sel { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
-.card .top { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--dim); margin-bottom: 6px; padding-right: 22px; }
+.card .top { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--dim); margin-bottom: 6px; padding-right: 22px; min-width: 0; }
+/* en columnas angostas (tres abiertas) el repo y la rama ceden con elipsis; el badge y el
+   "hace X" de la derecha no se encogen, asi la fecha siempre queda visible */
+.card .top > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .top .badge, .card .top .right { flex: 0 0 auto; overflow: visible; }
 .badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #fff; }
 .badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); }
 .card .repo { font-weight: 600; color: var(--fg); }

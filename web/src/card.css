@@ -20,6 +20,10 @@
 .card .quickact { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
 .card .quickact button { font-size: 12px; padding: 3px 9px; border-radius: 12px; }
 
+/* limite de uso con hora: programar "Continuar" un minuto despues */
+.card .limitrow { margin-top: 6px; }
+.card .limitrow button { font-size: 12px; padding: 3px 9px; border-radius: 12px; color: var(--acc); border-color: var(--acc); }
+
 /* renombrar: input inline en el lugar del titulo */
 .card .title { cursor: text; }
 .card .title input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--acc); border-radius: 4px; padding: 2px 6px; font: inherit; font-weight: 600; }
