@@ -64,7 +64,11 @@ export function Login({ onDone, mode, initialPassphrase = "" }: Props) {
         <button className="primary" disabled={busy || (needPass && !passphrase) || code.replace(/\s/g, "").length !== 6}>
           Entrar
         </button>
-        <div className="small dim">La sesión dura 7 días en este dispositivo. Cinco intentos fallidos bloquean el login 15 minutos.</div>
+        <div className="small dim">
+          {needPass
+            ? "Passphrase de seis palabras más el código de Authenticator. Cinco intentos fallidos bloquean el login 15 minutos."
+            : "Solo el código de 6 dígitos de Authenticator. Cinco intentos fallidos bloquean el login 15 minutos."}
+        </div>
       </form>
     </div>
   );
