@@ -38,6 +38,12 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 /* el canal de 56 px por donde pasan las flechas existe solo entre columnas abiertas; las tiras
    colapsadas van pegadas entre si y a lo que tengan al lado (8 px) */
 .board { display: flex; gap: 0; padding: 12px 16px; align-items: stretch; min-height: 60vh; position: relative; }
+/* carril de las flechas: lo prende Arrows.tsx con data-lanes cuando alguna flecha lo usa. Sin
+   flechas, con las flechas apagadas o abajo de 900 px el atributo no esta y la columna se ve
+   como siempre: el aire extra solo existe cuando hay algo que pase por ahi */
+.board[data-lanes] .col .cards { margin-top: var(--lane-h, 28px); padding-bottom: var(--lane-h, 28px); }
+.board[data-lanes] .col:not(.wide) .cards .card { margin-bottom: var(--lane-h, 28px); }
+.board[data-lanes] .col.wide .cards > div { margin-bottom: var(--lane-h, 28px); }
 .col + .col { margin-left: 28px; }
 .col.collapsed + .col, .col + .col.collapsed { margin-left: 8px; }
 .arrows { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; overflow: visible; }
@@ -57,7 +63,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .arrows .arrow { transition: opacity .15s; }
 /* editor de una conexion: doble click en el circulo de la flecha */
 .arrow-edit { position: absolute; z-index: 6; transform: translate(-50%, 14px); background: var(--panel); border: 1px solid var(--acc); border-radius: 10px; padding: 10px 12px; width: 270px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
-.arrow-edit .hd { color: var(--acc); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+.arrow-edit .hd { color: var(--acc); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .arrow-edit label { display: flex; flex-direction: column; gap: 3px; color: var(--dim); font-size: 11.5px; }
 .arrow-edit label.row { flex-direction: row; align-items: center; gap: 6px; }
 .arrow-edit input, .arrow-edit textarea { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; font-size: 12.5px; }
@@ -70,10 +77,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .arrow-edit .btns { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
 .arrow-edit .btns button { font-size: 12px; padding: 3px 10px; border-radius: 12px; }
 .arrow-edit .btns .ok { color: var(--acc); border-color: var(--acc); }
+/* fondo atenuado y difuminado mientras el editor o la vista de una flecha estan abiertos. La
+   descripcion de una flecha seleccionada es una linea y no apaga el tablero. pointer-events:
+   none para que el click afuera siga llegando y cierre */
+.arrow-backdrop { position: fixed; inset: 0; z-index: 5; pointer-events: none;
+  background: rgba(8, 10, 14, .55); backdrop-filter: blur(3px); }
 /* vista de un envio hecho: los ultimos mensajes del par, sin editar */
 .arrow-edit.view { width: 320px; }
 .arrow-edit .msgs { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; }
-.arrow-edit .msg { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; white-space: pre-wrap; word-break: break-word; max-height: 5.6em; overflow: hidden; }
+.arrow-edit .msg { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; white-space: pre-wrap; word-break: break-word; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .col { flex: 1 1 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-height: 120px; padding: 8px; }
 .col.collapsed { flex: 0 0 34px; padding: 0; display: flex; align-items: flex-start; justify-content: center; }
 /* columna ancha (pocas abiertas): las tarjetas en dos subcolumnas */
@@ -149,7 +162,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .panel-open .toasts { max-width: calc(100vw - var(--panel-w) - 32px); }
 .panel-open .toast { max-width: 100%; }
 .panel .ph { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.panel .ph .t { font-weight: 600; flex: 1; min-width: 120px; }
+.panel .ph .t { font-weight: 600; flex: 1; min-width: 120px; display: flex; align-items: center; overflow: hidden; }
+.panel .ph .t .ttext { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel .ph .t .coord { flex: none; }
 .panel .tabs { display: flex; gap: 4px; }
 .panel .tabs button.on { border-color: var(--acc); color: var(--acc); }
 .panel .pmeta { width: 100%; word-break: break-all; }
@@ -160,9 +175,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .send { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; background: var(--panel); }
 .send.drag { outline: 2px dashed var(--acc); }
 .send .inputwrap { position: relative; background: var(--card); border-radius: 6px; }
-.send .ghost { position: absolute; left: 9px; top: 9px; right: 9px; color: var(--dim); font: inherit; pointer-events: none; white-space: pre-wrap; opacity: .75; }
+.send .ghost { position: absolute; left: 9px; top: 9px; right: 9px; z-index: 1; color: var(--dim); font: inherit; pointer-events: none; white-space: pre-wrap; opacity: .75; }
+/* el textarea va transparente y el fondo lo pone .inputwrap: con fondo propio tapaba la
+   sugerencia gris, que se aceptaba con Tab pero no se veia (medido 2026-09-06) */
 .send .ghost .tabhint { margin-left: 8px; font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; vertical-align: middle; }
-.send textarea { width: 100%; min-height: 64px; position: relative; background: transparent; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
+.send textarea { width: 100%; min-height: 64px; position: relative; background: transparent; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
 .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .send .notifyme { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); margin-right: 4px; }
 .send .notifyme:hover { color: var(--fg); }
@@ -218,6 +235,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .fwd .ok { color: var(--run); }
 .fwd .modes label { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 13px; }
 .fwd .modes label.on { border-color: var(--acc); color: var(--acc); }
+/* modo que no aplica al destino elegido: sigue a la vista, en gris, con el motivo en el title */
+.fwd .modes label.off { color: var(--dim); opacity: .6; cursor: not-allowed; }
+/* la casilla o el radio viajan pegados a su texto: en pantalla angosta la etiqueta envuelve
+   entera en vez de dejar el control solo en la linea de arriba */
+.fwd .row label.small { display: inline-flex; flex-direction: row; align-items: center; gap: 5px; }
 .fwd input[type="time"], .fwd input[type="text"], .fwd input[type="number"] { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
 .card .rule { margin-top: 6px; font-size: 12px; color: var(--acc); background: #1a2438; border-radius: 6px; padding: 4px 8px; display: flex; gap: 6px; align-items: center; }
 .card .rule .del { margin-left: auto; cursor: pointer; color: var(--dim); padding: 0 2px; }
@@ -311,6 +333,8 @@ header .search .chip:not(.on) { text-decoration: line-through; }
   .panel .pmeta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
   .panel .body { padding: 10px; }
   .send { padding: 8px 10px; }
+  /* Conectar en el celular: si no entra, scrollea la caja y los botones no quedan contra el borde */
+  .gate-box.connect { max-height: calc(100vh - 32px); overflow-y: auto; }
   .filters { display: flex; flex-wrap: wrap; }
 }
 

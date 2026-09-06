@@ -1,6 +1,7 @@
+import { ago } from "./api";
 import { hhmm } from "./nl";
 import { periodLabel, periodicCount } from "./arrows-geometry";
-import type { Rule, Session } from "./types";
+import type { Link, Rule, Session } from "./types";
 
 /** Nombres y textos que comparten la tarjeta, el panel, las flechas y Conectar: como se llama una
  *  sesion, como se lee una regla, como se pliega un pedido. Sin React ni DOM. `periodLabel` vive en
@@ -71,6 +72,67 @@ export function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session
   }
   const count = r.repeat ? ` (${r.fired}/${r.max_fires})` : "";
   return r.from === sid ? `⏹ al terminar → ${other(r.to)}${count}` : `⏹ recibe de ${other(r.from)} al terminar${count}`;
+}
+
+/** Conexiones de la tarjeta en un contador chico, para el modo compacto: `⏰1 ⏹3`, con la lista
+ *  completa en el `title`. null si no hay ninguna. */
+export function ruleSummary(rules: Rule[], sid: string, sessions: Record<string, Session>): { text: string; title: string } | null {
+  if (!rules.length) return null;
+  const n = new Map<string, number>();
+  for (const r of rules) {
+    const g = r.kind === "at" ? (r.every_s ? "↻" : "⏰") : "⏹";
+    n.set(g, (n.get(g) ?? 0) + 1);
+  }
+  return {
+    text: ["⏰", "↻", "⏹"].filter((g) => n.has(g)).map((g) => `${g}${n.get(g)}`).join(" "),
+    title: rules.map((r) => ruleLabel(r, sid, sessions)).join("\n"),
+  };
+}
+
+const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
+/** La misma conexion que el chip, pero en una frase: es lo que muestra la tarjeta seleccionada,
+ *  donde hay lugar para leerla. "Al terminar le manda su respuesta a lienzo · Coordinadora.
+ *  Van 3 de 20." */
+export function ruleSentence(r: Rule, sid: string, sessions: Record<string, Session>): string {
+  const other = (id: string | null) => shortName(id ? sessions[id] : undefined, "otra sesión");
+  if (r.kind === "on_stop") {
+    const count = r.max_fires > 1 ? ` Van ${r.fired} de ${r.max_fires}.` : "";
+    return r.from === sid
+      ? `Al terminar le manda su respuesta a ${other(r.to)}.${count}`
+      : `Cuando ${other(r.from)} termine, le llega su respuesta.${count}`;
+  }
+  const what = r.to === sid ? "se le escribe" : `se le escribe a ${other(r.to)}`;
+  // quien la dejo armada: el server solo (limite de uso) u otra sesion
+  const by = r.auto ? " La programó el lienzo solo." : r.from && r.from !== sid ? ` La programó ${other(r.from)}.` : "";
+  const quoted = `«${r.text}»`;
+  if (r.every_s) {
+    const next = r.at ? ` La próxima, ${whenLabel(r.at, true)}.` : "";
+    return `${cap(periodLabel(r.every_s))} ${what} ${quoted}. Van ${r.fired} de ${r.max_fires}.${next}${by}`;
+  }
+  return r.at ? `${cap(whenLabel(r.at, true))} ${what} ${quoted}.${by}` : `Sin hora fijada, ${what} ${quoted}.${by}`;
+}
+
+/** Lo que ya recibio esta sesion, agrupado por remitente y en una frase por cada uno:
+ *  "Recibió 4 mensajes de lienzo · Encargo R1. El último, hace 22 min." */
+export function linkSentences(links: Link[], sid: string, sessions: Record<string, Session>): string[] {
+  const groups = new Map<string, { from: string; n: number; last: string; native: boolean }>();
+  for (const l of links) {
+    if (l.to !== sid || !l.from) continue;
+    const native = l.kind === "native";
+    const k = `${native ? "n" : "s"}|${l.from}`;
+    const g = groups.get(k);
+    if (!g) groups.set(k, { from: l.from, n: 1, last: l.ts, native });
+    else {
+      g.n++;
+      if (l.ts > g.last) g.last = l.ts;
+    }
+  }
+  return [...groups.values()].map((g) => {
+    const name = shortName(sessions[g.from]);
+    if (g.native) return `Tiene un canal nativo con ${name}, abierto hace ${ago(g.last)}.`;
+    return g.n === 1 ? `Recibió un mensaje de ${name}, hace ${ago(g.last)}.` : `Recibió ${g.n} mensajes de ${name}. El último, hace ${ago(g.last)}.`;
+  });
 }
 
 export interface RuleGroup {

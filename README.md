@@ -87,8 +87,11 @@ El buscador del encabezado (`/` lo enfoca) filtra por repo, título y último pe
 chips filtran por agente. Si el filtro matchea tarjetas de una columna colapsada, esa
 columna se abre sola mientras dure el filtro.
 
-Click en una tarjeta abre el panel, pegado a la derecha; el tablero se corre y sigue usable.
-Click en otra tarjeta cambia el panel, click en el vacío lo cierra. Pestañas: *Destacados*
+Un click en una tarjeta **la elige**: se resalta, sus flechas quedan opacas y las demás se
+atenúan, y sus conexiones se leen en palabras ("Al terminar le manda su respuesta a lienzo ·
+Coordinadora. Van 4 de 20."). El **doble click abre el panel**, pegado a la derecha; el tablero se
+corre y sigue usable, y las tarjetas se reparten en menos subcolumnas para no volverse ilegibles.
+Esc cierra de a una capa: primero el panel, después la elección. Pestañas: *Destacados*
 (por turno: pedido, respuesta, archivos tocados, comandos, errores, preguntas, mensajes a
 otras sesiones), *Conversación* (la transcripción completa, con las herramientas
 colapsadas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo que recibió, lo que
@@ -97,9 +100,12 @@ mandó, lo que le escribiste desde el lienzo, y las conexiones activas con su es
 ### Tarjeta
 
 - Título: el que Claude le pone a la sesión, o la primera línea del pedido; si el pedido
-  llegó como adjunto `.md`, el primer encabezado del archivo. Doble click sobre el título lo
+  llegó como adjunto `.md`, el primer encabezado del archivo. El lápiz ✎ de la fila de arriba lo
   renombra en el lugar; el nombre queda fijo aunque la sesión cambie de tema. Cuando el título
   es el propio pedido, la línea del pedido no se repite.
+- Cuando la tarjeta queda angosta (tres columnas abiertas, o el panel abierto en una pantalla
+  chica) pasa a **modo compacto**: agente, repo, estado, título en una línea y un contador de
+  conexiones. Una tarjeta con un permiso pendiente nunca se compacta.
 - La última respuesta y el pedido se muestran como texto plano (sin asteriscos ni almohadillas
   del markdown); el botón copiar copia el markdown original.
 - Estrella ★ a la derecha de la fila de arriba (aparece al pasar el mouse): marca la sesión
@@ -188,19 +194,28 @@ En el celular el agarre ⇢ se arrastra con el dedo; el cuerpo de la tarjeta scr
 
 Cada conexión se dibuja entre las tarjetas: el último envío de cada par con ↪ (o ×N si hubo
 varios), las reglas pendientes punteadas con ⏹, ⏰ o ↻ (periódica), el canal nativo con una
-flecha doble gruesa. Las reglas de una sesión hacia sí misma no tienen flecha, sólo chip. Entre
+flecha doble gruesa. Las corridas horizontales van por un **carril** propio, debajo del título de
+la columna, entre dos filas o debajo de la última: el mismo criterio en los tres casos. Varias
+flechas en el mismo carril se reparten en pistas paralelas, a 7 px, como un mapa de subte, y la
+columna reserva justo el alto que ese carril necesita. Sin flechas, o con las flechas apagadas, la
+columna no reserva nada. Las reglas de una sesión hacia sí misma no tienen flecha, sólo chip. Entre
 tarjetas de la misma columna la flecha va por arriba, por el hueco entre filas, sin cruzar
 ninguna tarjeta; si no hay camino limpio se dibuja igual, casi transparente. Sin hover, todas
 van al 35 %; la tarjeta bajo el mouse sube las suyas a opaco. Viajan por el canal entre columnas, el glifo cae en el hueco para no robarle el
 click a ninguna tarjeta, y al pasar el mouse sobre una tarjeta se resaltan las suyas. Un
 botón del menú las oculta.
 
-- Click en el glifo quita la conexión, con confirmación.
+- Un click en el glifo **elige la flecha**: se resalta, se marcan las dos tarjetas que une y
+  aparece al lado qué es y qué hace, en una frase que termina diciendo qué abre el doble click.
+  No borra nada.
 - Doble click en una regla la edita en el lugar: texto, hora, repetición, tope y, en una
   programada, "repetir cada" y "sólo si está libre". Una programada que ya disparó se puede
   reprogramar y vuelve a quedar vigente.
 - Doble click en un envío hecho muestra los mensajes de ese par y, si el destino tiene
   consola, "Mandar de nuevo" escribe el último otra vez. Un envío hecho no se edita.
+- **Quitar** vive adentro del editor y de la vista, con confirmación. Con una flecha elegida,
+  Supr también la quita y Esc la suelta.
+- Mientras el editor o la vista están abiertos, el tablero de atrás se atenúa y se difumina.
 
 ### Continuar solo tras límite de uso
 
@@ -304,7 +319,7 @@ lienzo-server.cmd  arranque
 
 ```powershell
 python -m pytest tests -q                                   # 43 tests
-cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 23 tests de las flechas
+cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 31 tests de las flechas
 cd web; node --experimental-strip-types src/nl.test.ts                # 77 aserciones del parser de frases
 ```
 

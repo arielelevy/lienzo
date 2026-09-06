@@ -18,6 +18,9 @@ interface Props {
   onHelp: () => void;
   onRescan: () => void;
   onLogout: () => void;
+  /** el menu ⋯ se acaba de abrir (no en cada toggle): abrirlo es cambiar de contexto, asi que App
+   *  cierra lo que haya abierto detras (panel, dialogo de conectar, ayuda) */
+  onMenuOpen?: () => void;
   flags: { label: string; icon: string; on: boolean; toggle: () => void; title: string }[];
 }
 
@@ -37,7 +40,7 @@ const Phone = () => (
 
 /** Header minimalista: marca y estado, buscador con chips por agente, acceso desde el celular
  *  (URL del tunel y QR de Authenticator, juntos) y un menu "⋯" con el resto. */
-export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onHelp, onRescan, onLogout, flags }: Props) {
+export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onHelp, onRescan, onLogout, onMenuOpen, flags }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -56,6 +59,12 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
   const closeAnd = (fn: () => void) => () => {
     setMenuOpen(false);
     fn();
+  };
+  // solo al pasar de cerrado a abierto: cerrar el menu no toca lo que haya detras
+  const toggleMenu = () => {
+    const open = !menuOpen;
+    setMenuOpen(open);
+    if (open) onMenuOpen?.();
   };
   const status = !connected ? "reconectando" : polling ? "sondeo cada 4 s" : "en vivo";
 
@@ -111,7 +120,7 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
         </button>
       )}
       <div className="menu" ref={menuRef}>
-        <button className="icon" title="más" aria-label="más opciones" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
+        <button className="icon" title="más" aria-label="más opciones" aria-haspopup="menu" aria-expanded={menuOpen} onClick={toggleMenu}>
           ⋯
         </button>
         {menuOpen && (

@@ -33,6 +33,23 @@ function fill(tpl: string, s: Session, reply: string): string {
     .replaceAll("{respuesta}", reply);
 }
 
+/** como se nombra un agente en un texto para el usuario */
+const agentLabel = (s: Session) => (s.agent === "claude" ? "Claude Code" : "Codex");
+
+/** pantalla angosta (celular): la plantilla arranca plegada y los textos ocupan menos filas, asi
+ *  el dialogo entra sin que los botones queden contra el borde */
+function useNarrow(): boolean {
+  const mq = () => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches;
+  const [narrow, setNarrow] = useState(mq);
+  useEffect(() => {
+    const m = window.matchMedia("(max-width: 900px)");
+    const on = () => setNarrow(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
+
 function nextTimeIso(hhmm: string): string | null {
   const m = hhmm.match(/^(\d{1,2}):(\d{2})$/);
   if (!m) return null;
@@ -56,6 +73,7 @@ interface Props {
  *  Con initialTarget === from (la tarjeta se solto sobre si misma) arranca en "programar" a la propia
  *  sesion: es el unico modo con sentido para un bucle. */
 export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
+  const narrow = useNarrow();
   const onItself = initialTarget === from.session_id;
   const [mode, setMode] = useState<Mode>(onItself ? "at" : "now");
   const targets = useMemo(() => (mode === "at" ? [from, ...others] : others), [mode, from, others]);
@@ -95,6 +113,18 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   // y "Reemplazar" repite el POST con replace: true (dos mensajes al mismo minuto nunca es lo que uno quiere)
   const [conflict, setConflict] = useState<{ at: string; text: string } | null>(null);
   const targetSession = useMemo(() => targets.find((o) => o.session_id === target), [targets, target]);
+  // El canal nativo solo existe entre dos sesiones distintas de Claude Code. El radio esta siempre:
+  // una opcion que aparece y desaparece al cambiar el destino no la descubre nadie, y una fila de
+  // modos que cambia de largo mientras la mirás se siente rota. Cuando no aplica queda deshabilitado
+  // y esto dice por que, en el title del radio y en la linea de ayuda.
+  const nativeWhy = useMemo(() => {
+    if (!targetSession) return "elegí primero una sesión destino";
+    if (targetSession.session_id === from.session_id) return "es un canal entre dos sesiones: elegí otra como destino";
+    const bad = [from, targetSession].filter((s) => s.agent !== "claude");
+    if (!bad.length) return null;
+    const who = bad.map((s) => (s.session_id === from.session_id ? "esta sesión" : shortName(s))).join(" y ");
+    return `las dos tienen que ser Claude Code; ${who} ${bad.length > 1 ? "son" : "es"} ${agentLabel(bad[0])}`;
+  }, [from, targetSession]);
 
   useEffect(() => {
     if (mode !== "at" && target === from.session_id) setTarget(others[0]?.session_id ?? "");
@@ -227,10 +257,10 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phrase]);
 
-  // si el destino deja de ser Claude, el canal nativo no aplica
+  // si el destino cambia a uno que no admite canal nativo, el modo vuelve a "ahora"
   useEffect(() => {
-    if (mode === "native" && !(from.agent === "claude" && targetSession?.agent === "claude")) setMode("now");
-  }, [mode, from.agent, targetSession?.agent]);
+    if (mode === "native" && nativeWhy) setMode("now");
+  }, [mode, nativeWhy]);
 
   return (
     <div className="fwd">
@@ -269,20 +299,22 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         <label className={mode === "at" ? "on" : ""}>
           <input type="radio" checked={mode === "at"} onChange={() => setMode("at")} /> Programar
         </label>
-        {from.agent === "claude" && targetSession?.agent === "claude" && (
-          <label className={mode === "native" ? "on" : ""} title="las dos son Claude Code: pueden hablarse entre sí con SendMessage">
-            <input type="radio" checked={mode === "native"} onChange={() => setMode("native")} /> ⇄ Canal nativo
-          </label>
-        )}
+        <label
+          className={`${mode === "native" ? "on" : ""} ${nativeWhy ? "off" : ""}`}
+          title={nativeWhy ?? "las dos son Claude Code: pueden hablarse entre sí con SendMessage"}
+        >
+          <input type="radio" checked={mode === "native"} disabled={!!nativeWhy} onChange={() => setMode("native")} /> ⇄ Canal nativo
+        </label>
       </div>
 
       <div className="small dim">
         {mode === "now" && "Manda ya la última respuesta de esta sesión a la otra, como si la tipearas ahí."}
         {mode === "native" && "Las dos son Claude Code: esta sesión ubica a la otra con ListAgents y le habla con SendMessage. Los mensajes llegan aunque la otra esté trabajando, y se responden por el mismo canal. Vos les das el tema; ellas conversan."}
-        {mode === "on_stop" && "Cada vez que esta sesión cierre un turno, su respuesta final se manda a la otra con la plantilla. Una vez, o hasta un tope."}
+        {mode === "on_stop" && "La respuesta final viaja con la plantilla de abajo. Una vez, o cada vez que termine hasta un tope."}
         {mode === "at" &&
           "A la hora indicada se manda un texto fijo a la sesión elegida (puede ser esta misma). Sirve para el \"Continuá\" cuando vuelven los créditos. Con \"repetir cada\" se vuelve a mandar cada tanto, hasta un tope de veces; los disparos que caen con la sesión trabajando se saltean sin contar."}
       </div>
+      {nativeWhy && mode !== "native" && <div className="small dim">⇄ Canal nativo, en gris: {nativeWhy}.</div>}
 
       {noOthers ? (
         <div className="empty">No hay otra sesión viva a la que conectar.</div>
@@ -300,11 +332,20 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
             </select>
           </div>
 
+          {mode === "on_stop" && targetSession && (
+            <div className="small dim">
+              Cuando {shortName(from)} cierre un turno, su respuesta se manda a {shortName(targetSession)}.
+              {me &&
+                me.session_id !== targetSession.session_id &&
+                (notifyMe ? ` También te llega a vos (${shortName(me)}).` : " Para que además te avise a vos, marcá la casilla de abajo.")}
+            </div>
+          )}
+
           {mode === "native" ? (
             <textarea
               value={nativeText}
               onChange={(e) => setNativeText(e.target.value)}
-              rows={4}
+              rows={narrow ? 3 : 4}
               placeholder="El tema de la conversación. Ej: “Revisá lo que hizo la otra sesión en web/src y acordá con ella los cambios; que ella los aplique.”"
             />
           ) : mode === "at" ? (
@@ -338,12 +379,13 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
             </>
           ) : (
             <>
-              <details open={mode === "on_stop"}>
+              {/* en el celular la plantilla arranca plegada: abierta se come media pantalla */}
+              <details open={mode === "on_stop" && !narrow}>
                 <summary className="small dim pointer">plantilla ({"{repo} {agente} {titulo} {pedido} {respuesta}"})</summary>
                 <textarea value={template} onChange={(e) => applyTemplate(e.target.value)} rows={3} />
               </details>
               {mode === "now" && (
-                <textarea value={text} onChange={(e) => setTextEdit(e.target.value)} rows={6} />
+                <textarea value={text} onChange={(e) => setTextEdit(e.target.value)} rows={narrow ? 3 : 6} />
               )}
             </>
           )}

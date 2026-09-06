@@ -31,14 +31,29 @@
 .arrows .arrow.dim.mine { opacity: .55; }
 .arrows .arrow .dot:hover { opacity: 1; }
 
-/* estrella de coordinadora en la fila de arriba: ☆ aparece al pasar el mouse (como los botones
-   rapidos), ★ prendida siempre visible */
-.card .top .star { background: none; border: 0; padding: 0 3px; font-size: 14px; line-height: 1; color: var(--dim); cursor: pointer; flex: 0 0 auto; opacity: 0; transition: opacity .12s; }
+/* estrella de coordinadora y lapiz de renombrar en la fila de arriba: aparecen al pasar el mouse
+   (como los botones rapidos y la ✕); la estrella prendida (★) queda siempre visible */
+.card .top .star, .card .top .pencil { background: none; border: 0; padding: 0 3px; font-size: 14px; line-height: 1; color: var(--dim); cursor: pointer; flex: 0 0 auto; opacity: 0; transition: opacity .12s; }
 .card:hover .top .star, .card:focus-within .top .star, .card .top .star.on { opacity: 1; }
+.card:hover .top .pencil, .card:focus-within .top .pencil { opacity: 1; }
 .card .top .star.on { color: var(--need); }
 .card .top .star:hover { color: var(--need); border-color: transparent; }
-.card .top .star:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; opacity: 1; }
-@media (hover: none) and (pointer: coarse) { .card .top .star { opacity: 1; } }
+.card .top .pencil:hover { color: var(--acc); border-color: transparent; }
+.card .top .star:focus-visible, .card .top .pencil:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; opacity: 1; }
+@media (hover: none) and (pointer: coarse) { .card .top .star, .card .top .pencil { opacity: 1; } }
+
+/* elegida con un click: barra al costado. La que tiene el panel abierto sigue con su borde
+   completo (.sel, en styles.css), asi se distinguen cuando no son la misma tarjeta. */
+.card.picked { box-shadow: inset 3px 0 0 var(--acc); }
+.card.picked.sel { box-shadow: 0 0 0 1px var(--acc), inset 3px 0 0 var(--acc); }
+
+/* conexiones en palabras (tarjeta elegida y con lugar): una frase por linea, con su ✕ */
+.card .words { margin-top: 6px; display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.card .words .w { display: flex; gap: 6px; align-items: baseline; color: var(--acc); background: #1a2438; border-radius: 6px; padding: 4px 8px; }
+.card .words .w.done { color: var(--run); background: #14261c; }
+.card .words .w > span { flex: 1 1 auto; min-width: 0; }
+.card .words .w .del { flex: 0 0 auto; background: none; border: 0; padding: 0 2px; color: var(--dim); cursor: pointer; font: inherit; line-height: 1; }
+.card .words .w .del:hover { color: var(--dead); border-color: transparent; }
 
 /* panel: "★ coordinadora" junto al nombre, y la fila de lo programado hacia esa sesion */
 .panel .ph .coord { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--need); white-space: nowrap; }
@@ -107,6 +122,23 @@
 .card .title .freeline { display: block; }
 .card .freeact button, .card:hover .freeact button, .card:focus-within .freeact button { opacity: 1; pointer-events: auto; color: var(--acc); border-color: var(--acc); }
 
+/* modo compacto: la subcolumna quedo por debajo de 200 px (panel abierto, o tres columnas). La
+   tarjeta pasa a ser un indice de dos lineas: agente, repo y estado arriba; titulo con elipsis y
+   un contador de conexiones abajo. El resto lo muestra el panel, que es lo que abre el click. */
+.card.compact { padding: 6px 8px; }
+.card.compact .top { gap: 4px; margin-bottom: 3px; font-size: 11px; padding-right: 14px; }
+.card.compact .top .badge { padding: 0 5px; font-size: 10px; }
+.card.compact .top .right { gap: 4px; }
+.card.compact .top .star, .card.compact .top .pencil, .card.compact .top .grip { font-size: 12px; padding: 0 1px; }
+/* en compacto no hay lugar para el lápiz: se renombra desde una tarjeta ancha o desde el panel */
+.card.compact .top .pencil { display: none; }
+.card.compact .x { top: 2px; right: 3px; font-size: 11px; padding: 1px 3px; }
+.card.compact .title { display: flex; gap: 5px; align-items: baseline; margin-bottom: 0; font-size: 12.5px; }
+.card.compact .title .ttext { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.card.compact .title input { font-size: 12.5px; }
+/* contador de conexiones: "⏰1 ⏹3", el detalle en el title */
+.card .rulecount { flex: 0 0 auto; font-size: 11px; font-weight: 400; color: var(--acc); cursor: help; }
+
 /* dos reglas "at" de la tarjeta caen en el mismo minuto: aviso chico delante del chip */
 .card .rule.clash { border: 1px solid #5c4a12; }
 .card .rule .warn { color: var(--need); flex: 0 0 auto; cursor: help; font-size: 12px; line-height: 1; }
@@ -115,8 +147,7 @@
 .card .limitrow { margin-top: 6px; }
 .card .limitrow button { font-size: 12px; padding: 3px 9px; border-radius: 12px; color: var(--acc); border-color: var(--acc); }
 
-/* renombrar: input inline en el lugar del titulo */
-.card .title { cursor: text; }
+/* renombrar: input inline en el lugar del titulo (lo abre el lapiz de la fila de arriba) */
 .card .title input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--acc); border-radius: 4px; padding: 2px 6px; font: inherit; font-weight: 600; }
 
 /* digest: encabezado de la respuesta final con copiar */
