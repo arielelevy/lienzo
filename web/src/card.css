@@ -22,6 +22,31 @@
 .board .col.wide .cards { column-count: var(--lanes, 2); column-gap: 24px; }
 @media (max-width: 900px) { .board .col.wide .cards { column-count: 1; } }
 
+/* agarre ⇢ en la fila de arriba, junto al "hace X" (abajo chocaba con la ✕ del ultimo chip de
+   regla); Board saca la linea del arrastre desde este boton */
+.card .top .grip { position: static; font-size: 14px; padding: 0 3px; line-height: 1; }
+/* la rama no entra en 420 px junto con badge, repo, estado y hora */
+@media (max-width: 900px) { .card .top .branch { display: none; } }
+
+/* titulo tomado del pedido: peso normal; la negrita queda para el ai-title */
+.card .title.plain { font-weight: 400; }
+
+/* chip "informe de X": una sola linea con elipsis, tambien en subcolumnas angostas */
+.card .chip.recent { display: block; max-width: 100%; box-sizing: border-box; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* error plegado a la primera oracion, "…más" lo abre (mismo control que el pedido) */
+.card .error { display: flex; gap: 6px; align-items: baseline; }
+.card .error .etext { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.card .error.open .etext { max-height: 14em; overflow-y: auto; }
+.card .error .more { flex: 0 0 auto; background: none; border: 0; padding: 0; color: var(--acc); font-size: 12px; cursor: pointer; line-height: inherit; }
+.card .error .more:hover { text-decoration: underline; border-color: transparent; }
+
+/* "usando Bash": actividad en curso, en dim y con un punto que late */
+.card .reply.working { color: var(--dim); display: flex; align-items: center; gap: 7px; }
+.card .reply.working .wdot { width: 6px; height: 6px; border-radius: 50%; background: var(--run); flex: 0 0 auto; animation: wdot 1s ease-in-out infinite alternate; }
+@keyframes wdot { from { opacity: .25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .card .reply.working .wdot { animation: none; } }
+
 /* pedido: una linea plegada, "…más" la abre */
 .card .prompt { display: flex; gap: 6px; align-items: baseline; max-height: none; }
 .card .prompt .ptext { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

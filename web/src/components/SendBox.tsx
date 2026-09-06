@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import type { Session } from "../types";
+import type { Rule, Session } from "../types";
 import { shortName } from "./Card";
 import "../card.css";
 
@@ -53,7 +53,13 @@ export function SendBox({ session: s, others, toast }: Props) {
   const notifyRule = async () => {
     if (!notifyMe || !me) return;
     try {
-      await api.post("/rules", { kind: "on_stop", from: s.session_id, to: me.session_id, text: NOTIFY_TEMPLATE, repeat: false, max_fires: 1 });
+      // el agente contesta varias veces (informe, aclaraciones): la regla se repite, con tope. Si ya
+      // hay una activa hacia la coordinadora (de esta casilla o de Conectar), no se crea otra
+      const active = (await api.get<Rule[]>("/rules")).some(
+        (r) => r.enabled && r.kind === "on_stop" && r.from === s.session_id && r.to === me.session_id,
+      );
+      if (active) return;
+      await api.post("/rules", { kind: "on_stop", from: s.session_id, to: me.session_id, text: NOTIFY_TEMPLATE, repeat: true, max_fires: 20 });
       toast(`Cuando ${shortName(s)} termine, su respuesta va a ${shortName(me)}`);
     } catch (e) {
       // 409: ya existe esa regla, o la inversa (seria un bucle). El envio ya se hizo; se avisa y listo

@@ -1,0 +1,390 @@
+"""Clasificacion corriendo/termino en lienzo/sessions.py (antes server.py): el Stop tardio de un pedido encolado y la
+correccion desde la transcripcion. Sin red ni hilos: apply_event y refresh_from_transcript directos,
+con el registro de sesiones apuntando a un directorio temporal."""
+import glob
+import json
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from lienzo import server  # noqa: E402,F401  (pone lienzo/ en sys.path y engancha rules a sessions)
+import rules as rl  # noqa: E402
+import sessions as ses  # noqa: E402
+import state as st  # noqa: E402
+
+HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+CLAUDE_DIR = os.path.join(HOME, ".claude", "projects", "D--Apps-lienzo")
+SID = "599a7e3e-0000-4000-8000-000000000000"
+T0 = "2026-09-05T20:41:53.135-03:00"      # turn_duration del caso medido, en hora local
+
+
+def local(offset_s: float) -> str:
+    import datetime as dt
+    return (dt.datetime.fromisoformat(T0) + dt.timedelta(seconds=offset_s)).isoformat(timespec="milliseconds")
+
+
+def utc(offset_s: float) -> str:
+    import datetime as dt
+    d = dt.datetime.fromisoformat(T0).astimezone(dt.timezone.utc) + dt.timedelta(seconds=offset_s)
+    return d.strftime("%Y-%m-%dT%H:%M:%S.") + f"{d.microsecond // 1000:03d}Z"
+
+
+@pytest.fixture
+def aislado(tmp_path, monkeypatch):
+    """Registro en tmp, sin SSE ni hilos de reglas: lo que se mide es el estado de la tarjeta."""
+    monkeypatch.setattr(st, "SESSIONS", str(tmp_path))
+    monkeypatch.setattr(st, "broadcast", lambda ev: None)
+    monkeypatch.setattr(ses, "on_turn_end", lambda sid: None)
+    monkeypatch.setattr(st, "log", lambda msg: None)
+    st.sessions.clear()
+    yield tmp_path
+    st.sessions.clear()
+
+
+def ev(name: str, **k) -> dict:
+    return {"hook_event_name": name, "session_id": SID, "agent": "claude", **k}
+
+
+# 1. hooks al reves ---------------------------------------------------------------
+
+def test_stop_tardio_del_pedido_anterior_no_pisa_el_corriendo(aislado):
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="primero", host_ts=local(-60)))
+    ses.apply_event(ev("Stop", prompt_id="A", last_assistant_message="listo el primero", host_ts=local(-30)))
+    s = st.sessions[SID]
+    assert s["state"] == "termino" and s["last_reply"] == "listo el primero"
+
+    # el segundo pedido estaba encolado: Claude Code lo arranca 60 ms despues del turn_duration y
+    # los dos hooks (async) corren juntos; el UserPromptSubmit de B queda escrito antes que el Stop de A
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="segundo", host_ts=local(0.2)))
+    ses.apply_event(ev("Stop", prompt_id="A", last_assistant_message="listo el primero", host_ts=local(0.3)))
+    assert s["state"] == "corriendo", "el Stop del pedido A no debe cerrar el turno del pedido B"
+    assert s["last_prompt"] == "segundo"
+
+    # el Stop del propio pedido si cierra
+    ses.apply_event(ev("Stop", prompt_id="B", last_assistant_message="listo el segundo", host_ts=local(40)))
+    assert s["state"] == "termino" and s["last_reply"] == "listo el segundo"
+
+
+def test_stop_lejano_con_otro_prompt_id_si_cierra(aislado):
+    # un Stop con prompt_id distinto pero lejos del ultimo UserPromptSubmit no es "tardio": es un
+    # turno que arranco sin hook (aviso de tarea en segundo plano, por ejemplo) y termino
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="uno", host_ts=local(-60)))
+    ses.apply_event(ev("Stop", prompt_id="Z", host_ts=local(-20)))
+    assert st.sessions[SID]["state"] == "termino"
+
+
+def test_stop_sin_prompt_id_cierra_como_siempre(aislado):
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="uno", host_ts=local(-60)))
+    ses.apply_event(ev("Stop", host_ts=local(-59.9)))
+    assert st.sessions[SID]["state"] == "termino"
+
+
+# 2. la transcripcion corrige a los hooks ----------------------------------------------
+
+def rows_encolado() -> list[dict]:
+    """La forma medida en 599a7e3e: turn_duration y, en el mismo segundo, el pedido que estaba
+    encolado; despues herramientas durante minutos."""
+    return [
+        {"type": "user", "timestamp": utc(-50), "promptId": "A", "message": {"role": "user", "content": "primero"}},
+        {"type": "assistant", "timestamp": utc(-0.1), "message": {"role": "assistant", "content": [{"type": "text", "text": "Listo el primero."}]}},
+        {"type": "system", "subtype": "stop_hook_summary", "timestamp": utc(-0.01)},
+        {"type": "system", "subtype": "turn_duration", "timestamp": utc(0)},
+        {"type": "user", "timestamp": utc(0.06), "promptId": "B", "message": {"role": "user", "content": "segundo, largo"}},
+        {"type": "assistant", "timestamp": utc(18), "message": {"role": "assistant", "content": [{"type": "text", "text": "Voy."}]}},
+        {"type": "assistant", "timestamp": utc(25), "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}},
+        {"type": "user", "timestamp": utc(27), "promptId": "B", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "a b c"}]}},
+    ]
+
+
+def write_jsonl(path, rows) -> str:
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return str(path)
+
+
+def tarjeta(path: str, state: str, since: str) -> dict:
+    s = ses.new_session(SID, "claude", "hook")
+    s.update({"transcript_path": path, "state": state, "state_since": since, "hooked": True, "last_event": "Stop"})
+    st.sessions[SID] = s
+    return s
+
+
+def test_transcripcion_reabre_el_termino_que_dejo_un_stop_tardio(aislado):
+    path = write_jsonl(aislado / "t.jsonl", rows_encolado())
+    # el Stop tardio dejo la tarjeta en termino 300 ms despues del turn_duration
+    s = tarjeta(path, "termino", local(0.3))
+    assert ses.refresh_from_transcript(s) is True
+    assert s["state"] == "corriendo"
+    assert s["last_prompt"] == "segundo, largo"
+    assert s["last_reply"] == "usando Bash"
+
+
+def test_transcripcion_no_toca_un_termino_legitimo(aislado):
+    # sin el pedido encolado: el turno termino y la tarjeta esta bien en termino
+    path = write_jsonl(aislado / "t.jsonl", rows_encolado()[:4])
+    s = tarjeta(path, "termino", local(0.3))
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "termino"
+
+
+def test_transcripcion_cierra_un_corriendo_sin_stop(aislado):
+    # el Stop se perdio (hook con timeout): el turn_duration es posterior al ultimo cambio de estado
+    path = write_jsonl(aislado / "t.jsonl", rows_encolado()[:4])
+    s = tarjeta(path, "corriendo", local(-50))
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "termino"
+
+
+def test_transcripcion_respeta_te_necesita_y_el_envio_reciente(aislado):
+    path = write_jsonl(aislado / "t.jsonl", rows_encolado()[:4])
+    # te_necesita es de los hooks: la transcripcion no lo pisa
+    s = tarjeta(path, "te_necesita", local(-50))
+    s["needs"] = {"kind": "permission"}
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "te_necesita"
+    # recien enviado desde el lienzo (send_to_session puso corriendo hace nada): el turno viejo de
+    # la transcripcion, anterior a ese cambio, no lo vuelve a termino
+    s = tarjeta(path, "corriendo", local(5))
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "corriendo"
+
+
+# 3. la transcripcion real ------------------------------------------------------------
+
+def caso_real():
+    """(ruta, filas hasta el primer tool_result del pedido encolado, ts del turn_duration) en la
+    primera transcripcion de ~/.claude/projects/D--Apps-lienzo que tenga un turn_duration seguido
+    en menos de un segundo por un pedido humano. None si no hay."""
+    import datetime as dt
+    for p in sorted(glob.glob(os.path.join(CLAUDE_DIR, "*.jsonl")), key=os.path.getsize, reverse=True):
+        rows = []
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue
+        for i, r in enumerate(rows):
+            if r.get("type") != "system" or r.get("subtype") != "turn_duration":
+                continue
+            nxt = next((j for j in range(i + 1, len(rows)) if rows[j].get("type") in ("user", "assistant")
+                        and not rows[j].get("isSidechain")), None)
+            if nxt is None or rows[nxt].get("type") != "user":
+                continue
+            c = (rows[nxt].get("message") or {}).get("content")
+            if not isinstance(c, str) or c.lstrip().startswith("<"):
+                continue
+            a, b = st.parse_ts(r.get("timestamp")), st.parse_ts(rows[nxt].get("timestamp"))
+            if not a or not b or (b - a).total_seconds() > 1.0:
+                continue
+            end = next((j for j in range(nxt + 1, len(rows)) if rows[j].get("type") == "user"
+                        and isinstance((rows[j].get("message") or {}).get("content"), list)), None)
+            if end is None:
+                continue
+            return p, rows[: end + 1], a
+    return None
+
+
+def test_caso_real_pedido_encolado(aislado):
+    caso = caso_real()
+    if caso is None:
+        pytest.skip(f"ninguna transcripcion en {CLAUDE_DIR} tiene un pedido encolado tras un turn_duration")
+    src, rows, td = caso
+    path = write_jsonl(aislado / "real.jsonl", rows)
+    import datetime as dt
+    since = (td + dt.timedelta(milliseconds=300)).astimezone().isoformat(timespec="milliseconds")
+    s = tarjeta(path, "termino", since)
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "corriendo", f"{os.path.basename(src)}: el pedido encolado tras {td} no reabrio la tarjeta"
+    assert s["last_prompt"]
+
+
+# 4. /config y el link del usuario --------------------------------------------------------
+
+def test_set_config_key_solo_toca_esa_clave(tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"ejemplos": "D:/x", "wait": 60, "auto_continue": True}), encoding="utf-8")
+    monkeypatch.setattr(st, "CONFIG_FILE", str(cfg))
+    assert st.public_config() == {"auto_continue": True}
+    st.set_config_key("auto_continue", False)
+    assert json.loads(cfg.read_text(encoding="utf-8")) == {"ejemplos": "D:/x", "wait": 60, "auto_continue": False}
+    assert st.public_config() == {"auto_continue": False}
+    # sin archivo: se crea con la clave sola
+    cfg.unlink()
+    st.set_config_key("auto_continue", True)
+    assert json.loads(cfg.read_text(encoding="utf-8")) == {"auto_continue": True}
+
+
+def test_connections_of_muestra_lo_que_mando_el_usuario(aislado, monkeypatch):
+    monkeypatch.setattr(st.links, "path", str(aislado / "links.json"))
+    monkeypatch.setattr(st.links, "items", [])
+    s = ses.new_session(SID, "claude", "hook")
+    s["repo"] = "lienzo"
+    st.sessions[SID] = s
+    ses.add_link(None, SID, "revisá el panel", "user")
+    c = rl.connections_of(SID)
+    assert len(c["links"]) == 1
+    l = c["links"][0]
+    assert l["from"] is None and l["kind"] == "user" and l["direction"] == "in"
+    assert l["other"] == {"session_id": None, "name": "vos (lienzo)"}
+    # al recargar, el link sin origen se conserva (antes se descartaba por from not in sessions)
+    st.links.load(lambda l: l.get("to") in st.sessions and (not l.get("from") or l["from"] in st.sessions))
+    assert len(st.links.items) == 1
+
+
+# 5. el mismo pid cambia de session_id (/clear, resume) -----------------------------------
+
+OLD = "7bb119b6-0000-4000-8000-000000000000"
+NEW = "43e4160d-0000-4000-8000-000000000000"
+COORD = "599a7e3e-0000-4000-8000-000000000001"
+PID = 26356
+
+
+@pytest.fixture
+def con_pid(aislado, monkeypatch):
+    """El pid siempre esta vivo y es una TUI; reglas y links en tmp; el log se guarda para mirarlo."""
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: pid == PID)
+    monkeypatch.setattr(ses.procs, "is_tui", lambda pid: True)
+    monkeypatch.setattr(st.rules, "path", str(aislado / "rules.json"))
+    monkeypatch.setattr(st.rules, "items", [])
+    monkeypatch.setattr(st.links, "path", str(aislado / "links.json"))
+    monkeypatch.setattr(st.links, "items", [])
+    logs: list[str] = []
+    monkeypatch.setattr(st, "log", logs.append)
+    coord = ses.new_session(COORD, "claude", "hook")
+    st.sessions[COORD] = coord
+    return logs
+
+
+def evp(name: str, sid: str, **k) -> dict:
+    return {"hook_event_name": name, "session_id": sid, "agent": "claude", "pid": PID, "cwd": r"D:\Apps\lienzo", **k}
+
+
+def sesion_vieja(aislado):
+    tp_old = str(aislado / f"{OLD}.jsonl")
+    open(tp_old, "w").close()
+    ses.apply_event(evp("SessionStart", OLD, transcript_path=tp_old, host_ts=local(-600)))
+    ses.apply_event(evp("UserPromptSubmit", OLD, prompt_id="A", prompt="hace algo", transcript_path=tp_old, host_ts=local(-500)))
+    ses.apply_event(evp("Stop", OLD, prompt_id="A", last_assistant_message="hecho", transcript_path=tp_old, host_ts=local(-400)))
+    old = st.sessions[OLD]
+    assert old["pid"] == PID and old["state"] == "termino"
+    # lo que la apunta: la regla "cuando termine" hacia la coordinadora y un envio que recibio
+    st.rules.add({"id": "r1", "kind": "on_stop", "from": OLD, "to": COORD, "text": "{respuesta}", "repeat": False,
+                      "max_fires": 1, "fired": 0, "enabled": True, "created": st.now()})
+    st.rules.add({"id": "r2", "kind": "at", "from": COORD, "to": OLD, "text": "Continuar", "at": st.now(),
+                      "repeat": False, "max_fires": 1, "fired": 0, "enabled": True, "created": st.now()})
+    ses.add_link(COORD, OLD, "revisá esto", "send")
+    return old
+
+
+def test_clear_la_sesion_nueva_hereda_pid_reglas_y_links(aislado, con_pid):
+    logs = con_pid
+    sesion_vieja(aislado)
+    ses.apply_event(evp("SessionEnd", OLD, reason="clear", host_ts=local(-10)))
+    assert st.sessions[OLD]["state"] == "muerta"
+
+    tp_new = str(aislado / f"{NEW}.jsonl")
+    ses.apply_event(evp("SessionStart", NEW, source="clear", transcript_path=tp_new, host_ts=local(-9.9)))
+    assert OLD not in st.sessions, "la vieja se da de baja"
+    new = st.sessions[NEW]
+    assert new["pid"] == PID and new["no_console"] is False
+    assert [(r["from"], r["to"]) for r in st.rules.items] == [(NEW, COORD), (COORD, NEW)]
+    assert [(l["from"], l["to"]) for l in st.links.items] == [(COORD, NEW)]
+    assert any("continua como" in m and OLD[:8] in m and NEW[:8] in m for m in logs), logs
+    assert not any("ya pertenece" in m for m in logs)
+    assert not os.path.exists(os.path.join(st.SESSIONS, f"{OLD}.json"))
+
+    # y la nueva sigue recibiendo sus eventos con normalidad
+    ses.apply_event(evp("UserPromptSubmit", NEW, prompt_id="B", prompt="segui", transcript_path=tp_new, host_ts=local(0)))
+    ses.apply_event(evp("Stop", NEW, prompt_id="B", last_assistant_message="listo", transcript_path=tp_new, host_ts=local(30)))
+    assert new["state"] == "termino"
+
+
+def test_sin_session_end_pero_con_transcripcion_propia_tambien_continua(aislado, con_pid):
+    # el SessionEnd se perdio (hook con timeout de 2 s): la nueva trae un .jsonl propio que existe
+    sesion_vieja(aislado)
+    tp_new = str(aislado / f"{NEW}.jsonl")
+    open(tp_new, "w").close()
+    ses.apply_event(evp("UserPromptSubmit", NEW, prompt_id="B", prompt="hola", transcript_path=tp_new, host_ts=local(0)))
+    assert OLD not in st.sessions
+    assert st.sessions[NEW]["pid"] == PID
+    assert st.rules.items[0]["from"] == NEW
+
+
+def test_prueba_manual_del_hook_no_roba_el_pid(aislado, con_pid):
+    logs = con_pid
+    old = sesion_vieja(aislado)
+    # session_id inventado, mismo pid, sin SessionEnd previo y sin transcripcion propia (o con una
+    # que no existe): la duena sigue viva y se queda con el pid y con sus reglas
+    for tp in (None, str(aislado / "no-existe.jsonl"), old["transcript_path"]):
+        ses.apply_event(evp("UserPromptSubmit", NEW, prompt="prueba", prompt_id="X", host_ts=local(0),
+                               **({"transcript_path": tp} if tp else {})))
+    assert OLD in st.sessions and old["pid"] == PID
+    assert st.sessions[NEW]["pid"] is None
+    assert [(r["from"], r["to"]) for r in st.rules.items] == [(OLD, COORD), (COORD, OLD)]
+    assert sum("ya pertenece" in m for m in logs) == 3
+    assert not any("continua como" in m for m in logs)
+
+
+# 6. state nunca None ------------------------------------------------------------------
+
+def test_state_nunca_queda_en_none(aislado, monkeypatch):
+    s = ses.new_session(SID, "claude", "hook")
+    assert s["state"] in st.STATES
+    # tarjeta guardada con el estado roto: apply_event la normaliza antes de tocarla
+    s["state"] = None
+    st.sessions[SID] = s
+    ses.apply_event(ev("Notification", notification_type="tool_use", host_ts=local(0)))
+    assert s["state"] in st.STATES
+    # set_state rechaza valores fuera del contrato
+    ses.set_state(s, "corriendo")
+    ses.set_state(s, "cualquiera")  # type: ignore[arg-type]
+    assert s["state"] == "corriendo"
+    # y load_sessions repara el archivo al arrancar
+    bad = dict(ses.new_session("aaaa0000-0000-4000-8000-000000000000", "claude", "hook"), state=None, pid=None,
+               last_event_ts=st.now())
+    with open(os.path.join(st.SESSIONS, f"{bad['session_id']}.json"), "w", encoding="utf-8") as f:
+        json.dump(bad, f)
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: False)
+    st.sessions.clear()
+    ses.load_sessions()
+    assert st.sessions[bad["session_id"]]["state"] == "muerta"
+
+
+# 7. envio desde la UI: chars y pedido reales, y no revivir una sesion con SessionEnd -------------
+
+class _Run:
+    def __init__(self, chars):
+        self.stdout = json.dumps({"ok": True, "pid": PID, "chars": chars, "enter": 1})
+        self.stderr = ""
+
+
+def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(st, "ADJUNTOS", str(aislado / "adjuntos"))
+    monkeypatch.setattr(ses, "ADJUNTOS", str(aislado / "adjuntos"))
+    typed = []
+    monkeypatch.setattr(ses.subprocess, "run", lambda cmd, **k: (typed.append(cmd), _Run(len(cmd[cmd.index("--text") + 1])))[1])
+    s = ses.new_session(SID, "claude", "hook")
+    s.update({"pid": PID, "state": "termino", "last_event": "Stop"})
+    st.sessions[SID] = s
+    # mensaje largo: viaja como adjunto .md y en la consola se tipea el envoltorio (143 caracteres)
+    msg = "Sos parte de la fase 1.\n" + "x" * 1600
+    code, out = ses.send_to_session(s, msg, [])
+    assert code == 200
+    assert typed[-1][typed[-1].index("--text") + 1].startswith(ses.ATTACH_WRAPPER)
+    assert out["chars"] == len(msg.strip()), "el toast cuenta el mensaje, no el envoltorio"
+    assert s["last_prompt"].startswith("Sos parte de la fase 1."), "la tarjeta muestra el contenido, no 'Leé el archivo adjunto'"
+    assert s["state"] == "corriendo"
+    # sesion terminada por SessionEnd (/clear, resume): la consola es de otra; el envio sale pero
+    # esta tarjeta no vuelve a 'corriendo'
+    s.update({"state": "muerta", "last_event": "SessionEnd"})
+    code, out = ses.send_to_session(s, "hola", [])
+    assert code == 200 and out["chars"] == 4
+    assert s["state"] == "muerta" and s["last_prompt"] == "hola"
