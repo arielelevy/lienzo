@@ -40,6 +40,46 @@ ENROLL_S = 15 * 60
 
 # --- HTTP ------------------------------------------------------------------------------
 
+def at_fields(d: dict, current: dict | None = None) -> tuple[dict | None, str | None]:
+    """Campos de repeticion de una regla 'at' (POST o PUT): every_s (entero >= 60, o None = un solo
+    disparo), max_fires (1..50; 5 por defecto si es periodica), skip_busy (True por defecto si es
+    periodica). `current` es la regla que se edita (PUT), para no pisar lo que no vino. Devuelve
+    (campos, error)."""
+    cur = current or {}
+    every = cur.get("every_s")
+    if "every_s" in d:
+        v = d["every_s"]
+        if v is None:
+            every = None
+        else:
+            if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+                return None, "every_s debe ser un entero en segundos"
+            try:
+                f = float(v)
+            except ValueError:
+                return None, "every_s debe ser un entero en segundos"
+            if f != int(f):
+                return None, "every_s debe ser un entero en segundos"
+            every = int(f)
+            if every < 60:
+                return None, "every_s debe ser al menos 60 segundos"
+    max_fires = cur.get("max_fires")
+    if d.get("max_fires") is not None:
+        try:
+            max_fires = max(1, min(int(d["max_fires"]), 50))
+        except (TypeError, ValueError):
+            return None, "max_fires debe ser un numero"
+    elif every and (max_fires or 1) <= 1:
+        max_fires = 5          # pasa a periodica sin tope explicito: 5 disparos
+    skip_busy = cur.get("skip_busy")
+    if "skip_busy" in d:
+        skip_busy = bool(d["skip_busy"])
+    elif skip_busy is None:
+        skip_busy = bool(every)
+    return {"every_s": every, "max_fires": int(max_fires or 1), "skip_busy": bool(skip_busy),
+            "repeat": bool(every)}, None
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "lienzo/0.1"
     protocol_version = "HTTP/1.1"
@@ -259,6 +299,11 @@ class Handler(BaseHTTPRequestHandler):
                     except ValueError:
                         return self._json(400, {"error": "at debe ser una fecha ISO"})
                 text = str(d.get("text") or "")
+                extra = {}
+                if kind == "at":
+                    extra, err = at_fields(d)
+                    if err:
+                        return self._json(400, {"error": err})
 
                 def same_rule(r: dict) -> bool:
                     if not r.get("enabled") or r.get("kind") != kind or r.get("to") != d["to"]:
@@ -267,6 +312,8 @@ class Handler(BaseHTTPRequestHandler):
                         return False
                     if kind != "at":
                         return True
+                    if (r.get("every_s") or None) != (extra.get("every_s") or None):
+                        return False   # misma hora pero una es periodica y la otra no (o distinto periodo)
                     try:
                         return dt.datetime.fromisoformat(str(r.get("at"))) == at
                     except ValueError:
@@ -280,8 +327,11 @@ class Handler(BaseHTTPRequestHandler):
                         "text": text, "at": at.isoformat(timespec="seconds") if at else None,
                         "repeat": bool(d.get("repeat")), "max_fires": max(1, min(int(d.get("max_fires") or 1), 50)),
                         "fired": 0, "enabled": True, "created": now()}
+                if kind == "at":
+                    rule.update(extra)   # every_s, max_fires, skip_busy, repeat=bool(every_s)
                 rules.add(rule, cap=500)
-                log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]} {rule.get('at') or ''}")
+                cada = f" cada {rule['every_s']} s x{rule['max_fires']}" if rule.get("every_s") else ""
+                log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]} {rule.get('at') or ''}{cada}")
                 return self._json(200, rule)
             if len(parts) == 2 and parts[0] == "pending":
                 d = self._json_body()
@@ -377,14 +427,20 @@ class Handler(BaseHTTPRequestHandler):
                     r = next((x for x in rules.items if x["id"] == parts[1]), None)
                     if r is None:
                         return self._json(404, {"error": "conexion desconocida"})
+                    if r.get("kind") == "at":
+                        extra, err = at_fields(d, r)
+                        if err:
+                            return self._json(400, {"error": err})
                     if "text" in d:
                         r["text"] = d["text"]
-                    if r.get("kind") == "at" and at is not None:
-                        r["at"] = at.isoformat(timespec="seconds")
-                        if not r.get("enabled"):
-                            r["enabled"] = True
-                            r["fired"] = 0
-                            r.pop("disabled_at", None)
+                    if r.get("kind") == "at":
+                        r.update(extra)   # every_s (null = un disparo), max_fires, skip_busy, repeat
+                        if at is not None:
+                            r["at"] = at.isoformat(timespec="seconds")
+                            if not r.get("enabled"):
+                                r["enabled"] = True
+                                r["fired"] = 0
+                                r.pop("disabled_at", None)
                     if r.get("kind") == "on_stop":
                         if "repeat" in d:
                             r["repeat"] = bool(d["repeat"])

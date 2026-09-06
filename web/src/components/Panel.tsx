@@ -1,6 +1,7 @@
 import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { ago, api } from "../api";
 import { hhmm } from "../nl";
+import { periodLabel } from "./Card";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
@@ -65,7 +66,15 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
   const rules = [...conn.rules].sort((a, b) => Number(b.enabled) - Number(a.enabled));
   const ruleState = (r: ConnectionsResponse["rules"][number]) => {
     if (!r.enabled) return "cumplida";
-    if (r.kind === "at") return r.at ? `a las ${hhmm(new Date(r.at))}` : "programada";
+    if (r.kind === "at") {
+      if (r.every_s) {
+        // periodica: proxima hora, cuenta de disparos y si saltea al destino ocupado
+        const next = r.at ? `próx. ${hhmm(new Date(r.at))}` : "programada";
+        const busy = r.skip_busy === false ? "" : " · saltea si está ocupada";
+        return `${next} · ${r.fired}/${r.max_fires}${busy}${r.last_fired ? ` · última hace ${ago(r.last_fired)}` : ""}`;
+      }
+      return r.at ? `a las ${hhmm(new Date(r.at))}` : "programada";
+    }
     const n = r.max_fires > 1 ? ` ${r.fired}/${r.max_fires}` : r.fired ? " ya disparó" : "";
     return `esperando que termine${n}${r.last_fired ? ` · última hace ${ago(r.last_fired)}` : ""}`;
   };
@@ -95,8 +104,11 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
         rules.map((r) => {
           const outbound = r.from === sid;
           const other = otherName(r);
+          const where = outbound ? "→ " + other : r.from && r.from !== sid ? "desde " + other : "a esta sesión";
           const label = r.kind === "at"
-            ? `⏰ "${cut(r.text, 60)}" ${outbound ? "→ " + other : r.from && r.from !== sid ? "desde " + other : "a esta sesión"}`
+            ? r.every_s
+              ? `↻ ${periodLabel(r.every_s)} "${cut(r.text, 60)}" ${where}`
+              : `⏰ "${cut(r.text, 60)}" ${where}`
             : outbound
               ? `⏹ al terminar → ${other}`
               : `⏹ recibe de ${other} al terminar`;
@@ -130,6 +142,14 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
   const [hasMore, setHasMore] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // sesion libre: viva, con consola y sin ningun pedido todavia. El estado vacio de Destacados y
+  // Conversacion dice que hacer, y la caja de envio arranca con el foco ("Darle trabajo" de la tarjeta)
+  const free = !!s.alive && !s.orphan && !s.no_console && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();
+  const freeEmpty = (
+    <div className="empty free">
+      Esta sesión todavía no recibió pedidos. Escribile abajo, o marcá "avisarme cuando termine" para que su informe te llegue solo.
+    </div>
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -237,18 +257,20 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
                 <Digest turn={t} toast={toast} />
               </div>
             ))
+          ) : free ? (
+            freeEmpty
           ) : (
             <div className="empty">{note || "sin turnos"}</div>
           )
         ) : (
           <>
             {hasMore && <button onClick={loadMore}>cargar anteriores</button>}
-            {turns.length ? turns.map((t) => <TurnView key={t.id} turn={t} />) : <div className="empty">{note || "sin turnos"}</div>}
+            {turns.length ? turns.map((t) => <TurnView key={t.id} turn={t} />) : free ? freeEmpty : <div className="empty">{note || "sin turnos"}</div>}
           </>
         )}
         </ErrorBoundary>
       </div>
-      <SendBox session={s} others={others} toast={toast} />
+      <SendBox session={s} others={others} toast={toast} autoFocus={free} />
     </div>
   );
 }

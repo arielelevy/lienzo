@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 // @ts-ignore TS5097: extension .ts en el import, necesaria para que Node lo resuelva
-import { buildItems, channelX, clearance, colOf, computeSegs, cubic, freeAt, groupColumns, layoutEnds, sideArc, type Formatters, type Rect } from "./arrows-geometry.ts";
+import { buildItems, channelX, clearance, colOf, computeSegs, cubic, freeAt, groupColumns, layoutEnds, periodLabel, sideArc, type Formatters, type Rect } from "./arrows-geometry.ts";
 import type { Link, Rule } from "./types";
 
 let failed = 0;
@@ -167,6 +167,34 @@ test("buildItems solo dibuja reglas activas, con origen, no reflexivas y con los
   assert.equal(items[2].glyph, "⏰");
   assert.equal(items[2].title.split("\n")[0], 'a las 23:00 → "Continuar"');
   assert.equal(items[3].title.split("\n")[0], 'a las ? → "sin hora"');
+});
+
+test("periodLabel: minutos, hora, horas y dia; nunca menos de un minuto", () => {
+  assert.equal(periodLabel(300), "cada 5 min");
+  assert.equal(periodLabel(1800), "cada 30 min");
+  assert.equal(periodLabel(3600), "cada hora");
+  assert.equal(periodLabel(7200), "cada 2 h");
+  assert.equal(periodLabel(86400), "cada día");
+  assert.equal(periodLabel(172800), "cada 2 días");
+  assert.equal(periodLabel(90), "cada 90 s");
+  assert.equal(periodLabel(10), "cada 1 min");
+  assert.equal(periodLabel(null), "cada 1 min");
+});
+
+test("buildItems: una regla at periodica lleva ↻ y dice periodo, cuenta y proxima hora; sin at, solo la cuenta", () => {
+  const anchors = new Map([["a", A1], ["b", B1]]);
+  const rules = [
+    rule({ id: "p1", from: "a", to: "b", kind: "at", at: "2026-09-06T09:30:00Z", text: "Continuá", every_s: 1800, max_fires: 5, fired: 1, repeat: true }),
+    rule({ id: "p2", from: "a", to: "b", kind: "at", at: null, text: "ping", every_s: 3600, max_fires: 2, fired: 0, repeat: true }),
+    rule({ id: "once", from: "a", to: "b", kind: "at", at: "2026-09-06T09:30:00Z", text: "una vez", every_s: null }),
+  ];
+  const items = buildItems([], rules, anchors, fmt);
+  assert.equal(items[0].glyph, "↻");
+  assert.equal(items[0].title, 'cada 30 min → "Continuá" (1/5, próx. 09:30)\n(click quita · doble click edita)');
+  assert.equal(items[1].glyph, "↻");
+  assert.equal(items[1].title.split("\n")[0], 'cada hora → "ping" (0/2)');
+  assert.equal(items[2].glyph, "⏰");
+  assert.equal(items[2].title.split("\n")[0], 'a las 09:30 → "una vez"');
 });
 
 test("layoutEnds: columnas distintas salen por el lado que mira al destino; misma columna usan el arco", () => {

@@ -388,3 +388,117 @@ def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
     code, out = ses.send_to_session(s, "hola", [])
     assert code == 200 and out["chars"] == 4
     assert s["state"] == "muerta" and s["last_prompt"] == "hola"
+
+
+# 8. reglas 'at' periodicas: cada every_s segundos, con tope max_fires ------------------------
+
+@pytest.fixture
+def periodica(aislado, con_pid, monkeypatch):
+    """Destino con consola; el envio no tipea de verdad, se anota. Devuelve (sesion, envios)."""
+    sent: list[str] = []
+    monkeypatch.setattr(rl, "send_to_session", lambda s, text, atts: (sent.append(text), (200, {"ok": True}))[1])
+    s = ses.new_session(SID, "claude", "hook")
+    s.update({"pid": PID, "state": "termino", "last_event": "Stop"})
+    st.sessions[SID] = s
+    return s, sent
+
+
+def regla_at(every_s, max_fires=3, at_offset_s=-1.0, **k) -> dict:
+    import datetime as dt
+    at = (dt.datetime.now().astimezone() + dt.timedelta(seconds=at_offset_s)).isoformat(timespec="seconds")
+    r = {"id": "p1", "kind": "at", "from": None, "to": SID, "text": "continuá", "at": at,
+         "repeat": bool(every_s), "every_s": every_s, "max_fires": max_fires, "skip_busy": bool(every_s),
+         "fired": 0, "enabled": True, "created": st.now()}
+    r.update(k)
+    st.rules.add(r)
+    return r
+
+
+def _at(r: dict):
+    import datetime as dt
+    return dt.datetime.fromisoformat(r["at"])
+
+
+def test_at_periodica_dispara_y_queda_habilitada_con_at_corrido(periodica):
+    s, sent = periodica
+    r = regla_at(600, max_fires=3)
+    antes = _at(r)
+    rl.fire_rule(r)
+    assert sent == ["continuá"]
+    assert r["enabled"] is True and r["fired"] == 1 and r["last_result"] == "ok"
+    assert (_at(r) - antes).total_seconds() == 600
+    assert "disabled_at" not in r
+    assert not st.links.items, "sin origen distinto del destino no hay flecha"
+
+
+def test_at_periodica_se_deshabilita_al_llegar_a_max_fires(periodica):
+    s, sent = periodica
+    r = regla_at(600, max_fires=3)
+    for i in range(3):
+        r["at"] = st.now()  # vencida otra vez
+        rl.fire_rule(r)
+    assert len(sent) == 3 and r["fired"] == 3
+    assert r["enabled"] is False and r.get("disabled_at")
+    # una cuarta pasada del bucle no la toma (esta deshabilitada) y aunque se fuerce no dispara de mas
+    assert not any(x.get("enabled") for x in st.rules.items if x["id"] == "p1")
+
+
+def test_at_periodica_saltea_sin_contar_si_el_destino_corre(periodica):
+    s, sent = periodica
+    s["state"] = "corriendo"
+    r = regla_at(600, max_fires=3)
+    antes = _at(r)
+    rl.fire_rule(r)
+    assert sent == [] and r["fired"] == 0 and r["enabled"] is True
+    assert r["last_result"] == "salteado: destino ocupado"
+    assert (_at(r) - antes).total_seconds() == 600
+    # sin skip_busy se manda igual aunque este corriendo
+    r["skip_busy"] = False
+    r["at"] = st.now()
+    rl.fire_rule(r)
+    assert sent == ["continuá"] and r["fired"] == 1
+
+
+def test_at_periodica_atrasada_horas_avanza_hasta_el_futuro_de_un_salto(periodica):
+    import datetime as dt
+    s, sent = periodica
+    r = regla_at(600, max_fires=5, at_offset_s=-5 * 3600)   # el server estuvo caido 5 h
+    rl.fire_rule(r)
+    ahora = dt.datetime.now().astimezone()
+    assert sent == ["continuá"] and r["fired"] == 1, "los periodos perdidos no se disparan"
+    assert ahora < _at(r) <= ahora + dt.timedelta(seconds=600)
+    # y cae sobre la grilla original (multiplo de 600 s desde el at inicial)
+    inicial = ahora - dt.timedelta(hours=5)
+    resto = round((_at(r) - inicial).total_seconds()) % 600
+    assert min(resto, 600 - resto) <= 1   # `at` se guarda sin microsegundos: puede caer 1 s abajo
+
+
+def test_at_sin_every_s_sigue_siendo_de_un_disparo(periodica):
+    s, sent = periodica
+    r = regla_at(None, max_fires=1)
+    antes = r["at"]
+    rl.fire_rule(r)
+    assert sent == ["continuá"] and r["fired"] == 1
+    assert r["enabled"] is False and r.get("disabled_at") and r["at"] == antes
+
+
+def test_at_fields_valida_every_s_y_pone_los_defaults():
+    ok, err = server.at_fields({"every_s": 30})
+    assert ok is None and err == "every_s debe ser al menos 60 segundos"
+    for malo in ("x", 12.5, True, [600]):
+        ok, err = server.at_fields({"every_s": malo})
+        assert ok is None and "entero" in err, malo
+    # periodica sin mas datos: 5 disparos, saltea ocupado, repeat para las etiquetas (fired/max_fires)
+    ok, err = server.at_fields({"every_s": 1800})
+    assert err is None and ok == {"every_s": 1800, "max_fires": 5, "skip_busy": True, "repeat": True}
+    ok, _ = server.at_fields({"every_s": "600", "max_fires": 99, "skip_busy": False})
+    assert ok == {"every_s": 600, "max_fires": 50, "skip_busy": False, "repeat": True}
+    # un disparo (como hoy): sin every_s no aplica el salteo
+    ok, _ = server.at_fields({"max_fires": 1})
+    assert ok == {"every_s": None, "max_fires": 1, "skip_busy": False, "repeat": False}
+    # PUT: null explicito la vuelve de un disparo; sin every_s en el body se conserva lo que tenia
+    cur = {"every_s": 600, "max_fires": 5, "skip_busy": True, "repeat": True}
+    ok, _ = server.at_fields({"every_s": None}, cur)
+    assert ok["every_s"] is None and ok["repeat"] is False and ok["max_fires"] == 5
+    ok, _ = server.at_fields({"max_fires": 2}, cur)
+    assert ok == {"every_s": 600, "max_fires": 2, "skip_busy": True, "repeat": True}

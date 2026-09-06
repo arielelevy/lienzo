@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ago, api } from "../api";
 import { hhmm, nextAt } from "../nl";
 import { computeSegs, FRESH_MS, type Rect, type Seg } from "../arrows-geometry";
+import { periodLabel } from "./Card";
 import type { Link, Rule, Session } from "../types";
 
 interface Props {
@@ -27,8 +28,21 @@ interface Edit {
   y: number;
   text: string;
   time: string;
+  /** on_stop: se repite hasta maxFires; at: es periodica (every_s) hasta maxFires */
   repeat: boolean;
   maxFires: number;
+  /** at periodica: "repetir cada [everyN] [everyUnit]" */
+  everyN: number;
+  everyUnit: "min" | "h";
+  /** at periodica: si el destino esta corriendo, saltear el disparo sin contarlo */
+  skipBusy: boolean;
+}
+
+/** every_s en segundos → cantidad y unidad para el editor (horas enteras en h, el resto en min) */
+function splitEvery(everyS: number | null | undefined): { everyN: number; everyUnit: "min" | "h" } {
+  const s = everyS ?? 1800;
+  if (s >= 3600 && s % 3600 === 0) return { everyN: s / 3600, everyUnit: "h" };
+  return { everyN: Math.max(1, Math.round(s / 60)), everyUnit: "min" };
 }
 
 /** doble click en un envio ya hecho: no se edita, pero se ve que se mando y se puede reenviar */
@@ -64,8 +78,21 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   const openEdit = (s: Seg) => {
     const r = rules.find((x) => x.id === s.ids[0]);
     if (!r) return;
-    setEdit({ id: r.id, kind: r.kind, x: s.x, y: s.y, text: r.text, time: r.at ? hhmm(new Date(r.at)) : "", repeat: r.repeat, maxFires: r.max_fires });
+    const periodic = r.kind === "at" && !!r.every_s;
+    setEdit({
+      id: r.id,
+      kind: r.kind,
+      x: s.x,
+      y: s.y,
+      text: r.text,
+      time: r.at ? hhmm(new Date(r.at)) : "",
+      repeat: r.kind === "at" ? periodic : r.repeat,
+      maxFires: r.max_fires,
+      ...splitEvery(r.every_s),
+      skipBusy: r.skip_busy ?? true,
+    });
   };
+  const everySeconds = (e: Edit) => Math.max(60, e.everyN * (e.everyUnit === "h" ? 3600 : 60));
   const saveEdit = async () => {
     if (!edit) return;
     const body: Record<string, unknown> = { text: edit.text };
@@ -76,6 +103,10 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         return;
       }
       body.at = nextAt(Number(m[1]), Number(m[2])).toISOString(); // ya paso hoy: manana
+      // periodica: every_s (null la vuelve de un disparo), tope de disparos y saltear si esta ocupada
+      body.every_s = edit.repeat ? everySeconds(edit) : null;
+      body.max_fires = edit.repeat ? edit.maxFires : 1;
+      body.skip_busy = edit.skipBusy;
     } else {
       body.repeat = edit.repeat;
       body.max_fires = edit.maxFires;
@@ -83,7 +114,13 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     setSaving(true);
     try {
       await api.put(`/rules/${edit.id}`, body);
-      toast?.(edit.kind === "at" ? `Reprogramada a las ${edit.time.trim()}` : "Conexión guardada");
+      toast?.(
+        edit.kind !== "at"
+          ? "Conexión guardada"
+          : edit.repeat
+            ? `Desde las ${edit.time.trim()}, ${periodLabel(everySeconds(edit))}, hasta ${edit.maxFires} veces`
+            : `Reprogramada a las ${edit.time.trim()}`,
+      );
       setEdit(null);
     } catch (e) {
       toast?.(`No se pudo guardar: ${(e as Error).message}`, true);
@@ -277,10 +314,10 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
           }
         }}
       >
-        <div className="hd">{edit.kind === "at" ? "⏰ programada" : "⏹ cuando termine"}</div>
+        <div className="hd">{edit.kind === "at" ? (edit.repeat ? "↻ periódica" : "⏰ programada") : "⏹ cuando termine"}</div>
         {edit.kind === "at" && (
           <label>
-            hora (HH:MM)
+            {edit.repeat ? "primera vez (HH:MM)" : "hora (HH:MM)"}
             <input autoFocus value={edit.time} placeholder="HH:MM" onChange={(e) => setEdit({ ...edit, time: e.target.value })} />
           </label>
         )}
@@ -288,6 +325,35 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
           {edit.kind === "at" ? "texto que se escribe" : "plantilla ({repo}, {titulo}, {pedido}, {respuesta})"}
           <textarea rows={edit.kind === "at" ? 2 : 3} autoFocus={edit.kind !== "at"} value={edit.text} onChange={(e) => setEdit({ ...edit, text: e.target.value })} />
         </label>
+        {edit.kind === "at" && (
+          <>
+            <label className="row">
+              <input type="checkbox" checked={edit.repeat} onChange={(e) => setEdit({ ...edit, repeat: e.target.checked })} />
+              repetir cada
+              <input
+                type="number"
+                min={1}
+                max={edit.everyUnit === "h" ? 168 : 1440}
+                disabled={!edit.repeat}
+                value={edit.everyN}
+                onChange={(e) => setEdit({ ...edit, everyN: Math.max(1, Math.min(1440, Number(e.target.value) || 1)) })}
+              />
+              <select disabled={!edit.repeat} value={edit.everyUnit} onChange={(e) => setEdit({ ...edit, everyUnit: e.target.value as "min" | "h" })}>
+                <option value="min">min</option>
+                <option value="h">h</option>
+              </select>
+            </label>
+            <label className="row indent">
+              hasta
+              <input type="number" min={1} max={50} disabled={!edit.repeat} value={edit.maxFires} onChange={(e) => setEdit({ ...edit, maxFires: Math.max(1, Math.min(50, Number(e.target.value) || 1)) })} />
+              veces
+            </label>
+            <label className="row indent" title="si a esa hora el destino está corriendo, ese disparo se saltea y no cuenta">
+              <input type="checkbox" disabled={!edit.repeat} checked={edit.skipBusy} onChange={(e) => setEdit({ ...edit, skipBusy: e.target.checked })} />
+              sólo si está libre
+            </label>
+          </>
+        )}
         {edit.kind === "on_stop" && (
           <label className="row">
             <input type="checkbox" checked={edit.repeat} onChange={(e) => setEdit({ ...edit, repeat: e.target.checked })} />

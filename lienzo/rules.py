@@ -1,6 +1,7 @@
-"""Reglas del lienzo: "cuando termine" (on_stop) y "a las HH:MM" (at), la regla automatica
-"Continuar" ante un limite de uso con hora, el disparo (fire_rule), el bucle de las programadas, la
-purga de las viejas y la vista de conexiones de una sesion. Importa sessions.py para enviar y
+"""Reglas del lienzo: "cuando termine" (on_stop) y "a las HH:MM" (at: una vez, o cada every_s
+segundos con tope max_fires), la regla automatica "Continuar" ante un limite de uso con hora, el
+disparo (fire_rule), el bucle de las programadas, la purga de las viejas y la vista de conexiones
+de una sesion. Importa sessions.py para enviar y
 registrar links; sessions.py lo llama por los ganchos on_turn_end / on_limit_notice, que se
 rellenan al final de este modulo."""
 from __future__ import annotations
@@ -115,12 +116,42 @@ def ensure_continue_rule(s: dict) -> None:
         f"'{CONTINUE_TEXT}' a las {at_iso}")
 
 
+def advance_at(rule: dict, ref: dt.datetime | None = None) -> None:
+    """Regla 'at' periodica: correr `at` un periodo (every_s). Si aun asi queda en el pasado (el
+    server estuvo caido), saltar los periodos perdidos hasta el primero futuro, sin disparar los
+    que no se hicieron. Se guarda en hora local con segundos, como el resto."""
+    every = int(rule["every_s"])
+    ref = ref or dt.datetime.now().astimezone()
+    try:
+        at = dt.datetime.fromisoformat(str(rule.get("at")))
+    except (TypeError, ValueError):
+        at = ref
+    if at.tzinfo is None:
+        at = at.astimezone()
+    at += dt.timedelta(seconds=every)
+    if at <= ref:
+        missed = int((ref - at).total_seconds() // every) + 1
+        at += dt.timedelta(seconds=missed * every)
+    rule["at"] = at.isoformat(timespec="seconds")
+
+
 def fire_rule(rule: dict) -> None:
     with lock:
         src = sessions.get(rule.get("from") or "")
         dst = sessions.get(rule["to"])
     if dst is None:
         rules.remove(lambda r: r["id"] == rule["id"])
+        return
+    periodic = rule.get("kind") == "at" and bool(rule.get("every_s"))
+    if periodic and rule.get("skip_busy", True) and dst.get("state") == "corriendo":
+        # el destino esta trabajando: este disparo no cuenta, se pasa al periodo siguiente
+        with lock:
+            advance_at(rule)
+            rule["last_result"] = "salteado: destino ocupado"
+            rules.save()
+        state.log(f"regla {rule['id']} (at cada {rule['every_s']} s) -> {rule['to'][:8]}: "
+                  f"salteado, destino ocupado; proximo {rule['at']}")
+        rules.publish()
         return
     text = render_template(rule.get("text") or "", src)
     code, res = send_to_session(dst, text, [])
@@ -132,10 +163,14 @@ def fire_rule(rule: dict) -> None:
         if not rule.get("repeat") or exhausted:
             rule["enabled"] = False
             rule["disabled_at"] = now()
+        elif periodic:
+            advance_at(rule)
         rules.save()
     state.log(f"regla {rule['id']} ({rule['kind']}) -> {rule['to'][:8]}: {rule['last_result']}")
     if exhausted:
         state.log(f"regla {rule['id']} agotada ({rule['fired']}/{rule.get('max_fires')} disparos)")
+    elif periodic:
+        state.log(f"regla {rule['id']} ({rule['fired']}/{rule.get('max_fires')}) proximo disparo {rule['at']}")
     if code == 200 and src and src["session_id"] != dst["session_id"]:
         add_link(src["session_id"], dst["session_id"], text, kind="rule", rule_id=rule["id"])
     rules.publish()

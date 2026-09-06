@@ -70,6 +70,20 @@
    pointer: none, y con la condicion doble no lo toma como pantalla tactil */
 @media (hover: none) and (pointer: coarse) { .card .quickact button { opacity: 1; pointer-events: auto; } }
 
+/* sesion libre (viva, con consola, sin ningun pedido): se lee como disponible, no como muerta.
+   Borde punteado suave y texto algo apagado; el boton "Darle trabajo" siempre visible (no espera el
+   hover como los rapidos, porque es la unica accion de la tarjeta) */
+.card.free { border-style: dashed; border-color: #3a4152; background: #191c25; }
+.card.free:hover, .card.free.sel { border-color: var(--acc); }
+.card.free .top .st.done { color: #556074; }
+.card .freeline { color: var(--dim); font-weight: 400; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .title .freeline { display: block; }
+.card .freeact button, .card:hover .freeact button, .card:focus-within .freeact button { opacity: 1; pointer-events: auto; color: var(--acc); border-color: var(--acc); }
+
+/* dos reglas "at" de la tarjeta caen en el mismo minuto: aviso chico delante del chip */
+.card .rule.clash { border: 1px solid #5c4a12; }
+.card .rule .warn { color: var(--need); flex: 0 0 auto; cursor: help; font-size: 12px; line-height: 1; }
+
 /* limite de uso con hora: programar "Continuar" un minuto despues */
 .card .limitrow { margin-top: 6px; }
 .card .limitrow button { font-size: 12px; padding: 3px 9px; border-radius: 12px; color: var(--acc); border-color: var(--acc); }

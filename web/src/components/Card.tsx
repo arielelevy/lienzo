@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
+import { periodLabel, periodicCount } from "../arrows-geometry";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
+
+/** "cada 30 min", "cada hora", "cada día": definida en arrows-geometry (modulo puro, sin React)
+ *  y reexportada desde aca, que es de donde la toman Panel y Arrows. */
+export { periodLabel };
 
 export type ToastFn = (msg: string, err?: boolean) => void;
 
@@ -50,25 +55,59 @@ export function shortName(o: Session | undefined, fallback = "otra sesión"): st
   return `${o.repo} · ${t.length > 24 ? t.slice(0, 23).trimEnd() + "…" : t}`;
 }
 
-/** Reglas con la misma etiqueta agrupadas (×N), como maximo `max` grupos. */
+/** minuto (ms truncados) en que dispara una regla "at"; null si no tiene hora */
+const minuteOf = (r: Rule): number | null => (r.kind === "at" && r.at ? Math.floor(new Date(r.at).getTime() / 60_000) : null);
+
+/** Reglas "at" que le escriben a esta sesion y caen en el mismo minuto que otra: dos inyecciones
+ *  a la misma consola en el mismo minuto (el server no lo impide todavia; la tarjeta lo marca). */
+export function clashingAt(rules: Rule[], sid: string): Set<string> {
+  const byMinute = new Map<number, string[]>();
+  for (const r of rules) {
+    if (!r.enabled || r.to !== sid) continue;
+    const m = minuteOf(r);
+    if (m === null) continue;
+    const arr = byMinute.get(m);
+    if (arr) arr.push(r.id);
+    else byMinute.set(m, [r.id]);
+  }
+  const out = new Set<string>();
+  for (const ids of byMinute.values()) if (ids.length > 1) ids.forEach((id) => out.add(id));
+  return out;
+}
+
+/** Reglas con la misma etiqueta agrupadas (×N), como maximo `max` grupos. `clash` marca los grupos
+ *  con alguna regla que comparte minuto con otra de la tarjeta. */
 function groupRules(rules: Rule[], sid: string, sessions: Record<string, Session>, max = 3) {
-  const groups = new Map<string, { label: string; kind: Rule["kind"]; ids: string[] }>();
+  const clashing = clashingAt(rules, sid);
+  const groups = new Map<string, { label: string; kind: Rule["kind"]; ids: string[]; clash: boolean }>();
   for (const r of rules) {
     const label = ruleLabel(r, sid, sessions);
     const g = groups.get(label);
-    if (g) g.ids.push(r.id);
-    else groups.set(label, { label, kind: r.kind, ids: [r.id] });
+    if (g) {
+      g.ids.push(r.id);
+      g.clash ||= clashing.has(r.id);
+    } else groups.set(label, { label, kind: r.kind, ids: [r.id], clash: clashing.has(r.id) });
   }
   const all = [...groups.values()];
   return { shown: all.slice(0, max), hidden: all.slice(max).reduce((n, g) => n + g.ids.length, 0) };
 }
 
-function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>): string {
+/** Etiqueta del chip de una regla vista desde la tarjeta `sid`. Una "at" periodica dice el periodo,
+ *  la proxima hora si esta en el futuro y cuantas veces fue: `↻ cada 30 min · próx. 09:30 → "Continuá" (1/5)`. */
+export function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>, now = Date.now()): string {
   const other = (id: string | null) => shortName(id ? sessions[id] : undefined, "?");
   if (r.kind === "at") {
-    const t = r.at ? hhmm(new Date(r.at)) : "?";
-    if (r.to === sid) return r.from && r.from !== sid ? `⏰ ${t} → "${r.text}" (desde ${other(r.from)})` : `⏰ ${t} → "${r.text}"`;
-    return `⏰ ${t} → "${r.text}" a ${other(r.to)}`;
+    let head: string;
+    let tail = "";
+    if (r.every_s) {
+      const next = r.at && new Date(r.at).getTime() > now ? ` · próx. ${hhmm(new Date(r.at))}` : "";
+      head = `↻ ${periodLabel(r.every_s)}${next}`;
+      tail = ` ${periodicCount(r.fired, r.max_fires, null)}`;
+    } else {
+      head = `⏰ ${r.at ? hhmm(new Date(r.at)) : "?"}`;
+    }
+    if (r.to === sid) return r.from && r.from !== sid ? `${head} → "${r.text}"${tail} (desde ${other(r.from)})` : `${head} → "${r.text}"${tail}`;
+    return `${head} → "${r.text}"${tail} a ${other(r.to)}`;
   }
   const count = r.repeat ? ` (${r.fired}/${r.max_fires})` : "";
   return r.from === sid ? `⏹ al terminar → ${other(r.to)}${count}` : `⏹ recibe de ${other(r.from)} al terminar${count}`;
@@ -170,6 +209,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const canWrite = !!s.alive && !s.orphan && !s.no_console;
   // ociosa: termino, o espera input en la terminal; con consola y sin permiso pendiente
   const idle = canWrite && !s.pending_id && !p && (s.state === "termino" || (s.state === "te_necesita" && s.needs?.kind === "idle"));
+  // libre: viva, con consola y sin ningun pedido todavia (sesion recien abierta). No hay nada que
+  // continuar ni que contestar: en vez de los botones rapidos, un solo "Darle trabajo" que abre el
+  // panel con el cursor en la caja
+  const free = canWrite && !p && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();
 
   // limite de uso con hora de vuelta (Codex): un click deja programado "Continuar" un minuto
   // despues; si ya hay una regla a esa hora (manual o automatica) el chip de abajo la muestra
@@ -234,10 +277,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
 
   return (
     <div
-      className={`card ${selected ? "sel" : ""}`}
+      className={`card ${selected ? "sel" : ""} ${free ? "free" : ""}`}
       role="button"
       tabIndex={0}
-      aria-label={`${s.repo}: ${s.title || s.last_prompt || "sin título"}`}
+      aria-label={`${s.repo}: ${s.title || s.last_prompt || (free ? "libre, sin pedidos todavía" : "sin título")}`}
       aria-pressed={selected}
       onClick={() => {
         window.clearTimeout(clickTimer.current);
@@ -336,10 +379,19 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               }
             }}
           />
+        ) : free && !s.title ? (
+          <span className="freeline" title={`abierta hace ${ago(s.started)}, sin ningún pedido todavía`}>
+            Libre · sin pedidos todavía · desde hace {ago(s.started)}
+          </span>
         ) : (
           s.title || s.last_prompt || "(sin título)"
         )}
       </div>
+      {free && s.title && (
+        <div className="freeline" title={`abierta hace ${ago(s.started)}, sin ningún pedido todavía`}>
+          Libre · sin pedidos todavía · desde hace {ago(s.started)}
+        </div>
+      )}
       {/* el pedido no se repite si el titulo ya es su primera linea; si hay mas texto queda el "…más" */}
       {s.title && s.last_prompt && (!dupPrompt || cut) && (
         <div className={`prompt ${promptOpen ? "open" : ""}`}>
@@ -413,7 +465,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           <span className="wdot" aria-hidden="true" />
           {s.last_reply}
         </div>
-      ) : (
+      ) : free ? null : (
         <div className="replyrow">
           <div className="reply">{s.last_reply}</div>
           {s.last_reply && (
@@ -446,7 +498,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       )}
       {suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {suggestion}</div>}
       {ruleGroups.shown.map((g) => (
-        <div key={g.label} className="rule" title={g.kind === "at" ? "programado" : "cuando termine el turno"}>
+        <div key={g.label} className={`rule ${g.clash ? "clash" : ""}`} title={g.kind === "at" ? (g.label.startsWith("↻") ? "periódica" : "programado") : "cuando termine el turno"}>
+          {g.clash && (
+            <span className="warn" role="img" aria-label="dos mensajes programados al mismo minuto" title="dos mensajes programados al mismo minuto">
+              ⚠
+            </span>
+          )}
           <span>
             {g.label}
             {g.ids.length > 1 && <span className="dim"> ×{g.ids.length}</span>}
@@ -471,7 +528,20 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           +{ruleGroups.hidden} más
         </div>
       )}
-      {idle && (
+      {free ? (
+        <div className="quickact freeact" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            title="abre el panel con el cursor en la caja de envío"
+            onClick={() => {
+              window.clearTimeout(clickTimer.current);
+              onSelect();
+            }}
+          >
+            Darle trabajo
+          </button>
+        </div>
+      ) : idle && (
         <div className="quickact" onClick={(e) => e.stopPropagation()}>
           {s.state === "te_necesita" && <span className="dim small">Espera tu input</span>}
           {QUICK.map((q) => (
