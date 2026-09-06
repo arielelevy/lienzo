@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, detail, type AuthInfo } from "./api";
 import { Board, type Agent } from "./components/Board";
+import { shortName } from "./components/Card";
 import { Enroll } from "./components/Enroll";
 import { Forward } from "./components/Forward";
 import { Header } from "./components/Header";
@@ -476,13 +477,16 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setConnect(null)}>
           <div className="gate-box wide connect">
             <h1>
+              {/* soltada sobre si misma: una sola sesion con el bucle; si no, "repo · titulo → repo · titulo"
+                  (shortName: dos sesiones del mismo repo no se distinguen por repo solo) */}
+              {connect.to === connect.from && <span className="dim" title="programar un mensaje para esta misma sesión">↻</span>}
               <span className={`badge ${sessions[connect.from].agent}`}>{sessions[connect.from].agent}</span>
-              {sessions[connect.from].title || sessions[connect.from].repo}
-              {connect.to && sessions[connect.to] && (
+              {shortName(sessions[connect.from])}
+              {connect.to && connect.to !== connect.from && sessions[connect.to] && (
                 <>
                   <span className="dim">→</span>
                   <span className={`badge ${sessions[connect.to].agent}`}>{sessions[connect.to].agent}</span>
-                  {sessions[connect.to].title || sessions[connect.to].repo}
+                  {shortName(sessions[connect.to])}
                 </>
               )}
             </h1>

@@ -30,9 +30,9 @@ Después, cuatro canales, cada uno por su lado:
 | Mandar un mensaje | Inyección de teclas en la consola del proceso por PID (`AttachConsole` + `WriteConsoleInputW`). Funciona sin foco y aunque la pestaña esté oculta. Los adjuntos viajan como ruta en el texto. |
 | Contestar un permiso | El hook `PermissionRequest` es sincrónico: deja el pedido en una carpeta y espera hasta 60 s la respuesta que el tablero escribe. Si nadie contesta, el prompt aparece en la terminal como siempre. |
 
-Además: conexiones entre sesiones (reenvío ahora, cuando termine, a una hora, canal nativo
-Claude a Claude), flechas entre las tarjetas por cada conexión, y una pestaña que muestra
-el texto visible de la terminal leído del buffer de consola.
+Además: conexiones entre sesiones (reenvío ahora, cuando termine, programado a una hora o
+cada tanto con tope, canal nativo Claude a Claude), flechas entre las tarjetas por cada
+conexión, y una pestaña que muestra el texto visible de la terminal leído del buffer de consola.
 
 Cuando una consola cambia de `session_id` sin cambiar de proceso (un `/clear` o un resume
 en Claude Code), la tarjeta nueva hereda el PID de la vieja y todas las conexiones que la
@@ -98,12 +98,17 @@ mandó, lo que le escribiste desde el lienzo, y las conexiones activas con su es
   copiarla.
 - Sesión ociosa con consola: botones rápidos "Continuá", "sí", "no", que se escriben en su
   terminal. Si está esperando input, la misma línea lo dice.
+- Sesión libre (viva, con consola y sin ningún pedido todavía): borde punteado, la línea
+  "Libre · sin pedidos todavía · desde hace N" en vez de "(sin título)", y un único botón
+  "Darle trabajo" que abre el panel con el cursor en la caja de envío.
 - Límite de uso: el error se ve en rojo. Si el aviso trae la hora en que vuelve el cupo
   ("try again at 1:00 AM", "resets 2:40pm"), aparece el botón "Continuar a las HH:MM", que
   deja programado escribir "Continuar" un minuto después de esa hora. Si ya hay una regla a
   esa hora, se muestra el chip en vez del botón.
-- Chips de conexiones: "al terminar → repo · título", "recibe de …", "⏰ 01:01 → Continuar".
-  Las iguales se agrupan (×N); con más de tres, el resto se ve en la pestaña Conexiones.
+- Chips de conexiones: "al terminar → repo · título", "recibe de …", "⏰ 01:01 → Continuar",
+  "↻ cada 30 min · próx. 09:30 → Continuá (1/5)". Las iguales se agrupan (×N); con más de
+  tres, el resto se ve en la pestaña Conexiones. Dos programadas al mismo minuto hacia la misma
+  tarjeta llevan un ⚠.
 - Chip "✓ informe de X hace N min" cuando otra sesión le mandó algo en la última media hora.
 - La sugerencia 💡 que la terminal esté mostrando en ese momento.
 - Con *Detalles técnicos* apagado (menú ⋯, el estado por defecto), no se ven el PID, los
@@ -133,16 +138,27 @@ Denegar. Nunca "permitir siempre".
 
 Arrastrá una tarjeta y soltala sobre otra (o "Conectar…" en el panel). Se abre un diálogo
 chico donde podés escribirlo en una frase, y se interpreta mientras tipeás: "continuá a las
-16:00", "en 30 min seguí", "cuando termine mandale a MAPO", "cada vez que termine pasale a
-Teorema hasta 3 veces". Enter confirma. Cuatro modos:
+16:00", "en 30 min seguí", "cada 30 min continuá hasta 6 veces", "todos los días a las 9
+continuá", "cuando termine mandale a MAPO", "cuando termine avisame", "cada vez que termine
+pasale a Teorema hasta 3 veces". "Avisame" es la coordinadora (la primera sesión de Claude del
+mismo repo). Enter confirma. Si no se entiende la frase, los controles de abajo quedan como
+estaban y el resumen lo dice.
+
+Soltar la tarjeta **sobre sí misma** es el bucle: abre el mismo diálogo en modo Programar con
+destino "esta misma sesión". El aviso durante el arrastre cambia cuando el mouse está sobre
+la tarjeta de origen. Cuatro modos:
 
 - *Ahora*: manda la última respuesta de A a B, con plantilla editable
   (`{repo} {agente} {titulo} {pedido} {respuesta}`).
 - *Cuando A termine*: al cerrar cada turno, su respuesta completa va a B. Una vez, o
   repetida hasta un tope (50 como máximo). No dispara si el turno terminó con error o con
   una pregunta para vos, y hay un enfriamiento de 30 s entre disparos.
-- *A una hora*: un texto fijo (por defecto "Continuá") a una sesión, que puede ser la
-  misma. Es el "seguí" para cuando vuelven los créditos.
+- *Programar*: un texto fijo (por defecto "Continuá") a una sesión, que puede ser la misma,
+  a una hora. Es el "seguí" para cuando vuelven los créditos. Con "repetir cada N min/h" se
+  vuelve periódica: se manda cada tanto hasta un tope de veces (5 por defecto, 50 como máximo;
+  no hay periódica sin tope), y con "sólo si está libre" (prendido por defecto) los disparos
+  que caen mientras la sesión trabaja se saltean sin contar. Si el server estuvo caído, los
+  disparos perdidos no se recuperan: el siguiente cae en la grilla original.
 - *Canal nativo* (sólo Claude a Claude): A ubica a B con `ListAgents` y le habla con
   `SendMessage`; los mensajes llegan aunque B esté trabajando y se responden por el mismo
   canal. Vos les das el tema; ellas conversan.
@@ -153,14 +169,15 @@ regla igual a otra que ya existe (mismo origen, destino, texto y hora).
 ### Flechas
 
 Cada conexión se dibuja entre las tarjetas: el último envío de cada par con ↪ (o ×N si hubo
-varios), las reglas pendientes punteadas con ⏹ o ⏰, el canal nativo con una flecha doble
-gruesa. Viajan por el canal entre columnas, el glifo cae en el hueco para no robarle el
+varios), las reglas pendientes punteadas con ⏹, ⏰ o ↻ (periódica), el canal nativo con una
+flecha doble gruesa. Las reglas de una sesión hacia sí misma no tienen flecha, sólo chip. Viajan por el canal entre columnas, el glifo cae en el hueco para no robarle el
 click a ninguna tarjeta, y al pasar el mouse sobre una tarjeta se resaltan las suyas. Un
 botón del menú las oculta.
 
 - Click en el glifo quita la conexión, con confirmación.
-- Doble click en una regla la edita en el lugar: texto, hora, repetición y tope. Una
-  programada que ya disparó se puede reprogramar y vuelve a quedar vigente.
+- Doble click en una regla la edita en el lugar: texto, hora, repetición, tope y, en una
+  programada, "repetir cada" y "sólo si está libre". Una programada que ya disparó se puede
+  reprogramar y vuelve a quedar vigente.
 - Doble click en un envío hecho muestra los mensajes de ese par y, si el destino tiene
   consola, "Mandar de nuevo" escribe el último otra vez. Un envío hecho no se edita.
 
@@ -180,8 +197,9 @@ termine" marcado. Cada consola trabaja en sus archivos, y su informe final llega
 coordinadora al cerrar el turno. La coordinadora verifica, commitea y reparte la ronda
 siguiente. Este repo se construyó así: la mayoría de los commits del 5 de septiembre los
 hicieron otras sesiones de Claude a partir de encargos y revisiones repartidos desde el
-propio lienzo, incluido el plan de producto de `docs/plan-pm-2026-09-05.md`, que salió de
-probar el lienzo por la interfaz.
+propio lienzo, incluidos los planes de producto de `docs/plan-pm-2026-09-05.md` y
+`docs/plan-pm-2026-09-06.md`, que salieron de probar el lienzo por la interfaz y repartir lo
+encontrado a tres sesiones en paralelo.
 
 Es manual a propósito: dos agentes vinculados en los dos sentidos se contestan hasta agotar
 los créditos, por eso el server rechaza el bucle y cada regla tiene tope.
@@ -226,8 +244,8 @@ túnel, además la cookie de sesión.
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
 | GET | `/links` | envíos hechos; `kind` es `send`, `rule`, `native` o `user` |
 | GET | `/rules` | conexiones pendientes y cumplidas |
-| POST | `/rules` | `{kind: on_stop\|at, from, to, text, at, repeat, max_fires}`; 409 si arma un bucle o ya existe |
-| PUT | `/rules/<id>` | edita texto, hora (`at`), `repeat` y `max_fires`; reprogramar una `at` cumplida la reactiva |
+| POST | `/rules` | `{kind: on_stop\|at, from, to, text, at, repeat, max_fires}`; una `at` acepta además `every_s` (segundos, mínimo 60; periódica) y `skip_busy`; con `every_s`, `max_fires` vale 5 si no viene y `skip_busy` true; 409 si arma un bucle o ya existe |
+| PUT | `/rules/<id>` | edita texto, hora (`at`), `repeat`, `max_fires`, y en una `at` también `every_s` (null la vuelve de un disparo) y `skip_busy`; reprogramar una `at` cumplida la reactiva |
 | DELETE | `/links/<id>`, `/rules/<id>` | quita la flecha o la conexión |
 | GET | `/pending` | permisos esperando respuesta |
 | POST | `/pending/<id>` | `{decision: allow\|deny}` |
@@ -248,17 +266,22 @@ lienzo/
   send.py          inyección de teclas por PID
   screen.py        lectura del buffer de consola por PID
   auth.py          TOTP (RFC 6238), cookies, freno de intentos
-  server.py        watcher, registro, máquina de estados, reglas, HTTP + SSE, túnel
+  state.py         estado compartido: listas JSON (links, reglas), config, broadcast SSE
+  sessions.py      registro de sesiones, máquina de estados, eventos de hooks, barrido, envío
+  rules.py         reglas "cuando termine" y "a las HH:MM" (una vez o cada every_s con tope), regla automática "Continuar", disparo y purga
+  server.py        handler HTTP + SSE, túnel, arranque de los hilos
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
-  src/arrows-geometry.ts   geometría de las flechas, funciones puras con tests propios
+  src/arrows-geometry.ts   geometría de las flechas y etiquetas de período, funciones puras con tests propios
+  src/nl.ts                parser de frases ("cada 30 min continuá hasta 6 veces"), con tests propios
 tests/             pytest: transcripciones reales, procesos vivos y la máquina de estados del server
 install.py         alta y baja de los hooks
 lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 28 tests
-cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 17 tests de las flechas
+python -m pytest tests -q                                   # 34 tests
+cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 19 tests de las flechas
+cd web; node --experimental-strip-types src/nl.test.ts                # 20 aserciones del parser de frases
 ```
 
 ## Qué es cada archivo de estado

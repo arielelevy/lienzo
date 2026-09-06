@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Rule, Session } from "../types";
 import { shortName } from "./Card";
@@ -25,14 +25,21 @@ interface Props {
   /** las demas sesiones vivas con consola: entre ellas se busca a la coordinadora */
   others: Session[];
   toast: (msg: string, err?: boolean) => void;
+  /** enfocar el textarea al montar (y al cambiar de sesion): "Darle trabajo" deja el cursor listo */
+  autoFocus?: boolean;
 }
 
-export function SendBox({ session: s, others, toast }: Props) {
+export function SendBox({ session: s, others, toast, autoFocus = false }: Props) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  // el Panel no se remonta al cambiar de tarjeta: el foco se repite por session_id, no solo al montar
+  useEffect(() => {
+    if (autoFocus) textRef.current?.focus();
+  }, [autoFocus, s.session_id]);
   // "avisarme cuando termine": delegar en un gesto. Tras enviar, se crea la regla on_stop desde
   // esta sesion hacia la coordinadora (la primera sesion de Claude del mismo repo que no sea el
   // destino, igual que Conectar). Recordado por navegador; apagado por defecto.
@@ -157,6 +164,7 @@ export function SendBox({ session: s, others, toast }: Props) {
         {/* sugerencia leida de la terminal: gris detras del texto, Tab la acepta (como en Claude Code) */}
         {!text && s.suggestion && !s.pending_id && <div className="ghost">{s.suggestion}<span className="tabhint">Tab</span></div>}
         <textarea
+          ref={textRef}
           value={text}
           disabled={disabled}
           onChange={(e) => setText(e.target.value)}

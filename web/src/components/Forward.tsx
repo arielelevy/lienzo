@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api } from "../api";
-import { hhmm as fmtHhmm, nextAt, parseConnection } from "../nl";
+import { fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection } from "../nl";
 import type { DigestResponse, Session } from "../types";
 import { shortName } from "./Card";
 
@@ -50,13 +50,17 @@ interface Props {
 /** Conectar sesiones. Tres modos:
  *  - ahora: manda la ultima respuesta de A a B, ya.
  *  - cuando termine: cada vez que A cierra un turno, su respuesta va a B (una vez o hasta N veces).
- *  - a una hora: manda un texto fijo a B (o a la misma A) a las HH:MM. Para el "Continua" de las 14:36.
- *  Nada es automatico sin que lo pidas, y los modos repetidos tienen tope. */
+ *  - programar: manda un texto fijo a B (o a la misma A) a las HH:MM, una vez o cada tanto con tope.
+ *    Para el "Continua" de las 14:36, o "cada 30 min continuá hasta 5 veces".
+ *  Nada es automatico sin que lo pidas, y los modos repetidos tienen tope.
+ *  Con initialTarget === from (la tarjeta se solto sobre si misma) arranca en "programar" a la propia
+ *  sesion: es el unico modo con sentido para un bucle. */
 export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
-  const [mode, setMode] = useState<Mode>("now");
+  const onItself = initialTarget === from.session_id;
+  const [mode, setMode] = useState<Mode>(onItself ? "at" : "now");
   const targets = useMemo(() => (mode === "at" ? [from, ...others] : others), [mode, from, others]);
   const [target, setTarget] = useState(
-    initialTarget && others.some((o) => o.session_id === initialTarget) ? initialTarget : others[0]?.session_id ?? "",
+    onItself ? from.session_id : initialTarget && others.some((o) => o.session_id === initialTarget) ? initialTarget : others[0]?.session_id ?? "",
   );
   const [template, setTemplate] = useState(loadTemplate);
   const [reply, setReply] = useState(from.last_reply || "");
@@ -67,7 +71,24 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   // si el usuario ya toco el texto, el digest que llega despues no lo pisa
   const dirtyRef = useRef(false);
   const [repeat, setRepeat] = useState(false);
+  // tope compartido: "cuando termine, hasta N veces" y "cada tanto, hasta N veces"
   const [maxFires, setMaxFires] = useState(5);
+  // modo programar, periodico: apagado por defecto; con every_s el backend saltea (sin contar) los
+  // disparos que caen con el destino trabajando, salvo que skipBusy se apague
+  const [every, setEvery] = useState(false);
+  const [everyQty, setEveryQty] = useState(30);
+  const [everyUnit, setEveryUnit] = useState<"min" | "h">("min");
+  const [skipBusy, setSkipBusy] = useState(true);
+  const everySec = Math.max(60, everyUnit === "h" ? everyQty * 3600 : everyQty * 60);
+  const setEverySec = (sec: number) => {
+    if (sec % 3600 === 0) {
+      setEveryQty(sec / 3600);
+      setEveryUnit("h");
+    } else {
+      setEveryQty(Math.round(sec / 60));
+      setEveryUnit("min");
+    }
+  };
   // "yo": la primera sesion de Claude del tablero con el mismo repo que el origen (la que coordina).
   // Si no existe, o es el mismo destino, el checkbox no aparece.
   const me = useMemo(() => others.find((o) => o.agent === "claude" && o.repo === from.repo && o.session_id !== from.session_id), [others, from.repo, from.session_id]);
@@ -143,8 +164,14 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         }
         // el origen queda registrado (si no es la misma sesion) para dibujar la flecha A -> B
         const src = targetSession.session_id === from.session_id ? null : from.session_id;
-        await api.post("/rules", { kind: "at", from: src, to: targetSession.session_id, text: atText, at });
-        toast(`A las ${hhmm} se manda "${atText}" a ${shortName(targetSession)}`);
+        if (every) {
+          const fires = Math.min(50, Math.max(1, maxFires));
+          await api.post("/rules", { kind: "at", from: src, to: targetSession.session_id, text: atText, at, every_s: everySec, max_fires: fires, skip_busy: skipBusy });
+          toast(`Cada ${fmtEvery(everySec)} desde las ${hhmm} se manda "${atText}" a ${shortName(targetSession)} (hasta ${fires} ${fires === 1 ? "vez" : "veces"})`);
+        } else {
+          await api.post("/rules", { kind: "at", from: src, to: targetSession.session_id, text: atText, at });
+          toast(`A las ${hhmm} se manda "${atText}" a ${shortName(targetSession)}`);
+        }
       }
       onDone();
     } catch (e) {
@@ -160,20 +187,30 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   // Enter crea la conexion directamente
   const [phrase, setPhrase] = useState("");
   const parsed = useMemo(() => parseConnection(phrase, from, others), [phrase, from, others]);
-  const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || !!parsed.to);
+  // "avisame" es la coordinadora (el mismo `me` del checkbox); si no hay, la frase no alcanza
+  const parsedTo = parsed.kind === "none" ? null : parsed.to ?? (parsed.toMe ? me ?? null : null);
+  const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || !!parsedTo);
   useEffect(() => {
     // solo cuando cambia la frase: `others`/`from` llegan nuevos con cada evento SSE y no deben
-    // pisar lo que el usuario ajusto a mano
+    // pisar lo que el usuario ajusto a mano. Si no se entiende nada, los controles quedan como
+    // estaban (el resumen lo dice); si se entiende el modo pero falta el destino, el radio cambia
+    // igual para que no contradiga al resumen
     const p = parseConnection(phrase, from, others);
-    if (p.kind === "none" || (p.kind !== "at" && !p.to)) return;
+    if (p.kind === "none") return;
     setMode(p.kind);
+    const to = p.to ?? (p.toMe ? me : undefined);
     if (p.kind === "at") {
       setHhmm(fmtHhmm(p.at));
       setAtText(p.text);
       if (p.toSelf) setTarget(from.session_id);
-      else if (p.to) setTarget(p.to.session_id);
-    } else if (p.to) {
-      setTarget(p.to.session_id);
+      else if (to) setTarget(to.session_id);
+      setEvery(!!p.every);
+      if (p.every) {
+        setEverySec(p.every);
+        setMaxFires(p.maxFires);
+      }
+    } else if (to) {
+      setTarget(to.session_id);
       if (p.kind === "on_stop") {
         setRepeat(p.repeat);
         setMaxFires(p.maxFires);
@@ -201,7 +238,11 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
               submit();
             }
           }}
-          placeholder={`Escribilo: "continuá a las 16:00", "en 30 min seguí", "cuando termine mandale a ${others[0]?.repo ?? "MAPO"}"`}
+          placeholder={
+            onItself
+              ? 'Escribilo: "continuá a las 9", "cada 30 min continuá", "en 2 h seguí hasta 3 veces"'
+              : `Escribilo: "continuá a las 16:00", "cada 30 min seguí", "cuando termine mandale a ${others[0]?.repo ?? "MAPO"}"`
+          }
           style={{ flex: 1 }}
         />
       </div>
@@ -218,7 +259,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           <input type="radio" checked={mode === "on_stop"} onChange={() => setMode("on_stop")} /> Cuando {from.repo} termine
         </label>
         <label className={mode === "at" ? "on" : ""}>
-          <input type="radio" checked={mode === "at"} onChange={() => setMode("at")} /> A una hora
+          <input type="radio" checked={mode === "at"} onChange={() => setMode("at")} /> Programar
         </label>
         {from.agent === "claude" && targetSession?.agent === "claude" && (
           <label className={mode === "native" ? "on" : ""} title="las dos son Claude Code: pueden hablarse entre sí con SendMessage">
@@ -231,7 +272,8 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         {mode === "now" && "Manda ya la última respuesta de esta sesión a la otra, como si la tipearas ahí."}
         {mode === "native" && "Las dos son Claude Code: esta sesión ubica a la otra con ListAgents y le habla con SendMessage. Los mensajes llegan aunque la otra esté trabajando, y se responden por el mismo canal. Vos les das el tema; ellas conversan."}
         {mode === "on_stop" && "Cada vez que esta sesión cierre un turno, su respuesta final se manda a la otra con la plantilla. Una vez, o hasta un tope."}
-        {mode === "at" && "A la hora indicada se manda un texto fijo a la sesión elegida (puede ser esta misma). Sirve para el \"Continuá\" cuando vuelven los créditos."}
+        {mode === "at" &&
+          "A la hora indicada se manda un texto fijo a la sesión elegida (puede ser esta misma). Sirve para el \"Continuá\" cuando vuelven los créditos. Con \"repetir cada\" se vuelve a mandar cada tanto, hasta un tope de veces; los disparos que caen con la sesión trabajando se saltean sin contar."}
       </div>
 
       {noOthers ? (
@@ -258,12 +300,34 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
               placeholder="El tema de la conversación. Ej: “Revisá lo que hizo la otra sesión en web/src y acordá con ella los cambios; que ella los aplique.”"
             />
           ) : mode === "at" ? (
-            <div className="row">
-              <span className="small dim">Hora</span>
-              <input type="time" value={hhmm} onChange={(e) => setHhmm(e.target.value)} />
-              <span className="small dim">Texto</span>
-              <input type="text" value={atText} onChange={(e) => setAtText(e.target.value)} style={{ flex: 1 }} />
-            </div>
+            <>
+              <div className="row">
+                <span className="small dim">{every ? "Primera vez" : "Hora"}</span>
+                <input type="time" value={hhmm} onChange={(e) => setHhmm(e.target.value)} />
+                <span className="small dim">Texto</span>
+                <input type="text" value={atText} onChange={(e) => setAtText(e.target.value)} style={{ flex: 1 }} />
+              </div>
+              <div className="row">
+                <label className="small">
+                  <input type="checkbox" checked={every} onChange={(e) => setEvery(e.target.checked)} /> repetir cada
+                </label>
+                <input type="number" min={1} max={999} value={everyQty} disabled={!every} onChange={(e) => setEveryQty(Math.max(1, Number(e.target.value) || 1))} style={{ width: 60 }} />
+                <select value={everyUnit} disabled={!every} onChange={(e) => setEveryUnit(e.target.value as "min" | "h")}>
+                  <option value="min">min</option>
+                  <option value="h">h</option>
+                </select>
+                {every && (
+                  <>
+                    <span className="small dim">hasta</span>
+                    <input type="number" min={1} max={50} value={maxFires} onChange={(e) => setMaxFires(Math.min(50, Math.max(1, Number(e.target.value) || 1)))} style={{ width: 60 }} />
+                    <span className="small dim">veces</span>
+                    <label className="small" title="si está trabajando, ese disparo se saltea y no cuenta">
+                      <input type="checkbox" checked={skipBusy} onChange={(e) => setSkipBusy(e.target.checked)} /> sólo si está libre
+                    </label>
+                  </>
+                )}
+              </div>
+            </>
           ) : (
             <>
               <details open={mode === "on_stop"}>

@@ -249,7 +249,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       if (!board) return;
       const b = board.getBoundingClientRect();
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]");
-      const cand = el && el.dataset.sid !== drag.from ? el.dataset.sid ?? null : null;
+      // la propia tarjeta tambien es destino: la flecha que vuelve al mismo bloque es un bucle,
+      // "programale un mensaje a esta misma sesion" (a una hora o cada tanto)
+      const cand = el?.dataset.sid ?? null;
       const over = cand && canReceive(sessions[cand]) ? cand : null;
       setDrag((d) => (d ? { ...d, x2: e.clientX - b.left, y2: e.clientY - b.top, over } : d));
     };
@@ -257,8 +259,10 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]");
       const to = el?.dataset.sid;
       setDrag(null);
-      // soltar sobre una muerta, huerfana o sin consola no conecta: no habria a donde escribir
-      if (to && to !== drag.from && canReceive(sessions[to])) onConnect(drag.from, to);
+      // soltar sobre una muerta, huerfana o sin consola no conecta: no habria a donde escribir.
+      // Sobre si misma (solo si el arrastre ya arranco: un click sin mover nunca llega aca) abre el
+      // dialogo con from === to, que Forward toma como "programar para esta sesion"
+      if (to && canReceive(sessions[to])) onConnect(drag.from, to);
     };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") setDrag(null); // soltar en cualquier lado o Esc cancela
@@ -298,7 +302,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
               <line x1={drag.x1} y1={drag.y1} x2={drag.x2} y2={drag.y2} />
             </svg>
             <div className="draghint">
-              {drag.over ? `Soltá para conectar con ${shortName(sessions[drag.over])}` : "Soltá sobre otra tarjeta para conectar · Esc cancela"}
+              {drag.over === drag.from
+                ? "Soltá acá para programarle un mensaje a esta sesión (a una hora o cada tanto)"
+                : drag.over
+                  ? `Soltá para conectar con ${shortName(sessions[drag.over])}`
+                  : "Soltá sobre otra tarjeta para conectar, o sobre la misma para programarle un mensaje · Esc cancela"}
             </div>
           </>
         )}

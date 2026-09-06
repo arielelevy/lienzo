@@ -128,6 +128,10 @@ export interface Rule {
   at: string | null;
   repeat: boolean;
   max_fires: number;
+  /** regla "at" periodica: se repite cada tantos segundos (>= 60) hasta max_fires; null o ausente = una vez */
+  every_s?: number | null;
+  /** periodica: si el destino esta corriendo, saltear ese disparo sin contarlo (por defecto true) */
+  skip_busy?: boolean;
   fired: number;
   enabled: boolean;
   last_fired?: string;
@@ -156,6 +160,8 @@ export interface ConnectionRule {
   enabled: boolean;
   fired: number;
   max_fires: number;
+  every_s?: number | null;
+  skip_busy?: boolean;
   last_fired?: string | null;
   other: OtherSession;
 }

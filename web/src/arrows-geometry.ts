@@ -78,6 +78,22 @@ const GLYPH_R = 22;
 export const cut = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
 export const midY = (r: Rect) => (r.t + r.b) / 2;
 
+/** Periodo de una regla "at" periodica, en palabras: "cada 5 min", "cada 30 min", "cada hora",
+ *  "cada 2 h", "cada día". Vive aca (y no en Card) para que el modulo siga sin React: Card la
+ *  reexporta y Panel/Arrows la toman de ahi. */
+export function periodLabel(everyS: number | null | undefined): string {
+  const s = Math.max(60, Math.round(everyS ?? 0));
+  if (s % 86400 === 0) return s === 86400 ? "cada día" : `cada ${s / 86400} días`;
+  if (s % 3600 === 0) return s === 3600 ? "cada hora" : `cada ${s / 3600} h`;
+  if (s % 60 === 0) return `cada ${s / 60} min`;
+  return `cada ${s} s`;
+}
+
+/** "(1/5, próx. 09:30)" o "(1/5)": disparos hechos sobre el tope y, si la hay, la proxima hora */
+export function periodicCount(fired: number, maxFires: number, next: string | null): string {
+  return next ? `(${fired}/${maxFires}, próx. ${next})` : `(${fired}/${maxFires})`;
+}
+
 /** "columnas" para las flechas = grupos de tarjetas con el mismo borde izquierdo, de izquierda a
  *  derecha. El canal de una curva es el hueco entre el grupo de salida y el vecino. */
 export function groupColumns(cards: Rect[]): Col[] {
@@ -211,6 +227,10 @@ export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Re
     if (!r.enabled || !r.from || r.from === r.to || !anchors.has(r.from) || !anchors.has(r.to)) continue;
     if (r.kind === "on_stop") {
       items.push({ ids: [r.id], kind: "rule", from: r.from, to: r.to, old: false, glyph: "⏹", title: `cuando termine → manda su respuesta${r.repeat ? ` (${r.fired}/${r.max_fires})` : " (una vez)"}\n(click quita · doble click edita)` });
+    } else if (r.every_s) {
+      // periodica: glifo ↻, y el title dice el periodo, cuantas veces fue y cuando es la proxima
+      const next = r.at ? fmt.hhmm(r.at) : null;
+      items.push({ ids: [r.id], kind: "rule", from: r.from, to: r.to, old: false, glyph: "↻", title: `${periodLabel(r.every_s)} → "${r.text}" ${periodicCount(r.fired, r.max_fires, next)}\n(click quita · doble click edita)` });
     } else {
       const t = r.at ? fmt.hhmm(r.at) : "?";
       items.push({ ids: [r.id], kind: "rule", from: r.from, to: r.to, old: false, glyph: "⏰", title: `a las ${t} → "${r.text}"\n(click quita · doble click edita)` });
