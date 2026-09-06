@@ -6,6 +6,7 @@ Archivos:
   ~/.lienzo/auth.json          {"salt", "hash", "totp_secret", "created", "last_totp_counter"}
   ~/.lienzo/sessions-web.json  {"<token>": {"created", "expires", "ip", "ua"}}
 """
+
 from __future__ import annotations
 
 import base64
@@ -29,10 +30,10 @@ COOKIE = "lienzo"
 SESSION_DAYS = 7
 MAX_FAILS = 5
 BLOCK_S = 15 * 60
-SCRYPT = dict(n=2 ** 14, r=8, p=1, dklen=32)
+SCRYPT = {"n": 2**14, "r": 8, "p": 1, "dklen": 32}
 
 _lock = threading.RLock()
-_fails: dict[str, list[float]] = {}      # ip -> timestamps de fallos; "*" es global
+_fails: dict[str, list[float]] = {}  # ip -> timestamps de fallos; "*" es global
 _blocked_until: dict[str, float] = {}
 
 
@@ -56,6 +57,7 @@ def now() -> dt.datetime:
 
 
 # --- passphrase ------------------------------------------------------------------
+
 
 def words() -> list[str]:
     out = []
@@ -81,12 +83,13 @@ def _hash(passphrase: str, salt: bytes) -> bytes:
 
 # --- TOTP (RFC 6238, SHA1, 30 s, 6 digitos) ------------------------------------------
 
+
 def totp(secret_b32: str, t: float | None = None, step: int = 30, digits: int = 6) -> str:
     key = base64.b32decode(secret_b32.upper() + "=" * (-len(secret_b32) % 8), casefold=True)
     counter = int((time.time() if t is None else t) // step)
     h = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
     o = h[-1] & 0x0F
-    code = (struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % (10 ** digits)
+    code = (struct.unpack(">I", h[o : o + 4])[0] & 0x7FFFFFFF) % (10**digits)
     return str(code).zfill(digits)
 
 
@@ -100,6 +103,7 @@ def otpauth_uri(secret_b32: str, account: str = "lienzo", issuer: str = "Lienzo"
 
 # --- alta y verificacion -----------------------------------------------------------------
 
+
 def configured() -> bool:
     return os.path.exists(AUTH_FILE)
 
@@ -112,8 +116,12 @@ def setup(account: str = "lienzo", mode: str = "code") -> dict:
         if configured():
             raise RuntimeError("ya hay acceso configurado; borrar ~/.lienzo/auth.json para rehacerlo")
         secret = base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
-        data = {"mode": mode, "totp_secret": secret, "created": now().isoformat(timespec="seconds"),
-                "last_totp_counter": 0}
+        data = {
+            "mode": mode,
+            "totp_secret": secret,
+            "created": now().isoformat(timespec="seconds"),
+            "last_totp_counter": 0,
+        }
         passphrase = None
         if mode == "full":
             passphrase = new_passphrase()
@@ -186,8 +194,10 @@ def login(passphrase: str, code: str, ip: str, ua: str = "") -> tuple[bool, str,
         sessions = _load(WEB_SESSIONS)
         exp = now() + dt.timedelta(days=SESSION_DAYS)
         sessions[hashlib.sha256(token.encode()).hexdigest()] = {
-            "created": now().isoformat(timespec="seconds"), "expires": exp.isoformat(timespec="seconds"),
-            "ip": ip, "ua": ua[:200],
+            "created": now().isoformat(timespec="seconds"),
+            "expires": exp.isoformat(timespec="seconds"),
+            "ip": ip,
+            "ua": ua[:200],
         }
         _prune(sessions)
         _atomic(WEB_SESSIONS, sessions)

@@ -34,6 +34,32 @@ function setLanes(board: HTMLDivElement, px: number): void {
   }
 }
 
+/** Cuanto mide el contenido del tablero. **No sirve `scrollWidth`/`scrollHeight`**: nuestro propio
+ *  `<svg class="arrows">` esta en `position: absolute` adentro del tablero, asi que cuenta como
+ *  contenido y el ancho que le pusimos vuelve por la misma puerta. Se realimentaba: al achicar la
+ *  ventana el svg conservaba el ancho viejo, el tablero lo seguia midiendo grande y la pagina
+ *  quedaba con barra de scroll horizontal para siempre, aunque las tarjetas ya entraran.
+ *  Cuenta entonces solo los hijos en flujo (las columnas), nunca los que estan posicionados
+ *  encima (el svg, los globos, la pista de arrastre), mas el padding del tablero; y nunca menos
+ *  que el area visible del tablero, para que el svg lo cubra cuando el contenido no llega. */
+function boardContent(board: HTMLDivElement): { w: number; h: number } {
+  const b = board.getBoundingClientRect();
+  const cs = getComputedStyle(board);
+  let w = 0;
+  let h = 0;
+  for (const el of Array.from(board.children)) {
+    const pos = getComputedStyle(el).position;
+    if (pos === "absolute" || pos === "fixed") continue; // encima del tablero: no es su contenido
+    const r = el.getBoundingClientRect();
+    w = Math.max(w, r.right - b.left);
+    h = Math.max(h, r.bottom - b.top);
+  }
+  return {
+    w: Math.max(board.clientWidth, Math.ceil(w + (parseFloat(cs.paddingRight) || 0))),
+    h: Math.max(board.clientHeight, Math.ceil(h + (parseFloat(cs.paddingBottom) || 0))),
+  };
+}
+
 /** Lo que la geometria necesita del DOM: los rects de las tarjetas, los anchors (que suman las
  *  tiras de las columnas colapsadas), los obstaculos laterales, el area util de cada columna y los
  *  links y reglas que de verdad se pueden dibujar. `null` si no hay ninguna tarjeta a la vista. */
@@ -90,14 +116,7 @@ function measureBoard(board: HTMLDivElement, sessions: Record<string, Session>, 
     const r = rel(el);
     return { l: r.l, r: r.r };
   });
-  return {
-    rects,
-    anchors,
-    strips,
-    bands,
-    links: links.filter((l) => !bothHidden(l.from, l.to)),
-    rules: rules.filter((r) => !bothHidden(r.from ?? r.to, r.to)),
-  };
+  return { rects, anchors, strips, bands, links: links.filter((l) => !bothHidden(l.from, l.to)), rules: rules.filter((r) => !bothHidden(r.from ?? r.to, r.to)) };
 }
 
 /** Los tres globos del tablero (la descripcion de la flecha elegida, el editor de una conexion y la
@@ -105,17 +124,8 @@ function measureBoard(board: HTMLDivElement, sessions: Record<string, Session>, 
  *  propagacion: un click adentro no tiene que soltar la seleccion ni cerrar nada. Cambia lo de
  *  adentro. Con `onEsc`, Esc cierra; con `onEnter`, Enter confirma salvo dentro de un textarea. */
 function Popover({ cls, x, y, style, role, label, live, head, onEsc, onEnter, children }: {
-  cls?: string;
-  x: number;
-  y: number;
-  style?: React.CSSProperties;
-  role: string;
-  label?: string;
-  live?: "polite";
-  head: React.ReactNode;
-  onEsc?: () => void;
-  onEnter?: () => void;
-  children: React.ReactNode;
+  cls?: string; x: number; y: number; style?: React.CSSProperties; role: string; label?: string; live?: "polite";
+  head: React.ReactNode; onEsc?: () => void; onEnter?: () => void; children: React.ReactNode;
 }) {
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
@@ -217,6 +227,12 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       skipBusy: r.skip_busy ?? true,
     });
   };
+  /** entero de un input, acotado; vacio o basura vuelve 1 */
+  const clampInt = (v: string, max: number) => Math.max(1, Math.min(max, Number(v) || 1));
+  /** "hasta N veces": el mismo input en la regla periodica y en la de cuando termine */
+  const maxFires = edit && (
+    <input type="number" min={1} max={50} disabled={!edit.repeat} value={edit.maxFires} onChange={(e) => setEdit({ ...edit, maxFires: clampInt(e.target.value, 50) })} />
+  );
   const saveEdit = async () => {
     if (!edit) return;
     const body: Record<string, unknown> = { text: edit.text };
@@ -341,7 +357,8 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       setSegs([]);
       return;
     }
-    setSize((prev) => (prev.w === board.scrollWidth && prev.h === board.scrollHeight ? prev : { w: board.scrollWidth, h: board.scrollHeight }));
+    const { w, h } = boardContent(board);
+    setSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     const measured = measureBoard(board, sessions, links, rules);
     if (!measured) {
       setSegs([]);
@@ -350,7 +367,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     }
     const out = computeSegs({
       ...measured,
-      boardWidth: board.scrollWidth,
+      boardWidth: w,
       fmt: {
         ago,
         hhmm: (iso) => hhmm(new Date(iso)),
@@ -478,7 +495,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
                 max={edit.everyUnit === "h" ? 168 : 1440}
                 disabled={!edit.repeat}
                 value={edit.everyN}
-                onChange={(e) => setEdit({ ...edit, everyN: Math.max(1, Math.min(1440, Number(e.target.value) || 1)) })}
+                onChange={(e) => setEdit({ ...edit, everyN: clampInt(e.target.value, 1440) })}
               />
               <select disabled={!edit.repeat} value={edit.everyUnit} onChange={(e) => setEdit({ ...edit, everyUnit: e.target.value as "min" | "h" })}>
                 <option value="min">min</option>
@@ -487,7 +504,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
             </label>
             <label className="row indent">
               hasta
-              <input type="number" min={1} max={50} disabled={!edit.repeat} value={edit.maxFires} onChange={(e) => setEdit({ ...edit, maxFires: Math.max(1, Math.min(50, Number(e.target.value) || 1)) })} />
+              {maxFires}
               veces
             </label>
             <label className="row indent" title="si a esa hora el destino está corriendo, ese disparo se saltea y no cuenta">
@@ -500,7 +517,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
           <label className="row">
             <input type="checkbox" checked={edit.repeat} onChange={(e) => setEdit({ ...edit, repeat: e.target.checked })} />
             repetir, hasta
-            <input type="number" min={1} max={50} disabled={!edit.repeat} value={edit.maxFires} onChange={(e) => setEdit({ ...edit, maxFires: Math.max(1, Math.min(50, Number(e.target.value) || 1)) })} />
+            {maxFires}
             veces
           </label>
         )}

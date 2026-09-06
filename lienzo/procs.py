@@ -6,6 +6,7 @@ y cuyo abuelo es Code.exe. Se excluyen por ruta la app de escritorio de Claude
 escritorio de Codex (ambos `app-server`), y el claude.exe de la extension de VS Code
 (\\.vscode\\extensions\\anthropic.claude-code-...\\native-binary\\).
 """
+
 from __future__ import annotations
 
 import json
@@ -17,8 +18,13 @@ except ImportError:  # corriendo como script (python lienzo/hook.py) o con lienz
     import procinfo
 
 # re-export: el resto del codigo (server, send, screen, tests) sigue usando procs.alive, etc.
-AGENTS, agent_of, alive, image_path, proc_info = (procinfo.AGENTS, procinfo.agent_of, procinfo.alive,
-                                                  procinfo.image_path, procinfo.proc_info)
+AGENTS, agent_of, alive, image_path, proc_info = (
+    procinfo.AGENTS,
+    procinfo.agent_of,
+    procinfo.alive,
+    procinfo.image_path,
+    procinfo.proc_info,
+)
 
 
 def cwd_of(pid: int) -> str | None:
@@ -31,11 +37,11 @@ def cwd_of(pid: int) -> str | None:
         pbi = procinfo.basic_info(h)
         if pbi is None or not pbi.PebBaseAddress:
             return None
-        raw = procinfo.read_memory(h, pbi.PebBaseAddress + 0x20, 8)          # PEB64.ProcessParameters
+        raw = procinfo.read_memory(h, pbi.PebBaseAddress + 0x20, 8)  # PEB64.ProcessParameters
         if not raw:
             return None
         params = int.from_bytes(raw, "little")
-        raw = procinfo.read_memory(h, params + 0x38, 16)                      # CurrentDirectory.DosPath (UNICODE_STRING)
+        raw = procinfo.read_memory(h, params + 0x38, 16)  # CurrentDirectory.DosPath (UNICODE_STRING)
         if not raw:
             return None
         length = int.from_bytes(raw[0:2], "little")
@@ -68,9 +74,7 @@ def is_impostor(exe: str | None, cmdline: str | None) -> bool:
         return True
     if "app-server" in c:
         return True
-    if "--type=" in c:  # electron renderer/utility/gpu
-        return True
-    return False
+    return "--type=" in c  # electron renderer/utility/gpu
 
 
 def is_tui(pid: int, cmdline: str | None = None) -> bool:
@@ -103,8 +107,14 @@ ConvertTo-Json -InputObject @($out) -Compress -Depth 3
 def sweep() -> list[dict]:
     """Barrido de respaldo: agentes interactivos vivos. Lento (~1 s), usar poco."""
     try:
-        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS],
-                           capture_output=True, text=True, timeout=20, encoding="utf-8", errors="replace")
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            encoding="utf-8",
+            errors="replace",
+        )
         rows = json.loads(r.stdout or "[]")
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return []
@@ -119,11 +129,18 @@ def sweep() -> list[dict]:
         parent = (p.get("parent") or "").lower()
         gp = (p.get("grandparent") or "").lower()
         in_vscode = parent in SHELLS and gp == "code.exe"
-        found.append({
-            "pid": p["pid"], "agent": agent, "exe": exe, "created": p.get("created"),
-            "parent": p.get("parent"), "grandparent": p.get("grandparent"),
-            "in_vscode": in_vscode, "orphan": p.get("parent") is None,
-        })
+        found.append(
+            {
+                "pid": p["pid"],
+                "agent": agent,
+                "exe": exe,
+                "created": p.get("created"),
+                "parent": p.get("parent"),
+                "grandparent": p.get("grandparent"),
+                "in_vscode": in_vscode,
+                "orphan": p.get("parent") is None,
+            }
+        )
     return found
 
 

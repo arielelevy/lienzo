@@ -7,6 +7,7 @@
 Hace merge, nunca pisa: guarda ~/.claude/settings.json.bak-<fecha> antes de tocar.
 Los hooks apuntan a D:/Apps/lienzo/lienzo/hook.py (este repo), sin copiar nada a ~/.lienzo/bin.
 """
+
 import datetime
 import json
 import os
@@ -18,16 +19,28 @@ HERE = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
 HOOK = f"{HERE}/lienzo/hook.py"
 
 CANDIDATES = [
-    os.path.join(HOME, r"AppData\Local\Python\pythoncore-3.14-64\python.exe"),   # ~200 ms de arranque
+    os.path.join(HOME, r"AppData\Local\Python\pythoncore-3.14-64\python.exe"),  # ~200 ms de arranque
     os.path.join(HOME, r"AppData\Local\Python\bin\python.exe"),
-    sys.executable,                                                             # el de la Store, ~300 ms
+    sys.executable,  # el de la Store, ~300 ms
 ]
 PY = next((p for p in CANDIDATES if p and os.path.exists(p)), "python").replace("\\", "/")
 
-CLAUDE_EVENTS = {"SessionStart": (True, 5), "UserPromptSubmit": (True, 5), "Stop": (True, 5),
-                 "Notification": (True, 5), "PermissionRequest": (False, 90), "SessionEnd": (False, 2)}
-CODEX_EVENTS = {"SessionStart": (True, 5), "UserPromptSubmit": (True, 5), "Stop": (True, 5),
-                "PermissionRequest": (False, 90), "SessionEnd": (False, 2), "Interrupt": (False, 2)}
+CLAUDE_EVENTS = {
+    "SessionStart": (True, 5),
+    "UserPromptSubmit": (True, 5),
+    "Stop": (True, 5),
+    "Notification": (True, 5),
+    "PermissionRequest": (False, 90),
+    "SessionEnd": (False, 2),
+}
+CODEX_EVENTS = {
+    "SessionStart": (True, 5),
+    "UserPromptSubmit": (True, 5),
+    "Stop": (True, 5),
+    "PermissionRequest": (False, 90),
+    "SessionEnd": (False, 2),
+    "Interrupt": (False, 2),
+}
 
 
 def cmd(agent: str) -> str:

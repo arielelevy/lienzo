@@ -1,10 +1,11 @@
 """Tests minimos de lienzo/procinfo.py y lienzo/procs.py (Windows, ctypes)."""
+
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lienzo import procinfo, procs  # noqa: E402
+from lienzo import procinfo, procs
 
 
 def test_agent_of():
@@ -21,7 +22,10 @@ def test_agent_of():
 
 def test_is_impostor():
     assert procs.is_impostor(r"C:\Program Files\WindowsApps\Claude_1.0_x64__abc\claude.exe", None) is True
-    assert procs.is_impostor(r"C:\Users\x\.vscode\extensions\anthropic.claude-code-2.0\native-binary\claude.exe", "") is True
+    assert (
+        procs.is_impostor(r"C:\Users\x\.vscode\extensions\anthropic.claude-code-2.0\native-binary\claude.exe", "")
+        is True
+    )
     assert procs.is_impostor(r"C:\Users\x\.local\bin\codex.exe", "codex.exe app-server --listen") is True
     assert procs.is_impostor(r"C:\Users\x\.local\bin\claude.exe", "claude.exe --type=renderer") is True
     assert procs.is_impostor(r"C:\Users\x\.local\bin\claude.exe", "claude.exe --resume") is False

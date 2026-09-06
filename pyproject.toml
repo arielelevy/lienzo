@@ -16,6 +16,28 @@ dev = ["playwright>=1.45"]
 [project.urls]
 Repository = "https://github.com/arielelevy/lienzo"
 
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+
+[tool.ruff.lint]
+# Reglas que no aplican a este proyecto, cada una con su motivo (revisadas una por una el
+# 2026-09-06; las que sí eran problemas ya se arreglaron).
+ignore = [
+    # El lienzo trabaja en hora local a propósito: la hora que ve el usuario es la de su PC, y todo
+    # lo que se compara pasa por .astimezone() o parse_ts. Lo que queda son nombres de archivo y
+    # el mes de un "Sep 11th" de Codex.
+    "DTZ005", "DTZ007",
+    # subprocess.run sin check=: send.py y screen.py devuelven su resultado en stdout y el código
+    # de salida se lee a mano; un check=True cambiaría un error informado por una excepción.
+    "PLW1510",
+    # except Exception a propósito en los bordes (hilos de fondo, handler HTTP): un hilo que muere
+    # por una excepción no prevista deja el tablero congelado sin rastro.
+    "BLE001",
+    # Desempaquetar y no usar una parte es más claro que indexar por posición.
+    "RUF059",
+]

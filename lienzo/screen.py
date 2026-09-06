@@ -7,6 +7,7 @@ en la TUI y que no quedan en ningun archivo ni hook.
     python screen.py --pid N            # imprime la pantalla
     python screen.py --pid N --json     # {"ok":true,"cols":..,"rows":..,"lines":[...]}
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,7 +18,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import procs  # noqa: E402
+import procs
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 GENERIC_READ = 0x80000000
@@ -37,8 +38,13 @@ class SMALL_RECT(ctypes.Structure):
 
 
 class CSBI(ctypes.Structure):
-    _fields_ = [("dwSize", COORD), ("dwCursorPosition", COORD), ("wAttributes", wt.WORD),
-                ("srWindow", SMALL_RECT), ("dwMaximumWindowSize", COORD)]
+    _fields_ = [
+        ("dwSize", COORD),
+        ("dwCursorPosition", COORD),
+        ("wAttributes", wt.WORD),
+        ("srWindow", SMALL_RECT),
+        ("dwMaximumWindowSize", COORD),
+    ]
 
 
 k32.AttachConsole.argtypes = [wt.DWORD]
@@ -60,14 +66,19 @@ def read_screen(pid: int, whole_buffer: bool = False) -> dict:
     if not k32.AttachConsole(pid):
         return {"ok": False, "pid": pid, "error": f"AttachConsole fallo (error {ctypes.get_last_error()})"}
     try:
-        h = k32.CreateFileW("CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                            None, OPEN_EXISTING, 0, None)
+        h = k32.CreateFileW(
+            "CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None
+        )
         if h == INVALID_HANDLE_VALUE or not h:
             return {"ok": False, "pid": pid, "error": f"no pude abrir CONOUT$ (error {ctypes.get_last_error()})"}
         try:
             info = CSBI()
             if not k32.GetConsoleScreenBufferInfo(h, ctypes.byref(info)):
-                return {"ok": False, "pid": pid, "error": f"GetConsoleScreenBufferInfo fallo (error {ctypes.get_last_error()})"}
+                return {
+                    "ok": False,
+                    "pid": pid,
+                    "error": f"GetConsoleScreenBufferInfo fallo (error {ctypes.get_last_error()})",
+                }
             cols = info.dwSize.X
             top, bottom = (0, info.dwSize.Y - 1) if whole_buffer else (info.srWindow.Top, info.srWindow.Bottom)
             lines = []
@@ -78,16 +89,22 @@ def read_screen(pid: int, whole_buffer: bool = False) -> dict:
                     lines.append(buf.value[: got.value].rstrip())
                 else:
                     lines.append("")
-            return {"ok": True, "pid": pid, "cols": cols, "rows": len(lines),
-                    "buffer_rows": info.dwSize.Y, "cursor": [info.dwCursorPosition.X, info.dwCursorPosition.Y],
-                    "lines": lines}
+            return {
+                "ok": True,
+                "pid": pid,
+                "cols": cols,
+                "rows": len(lines),
+                "buffer_rows": info.dwSize.Y,
+                "cursor": [info.dwCursorPosition.X, info.dwCursorPosition.Y],
+                "lines": lines,
+            }
         finally:
             k32.CloseHandle(h)
     finally:
         k32.FreeConsole()
 
 
-PLACEHOLDERS = ("Press up to edit queued messages", "Try \"", 'Try "', "Type a message", "? for shortcuts")
+PLACEHOLDERS = ("Press up to edit queued messages", 'Try "', 'Try "', "Type a message", "? for shortcuts")
 RULE_CHARS = ("─", "━", "═")
 
 
@@ -100,14 +117,19 @@ def input_area(lines: list[str]) -> dict:
     box, queued = [], []
     if len(rules) >= 2:
         top, bottom = rules[-2], rules[-1]
-        box = [l.strip() for l in lines[top + 1:bottom] if l.strip()]
+        box = [l.strip() for l in lines[top + 1 : bottom] if l.strip()]
         for l in lines[:top]:
             s = l.strip()
             if s.startswith("❯ ") and not any(p in s for p in PLACEHOLDERS):
                 queued.append(s[2:].strip())
     text = " ".join(b[2:].strip() if b.startswith("❯") else b for b in box).strip()
     is_placeholder = any(p in text for p in PLACEHOLDERS) or not text
-    return {"input": text, "placeholder": is_placeholder, "queued": queued, "status": (lines[-1].strip() if lines else "")}
+    return {
+        "input": text,
+        "placeholder": is_placeholder,
+        "queued": queued,
+        "status": (lines[-1].strip() if lines else ""),
+    }
 
 
 def main() -> int:
