@@ -159,6 +159,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       return;
     }
     if (e.pointerType !== "mouse" || t.closest("button, a, input, textarea, .x, code")) return;
+    // se arrastra desde la fila de arriba y el titulo; el cuerpo de la tarjeta es texto que se
+    // lee y se copia, y arrastrar desde ahi se llevaba puesta la seleccion
+    if (!t.closest(".top, .title, .freeline")) return;
     pressRef.current = { sid, x: e.clientX, y: e.clientY };
   };
 

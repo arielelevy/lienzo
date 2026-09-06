@@ -380,9 +380,11 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setInside(false);
       }}
       onMouseDown={(e) => {
-        // arrastre desde cualquier parte de la tarjeta, salvo controles y el agarre (que ya arrastra)
+        // el arrastre arranca sólo desde la fila de arriba y el título: el resto de la tarjeta es
+        // texto que se lee y se copia, y arrastrar desde ahí se llevaba puesta la selección
         const t = e.target as HTMLElement;
         if (e.button !== 0 || t.closest("button, a, input, textarea, .x, .grip, code")) return;
+        if (!t.closest(".top, .title, .freeline")) return;
         onPress?.(e);
       }}
     >
