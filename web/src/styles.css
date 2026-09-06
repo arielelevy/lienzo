@@ -132,9 +132,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .board.dragging .card:not(.sel) { opacity: .75; }
 .droptarget .card { opacity: 1 !important; }
 
-/* panel de sesion: centrado, con el tablero apenas difuminado detras */
-.panel-backdrop { position: fixed; inset: 0; background: rgba(8, 10, 14, .45); backdrop-filter: blur(2px); z-index: 9; }
-.panel { position: fixed; top: 5vh; left: 50%; transform: translateX(-50%); height: 90vh; width: min(920px, 94vw); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.5); z-index: 10; display: flex; flex-direction: column; overflow: hidden; }
+/* panel de sesion: pegado a la derecha, debajo del header (--hh lo mide App), sin fondo que tape.
+   El tablero se corre a la izquierda (padding) y sigue usable: click en otra tarjeta cambia el
+   panel, click en el vacio lo cierra. Centrado con backdrop tapaba las tarjetas del medio. */
+:root { --panel-w: min(720px, 94vw); --hh: 46px; }
+.panel { position: fixed; top: var(--hh); right: 0; bottom: 0; width: var(--panel-w); background: var(--panel); border: 1px solid var(--line); border-right: 0; border-bottom: 0; border-radius: 12px 0 0 0; box-shadow: -12px 0 40px rgba(0,0,0,.45); z-index: 10; display: flex; flex-direction: column; overflow: hidden; }
+.panel-open .board { padding-right: calc(var(--panel-w) + 16px); }
+.panel-open .toasts { max-width: calc(100vw - var(--panel-w) - 32px); }
+.panel-open .toast { max-width: 100%; }
 .panel .ph { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .panel .ph .t { font-weight: 600; flex: 1; min-width: 120px; }
 .panel .tabs { display: flex; gap: 4px; }
@@ -151,6 +156,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .send .ghost .tabhint { margin-left: 8px; font-size: 10px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; vertical-align: middle; }
 .send textarea { width: 100%; min-height: 64px; position: relative; background: transparent; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
 .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.send .notifyme { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); margin-right: 4px; }
+.send .notifyme:hover { color: var(--fg); }
 .quick button { font-size: 12px; padding: 4px 8px; }
 .att { font-size: 12px; color: var(--dim); }
 .att span { display: inline-block; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin: 2px; }
@@ -184,6 +191,16 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .dg li.err { color: var(--err); }
 .dg .k { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
 .dg .stats { font-size: 11px; color: var(--dim); margin-top: 6px; }
+
+/* "Detalles tecnicos" (menu, apagado por defecto): PID/hooks/id de las tarjetas, "0 herramientas ·
+   0 lecturas" del digest y el nombre del .jsonl (Panel). Los avisos (.warn: sin consola, sin
+   terminal) siguen siempre visibles. Card.tsx no cambia: es todo por la clase .details de la raiz */
+.card .meta > span:not(.warn) { display: none; }
+.card .meta:not(:has(.warn)) { display: none; }
+.details .card .meta { display: flex; }
+.details .card .meta > span { display: inline; }
+.nostats .dg .stats { display: none; }
+.details .nostats .dg .stats { display: block; }
 
 .fwd { border-bottom: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; background: #1a1f2b; }
 .fwd select { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; max-width: 100%; }
@@ -279,8 +296,9 @@ header .search .chip:not(.on) { text-decoration: line-through; }
   .col.wide .cards .card { margin-bottom: 10px; }
   .col.show .empty { padding: 24px 8px; text-align: center; }
   .card { margin-bottom: 10px; }
-  .panel { width: 100vw; height: 100vh; top: 0; left: 0; transform: none; border-radius: 0; border: 0; }
-  .panel-backdrop { display: none; }
+  .panel { width: 100vw; top: 0; right: 0; bottom: 0; border-radius: 0; border: 0; box-shadow: none; }
+  .panel-open .board { padding-right: 10px; }
+  .panel-open .toasts { max-width: none; }
   .panel .ph { padding: 8px 10px; }
   .panel .pmeta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
   .panel .body { padding: 10px; }

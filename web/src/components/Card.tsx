@@ -111,6 +111,18 @@ interface Props {
 
 const RECENT_MS = 30 * 60 * 1000;
 
+/** El titulo salio del pedido (el server lo marca, o coincide con su primera linea, aun cortada):
+ *  la linea "› pedido" diria lo mismo. */
+function titleIsPrompt(s: Session): boolean {
+  const title = (s.title || "").trim();
+  if (!title) return false;
+  if ((s as Session & { title_source?: string | null }).title_source === "prompt") return true;
+  const first = (s.last_prompt || "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  if (!first) return false;
+  const t = title.replace(/…$/, "").replace(/\.\.\.$/, "").trimEnd();
+  return first === title || (t.length >= 8 && first.startsWith(t));
+}
+
 export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -118,6 +130,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  // el click simple espera 280 ms antes de abrir el panel; el doble click sobre el titulo lo
+  // cancela y renombra en el lugar (mismo truco que las flechas en Arrows)
+  const clickTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(clickTimer.current), []);
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -131,6 +147,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const recentFrom = recent ? shortName(sessions[recent.from]) : "";
 
   const { head, cut } = foldPrompt(s.last_prompt);
+  const dupPrompt = titleIsPrompt(s);
   const ruleGroups = groupRules(rules, s.session_id, sessions);
   const canWrite = !!s.alive && !s.orphan && !s.no_console;
   // ociosa: termino, o espera input en la terminal; con consola y sin permiso pendiente
@@ -204,7 +221,11 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       tabIndex={0}
       aria-label={`${s.repo}: ${s.title || s.last_prompt || "sin título"}`}
       aria-pressed={selected}
-      onClick={onSelect}
+      onClick={() => {
+        window.clearTimeout(clickTimer.current);
+        clickTimer.current = window.setTimeout(onSelect, 280);
+      }}
+      onDoubleClick={() => window.clearTimeout(clickTimer.current)}
       onKeyDown={(e) => {
         // Enter sobre la tarjeta misma abre el panel; los botones de adentro manejan su propio Enter
         if (e.key === "Enter" && e.target === e.currentTarget) {
@@ -236,13 +257,29 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         <span className="repo">{s.repo}</span>
         {s.branch && <span>⎇ {s.branch}</span>}
-        <span className="right">{ago(s.state_since)}</span>
+        <span className="right">
+          {/* estado como icono: corriendo y termino comparten la columna "Trabajo"; la huerfana va a
+              "Muerta" con esta etiqueta, para distinguirla de un proceso muerto de verdad */}
+          {s.orphan ? (
+            <span className="st orphan" title="el proceso sigue, pero su terminal de VS Code se cerró: no hay dónde escribirle">
+              sin terminal
+            </span>
+          ) : s.alive === false ? null : s.state === "corriendo" ? (
+            <span className="st run" role="img" aria-label="corriendo" title="corriendo" />
+          ) : s.state === "termino" ? (
+            <span className="st done" role="img" aria-label="terminó" title="terminó">
+              ✓
+            </span>
+          ) : null}
+          {ago(s.state_since)}
+        </span>
       </div>
       <div
         className="title"
         title={editing ? undefined : "doble click para renombrar"}
         onDoubleClick={(e) => {
           e.stopPropagation();
+          window.clearTimeout(clickTimer.current);
           startRename();
         }}
       >
@@ -269,9 +306,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           s.title || s.last_prompt || "(sin título)"
         )}
       </div>
-      {s.title && s.last_prompt && (
+      {/* el pedido no se repite si el titulo ya es su primera linea; si hay mas texto queda el "…más" */}
+      {s.title && s.last_prompt && (!dupPrompt || cut) && (
         <div className={`prompt ${promptOpen ? "open" : ""}`}>
-          <span className="ptext">› {promptOpen ? s.last_prompt : head}</span>
+          {(!dupPrompt || promptOpen) && <span className="ptext">› {promptOpen ? s.last_prompt : head}</span>}
           {cut && (
             <button
               type="button"
@@ -282,7 +320,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
                 setPromptOpen((o) => !o);
               }}
             >
-              {promptOpen ? "menos" : "…más"}
+              {promptOpen ? "menos" : dupPrompt ? "…ver el pedido" : "…más"}
             </button>
           )}
         </div>
@@ -303,7 +341,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             <span className="dim small">vence {new Date(p.expires_at).toLocaleTimeString()}</span>
           </div>
         </div>
-      ) : s.state === "te_necesita" && s.needs ? (
+      ) : s.state === "te_necesita" && s.needs && !(idle && s.needs.kind === "idle") ? (
+        /* ociosa con botones rapidos: el aviso va en una linea con los botones, mas abajo */
         <div className="needs terminal">
           <b>
             {s.needs.kind === "idle"
@@ -380,6 +419,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       )}
       {idle && (
         <div className="quickact" onClick={(e) => e.stopPropagation()}>
+          {s.state === "te_necesita" && <span className="dim small">Espera tu input</span>}
           {QUICK.map((q) => (
             <button key={q} type="button" disabled={busy} title="se escribe en su terminal" onClick={() => quickSend(q)}>
               {q}
@@ -392,7 +432,6 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         <span>PID {s.pid ?? "?"}</span>
         <span>{s.source === "sweep" ? "barrido" : "hooks"}</span>
         {s.alive === false && <span>proceso muerto</span>}
-        {s.orphan && <span className="warn" title="su terminal de VS Code se cerró; el proceso sigue pero no hay dónde escribirle">sin terminal</span>}
         {s.no_console && !s.orphan && <span className="warn" title="panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe">sin consola</span>}
         <span>{s.session_id.slice(0, 8)}</span>
       </div>

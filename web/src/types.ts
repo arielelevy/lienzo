@@ -101,13 +101,22 @@ export interface DigestResponse {
   note?: string;
 }
 
+/** Envio hecho entre dos sesiones (flecha del tablero). Los que el usuario manda desde el
+ *  SendBox llegan del server con from null y kind "user": App los filtra antes de dar el
+ *  tablero, y se ven solo en la pestana Conexiones (ConnectionLink). */
 export interface Link {
   id: string;
   from: string;
   to: string;
   ts: string;
   text: string;
-  kind?: "send" | "native";
+  kind?: "send" | "native" | "rule" | "user";
+}
+
+/** ~/.lienzo/config.json, la parte que la UI puede leer y escribir (GET/PUT /config). */
+export interface Config {
+  /** ante un aviso de limite de uso con hora, programar "Continuar" solo */
+  auto_continue: boolean;
 }
 
 export interface Rule {
@@ -130,7 +139,9 @@ export interface Rule {
  *  {session_id, name: "repo · titulo"}; un server anterior lo mandaba como string. */
 export type OtherSession = string | { session_id: string | null; name: string };
 
-export interface ConnectionLink extends Link {
+export interface ConnectionLink extends Omit<Link, "from"> {
+  /** null en lo que mando el usuario desde el lienzo (kind "user") */
+  from: string | null;
   rule_id?: string;
   other: OtherSession;
 }

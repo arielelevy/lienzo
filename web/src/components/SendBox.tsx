@@ -1,24 +1,65 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Session } from "../types";
+import { shortName } from "./Card";
 import "../card.css";
 
 const QUICK = ["Continuá", "sí", "no", "dale"];
+const NOTIFY_KEY = "lienzo.send.notifyme";
+// misma plantilla que Conectar > "cuando termine": la respuesta completa, con quien la manda
+const NOTIFY_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
 
 /** alguien esta escribiendo en esa terminal: lo que se mande se mezcla con lo suyo */
 const isTyping = (s: Session): boolean => !!s.typing;
 
+function loadNotify(): boolean {
+  try {
+    return localStorage.getItem(NOTIFY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 interface Props {
   session: Session;
+  /** las demas sesiones vivas con consola: entre ellas se busca a la coordinadora */
+  others: Session[];
   toast: (msg: string, err?: boolean) => void;
 }
 
-export function SendBox({ session: s, toast }: Props) {
+export function SendBox({ session: s, others, toast }: Props) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // "avisarme cuando termine": delegar en un gesto. Tras enviar, se crea la regla on_stop desde
+  // esta sesion hacia la coordinadora (la primera sesion de Claude del mismo repo que no sea el
+  // destino, igual que Conectar). Recordado por navegador; apagado por defecto.
+  const me = useMemo(
+    () => others.find((o) => o.agent === "claude" && o.repo === s.repo && o.session_id !== s.session_id),
+    [others, s.repo, s.session_id],
+  );
+  const [notifyMe, setNotifyMe] = useState(loadNotify);
+  const toggleNotify = (on: boolean) => {
+    setNotifyMe(on);
+    try {
+      localStorage.setItem(NOTIFY_KEY, on ? "1" : "0");
+    } catch {
+      /* sin storage, no importa */
+    }
+  };
+
+  const notifyRule = async () => {
+    if (!notifyMe || !me) return;
+    try {
+      await api.post("/rules", { kind: "on_stop", from: s.session_id, to: me.session_id, text: NOTIFY_TEMPLATE, repeat: false, max_fires: 1 });
+      toast(`Cuando ${shortName(s)} termine, su respuesta va a ${shortName(me)}`);
+    } catch (e) {
+      // 409: ya existe esa regla, o la inversa (seria un bucle). El envio ya se hizo; se avisa y listo
+      toast(`El mensaje salió, pero la regla "cuando termine" no: ${(e as Error).message}`, true);
+    }
+  };
 
   const upload = async (files: FileList | File[]) => {
     for (const f of Array.from(files)) {
@@ -44,6 +85,7 @@ export function SendBox({ session: s, toast }: Props) {
       toast(`Enviado (${r.chars} caracteres)`);
       setText("");
       setAttachments([]);
+      await notifyRule();
     } catch (e) {
       toast(`No se pudo enviar: ${(e as Error).message}`, true);
     } finally {
@@ -141,6 +183,11 @@ export function SendBox({ session: s, toast }: Props) {
           ))}
         </div>
         <span className="sp" />
+        {me && (
+          <label className="small notifyme pointer" title={`al terminar este pedido, su respuesta se manda sola a ${shortName(me)}`}>
+            <input type="checkbox" checked={notifyMe} onChange={(e) => toggleNotify(e.target.checked)} /> avisarme cuando termine
+          </label>
+        )}
         <button className="primary" disabled={disabled} onClick={() => send(text)}>
           Enviar
         </button>
