@@ -295,15 +295,17 @@ lienzo/
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
   src/arrows-geometry.ts   geometría de las flechas y etiquetas de período, funciones puras con tests propios
   src/nl.ts                parser de frases ("cada 30 min continuá hasta 6 veces"), con tests propios
+  src/names.ts             nombres cortos, etiquetas de reglas y texto plano, compartidos por tarjeta, panel y flechas
+  src/hooks/               datos por SSE, avisos del navegador y flags guardados en el navegador
 tests/             pytest: transcripciones reales, procesos vivos y la máquina de estados del server
 install.py         alta y baja de los hooks
 lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 40 tests
+python -m pytest tests -q                                   # 43 tests
 cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 23 tests de las flechas
-cd web; node --experimental-strip-types src/nl.test.ts                # 34 aserciones del parser de frases
+cd web; node --experimental-strip-types src/nl.test.ts                # 77 aserciones del parser de frases
 ```
 
 ## Qué es cada archivo de estado

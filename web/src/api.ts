@@ -1,8 +1,19 @@
 const HEADERS = { "X-Lienzo": "1", "Content-Type": "application/json" };
 
+/** Error HTTP con el body JSON del server: un 409 de programadas trae rule_id, at, text y replace. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public body: Record<string, unknown>,
+  ) {
+    super(message);
+  }
+}
+
 async function parse<T>(r: Response): Promise<T> {
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((j as { error?: string }).error || String(r.status));
+  const j = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!r.ok) throw new ApiError(typeof j.error === "string" ? j.error : String(r.status), r.status, j);
   return j as T;
 }
 

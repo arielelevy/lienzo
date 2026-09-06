@@ -103,6 +103,8 @@ export function splitLanes(open: { key: ColKey; n: number }[], budget: number): 
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 const canReceive = (s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
+/** Card dibuja el agarre ⇢ si recibe onGrip; el arrastre en si lo maneja el tablero por Pointer Events */
+const noGrip = () => undefined;
 
 interface Drag {
   from: string;
@@ -115,7 +117,14 @@ interface Drag {
 
 export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
-  const [drag, setDrag] = useState<Drag | null>(null);
+  // el arrastre vive en el ref (los listeners de document lo leen al instante, sin esperar el
+  // render) y se copia al estado para dibujar la linea
+  const dragRef = useRef<Drag | null>(null);
+  const [drag, setDragState] = useState<Drag | null>(null);
+  const setDrag = (d: Drag | null) => {
+    dragRef.current = d;
+    setDragState(d);
+  };
   // tarjeta bajo el mouse: Arrows resalta sus flechas y atenua las demas
   const [hover, setHover] = useState<string | null>(null);
   // El arrastre va por Pointer Events, asi funciona igual con mouse y con el dedo. Presion sobre el
@@ -124,35 +133,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // touch-action: none para que el scroll no se lo lleve).
   const pressRef = useRef<{ sid: string; x: number; y: number } | null>(null);
   const draggedRef = useRef(false);
-
-  useEffect(() => {
-    const move = (e: PointerEvent) => {
-      const pr = pressRef.current;
-      if (!pr) return;
-      if (Math.hypot(e.clientX - pr.x, e.clientY - pr.y) > 8) {
-        pressRef.current = null;
-        draggedRef.current = true;
-        startDragAt(pr.sid, e.clientX, e.clientY);
-      }
-    };
-    const up = () => {
-      pressRef.current = null;
-      // el click (si lo hay) llega despues del pointerup, y la tarjeta lo demora 280 ms para
-      // distinguirlo del doble click: la marca tiene que sobrevivir a esa demora
-      setTimeout(() => {
-        draggedRef.current = false;
-      }, 400);
-    };
-    document.addEventListener("pointermove", move);
-    document.addEventListener("pointerup", up);
-    document.addEventListener("pointercancel", up);
-    return () => {
-      document.removeEventListener("pointermove", move);
-      document.removeEventListener("pointerup", up);
-      document.removeEventListener("pointercancel", up);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const draggedTimer = useRef<number | undefined>(undefined);
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -261,7 +242,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     if (changed) saveManual(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [byState]);
-  useEffect(() => () => Object.values(emptyTimers.current).forEach((t) => window.clearTimeout(t)), []);
+  useEffect(() => () => [...Object.values(emptyTimers.current), draggedTimer.current].forEach((t) => window.clearTimeout(t)), []);
 
   const isCollapsed = (k: ColKey, n: number) => {
     if (filtering && n > 0) return false;
@@ -298,32 +279,56 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     const y1 = r ? (r.top + r.bottom) / 2 - b.top : cy - b.top;
     setDrag({ from: sid, x1, y1, x2: cx - b.left, y2: cy - b.top, over: null });
   };
+  // un solo juego de listeners en document, suscrito una vez: sin arrastre siguen la presion
+  // (arranca a los 8 px); con arrastre mueven la linea y resuelven el destino al soltar
   useEffect(() => {
-    if (!drag) return;
+    // tarjeta con consola bajo el puntero (la propia tambien: la flecha que vuelve al mismo bloque
+    // es un bucle, "programale un mensaje a esta misma sesion")
+    const cardAt = (e: PointerEvent) => {
+      const sid = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]")?.dataset.sid;
+      return sid && canReceive(sessions[sid]) ? sid : null;
+    };
     const move = (e: PointerEvent) => {
       const board = boardRef.current;
       if (!board) return;
-      const b = board.getBoundingClientRect();
-      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]");
-      // la propia tarjeta tambien es destino: la flecha que vuelve al mismo bloque es un bucle,
-      // "programale un mensaje a esta misma sesion" (a una hora o cada tanto)
-      const cand = el?.dataset.sid ?? null;
-      const over = cand && canReceive(sessions[cand]) ? cand : null;
-      setDrag((d) => (d ? { ...d, x2: e.clientX - b.left, y2: e.clientY - b.top, over } : d));
+      const d = dragRef.current;
+      if (d) {
+        const b = board.getBoundingClientRect();
+        setDrag({ ...d, x2: e.clientX - b.left, y2: e.clientY - b.top, over: cardAt(e) });
+        return;
+      }
+      const pr = pressRef.current;
+      if (pr && Math.hypot(e.clientX - pr.x, e.clientY - pr.y) > 8) {
+        pressRef.current = null;
+        draggedRef.current = true;
+        startDragAt(pr.sid, e.clientX, e.clientY);
+      }
     };
     const up = (e: PointerEvent) => {
-      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]");
-      const to = el?.dataset.sid;
-      setDrag(null);
+      pressRef.current = null;
+      // el click (si lo hay) llega despues del pointerup, y la tarjeta lo demora 280 ms para
+      // distinguirlo del doble click: la marca tiene que sobrevivir a esa demora (y a un arrastre
+      // anterior muy reciente, cuyo timer no debe borrarla antes de tiempo)
+      window.clearTimeout(draggedTimer.current);
+      draggedTimer.current = window.setTimeout(() => {
+        draggedRef.current = false;
+      }, 400);
+      const d = dragRef.current;
+      if (!d) return;
       // soltar sobre una muerta, huerfana o sin consola no conecta: no habria a donde escribir.
       // Sobre si misma (solo si el arrastre ya arranco: un click sin mover nunca llega aca) abre el
       // dialogo con from === to, que Forward toma como "programar para esta sesion"
-      if (to && canReceive(sessions[to])) onConnect(drag.from, to);
+      const to = cardAt(e);
+      setDrag(null);
+      if (to) onConnect(d.from, to);
     };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") setDrag(null); // soltar en cualquier lado o Esc cancela
     };
-    const cancel = () => setDrag(null); // el navegador se quedo el puntero (scroll, gesto del sistema)
+    const cancel = () => {
+      pressRef.current = null;
+      setDrag(null); // el navegador se quedo el puntero (scroll, gesto del sistema)
+    };
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up);
     document.addEventListener("pointercancel", cancel);
@@ -334,7 +339,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       document.removeEventListener("pointercancel", cancel);
       document.removeEventListener("keydown", key);
     };
-  }, [drag?.from, onConnect]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessions, onConnect]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -430,9 +435,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         }}
                         onDecide={onDecide}
                         onDrop={() => onDrop(s.session_id)}
-                        // el agarre y la presion sobre el cuerpo se manejan con Pointer Events en el
-                        // tablero (onPointerDown); onGrip solo hace que la tarjeta dibuje el agarre
-                        onGrip={() => undefined}
+                        onGrip={noGrip}
                       />
                     </div>
                   ))}

@@ -1,40 +1,16 @@
-import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { ago, api } from "../api";
 import { hhmm } from "../nl";
-import { periodLabel } from "./Card";
+import { isFree, periodLabel, schedLabel } from "../names";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
 import type { ConnectionRule, ConnectionsResponse, DigestResponse, OtherSession, Session, Turn, TurnsResponse } from "../types";
 
-/** "a las 22:19" si es hoy, "el jue 11/9 a las 22:19" si es otro dia */
-export function whenLabel(iso: string, now = new Date()): string {
-  const d = new Date(iso);
-  const hm = hhmm(d);
-  if (d.toDateString() === now.toDateString()) return `a las ${hm}`;
-  const wd = d.toLocaleDateString("es-AR", { weekday: "short" }).replace(".", "");
-  return `el ${wd} ${d.getDate()}/${d.getMonth() + 1} a las ${hm}`;
-}
-
-/** Fila fija del panel: una regla "at" habilitada hacia esta sesion, en una linea. `(auto)` cuando
- *  la creo el server por un limite de uso (el campo `auto` todavia no esta en el tipo). */
-export function schedLabel(r: ConnectionRule, now = new Date()): { text: string; auto: boolean } {
-  const auto = !!(r as { auto?: boolean }).auto;
-  if (r.every_s) {
-    const next = r.at ? ` · próx. ${whenLabel(r.at, now).replace(/^a las /, "").replace(/^el /, "")}` : "";
-    return { text: `↻ ${r.text} ${periodLabel(r.every_s)}${next} (${r.fired}/${r.max_fires})`, auto };
-  }
-  return { text: `⏰ ${r.text} ${r.at ? whenLabel(r.at, now) : "sin hora"}`, auto };
-}
-
 /** La otra punta de un vinculo o regla, en texto: el server la manda como objeto
  *  {session_id, name}; uno anterior la mandaba como string. Nunca renderizar `other` crudo. */
 export function otherName(x: { other?: OtherSession | null }): string {
-  const o = x.other;
-  if (o == null) return "?";
-  if (typeof o === "string") return o;
-  if (typeof o === "object" && typeof o.name === "string") return o.name;
-  return "?";
+  return x.other?.name || "?";
 }
 
 /** Limite de error chico: un dato inesperado en una pestana muestra un aviso en vez de tirar
@@ -155,25 +131,32 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
   // devuelve el resultado en vez de setearlo: el efecto decide si todavia aplica (cancelled)
   const fetchScreen = (): Promise<Screen> =>
     api.get<Screen>(`/sessions/${s.session_id}/screen`).catch((e) => ({ ok: false, error: (e as Error).message }));
-  // conexiones: null mientras carga; "old" si el server no tiene el endpoint todavia
+  // conexiones de la sesion: alimentan la pestana Conexiones y la fila de programadas del
+  // encabezado. Las reglas llegan por SSE al App pero el Panel no las recibe: se piden a
+  // /connections al abrir, con cada transcriptTick, cada 30 s y despues de quitar una. null
+  // mientras carga; "old" si el server no tiene la ruta (la fila no aparece).
   const [conn, setConn] = useState<ConnectionsResponse | "old" | null>(null);
-  // lo programado hacia esta sesion (reglas "at" habilitadas), visible al abrir la tarjeta. Las
-  // reglas llegan por SSE al App pero el Panel no las recibe: se piden a /connections al montar,
-  // con cada transcriptTick y cada 30 s. Sin la ruta (server viejo) la fila no aparece.
-  const [sched, setSched] = useState<ConnectionRule[]>([]);
-  const loadSched = useCallback(async () => {
-    try {
-      const c = await api.get<ConnectionsResponse>(`/sessions/${s.session_id}/connections`);
-      setSched(c.rules.filter((r) => r.kind === "at" && r.enabled && r.to === s.session_id));
-    } catch {
-      setSched([]);
-    }
-  }, [s.session_id]);
+  const [connTick, setConnTick] = useState(0);
+  useEffect(() => setConn(null), [s.session_id]);
   useEffect(() => {
-    loadSched();
-    const id = setInterval(loadSched, 30_000);
-    return () => clearInterval(id);
-  }, [loadSched, transcriptTick]);
+    let cancelled = false;
+    const load = () =>
+      api
+        .get<ConnectionsResponse>(`/sessions/${s.session_id}/connections`)
+        .then((c) => !cancelled && setConn(c))
+        .catch((e) => {
+          if (cancelled) return;
+          if ((e as Error).message === "404") setConn("old");
+          else console.warn("connections:", e); // sin red o server caido: se reintenta en 30 s
+        });
+    load();
+    const id = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [s.session_id, transcriptTick, connTick]);
+  const sched = conn && conn !== "old" ? conn.rules.filter((r) => r.kind === "at" && r.enabled && r.to === s.session_id) : [];
   const dropSched = async (r: ConnectionRule) => {
     if (!confirm("Quitar esta programación?")) return;
     try {
@@ -182,7 +165,7 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
     } catch (e) {
       toast(`No se pudo quitar: ${(e as Error).message}`, true);
     }
-    loadSched();
+    setConnTick((t) => t + 1);
   };
   const [digest, setDigest] = useState<DigestResponse | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -191,7 +174,7 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
   const bodyRef = useRef<HTMLDivElement>(null);
   // sesion libre: viva, con consola y sin ningun pedido todavia. El estado vacio de Destacados y
   // Conversacion dice que hacer, y la caja de envio arranca con el foco ("Darle trabajo" de la tarjeta)
-  const free = !!s.alive && !s.orphan && !s.no_console && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();
+  const free = isFree(s);
   const freeEmpty = (
     <div className="empty free">
       Esta sesión todavía no recibió pedidos. Escribile abajo, o marcá "avisarme cuando termine" para que su informe te llegue solo.
@@ -209,19 +192,7 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           if (!cancelled) setScreen(r);
           return;
         }
-        if (tab === "conn") {
-          try {
-            const c = await api.get<ConnectionsResponse>(`/sessions/${s.session_id}/connections`);
-            if (!cancelled) setConn(c);
-          } catch (e) {
-            // 404 = server anterior a la ruta; cualquier otro error va a la nota
-            if (!cancelled) {
-              if ((e as Error).message === "404") setConn("old");
-              else setNote(`error: ${(e as Error).message}`);
-            }
-          }
-          return;
-        }
+        if (tab === "conn") return; // ya cargado por el efecto de conexiones
         if (tab === "digest") {
           const d = await api.get<DigestResponse>(`/sessions/${s.session_id}/digest?n=10`);
           if (!cancelled) {

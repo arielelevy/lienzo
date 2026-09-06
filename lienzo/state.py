@@ -214,8 +214,10 @@ class JsonList:
     def save(self) -> None:
         try:
             atomic_write(self.path, json.dumps(self.items, ensure_ascii=False, indent=1))
-        except OSError:
-            pass
+        except OSError as e:
+            # antes se tragaba: si rules.json o links.json no se podian escribir (disco lleno, archivo
+            # bloqueado), las reglas seguian en memoria y se perdian en el proximo arranque sin aviso
+            log(f"no se pudo guardar {os.path.basename(self.path)}: {e}")
 
     def snapshot(self) -> list[dict]:
         with lock:

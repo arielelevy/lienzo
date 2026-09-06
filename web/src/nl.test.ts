@@ -93,3 +93,18 @@ p = parseConnection("a las 9 continuá a mapo", from, others, { current: "esta s
 assert.match(p.summary, /a mapo · Tablero$/);
 
 console.log("nl.test.ts OK");
+
+// splitEvery / everySeconds (los comparten Conectar y el editor de la flecha)
+// @ts-ignore TS5097: extension .ts en el import, necesaria para que Node lo resuelva
+import { splitEvery, everySeconds } from "./nl.ts";
+assert.deepEqual(splitEvery(1800), { everyN: 30, everyUnit: "min" });
+assert.deepEqual(splitEvery(7200), { everyN: 2, everyUnit: "h" });
+assert.deepEqual(splitEvery(90), { everyN: 2, everyUnit: "min" });
+assert.deepEqual(splitEvery(null), { everyN: 30, everyUnit: "min" });
+assert.equal(everySeconds(2, "h"), 7200);
+assert.equal(everySeconds(0, "min"), 60);
+// am/pm/hs en la hora y en "hasta las": mismo manejo
+p = at("a las 12 am continuá"); assert.equal(hhmm(p.at), "00:00");
+p = at("a las 4 pm continuá"); assert.equal(hhmm(p.at), "16:00");
+p = at("a las 9 cada hora continuá hasta las 5 pm"); assert.equal(p.maxFires, 9);
+assert.equal(P("a las 25 continuá").kind, "none");

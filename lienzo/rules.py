@@ -31,7 +31,7 @@ def session_name(sid: str | None) -> str:
 def connections_of(sid: str) -> dict:
     """Vinculos y reglas donde `sid` es origen o destino, con la otra punta resuelta a nombre,
     ordenados del mas nuevo al mas viejo."""
-    def decorate(x: dict, ts_key: str) -> dict:
+    def decorate(x: dict) -> dict:
         out = dict(x)
         out["direction"] = "out" if x.get("from") == sid else "in"
         other = x.get("to") if out["direction"] == "out" else x.get("from")
@@ -40,18 +40,16 @@ def connections_of(sid: str) -> dict:
         else:
             name = "vos (lienzo)" if x.get("kind") == "user" else "(hora fija)"
         out["other"] = {"session_id": other, "name": name}
-        out["_ts"] = x.get(ts_key) or ""
         return out
 
-    with lock:
-        ls = [decorate(l, "ts") for l in links.items if sid in (l.get("from"), l.get("to"))]
-        rs = [decorate(r, "created") for r in rules.items if sid in (r.get("from"), r.get("to"))]
-    for coll in (ls, rs):
+    def newest_first(coll: list[dict], ts_key: str) -> list[dict]:
         # fecha descendente; a igual fecha (mismo milisegundo), el agregado despues va primero
-        order = sorted(enumerate(coll), key=lambda ix: (ix[1]["_ts"], ix[0]), reverse=True)
-        coll[:] = [x for _, x in order]
-        for x in coll:
-            del x["_ts"]
+        order = sorted(enumerate(coll), key=lambda ix: (ix[1].get(ts_key) or "", ix[0]), reverse=True)
+        return [decorate(x) for _, x in order]
+
+    with lock:
+        ls = newest_first([l for l in links.items if sid in (l.get("from"), l.get("to"))], "ts")
+        rs = newest_first([r for r in rules.items if sid in (r.get("from"), r.get("to"))], "created")
     return {"links": ls, "rules": rs}
 
 def full_reply(s: dict, cap: int = 6000) -> str:
@@ -77,6 +75,15 @@ def render_template(tpl: str, s: dict | None) -> str:
 
 CONTINUE_TEXT = "Continuar"
 CONTINUE_DELAY_S = 60
+AT_NEAR_S = 120     # dos programadas a menos de 2 min son "la misma hora" (la UI guarda UTC, aca local)
+
+
+def at_near(r: dict, at: dt.datetime) -> bool:
+    """La regla `r` (kind at) cae a menos de AT_NEAR_S segundos de `at`."""
+    try:
+        return abs((dt.datetime.fromisoformat(str(r.get("at"))) - at).total_seconds()) <= AT_NEAR_S
+    except ValueError:
+        return False
 
 
 def ensure_continue_rule(s: dict) -> None:
@@ -95,18 +102,10 @@ def ensure_continue_rule(s: dict) -> None:
     if at < dt.datetime.now().astimezone() - dt.timedelta(minutes=5):
         return  # aviso viejo: el cupo ya volvio, no hay nada que programar
     at_iso = at.isoformat(timespec="seconds")
-
-    def near(r: dict) -> bool:
-        # mismo instante aunque el offset difiera (la UI guarda UTC, aca local): +-2 min
-        try:
-            return abs((dt.datetime.fromisoformat(r["at"]) - at).total_seconds()) <= 120
-        except (KeyError, TypeError, ValueError):
-            return False
-
     with lock:
         s["continue_scheduled_for"] = until
         for r in rules.items:
-            if r.get("kind") == "at" and r.get("to") == s["session_id"] and near(r):
+            if r.get("kind") == "at" and r.get("to") == s["session_id"] and at_near(r, at):
                 return  # ya esta (manual o automatica, vigente o ya disparada)
         rule = {"id": secrets.token_hex(6), "kind": "at", "from": None, "to": s["session_id"],
                 "text": CONTINUE_TEXT, "at": at_iso, "repeat": False, "max_fires": 1, "fired": 0,

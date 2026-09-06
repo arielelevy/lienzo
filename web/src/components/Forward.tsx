@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ago, api } from "../api";
-import { coordinatorOf, fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection } from "../nl";
-import type { Rule } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import { ApiError, ago, api } from "../api";
+import { coordinatorOf, everySeconds, fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection, splitEvery, type EveryUnit } from "../nl";
 import type { DigestResponse, Session } from "../types";
 import { shortName } from "./Card";
 
@@ -65,12 +64,13 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   );
   const [template, setTemplate] = useState(loadTemplate);
   const [reply, setReply] = useState(from.last_reply || "");
-  const [text, setText] = useState(() => fill(loadTemplate(), from, from.last_reply || ""));
+  // lo que se manda en "ahora": la plantilla rellena, salvo que el usuario la haya editado a mano
+  // (entonces el digest que llega despues no la pisa)
+  const [textEdit, setTextEdit] = useState<string | null>(null);
+  const text = textEdit ?? fill(template, from, reply);
   const [atText, setAtText] = useState("Continuá");
   const [nativeText, setNativeText] = useState("");
   const [hhmm, setHhmm] = useState(() => fmtHhmm(new Date(Date.now() + 60 * 60 * 1000)));
-  // si el usuario ya toco el texto, el digest que llega despues no lo pisa
-  const dirtyRef = useRef(false);
   const [repeat, setRepeat] = useState(false);
   // tope compartido: "cuando termine, hasta N veces" y "cada tanto, hasta N veces"
   const [maxFires, setMaxFires] = useState(5);
@@ -78,17 +78,13 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   // disparos que caen con el destino trabajando, salvo que skipBusy se apague
   const [every, setEvery] = useState(false);
   const [everyQty, setEveryQty] = useState(30);
-  const [everyUnit, setEveryUnit] = useState<"min" | "h">("min");
+  const [everyUnit, setEveryUnit] = useState<EveryUnit>("min");
   const [skipBusy, setSkipBusy] = useState(true);
-  const everySec = Math.max(60, everyUnit === "h" ? everyQty * 3600 : everyQty * 60);
+  const everySec = everySeconds(everyQty, everyUnit);
   const setEverySec = (sec: number) => {
-    if (sec % 3600 === 0) {
-      setEveryQty(sec / 3600);
-      setEveryUnit("h");
-    } else {
-      setEveryQty(Math.round(sec / 60));
-      setEveryUnit("min");
-    }
+    const e = splitEvery(sec);
+    setEveryQty(e.everyN);
+    setEveryUnit(e.everyUnit);
   };
   // "yo": la primera sesion de Claude del tablero con el mismo repo que el origen (la que coordina).
   // Si no existe, o es el mismo destino, el checkbox no aparece.
@@ -97,7 +93,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const [busy, setBusy] = useState(false);
   // 409 del server: ya hay una programada a ±2 min hacia el mismo destino. Se muestra en el dialogo
   // y "Reemplazar" repite el POST con replace: true (dos mensajes al mismo minuto nunca es lo que uno quiere)
-  const [conflict, setConflict] = useState<{ id: string; at: string; text: string } | null>(null);
+  const [conflict, setConflict] = useState<{ at: string; text: string } | null>(null);
   const targetSession = useMemo(() => targets.find((o) => o.session_id === target), [targets, target]);
 
   useEffect(() => {
@@ -109,10 +105,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     api.get<DigestResponse>(`/sessions/${from.session_id}/digest?n=5`).then((d) => {
       if (cancelled) return;
       const last = [...d.turns].reverse().find((t) => t.final && t.final.trim());
-      if (last) {
-        setReply(last.final);
-        if (!dirtyRef.current) setText(fill(template, from, last.final));
-      }
+      if (last) setReply(last.final);
     }).catch(() => null);
     return () => {
       cancelled = true;
@@ -122,7 +115,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
 
   const applyTemplate = (tpl: string) => {
     setTemplate(tpl);
-    setText(fill(tpl, from, reply));
+    setTextEdit(null);
     try {
       localStorage.setItem(KEY, tpl);
     } catch {
@@ -180,15 +173,10 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
             toast(`A las ${hhmm} se manda "${atText}" a ${shortName(targetSession)}`);
           }
         } catch (e) {
-          // api.post solo conserva el texto del error, no el body (rule_id, at, text): la programada
-          // que choca se busca en /rules, a ±2 min hacia el mismo destino
-          if (!/ya hay una programada/i.test((e as Error).message)) throw e;
-          const want = new Date(at).getTime();
-          const hit = (await api.get<Rule[]>("/rules")).find(
-            (r) => r.enabled && r.kind === "at" && r.to === targetSession.session_id && r.at && Math.abs(new Date(r.at).getTime() - want) <= 2 * 60e3,
-          );
-          if (!hit) throw e;
-          setConflict({ id: hit.id, at: fmtHhmm(new Date(hit.at as string)), text: hit.text });
+          // 409 con replace: el body trae la programada que choca (at, text)
+          const b = e instanceof ApiError && e.status === 409 && e.body.replace === true ? e.body : null;
+          if (!b) throw e;
+          setConflict({ at: fmtHhmm(new Date(String(b.at))), text: String(b.text ?? "") });
           return;
         }
       }
@@ -332,7 +320,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
                   <input type="checkbox" checked={every} onChange={(e) => setEvery(e.target.checked)} /> repetir cada
                 </label>
                 <input type="number" min={1} max={999} value={everyQty} disabled={!every} onChange={(e) => setEveryQty(Math.max(1, Number(e.target.value) || 1))} style={{ width: 60 }} />
-                <select value={everyUnit} disabled={!every} onChange={(e) => setEveryUnit(e.target.value as "min" | "h")}>
+                <select value={everyUnit} disabled={!every} onChange={(e) => setEveryUnit(e.target.value as EveryUnit)}>
                   <option value="min">min</option>
                   <option value="h">h</option>
                 </select>
@@ -355,14 +343,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
                 <textarea value={template} onChange={(e) => applyTemplate(e.target.value)} rows={3} />
               </details>
               {mode === "now" && (
-                <textarea
-                  value={text}
-                  onChange={(e) => {
-                    dirtyRef.current = true;
-                    setText(e.target.value);
-                  }}
-                  rows={6}
-                />
+                <textarea value={text} onChange={(e) => setTextEdit(e.target.value)} rows={6} />
               )}
             </>
           )}

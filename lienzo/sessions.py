@@ -80,7 +80,9 @@ def attachment_title(s: dict) -> str | None:
         if m and m.group(1):
             return short(m.group(1), 60)
     first = next((l for l in lines if l), "")
-    return short(first, 60) if first else None
+    # la cabecera de un informe recibido ("Mensaje de X (claude) sobre '…':") no es titulo: si el
+    # adjunto empieza asi, no hay titulo que sacar de el
+    return None if not first or bad_title(first) else short(first, 60)
 
 
 def set_last_prompt(s: dict, raw: str) -> None:
@@ -90,7 +92,9 @@ def set_last_prompt(s: dict, raw: str) -> None:
 
 
 USELESS_TITLE_WORDS = ("adjunto", "archivo")
-USELESS_TITLE_RE = re.compile(r"^(mensaje(\s+\d+|\s+del\b.*)?|encargo)$")
+# "Mensaje de lienzo (claude) sobre '…':" es la cabecera de un informe que otra sesion le mando a esta:
+# tampoco sirve de titulo (la coordinadora se llamaria como el ultimo informe recibido)
+USELESS_TITLE_RE = re.compile(r"^(mensaje(\s+\d+|\s+del\b.*|\s+de\s+.*\bsobre\b.*)?|encargo)$")
 
 
 def bad_title(title) -> bool:
@@ -180,18 +184,7 @@ def limit_until_of(turn: dict) -> str | None:
     err = turn.get("error")
     if not err:
         return None
-    ref = None
-    for k in ("ts_end", "ts_start"):
-        raw = turn.get(k)
-        if not raw:
-            continue
-        try:
-            ref = dt.datetime.fromisoformat(str(raw))
-            break
-        except ValueError:
-            continue
-    if ref is not None and ref.tzinfo is None:
-        ref = ref.replace(tzinfo=dt.timezone.utc)
+    ref = parse_ts(turn.get("ts_end")) or parse_ts(turn.get("ts_start"))
     at = transcripts.limit_reset(err, ref)
     return at.astimezone().isoformat(timespec="seconds") if at else None
 
@@ -332,6 +325,9 @@ def transcript_state(s: dict, t: dict) -> str | None:
     return want
 
 
+REFRESH_KEYS = ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for")
+
+
 def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
     """Titulo, rama, ultimo pedido/respuesta desde la transcripcion. Si la sesion no tiene
     hooks (o force_state), tambien el estado corriendo/termino. Devuelve si cambio algo."""
@@ -344,7 +340,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         state.log(f"transcripcion {path}: {e}")
         return False
     meta, ts = r["meta"], r["turns"]
-    before = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for")})
+    before = json.dumps({k: s.get(k) for k in REFRESH_KEYS})
     # titulo de la transcripcion: ai-title de Claude, o thread_name del indice de Codex (solo se
     # busca si el que hay no sirve); la regla de que gana esta en choose_title, despues del turno
     tt = meta.get("title")
@@ -392,8 +388,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         if s["limit_until"]:
             on_limit_notice(s)
     choose_title(s, tt)
-    after = json.dumps({k: s.get(k) for k in ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for")})
-    return before != after
+    return before != json.dumps({k: s.get(k) for k in REFRESH_KEYS})
 
 
 def set_title(s: dict, title: str) -> None:
@@ -450,6 +445,35 @@ def recalc_title(s: dict) -> bool:
 
 # --- eventos de hooks -------------------------------------------------------------
 
+def claim_pid(s: dict, ev: dict) -> None:
+    """El evento trae un pid vivo: la tarjeta se lo queda, salvo que ya sea de otra. Otra tarjeta con
+    el mismo pid: si es un placeholder del barrido (source sweep o id "pid-N") es la misma sesion y
+    se reemplaza; si es una sesion con hooks que termino (SessionEnd por /clear o resume) o dejo de
+    emitir y esta trae su propia transcripcion, el proceso siguio con otro session_id y esta la
+    continua (hereda pid, reglas y links); si es una sesion real que sigue viva, el pid ya tiene
+    duena y este evento no se lo lleva (una prueba manual del hook con otro session_id no debe
+    borrar la sesion real ni sus reglas). Se llama con el lock tomado."""
+    pid, sid = ev["pid"], s["session_id"]
+    owner = None
+    if s.get("pid") != pid:
+        for other_sid, other in list(sessions.items()):
+            if other_sid != sid and other.get("pid") == pid:
+                if other.get("source") == "sweep" or other_sid.startswith("pid-"):
+                    drop_session(other_sid, "duplicada por barrido")
+                elif continues_session(other, ev):
+                    continue_session(other, s)
+                else:
+                    owner = other_sid
+        if owner:
+            state.log(f"pid {pid} ya pertenece a {owner[:8]}; evento {ev.get('hook_event_name') or '?'} de {sid[:8]} no lo toma")
+    if not owner:
+        s["pid"] = pid
+        s["agent_exe"] = ev.get("agent_exe")
+        # el panel de Claude Code de VS Code y las apps de escritorio disparan hooks pero no
+        # tienen consola: se ven y se leen, no se les escribe
+        s["no_console"] = not procs.is_tui(pid)
+
+
 def apply_event(ev: dict) -> None:
     name = ev.get("hook_event_name") or "?"
     sid = ev.get("session_id")
@@ -468,31 +492,7 @@ def apply_event(ev: dict) -> None:
             s["state"], s["state_since"] = "termino", now()
         pid = ev.get("pid")
         if pid and procs.agent_alive(pid):
-            owner = None
-            if s.get("pid") != pid:
-                # otra tarjeta con el mismo pid: si es un placeholder del barrido (source sweep o
-                # id "pid-N") es la misma sesion y se reemplaza; si es una sesion con hooks que
-                # termino (SessionEnd por /clear o resume) o dejo de emitir y esta trae su propia
-                # transcripcion, el proceso siguio con otro session_id y esta la continua (hereda
-                # pid, reglas y links); si es una sesion real que sigue viva, el pid ya tiene
-                # duena y este evento no se lo lleva (una prueba manual del hook con otro
-                # session_id no debe borrar la sesion real ni sus reglas)
-                for other_sid, other in list(sessions.items()):
-                    if other_sid != sid and other.get("pid") == pid:
-                        if other.get("source") == "sweep" or other_sid.startswith("pid-"):
-                            drop_session(other_sid, "duplicada por barrido")
-                        elif continues_session(other, ev):
-                            continue_session(other, s)
-                        else:
-                            owner = other_sid
-                if owner:
-                    state.log(f"pid {pid} ya pertenece a {owner[:8]}; evento {name} de {sid[:8]} no lo toma")
-            if not owner:
-                s["pid"] = pid
-                s["agent_exe"] = ev.get("agent_exe")
-                # el panel de Claude Code de VS Code y las apps de escritorio disparan hooks pero no
-                # tienen consola: se ven y se leen, no se les escribe
-                s["no_console"] = not procs.is_tui(pid)
+            claim_pid(s, ev)
         if ev.get("cwd") and (not s.get("cwd") or name == "SessionStart"):
             # el cwd de los hooks sigue al shell del agente (cambia con un cd de una tool);
             # el repo de la tarjeta se fija al arrancar y no baila
@@ -557,7 +557,7 @@ def apply_event(ev: dict) -> None:
             if s["state"] == "te_necesita" and s.get("needs"):
                 s["needs"]["where"] = "terminal"
             s["pending_id"] = None
-        elif name in ("PostToolUse",):
+        elif name == "PostToolUse":
             if s["state"] == "te_necesita" and (s.get("needs") or {}).get("tool_use_id") == ev.get("tool_use_id"):
                 set_state(s, "corriendo")
         elif name == "Interrupt":
