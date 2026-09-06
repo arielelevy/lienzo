@@ -85,7 +85,7 @@
 /* error plegado a la primera oracion, "…más" lo abre (mismo control que el pedido) */
 .card .error { display: flex; gap: 6px; align-items: baseline; }
 .card .error .etext { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word; }
-.card .error.open .etext { max-height: 14em; overflow-y: auto; }
+.card .error.open .etext { max-height: 14em; overflow-y: auto; overscroll-behavior: contain; }
 .card .error .more { flex: 0 0 auto; background: none; border: 0; padding: 0; color: var(--acc); font-size: 12px; cursor: pointer; line-height: inherit; }
 .card .error .more:hover { text-decoration: underline; border-color: transparent; }
 
@@ -97,8 +97,12 @@
 
 /* pedido: una linea plegada, "…más" la abre */
 .card .prompt { display: flex; gap: 6px; align-items: baseline; max-height: none; }
-.card .prompt .ptext { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.card .prompt.open .ptext { white-space: pre-wrap; overflow: visible; text-overflow: clip; max-height: 14em; overflow-y: auto; }
+.card .prompt .ptext { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  /* dos lineas del pedido, no una: con una sola casi nunca se entiende que le pediste */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.card .prompt.open .ptext { white-space: pre-wrap; overflow: visible; text-overflow: clip; }
+/* el pedido abierto crece con su texto: con max-height + overflow salia una barra de scroll
+   nativa (clara, sin tema) adentro de la tarjeta, que se veia como un error de dibujo */
 .card .prompt .more { flex: 0 0 auto; background: none; border: 0; padding: 0; color: var(--acc); font-size: 12px; cursor: pointer; line-height: inherit; }
 .card .prompt .more:hover { text-decoration: underline; border-color: transparent; }
 

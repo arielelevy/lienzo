@@ -509,10 +509,12 @@ export function topRoute(ra: Rect, rc: Rect, xa: number, xc: number, cards: Rect
     const free = !others.some((c) => segs.some(([a, b]) => segHits(c, a, b)));
     const fits = runAllowed(zone.bands, xa, xc, y);
     // entrar en el area util pesa mas que esquivar tarjetas, y esquivarlas mas que el aire de sobra;
-    // a igualdad, el camino mas corto. Un resquicio de 10 px pierde contra un carril de verdad
+    // a igualdad, el carril de mas arriba, y recien despues el camino mas corto. Lo de arriba se
+    // lee mejor: el ojo sigue una linea que corre por encima de las tarjetas, no por abajo
     const score = (fits ? 4 : 0) + (free ? 2 : 0) + (room >= 2 * LANE_CLEAR ? 1 : 0);
     const len = Math.abs(ya - y) + Math.abs(xa - xc) + Math.abs(y - yc);
-    if (!best || score > best.score || (score === best.score && len < best.len - 0.5)) {
+    const higher = !!best && y < best.y - 0.5;
+    if (!best || score > best.score || (score === best.score && (higher || (Math.abs(y - best.y) <= 0.5 && len < best.len - 0.5)))) {
       best = { d: orthoPath(xa, ya, y, xc, yc), x: (xa + xc) / 2, y, clean: score >= 6, exit, enter, lane, len, score };
     }
   }
