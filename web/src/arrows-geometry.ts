@@ -105,7 +105,7 @@ export interface GeometryInput {
 }
 
 /** medio canal por defecto, si no se puede medir el hueco entre columnas abiertas */
-export const HALF_GAP = 26; // la mitad del canal entre columnas (40 px) mas un poco de aire
+export const HALF_GAP = 21; // la mitad del canal entre columnas y entre subcolumnas (30 px), mas aire
 /** separacion vertical entre flechas que salen o entran por el mismo lado de una tarjeta */
 export const SLOT = 14;
 /** dos tarjetas con bordes izquierdos a menos de esto son de la misma columna */

@@ -533,7 +533,17 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       {!compact && !free && !!s.tool_count && (
         <div className="activity" title="actividad del turno que corre (o del último)">
           <span className="n">{s.tool_count} {s.tool_count === 1 ? "paso" : "pasos"}</span>
+          {!!s.tool_errors && (
+            <span className="e" title={`${s.tool_errors} de esos pasos volvieron con error`}>
+              {s.tool_errors} ⚠
+            </span>
+          )}
           {!!s.last_files?.length && <span className="f">{s.last_files.join(" · ")}</span>}
+        </div>
+      )}
+      {!compact && !free && s.last_cmd && (
+        <div className="lastcmd" title={s.last_cmd}>
+          <span className="p">$</span> {s.last_cmd}
         </div>
       )}
       {/* la sugerencia que la terminal tiene tipeada: un click la manda, que es lo que uno iba a
