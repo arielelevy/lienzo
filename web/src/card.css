@@ -2,6 +2,26 @@
    rapidas, copiar, renombrar, aviso de tipeo y el mini toast local (cuando el componente no
    recibe el toast global por props). */
 
+/* estado en la fila de arriba, junto al "hace X": punto verde con pulso (corriendo) o tilde
+   gris (termino). Reemplaza a las columnas Corriendo y Terminó, que se unieron en "Trabajo". */
+.card .top .right { display: inline-flex; align-items: center; gap: 6px; }
+.card .top .st { display: inline-block; flex: 0 0 auto; }
+.card .top .st.run { width: 8px; height: 8px; border-radius: 50%; background: var(--run); box-shadow: 0 0 0 0 rgba(63, 185, 80, .55); animation: st-pulse 1.6s ease-out infinite; }
+.card .top .st.done { color: var(--dim); font-size: 12px; line-height: 1; }
+.card .top .st.orphan { color: var(--need); border: 1px solid var(--need); border-radius: 8px; padding: 0 6px; font-size: 11px; line-height: 1.5; }
+@keyframes st-pulse { 0% { box-shadow: 0 0 0 0 rgba(63, 185, 80, .55); } 70% { box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); } 100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0); } }
+@media (prefers-reduced-motion: reduce) { .card .top .st.run { animation: none; } }
+
+/* la columna "Trabajo" lleva tambien las clases corriendo/termino (las usa Arrows para ubicar la
+   tira colapsada); el color verde que styles.css da a .col.corriendo no aplica al titulo unido */
+.col.trabajo.corriendo h2, .col.trabajo.corriendo .vlabel { color: var(--dim); }
+
+/* subcolumnas de tarjetas: Board reparte hasta 4 entre las columnas abiertas y las pasa en --lanes
+   (styles.css fija 2 para .col.wide; esta regla, mas especifica, toma la variable). El hueco de
+   24 px queda como canal para las flechas. En movil, una sola. */
+.board .col.wide .cards { column-count: var(--lanes, 2); column-gap: 24px; }
+@media (max-width: 900px) { .board .col.wide .cards { column-count: 1; } }
+
 /* pedido: una linea plegada, "…más" la abre */
 .card .prompt { display: flex; gap: 6px; align-items: baseline; max-height: none; }
 .card .prompt .ptext { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -16,9 +36,14 @@
 .card .copy:hover, .dg .copy:hover { opacity: 1; color: var(--acc); border-color: transparent; }
 .card .copy:focus-visible, .dg .copy:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; opacity: 1; }
 
-/* acciones rapidas en sesiones ociosas */
-.card .quickact { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
-.card .quickact button { font-size: 12px; padding: 3px 9px; border-radius: 12px; }
+/* acciones rapidas en sesiones ociosas: los botones aparecen al pasar el mouse o al enfocar la
+   tarjeta (la fila conserva su alto para que las flechas no salten); en tactil, siempre */
+.card .quickact { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; min-height: 22px; }
+.card .quickact button { font-size: 12px; padding: 3px 9px; border-radius: 12px; opacity: 0; pointer-events: none; transition: opacity .12s; }
+.card:hover .quickact button, .card:focus-within .quickact button { opacity: 1; pointer-events: auto; }
+/* solo en tactil de verdad: Chromium headless (el de las pruebas) reporta hover: none pero
+   pointer: none, y con la condicion doble no lo toma como pantalla tactil */
+@media (hover: none) and (pointer: coarse) { .card .quickact button { opacity: 1; pointer-events: auto; } }
 
 /* limite de uso con hora: programar "Continuar" un minuto despues */
 .card .limitrow { margin-top: 6px; }

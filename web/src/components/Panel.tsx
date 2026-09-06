@@ -45,10 +45,14 @@ class ErrorBoundary extends Component<{ resetKey: string; children: ReactNode },
 
 interface Props {
   session: Session;
+  /** las demas sesiones vivas con consola: el SendBox busca ahi a la coordinadora */
+  others: Session[];
   onConnect: () => void;
   transcriptTick: number;
   onClose: () => void;
   toast: (msg: string, err?: boolean) => void;
+  /** "Detalles tecnicos" del menu: PID y nombre del .jsonl en el encabezado, contadores en cero */
+  details: boolean;
 }
 
 const cut = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
@@ -71,6 +75,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
       {links.length ? (
         links.map((l) => {
           const inbound = l.to === sid;
+          // kind "user": lo escribio el usuario desde el lienzo; other viene como "vos (lienzo)"
           const dir = l.kind === "native" ? "⇄ canal con" : inbound ? "↙ recibido de" : "↗ enviado a";
           return (
             <div key={l.id} className={`conn ${inbound ? "in" : "out"}`} title={l.text}>
@@ -111,7 +116,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
   );
 }
 
-export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }: Props) {
+export function Panel({ session: s, others, onConnect, transcriptTick, onClose, toast, details }: Props) {
   const [tab, setTab] = useState<"digest" | "chat" | "screen" | "conn">("digest");
   type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
   const [screen, setScreen] = useState<Screen | null>(null);
@@ -206,7 +211,9 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
         )}
         <button onClick={onClose} aria-label="cerrar panel" title="cerrar">✕</button>
         <div className="pmeta dim small" title={`${s.cwd ?? ""}\n${s.transcript_path ?? "sin transcripción"}`}>
-          {s.cwd} · PID {s.pid ?? "?"} · {s.state} · {s.transcript_path ? s.transcript_path.split(/[\\/]/).pop() : "sin transcripción"}
+          {details
+            ? `${s.cwd} · PID ${s.pid ?? "?"} · ${s.state} · ${s.transcript_path ? s.transcript_path.split(/[\\/]/).pop() : "sin transcripción"}`
+            : `${s.cwd}${s.branch ? ` · ${s.branch}` : ""} · ${s.state}`}
         </div>
       </div>
       <div className="body" ref={bodyRef}>
@@ -224,7 +231,12 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
           <Connections sid={s.session_id} conn={conn} />
         ) : tab === "digest" ? (
           digest && digest.turns.length ? (
-            digest.turns.map((t) => <Digest key={t.id} turn={t} toast={toast} />)
+            // "0 herramientas · 0 lecturas" no dice nada: sin "Detalles tecnicos" se esconde (CSS)
+            digest.turns.map((t) => (
+              <div key={t.id} className={!t.tools && !t.reads && !t.subagents ? "nostats" : undefined}>
+                <Digest turn={t} toast={toast} />
+              </div>
+            ))
           ) : (
             <div className="empty">{note || "sin turnos"}</div>
           )
@@ -236,7 +248,7 @@ export function Panel({ session: s, onConnect, transcriptTick, onClose, toast }:
         )}
         </ErrorBoundary>
       </div>
-      <SendBox session={s} toast={toast} />
+      <SendBox session={s} others={others} toast={toast} />
     </div>
   );
 }

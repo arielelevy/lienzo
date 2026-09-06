@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api } from "../api";
 import { hhmm as fmtHhmm, nextAt, parseConnection } from "../nl";
 import type { DigestResponse, Session } from "../types";
+import { shortName } from "./Card";
 
 const DEFAULT_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
 const KEY = "lienzo.forward.template";
@@ -118,7 +119,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           attachments: [],
           from: from.session_id,
         });
-        toast(`Enviado a ${targetSession.repo} (${r.chars} caracteres)`);
+        toast(`Enviado a ${shortName(targetSession)} (${r.chars} caracteres)`);
       } else if (mode === "native") {
         // se le habla a A (esta sesion) para que abra el canal con B; la flecha doble es A <-> B
         await api.post(`/sessions/${from.session_id}/send`, {
@@ -127,13 +128,13 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           link_to: targetSession.session_id,
           native: true,
         });
-        toast(`${from.repo} va a abrir el canal con ${targetSession.repo}`);
+        toast(`${shortName(from)} va a abrir el canal con ${shortName(targetSession)}`);
       } else if (mode === "on_stop") {
         const rule = { kind: "on_stop", from: from.session_id, text: template, repeat, max_fires: repeat ? maxFires : 1 };
         await api.post("/rules", { ...rule, to: targetSession.session_id });
         const alsoMe = notifyMe && me && me.session_id !== targetSession.session_id ? me : null;
         if (alsoMe) await api.post("/rules", { ...rule, to: alsoMe.session_id });
-        toast(`Cuando ${from.repo} termine, su respuesta va a ${targetSession.repo}${alsoMe ? " y a la coordinadora" : ""}`);
+        toast(`Cuando ${shortName(from)} termine, su respuesta va a ${shortName(targetSession)}${alsoMe ? ` y a ${shortName(alsoMe)}` : ""}`);
       } else {
         const at = nextTimeIso(hhmm);
         if (!at) {
@@ -143,7 +144,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         // el origen queda registrado (si no es la misma sesion) para dibujar la flecha A -> B
         const src = targetSession.session_id === from.session_id ? null : from.session_id;
         await api.post("/rules", { kind: "at", from: src, to: targetSession.session_id, text: atText, at });
-        toast(`A las ${hhmm} se manda "${atText}" a ${targetSession.repo}`);
+        toast(`A las ${hhmm} se manda "${atText}" a ${shortName(targetSession)}`);
       }
       onDone();
     } catch (e) {
@@ -296,8 +297,8 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           )}
           {mode === "on_stop" && me && me.session_id !== targetSession?.session_id && (
             <div className="row">
-              <label className="small" title={`crea una segunda regla igual hacia ${me.repo} · ${me.title || me.session_id.slice(0, 8)}`}>
-                <input type="checkbox" checked={notifyMe} onChange={(e) => setNotifyMe(e.target.checked)} /> avisarme también acá ({me.title || me.repo})
+              <label className="small" title={`crea una segunda regla igual hacia ${shortName(me)}`}>
+                <input type="checkbox" checked={notifyMe} onChange={(e) => setNotifyMe(e.target.checked)} /> avisarme también acá ({shortName(me)})
               </label>
             </div>
           )}

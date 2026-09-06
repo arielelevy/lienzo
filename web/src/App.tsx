@@ -3,12 +3,40 @@ import { api, detail, type AuthInfo } from "./api";
 import { Board, type Agent } from "./components/Board";
 import { Enroll } from "./components/Enroll";
 import { Forward } from "./components/Forward";
+import { Header } from "./components/Header";
 import { Login } from "./components/Login";
 import { Panel } from "./components/Panel";
 import { Setup, TotpQr } from "./components/Setup";
 import { Toasts, useToasts } from "./components/Toasts";
 import { UrlQr } from "./components/UrlQr";
-import type { Link, Pending, Rule, ServerEvent, Session, State } from "./types";
+import type { Config, Link, Pending, Rule, ServerEvent, Session, State } from "./types";
+
+/** El tablero dibuja flechas entre sesiones: lo que mando el usuario desde el SendBox (from null,
+ *  kind "user") no tiene origen y queda solo en la pestana Conexiones del panel. */
+const boardLinks = (ls: Link[]): Link[] => ls.filter((l) => !!l.from);
+
+/** Flag on/off recordado por navegador (localStorage); `def` cuando no hay storage. */
+function useStoredFlag(key: string, def: boolean): [boolean, () => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? def : v === "1";
+    } catch {
+      return def;
+    }
+  });
+  const toggle = useCallback(() => {
+    setOn((v) => {
+      try {
+        localStorage.setItem(key, v ? "0" : "1");
+      } catch {
+        /* sin storage, no importa */
+      }
+      return !v;
+    });
+  }, [key]);
+  return [on, toggle];
+}
 
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
@@ -68,43 +96,50 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [filter, setFilter] = useState<State>("corriendo");
   const [transcriptTick, setTranscriptTick] = useState(0);
   // flechas visibles u ocultas, recordado por navegador
-  const [showArrows, setShowArrows] = useState(() => {
-    try {
-      return localStorage.getItem("lienzo.arrows") !== "0";
-    } catch {
-      return true;
-    }
-  });
-  const toggleArrows = useCallback(() => {
-    setShowArrows((v) => {
-      try {
-        localStorage.setItem("lienzo.arrows", v ? "0" : "1");
-      } catch {
-        /* sin storage, no importa */
-      }
-      return !v;
-    });
-  }, []);
+  const [showArrows, toggleArrows] = useStoredFlag("lienzo.arrows", true);
+  // "Detalles tecnicos": PID/hooks/id en las tarjetas, contadores en cero del digest, nombre del
+  // .jsonl en el panel. Sirven para depurar, no para usar: apagados por defecto
+  const [details, toggleDetails] = useStoredFlag("lienzo.details", false);
   const { toasts, toast } = useToasts();
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
+
+  // auto_continue vive en ~/.lienzo/config.json (lo lee el server): GET/PUT /config. null mientras
+  // carga o si el server que corre no tiene la ruta todavia
+  const [config, setConfig] = useState<Config | null>(null);
+  const loadConfig = useCallback(() => api.get<Config>("/config").then(setConfig).catch(() => setConfig(null)), []);
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
+  const toggleAutoContinue = useCallback(async () => {
+    if (!config) {
+      toast("El server que corre no tiene /config todavía: reiniciá el server", true);
+      return;
+    }
+    try {
+      const c = await api.put<Config>("/config", { auto_continue: !config.auto_continue });
+      setConfig(c);
+      toast(c.auto_continue ? "Ante un límite de uso con hora, se programa \"Continuar\" solo" : "Continuar automático apagado");
+    } catch (e) {
+      toast(`No se pudo cambiar: ${(e as Error).message}`, true);
+    }
+  }, [config, toast]);
 
   // filtro visual del header: texto + agentes. "/" enfoca la caja, Esc la limpia.
   const [query, setQuery] = useState("");
   const [agents, setAgents] = useState<Record<Agent, boolean>>({ claude: true, codex: true });
   const searchRef = useRef<HTMLInputElement>(null);
   const [showHelp, setShowHelp] = useState(false);
-  // menu "⋯" del header: click afuera lo cierra
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  // el panel va pegado a la derecha, debajo del header: su alto sale de aca (--hh)
   useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [menuOpen]);
+    const h = document.querySelector("header");
+    if (!h) return;
+    const set = () => document.documentElement.style.setProperty("--hh", `${Math.ceil(h.getBoundingClientRect().height)}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(h);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -218,7 +253,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         .then(([ss, ps, ls, rs]) => {
           setSessions(Object.fromEntries(ss.map((s) => [s.session_id, s])));
           setPending(Object.fromEntries(ps.map((p) => [p.request_id, p])));
-          setLinks(ls);
+          setLinks(boardLinks(ls));
           setRules(rs);
           if (selectedRef.current) setTranscriptTick((t) => t + 1);
         })
@@ -247,11 +282,11 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       if (m.type === "snapshot") {
         setSessions(Object.fromEntries(m.sessions.map((s) => [s.session_id, s])));
         setPending(Object.fromEntries(m.pending.map((p) => [p.request_id, p])));
-        if (m.links) setLinks(m.links);
+        if (m.links) setLinks(boardLinks(m.links));
         if (m.rules) setRules(m.rules);
         setTranscriptTick((t) => t + 1);
       } else if (m.type === "links") {
-        setLinks(m.links);
+        setLinks(boardLinks(m.links));
       } else if (m.type === "rules") {
         setRules(m.rules);
       } else if (m.type === "session") {
@@ -276,25 +311,26 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     };
   }, [refreshAuth]);
 
-  // Escape cierra lo que este abierto: ayuda, dialogo de conexion, o panel
+  // Escape cierra lo que este abierto: menu del header (lo cierra Header), ayuda, dialogo de
+  // conexion, o panel
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (menuOpen) setMenuOpen(false);
-      else if (showHelp) setShowHelp(false);
+      if (document.querySelector("header .dropdown")) return;
+      if (showHelp) setShowHelp(false);
       else if (connect) setConnect(null);
       else if (selectedRef.current) setSelected(null);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [connect, showHelp, menuOpen]);
+  }, [connect, showHelp]);
 
-  // click fuera del panel (y fuera de una tarjeta) lo cierra
+  // click fuera del panel (y fuera de una tarjeta o del header) lo cierra
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
       if (!selectedRef.current) return;
-      if (t.closest(".panel") || t.closest(".card") || t.closest(".toasts") || t.closest(".gate")) return;
+      if (t.closest(".panel") || t.closest(".card") || t.closest(".toasts") || t.closest(".gate") || t.closest("header")) return;
       setSelected(null);
     };
     document.addEventListener("mousedown", onDown);
@@ -350,111 +386,44 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const connectCards = useCallback((from: string, to: string) => setConnect({ from, to }), []);
 
   const sel = selected ? sessions[selected] : null;
+  // sesiones a las que se les puede escribir: destinos de Conectar y coordinadora del SendBox
+  const writable = Object.values(sessions).filter((s) => s.alive && s.pid);
+
+  const flags = [
+    { label: "Avisos", icon: "🔔", on: notify, toggle: toggleNotify, title: "notificación del navegador cuando una sesión pide permiso" },
+    { label: "Flechas", icon: "↪", on: showArrows, toggle: toggleArrows, title: "flechas entre tarjetas" },
+    { label: "Pensamiento", icon: "💭", on: showThinking, toggle: () => setShowThinking((v) => !v), title: "mostrar el pensamiento del agente en la conversación" },
+    { label: "Detalles técnicos", icon: "🛠", on: details, toggle: toggleDetails, title: "PID, hooks e id en las tarjetas; contadores en cero; nombre del .jsonl en el panel" },
+    {
+      label: "Continuar solo tras límite de uso",
+      icon: "⏰",
+      on: !!config?.auto_continue,
+      toggle: toggleAutoContinue,
+      title: config
+        ? "cuando una sesión avisa que llegó al límite de uso con hora de vuelta, programar \"Continuar\" un minuto después (auto_continue en ~/.lienzo/config.json)"
+        : "el server que corre no tiene /config: reiniciá el server",
+    },
+  ];
 
   return (
-    <div className={showThinking ? "showthink" : ""}>
-      <header>
-        <h1>Lienzo</h1>
-        <span className={`dot ${connected ? "on" : ""}`} title={!connected ? "reconectando" : polling ? "sondeo cada 4 s" : "en vivo"} aria-label={!connected ? "reconectando" : "conectado"} />
-        <div className="search" role="search">
-          <input
-            ref={searchRef}
-            type="search"
-            value={query}
-            placeholder="buscar  /"
-            aria-label="filtrar tarjetas por repo, título o último pedido"
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.stopPropagation();
-                setQuery("");
-                (e.target as HTMLInputElement).blur();
-              }
-            }}
-          />
-          {(["claude", "codex"] as Agent[]).map((a) => (
-            <button
-              key={a}
-              className={`chip ${a} ${agents[a] ? "on" : ""}`}
-              aria-pressed={agents[a]}
-              title={agents[a] ? `ocultar sesiones de ${a}` : `mostrar sesiones de ${a}`}
-              onClick={() => setAgents((prev) => ({ ...prev, [a]: !prev[a] }))}
-            >
-              {a}
-            </button>
-          ))}
-        </div>
-        <span className="sp" />
-        {/* acceso desde el celular: URL del tunel y QR de Authenticator, juntos */}
-        {authInfo.remote_url && authInfo.local && (
-          <button className="icon lbl" title={`abrir en el celular: ${authInfo.remote_url.replace("https://", "")}`} aria-label="QR con la URL para el celular" onClick={() => setShowQr(true)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" /><circle cx="12" cy="18.2" r="1" fill="currentColor" /></svg><span className="txt">Celular</span>
-          </button>
-        )}
-        {!authInfo.configured && authInfo.local && (
-          <button className="icon lbl" onClick={onSetup} title="configurar el acceso desde el celular con Authenticator" aria-label="configurar acceso remoto">
-            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.6 8 11 4.6-1.4 8-5.8 8-11V5l-8-3z" fill="#2f7be8" /><rect x="8.5" y="11" width="7" height="5.5" rx="1" fill="#fff" /><path d="M10 11V9.6a2 2 0 0 1 4 0V11" stroke="#fff" strokeWidth="1.6" fill="none" /></svg><span className="txt">Acceso remoto</span>
-          </button>
-        )}
-        {authInfo.configured && authInfo.local && (
-          <button className="icon lbl auth" onClick={() => setShowTotp(true)} title="QR de Microsoft Authenticator" aria-label="QR de Authenticator">
-            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.6 8 11 4.6-1.4 8-5.8 8-11V5l-8-3z" fill="#2f7be8" /><rect x="8.5" y="11" width="7" height="5.5" rx="1" fill="#fff" /><path d="M10 11V9.6a2 2 0 0 1 4 0V11" stroke="#fff" strokeWidth="1.6" fill="none" /></svg><span className="txt">Authenticator</span>
-          </button>
-        )}
-        <div className="menu" ref={menuRef}>
-          <button className="icon" title="más" aria-label="más opciones" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
-            ⋯
-          </button>
-          {menuOpen && (
-            <div className="dropdown" role="menu">
-              <button role="menuitemcheckbox" aria-checked={notify} onClick={toggleNotify} title="notificación del navegador cuando una sesión pide permiso">
-                🔔 Avisos <span className={`state ${notify ? "on" : ""}`}>{notify ? "on" : "off"}</span>
-              </button>
-              <button role="menuitemcheckbox" aria-checked={showArrows} onClick={toggleArrows} title="flechas entre tarjetas">
-                ↪ Flechas <span className={`state ${showArrows ? "on" : ""}`}>{showArrows ? "on" : "off"}</span>
-              </button>
-              <button role="menuitemcheckbox" aria-checked={showThinking} onClick={() => setShowThinking((v) => !v)} title="mostrar el pensamiento del agente en la conversación">
-                💭 Pensamiento <span className={`state ${showThinking ? "on" : ""}`}>{showThinking ? "on" : "off"}</span>
-              </button>
-              <hr />
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false);
-                  rescan();
-                }}
-                title="barrer procesos de VS Code"
-              >
-                ↻ Rescan
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setShowHelp(true);
-                }}
-              >
-                ? Atajos de teclado
-              </button>
-              {authInfo.configured && !authInfo.local && (
-                <>
-                  <hr />
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true));
-                    }}
-                    title="cerrar sesión en este dispositivo"
-                  >
-                    ⏏ Salir
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      </header>
+    <div className={`${showThinking ? "showthink" : ""} ${details ? "details" : ""} ${sel ? "panel-open" : ""}`}>
+      <Header
+        authInfo={authInfo}
+        connected={connected}
+        polling={polling}
+        query={query}
+        onQuery={setQuery}
+        agents={agents}
+        onAgents={setAgents}
+        searchRef={searchRef}
+        onSetup={onSetup}
+        onShowQr={() => setShowQr(true)}
+        onShowTotp={() => setShowTotp(true)}
+        onHelp={() => setShowHelp(true)}
+        onRescan={rescan}
+        onLogout={() => api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true))}
+        flags={flags}
+      />
       {showHelp && (
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setShowHelp(false)}>
           <div className="gate-box help" role="dialog" aria-label="atajos">
@@ -519,7 +488,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
             </h1>
             <Forward
               from={sessions[connect.from]}
-              others={Object.values(sessions).filter((s) => s.session_id !== connect.from && s.alive && s.pid)}
+              others={writable.filter((s) => s.session_id !== connect.from)}
               initialTarget={connect.to || undefined}
               toast={toast}
               onDone={() => setConnect(null)}
@@ -527,15 +496,17 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           </div>
         </div>
       )}
-      {sel && <div className="panel-backdrop" aria-hidden="true" />}
+      {/* pegado a la derecha, sin fondo que tape: el tablero sigue recibiendo clicks a su izquierda */}
       {sel && (
         <Panel
           key={sel.session_id}
           session={sel}
+          others={writable.filter((s) => s.session_id !== sel.session_id)}
           onConnect={() => setConnect({ from: sel.session_id, to: "" })}
           transcriptTick={transcriptTick}
           onClose={() => setSelected(null)}
           toast={toast}
+          details={details}
         />
       )}
       <Toasts toasts={toasts} />

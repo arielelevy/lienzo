@@ -1,14 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Arrows } from "./Arrows";
-import { Card } from "./Card";
+import { Card, shortName } from "./Card";
 import type { Link, Pending, Rule, Session, State } from "../types";
 
-export const STATES: [State, string][] = [
-  ["corriendo", "Corriendo"],
+/** Columnas del tablero. "Trabajo" junta corriendo y termino (el estado se ve como icono en la
+ *  tarjeta); "Te necesita" y "Muerta" siguen aparte porque piden accion. El tipo State es del
+ *  server y no cambia: el mapeo estado -> columna vive aca. */
+export type ColKey = "trabajo" | "te_necesita" | "muerta";
+export const COLS: [ColKey, string][] = [
+  ["trabajo", "Trabajo"],
   ["te_necesita", "Te necesita"],
-  ["termino", "Terminó"],
   ["muerta", "Muerta"],
 ];
+export const colOfState = (st: State): ColKey => (st === "corriendo" || st === "termino" ? "trabajo" : st);
+/** Columna de una sesion. Una huerfana (proceso vivo pero sin terminal donde escribirle) o una con
+ *  el proceso muerto va a "Muerta" aunque su estado diga otra cosa: no se le puede pedir nada. */
+export const colOf = (s: Session): ColKey => (s.orphan || s.alive === false ? "muerta" : colOfState(s.state));
+/** estado del filtro (State, lo maneja App) que representa a cada columna */
+const FILTER_STATE: Record<ColKey, State> = { trabajo: "corriendo", te_necesita: "te_necesita", muerta: "muerta" };
 
 interface Props {
   sessions: Record<string, Session>;
@@ -36,7 +45,7 @@ interface Props {
 export type Agent = Session["agent"];
 
 const COLLAPSE_KEY = "lienzo.collapsed";
-type Collapsed = Partial<Record<State, boolean>>;
+type Collapsed = Partial<Record<ColKey, boolean>>;
 function loadCollapsed(): Collapsed {
   try {
     const raw = localStorage.getItem(COLLAPSE_KEY);
@@ -44,6 +53,44 @@ function loadCollapsed(): Collapsed {
   } catch {
     return {};
   }
+}
+
+/** Subcolumnas de tarjetas disponibles en total: 4 en pantalla ancha, 2 por debajo de ~1100 px
+ *  (en movil el CSS fuerza 1). */
+function useLaneBudget(): number {
+  const mq = () => (typeof window !== "undefined" && window.matchMedia("(min-width: 1100px)").matches ? 4 : 2);
+  const [budget, setBudget] = useState<number>(mq);
+  useEffect(() => {
+    const m = window.matchMedia("(min-width: 1100px)");
+    const on = () => setBudget(m.matches ? 4 : 2);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return budget;
+}
+
+/** Reparte `budget` subcolumnas entre las columnas abiertas segun cuantas tarjetas tienen: una
+ *  abierta se lleva todas; dos, mitad y mitad (3 y 1 si una tiene muchas mas); tres, 2 para la
+ *  que mas tiene y 1 para las otras. Ninguna recibe mas subcolumnas que tarjetas. */
+export function splitLanes(open: { key: ColKey; n: number }[], budget: number): Record<ColKey, number> {
+  const out = { trabajo: 1, te_necesita: 1, muerta: 1 } as Record<ColKey, number>;
+  if (!open.length) return out;
+  const sorted = [...open].sort((a, b) => b.n - a.n);
+  if (open.length === 1) out[open[0].key] = budget;
+  else if (open.length === 2) {
+    const [a, b] = sorted;
+    if (budget >= 4 && a.n >= 3 * Math.max(b.n, 1)) {
+      out[a.key] = 3;
+      out[b.key] = 1;
+    } else {
+      out[a.key] = budget / 2;
+      out[b.key] = budget / 2;
+    }
+  } else {
+    out[sorted[0].key] = budget >= 4 ? 2 : 1;
+  }
+  for (const o of open) out[o.key] = Math.max(1, Math.min(out[o.key], o.n));
+  return out;
 }
 
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -80,10 +127,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     };
     const up = () => {
       pressRef.current = null;
-      // el click (si lo hay) llega despues del mouseup; recien entonces se limpia la marca
+      // el click (si lo hay) llega despues del mouseup, y la tarjeta lo demora 280 ms para
+      // distinguirlo del doble click: la marca tiene que sobrevivir a esa demora
       setTimeout(() => {
         draggedRef.current = false;
-      }, 0);
+      }, 400);
     };
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
@@ -94,25 +142,35 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // una pasada por render: las sesiones que pasan el filtro del header, agrupadas por estado y
-  // ordenadas por repo + inicio. El filtro es solo visual: el server no se entera.
+  // una pasada por render: las sesiones que pasan el filtro del header, agrupadas por columna.
+  // En "Trabajo" van primero las que corren (por repo + inicio) y despues las terminadas, la mas
+  // reciente arriba. El filtro es solo visual: el server no se entera.
   const byState = useMemo(() => {
     const q = norm(query.trim());
-    const g: Record<State, Session[]> = { corriendo: [], te_necesita: [], termino: [], muerta: [] };
+    const g: Record<ColKey, Session[]> = { trabajo: [], te_necesita: [], muerta: [] };
     for (const s of Object.values(sessions)) {
       if (!agents[s.agent]) continue;
       if (q && !norm(`${s.repo} ${s.title ?? ""} ${s.last_prompt ?? ""}`).includes(q)) continue;
-      (g[s.state] ??= []).push(s);
+      g[colOf(s)].push(s);
     }
-    for (const k of STATES.map(([k]) => k)) g[k].sort((a, b) => (a.repo + a.started).localeCompare(b.repo + b.started));
+    const done = (s: Session) => (s.state === "termino" ? 1 : 0);
+    for (const k of COLS.map(([k]) => k)) {
+      g[k].sort((a, b) => {
+        if (done(a) !== done(b)) return done(a) - done(b);
+        if (done(a)) return b.state_since.localeCompare(a.state_since);
+        return (a.repo + a.started).localeCompare(b.repo + b.started);
+      });
+    }
     return g;
   }, [sessions, query, agents]);
 
-  // columnas colapsadas a la tira vertical. Sin eleccion guardada: "Terminó" arranca colapsada
-  // (pedido del autor) y las vacias tambien; el click en la tira expande, el click en el titulo
-  // colapsa, y la eleccion queda en localStorage.
+  // columnas colapsadas a la tira vertical. Sin eleccion guardada solo las vacias arrancan
+  // colapsadas; el click en la tira expande, el click en el titulo colapsa, y la eleccion queda en
+  // localStorage. Mientras el filtro del header (texto o agentes) matchea tarjetas de una columna
+  // colapsada, esa columna se muestra abierta sin tocar la eleccion guardada.
   const [collapsed, setCollapsed] = useState<Collapsed>(loadCollapsed);
-  const setCol = (k: State, v: boolean) => {
+  const filtering = query.trim() !== "" || Object.values(agents).some((v) => !v);
+  const setCol = (k: ColKey, v: boolean) => {
     setCollapsed((prev) => {
       const next = { ...prev, [k]: v };
       try {
@@ -123,26 +181,48 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       return next;
     });
   };
-  const isCollapsed = (k: State, n: number) => collapsed[k] ?? (k === "termino" || n === 0);
-
-  // aprovechar el ancho: con una sola columna abierta sus tarjetas van en dos subcolumnas; con dos
-  // abiertas, la que tiene mas tarjetas (dos en ejecucion y una en "te necesita", por ejemplo)
-  const wideCols = useMemo(() => {
-    const open = STATES.map(([k]) => k).filter((k) => !isCollapsed(k, byState[k].length));
-    const out = new Set<State>();
-    if (open.length === 1) out.add(open[0]);
-    else if (open.length === 2) {
-      const [a, b] = open;
-      const na = byState[a].length, nb = byState[b].length;
-      if (na >= 2 || nb >= 2) out.add(na >= nb ? a : b);
+  // colapso automatico: una columna que queda vacia se cierra sola a los 3 s (si le llega una
+  // tarjeta antes, el timer se cancela); si estaba cerrada por esto y le llega una, se abre sola.
+  // Lo que el usuario eligio a mano (collapsed, en localStorage) manda por encima.
+  const [autoCollapsed, setAutoCollapsed] = useState<Collapsed>(() => Object.fromEntries(COLS.map(([k]) => [k, byState[k].length === 0])));
+  const autoTimers = useRef<Partial<Record<ColKey, number>>>({});
+  useEffect(() => {
+    for (const [k] of COLS) {
+      const n = byState[k].length;
+      if (n > 0) {
+        window.clearTimeout(autoTimers.current[k]);
+        autoTimers.current[k] = undefined;
+        if (autoCollapsed[k]) setAutoCollapsed((a) => ({ ...a, [k]: false }));
+      } else if (!autoCollapsed[k] && autoTimers.current[k] === undefined) {
+        autoTimers.current[k] = window.setTimeout(() => {
+          autoTimers.current[k] = undefined;
+          setAutoCollapsed((a) => ({ ...a, [k]: true }));
+        }, 3000);
+      }
     }
-    return out;
+  }, [byState, autoCollapsed]);
+  useEffect(() => () => Object.values(autoTimers.current).forEach((t) => window.clearTimeout(t)), []);
+
+  const isCollapsed = (k: ColKey, n: number) => {
+    if (filtering && n > 0) return false;
+    return collapsed[k] ?? !!autoCollapsed[k];
+  };
+
+  // aprovechar el ancho: hasta 4 subcolumnas de tarjetas en total (2 en pantallas angostas),
+  // repartidas entre las columnas abiertas. Cada columna crece en proporcion a sus subcolumnas,
+  // asi todas las tarjetas del tablero quedan del mismo ancho
+  const laneBudget = useLaneBudget();
+  const lanes = useMemo(() => {
+    const open = COLS.map(([k]) => k)
+      .filter((k) => !isCollapsed(k, byState[k].length))
+      .map((k) => ({ key: k, n: byState[k].length }));
+    return splitLanes(open, laneBudget);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collapsed, byState]);
+  }, [collapsed, autoCollapsed, byState, filtering, laneBudget]);
 
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
-  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, collapsed, query, agents]);
+  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, collapsed, autoCollapsed, query, agents, laneBudget]);
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
   // tarjeta se abre el reenvio con ese destino
@@ -195,8 +275,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   return (
     <>
       <div className="filters">
-        {STATES.map(([k, label]) => (
-          <button key={k} className={filter === k ? "on" : ""} onClick={() => onFilter(k)}>
+        {COLS.map(([k, label]) => (
+          <button key={k} className={colOfState(filter) === k ? "on" : ""} onClick={() => onFilter(FILTER_STATE[k])}>
             {label} {byState[k].length}
           </button>
         ))}
@@ -217,16 +297,23 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
               <line x1={drag.x1} y1={drag.y1} x2={drag.x2} y2={drag.y2} />
             </svg>
             <div className="draghint">
-              {drag.over ? `Soltá para conectar con ${sessions[drag.over]?.repo ?? ""}` : "Soltá sobre otra tarjeta para conectar · Esc cancela"}
+              {drag.over ? `Soltá para conectar con ${shortName(sessions[drag.over])}` : "Soltá sobre otra tarjeta para conectar · Esc cancela"}
             </div>
           </>
         )}
-        {STATES.map(([k, label]) => {
+        {COLS.map(([k, label]) => {
           const list = byState[k];
           const col = isCollapsed(k, list.length);
-          const wide = wideCols.has(k);
+          const wide = lanes[k] > 1;
+          // la columna lleva ademas las clases de los estados que contiene: Arrows ubica la tira de
+          // una columna colapsada por `.col.<estado>.collapsed`, con el estado de la sesion
+          const stateClasses = k === "trabajo" ? "corriendo termino" : k;
           return (
-            <div key={k} className={`col ${k} ${col ? "collapsed" : ""} ${wide ? "wide" : ""} ${filter === k ? "show" : ""}`} style={wide ? { flexGrow: 2 } : undefined}>
+            <div
+              key={k}
+              className={`col ${k} ${stateClasses} ${col ? "collapsed" : ""} ${wide ? "wide" : ""} ${colOfState(filter) === k ? "show" : ""}`}
+              style={col ? undefined : ({ flexGrow: lanes[k], "--lanes": lanes[k] } as React.CSSProperties)}
+            >
               {col ? (
                 <>
                   <div
@@ -250,9 +337,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   </h2>
                   {list.length === 0 && <div className="empty">nada acá</div>}
                   <div className="cards">
-                  {/* columna ancha: dos subcolumnas por CSS (column-count en .col.wide .cards), no por
-                      padres distintos: si una tarjeta cambiara de subcolumna React la remontaria y
-                      perderia su estado (pedido expandido, input de renombrar, toast) */}
+                  {/* columna ancha: subcolumnas por CSS (column-count: var(--lanes) en .col.wide .cards),
+                      no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
+                      y perderia su estado (pedido expandido, input de renombrar, toast) */}
                   {list.map((s) => (
                     <div key={s.session_id} className={drag?.over === s.session_id ? "droptarget" : ""}>
                       <Card
