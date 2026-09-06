@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 // @ts-ignore TS5097: extension .ts en el import, necesaria para que Node lo resuelva
-import { buildItems, channelX, clearance, colOf, computeSegs, cubic, freeAt, groupColumns, layoutEnds, periodLabel, sideArc, type Formatters, type Rect } from "./arrows-geometry.ts";
+import { buildItems, channelX, clearance, colOf, computeSegs, cubic, cubicAt, cubicHits, ejectGlyph, freeAt, groupColumns, inside, layoutEnds, periodLabel, segHits, sideArc, topRoute, type Formatters, type Pt, type Rect } from "./arrows-geometry.ts";
 import type { Link, Rule } from "./types";
 
 let failed = 0;
@@ -256,6 +256,82 @@ test("computeSegs: misma columna, arco por el costado; y sin extremos visibles, 
   assert.ok(segs[0].x > 300 && segs[0].x <= 320, `glifo en la panza, x=${segs[0].x}`);
   const none = computeSegs({ rects: new Map(), anchors: new Map(), strips: [], boardWidth: 0, links: [], rules: [rule({ id: "r", from: "a1", to: "a2" })], fmt });
   assert.deepEqual(none, []);
+});
+
+/** los cuatro puntos de un path "M x y C x y, x y, x y" */
+function cubicPts(d: string): [Pt, Pt, Pt, Pt] {
+  const n = d.match(/-?\d+(\.\d+)?/g)!.map(Number);
+  assert.equal(n.length, 8, `path cubico: ${d}`);
+  return [[n[0], n[1]], [n[2], n[3]], [n[4], n[5]], [n[6], n[7]]];
+}
+
+test("inside, segHits y ejectGlyph: el glifo nunca queda adentro de una tarjeta", () => {
+  assert.ok(inside([A1], 10, 10));
+  assert.ok(!inside([A1], 300, 60)); // el borde no cuenta
+  assert.ok(segHits(B1, [300, 60], [656, 60])); // horizontal que atraviesa B1
+  assert.ok(!segHits(B1, [300, -14], [656, -14])); // por arriba, libre
+  assert.ok(!segHits(B1, [150, 0], [150, -14])); // vertical en otra columna
+  assert.deepEqual(ejectGlyph([A1], 150, 10), [150, -6]); // arriba es el borde mas cercano
+  assert.deepEqual(ejectGlyph([A1], 290, 60), [306, 60]); // a la derecha
+  assert.deepEqual(ejectGlyph([A1], 150, 60), [150, -6]); // centro exacto: empata arriba y abajo, gana arriba (orden estable)
+  assert.deepEqual(ejectGlyph([A1], 150, 61), [150, 126]); // apenas mas cerca del piso: abajo
+  assert.deepEqual(ejectGlyph([A1], 400, 60), [400, 60]); // afuera, no se toca
+  // filas pegadas: arriba de A2 esta A1 a 20 px; el punto sale igual arriba (el hueco es libre)
+  assert.deepEqual(ejectGlyph([A1, A2], 150, 145), [150, 134]);
+});
+
+test("mismo par en la misma columna: la cubica no pasa por una tercera tarjeta y el glifo cae en el hueco", () => {
+  const A3 = R(0, 280, 300, 400);
+  const rects = new Map([["a1", A1], ["a2", A2], ["a3", A3], ["b", B1]]);
+  const [s] = computeSegs({ rects, anchors: rects, strips: [STRIP], boardWidth: W, links: [], rules: [rule({ id: "r", from: "a1", to: "a3" })], fmt });
+  const pts = cubicPts(s.d);
+  for (let i = 1; i < 20; i++) {
+    const [x, y] = cubicAt(...pts, i / 20);
+    assert.ok(!inside([A2, B1], x, y), `punto ${i}/20 (${x.toFixed(1)}, ${y.toFixed(1)}) adentro de una tercera tarjeta`);
+  }
+  assert.ok(!inside([A1, A2, A3, B1], s.x, s.y), `glifo adentro de una tarjeta: (${s.x}, ${s.y})`);
+  assert.ok(!s.dim);
+});
+
+test("columnas no vecinas: la S cruzaria la del medio, asi que va por arriba con esquinas redondeadas", () => {
+  const C1 = R(656, 0, 956, 120);
+  const rects = new Map([["a", A1], ["b", B1], ["c", C1]]);
+  // la S por defecto atraviesa B1
+  assert.ok(cubicHits([B1], [300, 60], [314, 60], [642, 60], [656, 60]));
+  const [s] = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1000, links: [], rules: [rule({ id: "r", from: "a", to: "c" })], fmt });
+  assert.ok(s.d.startsWith("M 150 0 L 150 -6 Q 150 -14, 158 -14 L 798 -14 Q 806 -14, 806 -6 L 806 0"), s.d);
+  assert.equal(s.y, -14); // corrida por el margen superior del tablero
+  assert.ok(!inside([A1, B1, C1], s.x, s.y));
+  assert.ok(!s.dim);
+  // dos flechas que salen por arriba de la misma tarjeta se reparten en x y no ponen el glifo en el mismo lugar
+  const two = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1000, links: [], rules: [rule({ id: "r1", from: "a", to: "c" }), rule({ id: "r2", from: "c", to: "a" })], fmt });
+  assert.equal(two.length, 2);
+  assert.notEqual(two[0].d, two[1].d);
+  assert.ok(Math.hypot(two[0].x - two[1].x, two[0].y - two[1].y) > 20, "glifos separados");
+});
+
+test("topRoute prefiere el hueco entre filas al margen si es mas corto, y marca dim cuando no hay camino limpio", () => {
+  // origen en la fila 2 de la columna A, destino en la fila 2 de la columna C, con B2 en el medio:
+  // el hueco entre filas (y = 140 - 4 = 136) esta libre y es mas corto que el margen superior
+  const B2b = R(328, 140, 628, 260);
+  const C2 = R(656, 140, 956, 260);
+  const cards = [A1, A2, B1, B2b, R(656, 0, 956, 120), C2];
+  const o = topRoute(A2, C2, 150, 806, cards);
+  assert.ok(o.clean);
+  assert.equal(o.y, 136);
+  assert.deepEqual([o.exit, o.enter], ["t", "t"]);
+  // encerrada: tarjetas pegadas arriba y abajo del origen y una torre en el medio. Ningun hueco
+  // sirve: se dibuja igual y avisa
+  const tower = R(328, -2000, 628, 2000);
+  const above = R(0, -2000, 300, -8);
+  const below = R(0, 128, 300, 2000);
+  const C1 = R(656, 0, 956, 120);
+  const d = topRoute(A1, C1, 150, 806, [A1, C1, tower, above, below]);
+  assert.ok(!d.clean);
+  assert.ok(d.d.startsWith("M 150"), d.d);
+  const rects = new Map([["a", A1], ["c", C1], ["t", tower], ["u", above], ["d", below]]);
+  const [s] = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1000, links: [], rules: [rule({ id: "r", from: "a", to: "c" })], fmt });
+  assert.equal(s.dim, true);
 });
 
 test("computeSegs es puro: no muta la entrada y repite la salida", () => {

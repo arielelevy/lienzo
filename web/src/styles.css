@@ -311,3 +311,10 @@ header .search .chip:not(.on) { text-decoration: line-through; }
   .send { padding: 8px 10px; }
   .filters { display: flex; flex-wrap: wrap; }
 }
+
+/* arrastre con el dedo: el agarre no cede el puntero al scroll, y en pantallas tactiles es mas grande */
+.card .grip { touch-action: none; -webkit-touch-callout: none; }
+@media (pointer: coarse) {
+  .board .card .top .grip { font-size: 20px; padding: 2px 8px; }
+}
+.fwd .row.conflict { background: color-mix(in srgb, var(--acc) 18%, transparent); border: 1px solid var(--acc); border-radius: 6px; padding: 6px 10px; }

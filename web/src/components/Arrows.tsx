@@ -423,7 +423,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         return (
           <g
             key={s.ids[0]}
-            className={`arrow ${s.old ? "old" : ""} ${mine ? "mine" : ""} ${s.fresh ? "fresh" : ""}`}
+            className={`arrow ${s.old ? "old" : ""} ${mine ? "mine" : ""} ${s.fresh ? "fresh" : ""} ${s.dim ? "dim" : ""}`}
             style={s.fresh ? { opacity: freshOpacity(s.fresh) } : undefined}
           >
             {s.kind === "native" && <path d={s.d} className="line native-outer" />}

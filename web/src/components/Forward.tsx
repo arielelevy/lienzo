@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api } from "../api";
-import { fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection } from "../nl";
+import { coordinatorOf, fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection } from "../nl";
+import type { Rule } from "../types";
 import type { DigestResponse, Session } from "../types";
 import { shortName } from "./Card";
 
@@ -91,9 +92,12 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   };
   // "yo": la primera sesion de Claude del tablero con el mismo repo que el origen (la que coordina).
   // Si no existe, o es el mismo destino, el checkbox no aparece.
-  const me = useMemo(() => others.find((o) => o.agent === "claude" && o.repo === from.repo && o.session_id !== from.session_id), [others, from.repo, from.session_id]);
+  const me = useMemo(() => coordinatorOf(from.repo, others, from.session_id), [others, from.repo, from.session_id]);
   const [notifyMe, setNotifyMe] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 409 del server: ya hay una programada a ±2 min hacia el mismo destino. Se muestra en el dialogo
+  // y "Reemplazar" repite el POST con replace: true (dos mensajes al mismo minuto nunca es lo que uno quiere)
+  const [conflict, setConflict] = useState<{ id: string; at: string; text: string } | null>(null);
   const targetSession = useMemo(() => targets.find((o) => o.session_id === target), [targets, target]);
 
   useEffect(() => {
@@ -126,9 +130,10 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     }
   };
 
-  const submit = async () => {
+  const submit = async (replace = false) => {
     if (!targetSession) return;
     setBusy(true);
+    setConflict(null);
     try {
       if (mode === "now") {
         if (targetSession.pending_id) {
@@ -164,13 +169,27 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         }
         // el origen queda registrado (si no es la misma sesion) para dibujar la flecha A -> B
         const src = targetSession.session_id === from.session_id ? null : from.session_id;
-        if (every) {
-          const fires = Math.min(50, Math.max(1, maxFires));
-          await api.post("/rules", { kind: "at", from: src, to: targetSession.session_id, text: atText, at, every_s: everySec, max_fires: fires, skip_busy: skipBusy });
-          toast(`Cada ${fmtEvery(everySec)} desde las ${hhmm} se manda "${atText}" a ${shortName(targetSession)} (hasta ${fires} ${fires === 1 ? "vez" : "veces"})`);
-        } else {
-          await api.post("/rules", { kind: "at", from: src, to: targetSession.session_id, text: atText, at });
-          toast(`A las ${hhmm} se manda "${atText}" a ${shortName(targetSession)}`);
+        const base = { kind: "at", from: src, to: targetSession.session_id, text: atText, at, ...(replace ? { replace: true } : {}) };
+        try {
+          if (every) {
+            const fires = Math.min(50, Math.max(1, maxFires));
+            await api.post("/rules", { ...base, every_s: everySec, max_fires: fires, skip_busy: skipBusy });
+            toast(`Cada ${fmtEvery(everySec)} desde las ${hhmm} se manda "${atText}" a ${shortName(targetSession)} (hasta ${fires} ${fires === 1 ? "vez" : "veces"})`);
+          } else {
+            await api.post("/rules", base);
+            toast(`A las ${hhmm} se manda "${atText}" a ${shortName(targetSession)}`);
+          }
+        } catch (e) {
+          // api.post solo conserva el texto del error, no el body (rule_id, at, text): la programada
+          // que choca se busca en /rules, a ±2 min hacia el mismo destino
+          if (!/ya hay una programada/i.test((e as Error).message)) throw e;
+          const want = new Date(at).getTime();
+          const hit = (await api.get<Rule[]>("/rules")).find(
+            (r) => r.enabled && r.kind === "at" && r.to === targetSession.session_id && r.at && Math.abs(new Date(r.at).getTime() - want) <= 2 * 60e3,
+          );
+          if (!hit) throw e;
+          setConflict({ id: hit.id, at: fmtHhmm(new Date(hit.at as string)), text: hit.text });
+          return;
         }
       }
       onDone();
@@ -186,10 +205,11 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   // "escribilo": la frase se interpreta mientras se escribe y mueve los controles de abajo;
   // Enter crea la conexion directamente
   const [phrase, setPhrase] = useState("");
-  const parsed = useMemo(() => parseConnection(phrase, from, others), [phrase, from, others]);
-  // "avisame" es la coordinadora (el mismo `me` del checkbox); si no hay, la frase no alcanza
-  const parsedTo = parsed.kind === "none" ? null : parsed.to ?? (parsed.toMe ? me ?? null : null);
-  const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || !!parsedTo);
+  // el resumen nombra al destino que ya tiene el dialogo cuando la frase no dice ninguno
+  const currentLabel = targetSession ? (targetSession.session_id === from.session_id ? "esta sesión" : shortName(targetSession)) : undefined;
+  const parsed = useMemo(() => parseConnection(phrase, from, others, { current: currentLabel, name: shortName }), [phrase, from, others, currentLabel]);
+  // "avisame" ya viene resuelto a la coordinadora (coordinatorOf); si no hay ninguna, la frase no alcanza
+  const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || !!parsed.to);
   useEffect(() => {
     // solo cuando cambia la frase: `others`/`from` llegan nuevos con cada evento SSE y no deben
     // pisar lo que el usuario ajusto a mano. Si no se entiende nada, los controles quedan como
@@ -198,7 +218,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     const p = parseConnection(phrase, from, others);
     if (p.kind === "none") return;
     setMode(p.kind);
-    const to = p.to ?? (p.toMe ? me : undefined);
+    const to = p.to;
     if (p.kind === "at") {
       setHhmm(fmtHhmm(p.at));
       setAtText(p.text);
@@ -367,6 +387,19 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
             </div>
           )}
 
+          {conflict && (
+            <div className="row conflict">
+              <span className="small">
+                Ya hay una programada a las {conflict.at} ("{conflict.text}").
+              </span>
+              <button className="primary" disabled={busy} onClick={() => submit(true)} title="quita la existente y deja esta">
+                Reemplazar
+              </button>
+              <button disabled={busy} onClick={() => setConflict(null)} title="deja la que ya está y no crea esta">
+                Cancelar
+              </button>
+            </div>
+          )}
           <div className="row">
             <span className="small dim">
               {mode === "now"
@@ -380,7 +413,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
             <button
               className="primary"
               disabled={busy || !targetSession || (mode === "now" && !text.trim()) || (mode === "at" && !atText.trim()) || (mode === "native" && !nativeText.trim())}
-              onClick={submit}
+              onClick={() => submit()}
             >
               {mode === "now" ? "Enviar ahora" : mode === "on_stop" ? "Conectar" : mode === "native" ? "Abrir canal" : "Programar"}
             </button>

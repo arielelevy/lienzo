@@ -73,10 +73,15 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
 ### Tablero
 
 Tres columnas: *Trabajo* (corriendo y terminó, el estado se ve como un punto verde o una
-tilde en la tarjeta), *Te necesita* y *Muerta*. Una columna vacía se colapsa sola a una tira
-vertical; click en la tira la expande, click en el título la colapsa, y la elección queda en
-el navegador. Cuando hay pocas columnas abiertas, las tarjetas se reparten en hasta cuatro
-subcolumnas según el ancho de la pantalla.
+tilde en la tarjeta), *Te necesita* y *Muerta*. Cada columna está abierta si tiene tarjetas
+y colapsada a una tira vertical si no; una columna vacía que quede abierta se cierra sola a
+los 10 segundos. Click en la tira la expande, click en el título la colapsa; si la colapsás con
+tarjetas adentro se respeta hasta que llegue una tarjeta nueva. Cuando hay pocas columnas
+abiertas, las tarjetas se reparten en hasta cuatro subcolumnas según el ancho de la pantalla.
+
+Una sesión pasa a *Te necesita* cuando pide permiso, cuando su respuesta termina con una
+pregunta para vos, o cuando está libre sin ningún pedido. Un informe entregado sin pregunta la
+deja en *Trabajo* con la tilde.
 
 El buscador del encabezado (`/` lo enfoca) filtra por repo, título y último pedido, y los
 chips filtran por agente. Si el filtro matchea tarjetas de una columna colapsada, esa
@@ -91,9 +96,16 @@ mandó, lo que le escribiste desde el lienzo, y las conexiones activas con su es
 
 ### Tarjeta
 
-- Título: el que Claude le pone a la sesión, o la primera línea del pedido. Doble click
-  sobre el título lo renombra en el lugar; el nombre queda fijo aunque la sesión cambie de
-  tema. Cuando el título es el propio pedido, la línea del pedido no se repite.
+- Título: el que Claude le pone a la sesión, o la primera línea del pedido; si el pedido
+  llegó como adjunto `.md`, el primer encabezado del archivo. Doble click sobre el título lo
+  renombra en el lugar; el nombre queda fijo aunque la sesión cambie de tema. Cuando el título
+  es el propio pedido, la línea del pedido no se repite.
+- La última respuesta y el pedido se muestran como texto plano (sin asteriscos ni almohadillas
+  del markdown); el botón copiar copia el markdown original.
+- Estrella ★ a la derecha de la fila de arriba (aparece al pasar el mouse): marca la sesión
+  como coordinadora del repo, una por repo. Es a quien van los avisos "cuando termine" del
+  SendBox y el "avisame" de las frases. Sin estrella, la coordinadora es la primera sesión de
+  Claude del mismo repo.
 - Último pedido plegado a una línea ("…más" lo abre), última respuesta, y un botón para
   copiarla.
 - Sesión ociosa con consola: botones rápidos "Continuá", "sí", "no", que se escriben en su
@@ -106,9 +118,9 @@ mandó, lo que le escribiste desde el lienzo, y las conexiones activas con su es
   deja programado escribir "Continuar" un minuto después de esa hora. Si ya hay una regla a
   esa hora, se muestra el chip en vez del botón.
 - Chips de conexiones: "al terminar → repo · título", "recibe de …", "⏰ 01:01 → Continuar",
-  "↻ cada 30 min · próx. 09:30 → Continuá (1/5)". Las iguales se agrupan (×N); con más de
-  tres, el resto se ve en la pestaña Conexiones. Dos programadas al mismo minuto hacia la misma
-  tarjeta llevan un ⚠.
+  "↻ cada 30 min · próx. 09:30 → Continuá (1/5)". Si la hora no es de hoy, el chip dice el
+  día ("⏰ vie 11/9 22:19"). Las iguales se agrupan (×N); con más de tres, el resto se ve en la
+  pestaña Conexiones. Dos programadas al mismo minuto hacia la misma tarjeta llevan un ⚠.
 - Chip "✓ informe de X hace N min" cuando otra sesión le mandó algo en la última media hora.
 - La sugerencia 💡 que la terminal esté mostrando en ese momento.
 - Con *Detalles técnicos* apagado (menú ⋯, el estado por defecto), no se ven el PID, los
@@ -124,7 +136,8 @@ escribe, igual que en Claude Code.
 
 La casilla "avisarme cuando termine" convierte el envío en una delegación: además de
 mandar el texto, crea la regla "cuando termine" desde esa sesión hacia la coordinadora (la
-primera sesión de Claude del mismo repo que no sea el destino). Un gesto en vez de dos.
+que tiene la estrella, o la primera sesión de Claude del mismo repo que no sea el destino). Un
+gesto en vez de dos.
 
 Lo que escribís desde el lienzo queda en la pestaña Conexiones de esa sesión como
 "recibido de vos (lienzo)". No dibuja flecha.
@@ -164,13 +177,21 @@ la tarjeta de origen. Cuatro modos:
   canal. Vos les das el tema; ellas conversan.
 
 El server rechaza con 409 una regla "cuando termine" que cierre un bucle A↔B, y también una
-regla igual a otra que ya existe (mismo origen, destino, texto y hora).
+regla igual a otra que ya existe. Una programada que caiga a menos de dos minutos de otra hacia
+la misma sesión también da 409, sin importar el texto: dos mensajes en el mismo minuto a la
+misma consola nunca es lo que uno quiere. El diálogo lo muestra como "Ya hay una programada a
+las HH:MM" con Reemplazar o Cancelar.
+
+En el celular el agarre ⇢ se arrastra con el dedo; el cuerpo de la tarjeta scrollea.
 
 ### Flechas
 
 Cada conexión se dibuja entre las tarjetas: el último envío de cada par con ↪ (o ×N si hubo
 varios), las reglas pendientes punteadas con ⏹, ⏰ o ↻ (periódica), el canal nativo con una
-flecha doble gruesa. Las reglas de una sesión hacia sí misma no tienen flecha, sólo chip. Viajan por el canal entre columnas, el glifo cae en el hueco para no robarle el
+flecha doble gruesa. Las reglas de una sesión hacia sí misma no tienen flecha, sólo chip. Entre
+tarjetas de la misma columna la flecha va por arriba, por el hueco entre filas, sin cruzar
+ninguna tarjeta; si no hay camino limpio se dibuja igual, casi transparente. Sin hover, todas
+van al 35 %; la tarjeta bajo el mouse sube las suyas a opaco. Viajan por el canal entre columnas, el glifo cae en el hueco para no robarle el
 click a ninguna tarjeta, y al pasar el mouse sobre una tarjeta se resaltan las suyas. Un
 botón del menú las oculta.
 
@@ -241,10 +262,11 @@ túnel, además la cookie de sesión.
 | POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío entre sesiones, con `native` lo marca como canal nativo |
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
 | PUT | `/sessions/<sid>/title` | `{title}`; el título pasa a ser del usuario y no se recalcula |
+| PUT | `/sessions/<sid>/coordinator` | `{on: true\|false}`; una coordinadora por repo, prender una apaga la anterior |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
 | GET | `/links` | envíos hechos; `kind` es `send`, `rule`, `native` o `user` |
 | GET | `/rules` | conexiones pendientes y cumplidas |
-| POST | `/rules` | `{kind: on_stop\|at, from, to, text, at, repeat, max_fires}`; una `at` acepta además `every_s` (segundos, mínimo 60; periódica) y `skip_busy`; con `every_s`, `max_fires` vale 5 si no viene y `skip_busy` true; 409 si arma un bucle o ya existe |
+| POST | `/rules` | `{kind: on_stop\|at, from, to, text, at, repeat, max_fires}`; una `at` acepta además `every_s` (segundos, mínimo 60; periódica) y `skip_busy`; con `every_s`, `max_fires` vale 5 si no viene y `skip_busy` true; 409 si arma un bucle, si ya existe, o si una `at` cae a ±2 min de otra hacia la misma sesión (la respuesta trae `rule_id` y `replace: true`; repetir con `replace: true` en el body la reemplaza) |
 | PUT | `/rules/<id>` | edita texto, hora (`at`), `repeat`, `max_fires`, y en una `at` también `every_s` (null la vuelve de un disparo) y `skip_busy`; reprogramar una `at` cumplida la reactiva |
 | DELETE | `/links/<id>`, `/rules/<id>` | quita la flecha o la conexión |
 | GET | `/pending` | permisos esperando respuesta |
@@ -279,9 +301,9 @@ lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 34 tests
-cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 19 tests de las flechas
-cd web; node --experimental-strip-types src/nl.test.ts                # 20 aserciones del parser de frases
+python -m pytest tests -q                                   # 40 tests
+cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 23 tests de las flechas
+cd web; node --experimental-strip-types src/nl.test.ts                # 34 aserciones del parser de frases
 ```
 
 ## Qué es cada archivo de estado
@@ -297,7 +319,7 @@ cd web; node --experimental-strip-types src/nl.test.ts                # 20 aserc
   rules.json     conexiones (cuando termine, a una hora), vigentes y cumplidas
   config.json    auto_continue, y lo que comparte con hook.py (espera de permisos, ejemplos)
   auth.json      clave TOTP del acceso remoto
-  lienzo.log
+  lienzo.log     una línea por hecho: fecha, etiqueta (envio, regla, sesion, permiso, error…) y mensaje; en consola sólo la hora, y los tracebacks en una línea
 ```
 
 ## Limitaciones conocidas
