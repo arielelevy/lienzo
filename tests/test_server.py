@@ -159,7 +159,9 @@ def test_transcripcion_reabre_el_termino_que_dejo_un_stop_tardio(aislado):
     assert ses.refresh_from_transcript(s) is True
     assert s["state"] == "corriendo"
     assert s["last_prompt"] == "segundo, largo"
-    assert s["last_reply"] == "usando Bash"
+    # encargo X1: mientras corre, la tarjeta muestra lo ultimo que el agente escribio ("Voy."), no
+    # el nombre de la herramienta; "usando Bash" quedo como respaldo para cuando no escribio nada
+    assert s["last_reply"] == "Voy."
 
 
 def test_transcripcion_no_toca_un_termino_legitimo(aislado):
@@ -1062,3 +1064,92 @@ def test_dos_hilos_sobre_la_misma_tarjeta_no_la_dejan_en_un_estado_imposible(ais
         sys.setswitchinterval(antes)
     assert not any(t.is_alive() for t in hilos), "algun hilo quedo trabado: revisar deadlocks"
     assert not rotos, f"{len(rotos)} muestras con la tarjeta en un estado imposible, la primera {rotos[0]}"
+
+
+# 13. encargo X1: mientras corre, la tarjeta dice lo que el agente esta escribiendo
+
+
+def texto(t, phase=None):
+    return {"kind": "text", "text": t, "phase": phase}
+
+
+def turno(blocks, final="", ended=False):
+    """Turno como lo arma transcripts.turns: `final` es el ultimo bloque de texto no vacio."""
+    return {"blocks": blocks, "final": final, "ended": ended}
+
+
+def test_turn_say_es_el_ultimo_texto_del_agente_no_la_herramienta():
+    t = turno(
+        [
+            texto("Arranco por el backend."),
+            blk("Read", {"file_path": "a.py"}),
+            texto("Ahora parto refresh_from_transcript en dos:"),
+            blk("Bash", {"command": "pytest"}),
+        ],
+        final="Ahora parto refresh_from_transcript en dos:",
+    )
+    assert ses.turn_say(t) == "Ahora parto refresh_from_transcript en dos:"
+    assert ses.using_tool(t) == "usando Bash", "la herramienta sigue estando, pero ya no es lo que se muestra"
+
+
+def test_turn_say_cae_a_la_herramienta_si_todavia_no_escribio_nada():
+    t = turno([blk("Bash", {"command": "pytest"})])
+    assert ses.turn_say(t) == "usando Bash"
+    assert ses.turn_say(turno([])) is None, "sin texto ni herramientas no hay nada que decir"
+    # un bloque de texto en blanco no cuenta: transcripts no lo pone en `final`
+    assert ses.turn_say(turno([texto("   ")])) is None
+
+
+def test_turn_say_no_muestra_el_pensamiento():
+    """kind 'thinking' no pasa por add_text, asi que nunca entra en `final`: el toggle
+    "Pensamiento" del menu es para la conversacion, no para la tarjeta."""
+    t = turno(
+        [{"kind": "thinking", "text": "El usuario quiere que revise el lock..."}, blk("Read", {"file_path": "a.py"})]
+    )
+    dicho = ses.turn_say(t)
+    assert dicho == "usando Read", "sin texto del agente, el respaldo es la herramienta"
+    assert "lock" not in (dicho or ""), "el pensamiento no puede llegar a la tarjeta"
+
+
+def test_turn_say_recorta_como_la_respuesta_final():
+    largo = "x" * 900
+    assert len(ses.turn_say(turno([texto(largo)], final=largo))) == 600
+
+
+def test_la_tarjeta_con_hooks_muestra_el_comentario_del_turno_abierto(aislado):
+    """El caso de la captura: sesion corriendo con hooks. Antes decia 'usando Bash'."""
+    rows = rows_encolado() + [
+        {
+            "type": "assistant",
+            "timestamp": utc(30),
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Ahora mido cuanto tarda el parseo antes de tocar el lock."}],
+            },
+        },
+        {
+            "type": "assistant",
+            "timestamp": utc(31),
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "python -m pytest"}}],
+            },
+        },
+    ]
+    path = write_jsonl(aislado / "t.jsonl", rows)
+    s = tarjeta(path, "corriendo", local(-50))
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "corriendo"
+    assert s["last_reply"] == "Ahora mido cuanto tarda el parseo antes de tocar el lock."
+    # la linea de actividad (que herramienta, cuantos pasos) sigue estando: es lo otro
+    assert s["tool_count"] == 2 and s["last_cmd"] == "python -m pytest"
+
+
+def test_al_cerrar_el_turno_sigue_mandando_el_final(aislado):
+    rows = rows_encolado()[:4]  # el turno cierra con turn_duration
+    path = write_jsonl(aislado / "t.jsonl", rows)
+    s = tarjeta(path, "corriendo", local(-50))
+    s["hooked"] = False
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "termino"
+    assert s["last_reply"] == "Listo el primero."
