@@ -4,6 +4,7 @@ disparo (fire_rule), el bucle de las programadas, la purga de las viejas y la vi
 de una sesion. Importa sessions.py para enviar y
 registrar links; sessions.py lo llama por los ganchos on_turn_end / on_limit_notice, que se
 rellenan al final de este modulo."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -31,6 +32,7 @@ def session_name(sid: str | None) -> str:
 def connections_of(sid: str) -> dict:
     """Vinculos y reglas donde `sid` es origen o destino, con la otra punta resuelta a nombre,
     ordenados del mas nuevo al mas viejo."""
+
     def decorate(x: dict) -> dict:
         out = dict(x)
         out["direction"] = "out" if x.get("from") == sid else "in"
@@ -52,6 +54,7 @@ def connections_of(sid: str) -> dict:
         rs = newest_first([r for r in rules.items if sid in (r.get("from"), r.get("to"))], "created")
     return {"links": ls, "rules": rs}
 
+
 def full_reply(s: dict, cap: int = 6000) -> str:
     """Ultima respuesta completa, leida de la transcripcion (la tarjeta guarda 600 caracteres y una
     revision entera no entra ahi). Si no se puede leer, lo que tiene la tarjeta."""
@@ -61,7 +64,7 @@ def full_reply(s: dict, cap: int = 6000) -> str:
             ts = transcripts.turns(s["agent"], path, 1)["turns"]
             if ts and ts[-1].get("final"):
                 return short(ts[-1]["final"], cap)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             state.log(f"respuesta completa de {s['session_id'][:8]}: {e}")
     return s.get("last_reply") or ""
 
@@ -69,13 +72,18 @@ def full_reply(s: dict, cap: int = 6000) -> str:
 def render_template(tpl: str, s: dict | None) -> str:
     if not s:
         return tpl
-    return (tpl.replace("{repo}", s.get("repo") or "").replace("{agente}", s.get("agent") or "")
-            .replace("{titulo}", s.get("title") or "").replace("{pedido}", s.get("last_prompt") or "")
-            .replace("{respuesta}", full_reply(s) if "{respuesta}" in tpl else ""))
+    return (
+        tpl.replace("{repo}", s.get("repo") or "")
+        .replace("{agente}", s.get("agent") or "")
+        .replace("{titulo}", s.get("title") or "")
+        .replace("{pedido}", s.get("last_prompt") or "")
+        .replace("{respuesta}", full_reply(s) if "{respuesta}" in tpl else "")
+    )
+
 
 CONTINUE_TEXT = "Continuar"
 CONTINUE_DELAY_S = 60
-AT_NEAR_S = 120     # dos programadas a menos de 2 min son "la misma hora" (la UI guarda UTC, aca local)
+AT_NEAR_S = 120  # dos programadas a menos de 2 min son "la misma hora" (la UI guarda UTC, aca local)
 
 
 def at_near(r: dict, at: dt.datetime) -> bool:
@@ -107,12 +115,25 @@ def ensure_continue_rule(s: dict) -> None:
         for r in rules.items:
             if r.get("kind") == "at" and r.get("to") == s["session_id"] and at_near(r, at):
                 return  # ya esta (manual o automatica, vigente o ya disparada)
-        rule = {"id": secrets.token_hex(6), "kind": "at", "from": None, "to": s["session_id"],
-                "text": CONTINUE_TEXT, "at": at_iso, "repeat": False, "max_fires": 1, "fired": 0,
-                "enabled": True, "created": now(), "auto": True}
+        rule = {
+            "id": secrets.token_hex(6),
+            "kind": "at",
+            "from": None,
+            "to": s["session_id"],
+            "text": CONTINUE_TEXT,
+            "at": at_iso,
+            "repeat": False,
+            "max_fires": 1,
+            "fired": 0,
+            "enabled": True,
+            "created": now(),
+            "auto": True,
+        }
         rules.add(rule, cap=500)
-    state.log(f"regla automatica {rule['id']}: {s['agent']} {s['session_id'][:8]} sin cupo hasta {until}; "
-        f"'{CONTINUE_TEXT}' a las {at_iso}")
+    state.log(
+        f"regla automatica {rule['id']}: {s['agent']} {s['session_id'][:8]} sin cupo hasta {until}; "
+        f"'{CONTINUE_TEXT}' a las {at_iso}"
+    )
 
 
 def advance_at(rule: dict, ref: dt.datetime | None = None) -> None:
@@ -148,8 +169,10 @@ def fire_rule(rule: dict) -> None:
             advance_at(rule)
             rule["last_result"] = "salteado: destino ocupado"
             rules.save()
-        state.log(f"regla {rule['id']} (at cada {rule['every_s']} s) -> {rule['to'][:8]}: "
-                  f"salteado, destino ocupado; proximo {rule['at']}")
+        state.log(
+            f"regla {rule['id']} (at cada {rule['every_s']} s) -> {rule['to'][:8]}: "
+            f"salteado, destino ocupado; proximo {rule['at']}"
+        )
         rules.publish()
         return
     text = render_template(rule.get("text") or "", src)
@@ -184,7 +207,9 @@ def fire_on_stop(sid: str) -> None:
         has_rules = any(r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid for r in rules.items)
         if s and has_rules:
             if s.get("last_error"):
-                state.log(f"on_stop de {sid[:8]} no disparado: el turno termino con error ({short(s['last_error'], 80)})")
+                state.log(
+                    f"on_stop de {sid[:8]} no disparado: el turno termino con error ({short(s['last_error'], 80)})"
+                )
                 return
             if (s.get("last_reply") or "").rstrip().endswith("?"):
                 state.log(f"on_stop de {sid[:8]} no disparado: la respuesta termina en pregunta al usuario")
@@ -219,7 +244,7 @@ def rules_loop() -> None:
                             r["disabled_at"] = now()
             for r in due:
                 fire_rule(r)
-        except Exception:  # noqa: BLE001
+        except Exception:
             state.log(traceback.format_exc())
         time.sleep(5)
 
@@ -247,6 +272,7 @@ def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
             rules.save()
     if n:
         state.log(f"purgadas {n} reglas 'at' viejas (disparadas o deshabilitadas hace mas de {max_age_h:g} h)")
+
 
 # sessions.py no importa este modulo: se engancha aca
 ses.on_turn_end = fire_on_stop

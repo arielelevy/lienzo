@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- el lienzo: tres columnas y una flecha que cruza de una tarjeta a otra -->
+  <rect width="32" height="32" rx="7" fill="#171a21"/>
+  <rect x="4"  y="9"  width="9" height="7"  rx="2" fill="#d97757"/>
+  <rect x="4"  y="18" width="9" height="5"  rx="2" fill="#2a2f3b"/>
+  <rect x="19" y="14" width="9" height="9"  rx="2" fill="#10a37f"/>
+  <path d="M8.5 7.5 h13.5 a2 2 0 0 1 2 2 v2.6" fill="none" stroke="#5b9cff" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M24 14.6 l-2 -2.6 h4 z" fill="#5b9cff"/>
+</svg>

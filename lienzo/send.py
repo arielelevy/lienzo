@@ -9,6 +9,7 @@ Imprime un JSON en stdout: {"ok": true, "pid": N, "chars": 42} o {"ok": false, "
 El server lo lanza como subproceso DETACHED (sin consola propia) por cada envio.
 Saltos de linea se colapsan a espacio (v1): el texto largo va como adjunto (§6.5).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,7 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import procs  # noqa: E402
+import procs
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 u32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -43,8 +44,14 @@ class _Char(ctypes.Union):
 
 
 class KEY_EVENT_RECORD(ctypes.Structure):
-    _fields_ = [("bKeyDown", wt.BOOL), ("wRepeatCount", wt.WORD), ("wVirtualKeyCode", wt.WORD),
-                ("wVirtualScanCode", wt.WORD), ("uChar", _Char), ("dwControlKeyState", wt.DWORD)]
+    _fields_ = [
+        ("bKeyDown", wt.BOOL),
+        ("wRepeatCount", wt.WORD),
+        ("wVirtualKeyCode", wt.WORD),
+        ("wVirtualScanCode", wt.WORD),
+        ("uChar", _Char),
+        ("dwControlKeyState", wt.DWORD),
+    ]
 
 
 class _Event(ctypes.Union):
@@ -107,8 +114,9 @@ def key_records(text: str, shift_enter: bool = False) -> list[INPUT_RECORD]:
     return recs
 
 
-def inject(pid: int, text: str, enter_presses: int = 1, key_delay: float = 0.3,
-           chunk: int = 200, chunk_delay: float = 0.05) -> dict:
+def inject(
+    pid: int, text: str, enter_presses: int = 1, key_delay: float = 0.3, chunk: int = 200, chunk_delay: float = 0.05
+) -> dict:
     if not procs.alive(pid):
         return {"ok": False, "pid": pid, "error": "el proceso no existe"}
     if not procs.is_tui(pid):
@@ -118,11 +126,13 @@ def inject(pid: int, text: str, enter_presses: int = 1, key_delay: float = 0.3,
     if not k32.AttachConsole(pid):
         return {"ok": False, "pid": pid, "error": f"AttachConsole fallo (error {ctypes.get_last_error()})"}
     try:
-        hin = k32.CreateFileW("CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                              None, OPEN_EXISTING, 0, None)
+        hin = k32.CreateFileW(
+            "CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None
+        )
         if hin == INVALID_HANDLE_VALUE or not hin:
             return {"ok": False, "pid": pid, "error": f"no pude abrir CONIN$ (error {ctypes.get_last_error()})"}
         try:
+
             def write(recs: list[INPUT_RECORD]) -> str | None:
                 arr = (INPUT_RECORD * len(recs))(*recs)
                 written = wt.DWORD(0)
@@ -132,7 +142,7 @@ def inject(pid: int, text: str, enter_presses: int = 1, key_delay: float = 0.3,
                 return None
 
             for i in range(0, len(text), chunk):
-                err = write(key_records(text[i:i + chunk]))
+                err = write(key_records(text[i : i + chunk]))
                 if err:
                     return {"ok": False, "pid": pid, "error": err}
                 time.sleep(chunk_delay)

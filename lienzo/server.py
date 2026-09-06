@@ -4,6 +4,7 @@ liveness por PID, SSE y envio por inyeccion. Solo stdlib. Bind 127.0.0.1:7321.
 
     python server.py [--port 7321] [--no-sweep]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,22 +24,62 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import auth  # noqa: E402
-import transcripts  # noqa: E402
-from rules import at_near, connections_of, purge_stale_at_rules, rules_loop  # noqa: E402
-from sessions import (add_link, answer_pending, clean_attachments, consume_events, drop_session, liveness_loop,  # noqa: E402
-                      load_sessions, public_pending, read_screen, save_attachment, scan_pending, screen_loop,
-                      send_to_session, set_coordinator, set_title, sweep_once, touch)
-from state import (ADJUNTOS, ANSWERS, DIST, EVENTS, MIME, PENDING, SESSIONS, STALE_SESSION_H, UI_CONFIG_KEYS, clients,  # noqa: E402
-                   is_disconnect, links, lock, log, now, pending, public_config, rules, sessions, set_config_key, short)
+import auth
+import transcripts
+from rules import at_near, connections_of, purge_stale_at_rules, rules_loop
+from sessions import (
+    add_link,
+    answer_pending,
+    clean_attachments,
+    consume_events,
+    drop_session,
+    liveness_loop,
+    load_sessions,
+    public_pending,
+    read_screen,
+    save_attachment,
+    scan_pending,
+    screen_loop,
+    send_to_session,
+    set_coordinator,
+    set_title,
+    sweep_once,
+    touch,
+)
+from state import (
+    ADJUNTOS,
+    ANSWERS,
+    DIST,
+    EVENTS,
+    MIME,
+    PENDING,
+    SESSIONS,
+    STALE_SESSION_H,
+    UI_CONFIG_KEYS,
+    clients,
+    is_disconnect,
+    links,
+    lock,
+    log,
+    now,
+    pending,
+    public_config,
+    rules,
+    sessions,
+    set_config_key,
+    short,
+)
 
-CLOUDFLARED = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "cloudflared", "cloudflared.exe")
+CLOUDFLARED = os.path.join(
+    os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "cloudflared", "cloudflared.exe"
+)
 remote_url: str | None = None
 # alta desde el celular con un solo QR: token de 15 min que entrega passphrase + otpauth una vez
 enroll: dict | None = None
 ENROLL_S = 15 * 60
 
 # --- HTTP ------------------------------------------------------------------------------
+
 
 def at_fields(d: dict, current: dict | None = None) -> tuple[dict | None, str | None]:
     """Campos de repeticion de una regla 'at' (POST o PUT): every_s (entero >= 60, o None = un solo
@@ -70,14 +111,18 @@ def at_fields(d: dict, current: dict | None = None) -> tuple[dict | None, str | 
         except (TypeError, ValueError):
             return None, "max_fires debe ser un numero"
     elif every and (max_fires or 1) <= 1:
-        max_fires = 5          # pasa a periodica sin tope explicito: 5 disparos
+        max_fires = 5  # pasa a periodica sin tope explicito: 5 disparos
     skip_busy = cur.get("skip_busy")
     if "skip_busy" in d:
         skip_busy = bool(d["skip_busy"])
     elif skip_busy is None:
         skip_busy = bool(every)
-    return {"every_s": every, "max_fires": int(max_fires or 1), "skip_busy": bool(skip_busy),
-            "repeat": bool(every)}, None
+    return {
+        "every_s": every,
+        "max_fires": int(max_fires or 1),
+        "skip_busy": bool(skip_busy),
+        "repeat": bool(every),
+    }, None
 
 
 def parse_at(value) -> dt.datetime:
@@ -98,20 +143,49 @@ def create_rule(d: dict) -> tuple[int, dict]:
     text = str(d.get("text") or "")
     if kind == "on_stop":
         with lock:
-            inverse = next((r for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop"
-                            and r.get("from") == d["to"] and r.get("to") == d["from"]), None)
-            dup = next((r for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop"
-                        and r.get("to") == d["to"] and (r.get("from") or None) == (d.get("from") or None)
-                        and (r.get("text") or "").strip() == text.strip()), None)
+            inverse = next(
+                (
+                    r
+                    for r in rules.items
+                    if r.get("enabled")
+                    and r.get("kind") == "on_stop"
+                    and r.get("from") == d["to"]
+                    and r.get("to") == d["from"]
+                ),
+                None,
+            )
+            dup = next(
+                (
+                    r
+                    for r in rules.items
+                    if r.get("enabled")
+                    and r.get("kind") == "on_stop"
+                    and r.get("to") == d["to"]
+                    and (r.get("from") or None) == (d.get("from") or None)
+                    and (r.get("text") or "").strip() == text.strip()
+                ),
+                None,
+            )
         if inverse:
-            return 409, {"error": f"crearía un bucle {d['from'][:8]}↔{d['to'][:8]}: "
-                                  f"ya existe la regla {inverse['id']} en sentido inverso"}
+            return 409, {
+                "error": f"crearía un bucle {d['from'][:8]}↔{d['to'][:8]}: "
+                f"ya existe la regla {inverse['id']} en sentido inverso"
+            }
         if dup:
             return 409, {"error": "ya existe esa conexión", "rule_id": dup["id"]}
-        rule = {"id": secrets.token_hex(6), "kind": kind, "from": d.get("from") or None, "to": d["to"],
-                "text": text, "at": None, "repeat": bool(d.get("repeat")),
-                "max_fires": max(1, min(int(d.get("max_fires") or 1), 50)),
-                "fired": 0, "enabled": True, "created": now()}
+        rule = {
+            "id": secrets.token_hex(6),
+            "kind": kind,
+            "from": d.get("from") or None,
+            "to": d["to"],
+            "text": text,
+            "at": None,
+            "repeat": bool(d.get("repeat")),
+            "max_fires": max(1, min(int(d.get("max_fires") or 1), 50)),
+            "fired": 0,
+            "enabled": True,
+            "created": now(),
+        }
         rules.add(rule, cap=500)
         log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]}")
         return 200, rule
@@ -126,18 +200,40 @@ def create_rule(d: dict) -> tuple[int, dict]:
     # "continua" a las 01:01): choca cualquier `at` habilitada a +-2 min, periodica o no, sea cual
     # sea el texto; con "replace": true la nueva reemplaza a la existente
     with lock:
-        clash = next((r for r in rules.items if r.get("enabled") and r.get("kind") == "at"
-                      and r.get("to") == d["to"] and at_near(r, at)), None)
+        clash = next(
+            (
+                r
+                for r in rules.items
+                if r.get("enabled") and r.get("kind") == "at" and r.get("to") == d["to"] and at_near(r, at)
+            ),
+            None,
+        )
     if clash:
         if d.get("replace") is not True:
             hhmm = dt.datetime.fromisoformat(clash["at"]).astimezone().strftime("%H:%M")
-            return 409, {"error": f"ya hay una programada a las {hhmm} para esa sesión", "rule_id": clash["id"],
-                         "at": clash["at"], "text": clash.get("text") or "", "replace": True}
+            return 409, {
+                "error": f"ya hay una programada a las {hhmm} para esa sesión",
+                "rule_id": clash["id"],
+                "at": clash["at"],
+                "text": clash.get("text") or "",
+                "replace": True,
+            }
         rules.remove(lambda r: r["id"] == clash["id"])
-        log(f"regla {clash['id']} ({clash.get('at')} {short(clash.get('text') or '', 40)!r}) reemplazada por una nueva a la misma hora")
-    rule = {"id": secrets.token_hex(6), "kind": kind, "from": d.get("from") or None, "to": d["to"],
-            "text": text, "at": at.isoformat(timespec="seconds"), "fired": 0, "enabled": True, "created": now()}
-    rule.update(extra)   # every_s, max_fires, skip_busy, repeat=bool(every_s)
+        log(
+            f"regla {clash['id']} ({clash.get('at')} {short(clash.get('text') or '', 40)!r}) reemplazada por una nueva a la misma hora"
+        )
+    rule = {
+        "id": secrets.token_hex(6),
+        "kind": kind,
+        "from": d.get("from") or None,
+        "to": d["to"],
+        "text": text,
+        "at": at.isoformat(timespec="seconds"),
+        "fired": 0,
+        "enabled": True,
+        "created": now(),
+    }
+    rule.update(extra)  # every_s, max_fires, skip_busy, repeat=bool(every_s)
     rules.add(rule, cap=500)
     cada = f" cada {rule['every_s']} s x{rule['max_fires']}" if rule.get("every_s") else ""
     log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]} {rule['at']}{cada}")
@@ -165,14 +261,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _server_error(self, e: BaseException) -> None:
         """Final de todos los do_*: si el navegador cerro la conexion a mitad de la respuesta no hay
-        a quien contestar; cualquier otra excepcion va al log propio y sale como 500."""
+        a quien contestar. Cualquier otra excepcion va entera al log con un id corto, y al cliente le
+        llega ese id y nada mas: str(e) podia llevar rutas y nombres de la maquina, y por el tunel
+        eso sale hacia afuera. El id esta en las dos puntas para poder cruzarlas."""
         if is_disconnect(e):
             return
-        log(traceback.format_exc())
-        return self._json(500, {"error": str(e)})
+        eid = secrets.token_hex(4)
+        log(f"error {eid} en {self.command} {self.path}:\n{traceback.format_exc()}")
+        # el id va tambien dentro de `error`: la UI muestra ese campo tal cual, asi se ve sin tocar web/
+        return self._json(500, {"error": f"error interno del lienzo ({eid})", "error_id": eid})
 
     def _json(self, code: int, obj, extra_headers: dict | None = None) -> None:
-        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        return self._send_json(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), extra_headers)
+
+    def _send_json(self, code: int, body: bytes, extra_headers: dict | None = None) -> None:
+        """Cuerpo JSON ya serializado. Lo que se arma con el lock tomado se escribe con esto sin el:
+        el write al socket tarda lo que tarde el cliente en leer (por el tunel, un celular), y con el
+        lock tomado eso frena los hooks y todo lo demas."""
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -247,13 +352,24 @@ class Handler(BaseHTTPRequestHandler):
                 if "\\" in name or name.startswith("."):
                     return self._json(404, {"error": "ruta invalida"})
                 path = os.path.join(DIST, "assets", name)
-                return self._file(path, MIME.get(os.path.splitext(name)[1].lower(), "application/octet-stream"),
-                                  cache="public, max-age=31536000, immutable")
+                return self._file(
+                    path,
+                    MIME.get(os.path.splitext(name)[1].lower(), "application/octet-stream"),
+                    cache="public, max-age=31536000, immutable",
+                )
             if parts == ["health"]:
                 return self._json(200, {"ok": True, "sessions": len(sessions), "pending": len(pending), "ts": now()})
             if parts == ["auth"]:
-                return self._json(200, {"configured": auth.configured(), "authenticated": self._authed(),
-                                        "local": self._is_local(), "remote_url": remote_url, "mode": auth.mode()})
+                return self._json(
+                    200,
+                    {
+                        "configured": auth.configured(),
+                        "authenticated": self._authed(),
+                        "local": self._is_local(),
+                        "remote_url": remote_url,
+                        "mode": auth.mode(),
+                    },
+                )
             if parts == ["totp"]:
                 # volver a ver el QR de Authenticator (segundo telefono, o alta interrumpida): solo local
                 if not self._is_local():
@@ -272,13 +388,24 @@ class Handler(BaseHTTPRequestHandler):
                     log(f"enroll rechazado desde {self._client_ip()}")
                     return self._json(410, {"error": "el enlace de alta vencio o no es valido; rehacer desde la PC"})
                 log(f"enroll entregado a {self._client_ip()}")
-                return self._json(200, {"passphrase": e["passphrase"], "otpauth": e["otpauth"],
-                                        "expires_in": int(e["expires"] - time.time())})
+                return self._json(
+                    200,
+                    {
+                        "passphrase": e["passphrase"],
+                        "otpauth": e["otpauth"],
+                        "expires_in": int(e["expires"] - time.time()),
+                    },
+                )
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
             if parts == ["sessions"]:
+                # serializar con el lock (es CPU pura) y escribir afuera: es el cuerpo mas grande
+                # que manda el server, y antes se escribia al socket con el lock tomado
                 with lock:
-                    return self._json(200, sorted(sessions.values(), key=lambda s: (s["repo"], s["started"])))
+                    tablero = json.dumps(
+                        sorted(sessions.values(), key=lambda s: (s["repo"], s["started"])), ensure_ascii=False
+                    ).encode("utf-8")
+                return self._send_json(200, tablero)
             if parts == ["pending"]:
                 return self._json(200, public_pending())
             if parts == ["links"]:
@@ -316,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, transcripts.turns(s["agent"], s["transcript_path"], n, before))
                 return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n))
             return self._json(404, {"error": "ruta desconocida"})
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return self._server_error(e)
 
     def do_POST(self):
@@ -327,15 +454,23 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parts == ["login"]:
                 d = self._json_body()
-                ok, motivo, token = auth.login(str(d.get("passphrase", "")), str(d.get("code", "")),
-                                               self._client_ip(), self.headers.get("User-Agent", ""))
+                ok, motivo, token = auth.login(
+                    str(d.get("passphrase", "")),
+                    str(d.get("code", "")),
+                    self._client_ip(),
+                    self.headers.get("User-Agent", ""),
+                )
                 if not ok:
                     log(f"login fallido desde {self._client_ip()}: {motivo}")
                     # hacia afuera un solo mensaje, salvo el bloqueo, que conviene que se vea
-                    msg = motivo if motivo.startswith("bloqueado") or "no configurado" in motivo else "codigo incorrecto"
+                    msg = (
+                        motivo if motivo.startswith("bloqueado") or "no configurado" in motivo else "codigo incorrecto"
+                    )
                     return self._json(401, {"ok": False, "error": msg})
                 log(f"login ok desde {self._client_ip()}")
-                return self._json(200, {"ok": True}, {"Set-Cookie": auth.cookie_header(token, secure=self._via_tunnel())})
+                return self._json(
+                    200, {"ok": True}, {"Set-Cookie": auth.cookie_header(token, secure=self._via_tunnel())}
+                )
             if parts == ["logout"]:
                 auth.logout(auth.parse_cookie(self.headers.get("Cookie")))
                 return self._json(200, {"ok": True}, {"Set-Cookie": f"{auth.COOKIE}=; Path=/; Max-Age=0"})
@@ -346,12 +481,17 @@ class Handler(BaseHTTPRequestHandler):
                 if auth.configured():
                     return self._json(409, {"error": "ya esta configurado; borrar ~/.lienzo/auth.json para rehacerlo"})
                 d = self._json_body()
-                res = auth.setup(account=os.environ.get("USERNAME", "lienzo"),
-                                 mode="full" if d.get("mode") == "full" else "code")
+                res = auth.setup(
+                    account=os.environ.get("USERNAME", "lienzo"), mode="full" if d.get("mode") == "full" else "code"
+                )
                 global enroll
                 with lock:
-                    enroll = {"token": secrets.token_urlsafe(24), "passphrase": res["passphrase"],
-                              "otpauth": res["otpauth"], "expires": time.time() + ENROLL_S}
+                    enroll = {
+                        "token": secrets.token_urlsafe(24),
+                        "passphrase": res["passphrase"],
+                        "otpauth": res["otpauth"],
+                        "expires": time.time() + ENROLL_S,
+                    }
                     res["enroll_token"] = enroll["token"]
                     res["enroll_expires_s"] = ENROLL_S
                 log("acceso remoto configurado (passphrase + TOTP); enlace de alta valido 15 min")
@@ -398,7 +538,7 @@ class Handler(BaseHTTPRequestHandler):
                     path = save_attachment(s["session_id"], name, data)
                     return self._json(200, {"path": path, "bytes": len(data)})
             return self._json(404, {"error": "ruta desconocida"})
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return self._server_error(e)
 
     def do_PUT(self):
@@ -429,9 +569,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": "title debe ser un texto"})
                 with lock:
                     s = sessions.get(parts[1])
-                    if s is None:
-                        return self._json(404, {"error": "sesion desconocida"})
-                    set_title(s, title or "")
+                if s is None:
+                    return self._json(404, {"error": "sesion desconocida"})
+                set_title(s, title or "")  # toma el lock por dentro; leer la transcripcion, no
+                with lock:
                     touch(s)
                 log(f"titulo de {parts[1][:8]} -> {s['title']!r} ({s.get('title_source')})")
                 return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
@@ -444,8 +585,10 @@ class Handler(BaseHTTPRequestHandler):
                 if s is None:
                     return self._json(404, {"error": "sesion desconocida"})
                 changed = set_coordinator(s, d["on"])
-                log(f"coordinadora de {s.get('repo')}: {parts[1][:8]} -> {d['on']} "
-                    f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})")
+                log(
+                    f"coordinadora de {s.get('repo')}: {parts[1][:8]} -> {d['on']} "
+                    f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"
+                )
                 return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
             if len(parts) == 2 and parts[0] == "rules":
                 # editar una conexion pendiente (doble click en la flecha): texto, hora, repeticion.
@@ -474,7 +617,7 @@ class Handler(BaseHTTPRequestHandler):
                     if "text" in d:
                         r["text"] = d["text"]
                     if r.get("kind") == "at":
-                        r.update(extra)   # every_s (null = un disparo), max_fires, skip_busy, repeat
+                        r.update(extra)  # every_s (null = un disparo), max_fires, skip_busy, repeat
                         if at is not None:
                             r["at"] = at.isoformat(timespec="seconds")
                             if not r.get("enabled"):
@@ -488,10 +631,12 @@ class Handler(BaseHTTPRequestHandler):
                             r["max_fires"] = max_fires
                     rules.save()
                 rules.publish()
-                log(f"regla {r['id']} editada: {r['kind']} -> {r['to'][:8]} {r.get('at') or ''} {short(r.get('text') or '', 60)!r}")
+                log(
+                    f"regla {r['id']} editada: {r['kind']} -> {r['to'][:8]} {r.get('at') or ''} {short(r.get('text') or '', 60)!r}"
+                )
                 return self._json(200, r)
             return self._json(404, {"error": "ruta desconocida"})
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             return self._server_error(e)
 
     def do_DELETE(self):
@@ -527,8 +672,18 @@ class Handler(BaseHTTPRequestHandler):
         q: queue.Queue = queue.Queue(maxsize=1000)
         with lock:
             clients.append(q)
-            snapshot = {"type": "snapshot", "sessions": list(sessions.values()), "pending": public_pending(),
-                        "links": links.snapshot(), "rules": rules.snapshot()}
+            # serializar aca adentro: `sessions.values()` son los dicts vivos, y armar el JSON
+            # afuera podia leer una tarjeta a medio escribir (o reventar si el dict cambia de tamaño)
+            snapshot = json.dumps(
+                {
+                    "type": "snapshot",
+                    "sessions": list(sessions.values()),
+                    "pending": public_pending(),
+                    "links": links.snapshot(),
+                    "rules": rules.snapshot(),
+                },
+                ensure_ascii=False,
+            )
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -544,11 +699,11 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            chunk(f"data: {json.dumps(snapshot, ensure_ascii=False)}\n\n".encode("utf-8"))
+            chunk(f"data: {snapshot}\n\n".encode())
             while True:
                 try:
                     data = q.get(timeout=15)
-                    chunk(f"data: {data}\n\n".encode("utf-8"))
+                    chunk(f"data: {data}\n\n".encode())
                 except queue.Empty:
                     # evento real, no comentario: el navegador lo cuenta como "el stream sigue vivo"
                     chunk(b'data: {"type": "ping"}\n\n')
@@ -558,6 +713,7 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 if q in clients:
                     clients.remove(q)
+
 
 def tunnel_loop(port: int) -> None:
     """Camino A (§7.6.2): cloudflared publica 127.0.0.1:<port> en una URL https de trycloudflare.
@@ -574,10 +730,15 @@ def tunnel_loop(port: int) -> None:
         remote_url = None
         try:
             # --protocol http2: con QUIC el SSE (/events) llegaba con cabeceras pero sin cuerpo
-            p = subprocess.Popen([CLOUDFLARED, "tunnel", "--url", f"http://127.0.0.1:{port}", "--no-autoupdate",
-                                  "--protocol", "http2"],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-                                 encoding="utf-8", errors="replace", creationflags=0x08000000)  # CREATE_NO_WINDOW
+            p = subprocess.Popen(
+                [CLOUDFLARED, "tunnel", "--url", f"http://127.0.0.1:{port}", "--no-autoupdate", "--protocol", "http2"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=0x08000000,
+            )  # CREATE_NO_WINDOW
         except OSError as e:
             log(f"--remote: cloudflared no arranca: {e}")
             return
@@ -622,9 +783,11 @@ def main() -> int:
         n_alive = sum(1 for s in sessions.values() if s.get("alive"))
         n_rules = sum(1 for r in rules.items if r.get("enabled"))
         n_links = len(links.items)
-    log(f"lienzo-server en http://127.0.0.1:{a.port}  sesiones={len(sessions)} (vivas={n_alive}, purgadas={purged}"
+    log(
+        f"lienzo-server en http://127.0.0.1:{a.port}  sesiones={len(sessions)} (vivas={n_alive}, purgadas={purged}"
         f" de mas de {STALE_SESSION_H} h, retituladas={retitled})  reglas_activas={n_rules}  links={n_links}"
-        f"  login={'si' if auth.configured() else 'no'}")
+        f"  login={'si' if auth.configured() else 'no'}"
+    )
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

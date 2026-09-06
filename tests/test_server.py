@@ -1,6 +1,7 @@
 """Clasificacion corriendo/termino en lienzo/sessions.py (antes server.py): el Stop tardio de un pedido encolado y la
 correccion desde la transcripcion. Sin red ni hilos: apply_event y refresh_from_transcript directos,
 con el registro de sesiones apuntando a un directorio temporal."""
+
 import glob
 import json
 import os
@@ -10,25 +11,30 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lienzo import server  # noqa: E402,F401  (pone lienzo/ en sys.path y engancha rules a sessions)
-import rules as rl  # noqa: E402
-import sessions as ses  # noqa: E402
-import state as st  # noqa: E402
+# ruff: noqa: I001
+# El orden importa y no se ordena solo: `from lienzo import server` es lo que agrega lienzo/ al
+# sys.path y engancha rules a sessions; recien despues se pueden importar los modulos sueltos.
+from lienzo import server
+import rules as rl
+import sessions as ses
+import state as st
 
 HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
 CLAUDE_DIR = os.path.join(HOME, ".claude", "projects", "D--Apps-lienzo")
 SID = "599a7e3e-0000-4000-8000-000000000000"
-T0 = "2026-09-05T20:41:53.135-03:00"      # turn_duration del caso medido, en hora local
+T0 = "2026-09-05T20:41:53.135-03:00"  # turn_duration del caso medido, en hora local
 
 
 def local(offset_s: float) -> str:
     import datetime as dt
+
     return (dt.datetime.fromisoformat(T0) + dt.timedelta(seconds=offset_s)).isoformat(timespec="milliseconds")
 
 
 def utc(offset_s: float) -> str:
     import datetime as dt
-    d = dt.datetime.fromisoformat(T0).astimezone(dt.timezone.utc) + dt.timedelta(seconds=offset_s)
+
+    d = dt.datetime.fromisoformat(T0).astimezone(dt.UTC) + dt.timedelta(seconds=offset_s)
     return d.strftime("%Y-%m-%dT%H:%M:%S.") + f"{d.microsecond // 1000:03d}Z"
 
 
@@ -39,10 +45,16 @@ def aislado(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "broadcast", lambda ev: None)
     monkeypatch.setattr(ses, "on_turn_end", lambda sid: None)
     monkeypatch.setattr(st, "log", lambda msg: None)
-    monkeypatch.setattr(server, "log", lambda msg: None)   # server importa log por nombre: el parche sobre st no lo alcanza
+    monkeypatch.setattr(
+        server, "log", lambda msg: None
+    )  # server importa log por nombre: el parche sobre st no lo alcanza
     st.sessions.clear()
+    # transcript_stat es estado de modulo y viaja entre tests: dos transcripciones distintas de 3
+    # bytes escritas en el mismo segundo tienen la misma firma y el "crecio" del test siguiente daba False
+    st.transcript_stat.clear()
     yield tmp_path
     st.sessions.clear()
+    st.transcript_stat.clear()
 
 
 def ev(name: str, **k) -> dict:
@@ -50,6 +62,7 @@ def ev(name: str, **k) -> dict:
 
 
 # 1. hooks al reves ---------------------------------------------------------------
+
 
 def test_stop_tardio_del_pedido_anterior_no_pisa_el_corriendo(aislado):
     ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="primero", host_ts=local(-60)))
@@ -85,27 +98,50 @@ def test_stop_sin_prompt_id_cierra_como_siempre(aislado):
 
 # 2. la transcripcion corrige a los hooks ----------------------------------------------
 
+
 def rows_encolado() -> list[dict]:
     """La forma medida en 599a7e3e: turn_duration y, en el mismo segundo, el pedido que estaba
     encolado; despues herramientas durante minutos."""
     return [
         {"type": "user", "timestamp": utc(-50), "promptId": "A", "message": {"role": "user", "content": "primero"}},
-        {"type": "assistant", "timestamp": utc(-0.1), "message": {"role": "assistant", "content": [{"type": "text", "text": "Listo el primero."}]}},
+        {
+            "type": "assistant",
+            "timestamp": utc(-0.1),
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Listo el primero."}]},
+        },
         {"type": "system", "subtype": "stop_hook_summary", "timestamp": utc(-0.01)},
         {"type": "system", "subtype": "turn_duration", "timestamp": utc(0)},
-        {"type": "user", "timestamp": utc(0.06), "promptId": "B", "message": {"role": "user", "content": "segundo, largo"}},
-        {"type": "assistant", "timestamp": utc(18), "message": {"role": "assistant", "content": [{"type": "text", "text": "Voy."}]}},
-        {"type": "assistant", "timestamp": utc(25), "message": {"role": "assistant", "content": [
-            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}},
-        {"type": "user", "timestamp": utc(27), "promptId": "B", "message": {"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": "t1", "content": "a b c"}]}},
+        {
+            "type": "user",
+            "timestamp": utc(0.06),
+            "promptId": "B",
+            "message": {"role": "user", "content": "segundo, largo"},
+        },
+        {
+            "type": "assistant",
+            "timestamp": utc(18),
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Voy."}]},
+        },
+        {
+            "type": "assistant",
+            "timestamp": utc(25),
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}],
+            },
+        },
+        {
+            "type": "user",
+            "timestamp": utc(27),
+            "promptId": "B",
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "a b c"}]},
+        },
     ]
 
 
 def write_jsonl(path, rows) -> str:
     with open(path, "w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        f.writelines(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
     return str(path)
 
 
@@ -158,11 +194,11 @@ def test_transcripcion_respeta_te_necesita_y_el_envio_reciente(aislado):
 
 # 3. la transcripcion real ------------------------------------------------------------
 
+
 def caso_real():
     """(ruta, filas hasta el primer tool_result del pedido encolado, ts del turn_duration) en la
     primera transcripcion de ~/.claude/projects/D--Apps-lienzo que tenga un turn_duration seguido
     en menos de un segundo por un pedido humano. None si no hay."""
-    import datetime as dt
     for p in sorted(glob.glob(os.path.join(CLAUDE_DIR, "*.jsonl")), key=os.path.getsize, reverse=True):
         rows = []
         with open(p, encoding="utf-8") as f:
@@ -174,8 +210,14 @@ def caso_real():
         for i, r in enumerate(rows):
             if r.get("type") != "system" or r.get("subtype") != "turn_duration":
                 continue
-            nxt = next((j for j in range(i + 1, len(rows)) if rows[j].get("type") in ("user", "assistant")
-                        and not rows[j].get("isSidechain")), None)
+            nxt = next(
+                (
+                    j
+                    for j in range(i + 1, len(rows))
+                    if rows[j].get("type") in ("user", "assistant") and not rows[j].get("isSidechain")
+                ),
+                None,
+            )
             if nxt is None or rows[nxt].get("type") != "user":
                 continue
             c = (rows[nxt].get("message") or {}).get("content")
@@ -184,8 +226,14 @@ def caso_real():
             a, b = st.parse_ts(r.get("timestamp")), st.parse_ts(rows[nxt].get("timestamp"))
             if not a or not b or (b - a).total_seconds() > 1.0:
                 continue
-            end = next((j for j in range(nxt + 1, len(rows)) if rows[j].get("type") == "user"
-                        and isinstance((rows[j].get("message") or {}).get("content"), list)), None)
+            end = next(
+                (
+                    j
+                    for j in range(nxt + 1, len(rows))
+                    if rows[j].get("type") == "user" and isinstance((rows[j].get("message") or {}).get("content"), list)
+                ),
+                None,
+            )
             if end is None:
                 continue
             return p, rows[: end + 1], a
@@ -199,6 +247,7 @@ def test_caso_real_pedido_encolado(aislado):
     src, rows, td = caso
     path = write_jsonl(aislado / "real.jsonl", rows)
     import datetime as dt
+
     since = (td + dt.timedelta(milliseconds=300)).astimezone().isoformat(timespec="milliseconds")
     s = tarjeta(path, "termino", since)
     ses.refresh_from_transcript(s)
@@ -207,6 +256,7 @@ def test_caso_real_pedido_encolado(aislado):
 
 
 # 4. /config y el link del usuario --------------------------------------------------------
+
 
 def test_set_config_key_solo_toca_esa_clave(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
@@ -271,15 +321,44 @@ def sesion_vieja(aislado):
     tp_old = str(aislado / f"{OLD}.jsonl")
     open(tp_old, "w").close()
     ses.apply_event(evp("SessionStart", OLD, transcript_path=tp_old, host_ts=local(-600)))
-    ses.apply_event(evp("UserPromptSubmit", OLD, prompt_id="A", prompt="hace algo", transcript_path=tp_old, host_ts=local(-500)))
-    ses.apply_event(evp("Stop", OLD, prompt_id="A", last_assistant_message="hecho", transcript_path=tp_old, host_ts=local(-400)))
+    ses.apply_event(
+        evp("UserPromptSubmit", OLD, prompt_id="A", prompt="hace algo", transcript_path=tp_old, host_ts=local(-500))
+    )
+    ses.apply_event(
+        evp("Stop", OLD, prompt_id="A", last_assistant_message="hecho", transcript_path=tp_old, host_ts=local(-400))
+    )
     old = st.sessions[OLD]
     assert old["pid"] == PID and old["state"] == "termino"
     # lo que la apunta: la regla "cuando termine" hacia la coordinadora y un envio que recibio
-    st.rules.add({"id": "r1", "kind": "on_stop", "from": OLD, "to": COORD, "text": "{respuesta}", "repeat": False,
-                      "max_fires": 1, "fired": 0, "enabled": True, "created": st.now()})
-    st.rules.add({"id": "r2", "kind": "at", "from": COORD, "to": OLD, "text": "Continuar", "at": st.now(),
-                      "repeat": False, "max_fires": 1, "fired": 0, "enabled": True, "created": st.now()})
+    st.rules.add(
+        {
+            "id": "r1",
+            "kind": "on_stop",
+            "from": OLD,
+            "to": COORD,
+            "text": "{respuesta}",
+            "repeat": False,
+            "max_fires": 1,
+            "fired": 0,
+            "enabled": True,
+            "created": st.now(),
+        }
+    )
+    st.rules.add(
+        {
+            "id": "r2",
+            "kind": "at",
+            "from": COORD,
+            "to": OLD,
+            "text": "Continuar",
+            "at": st.now(),
+            "repeat": False,
+            "max_fires": 1,
+            "fired": 0,
+            "enabled": True,
+            "created": st.now(),
+        }
+    )
     ses.add_link(COORD, OLD, "revisá esto", "send")
     return old
 
@@ -302,8 +381,12 @@ def test_clear_la_sesion_nueva_hereda_pid_reglas_y_links(aislado, con_pid):
     assert not os.path.exists(os.path.join(st.SESSIONS, f"{OLD}.json"))
 
     # y la nueva sigue recibiendo sus eventos con normalidad
-    ses.apply_event(evp("UserPromptSubmit", NEW, prompt_id="B", prompt="segui", transcript_path=tp_new, host_ts=local(0)))
-    ses.apply_event(evp("Stop", NEW, prompt_id="B", last_assistant_message="listo", transcript_path=tp_new, host_ts=local(30)))
+    ses.apply_event(
+        evp("UserPromptSubmit", NEW, prompt_id="B", prompt="segui", transcript_path=tp_new, host_ts=local(0))
+    )
+    ses.apply_event(
+        evp("Stop", NEW, prompt_id="B", last_assistant_message="listo", transcript_path=tp_new, host_ts=local(30))
+    )
     assert new["state"] == "termino"
 
 
@@ -312,7 +395,9 @@ def test_sin_session_end_pero_con_transcripcion_propia_tambien_continua(aislado,
     sesion_vieja(aislado)
     tp_new = str(aislado / f"{NEW}.jsonl")
     open(tp_new, "w").close()
-    ses.apply_event(evp("UserPromptSubmit", NEW, prompt_id="B", prompt="hola", transcript_path=tp_new, host_ts=local(0)))
+    ses.apply_event(
+        evp("UserPromptSubmit", NEW, prompt_id="B", prompt="hola", transcript_path=tp_new, host_ts=local(0))
+    )
     assert OLD not in st.sessions
     assert st.sessions[NEW]["pid"] == PID
     assert st.rules.items[0]["from"] == NEW
@@ -324,8 +409,16 @@ def test_prueba_manual_del_hook_no_roba_el_pid(aislado, con_pid):
     # session_id inventado, mismo pid, sin SessionEnd previo y sin transcripcion propia (o con una
     # que no existe): la duena sigue viva y se queda con el pid y con sus reglas
     for tp in (None, str(aislado / "no-existe.jsonl"), old["transcript_path"]):
-        ses.apply_event(evp("UserPromptSubmit", NEW, prompt="prueba", prompt_id="X", host_ts=local(0),
-                               **({"transcript_path": tp} if tp else {})))
+        ses.apply_event(
+            evp(
+                "UserPromptSubmit",
+                NEW,
+                prompt="prueba",
+                prompt_id="X",
+                host_ts=local(0),
+                **({"transcript_path": tp} if tp else {}),
+            )
+        )
     assert OLD in st.sessions and old["pid"] == PID
     assert st.sessions[NEW]["pid"] is None
     assert [(r["from"], r["to"]) for r in st.rules.items] == [(OLD, COORD), (COORD, OLD)]
@@ -334,6 +427,7 @@ def test_prueba_manual_del_hook_no_roba_el_pid(aislado, con_pid):
 
 
 # 6. state nunca None ------------------------------------------------------------------
+
 
 def test_state_nunca_queda_en_none(aislado, monkeypatch):
     s = ses.new_session(SID, "claude", "hook")
@@ -348,8 +442,12 @@ def test_state_nunca_queda_en_none(aislado, monkeypatch):
     ses.set_state(s, "cualquiera")  # type: ignore[arg-type]
     assert s["state"] == "corriendo"
     # y load_sessions repara el archivo al arrancar
-    bad = dict(ses.new_session("aaaa0000-0000-4000-8000-000000000000", "claude", "hook"), state=None, pid=None,
-               last_event_ts=st.now())
+    bad = dict(
+        ses.new_session("aaaa0000-0000-4000-8000-000000000000", "claude", "hook"),
+        state=None,
+        pid=None,
+        last_event_ts=st.now(),
+    )
     with open(os.path.join(st.SESSIONS, f"{bad['session_id']}.json"), "w", encoding="utf-8") as f:
         json.dump(bad, f)
     monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: False)
@@ -359,6 +457,7 @@ def test_state_nunca_queda_en_none(aislado, monkeypatch):
 
 
 # 7. envio desde la UI: chars y pedido reales, y no revivir una sesion con SessionEnd -------------
+
 
 class _Run:
     def __init__(self, chars):
@@ -371,7 +470,9 @@ def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
     monkeypatch.setattr(st, "ADJUNTOS", str(aislado / "adjuntos"))
     monkeypatch.setattr(ses, "ADJUNTOS", str(aislado / "adjuntos"))
     typed = []
-    monkeypatch.setattr(ses.subprocess, "run", lambda cmd, **k: (typed.append(cmd), _Run(len(cmd[cmd.index("--text") + 1])))[1])
+    monkeypatch.setattr(
+        ses.subprocess, "run", lambda cmd, **k: (typed.append(cmd), _Run(len(cmd[cmd.index("--text") + 1])))[1]
+    )
     s = ses.new_session(SID, "claude", "hook")
     s.update({"pid": PID, "state": "termino", "last_event": "Stop"})
     st.sessions[SID] = s
@@ -381,7 +482,9 @@ def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
     assert code == 200
     assert typed[-1][typed[-1].index("--text") + 1].startswith(ses.ATTACH_WRAPPER)
     assert out["chars"] == len(msg.strip()), "el toast cuenta el mensaje, no el envoltorio"
-    assert s["last_prompt"].startswith("Sos parte de la fase 1."), "la tarjeta muestra el contenido, no 'Leé el archivo adjunto'"
+    assert s["last_prompt"].startswith(
+        "Sos parte de la fase 1."
+    ), "la tarjeta muestra el contenido, no 'Leé el archivo adjunto'"
     assert s["state"] == "corriendo"
     # sesion terminada por SessionEnd (/clear, resume): la consola es de otra; el envio sale pero
     # esta tarjeta no vuelve a 'corriendo'
@@ -392,6 +495,7 @@ def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
 
 
 # 8. reglas 'at' periodicas: cada every_s segundos, con tope max_fires ------------------------
+
 
 @pytest.fixture
 def periodica(aislado, con_pid, monkeypatch):
@@ -406,10 +510,23 @@ def periodica(aislado, con_pid, monkeypatch):
 
 def regla_at(every_s, max_fires=3, at_offset_s=-1.0, **k) -> dict:
     import datetime as dt
+
     at = (dt.datetime.now().astimezone() + dt.timedelta(seconds=at_offset_s)).isoformat(timespec="seconds")
-    r = {"id": "p1", "kind": "at", "from": None, "to": SID, "text": "continuá", "at": at,
-         "repeat": bool(every_s), "every_s": every_s, "max_fires": max_fires, "skip_busy": bool(every_s),
-         "fired": 0, "enabled": True, "created": st.now()}
+    r = {
+        "id": "p1",
+        "kind": "at",
+        "from": None,
+        "to": SID,
+        "text": "continuá",
+        "at": at,
+        "repeat": bool(every_s),
+        "every_s": every_s,
+        "max_fires": max_fires,
+        "skip_busy": bool(every_s),
+        "fired": 0,
+        "enabled": True,
+        "created": st.now(),
+    }
     r.update(k)
     st.rules.add(r)
     return r
@@ -417,6 +534,7 @@ def regla_at(every_s, max_fires=3, at_offset_s=-1.0, **k) -> dict:
 
 def _at(r: dict):
     import datetime as dt
+
     return dt.datetime.fromisoformat(r["at"])
 
 
@@ -462,8 +580,9 @@ def test_at_periodica_saltea_sin_contar_si_el_destino_corre(periodica):
 
 def test_at_periodica_atrasada_horas_avanza_hasta_el_futuro_de_un_salto(periodica):
     import datetime as dt
+
     s, sent = periodica
-    r = regla_at(600, max_fires=5, at_offset_s=-5 * 3600)   # el server estuvo caido 5 h
+    r = regla_at(600, max_fires=5, at_offset_s=-5 * 3600)  # el server estuvo caido 5 h
     rl.fire_rule(r)
     ahora = dt.datetime.now().astimezone()
     assert sent == ["continuá"] and r["fired"] == 1, "los periodos perdidos no se disparan"
@@ -471,7 +590,7 @@ def test_at_periodica_atrasada_horas_avanza_hasta_el_futuro_de_un_salto(periodic
     # y cae sobre la grilla original (multiplo de 600 s desde el at inicial)
     inicial = ahora - dt.timedelta(hours=5)
     resto = round((_at(r) - inicial).total_seconds()) % 600
-    assert min(resto, 600 - resto) <= 1   # `at` se guarda sin microsegundos: puede caer 1 s abajo
+    assert min(resto, 600 - resto) <= 1  # `at` se guarda sin microsegundos: puede caer 1 s abajo
 
 
 def test_at_sin_every_s_sigue_siendo_de_un_disparo(periodica):
@@ -507,6 +626,7 @@ def test_at_fields_valida_every_s_y_pone_los_defaults():
 
 # 9. fase 2: titulo desde el adjunto, idle_prompt sin pregunta, programadas que chocan, coordinadora
 
+
 def test_titulo_del_adjunto_le_gana_al_ai_title(aislado):
     md = aislado / "20260906-encargo.md"
     md.write_text("\n# Encargo B: tarjetas y flechas de la fase 2\n\ntexto del encargo\n", encoding="utf-8")
@@ -519,7 +639,9 @@ def test_titulo_del_adjunto_le_gana_al_ai_title(aislado):
     assert s["last_prompt"].startswith("# Encargo B"), "la tarjeta muestra el contenido, no el envoltorio"
     assert s["last_attachment"] == str(md)
     # el hook real: UserPromptSubmit con el envoltorio, y despues el ai-title de la transcripcion no lo pisa
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt=f"{ses.ATTACH_WRAPPER} Adjunto: {md}", host_ts=local(0)))
+    ses.apply_event(
+        ev("UserPromptSubmit", prompt_id="A", prompt=f"{ses.ATTACH_WRAPPER} Adjunto: {md}", host_ts=local(0))
+    )
     assert s["title"] == "Encargo B: tarjetas y flechas de la fase 2"
     ses.choose_title(s, "Revisar archivo de tareas")
     assert s["title"] == "Encargo B: tarjetas y flechas de la fase 2"
@@ -534,14 +656,25 @@ def test_titulo_del_adjunto_le_gana_al_ai_title(aislado):
 
 
 def test_bad_title_reconoce_mensaje_y_encargo():
-    for t in ("Mensaje", "mensaje 20260906", "Mensaje del 20260905", "MENSAJE DEL 6 de septiembre", "Encargo", "Leer archivo adjunto", "", None):
+    for t in (
+        "Mensaje",
+        "mensaje 20260906",
+        "Mensaje del 20260905",
+        "MENSAJE DEL 6 de septiembre",
+        "Encargo",
+        "Leer archivo adjunto",
+        "",
+        None,
+    ):
         assert ses.bad_title(t), t
     for t in ("Encargo B: tarjetas", "Mensaje a Marian sobre el tablero", "Reglas periodicas"):
         assert not ses.bad_title(t), t
 
 
 def test_idle_prompt_solo_es_te_necesita_con_pregunta_o_sin_pedido(aislado):
-    idle = ev("Notification", notification_type="idle_prompt", message="Claude is waiting for your input", host_ts=local(60))
+    idle = ev(
+        "Notification", notification_type="idle_prompt", message="Claude is waiting for your input", host_ts=local(60)
+    )
     # informe entregado sin pregunta: queda en termino, sin needs
     ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="hace X", host_ts=local(-60)))
     ses.apply_event(ev("Stop", prompt_id="A", last_assistant_message="Listo, quedó en X.", host_ts=local(0)))
@@ -567,22 +700,31 @@ def test_idle_prompt_solo_es_te_necesita_con_pregunta_o_sin_pedido(aislado):
 
 def test_dos_programadas_al_mismo_minuto_chocan_y_replace_reemplaza(aislado, con_pid, monkeypatch):
     import datetime as dt
+
     s = ses.new_session(SID, "claude", "hook")
     st.sessions[SID] = s
     at = dt.datetime.now().astimezone().replace(microsecond=0) + dt.timedelta(hours=1)
     code, r1 = server.create_rule({"kind": "at", "to": SID, "text": "Continuar", "at": at.isoformat()})
     assert code == 200
     # otro texto, 90 s despues, periodica: choca igual
-    code, res = server.create_rule({"kind": "at", "to": SID, "text": "continua", "at": (at + dt.timedelta(seconds=90)).isoformat(), "every_s": 600})
+    code, res = server.create_rule(
+        {"kind": "at", "to": SID, "text": "continua", "at": (at + dt.timedelta(seconds=90)).isoformat(), "every_s": 600}
+    )
     assert code == 409
-    assert res["rule_id"] == r1["id"] and res["replace"] is True and res["text"] == "Continuar" and res["at"] == r1["at"]
+    assert (
+        res["rule_id"] == r1["id"] and res["replace"] is True and res["text"] == "Continuar" and res["at"] == r1["at"]
+    )
     assert res["error"] == f"ya hay una programada a las {at.strftime('%H:%M')} para esa sesión"
     assert len(st.rules.items) == 1
     # a 3 min no choca
-    code, r3 = server.create_rule({"kind": "at", "to": SID, "text": "otra", "at": (at + dt.timedelta(minutes=3)).isoformat()})
+    code, r3 = server.create_rule(
+        {"kind": "at", "to": SID, "text": "otra", "at": (at + dt.timedelta(minutes=3)).isoformat()}
+    )
     assert code == 200 and len(st.rules.items) == 2
     # con replace: true la nueva reemplaza a la que chocaba
-    code, r4 = server.create_rule({"kind": "at", "to": SID, "text": "continua", "at": at.isoformat(), "every_s": 600, "replace": True})
+    code, r4 = server.create_rule(
+        {"kind": "at", "to": SID, "text": "continua", "at": at.isoformat(), "every_s": 600, "replace": True}
+    )
     assert code == 200 and r4["every_s"] == 600
     assert [r["id"] for r in st.rules.items] == [r3["id"], r4["id"]]
     # validaciones que ya existian siguen pasando por aca
@@ -622,16 +764,22 @@ def test_coordinadora_se_hereda_con_el_pid(aislado, con_pid):
 
 # 10. HTTP: el body se lee siempre, aunque la respuesta sea 403 o 404 -----------------------------
 
+
 def test_keep_alive_tras_un_404_sigue_contestando(aislado):
     """Antes, un POST a una ruta desconocida (o sin X-Lienzo) contestaba sin leer el cuerpo; el
     siguiente request de la misma conexion keep-alive leia ese cuerpo como linea de pedido y daba 501."""
     import http.client
     import threading
+
     srv = server.QuietServer(("127.0.0.1", 0), server.Handler)
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
-        for path, headers, first in (("/nada", {"X-Lienzo": "1"}, 404), ("/rules", {}, 403), ("/rules", {"X-Lienzo": "1"}, 400)):
+        for path, headers, first in (
+            ("/nada", {"X-Lienzo": "1"}, 404),
+            ("/rules", {}, 403),
+            ("/rules", {"X-Lienzo": "1"}, 400),
+        ):
             c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=3)
             c.request("POST", path, body='{"kind": "x"}', headers={"Content-Type": "application/json", **headers})
             r = c.getresponse()
@@ -664,19 +812,22 @@ def test_el_adjunto_de_un_informe_recibido_no_titula_la_coordinadora(tmp_path):
 
 # 10. simplificacion del backend: las funciones chicas de turn_activity y el adjunto
 
+
 def blk(name, inp=None, err=False):
     return {"kind": "tool", "name": name, "input": inp or {}, "result": {"is_error": err}}
 
 
 def test_turn_activity_cuenta_archivos_comando_y_errores_en_una_pasada():
-    t = {"blocks": [
-        {"kind": "text", "text": "arranco"},
-        blk("Read", {"file_path": r"D:\Apps\lienzo\lienzo\state.py"}),
-        blk("Bash", {"command": r'cd "D:\Apps\lienzo" && python -m pytest tests -q'}, err=True),
-        blk("Edit", {"file_path": "D:/Apps/lienzo/lienzo/sessions.py"}),
-        blk("Read", {"file_path": "D:/Apps/lienzo/lienzo/sessions.py"}),   # repetido: un solo nombre
-        {"kind": "thinking", "text": "no cuenta"},
-    ]}
+    t = {
+        "blocks": [
+            {"kind": "text", "text": "arranco"},
+            blk("Read", {"file_path": r"D:\Apps\lienzo\lienzo\state.py"}),
+            blk("Bash", {"command": r'cd "D:\Apps\lienzo" && python -m pytest tests -q'}, err=True),
+            blk("Edit", {"file_path": "D:/Apps/lienzo/lienzo/sessions.py"}),
+            blk("Read", {"file_path": "D:/Apps/lienzo/lienzo/sessions.py"}),  # repetido: un solo nombre
+            {"kind": "thinking", "text": "no cuenta"},
+        ]
+    }
     a = ses.turn_activity(t)
     assert a["tool_count"] == 4
     assert a["last_files"] == ["sessions.py", "state.py"], "del mas nuevo al mas viejo, sin repetir"
@@ -712,3 +863,202 @@ def test_attachment_path_toma_el_ultimo_adjunto_md_que_existe(tmp_path):
     assert ses.attachment_path(f"{ses.ATTACH_WRAPPER} Adjunto: {tmp_path / 'no-esta.md'} Adjunto: {md}") == str(md)
     assert ses.attachment_path("un pedido cualquiera") is None
     assert ses.attachment_path(f"{ses.ATTACH_WRAPPER} Adjunto: {tmp_path / 'foto.png'}") is None
+
+
+# 11. la carrera del lock: lo lento corre afuera, y al volver la tarjeta puede haberse ido
+
+
+def lock_libre() -> bool:
+    """Si el lock global esta libre AHORA. Se prueba desde otro hilo a proposito: es reentrante, y
+    desde el hilo que lo tiene tomado un acquire() siempre daria True."""
+    import threading
+
+    res = []
+
+    def probe():
+        got = st.lock.acquire(blocking=False)
+        res.append(got)
+        if got:
+            st.lock.release()
+
+    t = threading.Thread(target=probe)
+    t.start()
+    t.join()
+    return res[0]
+
+
+def tarjeta_claude(sid=SID):
+    s = ses.new_session(sid, "claude", "hook")
+    s.update({"pid": PID, "alive": True, "state": "termino"})
+    st.sessions[sid] = s
+    return s
+
+
+def test_el_lock_esta_libre_mientras_se_lee_la_pantalla(aislado, monkeypatch):
+    """read_screen es un subproceso de 183 ms: con el lock tomado frenaria los hooks y el HTTP."""
+    s = tarjeta_claude()
+    visto = []
+    leido = {"ok": True, "area": {"input": "hola", "placeholder": False}}
+    monkeypatch.setattr(ses, "read_screen", lambda pid: (visto.append(lock_libre()), leido)[1])
+    ses.screen_once()
+    assert visto == [True], "screen_once tenia el lock tomado mientras corria el subproceso"
+    assert s["suggestion"] == "hola"
+
+
+def test_la_pantalla_no_revive_una_tarjeta_borrada_mientras_se_leia(aislado, monkeypatch):
+    """Entre el read_screen y el touch la tarjeta puede haberse borrado: el touch le rehacia el
+    archivo en disco y volvia como fantasma en el arranque siguiente."""
+    tarjeta_claude()
+
+    def leyendo(pid):
+        ses.drop_session(SID, "borrada desde la UI mientras se leia")
+        return {"ok": True, "area": {"input": "hola", "placeholder": False}}
+
+    monkeypatch.setattr(ses, "read_screen", leyendo)
+    ses.screen_once()
+    assert SID not in st.sessions
+    assert not os.path.exists(os.path.join(str(aislado), f"{SID}.json")), "la tarjeta borrada revivio"
+
+
+def test_el_lock_esta_libre_mientras_se_parsea_la_transcripcion(aislado, monkeypatch, tmp_path):
+    """El parseo son 22 ms de mediana por sesion, cada 2 s: va fuera del lock (read_transcript),
+    y solo el volcado a la tarjeta (apply_transcript) va adentro."""
+    tp = tmp_path / "t.jsonl"
+    tp.write_text("{}\n", encoding="utf-8")
+    s = tarjeta_claude()
+    s["transcript_path"] = str(tp)
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    visto = []
+    monkeypatch.setattr(ses, "read_transcript", lambda x: (visto.append(lock_libre()), None)[1])
+    dentro = []
+    monkeypatch.setattr(ses.state, "broadcast", lambda ev: dentro.append(ev.get("type")))
+    ses.check_liveness(SID)
+    assert visto == [True], "check_liveness tenia el lock tomado mientras parseaba la transcripcion"
+    assert "transcript" in dentro, "la transcripcion crecio: hay que avisar igual"
+
+
+def test_la_transcripcion_no_revive_una_tarjeta_borrada_mientras_se_leia(aislado, monkeypatch, tmp_path):
+    tp = tmp_path / "t.jsonl"
+    tp.write_text("{}\n", encoding="utf-8")
+    s = tarjeta_claude()
+    s["transcript_path"] = str(tp)
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+
+    def leyendo(x):
+        ses.drop_session(SID, "borrada mientras se leia")
+        return {"meta": {}, "turns": [], "title": None}
+
+    monkeypatch.setattr(ses, "read_transcript", leyendo)
+    ses.check_liveness(SID)
+    assert SID not in st.sessions
+    assert not os.path.exists(os.path.join(str(aislado), f"{SID}.json")), "la tarjeta borrada revivio"
+
+
+def test_el_lock_esta_libre_mientras_send_py_tipea(aislado, monkeypatch):
+    """send.py puede tardar hasta 60 s: con el lock tomado congelaria el tablero entero."""
+    s = tarjeta_claude()
+    s["last_event"] = "Stop"
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    visto = []
+    monkeypatch.setattr(ses.subprocess, "run", lambda cmd, **k: (visto.append(lock_libre()), _Run(4))[1])
+    code, _ = ses.send_to_session(s, "hola", [])
+    assert code == 200 and visto == [True], "send_to_session tenia el lock tomado mientras tipeaba"
+    assert s["state"] == "corriendo" and s["last_prompt"] == "hola"
+
+
+# 12. encargo V2: la firma que quedaba colgada, el 500 que hablaba de mas, y la carrera de verdad
+
+
+def test_drop_session_limpia_la_firma_de_la_transcripcion(aislado, tmp_path):
+    """transcript_stat es un dict de modulo: sin limpiarlo quedaba una entrada por cada tarjeta que
+    existio desde que arranco el server, para siempre."""
+    tp = tmp_path / "t.jsonl"
+    tp.write_text("{}", encoding="utf-8")
+    s = tarjeta_claude()
+    s["transcript_path"] = str(tp)
+    st.transcript_stat[SID] = (1, 2)
+    ses.drop_session(SID, "borrada en el test")
+    assert SID not in st.transcript_stat, "la firma de una tarjeta borrada quedo colgada"
+    assert SID not in st.sessions
+
+
+def test_el_500_no_le_manda_al_cliente_el_texto_de_la_excepcion(aislado, monkeypatch):
+    """Por el tunel, str(e) sale hacia afuera y puede llevar rutas y nombres de la maquina. Al
+    cliente le tiene que llegar un id corto, y el detalle quedar en el log con el mismo id."""
+    import http.client
+    import threading
+
+    secreto = r"C:\Users\alguien\.lienzo\secreto.json no existe"
+    monkeypatch.setattr(server, "public_config", lambda: (_ for _ in ()).throw(RuntimeError(secreto)))
+    logueado = []
+    monkeypatch.setattr(server, "log", lambda msg: logueado.append(str(msg)))
+    srv = server.QuietServer(("127.0.0.1", 0), server.Handler)
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=3)
+        c.request("GET", "/config")
+        r = c.getresponse()
+        cuerpo = json.loads(r.read())
+        c.close()
+    finally:
+        srv.shutdown()
+    assert r.status == 500
+    assert secreto not in json.dumps(cuerpo), f"el 500 le mando la excepcion al cliente: {cuerpo}"
+    eid = cuerpo["error_id"]
+    assert len(eid) == 8 and eid in cuerpo["error"], "el id tiene que verse en el campo que muestra la UI"
+    detalle = "\n".join(logueado)
+    assert eid in detalle and secreto in detalle, "el detalle tiene que quedar en el log, con el mismo id"
+
+
+def test_dos_hilos_sobre_la_misma_tarjeta_no_la_dejan_en_un_estado_imposible(aislado, monkeypatch):
+    """El invariante de set_state: si el estado no es te_necesita, `needs` va en None. Con
+    check_liveness escribiendo el dict sin el lock, este intercalado lo rompia y quedaba una tarjeta
+    'muerta' con un permiso pendiente colgado, que la UI muestra y nadie puede contestar:
+
+        apply_event  set_state(te_necesita) -> state="te_necesita"
+        liveness     set_state(muerta)      -> state="muerta"; needs=None
+        apply_event  s["needs"] = {...}     -> state="muerta" CON needs
+
+    El muestreo tambien toma el lock: con el arreglo no puede ver un estado a medio escribir.
+    Medido contra el check_liveness viejo: 12 de 12 corridas lo detectan (200 a 390 muestras rotas
+    cada una); contra el nuevo, 0 de 12."""
+    import threading
+
+    tarjeta_claude()
+    monkeypatch.setattr(ses, "save_session", lambda s: None)  # sin tocar disco: esto corre miles de veces
+    vivo = [True]
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: vivo[0])
+    rondas, parar, rotos = 300, threading.Event(), []
+
+    def hooks():
+        for _ in range(rondas):
+            ses.apply_event(ev("PermissionRequest", tool_name="Bash", tool_use_id="t1", host_ts=local(0)))
+            ses.apply_event(ev("PermissionDecision", host_ts=local(1)))
+        parar.set()
+
+    def liveness():
+        while not parar.is_set():
+            vivo[0] = not vivo[0]
+            ses.check_liveness(SID)
+
+    def mirar():
+        while not parar.is_set():
+            with st.lock:
+                s = st.sessions.get(SID)
+                if s and s["state"] != "te_necesita" and s.get("needs") is not None:
+                    rotos.append((s["state"], s["needs"]))
+
+    hilos = [threading.Thread(target=f) for f in (hooks, liveness, mirar)]
+    antes = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # sin esto el GIL casi no cambia de hilo y la ventana no se pisa nunca
+    try:
+        for t in hilos:
+            t.start()
+        for t in hilos:
+            t.join(timeout=30)
+    finally:
+        parar.set()
+        sys.setswitchinterval(antes)
+    assert not any(t.is_alive() for t in hilos), "algun hilo quedo trabado: revisar deadlocks"
+    assert not rotos, f"{len(rotos)} muestras con la tarjeta en un estado imposible, la primera {rotos[0]}"

@@ -295,21 +295,30 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setShowHelp(false)}>
           <div className="gate-box help" role="dialog" aria-label="atajos">
             <h1>Atajos</h1>
+            {/* primero los gestos del mouse, que son los que se olvidan, y despues las teclas */}
             <dl>
+              <dt>click</dt>
+              <dd>elige la tarjeta: la resalta con sus flechas y muestra sus conexiones en palabras</dd>
+              <dt>doble click</dt>
+              <dd>abre el panel de la tarjeta</dd>
+              <dt>arrastrar</dt>
+              <dd>una tarjeta sobre otra abre el diálogo de conectar con ese destino; soltarla sobre sí misma, Programar</dd>
+              <dt>✎</dt>
+              <dd>renombra la tarjeta en el lugar (aparece al pasar el mouse, junto a la estrella)</dd>
+              <dt>flecha</dt>
+              <dd>un click la elige; doble click la opera: en un envío muestra lo que se mandó, en una regla la abre para editar</dd>
+              <dt>columna</dt>
+              <dd>click en su título la colapsa a una tira; en la tira, la expande</dd>
               <dt><kbd>Esc</kbd></dt>
-              <dd>cierra el panel, el diálogo de conectar o esta ayuda; en la búsqueda, la limpia</dd>
+              <dd>pela una capa por vez: el arrastre, esta ayuda, el diálogo de conectar, el panel, y al final la tarjeta elegida; en la búsqueda, la limpia</dd>
+              <dt><kbd>Enter</kbd></dt>
+              <dd>sobre una tarjeta enfocada, abre su panel</dd>
               <dt><kbd>Tab</kbd></dt>
               <dd>en la caja de envío, acepta la sugerencia gris leída de la terminal</dd>
               <dt><kbd>/</kbd></dt>
-              <dd>enfoca la búsqueda (repo, título, último pedido)</dd>
+              <dd>enfoca la búsqueda (agente, repo, rama, título, último pedido)</dd>
               <dt><kbd>?</kbd></dt>
               <dd>muestra u oculta esta ayuda</dd>
-              <dt><kbd>Enter</kbd></dt>
-              <dd>sobre una tarjeta enfocada, abre su panel</dd>
-              <dt>arrastrar</dt>
-              <dd>una tarjeta sobre otra abre el diálogo de conectar con ese destino</dd>
-              <dt>click</dt>
-              <dd>en el título de una columna la colapsa a una tira; en la tira, la expande</dd>
             </dl>
             <div className="row">
               <span className="sp" />

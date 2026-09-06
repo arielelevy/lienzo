@@ -99,35 +99,46 @@ function useRename(s: Session, toast: ToastFn) {
   return { editing, start, input };
 }
 
-/** Las conexiones de la tarjeta elegida, en palabras: una frase por linea. Lo ya recibido no se
- *  puede quitar; cada regla lleva su ✕, como el chip. */
+/** Las conexiones de la tarjeta elegida, en palabras: una frase por linea, con su ✕ las reglas (lo
+ *  ya recibido no se puede quitar). Como mucho dos, y el resto contado en "+N mas", como hacian los
+ *  chips: la coordinadora tiene 20 reglas activas y las escribia todas (medido: la tarjeta pasaba
+ *  de 205 a 559 px). El bloque se dibuja por encima, colgado del borde de abajo (card.css), asi
+ *  elegir una tarjeta no cambia ningun alto ni mueve a las demas de subcolumna. */
+const MAX_WORDS = 2;
+
 function CardWords({ sid, rules, links, sessions, onDelete }: { sid: string; rules: Rule[]; links: Link[]; sessions: Record<string, Session>; onDelete?: (id: string) => void }) {
-  const said = linkSentences(links, sid, sessions);
-  if (!rules.length && !said.length) return null;
+  const items = [
+    ...linkSentences(links, sid, sessions).map((t) => ({ key: t, text: t, id: null as string | null })),
+    ...rules.map((r) => ({ key: r.id, text: ruleSentence(r, sid, sessions), id: r.id })),
+  ];
+  if (!items.length) return null;
+  const rest = items.slice(MAX_WORDS);
   return (
     <div className="words">
-      {said.map((t) => (
-        <div key={t} className="w done">
-          {t}
+      {items.slice(0, MAX_WORDS).map((it) => (
+        <div key={it.key} className={`w ${it.id ? "" : "done"}`}>
+          <span>{it.text}</span>
+          {it.id && (
+            <button
+              type="button"
+              className="del"
+              title="quitar"
+              aria-label="quitar conexión"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm("Quitar esta conexión?")) onDelete?.(it.id!);
+              }}
+            >
+              ✕
+            </button>
+          )}
         </div>
       ))}
-      {rules.map((r) => (
-        <div key={r.id} className="w">
-          <span>{ruleSentence(r, sid, sessions)}</span>
-          <button
-            type="button"
-            className="del"
-            title="quitar"
-            aria-label="quitar conexión"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm("Quitar esta conexión?")) onDelete?.(r.id);
-            }}
-          >
-            ✕
-          </button>
+      {!!rest.length && (
+        <div className="w more" title={rest.map((r) => r.text).join("\n") + "\n\nEstán todas en la pestaña Conexiones del panel."}>
+          +{rest.length} más
         </div>
-      ))}
+      )}
     </div>
   );
 }
@@ -202,8 +213,9 @@ interface Props {
   selected: boolean;
   /** elegida con un click en el tablero: se resalta y muestra sus conexiones en palabras */
   picked?: boolean;
-  /** esta en el otro extremo de una conexion de la elegida: tambien muestra las suyas en palabras */
-  related?: boolean;
+  /** esta en el otro extremo de una conexion de la elegida: muestra en palabras **solo** eso que
+   *  comparte con ella (lo arma Board), no todas las conexiones que tenga */
+  related?: { links: Link[]; rules: Rule[] };
   /** un click: elegir la tarjeta, sin abrir nada */
   onPick?: () => void;
   /** doble click (o Enter): abrir el panel */
@@ -216,7 +228,7 @@ interface Props {
   toast?: ToastFn;
 }
 
-export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related = false, onPick, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, onPick, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const [promptOpen, setPromptOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
@@ -266,7 +278,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const summary = compact ? ruleSummary(rules, s.session_id, sessions) : null;
   // elegida con un click y con lugar para leerlas: las conexiones en palabras, una por linea,
   // en vez de los chips abreviados
-  const words = (picked || related) && !compact;
+  // la elegida escribe las suyas; la del otro extremo, solo las del par
+  const words = (picked || !!related) && !compact;
+  const wordRules = picked ? rules : related?.rules ?? [];
+  const wordLinks = picked ? links : related?.links ?? [];
 
   // limite de uso con hora de vuelta (Codex): un click deja programado "Continuar" un minuto
   // despues; si ya hay una regla a esa hora (manual o automatica) el chip de abajo la muestra
@@ -315,7 +330,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   return (
     <div
       ref={rootRef}
-      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${compact ? "compact" : ""}`}
+      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${compact ? "compact" : ""} ${words ? "haswords" : ""}`}
       role="button"
       tabIndex={0}
       aria-label={`${s.repo}: ${s.title || s.last_prompt || (free ? "libre, sin pedidos todavía" : "sin título")}`}
@@ -508,7 +523,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           )}
         </div>
       )}
-      {recent && !words && (
+      {recent && (
         <div className="chip recent" title={`informe de ${recentFrom}: ${plainText(recent.text)}`}>
           ✓ {recentFrom} · hace {ago(recent.ts)}
         </div>
@@ -634,7 +649,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         ))}
       {/* las conexiones no compiten con lo que pasa adentro: viven en las flechas, y al elegir la
           tarjeta se leen en palabras. El contador queda para saber que hay algo */}
-      {words && <CardWords sid={s.session_id} rules={rules} links={links} sessions={sessions} onDelete={onDeleteRule} />}
+      {words && <CardWords sid={s.session_id} rules={wordRules} links={wordLinks} sessions={sessions} onDelete={onDeleteRule} />}
       {free ? (
         <div className="quickact freeact" onClick={(e) => e.stopPropagation()}>
           <button type="button" title="abre el panel con el cursor en la caja de envío" onClick={onSelect}>

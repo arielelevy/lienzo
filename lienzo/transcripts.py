@@ -23,11 +23,12 @@ Estructura comun de un turno (los dos agentes):
       "from_peer": "lienzo-b7"   # solo si el pedido vino de otra sesion de Claude (<cross-session-message>)
     }
 """
+
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
-import datetime as dt
 import re
 
 TAIL_BYTES = 2 * 1024 * 1024
@@ -37,6 +38,7 @@ READ_TOOLS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch"}
 
 
 # --- utilidades --------------------------------------------------------------
+
 
 def tail_lines(path: str, max_bytes: int = TAIL_BYTES) -> tuple[list[str], bool]:
     """Devuelve (lineas, truncado). Lee solo los ultimos max_bytes."""
@@ -72,12 +74,29 @@ def _first_line(s: str, n: int = 160) -> str:
     return _short((s or "").strip().split("\n", 1)[0], n)
 
 
-SYSTEM_PROMPT_TAGS = ("<task-notification>", "<system-reminder>", "<local-command-", "<command-name>",
-                      "<command-message>", "<bash-input>", "<bash-stdout>", "<ide_", "<user-memory-input>")
+SYSTEM_PROMPT_TAGS = (
+    "<task-notification>",
+    "<system-reminder>",
+    "<local-command-",
+    "<command-name>",
+    "<command-message>",
+    "<bash-input>",
+    "<bash-stdout>",
+    "<ide_",
+    "<user-memory-input>",
+)
 
 
-ERROR_PATTERNS = ("You've hit your", "usage limit", "session limit", "rate limit", "API Error",
-                  "overloaded_error", "Request timed out", "Credit balance is too low")
+ERROR_PATTERNS = (
+    "You've hit your",
+    "usage limit",
+    "session limit",
+    "rate limit",
+    "API Error",
+    "overloaded_error",
+    "Request timed out",
+    "Credit balance is too low",
+)
 
 
 def looks_like_error(text: str) -> bool:
@@ -90,10 +109,14 @@ def looks_like_error(text: str) -> bool:
 _RESET_AT_RE = re.compile(
     r"(?:try again|resets?)\s+(?:at\s+)?"
     r"(?:(?P<mon>[A-Za-z]{3})[a-z]*\.?\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?P<year>\d{4}),?\s+)?"
-    r"(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ampm>[AaPp]\.?[Mm])?", re.I)
+    r"(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ampm>[AaPp]\.?[Mm])?",
+    re.IGNORECASE,
+)
 # "try again in 2 hours 15 minutes", "resets in 45 min"
 _RESET_IN_RE = re.compile(
-    r"(?:try again|resets?)\s+in\s+(?:(?P<h>\d+)\s*h(?:ours?|rs?)?\b)?[\s,]*(?:(?P<m>\d+)\s*m(?:in(?:ute)?s?)?\b)?", re.I)
+    r"(?:try again|resets?)\s+in\s+(?:(?P<h>\d+)\s*h(?:ours?|rs?)?\b)?[\s,]*(?:(?P<m>\d+)\s*m(?:in(?:ute)?s?)?\b)?",
+    re.IGNORECASE,
+)
 
 
 def limit_reset(text: str, ref: dt.datetime | None = None) -> dt.datetime | None:
@@ -121,8 +144,15 @@ def limit_reset(text: str, ref: dt.datetime | None = None) -> dt.datetime | None
     if m.group("mon"):
         try:
             mon = dt.datetime.strptime(m.group("mon").title(), "%b").month
-            return ref.replace(year=int(m.group("year")), month=mon, day=int(m.group("day")),
-                               hour=h, minute=mi, second=0, microsecond=0)
+            return ref.replace(
+                year=int(m.group("year")),
+                month=mon,
+                day=int(m.group("day")),
+                hour=h,
+                minute=mi,
+                second=0,
+                microsecond=0,
+            )
         except ValueError:
             return None
     at = ref.replace(hour=h, minute=mi, second=0, microsecond=0)
@@ -140,7 +170,7 @@ def is_system_prompt(text: str) -> bool:
     return t.startswith(SYSTEM_PROMPT_TAGS)
 
 
-_XSESSION_RE = re.compile(r"<cross-session-message\b([^>]*)>(.*?)</cross-session-message>", re.S)
+_XSESSION_RE = re.compile(r"<cross-session-message\b([^>]*)>(.*?)</cross-session-message>", re.DOTALL)
 _ATTR_RE = re.compile(r'([\w-]+)="([^"]*)"')
 
 
@@ -158,8 +188,19 @@ def peer_message(text: str) -> tuple[str, str] | None:
 
 
 def _new_turn(agent: str, tid: str, ts: str | None, prompt: str = "") -> dict:
-    return {"id": tid, "agent": agent, "ts_start": ts, "ts_end": ts, "prompt": prompt,
-            "blocks": [], "final": "", "ended": False, "error": None, "usage": None, "extensions": 0}
+    return {
+        "id": tid,
+        "agent": agent,
+        "ts_start": ts,
+        "ts_end": ts,
+        "prompt": prompt,
+        "blocks": [],
+        "final": "",
+        "ended": False,
+        "error": None,
+        "usage": None,
+        "extensions": 0,
+    }
 
 
 def _content_text(content) -> str:
@@ -187,13 +228,14 @@ def set_prompt(turn: dict, text: str) -> None:
 
 # --- Claude Code -------------------------------------------------------------
 
+
 def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
     lines, truncated = tail_lines(path, max_bytes)
     meta = {"agent": "claude", "title": None, "branch": None, "cwd": None, "version": None, "truncated": truncated}
     turns: list[dict] = []
     cur: dict | None = None
-    tools: dict[str, dict] = {}       # tool_use_id -> bloque tool
-    sidechain: dict[str | None, int] = {}   # turn id -> lineas de subagente; None = antes del primer turno
+    tools: dict[str, dict] = {}  # tool_use_id -> bloque tool
+    sidechain: dict[str | None, int] = {}  # turn id -> lineas de subagente; None = antes del primer turno
 
     def ensure_turn(ts):
         nonlocal cur
@@ -249,7 +291,9 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                 if peer:
                     # pedido real de otra sesion de Claude: sin el XML ni el aviso de permisos que lo envuelve
                     human = f"de {peer[0]}: {_short(peer[1], 2000)}"
-                cur = _new_turn("claude", d.get("promptId") or d.get("uuid") or str(len(turns)), ts, human or "(imagen)")
+                cur = _new_turn(
+                    "claude", d.get("promptId") or d.get("uuid") or str(len(turns)), ts, human or "(imagen)"
+                )
                 if peer:
                     cur["from_peer"] = peer[0]
                 turns.append(cur)
@@ -267,8 +311,9 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                         if blk is not None:
                             blk["result"] = res
                         else:
-                            turn["blocks"].append({"kind": "tool", "id": b.get("tool_use_id"), "name": "?",
-                                                   "input": {}, "result": res})
+                            turn["blocks"].append(
+                                {"kind": "tool", "id": b.get("tool_use_id"), "name": "?", "input": {}, "result": res}
+                            )
                 turn["ts_end"] = ts or turn["ts_end"]
             continue
 
@@ -289,8 +334,13 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
             elif k == "thinking":
                 turn["blocks"].append({"kind": "thinking", "text": b.get("thinking", "")})
             elif k == "tool_use":
-                blk = {"kind": "tool", "id": b.get("id"), "name": b.get("name", "?"),
-                       "input": b.get("input") or {}, "result": None}
+                blk = {
+                    "kind": "tool",
+                    "id": b.get("id"),
+                    "name": b.get("name", "?"),
+                    "input": b.get("input") or {},
+                    "result": None,
+                }
                 tools[b.get("id")] = blk
                 turn["blocks"].append(blk)
 
@@ -306,11 +356,17 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
 
 # --- Codex -------------------------------------------------------------------
 
+
 def _codex_tool(item: dict, name: str, inp: dict, text: str = "", limit: int = 4000) -> dict:
     """Bloque tool a partir de un item de Codex: falla si status != completed."""
     failed = item.get("status") not in (None, "completed")
-    return {"kind": "tool", "id": item.get("id"), "name": name, "input": inp,
-            "result": {"text": _short(text or "", limit), "is_error": failed}}
+    return {
+        "kind": "tool",
+        "id": item.get("id"),
+        "name": name,
+        "input": inp,
+        "result": {"text": _short(text or "", limit), "is_error": failed},
+    }
 
 
 def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
@@ -324,8 +380,17 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                 lines.insert(0, first)
         except OSError:
             pass
-    meta = {"agent": "codex", "title": None, "branch": None, "cwd": None, "version": None,
-            "truncated": truncated, "originator": None, "source": None, "imported": False}
+    meta = {
+        "agent": "codex",
+        "title": None,
+        "branch": None,
+        "cwd": None,
+        "version": None,
+        "truncated": truncated,
+        "originator": None,
+        "source": None,
+        "imported": False,
+    }
     turns: list[dict] = []
     by_id: dict[str, dict] = {}
     cur: dict | None = None
@@ -382,9 +447,15 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                     turn["blocks"].append({"kind": "thinking", "text": text})
             elif it == "CommandExecution":
                 parsed = item.get("parsed_cmd") or []
-                cmd = " ; ".join(c.get("cmd", "") for c in parsed if c.get("cmd")) or " ".join(item.get("command") or [])
-                blk = _codex_tool(item, "shell", {"command": cmd, "cwd": item.get("cwd")},
-                                  item.get("stdout") or item.get("stderr") or "")
+                cmd = " ; ".join(c.get("cmd", "") for c in parsed if c.get("cmd")) or " ".join(
+                    item.get("command") or []
+                )
+                blk = _codex_tool(
+                    item,
+                    "shell",
+                    {"command": cmd, "cwd": item.get("cwd")},
+                    item.get("stdout") or item.get("stderr") or "",
+                )
                 code = item.get("exit_code")
                 if isinstance(code, int) and code != 0:
                     blk["result"]["is_error"] = True
@@ -392,8 +463,11 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
             elif it == "FileChange":
                 changes = item.get("changes") or {}
                 paths = [{"path": k, "type": (v or {}).get("type")} for k, v in changes.items()]
-                turn["blocks"].append(_codex_tool(item, "apply_patch", {"paths": paths},
-                                                  item.get("stdout") or item.get("stderr") or "", 2000))
+                turn["blocks"].append(
+                    _codex_tool(
+                        item, "apply_patch", {"paths": paths}, item.get("stdout") or item.get("stderr") or "", 2000
+                    )
+                )
             elif it == "McpToolCall":
                 # {server, tool, arguments, status, result: {content: [{type: "text", text}]}, error?}
                 name = "/".join(x for x in (item.get("server"), item.get("tool")) if x) or "mcp"
@@ -407,9 +481,9 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                 turn["blocks"].append(_codex_tool(item, "view_image", {"path": item.get("path")}))
             elif it == "ContextCompaction":
                 turn["blocks"].append({"kind": "user_text", "text": "(compactación)"})
-            elif it == "Extension":     # web.search y similares: se cuentan, sin bloque
+            elif it == "Extension":  # web.search y similares: se cuentan, sin bloque
                 turn["extensions"] += 1
-        elif pt == "user_message":      # forma vieja / importada
+        elif pt == "user_message":  # forma vieja / importada
             set_prompt(turn_for(tid, ts), p.get("message", ""))
         elif pt == "agent_message":
             add_text(turn_for(tid, ts), p.get("message", ""), p.get("phase"))
@@ -449,6 +523,7 @@ def codex_title(thread_id: str) -> str | None:
 
 
 # --- API comun -----------------------------------------------------------------
+
 
 def parse(agent: str, path: str, max_bytes: int = TAIL_BYTES) -> dict:
     return parse_codex(path, max_bytes) if agent == "codex" else parse_claude(path, max_bytes)
@@ -515,12 +590,19 @@ def digest_turn(turn: dict) -> dict:
     # dedupe conservando orden
     files = list(dict.fromkeys(files))
     return {
-        "id": turn["id"], "ts_start": turn.get("ts_start"), "ts_end": turn.get("ts_end"),
+        "id": turn["id"],
+        "ts_start": turn.get("ts_start"),
+        "ts_end": turn.get("ts_end"),
         "ended": turn.get("ended"),
         "prompt": turn.get("prompt", ""),
         "final": _short(final, 600),
-        "files": files, "commands": commands[:20], "errors": errors[:10],
-        "questions": questions, "peers": peers[:10], "reads": reads, "subagents": subagents,
+        "files": files,
+        "commands": commands[:20],
+        "errors": errors[:10],
+        "questions": questions,
+        "peers": peers[:10],
+        "reads": reads,
+        "subagents": subagents,
         "extensions": turn.get("extensions", 0),
         "tools": sum(1 for b in turn["blocks"] if b["kind"] == "tool"),
     }
@@ -533,6 +615,7 @@ def digest(agent: str, path: str, n: int = 10, max_bytes: int = TAIL_BYTES) -> d
 
 if __name__ == "__main__":
     import sys
+
     agent, path = sys.argv[1], sys.argv[2]
     n = int(sys.argv[3]) if len(sys.argv) > 3 else 3
     out = digest(agent, path, n)

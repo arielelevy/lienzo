@@ -121,6 +121,8 @@ export function ruleSentence(r: Rule, sid: string, sessions: Record<string, Sess
   return r.at ? `${cap(whenLabel(r.at, true))} ${what} ${quoted}.${by}` : `Sin hora fijada, ${what} ${quoted}.${by}`;
 }
 
+
+
 /** Lo que ya recibio esta sesion, agrupado por remitente y en una frase por cada uno:
  *  "Recibió 4 mensajes de lienzo · Encargo R1. El último, hace 22 min." */
 export function linkSentences(links: Link[], sid: string, sessions: Record<string, Session>): string[] {
@@ -141,30 +143,6 @@ export function linkSentences(links: Link[], sid: string, sessions: Record<strin
     if (g.native) return `Tiene un canal nativo con ${name}, abierto hace ${ago(g.last)}.`;
     return g.n === 1 ? `Recibió un mensaje de ${name}, hace ${ago(g.last)}.` : `Recibió ${g.n} mensajes de ${name}. El último, hace ${ago(g.last)}.`;
   });
-}
-
-export interface RuleGroup {
-  label: string;
-  kind: Rule["kind"];
-  ids: string[];
-  /** alguna de sus reglas comparte minuto con otra de la tarjeta */
-  clash: boolean;
-}
-
-/** Reglas con la misma etiqueta agrupadas (×N), como maximo `max` grupos; el resto se cuenta. */
-export function groupRules(rules: Rule[], sid: string, sessions: Record<string, Session>, max = 3): { shown: RuleGroup[]; hidden: number } {
-  const clashing = clashingAt(rules, sid);
-  const groups = new Map<string, RuleGroup>();
-  for (const r of rules) {
-    const label = ruleLabel(r, sid, sessions);
-    const g = groups.get(label);
-    if (g) {
-      g.ids.push(r.id);
-      g.clash ||= clashing.has(r.id);
-    } else groups.set(label, { label, kind: r.kind, ids: [r.id], clash: clashing.has(r.id) });
-  }
-  const all = [...groups.values()];
-  return { shown: all.slice(0, max), hidden: all.slice(max).reduce((n, g) => n + g.ids.length, 0) };
 }
 
 /** Fila de programadas del panel: una regla "at" habilitada hacia esa sesion, en una linea.

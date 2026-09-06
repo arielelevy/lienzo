@@ -10,6 +10,7 @@ Para PermissionRequest ademas escribe ~/.lienzo/pending/<request_id>.json y espe
 ~/.lienzo/answers/<request_id>.json hasta LIENZO_WAIT segundos (60). Si llega con el
 nonce correcto imprime la decision en stdout; si no, sale 0 sin stdout (abstenerse).
 """
+
 import datetime as dt
 import json
 import os
@@ -53,6 +54,7 @@ def load_config() -> dict:
 
 # --- cadena de procesos (procinfo, ctypes sin psutil) -----------------------
 
+
 def find_agent_pid(max_hops: int = 8):
     """Sube por los padres hasta encontrar claude.exe o codex.exe (o el renombrado
     claude.exe.old.<ts> que deja el auto-update)."""
@@ -71,6 +73,7 @@ def find_agent_pid(max_hops: int = 8):
 
 
 # --- decision de permisos ----------------------------------------------------
+
 
 def decision_json(agent: str, decision: str, reason: str = "") -> dict:
     """Forma del JSON de salida por agente. Claude: hookSpecificOutput.decision.behavior.
@@ -112,8 +115,11 @@ def wait_for_answer(agent: str, data: dict, wait_s: float) -> dict | None:
                         ans = json.load(f)
                 except (OSError, ValueError):
                     ans = None
-                if isinstance(ans, dict) and secrets.compare_digest(str(ans.get("nonce", "")), nonce) \
-                        and ans.get("decision") in ("allow", "deny"):
+                if (
+                    isinstance(ans, dict)
+                    and secrets.compare_digest(str(ans.get("nonce", "")), nonce)
+                    and ans.get("decision") in ("allow", "deny")
+                ):
                     result = decision_json(agent, ans["decision"], ans.get("reason", ""))
                 break
             time.sleep(0.25)
@@ -127,6 +133,7 @@ def wait_for_answer(agent: str, data: dict, wait_s: float) -> dict | None:
 
 
 # --- main --------------------------------------------------------------------
+
 
 def main() -> int:
     agent = sys.argv[1] if len(sys.argv) > 1 else "unknown"
@@ -161,14 +168,16 @@ def main() -> int:
         except OSError:
             pass
 
-    data.update({
-        "agent": agent,
-        "pid": pid,
-        "agent_exe": exe,
-        "proc_chain": chain,
-        "host_ts": now_iso(),
-        "hook_ms": round((time.perf_counter() - T0) * 1000, 1),
-    })
+    data.update(
+        {
+            "agent": agent,
+            "pid": pid,
+            "agent_exe": exe,
+            "proc_chain": chain,
+            "host_ts": now_iso(),
+            "hook_ms": round((time.perf_counter() - T0) * 1000, 1),
+        }
+    )
     safe_event = "".join(c for c in event if c.isalnum() or c in "-_")
     safe_sid = "".join(c for c in sid if c.isalnum() or c in "-_")[:64] or "nosid"
     name = f"{time.time_ns()}-{safe_sid}-{safe_event}.json"
@@ -192,8 +201,9 @@ def main() -> int:
         ev["decision"] = out["hookSpecificOutput"]["decision"]["behavior"]
     ev["host_ts"] = now_iso()
     try:
-        atomic_write(os.path.join(EVENTS, f"{time.time_ns()}-{safe_sid}-{done}.json"),
-                     json.dumps(ev, ensure_ascii=False))
+        atomic_write(
+            os.path.join(EVENTS, f"{time.time_ns()}-{safe_sid}-{done}.json"), json.dumps(ev, ensure_ascii=False)
+        )
     except OSError:
         pass
     return 0

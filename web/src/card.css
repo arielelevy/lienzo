@@ -69,8 +69,18 @@
 .card.picked { box-shadow: inset 3px 0 0 var(--acc); }
 .card.picked.sel { box-shadow: 0 0 0 1px var(--acc), inset 3px 0 0 var(--acc); }
 
-/* conexiones en palabras (tarjeta elegida y con lugar): una frase por linea, con su ✕ */
-.card .words { margin-top: 6px; display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+/* Conexiones en palabras (tarjeta elegida y con lugar): una frase por linea, con su ✕. Van **por
+   encima** de la mitad de abajo de la tarjeta, no adentro del flujo: empujando el contenido la
+   agrandaban (medido: de 205 a 559 px con la coordinadora) y el multi-columna, que balancea alturas,
+   reacomodaba el tablero entero con cada click. Ancladas al borde de abajo *de la tarjeta* y no
+   colgando por fuera: un absoluto que se pasa del alto de la columna, Chrome lo manda a la columna
+   siguiente (medido: la tarjeta en 354,324 y sus palabras en 682,132). Card muestra dos frases y
+   un "+N más", y a la del otro extremo solo la que comparte con la elegida. */
+.card .words { position: absolute; left: 4px; right: 4px; bottom: 4px; z-index: 4;
+  display: flex; flex-direction: column; gap: 5px; font-size: 12px;
+  background: var(--card); border: 1px solid var(--acc); border-radius: 8px; padding: 6px 8px;
+  box-shadow: 0 8px 20px rgba(0,0,0,.5); }
+.card .words .w.more { color: var(--dim); background: none; padding: 0 2px; cursor: help; }
 .card .words .w { display: flex; gap: 6px; align-items: baseline; color: var(--acc); background: #1a2438; border-radius: 6px; padding: 4px 8px; }
 .card .words .w.done { color: var(--run); background: #14261c; }
 .card .words .w > span { flex: 1 1 auto; min-width: 0; }

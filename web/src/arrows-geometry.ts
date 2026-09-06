@@ -167,11 +167,11 @@ function spread(n: number, center: number, size: number, pad: number): number[] 
   return Array.from({ length: n }, (_, i) => center - span / 2 + i * step);
 }
 
-/** un extremo de flecha esperando su lugar sobre un borde de tarjeta */
+/** un extremo de flecha esperando su lugar sobre un borde de tarjeta. `other` es la coordenada del
+ *  otro extremo en el eje del apilado: ordena la fila para que dos flechas no se crucen */
 interface End {
   item: number;
   end: "from" | "to";
-  /** coordenada del otro extremo en el eje del apilado: ordena la fila para que no se crucen */
   other: number;
 }
 
@@ -249,20 +249,19 @@ export function freeAt(cols: Col[], strips: Strip[], boardWidth: number, i: numb
   return a.l - x;
 }
 
-/** cuanto lugar hay hacia `dir` desde la subcolumna `a` sin salirse de las columnas del tablero.
- *  Sin columnas medidas, todo el que diga `freeAt`. */
-function outerRoom(bands: Band[], a: Col, dir: 1 | -1): number {
-  if (!bands.length) return Infinity;
-  return dir === 1 ? Math.max(...bands.map((b) => b.r)) - a.r : a.l - Math.min(...bands.map((b) => b.l));
-}
-
 /** arco entre dos tarjetas de la misma columna: por el costado con mas lugar (el canal vecino si
  *  lo hay, si no el aire que quede dentro de la columna); nunca por encima de una tarjeta ni fuera
  *  de las columnas. La panza se recorta al lugar real: sin eso, una columna pegada al borde
  *  izquierdo mandaba el arco (y su glifo) al padding del tablero, fuera de toda columna. */
 export function sideArc(cols: Col[], strips: Strip[], boardWidth: number, i: number, bands: Band[] = []): { side: "l" | "r"; x: number } {
   const a = cols[i];
-  const roomTo = (dir: 1 | -1) => Math.min(freeAt(cols, strips, boardWidth, i, dir), outerRoom(bands, a, dir));
+  // lo que haya libre a ese costado, sin pasarse del ultimo borde de columna del tablero: sin
+  // columnas medidas manda `freeAt` sola, que es como se ruteaba antes de que existieran las bandas
+  const roomTo = (dir: 1 | -1) =>
+    Math.min(
+      freeAt(cols, strips, boardWidth, i, dir),
+      !bands.length ? Infinity : dir === 1 ? Math.max(...bands.map((b) => b.r)) - a.r : a.l - Math.min(...bands.map((b) => b.l)),
+    );
   const right = roomTo(1);
   const left = roomTo(-1);
   const side: "l" | "r" = left > right ? "l" : "r";
@@ -619,34 +618,29 @@ export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Re
     const from = self ? r.to : r.from!;
     const a = self ? "" : fmt.name(from);
     const b = fmt.name(r.to);
-    const base = { ids: [r.id], kind: "rule" as const, from, to: r.to };
     const tail = " Doble click para editarla.";
+    const quien = self ? "se escribe" : "se le escribe";
+    const aQuien = self ? " sola" : ` a ${b}`;
+    const firma = a ? ` La programó ${a}.` : "";
+    let glyph: string, title: string, desc: string;
     if (r.kind === "on_stop") {
       const count = r.repeat ? ` Van ${r.fired} de ${r.max_fires}.` : " Una sola vez.";
-      items.push({
-        ...base,
-        glyph: "⏹",
-        title: `cuando ${self ? b : a} termine → su respuesta a ${self ? "sí misma" : b}${r.repeat ? ` (${r.fired}/${r.max_fires})` : ""} · click para seleccionarla`,
-        desc: `Cada vez que ${self ? b : a} cierre un turno, su respuesta se manda a ${self ? "sí misma" : b}.${count}${tail}`,
-      });
+      glyph = "⏹";
+      title = `cuando ${self ? b : a} termine → su respuesta a ${self ? "sí misma" : b}${r.repeat ? ` (${r.fired}/${r.max_fires})` : ""} · click para seleccionarla`;
+      desc = `Cada vez que ${self ? b : a} cierre un turno, su respuesta se manda a ${self ? "sí misma" : b}.${count}${tail}`;
     } else if (r.every_s) {
       // periodica: glifo ↻, y el titulo dice el periodo, cuantas veces fue y cuando es la proxima
       const next = r.at ? ` La próxima, ${fmt.when(r.at)}.` : "";
       const skip = r.skip_busy === false ? "" : " Se saltea si está trabajando.";
-      items.push({
-        ...base,
-        glyph: "↻",
-        title: `${periodLabel(r.every_s)} → «${r.text}» a ${b} ${periodicCount(r.fired, r.max_fires, r.at ? fmt.hhmm(r.at) : null)} · click para seleccionarla`,
-        desc: `${cap(periodLabel(r.every_s))} ${self ? "se escribe" : "se le escribe"} «${r.text}»${self ? " sola" : ` a ${b}`}. Van ${r.fired} de ${r.max_fires}.${next}${skip}${a ? ` La programó ${a}.` : ""}${tail}`,
-      });
+      glyph = "↻";
+      title = `${periodLabel(r.every_s)} → «${r.text}» a ${b} ${periodicCount(r.fired, r.max_fires, r.at ? fmt.hhmm(r.at) : null)} · click para seleccionarla`;
+      desc = `${cap(periodLabel(r.every_s))} ${quien} «${r.text}»${aQuien}. Van ${r.fired} de ${r.max_fires}.${next}${skip}${firma}${tail}`;
     } else {
-      items.push({
-        ...base,
-        glyph: "⏰",
-        title: `${r.at ? fmt.when(r.at) : "sin hora"} → «${r.text}» a ${b} · click para seleccionarla`,
-        desc: `${r.at ? cap(fmt.when(r.at)) : "Sin hora fijada,"} ${self ? "se escribe" : "se le escribe"} «${r.text}»${self ? " sola" : ` a ${b}`}.${a ? ` La programó ${a}.` : ""}${tail}`,
-      });
+      glyph = "⏰";
+      title = `${r.at ? fmt.when(r.at) : "sin hora"} → «${r.text}» a ${b} · click para seleccionarla`;
+      desc = `${r.at ? cap(fmt.when(r.at)) : "Sin hora fijada,"} ${quien} «${r.text}»${aQuien}.${firma}${tail}`;
     }
+    items.push({ ids: [r.id], kind: "rule", from, to: r.to, glyph, title, desc });
   }
   return items;
 }
@@ -809,16 +803,11 @@ export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rec
   return out as Seg[];
 }
 
-/** cuanto se aleja del costado de la tarjeta la panza del bucle */
-const LOOP_OUT = 20;
-/** cuanto baja el bucle entre que sale y vuelve a entrar */
-const LOOP_SPAN = 26;
-/** desde donde sale, medido desde el techo de la tarjeta: por debajo de su titulo */
-const LOOP_TOP = 16;
-/** cuanto tiran los controles de la cubica mas alla de la panza, para que la vuelta sea redonda */
-const LOOP_PULL = 8;
-/** aire entre la panza y el borde del tablero para que el bucle quepa a la derecha */
-const LOOP_EDGE = 6;
+/** Medidas del bucle: cuanto se aleja la panza del costado de la tarjeta (OUT), cuanto baja entre
+ *  que sale y vuelve a entrar (SPAN), desde donde sale medido desde el techo de la tarjeta, o sea
+ *  por debajo de su titulo (TOP), cuanto tiran los controles de la cubica mas alla de la panza para
+ *  que la vuelta sea redonda (PULL) y el aire que necesita contra el borde del tablero (EDGE). */
+const LOOP_OUT = 20, LOOP_SPAN = 26, LOOP_TOP = 16, LOOP_PULL = 8, LOOP_EDGE = 6;
 
 /** Bucle: una regla de una tarjeta hacia si misma. Sale del costado, da la vuelta y vuelve a
  *  entrar LOOP_SPAN mas abajo, con el glifo en la panza. Va por el costado y no por arriba porque

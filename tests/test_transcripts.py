@@ -1,4 +1,5 @@
 """Tests minimos de lienzo/transcripts.py contra datos reales de esta maquina."""
+
 import glob
 import os
 import sys
@@ -7,7 +8,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from lienzo import transcripts as tr  # noqa: E402
+from lienzo import transcripts as tr
 
 HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
 CLAUDE_DIR = os.path.join(HOME, ".claude", "projects", "D--Apps-lienzo")
@@ -42,6 +43,7 @@ def codex_path():
 
 # 1. parse_claude ---------------------------------------------------------------
 
+
 def test_parse_claude_turnos_y_tools(claude_path):
     r = tr.parse_claude(claude_path)
     assert r["meta"]["agent"] == "claude"
@@ -64,12 +66,16 @@ def test_parse_claude_turnos_y_tools(claude_path):
 
 # 2. parse_codex ----------------------------------------------------------------
 
+
 def test_parse_codex_turn_id_y_task_complete(codex_path):
     lines, _ = tr.tail_lines(codex_path)
     events = [d for d in tr.iter_json(lines) if d.get("type") == "event_msg"]
     turn_ids = {(d.get("payload") or {}).get("turn_id") for d in events} - {None}
-    completed = {(d.get("payload") or {}).get("turn_id") for d in events
-                 if (d.get("payload") or {}).get("type") == "task_complete"} - {None}
+    completed = {
+        (d.get("payload") or {}).get("turn_id")
+        for d in events
+        if (d.get("payload") or {}).get("type") == "task_complete"
+    } - {None}
     if not turn_ids:
         pytest.skip("el rollout no tiene event_msg con turn_id")
 
@@ -89,6 +95,7 @@ def test_parse_codex_turn_id_y_task_complete(codex_path):
 
 # 3. digest --------------------------------------------------------------------
 
+
 def test_digest_forma(claude_path):
     out = tr.digest("claude", claude_path, n=5)
     assert out["turns"]
@@ -107,6 +114,7 @@ def test_is_system_prompt():
 
 # 4. tail_lines ----------------------------------------------------------------
 
+
 def test_tail_lines_truncado_descarta_parcial(tmp_path):
     p = tmp_path / "t.jsonl"
     rows = [f'{{"i": {i}, "pad": "{"x" * 50}"}}' for i in range(20)]
@@ -118,12 +126,13 @@ def test_tail_lines_truncado_descarta_parcial(tmp_path):
     assert lines[-1] == rows[-1]
     assert len(lines) < len(rows)
 
-    lines_all, truncated_all = tr.tail_lines(str(p), max_bytes=10 ** 6)
+    lines_all, truncated_all = tr.tail_lines(str(p), max_bytes=10**6)
     assert truncated_all is False
     assert lines_all == rows
 
 
 # 5. looks_like_error ------------------------------------------------------------
+
 
 def test_looks_like_error():
     assert tr.looks_like_error("You've hit your session limit · resets 2:40pm") is True
@@ -133,11 +142,16 @@ def test_looks_like_error():
 
 # 6. limit_reset -----------------------------------------------------------------
 
+
 def test_limit_reset():
     import datetime as dt
+
     ref = dt.datetime(2026, 9, 5, 15, 28, tzinfo=dt.timezone(dt.timedelta(hours=-3)))
-    at = tr.limit_reset("You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
-                        "https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:57 PM.", ref)
+    at = tr.limit_reset(
+        "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
+        "https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 7:57 PM.",
+        ref,
+    )
     assert at == ref.replace(hour=19, minute=57, second=0, microsecond=0)
     # la referencia (fin del turno) puede quedar unos minutos despues de la hora: sigue siendo hoy
     late = ref.replace(hour=20, minute=5)

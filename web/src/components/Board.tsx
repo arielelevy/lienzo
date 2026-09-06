@@ -295,19 +295,24 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
   // al elegir una tarjeta se explican sus conexiones, y tambien las de la del otro extremo: una
-  // conexion tiene dos puntas y se entiende mirando las dos
+  // conexion tiene dos puntas y se entiende mirando las dos. La del otro extremo muestra *solo* lo
+  // que comparte con la elegida (si ademas tiene reglas con otras tres sesiones, esas no vienen al
+  // caso, y escribirlas le cambiaba el alto a media pantalla): lo que le llego de ella --lo que la
+  // elegida recibio se lee en la elegida-- y las reglas que las unen, en cualquier direccion.
   const related = useMemo(() => {
-    const out = new Set<string>();
+    const out = new Map<string, { links: Link[]; rules: Rule[] }>();
     if (!picked) return out;
-    for (const l of links) {
-      if (l.from === picked && l.to) out.add(l.to);
-      if (l.to === picked && l.from) out.add(l.from);
-    }
+    const at = (sid: string) => {
+      let e = out.get(sid);
+      if (!e) out.set(sid, (e = { links: [], rules: [] }));
+      return e;
+    };
+    for (const l of links) if (l.from === picked && l.to && l.to !== picked) at(l.to).links.push(l);
     for (const r of rules) {
-      if (r.from === picked && r.to) out.add(r.to);
-      if (r.to === picked && r.from) out.add(r.from);
+      if (!r.enabled) continue;
+      if (r.from === picked && r.to && r.to !== picked) at(r.to).rules.push(r);
+      else if (r.to === picked && r.from && r.from !== picked) at(r.from).rules.push(r);
     }
-    out.delete(picked);
     return out;
   }, [picked, links, rules]);
 
@@ -496,7 +501,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         toast={toast}
                         selected={selected === s.session_id}
                         picked={picked === s.session_id}
-                        related={related.has(s.session_id)}
+                        related={related.get(s.session_id)}
                         onPick={() => {
                           // el click que cierra un arrastre tampoco elige la tarjeta
                           if (draggedRef.current) return;

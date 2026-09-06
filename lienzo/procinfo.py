@@ -3,6 +3,7 @@
 Lo comparten hook.py (que corre en cada evento y tiene que arrancar rapido) y procs.py.
 Por eso aca no hay subprocess, json ni nada pesado: solo ctypes y os.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -32,9 +33,14 @@ AGENTS = {"claude.exe": "claude", "codex.exe": "codex"}
 
 class _PBI(ctypes.Structure):
     """PROCESS_BASIC_INFORMATION."""
-    _fields_ = [("Reserved1", ctypes.c_void_p), ("PebBaseAddress", ctypes.c_void_p),
-                ("Reserved2", ctypes.c_void_p * 2), ("UniqueProcessId", ctypes.c_void_p),
-                ("InheritedFromUniqueProcessId", ctypes.c_void_p)]
+
+    _fields_ = [
+        ("Reserved1", ctypes.c_void_p),
+        ("PebBaseAddress", ctypes.c_void_p),
+        ("Reserved2", ctypes.c_void_p * 2),
+        ("UniqueProcessId", ctypes.c_void_p),
+        ("InheritedFromUniqueProcessId", ctypes.c_void_p),
+    ]
 
 
 def open_process(pid: int | None, access: int = PROCESS_QUERY_LIMITED_INFORMATION):
