@@ -513,12 +513,13 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     )}
     <svg className={`arrows ${hover ? "hovering" : ""}`} width={size.w} height={size.h} style={{ width: size.w, height: size.h }}>
       <defs>
-        {/* puntas chicas: la linea es de 2 px y con 7x6 todavia pesaban de mas en el carril */}
-        <marker id="arrowhead" markerWidth="5.5" markerHeight="4.5" refX="5" refY="2.25" orient="auto">
-          <path d="M0,0 L5.5,2.25 L0,4.5 z" fill="var(--acc)" />
+        {/* markerUnits="userSpaceOnUse": sin eso el marker escala con el stroke-width (2), asi que
+            un 5.5x4.5 se dibujaba de 11x9 y las puntas se veian pesadas. Ahora el tamaño es en px */}
+        <marker id="arrowhead" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="5" refX="6.5" refY="2.5" orient="auto">
+          <path d="M0,0 L7,2.5 L0,5 z" fill="var(--acc)" />
         </marker>
-        <marker id="arrowtail" markerWidth="5.5" markerHeight="4.5" refX="0.5" refY="2.25" orient="auto">
-          <path d="M5.5,0 L0,2.25 L5.5,4.5 z" fill="var(--acc)" />
+        <marker id="arrowtail" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="5" refX="0.5" refY="2.5" orient="auto">
+          <path d="M7,0 L0,2.5 L7,5 z" fill="var(--acc)" />
         </marker>
       </defs>
       {/* seleccionada: se marcan las dos tarjetas que une, para ver de quien a quien es */}
