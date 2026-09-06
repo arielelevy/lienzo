@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ago, api } from "../api";
-import { hhmm, nextAt } from "../nl";
-import { computeSegs, FRESH_MS, type Rect, type Seg } from "../arrows-geometry";
-import { periodLabel } from "./Card";
+import { everySeconds, hhmm, nextAt, splitEvery, type EveryUnit } from "../nl";
+import { computeSegs, type Rect, type Seg } from "../arrows-geometry";
+import { periodLabel, shortName } from "./Card";
 import type { Link, Rule, Session } from "../types";
 
 interface Props {
@@ -33,16 +33,9 @@ interface Edit {
   maxFires: number;
   /** at periodica: "repetir cada [everyN] [everyUnit]" */
   everyN: number;
-  everyUnit: "min" | "h";
+  everyUnit: EveryUnit;
   /** at periodica: si el destino esta corriendo, saltear el disparo sin contarlo */
   skipBusy: boolean;
-}
-
-/** every_s en segundos → cantidad y unidad para el editor (horas enteras en h, el resto en min) */
-function splitEvery(everyS: number | null | undefined): { everyN: number; everyUnit: "min" | "h" } {
-  const s = everyS ?? 1800;
-  if (s >= 3600 && s % 3600 === 0) return { everyN: s / 3600, everyUnit: "h" };
-  return { everyN: Math.max(1, Math.round(s / 60)), everyUnit: "min" };
 }
 
 /** doble click en un envio ya hecho: no se edita, pero se ve que se mando y se puede reenviar */
@@ -55,16 +48,14 @@ interface View {
   y: number;
 }
 
-/** Flechas entre tarjetas. En el tablero quedan solo las conexiones pendientes (reglas on_stop y
- *  at, punteadas) y el canal nativo Claude<->Claude (doble). Un envio comun se muestra 60 s con
- *  un fade, para confirmar que salio, y despues se va: lo enviado vive en la pestana Conexiones.
+/** Flechas entre tarjetas: las conexiones pendientes (reglas on_stop y at, punteadas), el canal
+ *  nativo Claude<->Claude (doble) y el ultimo envio de cada par (los anteriores van al contador).
  *  Las posiciones salen del DOM (data-sid) y se recalculan al cambiar sesiones, vinculos o tamano.
  *  Las curvas entre columnas viajan por el hueco entre los grupos de tarjetas vecinos; las de la
  *  misma columna hacen un arco corto por el costado con mas lugar. En pantalla angosta no hay flechas. */
 export function Arrows({ links, rules, sessions, boardRef, version, hover, onDelete, onDeleteRule, toast }: Props) {
   const [segs, setSegs] = useState<Seg[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [, setTick] = useState(0);
   // doble click en el glifo de una regla: editarla en el lugar. El click simple (quitar) espera
   // un poco para no confirmar dos veces antes de que llegue el doble click.
   const [edit, setEdit] = useState<Edit | null>(null);
@@ -92,7 +83,6 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       skipBusy: r.skip_busy ?? true,
     });
   };
-  const everySeconds = (e: Edit) => Math.max(60, e.everyN * (e.everyUnit === "h" ? 3600 : 60));
   const saveEdit = async () => {
     if (!edit) return;
     const body: Record<string, unknown> = { text: edit.text };
@@ -104,7 +94,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       }
       body.at = nextAt(Number(m[1]), Number(m[2])).toISOString(); // ya paso hoy: manana
       // periodica: every_s (null la vuelve de un disparo), tope de disparos y saltear si esta ocupada
-      body.every_s = edit.repeat ? everySeconds(edit) : null;
+      body.every_s = edit.repeat ? everySeconds(edit.everyN, edit.everyUnit) : null;
       body.max_fires = edit.repeat ? edit.maxFires : 1;
       body.skip_busy = edit.skipBusy;
     } else {
@@ -118,7 +108,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         edit.kind !== "at"
           ? "Conexión guardada"
           : edit.repeat
-            ? `Desde las ${edit.time.trim()}, ${periodLabel(everySeconds(edit))}, hasta ${edit.maxFires} veces`
+            ? `Desde las ${edit.time.trim()}, ${periodLabel(everySeconds(edit.everyN, edit.everyUnit))}, hasta ${edit.maxFires} veces`
             : `Reprogramada a las ${edit.time.trim()}`,
       );
       setEdit(null);
@@ -150,11 +140,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   const viewLinks = view ? links.filter((l) => view.ids.includes(l.id)).sort((a, c) => c.ts.localeCompare(a.ts)) : [];
   const viewTarget = view ? sessions[view.to] : undefined;
   const canResend = !!viewTarget && viewTarget.alive && !viewTarget.orphan && !viewTarget.no_console && !viewTarget.pending_id;
-  const nameOf = (sid: string) => {
-    const o = sessions[sid];
-    if (!o) return sid.slice(0, 8);
-    return o.title ? `${o.repo} · ${o.title.slice(0, 24)}` : `${o.repo} · ${sid.slice(0, 8)}`;
-  };
+  const nameOf = (sid: string) => shortName(sessions[sid], sid.slice(0, 8));
   const resend = async () => {
     if (!view || !viewLinks[0]) return;
     setResending(true);
@@ -279,22 +265,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // mientras haya envios recientes en pantalla: re-render cada 400 ms para el fade, y recompute
-  // cuando alguno cumple los 60 s (ahi desaparece)
-  useEffect(() => {
-    if (!segs.some((s) => s.fresh)) return;
-    const id = setInterval(() => {
-      const now = Date.now();
-      if (segs.some((s) => s.fresh && now - s.fresh >= FRESH_MS)) computeRef.current();
-      else setTick((t) => t + 1);
-    }, 400);
-    return () => clearInterval(id);
-  }, [segs]);
-
   if (!segs.length) return null;
-  const now = Date.now();
-  // envio reciente: opaco 45 s, despues se desvanece hasta los 60 s
-  const freshOpacity = (ts: number) => Math.max(0, Math.min(1, 1 - (now - ts - 45_000) / 15_000));
   return (
     <>
     {edit && (
@@ -421,11 +392,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         const mine = hover !== null && (s.from === hover || s.to === hover);
         const many = s.ids.length > 1;
         return (
-          <g
-            key={s.ids[0]}
-            className={`arrow ${s.old ? "old" : ""} ${mine ? "mine" : ""} ${s.fresh ? "fresh" : ""} ${s.dim ? "dim" : ""}`}
-            style={s.fresh ? { opacity: freshOpacity(s.fresh) } : undefined}
-          >
+          <g key={s.ids[0]} className={`arrow ${s.old ? "old" : ""} ${mine ? "mine" : ""} ${s.dim ? "dim" : ""}`}>
             {s.kind === "native" && <path d={s.d} className="line native-outer" />}
             <path
               d={s.d}
@@ -435,7 +402,6 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
             />
             <g
               onClick={() => {
-                if (s.fresh) return; // el envio reciente se va solo
                 window.clearTimeout(clickTimer.current);
                 clickTimer.current = window.setTimeout(() => {
                   const q = s.kind === "rule" ? "Quitar la conexión?" : "Quitar la flecha?";

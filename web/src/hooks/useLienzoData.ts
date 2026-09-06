@@ -11,6 +11,10 @@ interface Options {
   onRemoved: (sid: string) => void;
 }
 
+/** El tablero dibuja flechas entre sesiones: lo que mando el usuario desde el SendBox (from null,
+ *  kind "user") no tiene origen y queda solo en la pestana Conexiones del panel. */
+const boardLinks = (ls: Link[]): Link[] => ls.filter((l) => !!l.from);
+
 /** Estado del tablero: sesiones, permisos pendientes, vinculos y reglas, alimentados por el
  *  stream SSE del server. Carga directa al entrar y sondeo cada 4 s mientras el stream no
  *  entregue nada (un proxy que retiene el SSE no deja el tablero vacio). */
@@ -34,7 +38,7 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
         .then(([ss, ps, ls, rs]) => {
           setSessions(byId(ss, (s) => s.session_id));
           setPending(byId(ps, (p) => p.request_id));
-          setLinks(ls);
+          setLinks(boardLinks(ls));
           setRules(rs);
           if (selectedRef.current) setTranscriptTick((t) => t + 1);
         })
@@ -62,12 +66,12 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
         case "snapshot":
           setSessions(byId(m.sessions, (s) => s.session_id));
           setPending(byId(m.pending, (p) => p.request_id));
-          if (m.links) setLinks(m.links);
+          if (m.links) setLinks(boardLinks(m.links));
           if (m.rules) setRules(m.rules);
           setTranscriptTick((t) => t + 1);
           break;
         case "links":
-          setLinks(m.links);
+          setLinks(boardLinks(m.links));
           break;
         case "rules":
           setRules(m.rules);

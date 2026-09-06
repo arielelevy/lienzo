@@ -17,10 +17,7 @@ export interface Col {
   r: number;
 }
 /** franja horizontal que ocupa una columna colapsada: obstaculo, no columna */
-export interface Strip {
-  l: number;
-  r: number;
-}
+export type Strip = Col;
 
 export interface Seg {
   /** ids de todos los links agrupados (o el id de la regla) */
@@ -35,7 +32,8 @@ export interface Seg {
   glyph: string;
   /** canal nativo con mas de una hora: se dibuja apagado y sin punta */
   old: boolean;
-  /** envio recien hecho: instante (ms) del envio; se muestra FRESH_MS y se desvanece */
+  /** reservado: instante (ms) de un envio recien hecho. Hoy nunca se setea (la ultima flecha del par
+   *  se ve siempre) y el componente no lo usa */
   fresh?: number;
   /** no hubo camino que no cruce una tercera tarjeta: se dibuja igual, con opacidad baja */
   dim?: boolean;
@@ -66,8 +64,6 @@ export interface GeometryInput {
   fmt: Formatters;
 }
 
-/** un envio ya hecho se muestra este tiempo, como confirmacion visual, y despues desaparece */
-export const FRESH_MS = 60_000;
 /** medio canal por defecto, si no se puede medir el hueco entre columnas abiertas */
 export const HALF_GAP = 20; // la mitad del canal entre columnas (28 px) mas un poco de aire
 /** separacion vertical entre flechas que salen o entran por el mismo lado de una tarjeta */
@@ -88,6 +84,25 @@ const EJECT = 6;
 
 export const cut = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
 export const midY = (r: Rect) => (r.t + r.b) / 2;
+const midX = (r: Rect) => (r.l + r.r) / 2;
+export const sameRect = (a: Rect, b: Rect) => a === b || (a.l === b.l && a.t === b.t && a.r === b.r && a.b === b.b);
+/** el punto cae estrictamente adentro del rectangulo (eps de tolerancia en el borde) */
+const contains = (c: Rect, x: number, y: number, eps = 0.5) => x > c.l + eps && x < c.r - eps && y > c.t + eps && y < c.b - eps;
+
+/** agrega v a la lista de k, creandola si no existe */
+function pushTo<K, V>(m: Map<K, V[]>, k: K, v: V): void {
+  const arr = m.get(k);
+  if (arr) arr.push(v);
+  else m.set(k, [v]);
+}
+
+/** n posiciones alrededor de `center`, a SLOT una de otra, sin pasar de `size - pad` en total: asi
+ *  varias flechas que comparten un borde no se pisan ni desbordan una tarjeta chica */
+function spread(n: number, center: number, size: number, pad: number): number[] {
+  const span = Math.min((n - 1) * SLOT, Math.max(0, size - pad));
+  const step = n > 1 ? span / (n - 1) : 0;
+  return Array.from({ length: n }, (_, i) => center - span / 2 + i * step);
+}
 
 /** Periodo de una regla "at" periodica, en palabras: "cada 5 min", "cada 30 min", "cada hora",
  *  "cada 2 h", "cada día". Vive aca (y no en Card) para que el modulo siga sin React: Card la
@@ -171,13 +186,13 @@ export function clearance(cards: Rect[], x: number, y: number): number {
 }
 
 /** el punto cae estrictamente adentro de alguna tarjeta (medio pixel de tolerancia en el borde) */
-export const inside = (cards: Rect[], x: number, y: number, eps = 0.5) => cards.some((c) => x > c.l + eps && x < c.r - eps && y > c.t + eps && y < c.b - eps);
+export const inside = (cards: Rect[], x: number, y: number, eps = 0.5) => cards.some((c) => contains(c, x, y, eps));
 
 /** Glifo que cayo adentro de una tarjeta: se corre al hueco mas cercano, o sea al borde mas proximo
  *  de esa tarjeta mas EJECT px hacia afuera. Si ahi tambien hay tarjeta (filas pegadas), prueba
  *  los otros bordes en orden de cercania; si ninguno esta libre, se queda en el mas cercano. */
 export function ejectGlyph(cards: Rect[], x: number, y: number): Pt {
-  const c = cards.find((r) => x > r.l + 0.5 && x < r.r - 0.5 && y > r.t + 0.5 && y < r.b - 0.5);
+  const c = cards.find((r) => contains(r, x, y));
   if (!c) return [x, y];
   const opts: { d: number; p: Pt }[] = (
     [
@@ -278,7 +293,7 @@ export interface Ortho {
  *  esta limpio, el mas corto igual, con `clean: false` (se dibuja apagado). El glifo va al medio de
  *  la corrida horizontal, que por construccion esta en un hueco. */
 export function topRoute(ra: Rect, rc: Rect, xa: number, xc: number, cards: Rect[]): Ortho {
-  const others = cards.filter((c) => c !== ra && c !== rc && !(c.l === ra.l && c.t === ra.t && c.r === ra.r && c.b === ra.b) && !(c.l === rc.l && c.t === rc.t && c.r === rc.r && c.b === rc.b));
+  const others = cards.filter((c) => !sameRect(c, ra) && !sameRect(c, rc));
   const tops = cards.map((c) => c.t);
   const bottoms = cards.map((c) => c.b);
   const ys = new Set<number>([Math.min(...tops) - TOP_MARGIN, Math.max(...bottoms) + TOP_MARGIN]);
@@ -396,23 +411,16 @@ export function layoutEnds(items: Item[], anchors: Map<string, Rect>, cols: Col[
     const exit: "l" | "r" = arc ? arc.side : ltr ? "r" : "l";
     const enter: "l" | "r" = arc ? arc.side : ltr ? "l" : "r";
     sideOf[i] = { exit, enter, same, arcX: arc?.x ?? 0 };
-    const push = (k: string, e: End) => {
-      const arr = slots.get(k);
-      if (arr) arr.push(e);
-      else slots.set(k, [e]);
-    };
-    push(`${it.from}|${exit}`, { item: i, end: "from", otherY: midY(rc), y: midY(ra) });
-    push(`${it.to}|${enter}`, { item: i, end: "to", otherY: midY(ra), y: midY(rc) });
+    pushTo(slots, `${it.from}|${exit}`, { item: i, end: "from", otherY: midY(rc), y: midY(ra) });
+    pushTo(slots, `${it.to}|${enter}`, { item: i, end: "to", otherY: midY(ra), y: midY(rc) });
   });
   const endY: { from: number; to: number }[] = items.map(() => ({ from: 0, to: 0 }));
   for (const [k, ends] of slots) {
     const r = anchors.get(k.split("|")[0])!;
     ends.sort((a, c) => a.otherY - c.otherY);
-    const n = ends.length;
-    const span = Math.min((n - 1) * SLOT, Math.max(0, r.b - r.t - 20)); // no desbordar tarjetas bajas
-    const step = n > 1 ? span / (n - 1) : 0;
+    const ys = spread(ends.length, midY(r), r.b - r.t, 20); // no desbordar tarjetas bajas
     ends.forEach((e, i) => {
-      endY[e.item][e.end] = midY(r) - span / 2 + i * step;
+      endY[e.item][e.end] = ys[i];
     });
   }
   return { sideOf, endY };
@@ -421,9 +429,6 @@ export function layoutEnds(items: Item[], anchors: Map<string, Rect>, cols: Col[
 /** 3) las curvas: misma columna, arco corto por el costado con mas lugar; columnas distintas, S
  *  que sale y entra por el canal entre columnas abiertas vecinas (si las columnas son vecinas los
  *  canales coinciden y la S vive entera en el hueco). */
-export const sameRect = (a: Rect, b: Rect) => a === b || (a.l === b.l && a.t === b.t && a.r === b.r && a.b === b.b);
-const midX = (r: Rect) => (r.l + r.r) / 2;
-
 /** Sobre la corrida horizontal de un camino por arriba (de xa a xc en y), el punto mas lejano de
  *  los glifos ya puestos; el centro desempata. Asi dos flechas que comparten un hueco no se pisan. */
 export function spreadOnRun(taken: Pt[], xa: number, xc: number, y: number): Pt {
@@ -499,22 +504,15 @@ export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rec
     for (const i of topIdx) {
       const { ra, rc } = plans[i];
       const o = topRoute(ra, rc, midX(ra), midX(rc), cards);
-      const push = (k: string, e: End) => {
-        const arr = slots.get(k);
-        if (arr) arr.push(e);
-        else slots.set(k, [e]);
-      };
-      push(`${items[i].from}|${o.exit}`, { item: i, end: "from", otherX: midX(rc) });
-      push(`${items[i].to}|${o.enter}`, { item: i, end: "to", otherX: midX(ra) });
+      pushTo(slots, `${items[i].from}|${o.exit}`, { item: i, end: "from", otherX: midX(rc) });
+      pushTo(slots, `${items[i].to}|${o.enter}`, { item: i, end: "to", otherX: midX(ra) });
     }
     const xOf = new Map<string, number>();
     for (const [k, ends] of slots) {
       const r = anchors.get(k.split("|")[0])!;
       ends.sort((a, c) => a.otherX - c.otherX);
-      const n = ends.length;
-      const span = Math.min((n - 1) * SLOT, Math.max(0, r.r - r.l - 40));
-      const step = n > 1 ? span / (n - 1) : 0;
-      ends.forEach((e, k2) => xOf.set(`${e.item}|${e.end}`, midX(r) - span / 2 + k2 * step));
+      const xs = spread(ends.length, midX(r), r.r - r.l, 40);
+      ends.forEach((e, k2) => xOf.set(`${e.item}|${e.end}`, xs[k2]));
     }
     for (const i of topIdx) {
       const { ra, rc } = plans[i];

@@ -61,10 +61,10 @@ export function Digest({ turn: t, toast: extToast }: { turn: DigestTurn; toast?:
           {list(t.questions)}
         </>
       )}
-      {(t.peers?.length ?? 0) > 0 && (
+      {!!t.peers?.length && (
         <>
           <div className="k">mensajes a otras sesiones</div>
-          {list(t.peers!)}
+          {list(t.peers)}
         </>
       )}
       <div className="stats">

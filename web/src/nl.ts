@@ -60,6 +60,29 @@ export function fmtEvery(sec: number): string {
   return `${Math.round(sec / 60)} min`;
 }
 
+export type EveryUnit = "min" | "h";
+/** every_s → cantidad y unidad para un control "repetir cada [n] [min|h]": horas enteras en h, el
+ *  resto en min. Lo comparten el dialogo Conectar y el editor de la flecha. */
+export function splitEvery(everyS: number | null | undefined, def = 1800): { everyN: number; everyUnit: EveryUnit } {
+  const sec = everyS ?? def;
+  if (sec >= 3600 && sec % 3600 === 0) return { everyN: sec / 3600, everyUnit: "h" };
+  return { everyN: Math.max(1, Math.round(sec / 60)), everyUnit: "min" };
+}
+/** el inverso: cantidad y unidad → segundos, nunca menos de 60 */
+export const everySeconds = (n: number, unit: EveryUnit) => Math.max(60, n * (unit === "h" ? 3600 : 60));
+
+/** segundos de "min", "minutos", "m", "h", "horas", "dias" */
+const unitSeconds = (u: string) => (u.startsWith("d") ? 86400 : u.startsWith("h") ? 3600 : 60);
+
+/** "16:00", "4 pm", "12 am", "18 hs" → [h, m] en 24 h; null si no es una hora valida */
+function clock(hh: string, mm: string | undefined, suffix: string | undefined): [number, number] | null {
+  let h = Number(hh);
+  const m = Number(mm || 0);
+  if (suffix === "pm" && h < 12) h += 12;
+  if (suffix === "am" && h === 12) h = 0;
+  return h > 23 || m > 59 ? null : [h, m];
+}
+
 /** La proxima vez que sean las h:m: hoy si todavia no paso, si no manana. */
 export function nextAt(h: number, m: number): Date {
   const d = new Date();
@@ -101,12 +124,7 @@ function findTarget(phrase: string, from: Session, others: Session[]): { to: Ses
  *  "todos los días". Sobre minusculas con acentos (el texto conserva "continuá"). */
 function parseEvery(n: string): { every: number; rest: string } | null {
   let m = n.match(/\b(cada|todos los|todas las)\s+(\d+)\s*(min(?:utos?)?|m|h(?:oras?)?|d[ií]as?)\b/);
-  if (m) {
-    const qty = Number(m[2]);
-    const u = m[3];
-    const sec = u.startsWith("d") ? qty * 86400 : u.startsWith("h") ? qty * 3600 : qty * 60;
-    return { every: Math.max(60, sec), rest: n.replace(m[0], " ") };
-  }
+  if (m) return { every: Math.max(60, Number(m[2]) * unitSeconds(m[3])), rest: n.replace(m[0], " ") };
   m = n.match(/\b(cada|todos los|todas las)\s+(media\s+hora|hora|d[ií]as?)\b/);
   if (m) return { every: m[2].startsWith("media") ? 1800 : m[2] === "hora" ? 3600 : 86400, rest: n.replace(m[0], " ") };
   return null;
@@ -117,36 +135,20 @@ function parseLimit(n: string): { count?: number; untilH?: number; untilM?: numb
   let m = n.match(/\bhasta\s+(\d+)\s*(veces|vez)\b/);
   if (m) return { count: Math.min(50, Math.max(1, Number(m[1]))), rest: n.replace(m[0], " ") };
   m = n.match(/\bhasta\s+las?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm|hs|h)?\b/);
-  if (m) {
-    let h = Number(m[1]);
-    const min = Number(m[2] || 0);
-    if (m[3] === "pm" && h < 12) h += 12;
-    if (m[3] === "am" && h === 12) h = 0;
-    if (h > 23 || min > 59) return null;
-    return { untilH: h, untilM: min, rest: n.replace(m[0], " ") };
-  }
-  return null;
+  if (!m) return null;
+  const c = clock(m[1], m[2], m[3]);
+  return c && { untilH: c[0], untilM: c[1], rest: n.replace(m[0], " ") };
 }
 
 function parseTime(n: string): { at: Date; rest: string } | null {
   // en 30 minutos / en 2 horas
   let m = n.match(/\ben\s+(\d+)\s*(min(?:utos?)?|m|h(?:oras?)?)\b/);
-  if (m) {
-    const qty = Number(m[1]);
-    const ms = m[2].startsWith("h") ? qty * 3600e3 : qty * 60e3;
-    return { at: new Date(Date.now() + ms), rest: n.replace(m[0], " ") };
-  }
+  if (m) return { at: new Date(Date.now() + Number(m[1]) * unitSeconds(m[2]) * 1000), rest: n.replace(m[0], " ") };
   // a las 16:00 / a las 4 pm / a las 4 / 16:30 / 4pm
   m = n.match(/\b(?:a\s+las?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|hs|h)?\b/);
-  if (m && (m[2] || m[3] || /\ba\s+las?\s+/.test(n))) {
-    let h = Number(m[1]);
-    const min = Number(m[2] || 0);
-    if (m[3] === "pm" && h < 12) h += 12;
-    if (m[3] === "am" && h === 12) h = 0;
-    if (h > 23 || min > 59) return null;
-    return { at: nextAt(h, min), rest: n.replace(m[0], " ") };
-  }
-  return null;
+  if (!m || !(m[2] || m[3] || /\ba\s+las?\s+/.test(n))) return null;
+  const c = clock(m[1], m[2], m[3]);
+  return c && { at: nextAt(c[0], c[1]), rest: n.replace(m[0], " ") };
 }
 
 function quoted(phrase: string): string | null {

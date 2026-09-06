@@ -38,6 +38,9 @@ export interface Session {
   suggestion?: string | null;
   /** alguien esta escribiendo en esa terminal (lo detecta screen_loop): lo que se mande se mezcla */
   typing?: boolean;
+  /** de donde salio el titulo automatico: "transcript" (ai-title), "prompt" (primera linea del pedido
+   *  o encabezado del adjunto) o "user" (renombrado a mano, no se recalcula) */
+  title_source?: "transcript" | "prompt" | "user" | null;
   /** coordinadora del repo (estrella en la tarjeta): recibe los avisos "cuando termine" y "avisame". A lo sumo una por repo */
   coordinator?: boolean;
 }
@@ -134,6 +137,8 @@ export interface Rule {
   every_s?: number | null;
   /** periodica: si el destino esta corriendo, saltear ese disparo sin contarlo (por defecto true) */
   skip_busy?: boolean;
+  /** la creo el server por un limite de uso con hora (auto_continue), no el usuario */
+  auto?: boolean;
   fired: number;
   enabled: boolean;
   last_fired?: string;
@@ -141,9 +146,11 @@ export interface Rule {
 }
 
 /** GET /sessions/<sid>/connections: lo que esa sesion mando/recibio y las reglas que la tocan.
- *  `other` ya viene armado por el server para no depender del tablero: hoy como objeto
- *  {session_id, name: "repo · titulo"}; un server anterior lo mandaba como string. */
-export type OtherSession = string | { session_id: string | null; name: string };
+ *  `other` ya viene armado por el server para no depender del tablero: {session_id, name: "repo · titulo"}. */
+export interface OtherSession {
+  session_id: string | null;
+  name: string;
+}
 
 export interface ConnectionLink extends Omit<Link, "from"> {
   /** null en lo que mando el usuario desde el lienzo (kind "user") */
@@ -164,6 +171,8 @@ export interface ConnectionRule {
   max_fires: number;
   every_s?: number | null;
   skip_busy?: boolean;
+  /** la creo el server por un limite de uso con hora (auto_continue), no el usuario */
+  auto?: boolean;
   last_fired?: string | null;
   other: OtherSession;
 }

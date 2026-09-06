@@ -25,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import auth  # noqa: E402
 import transcripts  # noqa: E402
-from rules import connections_of, purge_stale_at_rules, rules_loop  # noqa: E402
+from rules import at_near, connections_of, purge_stale_at_rules, rules_loop  # noqa: E402
 from sessions import (add_link, answer_pending, clean_attachments, consume_events, drop_session, liveness_loop,  # noqa: E402
                       load_sessions, public_pending, read_screen, save_attachment, scan_pending, screen_loop,
                       send_to_session, set_coordinator, set_title, sweep_once, touch)
@@ -80,7 +80,10 @@ def at_fields(d: dict, current: dict | None = None) -> tuple[dict | None, str | 
             "repeat": bool(every)}, None
 
 
-AT_CLASH_S = 120   # dos programadas a la misma consola a menos de 2 min se pisan (misma tolerancia que ensure_continue_rule)
+def parse_at(value) -> dt.datetime:
+    """Hora de una regla `at`, siempre en hora local: naive se asume local, aware (la UI manda UTC
+    con Z) se convierte, asi todas las reglas guardan `at` con el mismo offset. ValueError si no es ISO."""
+    return dt.datetime.fromisoformat(str(value)).astimezone()
 
 
 def create_rule(d: dict) -> tuple[int, dict]:
@@ -113,28 +116,18 @@ def create_rule(d: dict) -> tuple[int, dict]:
         log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]}")
         return 200, rule
     try:
-        # siempre en hora local: naive se asume local, aware (la UI manda UTC con Z) se convierte,
-        # asi todas las reglas guardan `at` con el mismo offset
-        at = dt.datetime.fromisoformat(str(d.get("at"))).astimezone()
+        at = parse_at(d.get("at"))
     except ValueError:
         return 400, {"error": "at debe ser una fecha ISO"}
     extra, err = at_fields(d)
     if err:
         return 400, {"error": err}
-
-    def clashes(r: dict) -> bool:
-        if not r.get("enabled") or r.get("kind") != "at" or r.get("to") != d["to"]:
-            return False
-        try:
-            return abs((dt.datetime.fromisoformat(str(r.get("at"))) - at).total_seconds()) <= AT_CLASH_S
-        except ValueError:
-            return False
-
     # dos programadas a la misma consola en el mismo minuto se inyectan juntas ("Continuar" y
     # "continua" a las 01:01): choca cualquier `at` habilitada a +-2 min, periodica o no, sea cual
     # sea el texto; con "replace": true la nueva reemplaza a la existente
     with lock:
-        clash = next((r for r in rules.items if clashes(r)), None)
+        clash = next((r for r in rules.items if r.get("enabled") and r.get("kind") == "at"
+                      and r.get("to") == d["to"] and at_near(r, at)), None)
     if clash:
         if d.get("replace") is not True:
             hhmm = dt.datetime.fromisoformat(clash["at"]).astimezone().strftime("%H:%M")
@@ -182,12 +175,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _body(self) -> bytes:
+        """Se llama al entrar a cada do_*, antes de decidir nada: si el cuerpo queda sin leer en el
+        socket (un 403 o un 404 tempranos), el siguiente request de la misma conexion keep-alive lo
+        toma como linea de pedido y contesta 501."""
         n = int(self.headers.get("Content-Length") or 0)
-        return self.rfile.read(n) if n else b""
+        self.raw = self.rfile.read(n) if n else b""
+        return self.raw
 
     def _json_body(self) -> dict:
         """JSON del cuerpo tolerante a clientes que mandan latin-1 (un curl desde Git Bash)."""
-        raw = self._body()
+        raw = self.raw
         if not raw:
             return {}
         try:
@@ -226,6 +223,7 @@ class Handler(BaseHTTPRequestHandler):
         return ohost == host or ohost.split(":")[0] in ("localhost", "127.0.0.1")
 
     def do_GET(self):
+        self._body()
         u = urllib.parse.urlparse(self.path)
         parts = [p for p in u.path.split("/") if p]
         q = urllib.parse.parse_qs(u.query)
@@ -317,8 +315,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(500, {"error": str(e)})
 
     def do_POST(self):
-        u = urllib.parse.urlparse(self.path)
-        parts = [p for p in u.path.split("/") if p]
+        self._body()
+        parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
         try:
@@ -389,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(code, res)
                 if parts[2] == "attach":
                     name = urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin")
-                    data = self._body()
+                    data = self.raw
                     if not data:
                         return self._json(400, {"error": "cuerpo vacio"})
                     path = save_attachment(s["session_id"], name, data)
@@ -402,6 +400,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(500, {"error": str(e)})
 
     def do_PUT(self):
+        self._body()
         parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
@@ -453,10 +452,7 @@ class Handler(BaseHTTPRequestHandler):
                 at = None
                 if d.get("at") is not None:
                     try:
-                        at = dt.datetime.fromisoformat(str(d["at"]))
-                        # siempre en hora local: naive se asume local, aware (la UI manda UTC con Z)
-                        # se convierte, asi todas las reglas guardan `at` con el mismo offset
-                        at = at.astimezone()
+                        at = parse_at(d["at"])
                     except ValueError:
                         return self._json(400, {"error": "at debe ser una fecha ISO"})
                 if "text" in d and not isinstance(d["text"], str):
@@ -500,6 +496,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(500, {"error": str(e)})
 
     def do_DELETE(self):
+        self._body()
         parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo"})

@@ -618,3 +618,45 @@ def test_coordinadora_se_hereda_con_el_pid(aislado, con_pid):
     tp_new = str(aislado / f"{NEW}.jsonl")
     ses.apply_event(evp("SessionStart", NEW, source="clear", transcript_path=tp_new, host_ts=local(-9.9)))
     assert st.sessions[NEW]["coordinator"] is True
+
+
+# 10. HTTP: el body se lee siempre, aunque la respuesta sea 403 o 404 -----------------------------
+
+def test_keep_alive_tras_un_404_sigue_contestando(aislado):
+    """Antes, un POST a una ruta desconocida (o sin X-Lienzo) contestaba sin leer el cuerpo; el
+    siguiente request de la misma conexion keep-alive leia ese cuerpo como linea de pedido y daba 501."""
+    import http.client
+    import threading
+    srv = server.QuietServer(("127.0.0.1", 0), server.Handler)
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        for path, headers, first in (("/nada", {"X-Lienzo": "1"}, 404), ("/rules", {}, 403), ("/rules", {"X-Lienzo": "1"}, 400)):
+            c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=3)
+            c.request("POST", path, body='{"kind": "x"}', headers={"Content-Type": "application/json", **headers})
+            r = c.getresponse()
+            r.read()
+            assert r.status == first, (path, r.status)
+            c.request("GET", "/health")
+            r2 = c.getresponse()
+            r2.read()
+            assert r2.status == 200, f"tras {first} en {path}: {r2.status}"
+            c.close()
+    finally:
+        srv.shutdown()
+
+
+def test_la_cabecera_de_un_informe_recibido_no_es_titulo():
+    assert ses.bad_title("Mensaje de lienzo (claude) sobre 'Encargo R1: revisión':")
+    assert ses.bad_title("Mensaje 20260906")
+    assert not ses.bad_title("Encargo R1: revisión de código")
+
+
+def test_el_adjunto_de_un_informe_recibido_no_titula_la_coordinadora(tmp_path):
+    md = tmp_path / "informe.md"
+    md.write_text("Mensaje de lienzo (claude) sobre 'Encargo R1':\nTodo listo.", encoding="utf-8")
+    s = {"last_prompt": "Mensaje de lienzo (claude) sobre 'Encargo R1':\nTodo listo.", "last_attachment": str(md)}
+    assert ses.attachment_title(s) is None
+    md2 = tmp_path / "encargo.md"
+    md2.write_text("# Encargo R1: revisión\nSos una sesión…", encoding="utf-8")
+    assert ses.attachment_title({"last_attachment": str(md2)}) == "Encargo R1: revisión"

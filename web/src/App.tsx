@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, detail, type AuthInfo } from "./api";
+import { api, type AuthInfo } from "./api";
 import { Board, type Agent } from "./components/Board";
 import { shortName } from "./components/Card";
 import { Enroll } from "./components/Enroll";
@@ -10,34 +10,10 @@ import { Panel } from "./components/Panel";
 import { Setup, TotpQr } from "./components/Setup";
 import { Toasts, useToasts } from "./components/Toasts";
 import { UrlQr } from "./components/UrlQr";
-import type { Config, Link, Pending, Rule, ServerEvent, Session, State } from "./types";
-
-/** El tablero dibuja flechas entre sesiones: lo que mando el usuario desde el SendBox (from null,
- *  kind "user") no tiene origen y queda solo en la pestana Conexiones del panel. */
-const boardLinks = (ls: Link[]): Link[] => ls.filter((l) => !!l.from);
-
-/** Flag on/off recordado por navegador (localStorage); `def` cuando no hay storage. */
-function useStoredFlag(key: string, def: boolean): [boolean, () => void] {
-  const [on, setOn] = useState(() => {
-    try {
-      const v = localStorage.getItem(key);
-      return v === null ? def : v === "1";
-    } catch {
-      return def;
-    }
-  });
-  const toggle = useCallback(() => {
-    setOn((v) => {
-      try {
-        localStorage.setItem(key, v ? "0" : "1");
-      } catch {
-        /* sin storage, no importa */
-      }
-      return !v;
-    });
-  }, [key]);
-  return [on, toggle];
-}
+import { useLienzoData } from "./hooks/useLienzoData";
+import { useLocalFlag } from "./hooks/useLocalFlag";
+import { useNotifications } from "./hooks/useNotifications";
+import type { Config, State } from "./types";
 
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
@@ -85,25 +61,27 @@ export default function App() {
 function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; refreshAuth: () => void; onSetup: () => void }) {
   const [showQr, setShowQr] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
-  const [sessions, setSessions] = useState<Record<string, Session>>({});
-  const [pending, setPending] = useState<Record<string, Pending>>({});
-  const [links, setLinks] = useState<Link[]>([]);
-  const [rules, setRules] = useState<Rule[]>([]);
   // dialogo de conectar (por arrastre o desde el boton del panel): flotante, sin abrir nada mas
   const [connect, setConnect] = useState<{ from: string; to: string } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [connected, setConnected] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
   const [filter, setFilter] = useState<State>("corriendo");
-  const [transcriptTick, setTranscriptTick] = useState(0);
   // flechas visibles u ocultas, recordado por navegador
-  const [showArrows, toggleArrows] = useStoredFlag("lienzo.arrows", true);
+  const [showArrows, toggleArrows] = useLocalFlag("lienzo.arrows", true);
   // "Detalles tecnicos": PID/hooks/id en las tarjetas, contadores en cero del digest, nombre del
   // .jsonl en el panel. Sirven para depurar, no para usar: apagados por defecto
-  const [details, toggleDetails] = useStoredFlag("lienzo.details", false);
+  const [details, toggleDetails] = useLocalFlag("lienzo.details", false);
   const { toasts, toast } = useToasts();
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selected;
+  // una sesion que desaparece del tablero cierra su panel y el dialogo de conectar que la tenia
+  const onRemoved = useCallback((sid: string) => {
+    if (selectedRef.current === sid) setSelected(null);
+    setConnect((c) => (c && (c.from === sid || c.to === sid) ? null : c));
+  }, []);
+  const { sessions, pending, links, rules, connected, polling, transcriptTick } = useLienzoData({ refreshAuth, selectedRef, onRemoved });
+  // notificaciones del navegador cuando una sesion pide permiso; el click abre su panel
+  const { notify, toggleNotify } = useNotifications({ sessions, pending, onOpen: setSelected, toast });
 
   // auto_continue vive en ~/.lienzo/config.json (lo lee el server): GET/PUT /config. null mientras
   // carga o si el server que corre no tiene la ruta todavia
@@ -157,160 +135,6 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-
-  // notificaciones del navegador: pedidos de permiso nuevos (pending) y tarjetas que pasan a
-  // "te necesita" por permiso. Se detectan por transicion contra el estado anterior; el primer
-  // snapshot solo inicializa, para no disparar una rafaga al abrir la pestana.
-  const [notify, setNotify] = useState(() => {
-    try {
-      return localStorage.getItem("lienzo.notify") === "1" && typeof Notification !== "undefined" && Notification.permission === "granted";
-    } catch {
-      return false;
-    }
-  });
-  const toggleNotify = useCallback(async () => {
-    if (typeof Notification === "undefined") {
-      toast("Este navegador no tiene notificaciones", true);
-      return;
-    }
-    if (notify) {
-      setNotify(false);
-      try {
-        localStorage.setItem("lienzo.notify", "0");
-      } catch {
-        /* sin storage, no importa */
-      }
-      return;
-    }
-    const perm = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
-    if (perm !== "granted") {
-      toast("El navegador no dio permiso para notificar", true);
-      return;
-    }
-    setNotify(true);
-    try {
-      localStorage.setItem("lienzo.notify", "1");
-    } catch {
-      /* sin storage, no importa */
-    }
-    toast("Notificaciones activadas");
-  }, [notify, toast]);
-  const notifyRef = useRef(notify);
-  notifyRef.current = notify;
-  const seenPendingRef = useRef<Set<string> | null>(null);
-  const permNeedRef = useRef<Set<string> | null>(null);
-  // recien despues del primer render con datos se empieza a comparar: lo que ya estaba al abrir
-  // la pestana no es novedad
-  const armedRef = useRef(false);
-  const hasData = Object.keys(sessions).length > 0 || Object.keys(pending).length > 0;
-  const fire = useCallback((sid: string, title: string, body: string) => {
-    if (!notifyRef.current || typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    try {
-      const n = new Notification(title, { body, tag: `lienzo-${sid}` });
-      n.onclick = () => {
-        window.focus();
-        setSelected(sid);
-        n.close();
-      };
-    } catch {
-      /* sin notificaciones (contexto inseguro, etc.) */
-    }
-  }, []);
-  useEffect(() => {
-    const ids = new Set(Object.keys(pending));
-    const prev = seenPendingRef.current;
-    seenPendingRef.current = ids;
-    if (!prev || !armedRef.current) return;
-    for (const p of Object.values(pending)) {
-      if (prev.has(p.request_id)) continue;
-      const s = sessions[p.session_id];
-      const who = s?.repo ?? p.agent;
-      fire(p.session_id, `${who} pide permiso: ${p.tool_name}`, detail(p.tool_input).slice(0, 200));
-    }
-  }, [pending, sessions, fire]);
-  useEffect(() => {
-    const now = new Set<string>();
-    for (const s of Object.values(sessions)) if (s.state === "te_necesita" && s.needs?.kind === "permission") now.add(s.session_id);
-    const prev = permNeedRef.current;
-    permNeedRef.current = now;
-    const armed = armedRef.current;
-    if (hasData) armedRef.current = true; // este render ya tiene datos: el proximo compara
-    if (!prev || !armed) return;
-    for (const sid of now) {
-      if (prev.has(sid)) continue;
-      const s = sessions[sid];
-      if (!s || s.pending_id) continue; // el pending ya avisa con mas detalle
-      fire(sid, `${s.repo} pide permiso: ${s.needs?.tool ?? ""}`.trim(), (s.needs?.detail ?? "").slice(0, 200));
-    }
-  }, [sessions, hasData, fire]);
-
-  const lastMsgRef = useRef(0);
-  const [polling, setPolling] = useState(false);
-  useEffect(() => {
-    // carga inicial directa, y sondeo cada 4 s mientras el stream no entregue nada (un proxy
-    // que retiene el SSE no deja el tablero vacio)
-    const load = () =>
-      Promise.all([api.get<Session[]>("/sessions"), api.get<Pending[]>("/pending"), api.get<Link[]>("/links"), api.get<Rule[]>("/rules")])
-        .then(([ss, ps, ls, rs]) => {
-          setSessions(Object.fromEntries(ss.map((s) => [s.session_id, s])));
-          setPending(Object.fromEntries(ps.map((p) => [p.request_id, p])));
-          setLinks(boardLinks(ls));
-          setRules(rs);
-          if (selectedRef.current) setTranscriptTick((t) => t + 1);
-        })
-        .catch(() => null);
-    load();
-    const poll = setInterval(() => {
-      if (Date.now() - lastMsgRef.current > 20000) {
-        setPolling(true);
-        load();
-      } else {
-        setPolling(false);
-      }
-    }, 4000);
-    const es = new EventSource("/events");
-    es.onopen = () => {
-      setConnected(true);
-      refreshAuth(); // la URL del tunel puede haber aparecido o cambiado con un reinicio
-    };
-    es.onerror = () => {
-      setConnected(false);
-      refreshAuth(); // si la cookie vencio, /auth lo dice y aparece el login
-    };
-    es.onmessage = (ev) => {
-      lastMsgRef.current = Date.now();
-      const m = JSON.parse(ev.data) as ServerEvent;
-      if (m.type === "snapshot") {
-        setSessions(Object.fromEntries(m.sessions.map((s) => [s.session_id, s])));
-        setPending(Object.fromEntries(m.pending.map((p) => [p.request_id, p])));
-        if (m.links) setLinks(boardLinks(m.links));
-        if (m.rules) setRules(m.rules);
-        setTranscriptTick((t) => t + 1);
-      } else if (m.type === "links") {
-        setLinks(boardLinks(m.links));
-      } else if (m.type === "rules") {
-        setRules(m.rules);
-      } else if (m.type === "session") {
-        setSessions((prev) => ({ ...prev, [m.session.session_id]: m.session }));
-      } else if (m.type === "removed") {
-        setSessions((prev) => {
-          const next = { ...prev };
-          delete next[m.session_id];
-          return next;
-        });
-        if (selectedRef.current === m.session_id) setSelected(null);
-        setConnect((c) => (c && (c.from === m.session_id || c.to === m.session_id) ? null : c));
-      } else if (m.type === "pending") {
-        setPending(Object.fromEntries(m.pending.map((p) => [p.request_id, p])));
-      } else if (m.type === "transcript") {
-        if (selectedRef.current === m.session_id) setTranscriptTick((t) => t + 1);
-      }
-    };
-    return () => {
-      es.close();
-      clearInterval(poll);
-    };
-  }, [refreshAuth]);
 
   // Escape cierra lo que este abierto: menu del header (lo cierra Header), ayuda, dialogo de
   // conexion, o panel
