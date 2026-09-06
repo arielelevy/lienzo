@@ -155,7 +155,10 @@ details.fold > summary,
 .badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); }
 .card .repo { font-weight: 600; color: var(--fg); }
 .card .title { font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card .prompt { color: var(--dim); font-size: 12.5px; max-height: 3em; overflow: hidden; }
+.card .prompt { color: var(--dim); font-size: 12.5px; }
+/* el recorte del pedido lo hace .ptext con line-clamp (card.css). Aca habia un max-height de
+   3em con overflow: hidden que le ganaba al `max-height: none` de card.css por orden en el
+   bundle, asi que el boton "…mas" abria el texto y la caja seguia en 38 px: no mostraba nada */
 .card .reply { margin-top: 6px; font-size: 12.5px; overflow: hidden; white-space: pre-wrap;
   /* corta por linea y con puntos suspensivos: con max-height la ultima quedaba partida al medio */
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; }

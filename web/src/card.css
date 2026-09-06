@@ -147,7 +147,9 @@
 .card .prompt .ptext { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   /* dos lineas del pedido, no una: con una sola casi nunca se entiende que le pediste */
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.card .prompt.open .ptext { white-space: pre-wrap; overflow: visible; text-overflow: clip; }
+.card .prompt.open .ptext { white-space: pre-wrap; overflow: visible; text-overflow: clip;
+  /* al abrir hay que soltar tambien el line-clamp de 2 lineas, si no el "…mas" no muestra nada */
+  display: block; -webkit-line-clamp: none; }
 /* el pedido abierto crece con su texto: con max-height + overflow salia una barra de scroll
    nativa (clara, sin tema) adentro de la tarjeta, que se veia como un error de dibujo */
 .card .prompt .more { flex: 0 0 auto; background: none; border: 0; color: var(--acc); font-size: 12px; cursor: pointer; line-height: inherit;
