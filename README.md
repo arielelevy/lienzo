@@ -83,15 +83,20 @@ Una sesión pasa a *Te necesita* cuando pide permiso, cuando su respuesta termin
 pregunta para vos, o cuando está libre sin ningún pedido. Un informe entregado sin pregunta la
 deja en *Trabajo* con la tilde.
 
-El buscador del encabezado (`/` lo enfoca) filtra por repo, título y último pedido, y los
-chips filtran por agente. Si el filtro matchea tarjetas de una columna colapsada, esa
+El buscador del encabezado (`/` lo enfoca) filtra por agente, repo, rama, título y último
+pedido, así que escribir "codex" encuentra las sesiones de Codex, y los chips filtran por agente. Si el filtro matchea tarjetas de una columna colapsada, esa
 columna se abre sola mientras dure el filtro.
 
 Un click en una tarjeta **la elige**: se resalta, sus flechas quedan opacas y las demás se
 atenúan, y sus conexiones se leen en palabras ("Al terminar le manda su respuesta a lienzo ·
-Coordinadora. Van 4 de 20."). El **doble click abre el panel**, pegado a la derecha; el tablero se
-corre y sigue usable, y las tarjetas se reparten en menos subcolumnas para no volverse ilegibles.
-Esc cierra de a una capa: primero el panel, después la elección. Pestañas: *Destacados*
+Coordinadora. Van 4 de 20."), también en la tarjeta del otro extremo. El **doble click abre el
+panel**, sobre la tarjeta que abriste, con el tablero atenuado y difuminado detrás; mientras está
+abierto no se mueve de lugar, pase lo que pase abajo. Se cierra con Esc, con la ✕ de su esquina o
+con un click afuera. Esc cierra de a una capa: primero el panel, después la elección.
+
+Tabulando se recorren las tarjetas; los controles de una tarjeta se alcanzan con las flechas
+cuando esa tarjeta tiene el foco, y Esc vuelve a la tarjeta. Permitir y Denegar de un permiso
+pendiente son la excepción y siempre están en el Tab directo, porque vencen a los 60 segundos. Pestañas: *Destacados*
 (por turno: pedido, respuesta, archivos tocados, comandos, errores, preguntas, mensajes a
 otras sesiones), *Conversación* (la transcripción completa, con las herramientas
 colapsadas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo que recibió, lo que
@@ -136,8 +141,8 @@ mandó, lo que le escribiste desde el lienzo, y las conexiones activas con su es
 ### Enviar
 
 Caja de texto al pie del panel. Enter manda. Más de 500 caracteres o varias líneas viajan
-como un `.md` adjunto y el agente lo lee por ruta. Se pueden arrastrar archivos e
-imágenes. Si la terminal muestra una sugerencia, aparece en gris en la caja y Tab la
+como un `.md` adjunto y el agente lo lee por ruta. Se pueden arrastrar archivos e imágenes, y
+**pegar una captura con Ctrl+V**: sube como adjunto con un nombre con la fecha y la hora. Si la terminal muestra una sugerencia, aparece en gris en la caja y Tab la
 escribe, igual que en Claude Code.
 
 La casilla "avisarme cuando termine" convierte el envío en una delegación: además de
@@ -318,7 +323,7 @@ lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 43 tests
+python -m pytest tests -q                                   # 48 tests
 cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 31 tests de las flechas
 cd web; node --experimental-strip-types src/nl.test.ts                # 77 aserciones del parser de frases
 ```

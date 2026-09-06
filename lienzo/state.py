@@ -90,10 +90,7 @@ def _with_names(msg: str) -> str:
             if full.startswith(sid):
                 return f"{s.get('repo') or '?'}/{sid}"
         return sid
-    try:
-        return _SID_RE.sub(sub, msg)
-    except Exception:  # noqa: BLE001
-        return msg
+    return _SID_RE.sub(sub, msg)
 
 
 def log(msg: str) -> None:

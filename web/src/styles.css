@@ -59,8 +59,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .arrows .dot:hover { fill: var(--acc); }
 .arrows .lbl { fill: var(--acc); font-size: 11px; }
 .arrows .lbl.count { font-size: 10px; font-weight: 600; }
-/* links viejos (mas de una hora): apagados y sin punta; hover sobre una tarjeta: solo las suyas */
-.arrows .arrow.old .line, .arrows .arrow.old .dot, .arrows .arrow.old .lbl { opacity: .35; }
+/* hover sobre una tarjeta: se resaltan solo las suyas */
 .arrows.hovering .arrow:not(.mine) { opacity: .12; }
 .arrows.hovering .arrow.mine .line { opacity: 1; }
 .arrows .arrow { transition: opacity .15s; }
@@ -160,19 +159,32 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .board.dragging .card:not(.sel) { opacity: .75; }
 .droptarget .card { opacity: 1 !important; }
 
-/* panel de sesion: pegado a la derecha, debajo del header (--hh lo mide App), sin fondo que tape.
-   El tablero se corre a la izquierda (padding) y sigue usable: click en otra tarjeta cambia el
-   panel, click en el vacio lo cierra. Centrado con backdrop tapaba las tarjetas del medio. */
-:root { --panel-w: min(720px, 94vw); --hh: 46px; --col-gap: 30px; }
-/* el panel se abre sobre la tarjeta que lo abrio (left/top van en el style, calculados en
-   Panel.tsx) y el tablero de atras se atenua y se difumina */
-.panel { position: fixed; width: var(--panel-w); max-height: 84vh; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 60px rgba(0,0,0,.6); z-index: 10; display: flex; flex-direction: column; overflow: hidden; }
+/* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y
+   click en el vacio lo cierra (--hh es el alto del header, que mide App) */
+:root { --hh: 46px; --col-gap: 30px; }
+/* el panel se abre sobre la tarjeta que lo abrio y el tablero de atras se atenua y se difumina.
+   left, top, width (y en el celular height) van en el style, calculados en Panel.tsx: el ancho
+   se declara en un solo lado, porque el clamp del left necesita el mismo numero. Aca no va
+   ningun width, ni en el @media del celular. */
+.panel { position: fixed; max-height: 84vh; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 60px rgba(0,0,0,.6); z-index: 10; display: flex; flex-direction: column; overflow: hidden; }
 .panel-backdrop { position: fixed; inset: 0; z-index: 9; pointer-events: none; background: rgba(8, 10, 14, .55); backdrop-filter: blur(3px); }
 .panel-open .toast { max-width: 100%; }
-.panel .ph { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.panel .ph .t { font-weight: 600; flex: 1; min-width: 120px; display: flex; align-items: center; overflow: hidden; }
-.panel .ph .t .ttext { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.panel .ph .t .coord { flex: none; }
+/* una sola fila: badge, titulo con rama y estado, pestanas, Conectar, y la ✕ en la esquina.
+   El padding derecho es el lugar de la ✕, que sale del flujo para no llevarse una fila entera */
+.panel .ph { position: relative; padding: 10px 34px 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.panel .ph .t { font-weight: 600; flex: 1; min-width: 120px; display: flex; align-items: center; gap: 8px; overflow: hidden; }
+/* si la fila no da, se achica primero el titulo (shrink 100) y despues la estrella (shrink 1);
+   la rama y el estado no se achican nunca, que es el dato que reemplazo a la fila de la ruta */
+.panel .ph .t .ttext, .panel .ph .t .coord { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.panel .ph .t .ttext { flex: 0 100 auto; }
+.panel .ph .t .coord { flex: 0 1 auto; }
+/* rama y estado pegados al nombre: lo unico que valia de la fila de la ruta */
+.panel .ph .t .sub { flex: none; font-weight: 400; white-space: nowrap; }
+/* pestanas mas justas: cada pixel que sueltan es titulo que se lee en la misma fila */
+.panel .tabs button { padding: 6px 9px; }
+/* chica y discreta como la ✕ de una tarjeta */
+.panel .ph .x { position: absolute; top: 6px; right: 8px; background: none; border: 0; border-radius: 4px; color: var(--dim); font: inherit; font-size: 12px; line-height: 1; padding: 3px 6px; cursor: pointer; }
+.panel .ph .x:hover { color: var(--fg); border-color: transparent; }
 .panel .tabs { display: flex; gap: 4px; }
 .panel .tabs button.on { border-color: var(--acc); color: var(--acc); }
 .panel .pmeta { width: 100%; word-break: break-all; }
@@ -334,13 +346,21 @@ header .search .chip:not(.on) { text-decoration: line-through; }
   .col.wide .cards .card { margin-bottom: 10px; }
   .col.show .empty { padding: 24px 8px; text-align: center; }
   .card { margin-bottom: 10px; }
-  .panel { width: 100vw; top: 0; right: 0; bottom: 0; border-radius: 0; border: 0; box-shadow: none; }
+  /* sin width/top/left: los pone Panel.tsx, que ya sabe que abajo de 900 px va pantalla entera */
+  .panel { border-radius: 0; border: 0; box-shadow: none; max-height: none; }
   .panel-open .board { padding-right: 10px; }
   .panel-open .toasts { max-width: none; }
-  .panel .ph { padding: 8px 10px; }
+  .panel .ph { padding: 8px 30px 8px 10px; gap: 6px; }
+  /* pestanas mas chicas: con el tamano de escritorio se llevaban una fila entera de las 420 px */
+  .panel .tabs { flex-wrap: wrap; }
+  .panel .tabs button { padding: 6px 8px; font-size: 12.5px; }
+  .panel .ph .x { top: 4px; right: 4px; padding: 4px 7px; }
   .panel .pmeta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
   .panel .body { padding: 10px; }
   .send { padding: 8px 10px; }
+  /* el placeholder ocupa tres renglones a 420 px y con 64 px de alto quedaba cortado a la mitad
+     del tercero. Solo con pantalla alta: con el teclado abierto el alto hace falta para el cuerpo */
+  @media (min-height: 600px) { .send textarea { min-height: 86px; } }
   /* Conectar en el celular: si no entra, scrollea la caja y los botones no quedan contra el borde */
   .gate-box.connect { max-height: calc(100vh - 32px); overflow-y: auto; }
   .filters { display: flex; flex-wrap: wrap; }

@@ -660,3 +660,55 @@ def test_el_adjunto_de_un_informe_recibido_no_titula_la_coordinadora(tmp_path):
     md2 = tmp_path / "encargo.md"
     md2.write_text("# Encargo R1: revisión\nSos una sesión…", encoding="utf-8")
     assert ses.attachment_title({"last_attachment": str(md2)}) == "Encargo R1: revisión"
+
+
+# 10. simplificacion del backend: las funciones chicas de turn_activity y el adjunto
+
+def blk(name, inp=None, err=False):
+    return {"kind": "tool", "name": name, "input": inp or {}, "result": {"is_error": err}}
+
+
+def test_turn_activity_cuenta_archivos_comando_y_errores_en_una_pasada():
+    t = {"blocks": [
+        {"kind": "text", "text": "arranco"},
+        blk("Read", {"file_path": r"D:\Apps\lienzo\lienzo\state.py"}),
+        blk("Bash", {"command": r'cd "D:\Apps\lienzo" && python -m pytest tests -q'}, err=True),
+        blk("Edit", {"file_path": "D:/Apps/lienzo/lienzo/sessions.py"}),
+        blk("Read", {"file_path": "D:/Apps/lienzo/lienzo/sessions.py"}),   # repetido: un solo nombre
+        {"kind": "thinking", "text": "no cuenta"},
+    ]}
+    a = ses.turn_activity(t)
+    assert a["tool_count"] == 4
+    assert a["last_files"] == ["sessions.py", "state.py"], "del mas nuevo al mas viejo, sin repetir"
+    assert a["last_cmd"] == "python -m pytest tests -q", "el cd del principio no va"
+    assert a["tool_errors"] == 1
+    assert list(a) == ["tool_count", "last_files", "last_cmd", "tool_errors"]
+
+
+def test_turn_activity_sin_herramientas_no_inventa_nada():
+    a = ses.turn_activity({"blocks": [{"kind": "text", "text": "hola"}]})
+    assert a == {"tool_count": 0, "last_files": [], "last_cmd": None, "tool_errors": 0}
+    assert ses.turn_activity({}) == a
+
+
+def test_using_tool_es_la_herramienta_mas_nueva():
+    assert ses.using_tool({"blocks": [blk("Read"), blk("Bash")]}) == "usando Bash"
+    assert ses.using_tool({"blocks": [{"kind": "text", "text": "x"}]}) is None
+    assert ses.using_tool({}) is None
+
+
+def test_turn_prompt_descarta_el_turno_cortado_por_la_cola():
+    assert ses.turn_prompt({"prompt": "hace esto"}) == "hace esto"
+    assert ses.turn_prompt({"prompt": "(turno anterior al corte)"}) is None
+    assert ses.turn_prompt({"prompt": ""}) is None
+    assert ses.turn_prompt({}) is None
+
+
+def test_attachment_path_toma_el_ultimo_adjunto_md_que_existe(tmp_path):
+    md = tmp_path / "mensaje.md"
+    md.write_text("# Hola", encoding="utf-8")
+    assert ses.attachment_path(f"{ses.ATTACH_WRAPPER} Adjunto: {md}") == str(md)
+    # varios adjuntos: gana el primero que sea .md y exista
+    assert ses.attachment_path(f"{ses.ATTACH_WRAPPER} Adjunto: {tmp_path / 'no-esta.md'} Adjunto: {md}") == str(md)
+    assert ses.attachment_path("un pedido cualquiera") is None
+    assert ses.attachment_path(f"{ses.ATTACH_WRAPPER} Adjunto: {tmp_path / 'foto.png'}") is None

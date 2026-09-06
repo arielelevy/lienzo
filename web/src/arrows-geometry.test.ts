@@ -146,7 +146,7 @@ test("buildItems agrupa los links por par y sentido, el mas nuevo manda, y separ
   assert.equal(items[2].glyph, "⇄");
   assert.match(items[2].title, /^canal nativo entre n\(a\) y n\(b\), abierto hace /);
   assert.match(items[2].desc, /^n\(a\) y n\(b\) tienen abierto el canal nativo desde hace /);
-  assert.ok(items.every((it) => it.old === false && it.fresh === undefined));
+  // `old` y `fresh` se fueron: el primero nunca era true y el segundo nunca se seteaba
 });
 
 test("buildItems: varios envios se cuentan en la descripcion; los textos se leen en la vista", () => {
@@ -557,6 +557,21 @@ test("el arco de la misma columna no se mete en el padding del tablero", () => {
   const [s] = computeSegs({ rects, anchors: rects, strips: [{ l: 316, r: 344 }], boardWidth: 400, bands: band, links: [], rules: [rule({ id: "r", from: "a1", to: "a2" })], fmt });
   for (const [x] of pathPts(s.d)) assert.ok(x >= 16 && x <= 316, `x=${x.toFixed(1)} fuera de la columna`);
   assert.ok(s.x >= 16 && s.x <= 316, `glifo en x=${s.x}`);
+});
+
+test("el bucle sale del costado, baja LOOP_SPAN y se va a la izquierda si no entra a la derecha", () => {
+  // una regla de una tarjeta hacia si misma: la panza a 20 px del borde, del techo + 16 al + 42
+  const r = R(0, 0, 300, 120);
+  const rects = new Map([["a", r]]);
+  const solo = rule({ id: "r1", from: null, to: "a", text: "seguir" });
+  const [s] = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 700, links: [], rules: [solo], fmt });
+  assert.equal(s.d, "M 300 16 C 328 16 328 42 300 42");
+  assert.deepEqual([s.x, s.y], [320, 29]);
+  assert.deepEqual(s.ends, [r, r]);
+  // el tablero termina justo al lado de la tarjeta: el bucle se dibuja del otro lado
+  const [z] = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 320, links: [], rules: [solo], fmt });
+  assert.equal(z.d, "M 0 16 C -28 16 -28 42 0 42");
+  assert.deepEqual([z.x, z.y], [-20, 29]);
 });
 
 if (failed) {

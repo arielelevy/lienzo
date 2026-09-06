@@ -226,14 +226,20 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
 
   // rect de la tarjeta que abrio el panel, medido al abrir: el panel se dibuja sobre ella
   const anchorRef = useRef<{ left: number; top: number } | null>(null);
-  if (selected) {
+  const anchoredTo = useRef<string | null>(null);
+  // el rect se mide una sola vez, al abrir: mientras el panel esta abierto no se mueve, pase lo
+  // que pase abajo. Antes se recalculaba en cada render y el panel saltaba cada vez que llegaba un
+  // evento por SSE y las tarjetas se reordenaban
+  if (!selected) {
+    anchorRef.current = null;
+    anchoredTo.current = null;
+  } else if (anchoredTo.current !== selected) {
     const el = typeof document !== "undefined" ? document.querySelector(`.card[data-sid="${selected}"]`) : null;
     if (el) {
       const r = el.getBoundingClientRect();
       anchorRef.current = { left: r.left, top: r.top };
     }
-  } else {
-    anchorRef.current = null;
+    anchoredTo.current = selected;
   }
 
   const sel = selected ? sessions[selected] : null;

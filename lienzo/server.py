@@ -163,6 +163,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # silencio; el log propio alcanza
         pass
 
+    def _server_error(self, e: BaseException) -> None:
+        """Final de todos los do_*: si el navegador cerro la conexion a mitad de la respuesta no hay
+        a quien contestar; cualquier otra excepcion va al log propio y sale como 500."""
+        if is_disconnect(e):
+            return
+        log(traceback.format_exc())
+        return self._json(500, {"error": str(e)})
+
     def _json(self, code: int, obj, extra_headers: dict | None = None) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -309,10 +317,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n))
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:  # noqa: BLE001
-            if is_disconnect(e):
-                return   # el navegador cerro la conexion a mitad de la respuesta: no hay a quien contestar
-            log(traceback.format_exc())
-            return self._json(500, {"error": str(e)})
+            return self._server_error(e)
 
     def do_POST(self):
         self._body()
@@ -394,10 +399,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, {"path": path, "bytes": len(data)})
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:  # noqa: BLE001
-            if is_disconnect(e):
-                return   # el navegador cerro la conexion a mitad de la respuesta: no hay a quien contestar
-            log(traceback.format_exc())
-            return self._json(500, {"error": str(e)})
+            return self._server_error(e)
 
     def do_PUT(self):
         self._body()
@@ -490,10 +492,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, r)
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:  # noqa: BLE001
-            if is_disconnect(e):
-                return   # el navegador cerro la conexion a mitad de la respuesta: no hay a quien contestar
-            log(traceback.format_exc())
-            return self._json(500, {"error": str(e)})
+            return self._server_error(e)
 
     def do_DELETE(self):
         self._body()

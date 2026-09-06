@@ -185,22 +185,17 @@ def main() -> int:
     if out is not None:
         sys.stdout.write(json.dumps(out))
         sys.stdout.flush()
-        # registrar la decision como evento para que el server cierre el pending
-        try:
-            atomic_write(os.path.join(EVENTS, f"{time.time_ns()}-{sid}-PermissionDecision.json"),
-                         json.dumps({"hook_event_name": "PermissionDecision", "session_id": sid, "agent": agent,
-                                     "tool_use_id": data.get("tool_use_id"),
-                                     "decision": out["hookSpecificOutput"]["decision"]["behavior"],
-                                     "host_ts": now_iso()}, ensure_ascii=False))
-        except OSError:
-            pass
-    else:
-        try:
-            atomic_write(os.path.join(EVENTS, f"{time.time_ns()}-{sid}-PermissionTimeout.json"),
-                         json.dumps({"hook_event_name": "PermissionTimeout", "session_id": sid, "agent": agent,
-                                     "tool_use_id": data.get("tool_use_id"), "host_ts": now_iso()}, ensure_ascii=False))
-        except OSError:
-            pass
+    # la decision (o el vencimiento) va como evento para que el server cierre el pending
+    done = "PermissionDecision" if out is not None else "PermissionTimeout"
+    ev = {"hook_event_name": done, "session_id": sid, "agent": agent, "tool_use_id": data.get("tool_use_id")}
+    if out is not None:
+        ev["decision"] = out["hookSpecificOutput"]["decision"]["behavior"]
+    ev["host_ts"] = now_iso()
+    try:
+        atomic_write(os.path.join(EVENTS, f"{time.time_ns()}-{safe_sid}-{done}.json"),
+                     json.dumps(ev, ensure_ascii=False))
+    except OSError:
+        pass
     return 0
 
 
