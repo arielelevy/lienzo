@@ -204,7 +204,10 @@ En el celular el agarre ⇢ se arrastra con el dedo; el cuerpo de la tarjeta scr
 
 Cada conexión se dibuja entre las tarjetas: el último envío de cada par con ↪ (o ×N si hubo
 varios), las reglas pendientes punteadas con ⏹, ⏰ o ↻ (periódica), el canal nativo con una
-flecha doble gruesa. Las corridas horizontales van por un **carril** propio, debajo del título de
+flecha doble gruesa. **La flecha de un envío vive diez minutos** y después se va sola: el tablero
+muestra lo que está pasando ahora, y lo que se mandó queda en la pestaña Conexiones. El canal
+nativo no caduca, porque es un vínculo abierto, y las reglas pendientes tampoco, porque todavía
+no pasaron. Las corridas horizontales van por un **carril** propio, debajo del título de
 la columna, entre dos filas o debajo de la última: el mismo criterio en los tres casos. Varias
 flechas en el mismo carril se reparten en pistas paralelas, a 7 px, como un mapa de subte, y la
 columna reserva justo el alto que ese carril necesita. Sin flechas, o con las flechas apagadas, la

@@ -31,6 +31,8 @@ const fmt: Formatters = {
   when: (iso) => `a las ${iso.slice(11, 16)}`,
 };
 const rule = (p: Partial<Rule> & Pick<Rule, "id" | "from" | "to">): Rule => ({ kind: "on_stop", text: "", at: null, repeat: false, max_fires: 1, fired: 0, enabled: true, ...p });
+/** reloj fijo para los tests: unos minutos despues de los links de prueba, que son de esa fecha */
+const AHORA = new Date("2026-09-05T12:05:00Z").getTime();
 const link = (p: Partial<Link> & Pick<Link, "id" | "from" | "to" | "ts">): Link => ({ text: "hola", ...p });
 
 // tablero tipo: dos columnas abiertas de 300 px con un canal de 28 px, y una tira colapsada a la derecha
@@ -123,25 +125,25 @@ test("cubic es determinista: misma entrada, misma salida", () => {
 test("buildItems agrupa los links por par y sentido, el mas nuevo manda, y separa el canal nativo", () => {
   const anchors = new Map([["a", A1], ["b", B1]]);
   const links = [
-    link({ id: "1", from: "a", to: "b", ts: "2026-09-05T10:00:00Z", text: "primero" }),
-    link({ id: "2", from: "a", to: "b", ts: "2026-09-05T12:00:00Z", text: "ultimo" }),
-    link({ id: "3", from: "b", to: "a", ts: "2026-09-05T11:00:00Z", text: "vuelta" }),
+    link({ id: "1", from: "a", to: "b", ts: "2026-09-05T12:00:00Z", text: "primero" }),
+    link({ id: "2", from: "a", to: "b", ts: "2026-09-05T12:03:00Z", text: "ultimo" }),
+    link({ id: "3", from: "b", to: "a", ts: "2026-09-05T12:02:00Z", text: "vuelta" }),
     link({ id: "4", from: "a", to: "b", ts: "2026-09-05T09:00:00Z", kind: "native", text: "nativo" }),
     link({ id: "5", from: "a", to: "zzz", ts: "2026-09-05T09:00:00Z", text: "destino sin tarjeta" }),
   ];
-  const items = buildItems(links, [], anchors, fmt);
+  const items = buildItems(links, [], anchors, fmt, AHORA);
   assert.equal(items.length, 3);
   assert.deepEqual(items[0].ids, ["2", "1"]); // mas nuevo primero
   assert.equal(items[0].kind, "link");
   assert.equal(items[0].glyph, "×2");
   // el titulo es de una linea y dice que hace el click; lo que es la flecha va en `desc`, que se
   // muestra mientras esta seleccionada y siempre termina diciendo que hace el doble click
-  assert.equal(items[0].title, "2 envíos de n(a) a n(b), el último hace ago(2026-09-05T12:00:00Z) · click para seleccionarla");
-  assert.equal(items[0].desc, "n(a) le mandó 2 mensajes a n(b). El último, hace ago(2026-09-05T12:00:00Z). Doble click para verlos o mandar de nuevo.");
+  assert.equal(items[0].title, "2 envíos de n(a) a n(b), el último hace ago(2026-09-05T12:03:00Z) · click para seleccionarla");
+  assert.equal(items[0].desc, "n(a) le mandó 2 mensajes a n(b). El último, hace ago(2026-09-05T12:03:00Z). Doble click para verlos o mandar de nuevo.");
   assert.ok(items.every((it) => !it.title.includes("\n")), "el title va en una linea");
   assert.ok(items.every((it) => /Doble click para /.test(it.desc)), "la descripcion enseña el gesto");
   assert.equal(items[1].glyph, "↪");
-  assert.equal(items[1].title, "envío de n(b) a n(a), hace ago(2026-09-05T11:00:00Z) · click para seleccionarla");
+  assert.equal(items[1].title, "envío de n(b) a n(a), hace ago(2026-09-05T12:02:00Z) · click para seleccionarla");
   assert.equal(items[2].kind, "native");
   assert.equal(items[2].glyph, "⇄");
   assert.match(items[2].title, /^canal nativo entre n\(a\) y n\(b\), abierto hace /);
@@ -151,10 +153,10 @@ test("buildItems agrupa los links por par y sentido, el mas nuevo manda, y separ
 
 test("buildItems: varios envios se cuentan en la descripcion; los textos se leen en la vista", () => {
   const anchors = new Map([["a", A1], ["b", B1]]);
-  const links = Array.from({ length: 7 }, (_, i) => link({ id: `l${i}`, from: "a", to: "b", ts: `2026-09-05T0${i}:00:00Z`, text: "x".repeat(100) }));
-  const [it] = buildItems(links, [], anchors, fmt);
+  const links = Array.from({ length: 7 }, (_, i) => link({ id: `l${i}`, from: "a", to: "b", ts: `2026-09-05T12:0${i}:00Z`, text: "x".repeat(100) }));
+  const [it] = buildItems(links, [], anchors, fmt, AHORA);
   assert.equal(it.glyph, "×7");
-  assert.equal(it.desc, "n(a) le mandó 7 mensajes a n(b). El último, hace ago(2026-09-05T06:00:00Z). Doble click para verlos o mandar de nuevo.");
+  assert.equal(it.desc, "n(a) le mandó 7 mensajes a n(b). El último, hace ago(2026-09-05T12:06:00Z). Doble click para verlos o mandar de nuevo.");
   assert.equal(cut("x".repeat(100)), `${"x".repeat(90)}…`);
 });
 
@@ -353,9 +355,26 @@ test("topRoute prefiere el hueco entre filas al margen si es mas corto, y marca 
   assert.equal(s.dim, true);
 });
 
+test("un envio de mas de 10 minutos se va del tablero; el canal nativo y las reglas se quedan", () => {
+  const anchors = new Map([["a", A1], ["b", B1]]);
+  const viejo = new Date(AHORA - 11 * 60_000).toISOString();
+  const fresco = new Date(AHORA - 2 * 60_000).toISOString();
+  const items = (ls: Link[], rs: Rule[] = []) => buildItems(ls, rs, anchors, fmt, AHORA).map((i) => i.ids[0]);
+  assert.deepEqual(items([link({ id: "v", from: "a", to: "b", ts: viejo })]), []);
+  assert.deepEqual(items([link({ id: "f", from: "a", to: "b", ts: fresco })]), ["f"]);
+  // el canal nativo no caduca: es un vinculo abierto, no un hecho puntual
+  assert.deepEqual(items([link({ id: "n", from: "a", to: "b", ts: viejo, kind: "native" })]), ["n"]);
+  // una regla pendiente tampoco: todavia no paso
+  assert.deepEqual(items([], [rule({ id: "r", from: "a", to: "b" })]), ["r"]);
+  // con uno viejo y uno fresco del mismo par, la flecha queda y los cuenta a los dos
+  const dos = buildItems([link({ id: "v", from: "a", to: "b", ts: viejo }), link({ id: "f", from: "a", to: "b", ts: fresco })], [], anchors, fmt, AHORA);
+  assert.equal(dos.length, 1);
+  assert.equal(dos[0].glyph, "×2");
+});
+
 test("computeSegs es puro: no muta la entrada y repite la salida", () => {
   const rects = new Map([["a", A1], ["b", B1], ["a2", A2]]);
-  const links = [link({ id: "1", from: "a", to: "b", ts: "2026-09-05T10:00:00Z" }), link({ id: "2", from: "a", to: "b", ts: "2026-09-05T11:00:00Z" })];
+  const links = [link({ id: "1", from: "a", to: "b", ts: new Date(Date.now() - 60_000).toISOString() }), link({ id: "2", from: "a", to: "b", ts: new Date(Date.now() - 30_000).toISOString() })];
   const before = JSON.stringify(links);
   const input = { rects, anchors: rects, strips: [STRIP], boardWidth: W, links, rules: [rule({ id: "r", from: "b", to: "a2" })], fmt };
   const s1 = computeSegs(input);

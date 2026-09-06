@@ -72,7 +72,9 @@ details.fold > summary,
    --lane-h, que crece con cuantas flechas lleve */
 .board[data-lanes] .col:not(.wide) .cards .card { margin-bottom: var(--card-gap-y, 15px); }
 .board[data-lanes] .col.wide .cards > div { margin-bottom: var(--card-gap-y, 15px); }
-.col + .col { margin-left: var(--col-gap, 35px); }
+/* entre dos columnas alcanza un hilo: las flechas corren por los carriles de adentro, no por
+   el canal de afuera. El aire grande (--col-gap) es el que separa tarjetas, que es donde se ven */
+.col + .col { margin-left: var(--col-sep, 10px); }
 .col.collapsed + .col, .col + .col.collapsed { margin-left: 8px; }
 .arrows { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; overflow: visible; }
 .arrows .arrow { pointer-events: none; }
@@ -189,7 +191,7 @@ details.fold > summary,
 
 /* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y
    click en el vacio lo cierra (--hh es el alto del header, que mide App) */
-:root { --hh: 46px; --col-gap: 35px; --card-gap-y: 15px; }
+:root { --hh: 46px; --col-gap: 35px; --col-sep: 10px; --card-gap-y: 15px; }
 /* el panel se abre sobre la tarjeta que lo abrio y el tablero de atras se atenua y se difumina.
    left, top, width (y en el celular height) van en el style, calculados en Panel.tsx: el ancho
    se declara en un solo lado, porque el clamp del left necesita el mismo numero. Aca no va
