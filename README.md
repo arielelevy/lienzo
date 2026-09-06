@@ -73,7 +73,8 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
 ### Tablero
 
 Tres columnas: *Trabajo* (corriendo y terminó, el estado se ve como un punto verde o una
-tilde en la tarjeta), *Te necesita* y *Muerta*. Cada columna está abierta si tiene tarjetas
+tilde en la tarjeta), *Te necesita* y *Muerta*. Entre columnas hay un hilo de 10 px; el aire
+grande, 35 px, va entre las tarjetas, que es donde se ve, y por ahí pasan las flechas. Cada columna está abierta si tiene tarjetas
 y colapsada a una tira vertical si no; una columna vacía que quede abierta se cierra sola a
 los 5 segundos. Click en la tira la expande, click en el título la colapsa; si la colapsás con
 tarjetas adentro se respeta hasta que llegue una tarjeta nueva. Cuando hay pocas columnas
@@ -165,7 +166,9 @@ Denegar. Nunca "permitir siempre".
 
 ### Conectar sesiones
 
-Arrastrá una tarjeta y soltala sobre otra (o "Conectar…" en el panel). Se abre un diálogo
+Arrastrá una tarjeta **desde su fila de arriba, su título o el agarre ⇢** y soltala sobre otra
+(o "Conectar…" en el panel). El cuerpo de la tarjeta no arrastra: ahí el texto se selecciona y se
+copia. Se abre un diálogo
 chico donde podés escribirlo en una frase, y se interpreta mientras tipeás: "continuá a las
 16:00", "en 30 min seguí", "cada 30 min continuá hasta 6 veces", "todos los días a las 9
 continuá", "cuando termine mandale a MAPO", "cuando termine avisame", "cada vez que termine
