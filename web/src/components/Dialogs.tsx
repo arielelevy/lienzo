@@ -12,13 +12,16 @@ function Gate({ onClose, className = "", children }: { onClose: () => void; clas
 
 export function HelpDialog({ onClose }: { onClose: () => void }) {
   const rows: [string, string][] = [
-    ["Esc", "cierra el panel, el diálogo de conectar o esta ayuda; en la búsqueda, la limpia"],
+    ["click", "elige una tarjeta: la resalta con sus flechas y muestra sus conexiones en palabras"],
+    ["doble click", "sobre una tarjeta abre su panel"],
+    ["Esc", "deselecciona la tarjeta; y cierra el panel, el diálogo de conectar o esta ayuda; en la búsqueda, la limpia"],
+    ["Enter", "sobre una tarjeta enfocada, abre su panel"],
+    ["✎", "renombra la tarjeta en el lugar (aparece al pasar el mouse, junto a la estrella)"],
+    ["arrastrar", "una tarjeta sobre otra abre el diálogo de conectar con ese destino; sobre sí misma, Programar"],
     ["Tab", "en la caja de envío, acepta la sugerencia gris leída de la terminal"],
     ["/", "enfoca la búsqueda (repo, título, último pedido)"],
     ["?", "muestra u oculta esta ayuda"],
-    ["Enter", "sobre una tarjeta enfocada, abre su panel"],
-    ["arrastrar", "una tarjeta sobre otra abre el diálogo de conectar con ese destino"],
-    ["click", "en el título de una columna la colapsa a una tira; en la tira, la expande"],
+    ["click en el título", "de una columna la colapsa a una tira; en la tira, la expande"],
   ];
   return (
     <Gate onClose={onClose} className="help">

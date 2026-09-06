@@ -233,8 +233,10 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
     <div className="panel">
       <div className="ph">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
+        {/* una linea sola: el titulo largo se corta con puntos suspensivos y va entero en el title,
+            asi no empuja las pestanas tres renglones para abajo */}
         <span className="t">
-          {s.title || s.repo}
+          <span className="ttext" title={s.title || s.repo}>{s.title || s.repo}</span>
           {s.coordinator && (
             <span className="coord" title="coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame'">
               ★ coordinadora

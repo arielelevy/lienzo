@@ -136,19 +136,33 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // Escape cierra lo que este abierto: menu del header (lo cierra Header), ayuda, dialogo de
-  // conexion, o panel
+  // Lo que hay abierto sobre el tablero, de adelante hacia atras: ayuda, dialogo de conectar,
+  // panel. `all` cierra todo de una; sin `all` cierra un nivel, el de mas adelante.
+  const closeOverlays = useCallback(
+    (all = false) => {
+      if (showHelp) {
+        setShowHelp(false);
+        if (!all) return;
+      }
+      if (connect) {
+        setConnect(null);
+        if (!all) return;
+      }
+      if (selectedRef.current) setSelected(null);
+    },
+    [connect, showHelp],
+  );
+
+  // Escape va de a un nivel; el menu del header lo cierra el propio Header y frena esta cascada
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (document.querySelector("header .dropdown")) return;
-      if (showHelp) setShowHelp(false);
-      else if (connect) setConnect(null);
-      else if (selectedRef.current) setSelected(null);
+      closeOverlays();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [connect, showHelp]);
+  }, [closeOverlays]);
 
   // click fuera del panel (y fuera de una tarjeta o del header) lo cierra
   useEffect(() => {
@@ -247,6 +261,8 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onHelp={() => setShowHelp(true)}
         onRescan={rescan}
         onLogout={() => api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true))}
+        // abrir el menu es cambiar de contexto: cierra todo lo que haya detras, no un nivel
+        onMenuOpen={() => closeOverlays(true)}
         flags={flags}
       />
       {showHelp && (

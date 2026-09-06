@@ -62,18 +62,22 @@ function loadManual(): Manual {
 }
 const EMPTY_COLLAPSE_MS = 5_000;   // pedido de Ariel: 10 s se sentia largo
 
-/** Subcolumnas de tarjetas disponibles en total: 4 en pantalla ancha, 2 por debajo de ~1100 px
- *  (en movil el CSS fuerza 1). */
-function useLaneBudget(): number {
-  const mq = () => (typeof window !== "undefined" && window.matchMedia("(min-width: 1100px)").matches ? 4 : 2);
-  const [budget, setBudget] = useState<number>(mq);
+/** Subcolumnas de tarjetas disponibles en total: 4 si hay lugar de verdad, 2 por debajo de
+ *  ~1100 px (en movil el CSS fuerza 1). Se mide el ancho **de contenido** del tablero, no el de la
+ *  ventana: con el panel abierto el tablero conserva su ancho pero su contenido queda en la mitad
+ *  de la pantalla (el relleno cuenta en clientWidth), y repartir 4 subcolumnas ahi dejaba tarjetas
+ *  de 129 px. Hasta la primera medicion vale el ancho de la ventana, para no arrancar en 2. */
+function useLaneBudget(ref: React.RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = useState(0);
   useEffect(() => {
-    const m = window.matchMedia("(min-width: 1100px)");
-    const on = () => setBudget(m.matches ? 4 : 2);
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, []);
-  return budget;
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const o = new ResizeObserver(([e]) => setWidth(e.contentRect.width));
+    o.observe(el);
+    return () => o.disconnect();
+  }, [ref]);
+  const w = width || (typeof window !== "undefined" ? window.innerWidth : 0);
+  return w >= 1100 ? 4 : 2;
 }
 
 /** Reparte `budget` subcolumnas entre las columnas abiertas segun cuantas tarjetas tienen: una
@@ -127,6 +131,13 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   };
   // tarjeta bajo el mouse: Arrows resalta sus flechas y atenua las demas
   const [hover, setHover] = useState<string | null>(null);
+  // tarjeta elegida con un click: se resalta, muestra sus conexiones en palabras y sus flechas
+  // quedan resaltadas (por el mismo camino que el hover). Es distinto de `selected`, que es la que
+  // tiene el panel abierto: se puede tener el panel de una y elegida otra.
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => {
+    if (picked && !sessions[picked]) setPicked(null); // se fue la sesion elegida
+  }, [sessions, picked]);
   // El arrastre va por Pointer Events, asi funciona igual con mouse y con el dedo. Presion sobre el
   // cuerpo de una tarjeta (solo mouse: con el dedo el cuerpo scrollea): es arrastre si se mueve mas
   // de 8 px, si no es click. Desde el agarre ⇢ arrastra de una, con cualquier puntero (.grip lleva
@@ -253,7 +264,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // aprovechar el ancho: hasta 4 subcolumnas de tarjetas en total (2 en pantallas angostas),
   // repartidas entre las columnas abiertas. Cada columna crece en proporcion a sus subcolumnas,
   // asi todas las tarjetas del tablero quedan del mismo ancho
-  const laneBudget = useLaneBudget();
+  const laneBudget = useLaneBudget(boardRef);
   const lanes = useMemo(() => {
     const open = COLS.map(([k]) => k)
       .filter((k) => !isCollapsed(k, byState[k].length))
@@ -264,7 +275,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
 
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
-  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, manual, openEmpty, query, agents, laneBudget]);
+  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, picked, manual, openEmpty, query, agents, laneBudget]);
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
   // tarjeta se abre el reenvio con ese destino
@@ -323,7 +334,12 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       if (to) onConnect(d.from, to);
     };
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDrag(null); // soltar en cualquier lado o Esc cancela
+      // Esc durante un arrastre lo cancela (soltar en cualquier lado, tambien); si no, deselecciona
+      if (e.key !== "Escape") return;
+      if (dragRef.current) setDrag(null);
+      // Esc pela una capa por vez: con el panel abierto lo cierra App y la eleccion queda; el
+      // siguiente Esc la suelta. Sin este guard, un solo Esc hacia las dos cosas.
+      else if (!selected) setPicked(null);
     };
     const cancel = () => {
       pressRef.current = null;
@@ -339,7 +355,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       document.removeEventListener("pointercancel", cancel);
       document.removeEventListener("keydown", key);
     };
-  }, [sessions, onConnect]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessions, onConnect, selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -354,13 +370,18 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         className={`board ${drag ? "dragging" : ""}`}
         ref={boardRef}
         onPointerDown={onPointerDown}
+        onClick={(e) => {
+          // click en el vacio del tablero: deselecciona (como Esc)
+          if (!(e.target as HTMLElement).closest("[data-sid]")) setPicked(null);
+        }}
         onMouseOver={(e) => {
           const sid = (e.target as HTMLElement).closest<HTMLElement>("[data-sid]")?.dataset.sid ?? null;
           setHover((h) => (h === sid ? h : sid));
         }}
         onMouseLeave={() => setHover(null)}
       >
-        {showArrows && <Arrows links={links} rules={rules} sessions={sessions} boardRef={boardRef} version={arrowsVersion} hover={hover} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} toast={toast} />}
+        {/* sin nada bajo el mouse, las flechas resaltadas son las de la tarjeta elegida */}
+        {showArrows && <Arrows links={links} rules={rules} sessions={sessions} boardRef={boardRef} version={arrowsVersion} hover={hover ?? picked} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} toast={toast} />}
         {drag && (
           <>
             <svg className="arrows draglink">
@@ -425,6 +446,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         onDeleteRule={onDeleteRule}
                         toast={toast}
                         selected={selected === s.session_id}
+                        picked={picked === s.session_id}
+                        onPick={() => setPicked(s.session_id)}
                         onSelect={() => {
                           // el click que cierra un arrastre no abre el panel
                           if (draggedRef.current) {

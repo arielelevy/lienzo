@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 // @ts-ignore TS5097: extension .ts en el import, necesaria para que Node lo resuelva
-import { buildItems, channelX, clearance, colOf, computeSegs, cubic, cubicAt, cubicHits, ejectGlyph, freeAt, groupColumns, inside, layoutEnds, periodLabel, segHits, sideArc, topRoute, type Formatters, type Pt, type Rect } from "./arrows-geometry.ts";
+import { LANE_CLEAR, LANE_H, LANE_MAX, TRACK_GAP, allowed, buildItems, channelX, clearance, colOf, computeSegs, cubic, cubicAt, cubicHits, cut, ejectGlyph, freeAt, freeLanes, groupColumns, inside, laneHeight, layoutEnds, periodLabel, runAllowed, segHits, sideArc, slotAt, topRoute, tracks, type Band, type Formatters, type Lane, type Pt, type Rect, type Seg } from "./arrows-geometry.ts";
 import type { Link, Rule } from "./types";
 
 let failed = 0;
@@ -23,8 +23,13 @@ function test(name: string, fn: () => void) {
   }
 }
 const R = (l: number, t: number, r: number, b: number): Rect => ({ l, t, r, b });
-/** formateadores deterministas: no dependen del reloj ni de la zona horaria */
-const fmt: Formatters = { ago: (iso) => `ago(${iso})`, hhmm: (iso) => iso.slice(11, 16) };
+/** formateadores deterministas: no dependen del reloj, de la zona horaria ni del registro de sesiones */
+const fmt: Formatters = {
+  ago: (iso) => `ago(${iso})`,
+  hhmm: (iso) => iso.slice(11, 16),
+  name: (sid) => `n(${sid})`,
+  when: (iso) => `a las ${iso.slice(11, 16)}`,
+};
 const rule = (p: Partial<Rule> & Pick<Rule, "id" | "from" | "to">): Rule => ({ kind: "on_stop", text: "", at: null, repeat: false, max_fires: 1, fired: 0, enabled: true, ...p });
 const link = (p: Partial<Link> & Pick<Link, "id" | "from" | "to" | "ts">): Link => ({ text: "hola", ...p });
 
@@ -129,23 +134,28 @@ test("buildItems agrupa los links por par y sentido, el mas nuevo manda, y separ
   assert.deepEqual(items[0].ids, ["2", "1"]); // mas nuevo primero
   assert.equal(items[0].kind, "link");
   assert.equal(items[0].glyph, "×2");
-  assert.equal(items[0].title, "último envío hace ago(2026-09-05T12:00:00Z) (2 en total)\n• 12:00 ultimo\n• 10:00 primero\n(click para quitar la flecha)");
+  // el titulo es de una linea y dice que hace el click; lo que es la flecha va en `desc`, que se
+  // muestra mientras esta seleccionada y siempre termina diciendo que hace el doble click
+  assert.equal(items[0].title, "2 envíos de n(a) a n(b), el último hace ago(2026-09-05T12:00:00Z) · click para seleccionarla");
+  assert.equal(items[0].desc, "n(a) le mandó 2 mensajes a n(b). El último, hace ago(2026-09-05T12:00:00Z). Doble click para verlos o mandar de nuevo.");
+  assert.ok(items.every((it) => !it.title.includes("\n")), "el title va en una linea");
+  assert.ok(items.every((it) => /Doble click para /.test(it.desc)), "la descripcion enseña el gesto");
   assert.equal(items[1].glyph, "↪");
-  assert.equal(items[1].title.split("\n")[0], "enviado hace ago(2026-09-05T11:00:00Z)");
+  assert.equal(items[1].title, "envío de n(b) a n(a), hace ago(2026-09-05T11:00:00Z) · click para seleccionarla");
   assert.equal(items[2].kind, "native");
   assert.equal(items[2].glyph, "⇄");
-  assert.match(items[2].title, /^canal nativo Claude↔Claude abierto hace /);
+  assert.match(items[2].title, /^canal nativo entre n\(a\) y n\(b\), abierto hace /);
+  assert.match(items[2].desc, /^n\(a\) y n\(b\) tienen abierto el canal nativo desde hace /);
   assert.ok(items.every((it) => it.old === false && it.fresh === undefined));
 });
 
-test("buildItems corta los textos a 90 y lista como mucho 5 mensajes", () => {
+test("buildItems: varios envios se cuentan en la descripcion; los textos se leen en la vista", () => {
   const anchors = new Map([["a", A1], ["b", B1]]);
   const links = Array.from({ length: 7 }, (_, i) => link({ id: `l${i}`, from: "a", to: "b", ts: `2026-09-05T0${i}:00:00Z`, text: "x".repeat(100) }));
   const [it] = buildItems(links, [], anchors, fmt);
-  const lines = it.title.split("\n");
-  assert.equal(lines.length, 8); // cabecera + 5 + "… y 2 más" + pie
-  assert.equal(lines[6], "… y 2 más");
-  assert.equal(lines[1], `• 06:00 ${"x".repeat(90)}…`);
+  assert.equal(it.glyph, "×7");
+  assert.equal(it.desc, "n(a) le mandó 7 mensajes a n(b). El último, hace ago(2026-09-05T06:00:00Z). Doble click para verlos o mandar de nuevo.");
+  assert.equal(cut("x".repeat(100)), `${"x".repeat(90)}…`);
 });
 
 test("buildItems solo dibuja reglas activas, con origen, no reflexivas y con los dos extremos", () => {
@@ -162,11 +172,13 @@ test("buildItems solo dibuja reglas activas, con origen, no reflexivas y con los
   ];
   const items = buildItems([], rules, anchors, fmt);
   assert.deepEqual(items.map((i) => i.ids[0]), ["r1", "r2", "r3", "r4"]);
-  assert.equal(items[0].title, "cuando termine → manda su respuesta (una vez)\n(click quita · doble click edita)");
-  assert.equal(items[1].title.split("\n")[0], "cuando termine → manda su respuesta (2/5)");
+  assert.equal(items[0].title, "cuando n(a) termine → su respuesta a n(b) · click para seleccionarla");
+  assert.equal(items[0].desc, "Cada vez que n(a) cierre un turno, su respuesta se manda a n(b). Una sola vez. Doble click para editarla.");
+  assert.equal(items[1].desc, "Cada vez que n(a) cierre un turno, su respuesta se manda a n(b). Van 2 de 5. Doble click para editarla.");
   assert.equal(items[2].glyph, "⏰");
-  assert.equal(items[2].title.split("\n")[0], 'a las 23:00 → "Continuar"');
-  assert.equal(items[3].title.split("\n")[0], 'a las ? → "sin hora"');
+  assert.equal(items[2].title, "a las 23:00 → «Continuar» a n(b) · click para seleccionarla");
+  assert.equal(items[2].desc, "A las 23:00 se le escribe «Continuar» a n(b). La programó n(a). Doble click para editarla.");
+  assert.equal(items[3].desc, "Sin hora fijada, se le escribe «sin hora» a n(b). La programó n(a). Doble click para editarla.");
 });
 
 test("periodLabel: minutos, hora, horas y dia; nunca menos de un minuto", () => {
@@ -190,11 +202,12 @@ test("buildItems: una regla at periodica lleva ↻ y dice periodo, cuenta y prox
   ];
   const items = buildItems([], rules, anchors, fmt);
   assert.equal(items[0].glyph, "↻");
-  assert.equal(items[0].title, 'cada 30 min → "Continuá" (1/5, próx. 09:30)\n(click quita · doble click edita)');
+  assert.equal(items[0].title, "cada 30 min → «Continuá» a n(b) (1/5, próx. 09:30) · click para seleccionarla");
+  assert.equal(items[0].desc, "Cada 30 min se le escribe «Continuá» a n(b). Van 1 de 5. La próxima, a las 09:30. Se saltea si está trabajando. La programó n(a). Doble click para editarla.");
   assert.equal(items[1].glyph, "↻");
-  assert.equal(items[1].title.split("\n")[0], 'cada hora → "ping" (0/2)');
+  assert.equal(items[1].title, "cada hora → «ping» a n(b) (0/2) · click para seleccionarla");
   assert.equal(items[2].glyph, "⏰");
-  assert.equal(items[2].title.split("\n")[0], 'a las 09:30 → "una vez"');
+  assert.equal(items[2].title, "a las 09:30 → «una vez» a n(b) · click para seleccionarla");
 });
 
 test("layoutEnds: columnas distintas salen por el lado que mira al destino; misma columna usan el arco", () => {
@@ -318,7 +331,7 @@ test("topRoute prefiere el hueco entre filas al margen si es mas corto, y marca 
   const cards = [A1, A2, B1, B2b, R(656, 0, 956, 120), C2];
   const o = topRoute(A2, C2, 150, 806, cards);
   assert.ok(o.clean);
-  assert.equal(o.y, 136);
+  assert.equal(o.y, 130); // el carril va al medio del hueco entre las dos filas (120..140)
   assert.deepEqual([o.exit, o.enter], ["t", "t"]);
   // encerrada: tarjetas pegadas arriba y abajo del origen y una torre en el medio. Ningun hueco
   // sirve: se dibuja igual y avisa
@@ -345,6 +358,199 @@ test("computeSegs es puro: no muta la entrada y repite la salida", () => {
   assert.equal(JSON.stringify(links), before);
   assert.equal(s1.length, 2);
   assert.notDeepEqual([s1[0].x, s1[0].y], [s1[1].x, s1[1].y]); // dos glifos en el mismo canal, separados
+});
+
+// --- carriles, techo de la columna y area util ------------------------------------------------
+
+/** tablero como el real a 1440x900: encabezado hasta y=92 y la primera tarjeta en y=102 */
+const BANDS: Band[] = [
+  { l: 16, r: 316, t: 92, b: 578 },
+  { l: 344, r: 644, t: 92, b: 578 },
+  { l: 672, r: 972, t: 92, b: 578 },
+];
+const CA = R(28, 102, 304, 375);
+const CB = R(356, 102, 632, 270);
+const CC = R(684, 102, 960, 270);
+/** los tres carriles de la misma columna, con el titulo a y=40 y tres filas de tarjetas */
+const ROWS: Band[] = [{ l: 16, r: 316, t: 40, b: 600 }];
+
+test("slotAt, allowed y runAllowed: debajo del encabezado y dentro de las columnas", () => {
+  assert.deepEqual(slotAt([], 999), [-Infinity, Infinity]); // sin columnas medidas, sin restriccion
+  assert.deepEqual(slotAt(BANDS, 100), [92, 578]); // adentro de una columna
+  assert.deepEqual(slotAt(BANDS, 330), [92, 578]); // en el canal entre dos: manda la mas baja
+  assert.deepEqual(slotAt(BANDS, 5), [Infinity, -Infinity]); // el padding del tablero: nada
+  assert.deepEqual(slotAt(BANDS, 990), [Infinity, -Infinity]);
+  assert.ok(!allowed(BANDS, 100, 80), "por encima del encabezado");
+  assert.ok(allowed(BANDS, 100, 92), "el borde del encabezado ya vale");
+  assert.ok(!allowed(BANDS, 1, 200), "fuera de toda columna");
+  assert.ok(runAllowed(BANDS, 100, 900, 400));
+  assert.ok(!runAllowed(BANDS, 100, 900, 80), "cruzaria los encabezados");
+  assert.ok(!runAllowed(BANDS, 5, 900, 400), "arranca en el padding del tablero");
+  assert.ok(runAllowed([], 5, 900, 80), "sin columnas medidas, todo vale");
+});
+
+test("freeLanes: uno arriba, uno entre filas y uno abajo, apoyados en las tarjetas", () => {
+  const cards = [R(28, 102, 304, 200), R(28, 240, 304, 320)];
+  const ls = freeLanes(ROWS, cards);
+  assert.equal(ls.length, 3);
+  assert.deepEqual(ls[0], { y: 102 - LANE_H / 2, room: 62, t: 40, b: 102 }); // arriba: se apoya en la primera fila
+  assert.deepEqual(ls[1], { y: 220, room: 40, t: 200, b: 240 }); // entre las dos filas: al medio
+  assert.deepEqual(ls[2], { y: 320 + LANE_H / 2, room: 280, t: 320, b: 600 }); // abajo: se apoya en la ultima
+  // franja mas fina que el carril: se usa igual, centrada (el aire que hay hoy sin reservar nada)
+  const tight = freeLanes(BANDS, [CA, CB, CC]);
+  assert.deepEqual(tight[0], { y: 97, room: 10, t: 92, b: 102 });
+  assert.ok(tight[0].room < 2 * LANE_CLEAR, "10 px no alcanzan para un carril");
+  // sin columnas medidas, arriba y abajo quedan a medio carril de la primera y la ultima fila
+  assert.deepEqual(freeLanes([], cards).map((l) => l.y), [102 - LANE_H / 2, 220, 320 + LANE_H / 2]);
+  assert.deepEqual(freeLanes(ROWS, []), []);
+});
+
+/** puntos muestreados de un path, sea cubica ("C") u ortogonal (tramos "L"/"Q") */
+function pathPts(d: string, n = 60): Pt[] {
+  if (d.includes(" C ")) {
+    const p = cubicPts(d);
+    return Array.from({ length: n + 1 }, (_, i) => cubicAt(...p, i / n));
+  }
+  const nums = d.match(/-?\d+(\.\d+)?/g)!.map(Number);
+  const corners: Pt[] = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) corners.push([nums[i], nums[i + 1]]);
+  const out: Pt[] = [];
+  for (let i = 0; i + 1 < corners.length; i++) {
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      out.push([corners[i][0] + (corners[i + 1][0] - corners[i][0]) * t, corners[i][1] + (corners[i + 1][1] - corners[i][1]) * t]);
+    }
+  }
+  return out;
+}
+
+/** y de la corrida horizontal de un camino ortogonal: el tramo largo del medio */
+function runY(d: string): number {
+  const pts = pathPts(d, 8);
+  let best = 0;
+  let bestLen = -1;
+  for (let i = 1; i < pts.length; i++) {
+    const len = Math.abs(pts[i][0] - pts[i - 1][0]);
+    if (Math.abs(pts[i][1] - pts[i - 1][1]) < 0.01 && len > bestLen) {
+      bestLen = len;
+      best = pts[i][1];
+    }
+  }
+  return best;
+}
+
+/** ningun punto del camino ni el glifo quedan por encima del techo, fuera de las columnas o adentro
+ *  de una tarjeta que no sea una de las dos puntas */
+function checkSeg(s: Seg, bands: Band[], cards: Rect[]) {
+  const others = cards.filter((c) => c !== s.ends[0] && c !== s.ends[1]);
+  const left = Math.min(...bands.map((b) => b.l));
+  const right = Math.max(...bands.map((b) => b.r));
+  for (const [x, y] of pathPts(s.d)) {
+    assert.ok(y >= Math.max(...bands.map((b) => b.t)) - 0.01, `(${x.toFixed(0)},${y.toFixed(0)}) por encima del encabezado`);
+    assert.ok(x >= left - 0.01 && x <= right + 0.01, `(${x.toFixed(0)},${y.toFixed(0)}) fuera de las columnas`);
+    assert.ok(!inside(others, x, y), `(${x.toFixed(0)},${y.toFixed(0)}) adentro de una tercera tarjeta`);
+  }
+  assert.ok(allowed(bands, s.x, s.y), `glifo (${s.x}, ${s.y}) fuera del area util`);
+  assert.ok(!inside(cards, s.x, s.y), `glifo (${s.x}, ${s.y}) adentro de una tarjeta`);
+}
+
+test("sin carril reservado arriba, la flecha baja: no cruza el titulo ni roza una tarjeta", () => {
+  const rects = new Map([["a", CA], ["b", CB], ["c", CC]]);
+  const [s] = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1000, bands: BANDS, links: [], rules: [rule({ id: "r", from: "a", to: "c" })], fmt });
+  assert.equal(s.lane, 375 + LANE_H / 2);
+  assert.ok(!s.dim);
+  // arriba solo hay 10 px entre el encabezado y la primera fila: el carril de abajo, que si tiene
+  // aire, gana aunque el camino sea mas largo
+  assert.equal(s.y, 375 + LANE_H / 2);
+  checkSeg(s, BANDS, [CA, CB, CC]);
+  // el glifo queda centrado en el carril: medio carril por debajo de la fila de tarjetas
+  assert.equal(s.y - 375, LANE_H / 2);
+});
+
+test("con el carril reservado arriba, la flecha cruza por arriba y no toca el encabezado", () => {
+  // el tablero reservo el carril: la primera fila arranca 40 px debajo del encabezado
+  const A = R(28, 132, 304, 405);
+  const B = R(356, 132, 632, 300);
+  const C = R(684, 132, 960, 300);
+  const rects = new Map([["a", A], ["b", B], ["c", C]]);
+  const [s] = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1000, bands: BANDS, links: [], rules: [rule({ id: "r", from: "a", to: "c" })], fmt });
+  assert.equal(s.lane, 132 - LANE_H / 2);
+  assert.ok(!s.dim);
+  assert.equal(s.y, 132 - LANE_H / 2, "corre por el carril de arriba, apoyado en la primera fila");
+  assert.ok(s.y > 92, "por debajo del encabezado");
+  checkSeg(s, BANDS, [A, B, C]);
+});
+
+test("tracks: pistas paralelas centradas en el carril, siempre con aire, comprimidas si no entran", () => {
+  const ancho: Lane = { y: 400, room: 200, t: 300, b: 500 };
+  assert.deepEqual(tracks(1, ancho), [400]); // una sola: por el medio del carril
+  assert.deepEqual(tracks(4, ancho), [389.5, 396.5, 403.5, 410.5]); // 7 px entre pistas, centradas
+  assert.deepEqual(tracks(2, ancho), [396.5, 403.5]);
+  // el carril se apoya arriba y las pistas no se salen de la franja: nunca a menos de LANE_CLEAR
+  const apoyado: Lane = { y: 314, room: 200, t: 300, b: 500 };
+  const ys = tracks(4, apoyado);
+  assert.ok(ys[0] >= 300 + LANE_CLEAR, `primera pista en ${ys[0]}`);
+  assert.ok(ys[3] <= 500 - LANE_CLEAR);
+  // franja angosta: se comprimen en vez de desbordar
+  const angosto: Lane = { y: 101, room: 18, t: 92, b: 110 };
+  const cuatro = tracks(4, angosto);
+  assert.equal(cuatro.length, 4);
+  assert.ok(cuatro[0] >= 100 && cuatro[3] <= 102, `comprimidas: ${cuatro.join(", ")}`);
+  assert.ok(cuatro[3] - cuatro[0] <= 3 * TRACK_GAP);
+  // sin lugar ni para el aire minimo: todas en la misma y, que es lo que hay
+  assert.deepEqual(tracks(3, { y: 50, room: 4, t: 48, b: 52 }), [50, 50, 50]);
+});
+
+test("laneHeight: el carril crece con lo que lleva, con tope", () => {
+  assert.equal(laneHeight(1), 2 * LANE_CLEAR + TRACK_GAP);
+  assert.equal(laneHeight(4), 2 * LANE_CLEAR + 4 * TRACK_GAP);
+  assert.equal(laneHeight(40), LANE_MAX);
+});
+
+test("cuatro flechas en el mismo carril van en cuatro pistas, no encimadas", () => {
+  const CD = R(1012, 102, 1288, 270);
+  const bands: Band[] = [...BANDS, { l: 1000, r: 1300, t: 92, b: 578 }];
+  const rects = new Map([["a", CA], ["b", CB], ["c", CC], ["d", CD]]);
+  const rules = [
+    rule({ id: "r1", from: "a", to: "c" }),
+    rule({ id: "r2", from: "a", to: "d" }),
+    rule({ id: "r3", from: "b", to: "d" }),
+    rule({ id: "r4", from: "c", to: "a" }),
+  ];
+  const segs = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1320, bands, links: [], rules, fmt });
+  assert.equal(segs.length, 4);
+  assert.ok(segs.every((s) => s.lane !== undefined), "las cuatro cruzan una tercera tarjeta: van por carril");
+  const ys = segs.map((s) => runY(s.d));
+  assert.equal(new Set(ys).size, 4, `cuatro corridas distintas, no una sola barra: ${ys.join(", ")}`);
+  // cada carril reparte a los suyos en pistas separadas; dos carriles distintos ya no se pisan
+  const porCarril = new Map<number, number[]>();
+  segs.forEach((sg) => porCarril.set(sg.lane!, [...(porCarril.get(sg.lane!) ?? []), runY(sg.d)]));
+  assert.ok([...porCarril.values()].some((g) => g.length > 1), "algun carril lleva mas de una flecha");
+  for (const g of porCarril.values()) {
+    const orden = [...g].sort((a, b) => a - b);
+    for (let i = 1; i < orden.length; i++) assert.ok(orden[i] - orden[i - 1] >= TRACK_GAP - 0.01, `pistas a ${orden[i] - orden[i - 1]} px`);
+  }
+  for (const s of segs) checkSeg(s, bands, [CA, CB, CC, CD]);
+  // el orden es estable: los mismos datos dan las mismas pistas
+  const otra = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1320, bands, links: [], rules, fmt });
+  assert.deepEqual(otra.map((s) => runY(s.d)), ys);
+});
+
+test("el arco de la misma columna no se mete en el padding del tablero", () => {
+  // columna pegada al borde izquierdo del tablero: sin columnas medidas la panza se iba a x=8,
+  // fuera de toda columna (el glifo aparecia suelto arriba a la izquierda)
+  const cols = groupColumns([R(28, 76, 304, 196)]);
+  assert.equal(sideArc(cols, [{ l: 316, r: 344 }], 400, 0).x, 8);
+  const band: Band[] = [{ l: 16, r: 316, t: 40, b: 600 }];
+  const arc = sideArc(cols, [{ l: 316, r: 344 }], 400, 0, band);
+  assert.deepEqual(arc, { side: "r", x: 314 });
+  assert.ok(arc.x >= band[0].l && arc.x <= band[0].r);
+  const a1 = R(28, 76, 304, 196);
+  const a2 = R(28, 216, 304, 336);
+  const rects = new Map([["a1", a1], ["a2", a2]]);
+  const [s] = computeSegs({ rects, anchors: rects, strips: [{ l: 316, r: 344 }], boardWidth: 400, bands: band, links: [], rules: [rule({ id: "r", from: "a1", to: "a2" })], fmt });
+  for (const [x] of pathPts(s.d)) assert.ok(x >= 16 && x <= 316, `x=${x.toFixed(1)} fuera de la columna`);
+  assert.ok(s.x >= 16 && s.x <= 316, `glifo en x=${s.x}`);
 });
 
 if (failed) {

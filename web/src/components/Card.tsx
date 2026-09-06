@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
-import { canWrite, foldPrompt, foldSentence, groupRules, isFree, periodLabel, plainText, shortName, titleIsPrompt, whenLabel, type RuleGroup } from "../names";
+import { canWrite, foldPrompt, foldSentence, groupRules, isFree, linkSentences, periodLabel, plainText, ruleSentence, ruleSummary, shortName, titleIsPrompt, whenLabel, type RuleGroup } from "../names";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
 
@@ -139,6 +139,39 @@ function CardRules({ groups, onDelete }: { groups: { shown: RuleGroup[]; hidden:
   );
 }
 
+/** Las conexiones de la tarjeta elegida, en palabras: una frase por linea. Lo ya recibido no se
+ *  puede quitar; cada regla lleva su ✕, como el chip. */
+function CardWords({ sid, rules, links, sessions, onDelete }: { sid: string; rules: Rule[]; links: Link[]; sessions: Record<string, Session>; onDelete?: (id: string) => void }) {
+  const said = linkSentences(links, sid, sessions);
+  if (!rules.length && !said.length) return null;
+  return (
+    <div className="words">
+      {said.map((t) => (
+        <div key={t} className="w done">
+          {t}
+        </div>
+      ))}
+      {rules.map((r) => (
+        <div key={r.id} className="w">
+          <span>{ruleSentence(r, sid, sessions)}</span>
+          <button
+            type="button"
+            className="del"
+            title="quitar"
+            aria-label="quitar conexión"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm("Quitar esta conexión?")) onDelete?.(r.id);
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Envoltorio con que el lienzo manda un texto largo: la sugerencia que arranca asi es nuestra. */
 const ATTACH_WRAPPER = "Leé el archivo adjunto y respondé";
 /** "usando Bash": la transcripcion dice que herramienta corre; es actividad, no una respuesta */
@@ -148,6 +181,27 @@ const QUICK = ["Continuá", "sí", "no"];
 
 const RECENT_MS = 30 * 60 * 1000;
 
+/** Por debajo de este ancho la tarjeta no alcanza para el pedido y la respuesta: pasa a modo
+ *  compacto (agente, repo, estado, titulo en una linea y un contador de conexiones). Pasa con el
+ *  panel abierto y varias columnas: el tablero tiene que seguir sirviendo de indice. */
+const COMPACT_W = 200;
+
+/** Ancho real de la tarjeta, medido con un ResizeObserver sobre ella misma: sale de la subcolumna
+ *  en que cayo, no del ancho de la ventana (con el panel abierto el tablero mide la mitad, y
+ *  encima depende de cuantas columnas esten abiertas). El contenido cambia el alto, nunca el
+ *  ancho, asi que no hay realimentacion. */
+function useCompact(ref: React.RefObject<HTMLElement | null>): boolean {
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const o = new ResizeObserver(() => setCompact(el.offsetWidth > 0 && el.offsetWidth < COMPACT_W));
+    o.observe(el);
+    return () => o.disconnect();
+  }, [ref]);
+  return compact;
+}
+
 interface Props {
   session: Session;
   pending?: Pending;
@@ -156,7 +210,13 @@ interface Props {
   links?: Link[];
   sessions?: Record<string, Session>;
   onDeleteRule?: (id: string) => void;
+  /** su panel esta abierto */
   selected: boolean;
+  /** elegida con un click en el tablero: se resalta y muestra sus conexiones en palabras */
+  picked?: boolean;
+  /** un click: elegir la tarjeta, sin abrir nada */
+  onPick?: () => void;
+  /** doble click (o Enter): abrir el panel */
   onSelect: () => void;
   onDecide: (requestId: string, decision: "allow" | "deny") => void;
   onDrop: () => void;
@@ -166,20 +226,16 @@ interface Props {
   toast?: ToastFn;
 }
 
-export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, onPick, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const [promptOpen, setPromptOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const rename = useRename(s, toast);
-  // el click simple espera 280 ms antes de abrir el panel; el doble click sobre el titulo lo
-  // cancela y renombra en el lugar (mismo truco que las flechas en Arrows)
-  const clickTimer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(clickTimer.current), []);
-  const selectNow = () => {
-    window.clearTimeout(clickTimer.current);
-    onSelect();
-  };
+  const rootRef = useRef<HTMLDivElement>(null);
+  // columna angosta: la tarjeta se reduce a indice. Un permiso pendiente nunca se compacta: es la
+  // unica accion que vence y solo se puede contestar desde la tarjeta
+  const compact = useCompact(rootRef) && !p;
 
   // ultimo reenvio recibido en la ultima media hora: "ya te llego el informe de X"
   const recent = links
@@ -197,14 +253,22 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const working = WORKING_RE.test(s.last_reply || "");
   const suggestion = s.suggestion && !s.suggestion.trim().startsWith(ATTACH_WRAPPER) ? s.suggestion : null;
   const writable = canWrite(s);
-  // ociosa: termino, o espera input en la terminal; con consola y sin permiso pendiente
-  const idle = writable && !s.pending_id && !p && (s.state === "termino" || (s.state === "te_necesita" && s.needs?.kind === "idle"));
+  // pregunta abierta: la ultima respuesta termina en "?" (la linea de actividad "usando X" no cuenta)
+  const asks = !working && /\?\s*$/.test((s.last_reply || "").trim());
+  // botones rapidos: solo si la sesion espera input de verdad o pregunto algo. Una que entrego un
+  // informe y no pregunto nada no tiene nada que continuar ni que contestar: alcanza la caja del panel
+  const quick = writable && !s.pending_id && !p && (s.needs?.kind === "idle" || asks);
   // libre: viva, con consola y sin ningun pedido todavia (sesion recien abierta). No hay nada que
   // continuar ni que contestar: en vez de los botones rapidos, un solo "Darle trabajo" que abre el
   // panel con el cursor en la caja
   const free = !p && isFree(s);
   const freeTitle = `abierta hace ${ago(s.started)}, sin ningún pedido todavía`;
   const freeText = `Libre · sin pedidos todavía · desde hace ${ago(s.started)}`;
+  // compacto: los chips de conexiones no entran, va un contador con el detalle en el title
+  const summary = compact ? ruleSummary(rules, s.session_id, sessions) : null;
+  // elegida con un click y con lugar para leerlas: las conexiones en palabras, una por linea,
+  // en vez de los chips abreviados
+  const words = picked && !compact;
 
   // limite de uso con hora de vuelta (Codex): un click deja programado "Continuar" un minuto
   // despues; si ya hay una regla a esa hora (manual o automatica) el chip de abajo la muestra
@@ -250,16 +314,19 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
 
   return (
     <div
-      className={`card ${selected ? "sel" : ""} ${free ? "free" : ""}`}
+      ref={rootRef}
+      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${compact ? "compact" : ""}`}
       role="button"
       tabIndex={0}
       aria-label={`${s.repo}: ${s.title || s.last_prompt || (free ? "libre, sin pedidos todavía" : "sin título")}`}
-      aria-pressed={selected}
-      onClick={() => {
-        window.clearTimeout(clickTimer.current);
-        clickTimer.current = window.setTimeout(onSelect, 280);
+      aria-pressed={picked || selected}
+      /* un click elige la tarjeta (instantáneo, no abre nada); el doble click abre el panel */
+      onClick={() => onPick?.()}
+      onDoubleClick={(e) => {
+        /* doble click sobre un control (✕, estrella, lápiz, chips) no abre el panel */
+        if ((e.target as HTMLElement).closest("button, a, input, textarea, code")) return;
+        onSelect();
       }}
-      onDoubleClick={() => window.clearTimeout(clickTimer.current)}
       onKeyDown={(e) => {
         // Enter sobre la tarjeta misma abre el panel; los botones de adentro manejan su propio Enter
         if (e.key === "Enter" && e.target === e.currentTarget) {
@@ -290,7 +357,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       <div className="top">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         <span className="repo">{s.repo}</span>
-        {s.branch && <span className="branch">⎇ {s.branch}</span>}
+        {s.branch && !compact && <span className="branch">⎇ {s.branch}</span>}
         <span className="right">
           {/* estado como icono: corriendo y termino comparten la columna "Trabajo"; la huerfana va a
               "Muerta" con esta etiqueta, para distinguirla de un proceso muerto de verdad */}
@@ -315,14 +382,31 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               aria-pressed={!!s.coordinator}
               onClick={(e) => {
                 e.stopPropagation();
-                window.clearTimeout(clickTimer.current);
                 toggleCoordinator();
               }}
             >
               {s.coordinator ? "★" : "☆"}
             </button>
           )}
-          {ago(s.state_since)}
+          {/* renombrar: el doble click sobre el título ahora abre el panel, así que el lápiz es
+              la puerta al modo de renombrar en el lugar */}
+          {writable && (
+            <button
+              type="button"
+              className="pencil"
+              title="renombrar la tarjeta"
+              aria-label="renombrar la tarjeta"
+              onClick={(e) => {
+                e.stopPropagation();
+                rename.start();
+              }}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              ✎
+            </button>
+          )}
+          {/* en compacto no entra el "hace X" junto al agente, el repo y el estado */}
+          {!compact && ago(s.state_since)}
           {onGrip && writable && (
             <button
               type="button"
@@ -341,17 +425,29 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           )}
         </span>
       </div>
-      <div
-        className={`title ${dupPrompt ? "plain" : ""}`}
-        title={rename.editing ? undefined : "doble click para renombrar"}
-        onDoubleClick={(e) => {
-          e.stopPropagation();
-          window.clearTimeout(clickTimer.current);
-          rename.start();
-        }}
-      >
-        {rename.input ?? (free && !s.title ? <span className="freeline" title={freeTitle}>{freeText}</span> : s.title || s.last_prompt || "(sin título)")}
+      <div className={`title ${dupPrompt ? "plain" : ""}`}>
+        {rename.input ??
+          (compact ? (
+            <>
+              <span className="ttext">{s.title || (free ? "Libre · sin pedidos" : head || "(sin título)")}</span>
+              {summary && (
+                <span className="rulecount" title={summary.title}>
+                  {summary.text}
+                </span>
+              )}
+            </>
+          ) : free && !s.title ? (
+            <span className="freeline" title={freeTitle}>
+              {freeText}
+            </span>
+          ) : (
+            s.title || s.last_prompt || "(sin título)"
+          ))}
       </div>
+      {/* de acá para abajo, todo lo que el modo compacto no muestra: pedido, respuesta, chips,
+          botones rápidos, copiar y la meta. Click abre el panel, que sí lo muestra todo. */}
+      {!compact && (
+      <>
       {free && s.title && (
         <div className="freeline" title={freeTitle}>
           {freeText}
@@ -376,7 +472,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           )}
         </div>
       )}
-      {recent && (
+      {recent && !words && (
         <div className="chip recent" title={`informe de ${recentFrom}: ${plainText(recent.text)}`}>
           ✓ {recentFrom} · hace {ago(recent.ts)}
         </div>
@@ -392,7 +488,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             <span className="dim small">vence {new Date(p.expires_at).toLocaleTimeString()}</span>
           </div>
         </div>
-      ) : s.state === "te_necesita" && s.needs && !(idle && s.needs.kind === "idle") ? (
+      ) : s.state === "te_necesita" && s.needs && !(quick && s.needs.kind === "idle") ? (
         /* ociosa con botones rapidos: el aviso va en una linea con los botones, mas abajo */
         <div className="needs terminal">
           <b>
@@ -462,14 +558,18 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       )}
       {suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {suggestion}</div>}
-      <CardRules groups={groupRules(rules, s.session_id, sessions)} onDelete={onDeleteRule} />
+      {words ? (
+        <CardWords sid={s.session_id} rules={rules} links={links} sessions={sessions} onDelete={onDeleteRule} />
+      ) : (
+        <CardRules groups={groupRules(rules, s.session_id, sessions)} onDelete={onDeleteRule} />
+      )}
       {free ? (
         <div className="quickact freeact" onClick={(e) => e.stopPropagation()}>
-          <button type="button" title="abre el panel con el cursor en la caja de envío" onClick={selectNow}>
+          <button type="button" title="abre el panel con el cursor en la caja de envío" onClick={onSelect}>
             Darle trabajo
           </button>
         </div>
-      ) : idle && (
+      ) : quick && (
         <div className="quickact" onClick={(e) => e.stopPropagation()}>
           {s.state === "te_necesita" && <span className="dim small">Espera tu input</span>}
           {QUICK.map((q) => (
@@ -487,6 +587,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         {s.no_console && !s.orphan && <span className="warn" title="panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe">sin consola</span>}
         <span>{s.session_id.slice(0, 8)}</span>
       </div>
+      </>
+      )}
       {toastNode}
     </div>
   );
