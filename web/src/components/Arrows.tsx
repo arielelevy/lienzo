@@ -243,25 +243,44 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       return el ? rel(el) : undefined;
     };
     const anchors = new Map(rects);
+    const onStrip = new Set<string>();
     for (const sid of new Set([...links.flatMap((l) => [l.from, l.to]), ...rules.flatMap((r) => [r.from, r.to])])) {
       if (sid && !anchors.has(sid)) {
         const r = stripOf(sid);
-        if (r) anchors.set(sid, r);
+        if (r) {
+          anchors.set(sid, r);
+          onStrip.add(sid);
+        }
       }
     }
+    // las dos puntas en la misma tira colapsada: la flecha no dice nada y se apila sobre el titulo
+    // de la columna (medido: 7 flechas encimadas al colapsar "Trabajo"). Esas no se dibujan; la
+    // conexion se sigue viendo al abrir la columna, en el chip y en la pestaña Conexiones
+    const bothHidden = (a: string | null, b: string) =>
+      !!a && onStrip.has(a) && onStrip.has(b) && anchors.get(a) === anchors.get(b);
+    const visLinks = links.filter((l) => !bothHidden(l.from, l.to));
+    const visRules = rules.filter((r) => !bothHidden(r.from ?? r.to, r.to));
     // columnas colapsadas: obstaculos laterales para el arco de misma columna (no son columnas)
     const strips = Array.from(board.querySelectorAll<HTMLElement>(".col.collapsed")).map((el) => {
       const r = rel(el);
       return { l: r.l, r: r.r };
     });
+    // sin ninguna tarjeta a la vista (todas las columnas colapsadas) no hay nada que conectar: las
+    // flechas se apilaban sobre la tira y su area sensible de 32 px le robaba el click al titulo de
+    // la columna, asi que no se podia ni volver a abrirla
+    if (rects.size === 0) {
+      setSegs([]);
+      setLanes(board, 0);
+      return;
+    }
     const out = computeSegs({
       rects,
       anchors,
       strips,
       bands,
       boardWidth: board.scrollWidth,
-      links,
-      rules,
+      links: visLinks,
+      rules: visRules,
       fmt: {
         ago,
         hhmm: (iso) => hhmm(new Date(iso)),
@@ -494,12 +513,12 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     )}
     <svg className={`arrows ${hover ? "hovering" : ""}`} width={size.w} height={size.h} style={{ width: size.w, height: size.h }}>
       <defs>
-        {/* puntas chicas (7x6): la linea es de 2 px y una punta de 10x8 se veia pesada */}
-        <marker id="arrowhead" markerWidth="7" markerHeight="6" refX="6.5" refY="3" orient="auto">
-          <path d="M0,0 L7,3 L0,6 z" fill="var(--acc)" />
+        {/* puntas chicas: la linea es de 2 px y con 7x6 todavia pesaban de mas en el carril */}
+        <marker id="arrowhead" markerWidth="5.5" markerHeight="4.5" refX="5" refY="2.25" orient="auto">
+          <path d="M0,0 L5.5,2.25 L0,4.5 z" fill="var(--acc)" />
         </marker>
-        <marker id="arrowtail" markerWidth="7" markerHeight="6" refX="0.5" refY="3" orient="auto">
-          <path d="M7,0 L0,3 L7,6 z" fill="var(--acc)" />
+        <marker id="arrowtail" markerWidth="5.5" markerHeight="4.5" refX="0.5" refY="2.25" orient="auto">
+          <path d="M5.5,0 L0,2.25 L5.5,4.5 z" fill="var(--acc)" />
         </marker>
       </defs>
       {/* seleccionada: se marcan las dos tarjetas que une, para ver de quien a quien es */}

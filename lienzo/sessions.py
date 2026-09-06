@@ -325,7 +325,27 @@ def transcript_state(s: dict, t: dict) -> str | None:
     return want
 
 
-REFRESH_KEYS = ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for")
+FILE_TOOLS = ("edit", "write", "read", "notebookedit", "multiedit", "apply_patch", "update_file")
+
+
+def turn_activity(t: dict) -> tuple[int, list[str]]:
+    """Cuantas herramientas lleva el turno y los ultimos archivos distintos que toco, del mas nuevo
+    al mas viejo. Sale de los bloques que ya tiene la transcripcion, sin leerla otra vez."""
+    tools = [b for b in t.get("blocks", []) if b.get("kind") == "tool"]
+    files: list[str] = []
+    for b in reversed(tools):
+        if (b.get("name") or "").lower() not in FILE_TOOLS:
+            continue
+        raw = (b.get("input") or {}).get("file_path") or (b.get("input") or {}).get("path") or ""
+        name = os.path.basename(str(raw).replace("\\", "/").rstrip("/"))
+        if name and name not in files:
+            files.append(name)
+        if len(files) == 3:
+            break
+    return len(tools), files
+
+
+REFRESH_KEYS = ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for", "tool_count", "last_files")
 
 
 def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
@@ -356,6 +376,8 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         t = ts[-1]
         hooked = s.get("hooked") and not force_state
         tools = [b for b in t["blocks"] if b["kind"] == "tool"]
+        # lo que pasa adentro, para la tarjeta: cuanto lleva hecho y sobre que archivos
+        s["tool_count"], s["last_files"] = turn_activity(t)
         if hooked:
             # el pedido y la respuesta final ya vienen por hook (UserPromptSubmit / Stop); de la
             # transcripcion se toma "usando X" mientras corre, y el estado solo cuando los hooks

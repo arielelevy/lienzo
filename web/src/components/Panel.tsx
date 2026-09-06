@@ -50,6 +50,8 @@ interface Props {
   toast: (msg: string, err?: boolean) => void;
   /** "Detalles tecnicos" del menu: PID y nombre del .jsonl en el encabezado, contadores en cero */
   details: boolean;
+  /** rect de la tarjeta que abrio el panel: el panel se dibuja ahi mismo */
+  anchor?: { left: number; top: number } | null;
 }
 
 const cut = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
@@ -124,7 +126,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
   );
 }
 
-export function Panel({ session: s, others, onConnect, transcriptTick, onClose, toast, details }: Props) {
+export function Panel({ session: s, others, onConnect, transcriptTick, onClose, toast, details, anchor}: Props) {
   const [tab, setTab] = useState<"digest" | "chat" | "screen" | "conn">("digest");
   type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
   const [screen, setScreen] = useState<Screen | null>(null);
@@ -229,8 +231,20 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
     }
   };
 
+  // el panel se abre sobre la tarjeta que lo abrio, no en un costado fijo: se ancla a su esquina
+  // superior izquierda y se corre lo justo para entrar en la ventana
+  const box = ((): { left: number; top: number } => {
+    const w = Math.min(720, window.innerWidth - 24);
+    const h = Math.min(window.innerHeight * 0.84, window.innerHeight - 70);
+    if (!anchor) return { left: Math.round((window.innerWidth - w) / 2), top: 56 };
+    return {
+      left: Math.round(Math.min(Math.max(anchor.left - 8, 12), Math.max(12, window.innerWidth - w - 12))),
+      top: Math.round(Math.min(Math.max(anchor.top - 8, 52), Math.max(52, window.innerHeight - h - 12))),
+    };
+  })();
+
   return (
-    <div className="panel">
+    <div className="panel" style={{ left: box.left, top: box.top }}>
       <div className="ph">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         {/* una linea sola: el titulo largo se corta con puntos suspensivos y va entero en el title,

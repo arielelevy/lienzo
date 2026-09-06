@@ -4,7 +4,9 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
-header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+/* el header va por encima del fondo del modal (.gate, z-index 30): con el panel, el dialogo de
+   conectar o la ayuda abiertos, el menu ⋯ sigue clickeable y cierra lo que haya detras */
+header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 40; }
 header > .dot { margin: 0 4px 0 -4px; }
 header button.icon { padding: 5px 8px; font-size: 15px; line-height: 1; border-color: transparent; background: transparent; }
 header button.icon:hover, header button.icon[aria-expanded="true"] { background: var(--card); border-color: var(--line); }
@@ -35,8 +37,9 @@ button.allow { background: #1f6f3a; border-color: #2b9a51; }
 button.deny { background: #7a2323; border-color: #b23232; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
-/* el canal de 56 px por donde pasan las flechas existe solo entre columnas abiertas; las tiras
-   colapsadas van pegadas entre si y a lo que tengan al lado (8 px) */
+/* el canal por donde pasan las flechas (40 px) existe solo entre columnas abiertas; las tiras
+   colapsadas van pegadas entre si y a lo que tengan al lado (8 px). El mismo aire va entre las dos
+   subcolumnas de una columna ancha, para que la flecha se vea y no roce las tarjetas */
 .board { display: flex; gap: 0; padding: 12px 16px; align-items: stretch; min-height: 60vh; position: relative; }
 /* carril de las flechas: lo prende Arrows.tsx con data-lanes cuando alguna flecha lo usa. Sin
    flechas, con las flechas apagadas o abajo de 900 px el atributo no esta y la columna se ve
@@ -44,7 +47,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .board[data-lanes] .col .cards { margin-top: var(--lane-h, 28px); padding-bottom: var(--lane-h, 28px); }
 .board[data-lanes] .col:not(.wide) .cards .card { margin-bottom: var(--lane-h, 28px); }
 .board[data-lanes] .col.wide .cards > div { margin-bottom: var(--lane-h, 28px); }
-.col + .col { margin-left: 28px; }
+.col + .col { margin-left: 40px; }
 .col.collapsed + .col, .col + .col.collapsed { margin-left: 8px; }
 .arrows { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; overflow: visible; }
 .arrows .arrow { pointer-events: none; }
@@ -95,13 +98,15 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 /* dos subcolumnas por CSS: cada tarjeta se apoya en la de arriba con el mismo aire aunque la de al
    lado sea mas alta, y todas siguen siendo hijas del mismo nodo (React no las remonta al reordenar).
    El hueco de 24 px es el canal para el glifo de las flechas. */
-.col.wide .cards { column-count: 2; column-gap: 24px; }
+.col.wide .cards { column-count: 2; column-gap: 40px; }
 .col.wide .cards > div { break-inside: avoid; margin-bottom: 8px; }
 .col.wide .cards .card { margin-bottom: 0; }
 .col.collapsed .vlabel { cursor: pointer; border-radius: 8px; }
 .col.collapsed .vlabel:hover { background: var(--card); color: var(--fg); }
 .col.collapsed .vlabel:focus-visible { outline: 2px solid var(--acc); }
 .col h2 { cursor: pointer; }
+.col h2.fixed { cursor: default; }
+.col h2.fixed:hover .n { background: none; color: inherit; }
 .col h2:hover .n { background: var(--acc); color: #fff; }
 .col.collapsed .empty { display: none; }
 .col.collapsed.show .empty { display: block; }
@@ -157,9 +162,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
    El tablero se corre a la izquierda (padding) y sigue usable: click en otra tarjeta cambia el
    panel, click en el vacio lo cierra. Centrado con backdrop tapaba las tarjetas del medio. */
 :root { --panel-w: min(720px, 94vw); --hh: 46px; }
-.panel { position: fixed; top: var(--hh); right: 0; bottom: 0; width: var(--panel-w); background: var(--panel); border: 1px solid var(--line); border-right: 0; border-bottom: 0; border-radius: 12px 0 0 0; box-shadow: -12px 0 40px rgba(0,0,0,.45); z-index: 10; display: flex; flex-direction: column; overflow: hidden; }
-.panel-open .board { padding-right: calc(var(--panel-w) + 16px); }
-.panel-open .toasts { max-width: calc(100vw - var(--panel-w) - 32px); }
+/* el panel se abre sobre la tarjeta que lo abrio (left/top van en el style, calculados en
+   Panel.tsx) y el tablero de atras se atenua y se difumina */
+.panel { position: fixed; width: var(--panel-w); max-height: 84vh; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 60px rgba(0,0,0,.6); z-index: 10; display: flex; flex-direction: column; overflow: hidden; }
+.panel-backdrop { position: fixed; inset: 0; z-index: 9; pointer-events: none; background: rgba(8, 10, 14, .55); backdrop-filter: blur(3px); }
 .panel-open .toast { max-width: 100%; }
 .panel .ph { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .panel .ph .t { font-weight: 600; flex: 1; min-width: 120px; display: flex; align-items: center; overflow: hidden; }
@@ -344,3 +350,11 @@ header .search .chip:not(.on) { text-decoration: line-through; }
   .board .card .top .grip { font-size: 20px; padding: 2px 8px; }
 }
 .fwd .row.conflict { background: color-mix(in srgb, var(--acc) 18%, transparent); border: 1px solid var(--acc); border-radius: 6px; padding: 6px 10px; }
+
+/* archivos y comandos del digest: plegados, porque son el ruido del turno y no el resultado */
+.turn details.fold { margin: 0; }
+.turn details.fold > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 5px; }
+.turn details.fold > summary::-webkit-details-marker { display: none; }
+.turn details.fold > summary::before { content: "▸"; font-size: 9px; color: var(--dim); transition: transform .12s; }
+.turn details.fold[open] > summary::before { transform: rotate(90deg); }
+.turn details.fold > summary:hover { color: var(--fg); }

@@ -224,6 +224,18 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const deleteRule = useCallback((id: string) => api.del(`/rules/${id}`).catch((e) => toast((e as Error).message, true)), [toast]);
   const connectCards = useCallback((from: string, to: string) => setConnect({ from, to }), []);
 
+  // rect de la tarjeta que abrio el panel, medido al abrir: el panel se dibuja sobre ella
+  const anchorRef = useRef<{ left: number; top: number } | null>(null);
+  if (selected) {
+    const el = typeof document !== "undefined" ? document.querySelector(`.card[data-sid="${selected}"]`) : null;
+    if (el) {
+      const r = el.getBoundingClientRect();
+      anchorRef.current = { left: r.left, top: r.top };
+    }
+  } else {
+    anchorRef.current = null;
+  }
+
   const sel = selected ? sessions[selected] : null;
   // sesiones a las que se les puede escribir: destinos de Conectar y coordinadora del SendBox
   const writable = Object.values(sessions).filter((s) => s.alive && s.pid);
@@ -256,8 +268,16 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onAgents={setAgents}
         searchRef={searchRef}
         onSetup={onSetup}
-        onShowQr={() => setShowQr(true)}
-        onShowTotp={() => setShowTotp(true)}
+        // el header quedo por encima del modal: estos abren otro, asi que cierran lo de atras
+        // primero y no se apilan dos fondos oscuros
+        onShowQr={() => {
+          closeOverlays(true);
+          setShowQr(true);
+        }}
+        onShowTotp={() => {
+          closeOverlays(true);
+          setShowTotp(true);
+        }}
         onHelp={() => setShowHelp(true)}
         onRescan={rescan}
         onLogout={() => api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true))}
@@ -340,9 +360,12 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           </div>
         </div>
       )}
-      {/* pegado a la derecha, sin fondo que tape: el tablero sigue recibiendo clicks a su izquierda */}
+      {/* se abre sobre la tarjeta que lo abrio, con el tablero atenuado y difuminado detras */}
       {sel && (
+        <>
+        <div className="panel-backdrop" />
         <Panel
+          anchor={anchorRef.current}
           key={sel.session_id}
           session={sel}
           others={writable.filter((s) => s.session_id !== sel.session_id)}
@@ -352,6 +375,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           toast={toast}
           details={details}
         />
+        </>
       )}
       <Toasts toasts={toasts} />
     </div>

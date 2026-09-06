@@ -38,6 +38,10 @@ export interface Session {
   suggestion?: string | null;
   /** alguien esta escribiendo en esa terminal (lo detecta screen_loop): lo que se mande se mezcla */
   typing?: boolean;
+  /** herramientas usadas en el turno que corre (o en el ultimo): lo que pasa adentro */
+  tool_count?: number;
+  /** ultimos archivos que toco en ese turno, del mas nuevo al mas viejo, solo el nombre */
+  last_files?: string[];
   /** de donde salio el titulo automatico: "transcript" (ai-title), "prompt" (primera linea del pedido
    *  o encabezado del adjunto) o "user" (renombrado a mano, no se recalcula) */
   title_source?: "transcript" | "prompt" | "user" | null;

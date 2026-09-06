@@ -224,3 +224,17 @@ export function titleIsPrompt(s: Session): boolean {
   const t = title.replace(/…$/, "").replace(/\.\.\.$/, "").trimEnd();
   return first === title || (t.length >= 8 && first.startsWith(t));
 }
+
+/** Por qué una sesión figura "corriendo" pero no está trabajando, o null si sí lo está. Dos casos
+ *  medidos: se quedó sin cupo (el turno no cierra nunca, el hook Stop no llega y la tarjeta queda
+ *  verde para siempre) y hace rato que no se mueve. El segundo puede ser una tarea larga y
+ *  legítima, por eso el texto sólo dice lo que se midió: cuánto hace que no pasa nada. */
+export const STALL_MIN = 15;
+
+export function stalledReason(s: Session, now = Date.now()): string | null {
+  if (s.state !== "corriendo") return null;
+  const until = s.limit_until ? new Date(s.limit_until).getTime() : 0;
+  if (until > now) return `sin cupo hasta ${whenLabel(s.limit_until!, true, new Date(now))}`;
+  const since = s.state_since ? now - new Date(s.state_since).getTime() : 0;
+  return since > STALL_MIN * 60_000 ? "sin actividad" : null;
+}

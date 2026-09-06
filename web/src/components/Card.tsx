@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
-import { canWrite, foldPrompt, foldSentence, groupRules, isFree, linkSentences, periodLabel, plainText, ruleSentence, ruleSummary, shortName, titleIsPrompt, whenLabel, type RuleGroup } from "../names";
+import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, periodLabel, plainText, ruleSentence, ruleSummary, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
 
@@ -99,46 +99,6 @@ function useRename(s: Session, toast: ToastFn) {
   return { editing, start, input };
 }
 
-/** Chips de las conexiones que tocan la tarjeta: hasta tres grupos con su ✕ (confirmando), y un
- *  "+N más" que manda al panel. El ⚠ marca dos programadas al mismo minuto. */
-function CardRules({ groups, onDelete }: { groups: { shown: RuleGroup[]; hidden: number }; onDelete?: (id: string) => void }) {
-  return (
-    <>
-      {groups.shown.map((g) => (
-        <div key={g.label} className={`rule ${g.clash ? "clash" : ""}`} title={g.kind === "at" ? (g.label.startsWith("↻") ? "periódica" : "programado") : "cuando termine el turno"}>
-          {g.clash && (
-            <span className="warn" role="img" aria-label="dos mensajes programados al mismo minuto" title="dos mensajes programados al mismo minuto">
-              ⚠
-            </span>
-          )}
-          <span>
-            {g.label}
-            {g.ids.length > 1 && <span className="dim"> ×{g.ids.length}</span>}
-          </span>
-          <button
-            type="button"
-            className="del"
-            title={g.ids.length > 1 ? `quitar las ${g.ids.length}` : "quitar"}
-            aria-label="quitar conexión"
-            onClick={(e) => {
-              e.stopPropagation();
-              const q = g.ids.length > 1 ? `Quitar estas ${g.ids.length} conexiones iguales?` : "Quitar esta conexión?";
-              if (confirm(q)) g.ids.forEach((id) => onDelete?.(id));
-            }}
-          >
-            ✕
-          </button>
-        </div>
-      ))}
-      {groups.hidden > 0 && (
-        <div className="rule dim small" title="abrí el panel, pestaña Conexiones, para ver todas">
-          +{groups.hidden} más
-        </div>
-      )}
-    </>
-  );
-}
-
 /** Las conexiones de la tarjeta elegida, en palabras: una frase por linea. Lo ya recibido no se
  *  puede quitar; cada regla lleva su ✕, como el chip. */
 function CardWords({ sid, rules, links, sessions, onDelete }: { sid: string; rules: Rule[]; links: Link[]; sessions: Record<string, Session>; onDelete?: (id: string) => void }) {
@@ -214,6 +174,8 @@ interface Props {
   selected: boolean;
   /** elegida con un click en el tablero: se resalta y muestra sus conexiones en palabras */
   picked?: boolean;
+  /** esta en el otro extremo de una conexion de la elegida: tambien muestra las suyas en palabras */
+  related?: boolean;
   /** un click: elegir la tarjeta, sin abrir nada */
   onPick?: () => void;
   /** doble click (o Enter): abrir el panel */
@@ -226,7 +188,7 @@ interface Props {
   toast?: ToastFn;
 }
 
-export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, onPick, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related = false, onPick, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const [promptOpen, setPromptOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
@@ -268,11 +230,13 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const summary = compact ? ruleSummary(rules, s.session_id, sessions) : null;
   // elegida con un click y con lugar para leerlas: las conexiones en palabras, una por linea,
   // en vez de los chips abreviados
-  const words = picked && !compact;
+  const words = (picked || related) && !compact;
 
   // limite de uso con hora de vuelta (Codex): un click deja programado "Continuar" un minuto
   // despues; si ya hay una regla a esa hora (manual o automatica) el chip de abajo la muestra
   const limitAt = s.limit_until ? new Date(new Date(s.limit_until).getTime() + 60_000) : null;
+  const stalledWhy = stalledReason(s);
+  const stalled = stalledWhy === "sin actividad" ? `sin actividad desde hace ${ago(s.state_since)}` : stalledWhy;
   // 30 s de margen: si la regla ya disparo y el navegador va unos segundos adelantado, no se ofrece
   // programar otra; y si el server ya la creo solo, tampoco
   const limitPending = !!limitAt && limitAt.getTime() > Date.now() + 30_000 && s.continue_scheduled_for !== s.limit_until;
@@ -366,7 +330,14 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               sin terminal
             </span>
           ) : s.alive === false ? null : s.state === "corriendo" ? (
-            <span className="st run" role="img" aria-label="corriendo" title="corriendo" />
+            /* verde sólo si de verdad está haciendo algo: sin cupo, o quieta hace rato, el punto se
+               apaga. Una sesión que llegó al límite de uso nunca cierra el turno, así que sin esto
+               se queda en verde para siempre (medido en Codex: 1,2 h "corriendo" sin cupo) */
+            stalled ? (
+              <span className="st idle" role="img" aria-label={stalled} title={stalled} />
+            ) : (
+              <span className="st run" role="img" aria-label="corriendo" title="corriendo" />
+            )
           ) : s.state === "termino" ? (
             <span className="st done" role="img" aria-label="terminó" title="terminó">
               ✓
@@ -557,12 +528,37 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           </button>
         </div>
       )}
-      {suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {suggestion}</div>}
-      {words ? (
-        <CardWords sid={s.session_id} rules={rules} links={links} sessions={sessions} onDelete={onDeleteRule} />
-      ) : (
-        <CardRules groups={groupRules(rules, s.session_id, sessions)} onDelete={onDeleteRule} />
+      {/* qué viene haciendo adentro: cuántas herramientas lleva el turno y sobre qué archivos.
+          En compacto no entra, y una sesión sin pedidos todavía no tiene nada que contar */}
+      {!compact && !free && !!s.tool_count && (
+        <div className="activity" title="actividad del turno que corre (o del último)">
+          <span className="n">{s.tool_count} {s.tool_count === 1 ? "paso" : "pasos"}</span>
+          {!!s.last_files?.length && <span className="f">{s.last_files.join(" · ")}</span>}
+        </div>
       )}
+      {/* la sugerencia que la terminal tiene tipeada: un click la manda, que es lo que uno iba a
+          hacer igual. Sin consola no es un botón, sólo texto */}
+      {suggestion &&
+        (writable && !s.pending_id ? (
+          <button
+            type="button"
+            className="sugg act"
+            disabled={busy}
+            title="lo que está tipeado en esa terminal · click para mandarlo"
+            onClick={(e) => {
+              e.stopPropagation();
+              quickSend(suggestion);
+            }}
+          >
+            💡 {suggestion}
+            <span className="go">enviar</span>
+          </button>
+        ) : (
+          <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {suggestion}</div>
+        ))}
+      {/* las conexiones no compiten con lo que pasa adentro: viven en las flechas, y al elegir la
+          tarjeta se leen en palabras. El contador queda para saber que hay algo */}
+      {words && <CardWords sid={s.session_id} rules={rules} links={links} sessions={sessions} onDelete={onDeleteRule} />}
       {free ? (
         <div className="quickact freeact" onClick={(e) => e.stopPropagation()}>
           <button type="button" title="abre el panel con el cursor en la caja de envío" onClick={onSelect}>
