@@ -75,7 +75,7 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
 Tres columnas: *Trabajo* (corriendo y terminó, el estado se ve como un punto verde o una
 tilde en la tarjeta), *Te necesita* y *Muerta*. Cada columna está abierta si tiene tarjetas
 y colapsada a una tira vertical si no; una columna vacía que quede abierta se cierra sola a
-los 10 segundos. Click en la tira la expande, click en el título la colapsa; si la colapsás con
+los 5 segundos. Click en la tira la expande, click en el título la colapsa; si la colapsás con
 tarjetas adentro se respeta hasta que llegue una tarjeta nueva. Cuando hay pocas columnas
 abiertas, las tarjetas se reparten en hasta cuatro subcolumnas según el ancho de la pantalla.
 

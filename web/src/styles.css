@@ -12,9 +12,11 @@ header button.icon svg { display: block; }
 header button.icon.lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--dim); }
 header button.icon.lbl:hover { color: var(--fg); }
 header .menu { position: relative; }
-header .dropdown { position: absolute; right: 0; top: calc(100% + 6px); min-width: 210px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,.45); z-index: 25; }
-header .dropdown button { background: none; border: 0; border-radius: 6px; text-align: left; padding: 8px 10px; display: flex; gap: 8px; align-items: center; font-size: 13px; }
+header .dropdown { position: absolute; right: 0; top: calc(100% + 6px); min-width: 300px; max-width: 360px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,.45); z-index: 25; }
+header .dropdown button { background: none; border: 0; border-radius: 6px; text-align: left; padding: 7px 10px; display: flex; flex-direction: column; gap: 2px; align-items: stretch; font-size: 13px; }
 header .dropdown button:hover { background: var(--card); }
+header .dropdown button .row { display: flex; gap: 8px; align-items: center; }
+header .dropdown button .desc { font-size: 11px; color: var(--dim); line-height: 1.3; white-space: normal; }
 header .dropdown .state { margin-left: auto; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
 header .dropdown .state.on { color: var(--run); }
 header .dropdown hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
