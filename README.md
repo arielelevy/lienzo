@@ -2,7 +2,7 @@
 
 Tablero para las sesiones de **Claude Code** y **Codex CLI** que corren en terminales de
 Windows: la integrada de VS Code, Windows Terminal, una PowerShell o un cmd sueltos. Una
-tarjeta por sesión, agrupadas por estado (corriendo, te necesita, terminó, muerta), con la
+tarjeta por sesión, agrupadas por columna (trabajo, te necesita, muerta), con la
 conversación a un click, una caja para contestarles, aprobación de permisos sin ir a la
 terminal, conexiones entre sesiones y acceso desde el celular con Microsoft Authenticator.
 
@@ -30,9 +30,15 @@ Después, cuatro canales, cada uno por su lado:
 | Mandar un mensaje | Inyección de teclas en la consola del proceso por PID (`AttachConsole` + `WriteConsoleInputW`). Funciona sin foco y aunque la pestaña esté oculta. Los adjuntos viajan como ruta en el texto. |
 | Contestar un permiso | El hook `PermissionRequest` es sincrónico: deja el pedido en una carpeta y espera hasta 60 s la respuesta que el tablero escribe. Si nadie contesta, el prompt aparece en la terminal como siempre. |
 
-Además: reenvío de la respuesta de una sesión a otra con plantilla (arrastrando una tarjeta
-sobre otra, o desde el botón), con una flecha entre las tarjetas por cada reenvío, y una
-pestaña que muestra el texto visible de la terminal leído del buffer de consola.
+Además: conexiones entre sesiones (reenvío ahora, cuando termine, a una hora, canal nativo
+Claude a Claude), flechas entre las tarjetas por cada conexión, y una pestaña que muestra
+el texto visible de la terminal leído del buffer de consola.
+
+Cuando una consola cambia de `session_id` sin cambiar de proceso (un `/clear` o un resume
+en Claude Code), la tarjeta nueva hereda el PID de la vieja y todas las conexiones que la
+apuntaban: las reglas "cuando termine" y el historial de envíos pasan a la sesión nueva y
+la vieja se da de baja. Una prueba manual del hook con un `session_id` inventado y el PID
+de una sesión viva no la reemplaza.
 
 ![Panel de una sesión](docs/img/panel.png)
 
@@ -64,52 +70,121 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
 
 ## Uso
 
-- **Tablero**: cuatro columnas por estado; las vacías se colapsan. Click en una tarjeta abre
-  el panel con *Destacados* (por turno: pedido, respuesta, archivos tocados, comandos,
-  errores, preguntas, mensajes a otras sesiones), *Conversación* (la transcripción completa,
-  con las herramientas colapsadas), *Pantalla* (el buffer de la terminal) y *Conexiones*
-  (qué recibió, qué mandó, y las conexiones activas con su estado).
-- **Tarjeta**: título (el que Claude le pone a la sesión, o la primera línea del pedido),
-  último pedido, última respuesta, errores de límite de uso en rojo, un chip
-  "✓ informe de X hace N min" cuando otra sesión le mandó algo, y la sugerencia 💡 que la
-  terminal esté mostrando en ese momento.
-- **Enviar**: caja de texto al pie del panel. Enter manda. Más de 500 caracteres o varias
-  líneas viajan como un `.md` adjunto y el agente lo lee por ruta. Se pueden arrastrar
-  archivos e imágenes. Si la terminal muestra una sugerencia, aparece en gris en la caja y
-  Tab la escribe, igual que en Claude Code.
-- **Permisos**: cuando una sesión pide permiso, la tarjeta muestra el comando y dos botones,
-  Permitir y Denegar. Nunca "permitir siempre".
-- **Conectar sesiones**: arrastrá una tarjeta y soltala sobre otra (o "Conectar…" en el
-  panel). Se abre un diálogo chico donde podés escribirlo en una frase, y se interpreta
-  mientras tipeás: "continuá a las 16:00", "en 30 min seguí", "cuando termine mandale a
-  MAPO", "cada vez que termine pasale a Teorema hasta 3 veces". Enter confirma. Cuatro modos:
-  - *Ahora*: manda la última respuesta de A a B, con plantilla editable
-    (`{repo} {agente} {titulo} {pedido} {respuesta}`).
-  - *Cuando A termine*: al cerrar cada turno, su respuesta va a B. Una vez o hasta un tope.
-  - *A una hora*: un texto fijo (por defecto "Continuá") a una sesión, que puede ser la
-    misma. Es el "seguí" para cuando vuelven los créditos.
-  - *Canal nativo* (sólo Claude ↔ Claude): A ubica a B con `ListAgents` y le habla con
-    `SendMessage`; los mensajes llegan aunque B esté trabajando y se responden por el mismo
-    canal. Vos les das el tema; ellas conversan.
+### Tablero
 
-  Cada reenvío dibuja una flecha entre las tarjetas; las conexiones pendientes se ven
-  punteadas con ⏹ o ⏰, el canal nativo con una flecha doble gruesa. Las flechas pasan por
-  el canal entre columnas, se agrupan por par con un contador, las viejas se atenúan, y al
-  pasar el mouse sobre una tarjeta se resaltan las suyas. Un botón las oculta. Esc cancela.
+Tres columnas: *Trabajo* (corriendo y terminó, el estado se ve como un punto verde o una
+tilde en la tarjeta), *Te necesita* y *Muerta*. Una columna vacía se colapsa sola a una tira
+vertical; click en la tira la expande, click en el título la colapsa, y la elección queda en
+el navegador. Cuando hay pocas columnas abiertas, las tarjetas se reparten en hasta cuatro
+subcolumnas según el ancho de la pantalla.
 
-  El server rechaza una regla "cuando termine" que cierre un bucle A↔B, y no la dispara si
-  el turno terminó con error o con una pregunta para vos.
+El buscador del encabezado (`/` lo enfoca) filtra por repo, título y último pedido, y los
+chips filtran por agente. Si el filtro matchea tarjetas de una columna colapsada, esa
+columna se abre sola mientras dure el filtro.
+
+Click en una tarjeta abre el panel, pegado a la derecha; el tablero se corre y sigue usable.
+Click en otra tarjeta cambia el panel, click en el vacío lo cierra. Pestañas: *Destacados*
+(por turno: pedido, respuesta, archivos tocados, comandos, errores, preguntas, mensajes a
+otras sesiones), *Conversación* (la transcripción completa, con las herramientas
+colapsadas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo que recibió, lo que
+mandó, lo que le escribiste desde el lienzo, y las conexiones activas con su estado).
+
+### Tarjeta
+
+- Título: el que Claude le pone a la sesión, o la primera línea del pedido. Doble click
+  sobre el título lo renombra en el lugar; el nombre queda fijo aunque la sesión cambie de
+  tema. Cuando el título es el propio pedido, la línea del pedido no se repite.
+- Último pedido plegado a una línea ("…más" lo abre), última respuesta, y un botón para
+  copiarla.
+- Sesión ociosa con consola: botones rápidos "Continuá", "sí", "no", que se escriben en su
+  terminal. Si está esperando input, la misma línea lo dice.
+- Límite de uso: el error se ve en rojo. Si el aviso trae la hora en que vuelve el cupo
+  ("try again at 1:00 AM", "resets 2:40pm"), aparece el botón "Continuar a las HH:MM", que
+  deja programado escribir "Continuar" un minuto después de esa hora. Si ya hay una regla a
+  esa hora, se muestra el chip en vez del botón.
+- Chips de conexiones: "al terminar → repo · título", "recibe de …", "⏰ 01:01 → Continuar".
+  Las iguales se agrupan (×N); con más de tres, el resto se ve en la pestaña Conexiones.
+- Chip "✓ informe de X hace N min" cuando otra sesión le mandó algo en la última media hora.
+- La sugerencia 💡 que la terminal esté mostrando en ese momento.
+- Con *Detalles técnicos* apagado (menú ⋯, el estado por defecto), no se ven el PID, los
+  hooks ni el id de la sesión, ni los contadores en cero del digest, ni el nombre del
+  `.jsonl` en el panel. Prendelo para depurar.
+
+### Enviar
+
+Caja de texto al pie del panel. Enter manda. Más de 500 caracteres o varias líneas viajan
+como un `.md` adjunto y el agente lo lee por ruta. Se pueden arrastrar archivos e
+imágenes. Si la terminal muestra una sugerencia, aparece en gris en la caja y Tab la
+escribe, igual que en Claude Code.
+
+La casilla "avisarme cuando termine" convierte el envío en una delegación: además de
+mandar el texto, crea la regla "cuando termine" desde esa sesión hacia la coordinadora (la
+primera sesión de Claude del mismo repo que no sea el destino). Un gesto en vez de dos.
+
+Lo que escribís desde el lienzo queda en la pestaña Conexiones de esa sesión como
+"recibido de vos (lienzo)". No dibuja flecha.
+
+### Permisos
+
+Cuando una sesión pide permiso, la tarjeta muestra el comando y dos botones, Permitir y
+Denegar. Nunca "permitir siempre".
+
+### Conectar sesiones
+
+Arrastrá una tarjeta y soltala sobre otra (o "Conectar…" en el panel). Se abre un diálogo
+chico donde podés escribirlo en una frase, y se interpreta mientras tipeás: "continuá a las
+16:00", "en 30 min seguí", "cuando termine mandale a MAPO", "cada vez que termine pasale a
+Teorema hasta 3 veces". Enter confirma. Cuatro modos:
+
+- *Ahora*: manda la última respuesta de A a B, con plantilla editable
+  (`{repo} {agente} {titulo} {pedido} {respuesta}`).
+- *Cuando A termine*: al cerrar cada turno, su respuesta completa va a B. Una vez, o
+  repetida hasta un tope (50 como máximo). No dispara si el turno terminó con error o con
+  una pregunta para vos, y hay un enfriamiento de 30 s entre disparos.
+- *A una hora*: un texto fijo (por defecto "Continuá") a una sesión, que puede ser la
+  misma. Es el "seguí" para cuando vuelven los créditos.
+- *Canal nativo* (sólo Claude a Claude): A ubica a B con `ListAgents` y le habla con
+  `SendMessage`; los mensajes llegan aunque B esté trabajando y se responden por el mismo
+  canal. Vos les das el tema; ellas conversan.
+
+El server rechaza con 409 una regla "cuando termine" que cierre un bucle A↔B, y también una
+regla igual a otra que ya existe (mismo origen, destino, texto y hora).
+
+### Flechas
+
+Cada conexión se dibuja entre las tarjetas: el último envío de cada par con ↪ (o ×N si hubo
+varios), las reglas pendientes punteadas con ⏹ o ⏰, el canal nativo con una flecha doble
+gruesa. Viajan por el canal entre columnas, el glifo cae en el hueco para no robarle el
+click a ninguna tarjeta, y al pasar el mouse sobre una tarjeta se resaltan las suyas. Un
+botón del menú las oculta.
+
+- Click en el glifo quita la conexión, con confirmación.
+- Doble click en una regla la edita en el lugar: texto, hora, repetición y tope. Una
+  programada que ya disparó se puede reprogramar y vuelve a quedar vigente.
+- Doble click en un envío hecho muestra los mensajes de ese par y, si el destino tiene
+  consola, "Mandar de nuevo" escribe el último otra vez. Un envío hecho no se edita.
+
+### Continuar solo tras límite de uso
+
+En el menú ⋯ hay un toggle "Continuar solo tras límite de uso". Prendido, cuando una
+sesión avisa que llegó al límite con hora de vuelta, el server deja programada la regla
+"Continuar" un minuto después, una sola vez por aviso; si borrás la regla, no la vuelve a
+crear. El toggle escribe `auto_continue` en `~/.lienzo/config.json`. Es la única
+automatización que corre sin que hagas nada, y tiene tope: una regla de un disparo.
 
 ## Delegar trabajo a varias sesiones
 
 El flujo que le da sentido al tablero: abrís dos o tres terminales de Claude Code, y desde el
-lienzo le mandás a cada una una tarea (texto largo, viaja como adjunto) conectada "cuando
-termine" hacia la sesión que coordina. Cada consola trabaja en sus archivos, y su informe
-final llega solo a la coordinadora al cerrar el turno. La coordinadora verifica, commitea y
-reparte la ronda siguiente. Este repo se construyó así: la mitad de los commits del 5 de
-septiembre los hicieron otras tres sesiones de Claude a partir de encargos y revisiones
-repartidos desde el propio lienzo. Es manual a propósito: dos agentes vinculados en los dos sentidos se
-  contestan hasta agotar los créditos.
+lienzo le mandás a cada una una tarea (texto largo, viaja como adjunto) con "avisarme cuando
+termine" marcado. Cada consola trabaja en sus archivos, y su informe final llega solo a la
+coordinadora al cerrar el turno. La coordinadora verifica, commitea y reparte la ronda
+siguiente. Este repo se construyó así: la mayoría de los commits del 5 de septiembre los
+hicieron otras sesiones de Claude a partir de encargos y revisiones repartidos desde el
+propio lienzo, incluido el plan de producto de `docs/plan-pm-2026-09-05.md`, que salió de
+probar el lienzo por la interfaz.
+
+Es manual a propósito: dos agentes vinculados en los dos sentidos se contestan hasta agotar
+los créditos, por eso el server rechaza el bucle y cada regla tiene tope.
 
 ![Arrastrar una tarjeta sobre otra](docs/img/arrastre.png)
 
@@ -133,26 +208,57 @@ hace falta un túnel con nombre y un dominio en Cloudflare.
 
 ![En el celular](docs/img/celular.png)
 
+## API
+
+Todo en `http://127.0.0.1:7321`, JSON. Las escrituras exigen el header `X-Lienzo: 1`; por el
+túnel, además la cookie de sesión.
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| GET | `/sessions` | todas las tarjetas, con `alive` recalculado |
+| GET | `/sessions/<sid>/turns?n=10` | turnos de la transcripción, para la conversación |
+| GET | `/sessions/<sid>/digest?n=10` | destacados por turno |
+| GET | `/sessions/<sid>/screen` | texto visible de la terminal |
+| GET | `/sessions/<sid>/connections` | links y reglas donde esa sesión es origen o destino, con la otra punta resuelta a `{session_id, name}`; lo que mandó el usuario viene como "vos (lienzo)" |
+| POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío entre sesiones, con `native` lo marca como canal nativo |
+| POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
+| PUT | `/sessions/<sid>/title` | `{title}`; el título pasa a ser del usuario y no se recalcula |
+| DELETE | `/sessions/<sid>` | saca la tarjeta |
+| GET | `/links` | envíos hechos; `kind` es `send`, `rule`, `native` o `user` |
+| GET | `/rules` | conexiones pendientes y cumplidas |
+| POST | `/rules` | `{kind: on_stop\|at, from, to, text, at, repeat, max_fires}`; 409 si arma un bucle o ya existe |
+| PUT | `/rules/<id>` | edita texto, hora (`at`), `repeat` y `max_fires`; reprogramar una `at` cumplida la reactiva |
+| DELETE | `/links/<id>`, `/rules/<id>` | quita la flecha o la conexión |
+| GET | `/pending` | permisos esperando respuesta |
+| POST | `/pending/<id>` | `{decision: allow\|deny}` |
+| GET | `/config` | `{auto_continue}` |
+| PUT | `/config` | `{auto_continue: true\|false}`; sólo esa clave, el resto de `config.json` no se toca |
+| GET | `/events` | SSE con cada cambio de sesiones, pendientes, links, reglas |
+| POST | `/rescan` | barrido de procesos ahora |
+| GET | `/auth`, POST `/setup`, `/login`, `/logout`, GET `/enroll` | acceso remoto |
+
 ## Estructura
 
 ```
 lienzo/
   hook.py          hook único para los dos agentes; espera de permisos con nonce
   procinfo.py      ctypes mínimo compartido: padre, imagen, vivo, agente
-  transcripts.py   lectura por la cola de las transcripciones y digest por turno
+  transcripts.py   lectura por la cola de las transcripciones, digest por turno, hora del límite de uso
   procs.py         liveness, barrido de procesos, cwd por PEB
   send.py          inyección de teclas por PID
   screen.py        lectura del buffer de consola por PID
   auth.py          TOTP (RFC 6238), cookies, freno de intentos
   server.py        watcher, registro, máquina de estados, reglas, HTTP + SSE, túnel
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
-tests/             pytest contra transcripciones reales y procesos vivos
+  src/arrows-geometry.ts   geometría de las flechas, funciones puras con tests propios
+tests/             pytest: transcripciones reales, procesos vivos y la máquina de estados del server
 install.py         alta y baja de los hooks
 lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q      # 12 tests
+python -m pytest tests -q                                   # 28 tests
+cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 17 tests de las flechas
 ```
 
 ## Qué es cada archivo de estado
@@ -164,8 +270,9 @@ python -m pytest tests -q      # 12 tests
   answers/       respuestas a permisos
   adjuntos/      archivos y textos largos enviados a las sesiones
   sessions/      una tarjeta por sesión
-  links.json     reenvíos hechos (flechas)
-  rules.json     conexiones pendientes (cuando termine, a una hora)
+  links.json     envíos hechos (flechas y pestaña Conexiones)
+  rules.json     conexiones (cuando termine, a una hora), vigentes y cumplidas
+  config.json    auto_continue, y lo que comparte con hook.py (espera de permisos, ejemplos)
   auth.json      clave TOTP del acceso remoto
   lienzo.log
 ```
@@ -173,7 +280,8 @@ python -m pytest tests -q      # 12 tests
 ## Limitaciones conocidas
 
 - La inyección escribe en la misma caja que tu teclado: si estás tipeando en esa terminal,
-  los dos textos se mezclan. Mandale a sesiones que no estés usando a mano en ese momento.
+  los dos textos se mezclan. La tarjeta avisa cuando detecta tipeo; mandale a sesiones que no
+  estés usando a mano en ese momento.
 - El stream de eventos (SSE) no pasa por el túnel rápido de Cloudflare; desde el celular el
   tablero se actualiza por sondeo cada 4 segundos.
 - Las sugerencias de prompt que muestra Claude Code no quedan en ningún archivo; se leen
@@ -184,6 +292,8 @@ python -m pytest tests -q      # 12 tests
   con `ListAgents`.
 - Una sesión cuya terminal se cerró (el proceso sigue, el shell padre murió) se muestra pero
   no acepta mensajes: no hay consola donde escribir.
+- Las flechas no se dibujan en pantallas de menos de 900 px; ahí el tablero es una columna
+  por vez con selector arriba.
 
 ## Licencia
 
