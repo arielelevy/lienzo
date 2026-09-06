@@ -60,7 +60,7 @@ function loadManual(): Manual {
     return {};
   }
 }
-const EMPTY_COLLAPSE_MS = 10_000;
+const EMPTY_COLLAPSE_MS = 5_000;   // pedido de Ariel: 10 s se sentia largo
 
 /** Subcolumnas de tarjetas disponibles en total: 4 en pantalla ancha, 2 por debajo de ~1100 px
  *  (en movil el CSS fuerza 1). */
@@ -178,7 +178,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   //    Se guarda con los ids que tenia y se respeta mientras solo contenga esas; una tarjeta nueva la
   //    vuelve a abrir y borra la eleccion.
   //  - `openEmpty` (solo en memoria): una columna vacia que esta abierta (el usuario la abrio, o se
-  //    vacio estando abierta) se cierra sola a los 10 s.
+  //    vacio estando abierta) se cierra sola a los 5 s.
   // Mientras el filtro del header (texto o agentes) matchea tarjetas de una columna colapsada, esa
   // columna se muestra abierta sin tocar nada de lo anterior.
   const [manual, setManual] = useState<Manual>(loadManual);
@@ -197,7 +197,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     window.clearTimeout(emptyTimers.current[k]);
     emptyTimers.current[k] = undefined;
   };
-  // columna vacia abierta: 10 s y se cierra sola
+  // columna vacia abierta: 5 s y se cierra sola
   const holdOpenEmpty = (k: ColKey) => {
     stopEmptyTimer(k);
     setOpenEmpty((o) => ({ ...o, [k]: true }));
@@ -220,7 +220,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     }
   };
   // con cada cambio de tarjetas: una nueva en una columna colapsada a mano la abre (y borra la
-  // eleccion); una columna abierta que se vacia arranca sus 10 s; una que recibe tarjetas deja de
+  // eleccion); una columna abierta que se vacia arranca sus 5 s; una que recibe tarjetas deja de
   // depender del timer
   const prevCount = useRef<Record<ColKey, number>>(Object.fromEntries(COLS.map(([k]) => [k, byState[k].length])) as Record<ColKey, number>);
   useEffect(() => {

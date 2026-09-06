@@ -116,23 +116,31 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
         </button>
         {menuOpen && (
           <div className="dropdown" role="menu">
+            {/* la descripcion va visible debajo del nombre: el title nativo tarda un segundo en aparecer
+                y nadie lo espera para saber que hace "Pensamiento" */}
             {flags.map((f) => (
-              <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle} title={f.title}>
-                {f.icon} {f.label} <span className={`state ${f.on ? "on" : ""}`}>{f.on ? "on" : "off"}</span>
+              <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle}>
+                <span className="row">
+                  {f.icon} {f.label} <span className={`state ${f.on ? "on" : ""}`}>{f.on ? "on" : "off"}</span>
+                </span>
+                <span className="desc">{f.title}</span>
               </button>
             ))}
             <hr />
-            <button role="menuitem" onClick={closeAnd(onRescan)} title="barrer procesos de la PC">
-              ↻ Rescan
+            <button role="menuitem" onClick={closeAnd(onRescan)}>
+              <span className="row">↻ Rescan</span>
+              <span className="desc">barrer ahora los procesos de la PC en busca de sesiones (solo se hace cada 30 s)</span>
             </button>
             <button role="menuitem" onClick={closeAnd(onHelp)}>
-              ? Atajos de teclado
+              <span className="row">? Atajos de teclado</span>
+              <span className="desc">qué hace cada tecla y cada gesto del tablero</span>
             </button>
             {authInfo.configured && !authInfo.local && (
               <>
                 <hr />
-                <button role="menuitem" onClick={closeAnd(onLogout)} title="cerrar sesión en este dispositivo">
-                  ⏏ Salir
+                <button role="menuitem" onClick={closeAnd(onLogout)}>
+                  <span className="row">⏏ Salir</span>
+                  <span className="desc">cerrar la sesión remota en este dispositivo</span>
                 </button>
               </>
             )}

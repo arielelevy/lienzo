@@ -215,10 +215,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const writable = Object.values(sessions).filter((s) => s.alive && s.pid);
 
   const flags = [
-    { label: "Avisos", icon: "🔔", on: notify, toggle: toggleNotify, title: "notificación del navegador cuando una sesión pide permiso" },
-    { label: "Flechas", icon: "↪", on: showArrows, toggle: toggleArrows, title: "flechas entre tarjetas" },
-    { label: "Pensamiento", icon: "💭", on: showThinking, toggle: () => setShowThinking((v) => !v), title: "mostrar el pensamiento del agente en la conversación" },
-    { label: "Detalles técnicos", icon: "🛠", on: details, toggle: toggleDetails, title: "PID, hooks e id en las tarjetas; contadores en cero; nombre del .jsonl en el panel" },
+    { label: "Avisos", icon: "🔔", on: notify, toggle: toggleNotify, title: "aviso del navegador (aunque la pestaña esté atrás) cuando una sesión pide permiso o te hace una pregunta" },
+    { label: "Flechas", icon: "↪", on: showArrows, toggle: toggleArrows, title: "dibujar las conexiones entre tarjetas: envíos hechos, reglas pendientes y canal nativo" },
+    { label: "Pensamiento", icon: "💭", on: showThinking, toggle: () => setShowThinking((v) => !v), title: "en la pestaña Conversación, mostrar también lo que el agente razona antes de contestar (los bloques de pensamiento). Apagado se ve solo lo que dijo e hizo" },
+    { label: "Detalles técnicos", icon: "🛠", on: details, toggle: toggleDetails, title: "para depurar: PID, hooks e id de sesión en las tarjetas, contadores en cero del digest, nombre del .jsonl en el panel" },
     {
       label: "Continuar solo tras límite de uso",
       icon: "⏰",
