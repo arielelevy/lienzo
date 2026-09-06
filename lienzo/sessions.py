@@ -328,24 +328,36 @@ def transcript_state(s: dict, t: dict) -> str | None:
 FILE_TOOLS = ("edit", "write", "read", "notebookedit", "multiedit", "apply_patch", "update_file")
 
 
-def turn_activity(t: dict) -> tuple[int, list[str]]:
-    """Cuantas herramientas lleva el turno y los ultimos archivos distintos que toco, del mas nuevo
-    al mas viejo. Sale de los bloques que ya tiene la transcripcion, sin leerla otra vez."""
+CD_PREFIX_RE = re.compile(r'^\s*cd\s+(?:"[^"]*"|\S+)\s*(?:&&|;)\s*')
+CMD_TOOLS = ("bash", "powershell", "shell", "run_terminal_cmd", "exec")
+
+
+def turn_activity(t: dict) -> tuple[int, list[str], str | None, int]:
+    """Lo que la sesion viene haciendo en el turno, para la tarjeta: cuantas herramientas lleva, los
+    ultimos archivos distintos que toco (del mas nuevo al mas viejo), el ultimo comando que corrio y
+    cuantas herramientas volvieron con error. Sale de los bloques que ya tiene la transcripcion."""
     tools = [b for b in t.get("blocks", []) if b.get("kind") == "tool"]
     files: list[str] = []
+    cmd: str | None = None
     for b in reversed(tools):
-        if (b.get("name") or "").lower() not in FILE_TOOLS:
-            continue
-        raw = (b.get("input") or {}).get("file_path") or (b.get("input") or {}).get("path") or ""
-        name = os.path.basename(str(raw).replace("\\", "/").rstrip("/"))
-        if name and name not in files:
-            files.append(name)
-        if len(files) == 3:
-            break
-    return len(tools), files
+        name = (b.get("name") or "").lower()
+        inp = b.get("input") or {}
+        if cmd is None and name in CMD_TOOLS:
+            raw = str(inp.get("command") or inp.get("cmd") or "").strip().replace("\n", " ")
+            # el "cd <ruta larga> &&" del principio no dice nada y se come la linea entera
+            raw = CD_PREFIX_RE.sub("", raw).strip()
+            if raw:
+                cmd = short(raw, 120)
+        if name in FILE_TOOLS and len(files) < 3:
+            path = str(inp.get("file_path") or inp.get("path") or "").replace("\\", "/").rstrip("/")
+            base = os.path.basename(path)
+            if base and base not in files:
+                files.append(base)
+    errors = sum(1 for b in tools if (b.get("result") or {}).get("is_error"))
+    return len(tools), files, cmd, errors
 
 
-REFRESH_KEYS = ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for", "tool_count", "last_files")
+REFRESH_KEYS = ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for", "tool_count", "last_files", "last_cmd", "tool_errors")
 
 
 def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
@@ -377,7 +389,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         hooked = s.get("hooked") and not force_state
         tools = [b for b in t["blocks"] if b["kind"] == "tool"]
         # lo que pasa adentro, para la tarjeta: cuanto lleva hecho y sobre que archivos
-        s["tool_count"], s["last_files"] = turn_activity(t)
+        s["tool_count"], s["last_files"], s["last_cmd"], s["tool_errors"] = turn_activity(t)
         if hooked:
             # el pedido y la respuesta final ya vienen por hook (UserPromptSubmit / Stop); de la
             # transcripcion se toma "usando X" mientras corre, y el estado solo cuando los hooks

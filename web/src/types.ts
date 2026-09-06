@@ -42,6 +42,10 @@ export interface Session {
   tool_count?: number;
   /** ultimos archivos que toco en ese turno, del mas nuevo al mas viejo, solo el nombre */
   last_files?: string[];
+  /** ultimo comando que corrio en ese turno, recortado */
+  last_cmd?: string | null;
+  /** herramientas del turno que volvieron con error */
+  tool_errors?: number;
   /** de donde salio el titulo automatico: "transcript" (ai-title), "prompt" (primera linea del pedido
    *  o encabezado del adjunto) o "user" (renombrado a mano, no se recalcula) */
   title_source?: "transcript" | "prompt" | "user" | null;

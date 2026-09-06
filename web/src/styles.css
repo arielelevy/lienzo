@@ -47,7 +47,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .board[data-lanes] .col .cards { margin-top: var(--lane-h, 28px); padding-bottom: var(--lane-h, 28px); }
 .board[data-lanes] .col:not(.wide) .cards .card { margin-bottom: var(--lane-h, 28px); }
 .board[data-lanes] .col.wide .cards > div { margin-bottom: var(--lane-h, 28px); }
-.col + .col { margin-left: 40px; }
+.col + .col { margin-left: var(--col-gap, 30px); }
 .col.collapsed + .col, .col + .col.collapsed { margin-left: 8px; }
 .arrows { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; overflow: visible; }
 .arrows .arrow { pointer-events: none; }
@@ -98,7 +98,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 /* dos subcolumnas por CSS: cada tarjeta se apoya en la de arriba con el mismo aire aunque la de al
    lado sea mas alta, y todas siguen siendo hijas del mismo nodo (React no las remonta al reordenar).
    El hueco de 24 px es el canal para el glifo de las flechas. */
-.col.wide .cards { column-count: 2; column-gap: 40px; }
+.col.wide .cards { column-count: 2; column-gap: var(--col-gap, 30px); }
 .col.wide .cards > div { break-inside: avoid; margin-bottom: 8px; }
 .col.wide .cards .card { margin-bottom: 0; }
 .col.collapsed .vlabel { cursor: pointer; border-radius: 8px; }
@@ -161,7 +161,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 /* panel de sesion: pegado a la derecha, debajo del header (--hh lo mide App), sin fondo que tape.
    El tablero se corre a la izquierda (padding) y sigue usable: click en otra tarjeta cambia el
    panel, click en el vacio lo cierra. Centrado con backdrop tapaba las tarjetas del medio. */
-:root { --panel-w: min(720px, 94vw); --hh: 46px; }
+:root { --panel-w: min(720px, 94vw); --hh: 46px; --col-gap: 30px; }
 /* el panel se abre sobre la tarjeta que lo abrio (left/top van en el style, calculados en
    Panel.tsx) y el tablero de atras se atenua y se difumina */
 .panel { position: fixed; width: var(--panel-w); max-height: 84vh; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 60px rgba(0,0,0,.6); z-index: 10; display: flex; flex-direction: column; overflow: hidden; }
