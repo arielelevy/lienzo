@@ -158,7 +158,7 @@ test("buildItems: varios envios se cuentan en la descripcion; los textos se leen
   assert.equal(cut("x".repeat(100)), `${"x".repeat(90)}…`);
 });
 
-test("buildItems solo dibuja reglas activas, con origen, no reflexivas y con los dos extremos", () => {
+test("buildItems dibuja las reglas activas con los dos extremos en el tablero, y las reflexivas como bucle", () => {
   const anchors = new Map([["a", A1], ["b", B1]]);
   const rules = [
     rule({ id: "r1", from: "a", to: "b" }),
@@ -171,7 +171,13 @@ test("buildItems solo dibuja reglas activas, con origen, no reflexivas y con los
     rule({ id: "lost", from: "a", to: "nadie" }),
   ];
   const items = buildItems([], rules, anchors, fmt);
-  assert.deepEqual(items.map((i) => i.ids[0]), ["r1", "r2", "r3", "r4"]);
+  // "auto" (sin origen, la programa el server) y "self" (mismo origen y destino) ahora se dibujan
+  // como bucle sobre su propia tarjeta; "off" (deshabilitada) y "lost" (destino que no esta) no
+  assert.deepEqual(items.map((i) => i.ids[0]), ["r1", "r2", "r3", "r4", "auto", "self"]);
+  const auto = items[4];
+  assert.equal(auto.from, auto.to);
+  assert.equal(auto.desc, "Cada vez que n(b) cierre un turno, su respuesta se manda a sí misma. Una sola vez. Doble click para editarla.");
+  assert.equal(items[5].from, "a");
   assert.equal(items[0].title, "cuando n(a) termine → su respuesta a n(b) · click para seleccionarla");
   assert.equal(items[0].desc, "Cada vez que n(a) cierre un turno, su respuesta se manda a n(b). Una sola vez. Doble click para editarla.");
   assert.equal(items[1].desc, "Cada vez que n(a) cierre un turno, su respuesta se manda a n(b). Van 2 de 5. Doble click para editarla.");

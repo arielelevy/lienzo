@@ -38,16 +38,16 @@ export function Digest({ turn: t, toast: extToast }: { turn: DigestTurn; toast?:
         </>
       )}
       {t.files.length > 0 && (
-        <>
-          <div className="k">archivos</div>
+        <details className="fold">
+          <summary className="k">archivos ({t.files.length})</summary>
           {list(t.files)}
-        </>
+        </details>
       )}
       {t.commands.length > 0 && (
-        <>
-          <div className="k">comandos</div>
+        <details className="fold">
+          <summary className="k">comandos ({t.commands.length})</summary>
           {list(t.commands)}
-        </>
+        </details>
       )}
       {t.errors.length > 0 && (
         <>

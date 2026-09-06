@@ -105,7 +105,7 @@ export interface GeometryInput {
 }
 
 /** medio canal por defecto, si no se puede medir el hueco entre columnas abiertas */
-export const HALF_GAP = 20; // la mitad del canal entre columnas (28 px) mas un poco de aire
+export const HALF_GAP = 26; // la mitad del canal entre columnas (40 px) mas un poco de aire
 /** separacion vertical entre flechas que salen o entran por el mismo lado de una tarjeta */
 export const SLOT = 14;
 /** dos tarjetas con bordes izquierdos a menos de esto son de la misma columna */
@@ -569,18 +569,23 @@ export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Re
     });
   }
   for (const r of rules) {
-    if (!r.enabled || !r.from || r.from === r.to || !anchors.has(r.from) || !anchors.has(r.to)) continue;
-    const a = fmt.name(r.from);
+    if (!r.enabled || !anchors.has(r.to)) continue;
+    // sin origen (la programo el server por el limite de uso) o con el mismo origen que destino:
+    // es un mensaje que la tarjeta se manda a si misma, y se dibuja como bucle sobre su costado
+    const self = !r.from || r.from === r.to;
+    if (!self && !anchors.has(r.from!)) continue;
+    const from = self ? r.to : r.from!;
+    const a = self ? "" : fmt.name(from);
     const b = fmt.name(r.to);
-    const base = { ids: [r.id], kind: "rule" as const, from: r.from, to: r.to, old: false };
+    const base = { ids: [r.id], kind: "rule" as const, from, to: r.to, old: false };
     const tail = " Doble click para editarla.";
     if (r.kind === "on_stop") {
       const count = r.repeat ? ` Van ${r.fired} de ${r.max_fires}.` : " Una sola vez.";
       items.push({
         ...base,
         glyph: "⏹",
-        title: `cuando ${a} termine → su respuesta a ${b}${r.repeat ? ` (${r.fired}/${r.max_fires})` : ""} · click para seleccionarla`,
-        desc: `Cada vez que ${a} cierre un turno, su respuesta se manda a ${b}.${count}${tail}`,
+        title: `cuando ${self ? b : a} termine → su respuesta a ${self ? "sí misma" : b}${r.repeat ? ` (${r.fired}/${r.max_fires})` : ""} · click para seleccionarla`,
+        desc: `Cada vez que ${self ? b : a} cierre un turno, su respuesta se manda a ${self ? "sí misma" : b}.${count}${tail}`,
       });
     } else if (r.every_s) {
       // periodica: glifo ↻, y el titulo dice el periodo, cuantas veces fue y cuando es la proxima
@@ -590,14 +595,14 @@ export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Re
         ...base,
         glyph: "↻",
         title: `${periodLabel(r.every_s)} → «${r.text}» a ${b} ${periodicCount(r.fired, r.max_fires, r.at ? fmt.hhmm(r.at) : null)} · click para seleccionarla`,
-        desc: `${cap(periodLabel(r.every_s))} se le escribe «${r.text}» a ${b}. Van ${r.fired} de ${r.max_fires}.${next}${skip} La programó ${a}.${tail}`,
+        desc: `${cap(periodLabel(r.every_s))} ${self ? "se escribe" : "se le escribe"} «${r.text}»${self ? " sola" : ` a ${b}`}. Van ${r.fired} de ${r.max_fires}.${next}${skip}${a ? ` La programó ${a}.` : ""}${tail}`,
       });
     } else {
       items.push({
         ...base,
         glyph: "⏰",
         title: `${r.at ? fmt.when(r.at) : "sin hora"} → «${r.text}» a ${b} · click para seleccionarla`,
-        desc: `${r.at ? cap(fmt.when(r.at)) : "Sin hora fijada,"} se le escribe «${r.text}» a ${b}. La programó ${a}.${tail}`,
+        desc: `${r.at ? cap(fmt.when(r.at)) : "Sin hora fijada,"} ${self ? "se escribe" : "se le escribe"} «${r.text}»${self ? " sola" : ` a ${b}`}.${a ? ` La programó ${a}.` : ""}${tail}`,
       });
     }
   }
@@ -781,10 +786,33 @@ export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rec
 }
 
 /** Todo junto: de rects medidos, links y reglas a los segmentos listos para dibujar. */
+/** Bucle: una regla de una tarjeta hacia si misma. Sale del costado, da la vuelta y vuelve a
+ *  entrar 26 px mas abajo, con el glifo en la panza. Va por el costado y no por arriba porque el
+ *  carril de arriba no siempre existe (se reserva solo cuando alguna flecha corre en horizontal);
+ *  el costado tiene el canal entre columnas, que siempre esta. Si no hay lugar a la derecha del
+ *  tablero, el bucle se dibuja a la izquierda de la tarjeta. */
+export const LOOP_OUT = 20;
+export const LOOP_SPAN = 26;
+
+export function loopSeg(it: Item, r: Rect, boardWidth: number): Seg {
+  const right = r.r + LOOP_OUT + 6 <= boardWidth;
+  const x = right ? r.r : r.l;
+  const dir = right ? 1 : -1;
+  const y1 = r.t + 16;
+  const y2 = y1 + LOOP_SPAN;
+  const out = x + dir * LOOP_OUT;
+  const d = `M ${x} ${y1} C ${out + dir * 8} ${y1} ${out + dir * 8} ${y2} ${x} ${y2}`;
+  return { ...it, d, x: out, y: (y1 + y2) / 2, ends: [r, r] };
+}
+
 export function computeSegs(input: GeometryInput): Seg[] {
   const cards = Array.from(input.rects.values());
   const cols = groupColumns(cards);
-  const items = buildItems(input.links, input.rules, input.anchors, input.fmt);
+  const all = buildItems(input.links, input.rules, input.anchors, input.fmt);
+  const items = all.filter((it) => it.from !== it.to);
+  const loops = all.filter((it) => it.from === it.to);
   const zone: Zone = { bands: input.bands ?? [], strips: input.strips };
-  return routeItems(items, input.anchors, cards, cols, input.strips, input.boardWidth, zone);
+  const segs = routeItems(items, input.anchors, cards, cols, input.strips, input.boardWidth, zone);
+  for (const it of loops) segs.push(loopSeg(it, input.anchors.get(it.to)!, input.boardWidth));
+  return segs;
 }

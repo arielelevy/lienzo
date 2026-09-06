@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Arrows } from "./Arrows";
 import { Card, shortName } from "./Card";
 import type { Link, Pending, Rule, Session, State } from "../types";
+import { stalledReason } from "../names";
 
 /** Columnas del tablero. "Trabajo" junta corriendo y termino (el estado se ve como icono en la
  *  tarjeta); "Te necesita" y "Muerta" siguen aparte porque piden accion. El tipo State es del
@@ -172,11 +173,14 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       if (q && !norm(`${s.repo} ${s.title ?? ""} ${s.last_prompt ?? ""}`).includes(q)) continue;
       g[colOf(s)].push(s);
     }
-    const done = (s: Session) => (s.state === "termino" ? 1 : 0);
+    // lo que esta trabajando de verdad va primero; lo que termino, despues; lo que figura corriendo
+    // pero esta quieto (sin cupo, o sin actividad hace rato), al final. Con las tarjetas repartidas
+    // en subcolumnas, "al final" es "a la derecha"
+    const rank = (s: Session) => (stalledReason(s) ? 2 : s.state === "termino" ? 1 : 0);
     for (const k of COLS.map(([k]) => k)) {
       g[k].sort((a, b) => {
-        if (done(a) !== done(b)) return done(a) - done(b);
-        if (done(a)) return b.state_since.localeCompare(a.state_since);
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        if (rank(a)) return b.state_since.localeCompare(a.state_since);
         return (a.repo + a.started).localeCompare(b.repo + b.started);
       });
     }
@@ -275,6 +279,23 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
 
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
+  // al elegir una tarjeta se explican sus conexiones, y tambien las de la del otro extremo: una
+  // conexion tiene dos puntas y se entiende mirando las dos
+  const related = useMemo(() => {
+    const out = new Set<string>();
+    if (!picked) return out;
+    for (const l of links) {
+      if (l.from === picked && l.to) out.add(l.to);
+      if (l.to === picked && l.from) out.add(l.from);
+    }
+    for (const r of rules) {
+      if (r.from === picked && r.to) out.add(r.to);
+      if (r.to === picked && r.from) out.add(r.from);
+    }
+    out.delete(picked);
+    return out;
+  }, [picked, links, rules]);
+
   const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, picked, manual, openEmpty, query, agents, laneBudget]);
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
@@ -426,7 +447,16 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                 </>
               ) : (
                 <>
-                  <h2 title="click para colapsar la columna" onClick={() => setCol(k, true)}>
+                  {/* Trabajo con tarjetas no se colapsa a mano: es el contenido del tablero y
+                      colapsarla deja la pantalla vacia. Vacia si se colapsa sola, como las demas */}
+                  <h2
+                    className={k === "trabajo" && list.length > 0 ? "fixed" : ""}
+                    title={k === "trabajo" && list.length > 0 ? "la columna del trabajo no se colapsa: es lo que estás mirando" : "click para colapsar la columna"}
+                    onClick={() => {
+                      if (k === "trabajo" && list.length > 0) return;
+                      setCol(k, true);
+                    }}
+                  >
                     <span>{label}</span>
                     <span className="n">{list.length}</span>
                   </h2>
@@ -447,6 +477,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         toast={toast}
                         selected={selected === s.session_id}
                         picked={picked === s.session_id}
+                        related={related.has(s.session_id)}
                         onPick={() => setPicked(s.session_id)}
                         onSelect={() => {
                           // el click que cierra un arrastre no abre el panel
