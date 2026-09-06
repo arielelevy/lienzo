@@ -67,8 +67,11 @@ details.fold > summary,
    flechas, con las flechas apagadas o abajo de 900 px el atributo no esta y la columna se ve
    como siempre: el aire extra solo existe cuando hay algo que pase por ahi */
 .board[data-lanes] .col .cards { margin-top: var(--lane-h, 28px); padding-bottom: var(--lane-h, 28px); }
-.board[data-lanes] .col:not(.wide) .cards .card { margin-bottom: var(--lane-h, 28px); }
-.board[data-lanes] .col.wide .cards > div { margin-bottom: var(--lane-h, 28px); }
+/* el aire vertical entre tarjetas es fijo (--card-gap-y): las flechas corren por el canal
+   horizontal, que es el que tiene los 30 px. El carril de arriba y el de abajo siguen saliendo de
+   --lane-h, que crece con cuantas flechas lleve */
+.board[data-lanes] .col:not(.wide) .cards .card { margin-bottom: var(--card-gap-y, 15px); }
+.board[data-lanes] .col.wide .cards > div { margin-bottom: var(--card-gap-y, 15px); }
 .col + .col { margin-left: var(--col-gap, 30px); }
 .col.collapsed + .col, .col + .col.collapsed { margin-left: 8px; }
 .arrows { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; overflow: visible; }
@@ -120,7 +123,7 @@ details.fold > summary,
    lado sea mas alta, y todas siguen siendo hijas del mismo nodo (React no las remonta al reordenar).
    El hueco de 24 px es el canal para el glifo de las flechas. */
 .col.wide .cards { column-count: 2; column-gap: var(--col-gap, 30px); }
-.col.wide .cards > div { break-inside: avoid; margin-bottom: 8px; }
+.col.wide .cards > div { break-inside: avoid; margin-bottom: var(--card-gap-y, 15px); }
 .col.wide .cards .card { margin-bottom: 0; }
 .col.collapsed .vlabel { cursor: pointer; border-radius: 8px; }
 .col.collapsed .vlabel:hover { background: var(--card); color: var(--fg); }
@@ -186,7 +189,7 @@ details.fold > summary,
 
 /* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y
    click en el vacio lo cierra (--hh es el alto del header, que mide App) */
-:root { --hh: 46px; --col-gap: 30px; }
+:root { --hh: 46px; --col-gap: 30px; --card-gap-y: 15px; }
 /* el panel se abre sobre la tarjeta que lo abrio y el tablero de atras se atenua y se difumina.
    left, top, width (y en el celular height) van en el style, calculados en Panel.tsx: el ancho
    se declara en un solo lado, porque el clamp del left necesita el mismo numero. Aca no va
