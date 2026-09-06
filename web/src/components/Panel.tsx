@@ -56,6 +56,10 @@ interface Props {
 
 const cut = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
 
+/** ancho de pantalla en el que el panel pasa a ocupar todo: el mismo numero que el
+ *  `@media (max-width: 900px)` de styles.css. */
+const MOBILE = 900;
+
 /** Pestana "Conexiones": dos listas, lo que paso (links) y lo que sigue armado (rules). */
 function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "old" | null }) {
   if (conn === null) return <div className="empty">leyendo…</div>;
@@ -174,6 +178,24 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
   const [hasMore, setHasMore] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // el tamano del panel se calcula al pintar: si la ventana cambia (girar el celular, abrir el
+  // teclado, agrandar la ventana) hay que volver a pintar. visualViewport tambien avisa cuando
+  // el teclado achica o desplaza lo visible sin tocar innerHeight (iOS)
+  const [, redraw] = useState(0);
+  useEffect(() => {
+    const on = () => redraw((n) => n + 1);
+    const vv = window.visualViewport;
+    window.addEventListener("resize", on);
+    window.addEventListener("scroll", on, { passive: true }); // en el celular el tope depende del header
+    vv?.addEventListener("resize", on);
+    vv?.addEventListener("scroll", on);
+    return () => {
+      window.removeEventListener("resize", on);
+      window.removeEventListener("scroll", on);
+      vv?.removeEventListener("resize", on);
+      vv?.removeEventListener("scroll", on);
+    };
+  }, []);
   // sesion libre: viva, con consola y sin ningun pedido todavia. El estado vacio de Destacados y
   // Conversacion dice que hacer, y la caja de envio arranca con el foco ("Darle trabajo" de la tarjeta)
   const free = isFree(s);
@@ -232,19 +254,43 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
   };
 
   // el panel se abre sobre la tarjeta que lo abrio, no en un costado fijo: se ancla a su esquina
-  // superior izquierda y se corre lo justo para entrar en la ventana
-  const box = ((): { left: number; top: number } => {
-    const w = Math.min(720, window.innerWidth - 24);
-    const h = Math.min(window.innerHeight * 0.84, window.innerHeight - 70);
-    if (!anchor) return { left: Math.round((window.innerWidth - w) / 2), top: 56 };
+  // superior izquierda y se corre lo justo para entrar en la ventana. El ancho se calcula aca y
+  // va en el style: el CSS ya no fija ninguno, asi el mismo numero manda el ancho pintado y el
+  // clamp del left. Antes el @media del celular ponia width: 100vw contra un left calculado con
+  // min(720, innerWidth - 24) y el panel se salia 12 px por la derecha (medido en 420x860).
+  const box = ((): { left: number; top: number; width: number; height?: number } => {
+    // clientWidth y no innerWidth: innerWidth cuenta la barra de scroll y el borde derecho del
+    // panel quedaba debajo de ella
+    const vv = window.visualViewport;
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = document.documentElement.clientHeight || window.innerHeight;
+    if (vw <= MOBILE) {
+      // celular: pantalla entera, pero abajo del header, que va por encima (z-index 40) y si no
+      // tapaba el titulo y la ✕ del panel. El alto sale de visualViewport, que se achica con el
+      // teclado abierto, para que la caja de envio quede siempre a la vista (con 84vh quedaba
+      // debajo del teclado). El header dice sticky pero no se pega: con la pagina scrolleada su
+      // borde inferior da negativo (medido: -53 en 420x430) y el panel se iba para arriba, asi
+      // que si no esta arriba el panel toma la pantalla entera
+      const top = Math.max(0, Math.round(document.querySelector("header")?.getBoundingClientRect().bottom ?? 0));
+      return {
+        left: Math.round(vv?.offsetLeft ?? 0),
+        top: Math.round((vv?.offsetTop ?? 0) + top),
+        width: Math.round(Math.min(vv?.width ?? vw, vw)),
+        height: Math.max(200, Math.round(vv?.height ?? vh) - top),
+      };
+    }
+    const width = Math.min(720, vw - 24);
+    const h = Math.min(vh * 0.84, vh - 70);
+    if (!anchor) return { left: Math.round((vw - width) / 2), top: 56, width };
     return {
-      left: Math.round(Math.min(Math.max(anchor.left - 8, 12), Math.max(12, window.innerWidth - w - 12))),
-      top: Math.round(Math.min(Math.max(anchor.top - 8, 52), Math.max(52, window.innerHeight - h - 12))),
+      left: Math.round(Math.min(Math.max(anchor.left - 8, 12), Math.max(12, vw - width - 12))),
+      top: Math.round(Math.min(Math.max(anchor.top - 8, 52), Math.max(52, vh - h - 12))),
+      width,
     };
   })();
 
   return (
-    <div className="panel" style={{ left: box.left, top: box.top }}>
+    <div className="panel" style={{ left: box.left, top: box.top, width: box.width, height: box.height, maxHeight: box.height }}>
       <div className="ph">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         {/* una linea sola: el titulo largo se corta con puntos suspensivos y va entero en el title,
@@ -256,6 +302,11 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
               ★ coordinadora
             </span>
           )}
+          {/* rama y estado al lado del nombre: es lo unico que servia de la fila de la ruta, que
+              ya no esta. La ruta vuelve abajo solo con "Detalles tecnicos" */}
+          <span className="sub dim small" title={s.cwd ?? ""}>
+            {s.branch ? `${s.branch} · ` : ""}{s.state}
+          </span>
         </span>
         <div className="tabs">
           <button className={tab === "digest" ? "on" : ""} onClick={() => setTab("digest")}>Destacados</button>
@@ -270,12 +321,16 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
             Conectar…
           </button>
         )}
-        <button onClick={onClose} aria-label="cerrar panel" title="cerrar">✕</button>
-        <div className="pmeta dim small" title={`${s.cwd ?? ""}\n${s.transcript_path ?? "sin transcripción"}`}>
-          {details
-            ? `${s.cwd} · PID ${s.pid ?? "?"} · ${s.state} · ${s.transcript_path ? s.transcript_path.split(/[\\/]/).pop() : "sin transcripción"}`
-            : `${s.cwd}${s.branch ? ` · ${s.branch}` : ""} · ${s.state}`}
-        </div>
+        {/* en la esquina de arriba a la derecha, chica como la ✕ de una tarjeta: antes se llevaba
+            una fila entera para un solo boton */}
+        <button className="x" onClick={onClose} aria-label="cerrar panel" title="cerrar">✕</button>
+        {/* la ruta absoluta no aporta (el repo ya esta en el titulo y en la tarjeta): la fila
+            aparece solo con "Detalles tecnicos", que es donde vive lo de depurar */}
+        {details && (
+          <div className="pmeta dim small" title={`${s.cwd ?? ""}\n${s.transcript_path ?? "sin transcripción"}`}>
+            {`${s.cwd} · PID ${s.pid ?? "?"} · ${s.state} · ${s.transcript_path ? s.transcript_path.split(/[\\/]/).pop() : "sin transcripción"}`}
+          </div>
+        )}
       </div>
       {sched.length > 0 && (
         <div className="sched" title="mensajes programados hacia esta sesión">

@@ -141,6 +141,12 @@ const QUICK = ["Continuá", "sí", "no"];
 
 const RECENT_MS = 30 * 60 * 1000;
 
+/** Espera del click simple antes de elegir la tarjeta. Si en ese rato llega el segundo click, se
+ *  cancela y el doble click abre el panel sin elegir nada: elegir agrega las conexiones en palabras
+ *  y **cambia el alto de la tarjeta**, asi que el segundo click del doble caia en otro elemento (se
+ *  medio en la tarjeta de Codex, la mas baja del tablero: el doble click no abria el panel). */
+const PICK_MS = 240;
+
 /** Por debajo de este ancho la tarjeta no alcanza para el pedido y la respuesta: pasa a modo
  *  compacto (agente, repo, estado, titulo en una linea y un contador de conexiones). Pasa con el
  *  panel abierto y varias columnas: el tablero tiene que seguir sirviendo de indice. */
@@ -160,6 +166,28 @@ function useCompact(ref: React.RefObject<HTMLElement | null>): boolean {
     return () => o.disconnect();
   }, [ref]);
   return compact;
+}
+
+/** Tab recorre las tarjetas, no sus botones. Todo lo que la tarjeta contiene sale del orden de
+ *  tabulacion (tabIndex -1) mientras el foco no este ya en uno de sus controles: asi Tab va de
+ *  tarjeta en tarjeta y no cae en la ✕ ("quitar tarjeta") ni en la estrella, dos acciones con
+ *  consecuencia, antes que en el elemento que las contiene. Con la tarjeta enfocada, las flechas
+ *  entran a sus botones (y ahi Tab los recorre); Escape vuelve a la tarjeta.
+ *  La excepcion son Permitir y Denegar (`data-always-tab`): un permiso vence a los 60 s y es la
+ *  unica accion del tablero que no puede esperar a que el usuario descubra la flecha.
+ *  Se hace por efecto y no boton por boton porque la tarjeta arma su contenido segun el estado
+ *  (pedido plegado, permiso pendiente, sugerencia, botones rapidos): un control nuevo queda
+ *  cubierto solo. */
+const FOCUSABLE = "button, a[href], input, textarea, select";
+
+function controlsOf(el: HTMLElement | null): HTMLElement[] {
+  return el ? [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((n) => n.offsetParent !== null) : [];
+}
+
+function useRovingTab(ref: React.RefObject<HTMLElement | null>, inside: boolean) {
+  useEffect(() => {
+    for (const n of ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []) n.tabIndex = inside || n.dataset.alwaysTab !== undefined ? 0 : -1;
+  });
 }
 
 interface Props {
@@ -195,6 +223,14 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const [busy, setBusy] = useState(false);
   const rename = useRename(s, toast);
   const rootRef = useRef<HTMLDivElement>(null);
+  // el foco esta en un control de la tarjeta (no en la tarjeta misma): recien ahi sus botones
+  // entran en el orden de tabulacion. El CSS ya usa :focus-within para mostrarlos
+  const [inside, setInside] = useState(false);
+  useRovingTab(rootRef, inside);
+  // click simple demorado (PICK_MS): se limpia al desmontar y si la tarjeta cambia de sesion, para
+  // que no quede uno vivo que elija una tarjeta que ya no esta
+  const pickTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(pickTimer.current), [s.session_id]);
   // columna angosta: la tarjeta se reduce a indice. Un permiso pendiente nunca se compacta: es la
   // unica accion que vence y solo se puede contestar desde la tarjeta
   const compact = useCompact(rootRef) && !p;
@@ -284,21 +320,50 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       tabIndex={0}
       aria-label={`${s.repo}: ${s.title || s.last_prompt || (free ? "libre, sin pedidos todavía" : "sin título")}`}
       aria-pressed={picked || selected}
-      /* un click elige la tarjeta (instantáneo, no abre nada); el doble click abre el panel */
-      onClick={() => onPick?.()}
+      /* un click elige la tarjeta, pero recién a los PICK_MS: si llega el segundo click no se elige
+         nada y el doble click abre el panel, sin el parpadeo ni el cambio de alto del medio */
+      onClick={(e) => {
+        if (e.detail > 1) return; // el segundo click de un doble: lo atiende onDoubleClick
+        window.clearTimeout(pickTimer.current);
+        pickTimer.current = window.setTimeout(() => onPick?.(), PICK_MS);
+      }}
       onDoubleClick={(e) => {
+        window.clearTimeout(pickTimer.current); // el click simple ya no elige
         /* doble click sobre un control (✕, estrella, lápiz, chips) no abre el panel */
         if ((e.target as HTMLElement).closest("button, a, input, textarea, code")) return;
         onSelect();
       }}
       onKeyDown={(e) => {
+        const onCard = e.target === e.currentTarget;
         // Enter sobre la tarjeta misma abre el panel; los botones de adentro manejan su propio Enter
-        if (e.key === "Enter" && e.target === e.currentTarget) {
+        if (e.key === "Enter" && onCard) {
           e.preventDefault();
           onSelect();
+          return;
+        }
+        // con la tarjeta enfocada, las flechas entran a sus controles (↓ → al primero, ↑ ← al
+        // último): son los que Tab ya no pisa
+        if (onCard && ["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(e.key)) {
+          const cs = controlsOf(rootRef.current);
+          if (!cs.length) return;
+          e.preventDefault();
+          (e.key === "ArrowUp" || e.key === "ArrowLeft" ? cs[cs.length - 1] : cs[0]).focus();
+          return;
+        }
+        // Escape desde un control vuelve a la tarjeta (y no le llega al tablero, que con Esc
+        // deselecciona: Esc pela una capa por vez)
+        if (e.key === "Escape" && !onCard) {
+          e.stopPropagation();
+          e.currentTarget.focus();
         }
       }}
       data-sid={s.session_id}
+      /* el foco en un control (por las flechas o por un click) mete a los demás en el orden de
+         tabulación; en la tarjeta misma, o afuera, vuelven a quedar fuera */
+      onFocus={(e) => setInside(e.target !== e.currentTarget)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setInside(false);
+      }}
       onMouseDown={(e) => {
         // arrastre desde cualquier parte de la tarjeta, salvo controles y el agarre (que ya arrastra)
         const t = e.target as HTMLElement;
@@ -454,8 +519,9 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           <b>Pide permiso: {p.tool_name}</b>
           <code>{detail(p.tool_input)}</code>
           <div className="btns">
-            <button className="allow" onClick={() => onDecide(p.request_id, "allow")}>Permitir</button>
-            <button className="deny" onClick={() => onDecide(p.request_id, "deny")}>Denegar</button>
+            {/* los unicos dos botones que quedan siempre en el orden de tabulacion: el permiso vence */}
+            <button className="allow" data-always-tab="" onClick={() => onDecide(p.request_id, "allow")}>Permitir</button>
+            <button className="deny" data-always-tab="" onClick={() => onDecide(p.request_id, "deny")}>Denegar</button>
             <span className="dim small">vence {new Date(p.expires_at).toLocaleTimeString()}</span>
           </div>
         </div>

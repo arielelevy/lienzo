@@ -73,6 +73,23 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     }
   };
 
+  /** Pegar con Ctrl+V: una captura viene en el portapapeles como archivo sin nombre util, asi que
+   *  se le pone uno con la hora. Si lo pegado es texto, no se toca: sigue al textarea como siempre. */
+  const paste = (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (!files.length) return;
+    e.preventDefault();
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+    upload(
+      files.map((f, i) => {
+        const ext = (f.type.split("/")[1] || "png").replace("jpeg", "jpg");
+        const name = f.name && f.name !== "image.png" ? f.name : `pegado-${stamp}${files.length > 1 ? `-${i + 1}` : ""}.${ext}`;
+        return f.name === name ? f : new File([f], name, { type: f.type });
+      }),
+    );
+    toast(files.length === 1 ? "Imagen pegada, va como adjunto" : `${files.length} archivos pegados`);
+  };
+
   const upload = async (files: FileList | File[]) => {
     for (const f of Array.from(files)) {
       try {
@@ -136,6 +153,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
         setDrag(true);
       }}
       onDragLeave={() => setDrag(false)}
+      onPaste={paste}
       onDrop={(e) => {
         e.preventDefault();
         setDrag(false);
@@ -183,7 +201,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
               ? "Hay un permiso pendiente: contestalo arriba"
               : s.suggestion
                 ? ""
-                : "Mensaje para la sesión. Enter envía, Shift+Enter salto. Más de 500 caracteres o varias líneas viajan como adjunto .md"
+                : "Mensaje para la sesión. Enter envía, Shift+Enter salto. Podés pegar o arrastrar una imagen. Más de 500 caracteres o varias líneas viajan como adjunto .md"
           }
         />
       </div>

@@ -22,6 +22,14 @@ export const canWrite = (s: Session): boolean => !!s.alive && !s.orphan && !s.no
 /** libre: con consola y sin ningun pedido ni respuesta todavia (sesion recien abierta) */
 export const isFree = (s: Session): boolean => canWrite(s) && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();
 
+/** Texto sobre el que busca el filtro del header. El agente va primero porque su nombre ("codex",
+ *  "claude") es lo primero que uno escribe, y hasta ahora sólo se filtraba por los chips; despues
+ *  van repo, rama, titulo y ultimo pedido. El `cwd` queda afuera a proposito: casi toda ruta de
+ *  una sesion de Claude lleva `.claude` adentro y "claude" pasaria a matchear cualquier cosa. */
+export function searchText(s: Session): string {
+  return [s.agent, s.repo, s.branch ?? "", s.title ?? "", s.last_prompt ?? ""].join(" ");
+}
+
 /** Hora de un instante ISO. Corto: "22:19" si es hoy, "vie 11/9 22:19" si es otro dia (chips).
  *  Largo: "a las 22:19" / "el vie 11/9 a las 22:19" (fila de programadas del panel). Un
  *  "Continuar" programado para dentro de cinco dias no puede leerse como si fuera esta noche. */

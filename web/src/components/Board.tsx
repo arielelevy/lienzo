@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Arrows } from "./Arrows";
 import { Card, shortName } from "./Card";
 import type { Link, Pending, Rule, Session, State } from "../types";
-import { stalledReason } from "../names";
+import { searchText, stalledReason } from "../names";
 
 /** Columnas del tablero. "Trabajo" junta corriendo y termino (el estado se ve como icono en la
  *  tarjeta); "Te necesita" y "Muerta" siguen aparte porque piden accion. El tipo State es del
@@ -36,7 +36,7 @@ interface Props {
   onConnect: (from: string, to: string) => void;
   /** boton del header: con muchas flechas conviene poder apagarlas */
   showArrows: boolean;
-  /** filtro del header: texto libre (repo, titulo, ultimo pedido) y agentes visibles */
+  /** filtro del header: texto libre (agente, repo, rama, titulo, ultimo pedido) y agentes visibles */
   query: string;
   agents: Record<Session["agent"], boolean>;
   /** toast global para las acciones de la tarjeta (copiar, botones rapidos, renombrar) */
@@ -170,22 +170,33 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     const g: Record<ColKey, Session[]> = { trabajo: [], te_necesita: [], muerta: [] };
     for (const s of Object.values(sessions)) {
       if (!agents[s.agent]) continue;
-      if (q && !norm(`${s.repo} ${s.title ?? ""} ${s.last_prompt ?? ""}`).includes(q)) continue;
+      if (q && !norm(searchText(s)).includes(q)) continue;
       g[colOf(s)].push(s);
     }
     // lo que esta trabajando de verdad va primero; lo que termino, despues; lo que figura corriendo
     // pero esta quieto (sin cupo, o sin actividad hace rato), al final. Con las tarjetas repartidas
     // en subcolumnas, "al final" es "a la derecha"
-    const rank = (s: Session) => (stalledReason(s) ? 2 : s.state === "termino" ? 1 : 0);
+    // el permiso pendiente va primero de todo: vence a los 60 s
+    const rank = (s: Session) => (s.pending_id && pending[s.pending_id] ? -1 : stalledReason(s) ? 2 : s.state === "termino" ? 1 : 0);
     for (const k of COLS.map(([k]) => k)) {
       g[k].sort((a, b) => {
         if (rank(a) !== rank(b)) return rank(a) - rank(b);
-        if (rank(a)) return b.state_since.localeCompare(a.state_since);
+        if (rank(a) > 0) return b.state_since.localeCompare(a.state_since);
         return (a.repo + a.started).localeCompare(b.repo + b.started);
       });
     }
     return g;
-  }, [sessions, query, agents]);
+  }, [sessions, pending, query, agents]);
+
+  // Una tarjeta con permiso pendiente va antes que las demas en el recorrido de Tab: el orden del
+  // Tab es el del DOM, asi que su columna se dibuja primero y el orden visual se repone con `order`
+  // (el tablero es flex). El canal de 30 px entre columnas sale de `.col + .col`, que es adyacencia
+  // del DOM: mientras dura el adelanto lo pone card.css por `.board.reordered`.
+  const urgent = useMemo(() => COLS.map(([k]) => k).find((k) => byState[k].some((s) => s.pending_id && pending[s.pending_id])) ?? null, [byState, pending]);
+  const domCols = useMemo(() => {
+    const cols = COLS.map(([k, label], visual) => ({ k, label, visual }));
+    return urgent ? [...cols.filter((c) => c.k === urgent), ...cols.filter((c) => c.k !== urgent)] : cols;
+  }, [urgent]);
 
   // columnas colapsadas a la tira vertical. Regla: abierta si tiene tarjetas, colapsada si no, las
   // tres por igual. Encima de eso, dos excepciones:
@@ -277,6 +288,10 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manual, openEmpty, byState, filtering, laneBudget]);
 
+  // colapso por columna, para que el canal entre columnas mire al vecino *visual* y no al del DOM
+  // (mientras una columna se adelanta por un permiso pendiente no son el mismo)
+  const collapsedOf = Object.fromEntries(COLS.map(([k]) => [k, isCollapsed(k, byState[k].length)])) as Record<ColKey, boolean>;
+
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
   // al elegir una tarjeta se explican sus conexiones, y tambien las de la del otro extremo: una
@@ -338,7 +353,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     };
     const up = (e: PointerEvent) => {
       pressRef.current = null;
-      // el click (si lo hay) llega despues del pointerup, y la tarjeta lo demora 280 ms para
+      // el click (si lo hay) llega despues del pointerup, y la tarjeta lo demora PICK_MS para
       // distinguirlo del doble click: la marca tiene que sobrevivir a esa demora (y a un arrastre
       // anterior muy reciente, cuyo timer no debe borrarla antes de tiempo)
       window.clearTimeout(draggedTimer.current);
@@ -388,7 +403,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         ))}
       </div>
       <div
-        className={`board ${drag ? "dragging" : ""}`}
+        className={`board ${drag ? "dragging" : ""} ${urgent ? "reordered" : ""}`}
         ref={boardRef}
         onPointerDown={onPointerDown}
         onClick={(e) => {
@@ -417,9 +432,13 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
             </div>
           </>
         )}
-        {COLS.map(([k, label]) => {
+        {domCols.map(({ k, label, visual }) => {
           const list = byState[k];
-          const col = isCollapsed(k, list.length);
+          const col = collapsedOf[k];
+          // canal a la izquierda, mirando al vecino *visual*: 8 px si alguno de los dos es una tira
+          // colapsada, 30 si no (es lo mismo que dice styles.css, pero ahi sale de la adyacencia del
+          // DOM, que con el adelanto por permiso pendiente ya no es la que se ve)
+          const gap = visual === 0 ? "first" : collapsedOf[COLS[visual - 1][0]] || col ? "gapthin" : "gapwide";
           const wide = lanes[k] > 1;
           // la columna lleva ademas las clases de los estados que contiene: Arrows ubica la tira de
           // una columna colapsada por `.col.<estado>.collapsed`, con el estado de la sesion
@@ -427,8 +446,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           return (
             <div
               key={k}
-              className={`col ${k} ${stateClasses} ${col ? "collapsed" : ""} ${wide ? "wide" : ""} ${colOfState(filter) === k ? "show" : ""}`}
-              style={col ? undefined : ({ flexGrow: lanes[k], "--lanes": lanes[k] } as React.CSSProperties)}
+              className={`col ${k} ${stateClasses} ${col ? "collapsed" : ""} ${wide ? "wide" : ""} ${gap} ${colOfState(filter) === k ? "show" : ""}`}
+              style={{ order: visual, ...(col ? {} : { flexGrow: lanes[k], "--lanes": lanes[k] }) } as React.CSSProperties}
             >
               {col ? (
                 <>
@@ -478,7 +497,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         selected={selected === s.session_id}
                         picked={picked === s.session_id}
                         related={related.has(s.session_id)}
-                        onPick={() => setPicked(s.session_id)}
+                        onPick={() => {
+                          // el click que cierra un arrastre tampoco elige la tarjeta
+                          if (draggedRef.current) return;
+                          setPicked(s.session_id);
+                        }}
                         onSelect={() => {
                           // el click que cierra un arrastre no abre el panel
                           if (draggedRef.current) {

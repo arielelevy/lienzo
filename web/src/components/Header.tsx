@@ -78,7 +78,7 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
           type="search"
           value={query}
           placeholder="buscar  /"
-          aria-label="filtrar tarjetas por repo, título o último pedido"
+          aria-label="filtrar tarjetas por agente, repo, rama, título o último pedido"
           onChange={(e) => onQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") {

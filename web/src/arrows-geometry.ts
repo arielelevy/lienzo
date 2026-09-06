@@ -2,7 +2,14 @@ import type { Link, Rule } from "./types";
 
 /** Geometria de las flechas del tablero, sin DOM ni React: funciones puras sobre rectangulos ya
  *  medidos. El componente Arrows lee los rects del DOM, llama a `computeSegs` y dibuja. Misma
- *  entrada, misma salida: todo lo que depende del reloj (hace cuanto, hora local) entra por `fmt`. */
+ *  entrada, misma salida: todo lo que depende del reloj (hace cuanto, hora local) entra por `fmt`.
+ *
+ *  De todo lo que exporta, el tablero solo usa `computeSegs` y `laneHeight`, y `names.ts` reexporta
+ *  `periodLabel` y `periodicCount`. El resto esta exportado **para los tests**: LANE_H, LANE_CLEAR,
+ *  TRACK_GAP, LANE_MAX, cut, inside, clearance, groupColumns, colOf, channelX, freeAt, sideArc,
+ *  ejectGlyph, slotAt, allowed, runAllowed, freeLanes, cubicAt, cubicHits, cubic, segHits, tracks,
+ *  topRoute, buildItems y layoutEnds. `orthoPath`, `routeItems` y `loopSeg` no los usa nadie
+ *  todavia; quedan a la vista porque son las tres etapas que cuentan los comentarios de abajo. */
 
 export interface Rect {
   l: number;
@@ -40,7 +47,7 @@ export interface Zone {
   bands: Band[];
   strips: Strip[];
 }
-export const FREE_ZONE: Zone = { bands: [], strips: [] };
+const FREE_ZONE: Zone = { bands: [], strips: [] };
 
 export interface Seg {
   /** ids de todos los links agrupados (o el id de la regla) */
@@ -57,11 +64,6 @@ export interface Seg {
    *  siempre termina diciendo que hace el doble click (es lo que enseña el gesto) */
   desc: string;
   glyph: string;
-  /** canal nativo con mas de una hora: se dibuja apagado y sin punta */
-  old: boolean;
-  /** reservado: instante (ms) de un envio recien hecho. Hoy nunca se setea (la ultima flecha del par
-   *  se ve siempre) y el componente no lo usa */
-  fresh?: number;
   /** no hubo camino limpio (cruza una tercera tarjeta, o no entra en el area util): se dibuja
    *  igual, con opacidad baja */
   dim?: boolean;
@@ -104,12 +106,18 @@ export interface GeometryInput {
   fmt: Formatters;
 }
 
-/** medio canal por defecto, si no se puede medir el hueco entre columnas abiertas */
-export const HALF_GAP = 21; // la mitad del canal entre columnas y entre subcolumnas (30 px), mas aire
+/** canal entre dos columnas (y entre dos subcolumnas): el mismo numero que el CSS del tablero.
+ *  Todo lo que tiene que pasar por ahi se mide contra el */
+const CHANNEL = 30;
+/** media panza por defecto, si no se puede medir el hueco entre columnas abiertas: medio canal
+ *  mas aire, para que la curva no roce el borde de la tarjeta */
+const HALF_GAP = CHANNEL / 2 + 6;
+/** panza minima de un arco de misma columna, aunque el costado tenga menos lugar */
+const MIN_BULGE = 20;
 /** separacion vertical entre flechas que salen o entran por el mismo lado de una tarjeta */
-export const SLOT = 14;
+const SLOT = 14;
 /** dos tarjetas con bordes izquierdos a menos de esto son de la misma columna */
-export const COL_TOL = 40;
+const COL_TOL = 40;
 /** radio de exclusion de un glifo ya puesto, para que dos flechas del mismo canal no se pisen */
 const GLYPH_R = 22;
 /** alto de un carril de flechas: la corrida horizontal va al medio y queda la mitad de aire a cada
@@ -127,17 +135,15 @@ export const LANE_MAX = 60;
 /** Alto que necesita un carril que lleva `n` flechas: el aire minimo a cada lado mas una pista por
  *  flecha. Es lo que el tablero reserva en el CSS de la columna (ver `data-lanes`). */
 export const laneHeight = (n: number) => Math.min(LANE_MAX, 2 * LANE_CLEAR + n * TRACK_GAP);
-/** aire por encima de la primera fila (o debajo de la ultima) cuando no hay columnas medidas */
-export const TOP_MARGIN = LANE_H / 2;
 /** radio de las esquinas redondeadas del camino ortogonal */
 const CORNER = 8;
 /** a cuanto del borde se saca un glifo que cayo adentro de una tarjeta */
 const EJECT = 6;
 
 export const cut = (t: string, n = 90) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
-export const midY = (r: Rect) => (r.t + r.b) / 2;
+const midY = (r: Rect) => (r.t + r.b) / 2;
 const midX = (r: Rect) => (r.l + r.r) / 2;
-export const sameRect = (a: Rect, b: Rect) => a === b || (a.l === b.l && a.t === b.t && a.r === b.r && a.b === b.b);
+const sameRect = (a: Rect, b: Rect) => a === b || (a.l === b.l && a.t === b.t && a.r === b.r && a.b === b.b);
 /** el punto cae estrictamente adentro del rectangulo (eps de tolerancia en el borde) */
 const contains = (c: Rect, x: number, y: number, eps = 0.5) => x > c.l + eps && x < c.r - eps && y > c.t + eps && y < c.b - eps;
 
@@ -148,12 +154,41 @@ function pushTo<K, V>(m: Map<K, V[]>, k: K, v: V): void {
   else m.set(k, [v]);
 }
 
+/** aire que se le respeta al borde de la tarjeta al apilar extremos, para no desbordarla: apilando
+ *  en `y` (flechas por el costado) el caso ajustado son las tarjetas bajas; en `x` (por arriba),
+ *  las angostas */
+const END_PAD = { y: 20, x: 40 };
+
 /** n posiciones alrededor de `center`, a SLOT una de otra, sin pasar de `size - pad` en total: asi
  *  varias flechas que comparten un borde no se pisan ni desbordan una tarjeta chica */
 function spread(n: number, center: number, size: number, pad: number): number[] {
   const span = Math.min((n - 1) * SLOT, Math.max(0, size - pad));
   const step = n > 1 ? span / (n - 1) : 0;
   return Array.from({ length: n }, (_, i) => center - span / 2 + i * step);
+}
+
+/** un extremo de flecha esperando su lugar sobre un borde de tarjeta */
+interface End {
+  item: number;
+  end: "from" | "to";
+  /** coordenada del otro extremo en el eje del apilado: ordena la fila para que no se crucen */
+  other: number;
+}
+
+/** Reparte a lo largo de un borde los extremos que lo comparten, ordenados por la altura (o el x)
+ *  del otro extremo asi no se cruzan entre si. `slots` va con clave `${sid}|${lado}`; devuelve, por
+ *  clave `${item}|${extremo}`, la coordenada elegida. Es la misma operacion en los dos ejes: en `y`
+ *  cuando la flecha sale por un costado, en `x` cuando sale por arriba. */
+function spreadEnds(slots: Map<string, End[]>, anchors: Map<string, Rect>, axis: "y" | "x"): Map<string, number> {
+  const at = new Map<string, number>();
+  for (const [k, ends] of slots) {
+    const r = anchors.get(k.split("|")[0])!;
+    ends.sort((a, c) => a.other - c.other);
+    const [center, size] = axis === "y" ? [midY(r), r.b - r.t] : [midX(r), r.r - r.l];
+    const cs = spread(ends.length, center, size, END_PAD[axis]);
+    ends.forEach((e, i) => at.set(`${e.item}|${e.end}`, cs[i]));
+  }
+  return at;
 }
 
 /** Periodo de una regla "at" periodica, en palabras: "cada 5 min", "cada 30 min", "cada hora",
@@ -227,11 +262,12 @@ function outerRoom(bands: Band[], a: Col, dir: 1 | -1): number {
  *  izquierdo mandaba el arco (y su glifo) al padding del tablero, fuera de toda columna. */
 export function sideArc(cols: Col[], strips: Strip[], boardWidth: number, i: number, bands: Band[] = []): { side: "l" | "r"; x: number } {
   const a = cols[i];
-  const fr = Math.min(freeAt(cols, strips, boardWidth, i, 1), outerRoom(bands, a, 1));
-  const fl = Math.min(freeAt(cols, strips, boardWidth, i, -1), outerRoom(bands, a, -1));
-  const side: "l" | "r" = fl > fr ? "l" : "r";
-  const room = side === "r" ? fr : fl;
-  const bulge = Math.min(HALF_GAP, Math.max(20, room / 2), Math.max(0, room - 2));
+  const roomTo = (dir: 1 | -1) => Math.min(freeAt(cols, strips, boardWidth, i, dir), outerRoom(bands, a, dir));
+  const right = roomTo(1);
+  const left = roomTo(-1);
+  const side: "l" | "r" = left > right ? "l" : "r";
+  const room = side === "r" ? right : left;
+  const bulge = Math.min(HALF_GAP, Math.max(MIN_BULGE, room / 2), Math.max(0, room - 2));
   return { side, x: side === "r" ? a.r + bulge : a.l - bulge };
 }
 
@@ -291,7 +327,7 @@ export function allowed(bands: Band[], x: number, y: number): boolean {
 }
 
 /** ademas de `allowed`, el glifo no puede caer sobre una tira colapsada: taparia su etiqueta */
-export function glyphOk(zone: Zone, x: number, y: number): boolean {
+function glyphOk(zone: Zone, x: number, y: number): boolean {
   if (!zone.bands.length) return true;
   return allowed(zone.bands, x, y) && !zone.strips.some((s) => x > s.l && x < s.r);
 }
@@ -315,7 +351,7 @@ export function runAllowed(bands: Band[], xa: number, xc: number, y: number): bo
 
 /** Ultimo recurso para un glifo que quedo fuera de las columnas, por encima de un encabezado o sobre
  *  una tira colapsada: se corre al punto permitido mas cercano, adentro de alguna columna. */
-export function clampGlyph(zone: Zone, x: number, y: number): Pt {
+function clampGlyph(zone: Zone, x: number, y: number): Pt {
   if (glyphOk(zone, x, y)) return [x, y];
   let best: Pt = [x, y];
   let bestD = Infinity;
@@ -330,6 +366,12 @@ export function clampGlyph(zone: Zone, x: number, y: number): Pt {
     }
   }
   return best;
+}
+
+/** Donde termina cayendo un glifo: primero afuera de la tarjeta que se lo hubiera tragado, despues
+ *  adentro de alguna columna. Los dos correctivos van siempre juntos y en este orden. */
+function placeGlyph(zone: Zone, cards: Rect[], x: number, y: number): Pt {
+  return clampGlyph(zone, ...ejectGlyph(cards, x, y));
 }
 
 /** Carriles de una columna: las franjas horizontales sin tarjetas por donde puede correr una
@@ -413,7 +455,7 @@ export function cubic(cards: Rect[], taken: Pt[], p0: Pt, p1: Pt, p2: Pt, p3: Pt
       y = py;
     }
   }
-  [x, y] = clampGlyph(zone, ...ejectGlyph(cards, x, y));
+  [x, y] = placeGlyph(zone, cards, x, y);
   taken.push([x, y]);
   return { d, x, y };
 }
@@ -519,16 +561,16 @@ export function topRoute(ra: Rect, rc: Rect, xa: number, xc: number, cards: Rect
     }
   }
   const b = best!; // siempre hay al menos los dos margenes
-  const [gx, gy] = clampGlyph(zone, ...ejectGlyph(cards, b.x, b.y));
+  const [gx, gy] = placeGlyph(zone, cards, b.x, b.y);
   return { d: b.d, x: gx, y: gy, clean: b.clean, exit: b.exit, enter: b.enter, lane: b.lane };
 }
+
+/** primera letra en mayuscula, para arrancar una frase con "cada 2 h" o "el vie 11/9 a las 22:19" */
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 /** 1) que hay que dibujar: canal nativo y ultimo envio por par (sin limite de tiempo; los
  *  anteriores del mismo par van al contador), mas las reglas activas con los dos extremos visibles.
  *  Orden: grupos de links en orden de primera aparicion, despues las reglas en su orden. */
-/** primera letra en mayuscula, para arrancar una frase con "cada 2 h" o "el vie 11/9 a las 22:19" */
-const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
-
 export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Rect>, fmt: Formatters): Item[] {
   const items: Item[] = [];
   const groups = new Map<string, Link[]>();
@@ -563,8 +605,6 @@ export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Re
       kind: native ? "native" : "link",
       from: newest.from,
       to: newest.to,
-      old: false, // sin limite de tiempo: la ultima flecha del par se ve igual siempre
-      fresh: undefined,
       glyph: n > 1 ? `×${n}` : native ? "⇄" : "↪",
       title: `${head} · click para seleccionarla`,
       desc,
@@ -579,7 +619,7 @@ export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Re
     const from = self ? r.to : r.from!;
     const a = self ? "" : fmt.name(from);
     const b = fmt.name(r.to);
-    const base = { ids: [r.id], kind: "rule" as const, from, to: r.to, old: false };
+    const base = { ids: [r.id], kind: "rule" as const, from, to: r.to };
     const tail = " Doble click para editarla.";
     if (r.kind === "on_stop") {
       const count = r.repeat ? ` Van ${r.fired} de ${r.max_fires}.` : " Una sola vez.";
@@ -623,12 +663,6 @@ export interface Sides {
  *  vertical ordenadas por la altura del otro extremo, asi no se cruzan entre si. Devuelve, por
  *  item, los lados y la y de cada extremo. Todo item debe tener sus dos extremos en `anchors`. */
 export function layoutEnds(items: Item[], anchors: Map<string, Rect>, cols: Col[], strips: Strip[], boardWidth: number, bands: Band[] = []): { sideOf: Sides[]; endY: { from: number; to: number }[] } {
-  interface End {
-    item: number;
-    end: "from" | "to";
-    otherY: number;
-    y: number;
-  }
   const slots = new Map<string, End[]>(); // `${sid}|${lado}` -> extremos que usan ese lado
   const sideOf: Sides[] = [];
   items.forEach((it, i) => {
@@ -641,27 +675,18 @@ export function layoutEnds(items: Item[], anchors: Map<string, Rect>, cols: Col[
     const exit: "l" | "r" = arc ? arc.side : ltr ? "r" : "l";
     const enter: "l" | "r" = arc ? arc.side : ltr ? "l" : "r";
     sideOf[i] = { exit, enter, same, arcX: arc?.x ?? 0 };
-    pushTo(slots, `${it.from}|${exit}`, { item: i, end: "from", otherY: midY(rc), y: midY(ra) });
-    pushTo(slots, `${it.to}|${enter}`, { item: i, end: "to", otherY: midY(ra), y: midY(rc) });
+    pushTo(slots, `${it.from}|${exit}`, { item: i, end: "from", other: midY(rc) });
+    pushTo(slots, `${it.to}|${enter}`, { item: i, end: "to", other: midY(ra) });
   });
-  const endY: { from: number; to: number }[] = items.map(() => ({ from: 0, to: 0 }));
-  for (const [k, ends] of slots) {
-    const r = anchors.get(k.split("|")[0])!;
-    ends.sort((a, c) => a.otherY - c.otherY);
-    const ys = spread(ends.length, midY(r), r.b - r.t, 20); // no desbordar tarjetas bajas
-    ends.forEach((e, i) => {
-      endY[e.item][e.end] = ys[i];
-    });
-  }
+  // todo item metio sus dos extremos en `slots`, asi que las dos claves estan
+  const y = spreadEnds(slots, anchors, "y");
+  const endY = items.map((_, i) => ({ from: y.get(`${i}|from`)!, to: y.get(`${i}|to`)! }));
   return { sideOf, endY };
 }
 
-/** 3) las curvas: misma columna, arco corto por el costado con mas lugar; columnas distintas, S
- *  que sale y entra por el canal entre columnas abiertas vecinas (si las columnas son vecinas los
- *  canales coinciden y la S vive entera en el hueco). */
 /** Sobre la corrida horizontal de un camino por arriba (de xa a xc en y), el punto mas lejano de
  *  los glifos ya puestos; el centro desempata. Asi dos flechas que comparten un hueco no se pisan. */
-export function spreadOnRun(taken: Pt[], xa: number, xc: number, y: number): Pt {
+function spreadOnRun(taken: Pt[], xa: number, xc: number, y: number): Pt {
   let best: Pt = [(xa + xc) / 2, y];
   let bestD = -Infinity;
   // del centro hacia afuera: a igual distancia gana el mas central (el primero que se ve)
@@ -685,6 +710,63 @@ export function spreadOnRun(taken: Pt[], xa: number, xc: number, y: number): Pt 
  *  sale por el borde superior del origen, corre por un hueco entre filas o por el margen del tablero
  *  y baja al borde superior del destino (`topRoute`). Varias flechas que salen o entran por el mismo
  *  borde se reparten en x, ordenadas por el x del otro extremo, para no cruzarse. */
+/** un item que va por arriba, ya ruteado: por donde sale y entra, y el camino elegido */
+interface Routed {
+  i: number;
+  ra: Rect;
+  rc: Rect;
+  xa: number;
+  xc: number;
+  o: Ortho;
+}
+
+/** Los items que van por arriba, en tres pases: uno desde el centro de cada tarjeta para saber por
+ *  que borde sale y entra cada uno, otro repartiendo en x los que comparten borde, y el ultimo con
+ *  el camino definitivo. Despues, las flechas que eligieron el mismo carril se reparten en pistas
+ *  paralelas: sin esto, cuatro flechas quedan dibujadas en la misma y y se ven como una sola barra
+ *  gruesa. El orden es estable (por el x de donde salen, y a igual x por id) para que no salten de
+ *  pista al redibujar por SSE. Devuelve, por indice de item, su segmento; `taken` acumula los
+ *  glifos ya puestos y sale con los de aca adentro. */
+function routeTops(idx: number[], plans: { ra: Rect; rc: Rect }[], items: Item[], anchors: Map<string, Rect>, cards: Rect[], zone: Zone, taken: Pt[]): Map<number, Seg> {
+  const slots = new Map<string, End[]>();
+  for (const i of idx) {
+    const { ra, rc } = plans[i];
+    const o = topRoute(ra, rc, midX(ra), midX(rc), cards, zone);
+    pushTo(slots, `${items[i].from}|${o.exit}`, { item: i, end: "from", other: midX(rc) });
+    pushTo(slots, `${items[i].to}|${o.enter}`, { item: i, end: "to", other: midX(ra) });
+  }
+  const xOf = spreadEnds(slots, anchors, "x");
+  const routed: Routed[] = idx.map((i) => {
+    const { ra, rc } = plans[i];
+    const xa = xOf.get(`${i}|from`) ?? midX(ra);
+    const xc = xOf.get(`${i}|to`) ?? midX(rc);
+    return { i, ra, rc, xa, xc, o: topRoute(ra, rc, xa, xc, cards, zone) };
+  });
+  const byLane = new Map<number, Routed[]>();
+  for (const r of routed) pushTo(byLane, r.o.lane.y, r);
+  const trackY = new Map<number, number>();
+  for (const group of byLane.values()) {
+    group.sort((a, b) => a.xa - b.xa || items[a.i].ids[0].localeCompare(items[b.i].ids[0]));
+    // la franja util del grupo es la interseccion de las de cada flecha: dos que eligieron la
+    // misma y pueden tener franjas distintas (cada una mira las tarjetas que cruzaria), y una
+    // pista puesta segun la mas ancha se le acerca demasiado a una tarjeta de la otra
+    const t = Math.max(...group.map((g) => g.o.lane.t));
+    const b = Math.min(...group.map((g) => g.o.lane.b));
+    const ys = tracks(group.length, { ...group[0].o.lane, t, b, room: b - t });
+    group.forEach((g, k) => trackY.set(g.i, ys[k]));
+  }
+  const out = new Map<number, Seg>();
+  for (const { i, ra, rc, xa, xc, o } of routed) {
+    const y = trackY.get(i)!;
+    const ya = o.exit === "t" ? ra.t : ra.b;
+    const yc = o.enter === "t" ? rc.t : rc.b;
+    const [gx, gy] = placeGlyph(zone, cards, ...spreadOnRun(taken, xa, xc, y));
+    taken.push([gx, gy]);
+    out.set(i, { ...items[i], ends: [ra, rc], d: orthoPath(xa, ya, y, xc, yc), x: gx, y: gy, lane: o.lane.y, ...(o.clean ? {} : { dim: true }) });
+  }
+  return out;
+}
+
 export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rect[], cols: Col[], strips: Strip[], boardWidth: number, zone: Zone = FREE_ZONE): Seg[] {
   const { sideOf, endY } = layoutEnds(items, anchors, cols, strips, boardWidth, zone.bands);
   const taken: Pt[] = [];
@@ -721,92 +803,41 @@ export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rec
     if (!p.top) out[i] = { ...items[i], ends: [p.ra, p.rc], ...cubic(cards, taken, ...p.pts, zone) };
   });
 
-  // 3) los que cruzan van por arriba. Primer pase con el centro de cada tarjeta, para saber por que
-  //    borde sale y entra cada uno; despues se reparten en x los que comparten borde; ultimo pase
+  // 3) los que cruzan van por arriba
   const topIdx = plans.map((p, i) => (p.top ? i : -1)).filter((i) => i >= 0);
-  if (topIdx.length) {
-    interface End {
-      item: number;
-      end: "from" | "to";
-      otherX: number;
-    }
-    const slots = new Map<string, End[]>();
-    for (const i of topIdx) {
-      const { ra, rc } = plans[i];
-      const o = topRoute(ra, rc, midX(ra), midX(rc), cards, zone);
-      pushTo(slots, `${items[i].from}|${o.exit}`, { item: i, end: "from", otherX: midX(rc) });
-      pushTo(slots, `${items[i].to}|${o.enter}`, { item: i, end: "to", otherX: midX(ra) });
-    }
-    const xOf = new Map<string, number>();
-    for (const [k, ends] of slots) {
-      const r = anchors.get(k.split("|")[0])!;
-      ends.sort((a, c) => a.otherX - c.otherX);
-      const xs = spread(ends.length, midX(r), r.r - r.l, 40);
-      ends.forEach((e, k2) => xOf.set(`${e.item}|${e.end}`, xs[k2]));
-    }
-    interface Routed {
-      i: number;
-      ra: Rect;
-      rc: Rect;
-      xa: number;
-      xc: number;
-      o: Ortho;
-    }
-    const routed: Routed[] = topIdx.map((i) => {
-      const { ra, rc } = plans[i];
-      const xa = xOf.get(`${i}|from`) ?? midX(ra);
-      const xc = xOf.get(`${i}|to`) ?? midX(rc);
-      return { i, ra, rc, xa, xc, o: topRoute(ra, rc, xa, xc, cards, zone) };
-    });
-    // las que eligieron el mismo carril se reparten en pistas paralelas: sin esto, cuatro flechas
-    // quedan dibujadas en la misma y y se ven como una sola barra gruesa. El orden es estable (por
-    // el x de donde salen, y a igual x por id) para que no salten de pista al redibujar por SSE
-    const byLane = new Map<number, Routed[]>();
-    for (const r of routed) pushTo(byLane, r.o.lane.y, r);
-    const trackY = new Map<number, number>();
-    for (const group of byLane.values()) {
-      group.sort((a, b) => a.xa - b.xa || items[a.i].ids[0].localeCompare(items[b.i].ids[0]));
-      // la franja util del grupo es la interseccion de las de cada flecha: dos que eligieron la
-      // misma y pueden tener franjas distintas (cada una mira las tarjetas que cruzaria), y una
-      // pista puesta segun la mas ancha se le acerca demasiado a una tarjeta de la otra
-      const t = Math.max(...group.map((g) => g.o.lane.t));
-      const b = Math.min(...group.map((g) => g.o.lane.b));
-      const ys = tracks(group.length, { ...group[0].o.lane, t, b, room: b - t });
-      group.forEach((g, k) => trackY.set(g.i, ys[k]));
-    }
-    for (const { i, ra, rc, xa, xc, o } of routed) {
-      const y = trackY.get(i)!;
-      const ya = o.exit === "t" ? ra.t : ra.b;
-      const yc = o.enter === "t" ? rc.t : rc.b;
-      let [gx, gy] = spreadOnRun(taken, xa, xc, y);
-      [gx, gy] = clampGlyph(zone, ...ejectGlyph(cards, gx, gy));
-      taken.push([gx, gy]);
-      out[i] = { ...items[i], ends: [ra, rc], d: orthoPath(xa, ya, y, xc, yc), x: gx, y: gy, lane: o.lane.y, ...(o.clean ? {} : { dim: true }) };
-    }
-  }
+  for (const [i, seg] of routeTops(topIdx, plans, items, anchors, cards, zone, taken)) out[i] = seg;
   return out as Seg[];
 }
 
-/** Todo junto: de rects medidos, links y reglas a los segmentos listos para dibujar. */
-/** Bucle: una regla de una tarjeta hacia si misma. Sale del costado, da la vuelta y vuelve a
- *  entrar 26 px mas abajo, con el glifo en la panza. Va por el costado y no por arriba porque el
- *  carril de arriba no siempre existe (se reserva solo cuando alguna flecha corre en horizontal);
- *  el costado tiene el canal entre columnas, que siempre esta. Si no hay lugar a la derecha del
- *  tablero, el bucle se dibuja a la izquierda de la tarjeta. */
-export const LOOP_OUT = 20;
-export const LOOP_SPAN = 26;
+/** cuanto se aleja del costado de la tarjeta la panza del bucle */
+const LOOP_OUT = 20;
+/** cuanto baja el bucle entre que sale y vuelve a entrar */
+const LOOP_SPAN = 26;
+/** desde donde sale, medido desde el techo de la tarjeta: por debajo de su titulo */
+const LOOP_TOP = 16;
+/** cuanto tiran los controles de la cubica mas alla de la panza, para que la vuelta sea redonda */
+const LOOP_PULL = 8;
+/** aire entre la panza y el borde del tablero para que el bucle quepa a la derecha */
+const LOOP_EDGE = 6;
 
+/** Bucle: una regla de una tarjeta hacia si misma. Sale del costado, da la vuelta y vuelve a
+ *  entrar LOOP_SPAN mas abajo, con el glifo en la panza. Va por el costado y no por arriba porque
+ *  el carril de arriba no siempre existe (se reserva solo cuando alguna flecha corre en
+ *  horizontal); el costado tiene el canal entre columnas, que siempre esta. Si no hay lugar a la
+ *  derecha del tablero, el bucle se dibuja a la izquierda de la tarjeta. */
 export function loopSeg(it: Item, r: Rect, boardWidth: number): Seg {
-  const right = r.r + LOOP_OUT + 6 <= boardWidth;
+  const right = r.r + LOOP_OUT + LOOP_EDGE <= boardWidth;
   const x = right ? r.r : r.l;
   const dir = right ? 1 : -1;
-  const y1 = r.t + 16;
+  const y1 = r.t + LOOP_TOP;
   const y2 = y1 + LOOP_SPAN;
   const out = x + dir * LOOP_OUT;
-  const d = `M ${x} ${y1} C ${out + dir * 8} ${y1} ${out + dir * 8} ${y2} ${x} ${y2}`;
+  const ctrl = out + dir * LOOP_PULL;
+  const d = `M ${x} ${y1} C ${ctrl} ${y1} ${ctrl} ${y2} ${x} ${y2}`;
   return { ...it, d, x: out, y: (y1 + y2) / 2, ends: [r, r] };
 }
 
+/** Todo junto: de rects medidos, links y reglas a los segmentos listos para dibujar. */
 export function computeSegs(input: GeometryInput): Seg[] {
   const cards = Array.from(input.rects.values());
   const cols = groupColumns(cards);

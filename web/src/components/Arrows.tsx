@@ -34,6 +34,120 @@ function setLanes(board: HTMLDivElement, px: number): void {
   }
 }
 
+/** Lo que la geometria necesita del DOM: los rects de las tarjetas, los anchors (que suman las
+ *  tiras de las columnas colapsadas), los obstaculos laterales, el area util de cada columna y los
+ *  links y reglas que de verdad se pueden dibujar. `null` si no hay ninguna tarjeta a la vista. */
+function measureBoard(board: HTMLDivElement, sessions: Record<string, Session>, links: Link[], rules: Rule[]) {
+  const b = board.getBoundingClientRect();
+  const rel = (el: Element): Rect => {
+    const r = el.getBoundingClientRect();
+    return { l: r.left - b.left, t: r.top - b.top, r: r.right - b.left, b: r.bottom - b.top };
+  };
+
+  // rects de todas las tarjetas, relativos al tablero
+  const rects = new Map<string, Rect>();
+  for (const el of board.querySelectorAll<HTMLElement>("[data-sid]")) {
+    if (el.dataset.sid) rects.set(el.dataset.sid, rel(el));
+  }
+  // sin ninguna tarjeta a la vista (todas las columnas colapsadas) no hay nada que conectar: las
+  // flechas se apilaban sobre la tira y su area sensible de 32 px le robaba el click al titulo de
+  // la columna, asi que no se podia ni volver a abrirla
+  if (!rects.size) return null;
+
+  // area util de cada columna: de aca para abajo puede haber flechas. El techo es el borde
+  // inferior del encabezado, porque una linea por encima le pasa por arriba al titulo
+  const bands: Band[] = Array.from(board.querySelectorAll<HTMLElement>(".col")).map((col) => {
+    const r = rel(col);
+    const h2 = col.querySelector<HTMLElement>(":scope > h2");
+    return { ...r, t: h2 ? rel(h2).b : r.t };
+  });
+  // sesion en una columna colapsada (por ejemplo la tarjeta paso a "Terminó"): la flecha llega a
+  // la etiqueta vertical de esa tira en vez de perderse. Esos extremos van en `anchors`, aparte de
+  // `rects`: la tira no es una tarjeta, no cuenta como columna ni dos veces como obstaculo
+  const stripOf = (sid: string): Rect | undefined => {
+    const st = sessions[sid]?.state;
+    const el = st ? board.querySelector<HTMLElement>(`.col.${st}.collapsed .vlabel`) : null;
+    return el ? rel(el) : undefined;
+  };
+  const anchors = new Map(rects);
+  const onStrip = new Set<string>();
+  for (const sid of new Set([...links.flatMap((l) => [l.from, l.to]), ...rules.flatMap((r) => [r.from, r.to])])) {
+    if (sid && !anchors.has(sid)) {
+      const r = stripOf(sid);
+      if (r) {
+        anchors.set(sid, r);
+        onStrip.add(sid);
+      }
+    }
+  }
+  // las dos puntas en la misma tira colapsada: la flecha no dice nada y se apila sobre el titulo
+  // de la columna (medido: 7 flechas encimadas al colapsar "Trabajo"). Esas no se dibujan; la
+  // conexion se sigue viendo al abrir la columna, en el chip y en la pestaña Conexiones
+  const bothHidden = (a: string | null, b: string) =>
+    !!a && onStrip.has(a) && onStrip.has(b) && anchors.get(a) === anchors.get(b);
+  // columnas colapsadas: obstaculos laterales para el arco de misma columna (no son columnas)
+  const strips = Array.from(board.querySelectorAll<HTMLElement>(".col.collapsed")).map((el) => {
+    const r = rel(el);
+    return { l: r.l, r: r.r };
+  });
+  return {
+    rects,
+    anchors,
+    strips,
+    bands,
+    links: links.filter((l) => !bothHidden(l.from, l.to)),
+    rules: rules.filter((r) => !bothHidden(r.from ?? r.to, r.to)),
+  };
+}
+
+/** Los tres globos del tablero (la descripcion de la flecha elegida, el editor de una conexion y la
+ *  vista de un envio) comparten la clase `.arrow-edit`, el anclaje al glifo y el freno de
+ *  propagacion: un click adentro no tiene que soltar la seleccion ni cerrar nada. Cambia lo de
+ *  adentro. Con `onEsc`, Esc cierra; con `onEnter`, Enter confirma salvo dentro de un textarea. */
+function Popover({ cls, x, y, style, role, label, live, head, onEsc, onEnter, children }: {
+  cls?: string;
+  x: number;
+  y: number;
+  style?: React.CSSProperties;
+  role: string;
+  label?: string;
+  live?: "polite";
+  head: React.ReactNode;
+  onEsc?: () => void;
+  onEnter?: () => void;
+  children: React.ReactNode;
+}) {
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  return (
+    <div
+      className={`arrow-edit${cls ? ` ${cls}` : ""}`}
+      style={{ left: x, top: y, ...style }}
+      role={role}
+      aria-label={label}
+      aria-live={live}
+      onClick={stop}
+      onMouseDown={stop}
+      onKeyDown={
+        onEsc &&
+        ((e: React.KeyboardEvent) => {
+          e.stopPropagation();
+          if (e.key === "Escape") onEsc();
+          else if (e.key === "Enter" && onEnter && !(e.target instanceof HTMLTextAreaElement)) {
+            e.preventDefault();
+            onEnter();
+          }
+        })
+      }
+    >
+      <div className="hd">{head}</div>
+      {children}
+    </div>
+  );
+}
+
+/** cuanto se le respeta a cada costado del tablero para que la descripcion no se salga */
+const DESC_EDGE = 180;
+
 /** Editor de una conexion pendiente, anclado al glifo de su flecha. */
 interface Edit {
   id: string;
@@ -184,6 +298,19 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     setView(null);
     setSel(null);
   };
+  /** el Quitar de un globo, o nada si esa flecha ya no esta en el tablero */
+  const removeBtn = (id: string, title: string) => {
+    const s = segs.find((x) => x.ids[0] === id);
+    return s ? (
+      <button type="button" style={{ marginRight: "auto" }} title={title} onClick={() => removeSeg(s)}>
+        Quitar
+      </button>
+    ) : null;
+  };
+  // removeSeg se rearma en cada render (cierra sobre los props): el efecto de abajo lo llama por
+  // ref, y asi sus dependencias son de verdad las que mira
+  const removeRef = useRef(removeSeg);
+  removeRef.current = removeSeg;
 
   // con una flecha seleccionada: Esc la suelta, Supr ofrece quitarla, un click en el vacio la suelta
   useEffect(() => {
@@ -195,7 +322,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       if (e.key === "Escape") setSel(null);
       else if (e.key === "Delete") {
         const s = segs.find((x) => x.ids[0] === sel);
-        if (s) removeSeg(s);
+        if (s) removeRef.current(s);
       }
     };
     const onDown = () => setSel(null); // el click sobre el glifo vuelve a seleccionar despues
@@ -205,7 +332,6 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onDown);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel, segs]);
 
   const compute = () => {
@@ -215,76 +341,20 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       setSegs([]);
       return;
     }
-    const b = board.getBoundingClientRect();
     setSize((prev) => (prev.w === board.scrollWidth && prev.h === board.scrollHeight ? prev : { w: board.scrollWidth, h: board.scrollHeight }));
-    const rel = (el: Element): Rect => {
-      const r = el.getBoundingClientRect();
-      return { l: r.left - b.left, t: r.top - b.top, r: r.right - b.left, b: r.bottom - b.top };
-    };
-
-    // rects de todas las tarjetas, relativos al tablero
-    const rects = new Map<string, Rect>();
-    for (const el of board.querySelectorAll<HTMLElement>("[data-sid]")) {
-      if (el.dataset.sid) rects.set(el.dataset.sid, rel(el));
-    }
-    // area util de cada columna: de aca para abajo puede haber flechas. El techo es el borde
-    // inferior del encabezado, porque una linea por encima le pasa por arriba al titulo
-    const bands: Band[] = Array.from(board.querySelectorAll<HTMLElement>(".col")).map((col) => {
-      const r = rel(col);
-      const h2 = col.querySelector<HTMLElement>(":scope > h2");
-      return { ...r, t: h2 ? rel(h2).b : r.t };
-    });
-    // sesion en una columna colapsada (por ejemplo la tarjeta paso a "Terminó"): la flecha llega a
-    // la etiqueta vertical de esa tira en vez de perderse. Esos extremos van en `anchors`, aparte de
-    // `rects`: la tira no es una tarjeta, no cuenta como columna ni dos veces como obstaculo
-    const stripOf = (sid: string): Rect | undefined => {
-      const st = sessions[sid]?.state;
-      const el = st ? board.querySelector<HTMLElement>(`.col.${st}.collapsed .vlabel`) : null;
-      return el ? rel(el) : undefined;
-    };
-    const anchors = new Map(rects);
-    const onStrip = new Set<string>();
-    for (const sid of new Set([...links.flatMap((l) => [l.from, l.to]), ...rules.flatMap((r) => [r.from, r.to])])) {
-      if (sid && !anchors.has(sid)) {
-        const r = stripOf(sid);
-        if (r) {
-          anchors.set(sid, r);
-          onStrip.add(sid);
-        }
-      }
-    }
-    // las dos puntas en la misma tira colapsada: la flecha no dice nada y se apila sobre el titulo
-    // de la columna (medido: 7 flechas encimadas al colapsar "Trabajo"). Esas no se dibujan; la
-    // conexion se sigue viendo al abrir la columna, en el chip y en la pestaña Conexiones
-    const bothHidden = (a: string | null, b: string) =>
-      !!a && onStrip.has(a) && onStrip.has(b) && anchors.get(a) === anchors.get(b);
-    const visLinks = links.filter((l) => !bothHidden(l.from, l.to));
-    const visRules = rules.filter((r) => !bothHidden(r.from ?? r.to, r.to));
-    // columnas colapsadas: obstaculos laterales para el arco de misma columna (no son columnas)
-    const strips = Array.from(board.querySelectorAll<HTMLElement>(".col.collapsed")).map((el) => {
-      const r = rel(el);
-      return { l: r.l, r: r.r };
-    });
-    // sin ninguna tarjeta a la vista (todas las columnas colapsadas) no hay nada que conectar: las
-    // flechas se apilaban sobre la tira y su area sensible de 32 px le robaba el click al titulo de
-    // la columna, asi que no se podia ni volver a abrirla
-    if (rects.size === 0) {
+    const measured = measureBoard(board, sessions, links, rules);
+    if (!measured) {
       setSegs([]);
       setLanes(board, 0);
       return;
     }
     const out = computeSegs({
-      rects,
-      anchors,
-      strips,
-      bands,
+      ...measured,
       boardWidth: board.scrollWidth,
-      links: visLinks,
-      rules: visRules,
       fmt: {
         ago,
         hhmm: (iso) => hhmm(new Date(iso)),
-        name: (sid) => shortName(sessions[sid], sid.slice(0, 8)),
+        name: nameOf,
         when: (iso) => whenLabel(iso, true),
       },
     });
@@ -305,8 +375,9 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   const computeRef = useRef(compute);
   computeRef.current = compute;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useLayoutEffect(compute, [links, rules, version]);
+  useLayoutEffect(() => {
+    computeRef.current();
+  }, [links, rules, version]);
   // Recalcular cuando algo se movio sin que cambien props: una tarjeta que crece ("…más", chips,
   // botones rapidos), una columna que cambia de ancho, tarjetas que aparecen o cambian de columna.
   // El tablero solo no alcanza: con contenido mas bajo que su min-height no cambia de tamano.
@@ -358,51 +429,34 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       setLanes(board, 0);
       if (raf) cancelAnimationFrame(raf);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [boardRef]);
 
   if (!segs.length) return null;
   // la descripcion va al lado del glifo, no en una franja fija: se lee junto a lo que explica. Se
   // corre para no salirse del tablero por ningun costado
-  const descX = selSeg ? Math.max(180, Math.min(selSeg.x, Math.max(180, size.w - 180))) : 0;
+  const descX = selSeg ? Math.max(DESC_EDGE, Math.min(selSeg.x, Math.max(DESC_EDGE, size.w - DESC_EDGE))) : 0;
   const kindOf = (s: Seg) => (s.kind === "rule" ? "conexión pendiente" : s.kind === "native" ? "canal nativo" : "envío hecho");
   return (
     <>
     {selSeg && !edit && !view && (
-      <div
-        className="arrow-edit desc"
-        style={{ left: descX, top: selSeg.y, width: "auto", maxWidth: 340 }}
-        role="status"
-        aria-live="polite"
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="hd">{kindOf(selSeg)}</div>
+      <Popover cls="desc" x={descX} y={selSeg.y} style={{ width: "auto", maxWidth: 340 }} role="status" live="polite" head={kindOf(selSeg)}>
         <div>{selSeg.desc}</div>
-      </div>
+      </Popover>
     )}
     {/* fondo atenuado y difuminado mientras el editor o la vista estan abiertos. Va como elemento
         propio y no como ::before del popover: el popover tiene transform, y un transform en el
         ancestro hace que position: fixed se resuelva contra el, no contra la ventana. */}
     {(edit || view) && <div className="arrow-backdrop" />}
     {edit && (
-      <div
-        className="arrow-edit"
-        style={{ left: edit.x, top: edit.y }}
+      <Popover
+        x={edit.x}
+        y={edit.y}
         role="dialog"
-        aria-label="editar conexión"
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key === "Escape") setEdit(null);
-          else if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) {
-            e.preventDefault();
-            saveEdit();
-          }
-        }}
+        label="editar conexión"
+        onEsc={() => setEdit(null)}
+        onEnter={saveEdit}
+        head={edit.kind === "at" ? (edit.repeat ? "↻ periódica" : "⏰ programada") : "⏹ cuando termine"}
       >
-        <div className="hd">{edit.kind === "at" ? (edit.repeat ? "↻ periódica" : "⏰ programada") : "⏹ cuando termine"}</div>
         {edit.kind === "at" && (
           <label>
             {edit.repeat ? "primera vez (HH:MM)" : "hora (HH:MM)"}
@@ -451,33 +505,26 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
           </label>
         )}
         <div className="btns">
-          {(() => {
-            const s = segs.find((x) => x.ids[0] === edit.id);
-            return s ? (
-              <button type="button" style={{ marginRight: "auto" }} title="borra esta conexión" onClick={() => removeSeg(s)}>
-                Quitar
-              </button>
-            ) : null;
-          })()}
+          {removeBtn(edit.id, "borra esta conexión")}
           <button type="button" onClick={() => setEdit(null)}>Cancelar</button>
           <button type="button" className="ok" disabled={saving} onClick={saveEdit}>Guardar</button>
         </div>
-      </div>
+      </Popover>
     )}
     {view && (
-      <div
-        className="arrow-edit view"
-        style={{ left: view.x, top: view.y }}
+      <Popover
+        cls="view"
+        x={view.x}
+        y={view.y}
         role="dialog"
-        aria-label="envío hecho"
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          e.stopPropagation();
-          if (e.key === "Escape") setView(null);
-        }}
+        label="envío hecho"
+        onEsc={() => setView(null)}
+        head={
+          <>
+            {view.native ? "⇄ canal nativo" : "↪ enviado"} · {nameOf(view.from)} → {nameOf(view.to)}
+          </>
+        }
       >
-        <div className="hd">{view.native ? "⇄ canal nativo" : "↪ enviado"} · {nameOf(view.from)} → {nameOf(view.to)}</div>
         <div className="msgs">
           {viewLinks.slice(0, 5).map((l) => (
             <div key={l.id} className="msg" title={l.text}>
@@ -494,14 +541,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
               : "El destino no tiene consola donde escribir ahora."}
         </div>
         <div className="btns">
-          {(() => {
-            const s = segs.find((x) => x.ids[0] === view.ids[0]);
-            return s ? (
-              <button type="button" style={{ marginRight: "auto" }} title="borra esta flecha del tablero" onClick={() => removeSeg(s)}>
-                Quitar
-              </button>
-            ) : null;
-          })()}
+          {removeBtn(view.ids[0], "borra esta flecha del tablero")}
           <button type="button" onClick={() => setView(null)}>Cerrar</button>
           {!view.native && (
             <button type="button" className="ok" disabled={resending || !canResend} onClick={resend} title="escribe el último texto otra vez en la terminal destino">
@@ -509,17 +549,17 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
             </button>
           )}
         </div>
-      </div>
+      </Popover>
     )}
     <svg className={`arrows ${hover ? "hovering" : ""}`} width={size.w} height={size.h} style={{ width: size.w, height: size.h }}>
       <defs>
         {/* markerUnits="userSpaceOnUse": sin eso el marker escala con el stroke-width (2), asi que
             un 5.5x4.5 se dibujaba de 11x9 y las puntas se veian pesadas. Ahora el tamaño es en px */}
-        <marker id="arrowhead" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="5" refX="6.5" refY="2.5" orient="auto">
-          <path d="M0,0 L7,2.5 L0,5 z" fill="var(--acc)" />
+        <marker id="arrowhead" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="9" refX="12.2" refY="4.5" orient="auto">
+          <path d="M0,0 L13,4.5 L0,9 z" fill="var(--acc)" />
         </marker>
-        <marker id="arrowtail" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="5" refX="0.5" refY="2.5" orient="auto">
-          <path d="M7,0 L0,2.5 L7,5 z" fill="var(--acc)" />
+        <marker id="arrowtail" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="9" refX="0.8" refY="4.5" orient="auto">
+          <path d="M13,0 L0,4.5 L13,9 z" fill="var(--acc)" />
         </marker>
       </defs>
       {/* seleccionada: se marcan las dos tarjetas que une, para ver de quien a quien es */}
@@ -545,7 +585,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         return (
           <g
             key={s.ids[0]}
-            className={`arrow ${s.old ? "old" : ""} ${mine ? "mine" : ""} ${s.dim ? "dim" : ""}`}
+            className={`arrow ${mine ? "mine" : ""} ${s.dim ? "dim" : ""}`}
             style={sel !== null ? { opacity: on ? 1 : 0.12 } : undefined}
           >
             {s.kind === "native" && <path d={s.d} className="line native-outer" />}
@@ -553,8 +593,8 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
               d={s.d}
               className={`line ${s.kind}`}
               style={on ? { strokeWidth: 3, opacity: 1 } : undefined}
-              markerEnd={s.old ? undefined : "url(#arrowhead)"}
-              markerStart={s.kind === "native" && !s.old ? "url(#arrowtail)" : undefined}
+              markerEnd="url(#arrowhead)"
+              markerStart={s.kind === "native" ? "url(#arrowtail)" : undefined}
             />
             <g
               onClick={() => {

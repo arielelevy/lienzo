@@ -48,6 +48,22 @@
 .card .top .star:focus-visible, .card .top .pencil:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; opacity: 1; }
 @media (hover: none) and (pointer: coarse) { .card .top .star, .card .top .pencil { opacity: 1; } }
 
+/* Tab recorre tarjetas (Card las saca del orden a sus botones hasta que la tarjeta tiene el foco):
+   la tarjeta enfocada tiene que verse. styles.css ya le da el outline; aca se refuerza el offset
+   para que no se confunda con el borde, y la marca se sostiene mientras el foco esta en uno de sus
+   botones, que es adonde entra el Tab siguiente. */
+.card:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.card:has(:focus-visible) { box-shadow: 0 0 0 1px var(--acc); border-color: var(--acc); }
+
+/* Con un permiso pendiente, Board adelanta esa columna en el DOM (el Tab sigue al DOM) y repone el
+   orden visual con `order`. El canal de 30 px entre columnas no puede seguir saliendo de
+   `.col + .col`, que mira la adyacencia del DOM: mientras dura el adelanto lo da el orden visual,
+   con la columna de la izquierda marcada `.first`. En móvil se ve una sola columna y no hay canal. */
+.board.reordered .col.gapwide { margin-left: var(--col-gap, 30px); }
+.board.reordered .col.gapthin { margin-left: 8px; }
+.board.reordered .col.first { margin-left: 0; }
+@media (max-width: 900px) { .board.reordered .col.gapwide, .board.reordered .col.gapthin { margin-left: 0; } }
+
 /* elegida con un click: barra al costado. La que tiene el panel abierto sigue con su borde
    completo (.sel, en styles.css), asi se distinguen cuando no son la misma tarjeta. */
 .card.picked { box-shadow: inset 3px 0 0 var(--acc); }

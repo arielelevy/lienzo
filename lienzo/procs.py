@@ -9,7 +9,6 @@ escritorio de Codex (ambos `app-server`), y el claude.exe de la extension de VS 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 
 try:

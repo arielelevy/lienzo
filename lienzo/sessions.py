@@ -40,7 +40,7 @@ def attachment_path(prompt: str) -> str | None:
     if not p.startswith(ATTACH_WRAPPER):
         return None
     for part in p.split("Adjunto: ")[1:]:
-        path = part.strip().split(" Adjunto: ")[0].strip()
+        path = part.strip()
         if path.lower().endswith(".md") and os.path.isfile(path):
             return path
     return None
@@ -75,10 +75,9 @@ def attachment_title(s: dict) -> str | None:
             lines = [l.strip() for l in f.read(4000).splitlines()]
     except OSError:
         return None
-    for l in lines:
-        m = HEADING_RE.match(l)
-        if m and m.group(1):
-            return short(m.group(1), 60)
+    heading = next((m.group(1) for l in lines if (m := HEADING_RE.match(l)) and m.group(1)), None)
+    if heading:
+        return short(heading, 60)
     first = next((l for l in lines if l), "")
     # la cabecera de un informe recibido ("Mensaje de X (claude) sobre '…':") no es titulo: si el
     # adjunto empieza asi, no hay titulo que sacar de el
@@ -190,9 +189,8 @@ def limit_until_of(turn: dict) -> str | None:
 
 def drop_session(sid: str, reason: str) -> None:
     with lock:
-        s = sessions.pop(sid, None)
-    if s is None:
-        return
+        if sessions.pop(sid, None) is None:
+            return
     links.remove(lambda l: sid in (l["from"], l["to"]))
     rules.remove(lambda r: sid in (r.get("from"), r["to"]))
     try:
@@ -224,22 +222,21 @@ def continue_session(old: dict, new: dict) -> None:
     """La sesion nueva hereda el pid de la vieja y todo lo que la apuntaba: reglas y links donde la
     vieja era origen o destino pasan al sid nuevo, y la vieja se da de baja."""
     old_sid, new_sid = old["session_id"], new["session_id"]
+
+    def repoint(coll) -> int:
+        """Las dos puntas de cada regla / link que nombraban a la vieja pasan al sid nuevo."""
+        n = 0
+        for x in coll.items:
+            for k in ("from", "to"):
+                if x.get(k) == old_sid:
+                    x[k] = new_sid
+                    n += 1
+        if n:
+            coll.save()
+        return n
+
     with lock:
-        n_rules = n_links = 0
-        for r in rules.items:
-            for k in ("from", "to"):
-                if r.get(k) == old_sid:
-                    r[k] = new_sid
-                    n_rules += 1
-        for l in links.items:
-            for k in ("from", "to"):
-                if l.get(k) == old_sid:
-                    l[k] = new_sid
-                    n_links += 1
-        if n_rules:
-            rules.save()
-        if n_links:
-            links.save()
+        n_rules, n_links = repoint(rules), repoint(links)
         for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator"):
             if old.get(k) is not None:
                 new[k] = old[k]
@@ -332,14 +329,19 @@ CD_PREFIX_RE = re.compile(r'^\s*cd\s+(?:"[^"]*"|\S+)\s*(?:&&|;)\s*')
 CMD_TOOLS = ("bash", "powershell", "shell", "run_terminal_cmd", "exec")
 
 
-def turn_activity(t: dict) -> tuple[int, list[str], str | None, int]:
+def turn_activity(t: dict) -> dict:
     """Lo que la sesion viene haciendo en el turno, para la tarjeta: cuantas herramientas lleva, los
     ultimos archivos distintos que toco (del mas nuevo al mas viejo), el ultimo comando que corrio y
-    cuantas herramientas volvieron con error. Sale de los bloques que ya tiene la transcripcion."""
-    tools = [b for b in t.get("blocks", []) if b.get("kind") == "tool"]
+    cuantas herramientas volvieron con error. Sale de los bloques que ya tiene la transcripcion, en
+    una sola pasada de atras para adelante; las claves son las de la tarjeta."""
+    n = errors = 0
     files: list[str] = []
     cmd: str | None = None
-    for b in reversed(tools):
+    for b in reversed(t.get("blocks", [])):
+        if b.get("kind") != "tool":
+            continue
+        n += 1
+        errors += bool((b.get("result") or {}).get("is_error"))
         name = (b.get("name") or "").lower()
         inp = b.get("input") or {}
         if cmd is None and name in CMD_TOOLS:
@@ -349,15 +351,63 @@ def turn_activity(t: dict) -> tuple[int, list[str], str | None, int]:
             if raw:
                 cmd = short(raw, 120)
         if name in FILE_TOOLS and len(files) < 3:
-            path = str(inp.get("file_path") or inp.get("path") or "").replace("\\", "/").rstrip("/")
-            base = os.path.basename(path)
+            base = os.path.basename(str(inp.get("file_path") or inp.get("path") or "").replace("\\", "/").rstrip("/"))
             if base and base not in files:
                 files.append(base)
-    errors = sum(1 for b in tools if (b.get("result") or {}).get("is_error"))
-    return len(tools), files, cmd, errors
+    return {"tool_count": n, "last_files": files, "last_cmd": cmd, "tool_errors": errors}
+
+
+def using_tool(t: dict) -> str | None:
+    """"usando Bash": la herramienta mas reciente del turno, para la tarjeta mientras corre."""
+    b = next((b for b in reversed(t.get("blocks", [])) if b.get("kind") == "tool"), None)
+    return f"usando {b['name']}" if b else None
+
+
+def turn_prompt(t: dict) -> str | None:
+    """Pedido del turno, o None si quedo fuera de la cola leida ("(turno anterior...")."""
+    p = t.get("prompt")
+    return p if p and not p.startswith("(turno anterior") else None
 
 
 REFRESH_KEYS = ("title", "branch", "last_prompt", "last_reply", "state", "cwd", "last_error", "limit_until", "continue_scheduled_for", "tool_count", "last_files", "last_cmd", "tool_errors")
+
+
+def apply_turn(s: dict, t: dict, force_state: bool) -> None:
+    """Vuelca el ultimo turno de la transcripcion a la tarjeta: actividad de adentro, pedido y
+    respuesta, estado (solo si la sesion no tiene hooks, o force_state) y el error del turno."""
+    # lo que pasa adentro, para la tarjeta: cuanto lleva hecho y sobre que archivos
+    s.update(turn_activity(t))
+    if s.get("hooked") and not force_state:
+        # el pedido y la respuesta final ya vienen por hook (UserPromptSubmit / Stop); de la
+        # transcripcion se toma "usando X" mientras corre, y el estado solo cuando los hooks
+        # lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido)
+        want = transcript_state(s, t)
+        if want:
+            if want == "corriendo" and (p := turn_prompt(t)):
+                set_last_prompt(s, p)
+            state.log(f"{s['session_id'][:8]}: la transcripcion dice {want} y los hooks {s['state']} "
+                f"(ultimo evento {s.get('last_event')}); corregido")
+            set_state(s, want)
+        if s["state"] == "corriendo" and not t.get("ended"):
+            s["last_reply"] = using_tool(t) or s["last_reply"]
+    else:
+        if p := turn_prompt(t):
+            set_last_prompt(s, p)
+        if t.get("final"):
+            s["last_reply"] = short(t["final"], 600)
+        elif not t.get("ended"):
+            s["last_reply"] = using_tool(t) or s["last_reply"]
+        if s["state"] != "muerta" and not s.get("needs"):
+            set_state(s, "termino" if t.get("ended") else "corriendo")
+    # error del turno (Codex: limite de uso, abortado; Claude: no aplica hoy) va aparte, en rojo
+    s["last_error"] = short(t.get("error") or "", 300) or None
+    if s["last_error"] and not t.get("final"):
+        s["last_reply"] = s["last_error"]
+    # limite de uso con hora de vuelta: la tarjeta ofrece programar "Continuar" y, con
+    # auto_continue en config.json, queda programado solo (un disparo por aviso)
+    s["limit_until"] = limit_until_of(t)
+    if s["limit_until"]:
+        on_limit_notice(s)
 
 
 def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
@@ -385,42 +435,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
         s["cwd"] = meta["cwd"]
         s["repo"] = repo_of(s["cwd"])
     if ts:
-        t = ts[-1]
-        hooked = s.get("hooked") and not force_state
-        tools = [b for b in t["blocks"] if b["kind"] == "tool"]
-        # lo que pasa adentro, para la tarjeta: cuanto lleva hecho y sobre que archivos
-        s["tool_count"], s["last_files"], s["last_cmd"], s["tool_errors"] = turn_activity(t)
-        if hooked:
-            # el pedido y la respuesta final ya vienen por hook (UserPromptSubmit / Stop); de la
-            # transcripcion se toma "usando X" mientras corre, y el estado solo cuando los hooks
-            # lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido)
-            want = transcript_state(s, t)
-            if want:
-                if want == "corriendo" and t.get("prompt") and not t["prompt"].startswith("(turno anterior"):
-                    set_last_prompt(s, t["prompt"])
-                state.log(f"{s['session_id'][:8]}: la transcripcion dice {want} y los hooks {s['state']} "
-                    f"(ultimo evento {s.get('last_event')}); corregido")
-                set_state(s, want)
-            if s["state"] == "corriendo" and not t.get("ended") and tools:
-                s["last_reply"] = f"usando {tools[-1]['name']}"
-        else:
-            if t.get("prompt") and not t["prompt"].startswith("(turno anterior"):
-                set_last_prompt(s, t["prompt"])
-            if t.get("final"):
-                s["last_reply"] = short(t["final"], 600)
-            elif not t.get("ended") and tools:
-                s["last_reply"] = f"usando {tools[-1]['name']}"
-            if s["state"] != "muerta" and not s.get("needs"):
-                set_state(s, "termino" if t.get("ended") else "corriendo")
-        # error del turno (Codex: limite de uso, abortado; Claude: no aplica hoy) va aparte, en rojo
-        s["last_error"] = short(t.get("error") or "", 300) or None
-        if s["last_error"] and not t.get("final"):
-            s["last_reply"] = s["last_error"]
-        # limite de uso con hora de vuelta: la tarjeta ofrece programar "Continuar" y, con
-        # auto_continue en config.json, queda programado solo (un disparo por aviso)
-        s["limit_until"] = limit_until_of(t)
-        if s["limit_until"]:
-            on_limit_notice(s)
+        apply_turn(s, ts[-1], force_state)
     choose_title(s, tt)
     return before != json.dumps({k: s.get(k) for k in REFRESH_KEYS})
 
@@ -428,13 +443,10 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
 def set_title(s: dict, title: str) -> None:
     """Titulo puesto por el usuario desde la UI. Vacio: vuelve a la logica automatica
     (ai-title / thread_name de la transcripcion, o la primera linea del ultimo pedido)."""
-    title = short(title, 120)
-    if title:
-        s["title"] = title
-        s["title_source"] = "user"
+    if title := short(title, 120):
+        s["title"], s["title_source"] = title, "user"
         return
-    s["title"] = None
-    s["title_source"] = None
+    s["title"] = s["title_source"] = None
     refresh_from_transcript(s)
     if s.get("title") is None:      # sin transcripcion: solo queda el pedido
         choose_title(s, None)
@@ -508,24 +520,88 @@ def claim_pid(s: dict, ev: dict) -> None:
         s["no_console"] = not procs.is_tui(pid)
 
 
+def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
+    """Lo propio de cada evento de hook sobre una tarjeta que apply_event ya puso al dia (pid, cwd,
+    transcripcion, ultimo evento). Se llama con el lock tomado."""
+    sid = s["session_id"]
+    if name == "SessionStart":
+        if created:
+            set_state(s, "termino")
+    elif name == "UserPromptSubmit":
+        set_state(s, "corriendo")
+        # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
+        s["prompt_id"] = ev.get("prompt_id")
+        s["prompt_ts"] = s["last_event_ts"]
+        if not transcripts.is_system_prompt(ev.get("prompt", "")):
+            set_last_prompt(s, ev.get("prompt", ""))
+            # sin ai-title todavia (o con uno inutil): la tarjeta se titula con la primera linea
+            # del pedido; un ai-title que sirva lo pisa despues (refresh_from_transcript), salvo
+            # que el pedido haya llegado como adjunto: ahi manda su encabezado
+            first = prompt_title(s)
+            if first and s.get("title_source") != "user" and (
+                    s.get("last_attachment") or bad_title(s.get("title")) or s.get("title_source") == "prompt"):
+                s["title"] = first
+                s["title_source"] = "prompt"
+        s["pending_id"] = None
+        s["typing"] = False   # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
+    elif name == "Stop":
+        if stale_stop(s, ev):
+            state.log(f"Stop tardio de {sid[:8]} (pedido {str(ev.get('prompt_id'))[:8]}, ya corre "
+                f"{str(s.get('prompt_id'))[:8]}): la tarjeta sigue corriendo")
+        else:
+            set_state(s, "termino")
+            if ev.get("last_assistant_message"):
+                s["last_reply"] = short(ev["last_assistant_message"], 600)
+        s["pending_id"] = None
+    elif name == "Notification":
+        nt = ev.get("notification_type") or ""
+        if nt == "idle_prompt" and s.get("last_prompt") and not (s.get("last_reply") or "").rstrip().endswith("?"):
+            # termino con un informe que no pregunta nada: no "te necesita", solo termino. La
+            # tarjeta libre (sin pedido) si pasa a te_necesita/idle, para ofrecer "Darle trabajo"
+            state.log(f"{sid[:8]}: idle_prompt sin pregunta al final; la tarjeta queda en {s['state']}")
+        elif nt in NEEDS_NOTIFICATIONS:
+            set_state(s, "te_necesita")
+            s["needs"] = {"kind": "idle" if nt == "idle_prompt" else "permission" if nt == "permission_prompt" else nt,
+                          "detail": short(ev.get("message", ""), 300), "where": "terminal"}
+    elif name == "PermissionRequest":
+        set_state(s, "te_necesita")
+        s["needs"] = {"kind": "permission", "tool": ev.get("tool_name"),
+                      "detail": tool_detail(ev.get("tool_name"), ev.get("tool_input")),
+                      "tool_use_id": ev.get("tool_use_id"), "where": "lienzo"}
+    elif name == "PermissionDecision":
+        s["pending_id"] = None
+        set_state(s, "corriendo")   # set_state ya limpia `needs` al salir de te_necesita
+    elif name == "PermissionTimeout":
+        if s["state"] == "te_necesita" and s.get("needs"):
+            s["needs"]["where"] = "terminal"
+        s["pending_id"] = None
+    elif name == "PostToolUse":
+        if s["state"] == "te_necesita" and (s.get("needs") or {}).get("tool_use_id") == ev.get("tool_use_id"):
+            set_state(s, "corriendo")
+    elif name == "Interrupt":
+        set_state(s, "termino")
+    elif name == "SessionEnd":
+        set_state(s, "muerta")
+        s["alive"] = False
+        s["dead_since"] = now()
+
+
 def apply_event(ev: dict) -> None:
     name = ev.get("hook_event_name") or "?"
     sid = ev.get("session_id")
-    agent = ev.get("agent") or "claude"
     if not sid or ev.get("agent_id"):
         return  # sin sesion, o subagente
     with lock:
         s = sessions.get(sid)
         created = s is None
         if created:
-            s = new_session(sid, agent, "hook")
+            s = new_session(sid, ev.get("agent") or "claude", "hook")
             sessions[sid] = s
         s["hooked"] = True
         s["source"] = "hook"
         if s.get("state") not in STATES:
             s["state"], s["state_since"] = "termino", now()
-        pid = ev.get("pid")
-        if pid and procs.agent_alive(pid):
+        if ev.get("pid") and procs.agent_alive(ev["pid"]):
             claim_pid(s, ev)
         if ev.get("cwd") and (not s.get("cwd") or name == "SessionStart"):
             # el cwd de los hooks sigue al shell del agente (cambia con un cd de una tool);
@@ -538,68 +614,7 @@ def apply_event(ev: dict) -> None:
         s["last_event_ts"] = ev.get("host_ts") or now()
         s["alive"] = True
         s["dead_since"] = None
-
-        if name == "SessionStart":
-            if created:
-                set_state(s, "termino")
-        elif name == "UserPromptSubmit":
-            set_state(s, "corriendo")
-            # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
-            s["prompt_id"] = ev.get("prompt_id")
-            s["prompt_ts"] = s["last_event_ts"]
-            if not transcripts.is_system_prompt(ev.get("prompt", "")):
-                set_last_prompt(s, ev.get("prompt", ""))
-                # sin ai-title todavia (o con uno inutil): la tarjeta se titula con la primera linea
-                # del pedido; un ai-title que sirva lo pisa despues (refresh_from_transcript), salvo
-                # que el pedido haya llegado como adjunto: ahi manda su encabezado
-                first = prompt_title(s)
-                if first and s.get("title_source") != "user" and (
-                        s.get("last_attachment") or bad_title(s.get("title")) or s.get("title_source") == "prompt"):
-                    s["title"] = first
-                    s["title_source"] = "prompt"
-            s["pending_id"] = None
-            s["typing"] = False   # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
-        elif name == "Stop":
-            if stale_stop(s, ev):
-                state.log(f"Stop tardio de {sid[:8]} (pedido {str(ev.get('prompt_id'))[:8]}, ya corre "
-                    f"{str(s.get('prompt_id'))[:8]}): la tarjeta sigue corriendo")
-            else:
-                set_state(s, "termino")
-                if ev.get("last_assistant_message"):
-                    s["last_reply"] = short(ev["last_assistant_message"], 600)
-            s["pending_id"] = None
-        elif name == "Notification":
-            nt = ev.get("notification_type") or ""
-            if nt == "idle_prompt" and s.get("last_prompt") and not (s.get("last_reply") or "").rstrip().endswith("?"):
-                # termino con un informe que no pregunta nada: no "te necesita", solo termino. La
-                # tarjeta libre (sin pedido) si pasa a te_necesita/idle, para ofrecer "Darle trabajo"
-                state.log(f"{sid[:8]}: idle_prompt sin pregunta al final; la tarjeta queda en {s['state']}")
-            elif nt in NEEDS_NOTIFICATIONS:
-                set_state(s, "te_necesita")
-                s["needs"] = {"kind": "idle" if nt == "idle_prompt" else "permission" if nt == "permission_prompt" else nt,
-                              "detail": short(ev.get("message", ""), 300), "where": "terminal"}
-        elif name == "PermissionRequest":
-            set_state(s, "te_necesita")
-            s["needs"] = {"kind": "permission", "tool": ev.get("tool_name"),
-                          "detail": tool_detail(ev.get("tool_name"), ev.get("tool_input")),
-                          "tool_use_id": ev.get("tool_use_id"), "where": "lienzo"}
-        elif name == "PermissionDecision":
-            s["needs"] = None
-            s["pending_id"] = None
-            set_state(s, "corriendo")
-        elif name == "PermissionTimeout":
-            if s["state"] == "te_necesita" and s.get("needs"):
-                s["needs"]["where"] = "terminal"
-            s["pending_id"] = None
-        elif name == "PostToolUse":
-            if s["state"] == "te_necesita" and (s.get("needs") or {}).get("tool_use_id") == ev.get("tool_use_id"):
-                set_state(s, "corriendo")
-        elif name == "Interrupt":
-            set_state(s, "termino")
-        elif name == "SessionEnd":
-            set_state(s, "muerta")
-            s["alive"] = False
-            s["dead_since"] = now()
+        apply_hook(s, ev, name, created)
         if created or name == "SessionStart":
             refresh_from_transcript(s)
         touch(s)
@@ -616,11 +631,13 @@ def consume_events() -> None:
             if n.endswith(".tmp"):
                 continue
             if not n.endswith(".json"):
-                if n.startswith("bad-") and time.time() - os.path.getmtime(p) > 3600:
-                    try:
+                try:
+                    # bad-*.txt: lo que un hook no pudo parsear. El getmtime iba fuera del try y un
+                    # archivo que desaparecia entre el listdir y esta linea mataba el hilo entero
+                    if n.startswith("bad-") and time.time() - os.path.getmtime(p) > 3600:
                         os.remove(p)
-                    except OSError:
-                        pass
+                except OSError:
+                    pass
                 continue
             try:
                 with open(p, encoding="utf-8") as f:
@@ -693,10 +710,8 @@ def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[
     """(session_id, transcript_path) mas probable para un agente encontrado por barrido."""
     if not cwd:
         return None, None
-    try:
-        t0 = dt.datetime.fromisoformat(created).timestamp() - 120 if created else 0
-    except ValueError:
-        t0 = 0
+    born = parse_ts(created)
+    t0 = born.timestamp() - 120 if born else 0
     if agent == "claude":
         d = os.path.join(HOME, ".claude", "projects", claude_slug(cwd))
         cands = [p for p in glob.glob(os.path.join(d, "*.jsonl")) if os.path.getmtime(p) >= t0]
@@ -720,10 +735,8 @@ def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[
             continue
         if pl.get("originator") not in (None, "codex-tui", "codex_cli_rs"):
             continue  # Codex Desktop (importados), codex_exec, app-server: no son la TUI
-        try:
-            started = dt.datetime.fromisoformat((pl.get("timestamp") or first.get("timestamp")).replace("Z", "+00:00")).timestamp()
-        except (AttributeError, ValueError):
-            started = os.path.getmtime(p)
+        birth = parse_ts(pl.get("timestamp") or first.get("timestamp"))
+        started = birth.timestamp() if birth else os.path.getmtime(p)
         gap = started - (t0 + 120)          # t0 ya tiene 120 s de margen
         if gap < -120:
             continue                        # arranco antes que el proceso: no es suyo
@@ -810,14 +823,10 @@ def liveness_loop(sweep_every: float) -> None:
                     s["alive"] = True
                     s["dead_since"] = None
                     changed = True
-                if s["state"] == "muerta" and s.get("dead_since"):
-                    try:
-                        dead_for = (dt.datetime.now().astimezone() - dt.datetime.fromisoformat(s["dead_since"])).total_seconds()
-                    except ValueError:
-                        dead_for = 0
-                    if dead_for > DEAD_GRACE_S:
-                        drop_session(s["session_id"], "muerta hace mas de 60 s")
-                        continue
+                dead_since = parse_ts(s["dead_since"]) if s["state"] == "muerta" else None
+                if dead_since and (dt.datetime.now().astimezone() - dead_since).total_seconds() > DEAD_GRACE_S:
+                    drop_session(s["session_id"], "muerta hace mas de 60 s")
+                    continue
                 # transcripcion: si crecio, avisar y refrescar la tarjeta
                 tp = s.get("transcript_path")
                 if tp and os.path.exists(tp):
@@ -886,24 +895,22 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
                 os.remove(tf)
             except OSError:
                 pass
-    if out.get("ok"):
-        state.log(f"send {s['session_id'][:8]}: {len(orig) if orig else out.get('chars')} caracteres"
-                  + (" (como adjunto)" if attachments else "") + f", pid {s['pid']}")
-    else:
+    if not out.get("ok"):
         state.log(f"send {s['session_id'][:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
-    if out.get("ok"):
-        if orig:
-            # send.py cuenta lo tipeado en la consola, que con un mensaje largo es el envoltorio
-            # 'Leé el archivo adjunto...' (143); el toast y la tarjeta hablan del mensaje real
-            out["chars"] = len(orig)
-        s["last_prompt"] = short(orig, 500) if orig else short(clean_prompt(final), 500)
-        if s.get("last_event") != "SessionEnd":
-            # tras SessionEnd la consola ya es de otra sesion (/clear, resume): lo que se tipea
-            # llega a esa, y esta tarjeta no vuelve a 'corriendo' (la continua apply_event)
-            set_state(s, "corriendo")
-        touch(s)
-        return 200, out
-    return 500, out
+        return 500, out
+    state.log(f"send {s['session_id'][:8]}: {len(orig) if orig else out.get('chars')} caracteres"
+              + (" (como adjunto)" if attachments else "") + f", pid {s['pid']}")
+    if orig:
+        # send.py cuenta lo tipeado en la consola, que con un mensaje largo es el envoltorio
+        # 'Leé el archivo adjunto...' (143); el toast y la tarjeta hablan del mensaje real
+        out["chars"] = len(orig)
+    s["last_prompt"] = short(orig, 500) if orig else short(clean_prompt(final), 500)
+    if s.get("last_event") != "SessionEnd":
+        # tras SessionEnd la consola ya es de otra sesion (/clear, resume): lo que se tipea
+        # llega a esa, y esta tarjeta no vuelve a 'corriendo' (la continua apply_event)
+        set_state(s, "corriendo")
+    touch(s)
+    return 200, out
 
 
 # --- pantalla (solo para las sugerencias de la TUI de Claude, DISENO §12) ------------------
@@ -932,14 +939,11 @@ def screen_loop() -> None:
             for s in items:
                 r = read_screen(s["pid"])
                 area = r.get("area") if r.get("ok") else None
-                sug, typing = None, False
+                escrito = bool(area and not area["placeholder"])
                 # medido: "❯ Guardá la revisión en docs/revision-backend.md" con la sesion en idle_prompt
                 idle = s["state"] == "termino" or (s["state"] == "te_necesita" and (s.get("needs") or {}).get("kind") == "idle")
-                if area and not area["placeholder"]:
-                    if idle:
-                        sug = short(area["input"], 300)
-                    else:
-                        typing = True
+                sug = short(area["input"], 300) if escrito and idle else None
+                typing = escrito and not idle
                 if s.get("suggestion") != sug or bool(s.get("typing")) != typing:
                     s["suggestion"] = sug
                     s["typing"] = typing
@@ -967,12 +971,8 @@ def load_sessions() -> tuple[int, int]:
             if s.get("state") not in STATES:
                 s["state"], s["state_since"] = "termino", s.get("state_since") or now()
             if not procs.agent_alive(s.get("pid")):
-                ref = s.get("last_event_ts") or s.get("started")
-                try:
-                    stale = not ref or dt.datetime.fromisoformat(ref) < limit
-                except ValueError:
-                    stale = True
-                if stale:
+                ref = parse_ts(s.get("last_event_ts") or s.get("started"))
+                if ref is None or ref < limit:
                     os.remove(p)
                     purged += 1
                     continue
