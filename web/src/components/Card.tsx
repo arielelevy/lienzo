@@ -89,6 +89,20 @@ function foldPrompt(p: string): { head: string; cut: boolean } {
   return { head, cut };
 }
 
+/** Primera oracion (hasta el primer . ! ? seguido de espacio o fin), tope de 90 caracteres. */
+function foldSentence(text: string): { head: string; cut: boolean } {
+  const t = (text || "").trim();
+  const m = t.match(/^(.*?[.!?])(?:\s|$)/s);
+  let head = m ? m[1] : t.split("\n")[0];
+  if (head.length > PROMPT_CHARS) head = head.slice(0, PROMPT_CHARS - 1) + "…";
+  return { head, cut: head.length < t.length };
+}
+
+/** Envoltorio con que el lienzo manda un texto largo: la sugerencia que arranca asi es nuestra. */
+const ATTACH_WRAPPER = "Leé el archivo adjunto y respondé";
+/** "usando Bash": la transcripcion dice que herramienta corre; es actividad, no una respuesta */
+const WORKING_RE = /^usando \S+/;
+
 const QUICK = ["Continuá", "sí", "no"];
 
 interface Props {
@@ -126,6 +140,7 @@ function titleIsPrompt(s: Session): boolean {
 export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [errorOpen, setErrorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -148,6 +163,9 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
 
   const { head, cut } = foldPrompt(s.last_prompt);
   const dupPrompt = titleIsPrompt(s);
+  const err = foldSentence(s.last_error || "");
+  const working = WORKING_RE.test(s.last_reply || "");
+  const suggestion = s.suggestion && !s.suggestion.trim().startsWith(ATTACH_WRAPPER) ? s.suggestion : null;
   const ruleGroups = groupRules(rules, s.session_id, sessions);
   const canWrite = !!s.alive && !s.orphan && !s.no_console;
   // ociosa: termino, o espera input en la terminal; con consola y sin permiso pendiente
@@ -256,7 +274,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       <div className="top">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         <span className="repo">{s.repo}</span>
-        {s.branch && <span>⎇ {s.branch}</span>}
+        {s.branch && <span className="branch">⎇ {s.branch}</span>}
         <span className="right">
           {/* estado como icono: corriendo y termino comparten la columna "Trabajo"; la huerfana va a
               "Muerta" con esta etiqueta, para distinguirla de un proceso muerto de verdad */}
@@ -272,10 +290,26 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             </span>
           ) : null}
           {ago(s.state_since)}
+          {onGrip && canWrite && (
+            <button
+              type="button"
+              className="grip"
+              title="arrastrá hasta otra tarjeta para reenviarle la última respuesta"
+              aria-label="arrastrar para conectar con otra tarjeta"
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                onGrip(e);
+              }}
+            >
+              ⇢
+            </button>
+          )}
         </span>
       </div>
       <div
-        className="title"
+        className={`title ${dupPrompt ? "plain" : ""}`}
         title={editing ? undefined : "doble click para renombrar"}
         onDoubleClick={(e) => {
           e.stopPropagation();
@@ -326,8 +360,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       )}
       {recent && (
-        <div className="chip" title={recent.text}>
-          ✓ informe de {recentFrom} hace {ago(recent.ts)}
+        <div className="chip recent" title={`informe de ${recentFrom}: ${recent.text}`}>
+          ✓ {recentFrom} · hace {ago(recent.ts)}
         </div>
       )}
       {/* lo que pide la sesion va antes que la respuesta: Permitir/Denegar es lo primero visible */}
@@ -358,7 +392,27 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       ) : null}
       {s.last_error ? (
-        <div className="error">⚠ {s.last_error}</div>
+        <div className={`error ${errorOpen ? "open" : ""}`}>
+          <span className="etext">⚠ {errorOpen ? s.last_error : err.head}</span>
+          {err.cut && (
+            <button
+              type="button"
+              className="more"
+              aria-expanded={errorOpen}
+              onClick={(e) => {
+                e.stopPropagation();
+                setErrorOpen((o) => !o);
+              }}
+            >
+              {errorOpen ? "menos" : "…más"}
+            </button>
+          )}
+        </div>
+      ) : working ? (
+        <div className="reply working" title="lo que está haciendo ahora, según la transcripción">
+          <span className="wdot" aria-hidden="true" />
+          {s.last_reply}
+        </div>
       ) : (
         <div className="replyrow">
           <div className="reply">{s.last_reply}</div>
@@ -390,7 +444,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           </button>
         </div>
       )}
-      {s.suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {s.suggestion}</div>}
+      {suggestion && <div className="sugg" title="leído de la caja de entrada de la terminal">💡 {suggestion}</div>}
       {ruleGroups.shown.map((g) => (
         <div key={g.label} className="rule" title={g.kind === "at" ? "programado" : "cuando termine el turno"}>
           <span>
@@ -435,22 +489,6 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         {s.no_console && !s.orphan && <span className="warn" title="panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe">sin consola</span>}
         <span>{s.session_id.slice(0, 8)}</span>
       </div>
-      {onGrip && canWrite && (
-        <button
-          type="button"
-          className="grip"
-          title="arrastrá hasta otra tarjeta para reenviarle la última respuesta"
-          aria-label="arrastrar para conectar con otra tarjeta"
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            onGrip(e);
-          }}
-        >
-          ⇢
-        </button>
-      )}
       {toastNode}
     </div>
   );

@@ -230,10 +230,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     const board = boardRef.current;
     if (!board) return;
     const b = board.getBoundingClientRect();
+    // la linea sale del agarre ⇢ (fila de arriba de la tarjeta); sin agarre, del mouse
     const card = board.querySelector<HTMLElement>(`[data-sid="${sid}"]`);
-    const r = card?.getBoundingClientRect();
-    const x1 = r ? r.right - b.left - 14 : cx - b.left;
-    const y1 = r ? r.bottom - b.top - 14 : cy - b.top;
+    const r = card?.querySelector<HTMLElement>(".grip")?.getBoundingClientRect();
+    const x1 = r ? (r.left + r.right) / 2 - b.left : cx - b.left;
+    const y1 = r ? (r.top + r.bottom) / 2 - b.top : cy - b.top;
     setDrag({ from: sid, x1, y1, x2: cx - b.left, y2: cy - b.top, over: null });
   };
   const startDrag = (sid: string, e: React.MouseEvent) => {
