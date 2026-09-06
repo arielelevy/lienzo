@@ -421,6 +421,16 @@ def turn_prompt(t: dict) -> str | None:
     return p if p and not p.startswith("(turno anterior") else None
 
 
+def turn_say(t: dict) -> str | None:
+    """Lo que la sesion viene diciendo, para la tarjeta: el ultimo texto que escribio el agente en el
+    turno. Mientras corre es el comentario entre dos herramientas ("Ahora parto refresh en dos:");
+    cuando el turno cierra es la respuesta final. Si todavia no escribio nada, el nombre de la
+    herramienta que esta usando. `transcripts` ya mantiene `final` = ultimo bloque de texto no vacio,
+    y el pensamiento (kind "thinking") nunca pasa por ahi: a la tarjeta no va (el toggle
+    "Pensamiento" del menu es para la conversacion). Lo de "que herramienta" es turn_activity."""
+    return short(t.get("final") or "", 600) or using_tool(t)
+
+
 REFRESH_KEYS = (
     "title",
     "branch",
@@ -445,8 +455,8 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     s.update(turn_activity(t))
     if s.get("hooked") and not force_state:
         # el pedido y la respuesta final ya vienen por hook (UserPromptSubmit / Stop); de la
-        # transcripcion se toma "usando X" mientras corre, y el estado solo cuando los hooks
-        # lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido)
+        # transcripcion se toma lo que el agente viene diciendo mientras corre, y el estado solo
+        # cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido)
         want = transcript_state(s, t)
         if want:
             if want == "corriendo" and (p := turn_prompt(t)):
@@ -457,14 +467,12 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
             )
             set_state(s, want)
         if s["state"] == "corriendo" and not t.get("ended"):
-            s["last_reply"] = using_tool(t) or s["last_reply"]
+            s["last_reply"] = turn_say(t) or s["last_reply"]
     else:
         if p := turn_prompt(t):
             set_last_prompt(s, p)
-        if t.get("final"):
-            s["last_reply"] = short(t["final"], 600)
-        elif not t.get("ended"):
-            s["last_reply"] = using_tool(t) or s["last_reply"]
+        if t.get("final") or not t.get("ended"):
+            s["last_reply"] = turn_say(t) or s["last_reply"]
         if s["state"] != "muerta" and not s.get("needs"):
             set_state(s, "termino" if t.get("ended") else "corriendo")
     # error del turno (Codex: limite de uso, abortado; Claude: no aplica hoy) va aparte, en rojo

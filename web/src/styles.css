@@ -11,6 +11,8 @@ header > .dot { margin: 0 4px 0 -4px; }
 header button.icon { padding: 5px 8px; font-size: 15px; line-height: 1; border-color: transparent; background: transparent; }
 header button.icon:hover, header button.icon[aria-expanded="true"] { background: var(--card); border-color: var(--line); }
 header button.icon svg { display: block; }
+/* en tactil los iconos del encabezado tambien piden 44 px de lado (con el mouse alcanzan 24) */
+@media (pointer: coarse) { header button.icon { min-width: 44px; min-height: 44px; } }
 header button.icon.lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--dim); }
 header button.icon.lbl:hover { color: var(--fg); }
 header .menu { position: relative; }
@@ -129,7 +131,7 @@ details.fold > summary,
 .col h2:hover .n { background: var(--acc); color: #fff; }
 .col.collapsed .empty { display: none; }
 .col.collapsed.show .empty { display: block; }
-.col .vlabel { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); padding: 10px 0; display: flex; gap: 8px; align-items: center; }
+.col .vlabel { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); padding: 10px 0; display: flex; gap: 8px; align-items: center; }
 .col.te_necesita .vlabel { color: var(--need); } .col.muerta .vlabel { color: var(--dead); } .col.corriendo .vlabel { color: var(--run); }
 .col .vlabel .n { background: var(--card); border-radius: 10px; padding: 6px 1px; }
 .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 4px 6px 10px; display: flex; justify-content: space-between; }
@@ -149,7 +151,7 @@ details.fold > summary,
    "hace X" de la derecha no se encogen, asi la fecha siempre queda visible */
 .card .top > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .top .badge, .card .top .right { flex: 0 0 auto; overflow: visible; }
-.badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #fff; }
+.badge { padding: 1px 7px; border-radius: 10px; font-size: 12px; font-weight: 600; color: #fff; }
 .badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); }
 .card .repo { font-weight: 600; color: var(--fg); }
 .card .title { font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
