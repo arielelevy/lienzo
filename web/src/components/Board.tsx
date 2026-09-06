@@ -44,16 +44,23 @@ interface Props {
 
 export type Agent = Session["agent"];
 
+/** Columnas que el usuario colapso a mano teniendo tarjetas: por columna, los ids que tenia en ese
+ *  momento. Se respeta mientras la columna solo contenga esas tarjetas; una nueva la abre y borra la
+ *  entrada. (El formato viejo, booleanos, se ignora.) */
 const COLLAPSE_KEY = "lienzo.collapsed";
-type Collapsed = Partial<Record<ColKey, boolean>>;
-function loadCollapsed(): Collapsed {
+type Manual = Partial<Record<ColKey, string[]>>;
+function loadManual(): Manual {
   try {
     const raw = localStorage.getItem(COLLAPSE_KEY);
-    return raw ? (JSON.parse(raw) as Collapsed) : {};
+    const j = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const out: Manual = {};
+    for (const [k] of COLS) if (Array.isArray(j[k])) out[k] = (j[k] as unknown[]).filter((x): x is string => typeof x === "string");
+    return out;
   } catch {
     return {};
   }
 }
+const EMPTY_COLLAPSE_MS = 10_000;
 
 /** Subcolumnas de tarjetas disponibles en total: 4 en pantalla ancha, 2 por debajo de ~1100 px
  *  (en movil el CSS fuerza 1). */
@@ -111,12 +118,15 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   const [drag, setDrag] = useState<Drag | null>(null);
   // tarjeta bajo el mouse: Arrows resalta sus flechas y atenua las demas
   const [hover, setHover] = useState<string | null>(null);
-  // mousedown sobre el cuerpo de una tarjeta: es arrastre si se mueve mas de 8 px, si no es click
+  // El arrastre va por Pointer Events, asi funciona igual con mouse y con el dedo. Presion sobre el
+  // cuerpo de una tarjeta (solo mouse: con el dedo el cuerpo scrollea): es arrastre si se mueve mas
+  // de 8 px, si no es click. Desde el agarre ⇢ arrastra de una, con cualquier puntero (.grip lleva
+  // touch-action: none para que el scroll no se lo lleve).
   const pressRef = useRef<{ sid: string; x: number; y: number } | null>(null);
   const draggedRef = useRef(false);
 
   useEffect(() => {
-    const move = (e: MouseEvent) => {
+    const move = (e: PointerEvent) => {
       const pr = pressRef.current;
       if (!pr) return;
       if (Math.hypot(e.clientX - pr.x, e.clientY - pr.y) > 8) {
@@ -127,20 +137,37 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     };
     const up = () => {
       pressRef.current = null;
-      // el click (si lo hay) llega despues del mouseup, y la tarjeta lo demora 280 ms para
+      // el click (si lo hay) llega despues del pointerup, y la tarjeta lo demora 280 ms para
       // distinguirlo del doble click: la marca tiene que sobrevivir a esa demora
       setTimeout(() => {
         draggedRef.current = false;
       }, 400);
     };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
     return () => {
-      document.removeEventListener("mousemove", move);
-      document.removeEventListener("mouseup", up);
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const t = e.target as HTMLElement;
+    const sid = t.closest<HTMLElement>("[data-sid]")?.dataset.sid;
+    // una muerta, huerfana o sin consola no arrastra: no habria a donde escribir ni que programarle
+    if (!sid || !canReceive(sessions[sid])) return;
+    if (t.closest(".grip")) {
+      draggedRef.current = true;
+      startDragAt(sid, e.clientX, e.clientY);
+      return;
+    }
+    if (e.pointerType !== "mouse" || t.closest("button, a, input, textarea, .x, code")) return;
+    pressRef.current = { sid, x: e.clientX, y: e.clientY };
+  };
 
   // una pasada por render: las sesiones que pasan el filtro del header, agrupadas por columna.
   // En "Trabajo" van primero las que corren (por repo + inicio) y despues las terminadas, la mas
@@ -164,48 +191,82 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     return g;
   }, [sessions, query, agents]);
 
-  // columnas colapsadas a la tira vertical. Sin eleccion guardada solo las vacias arrancan
-  // colapsadas; el click en la tira expande, el click en el titulo colapsa, y la eleccion queda en
-  // localStorage. Mientras el filtro del header (texto o agentes) matchea tarjetas de una columna
-  // colapsada, esa columna se muestra abierta sin tocar la eleccion guardada.
-  const [collapsed, setCollapsed] = useState<Collapsed>(loadCollapsed);
+  // columnas colapsadas a la tira vertical. Regla: abierta si tiene tarjetas, colapsada si no, las
+  // tres por igual. Encima de eso, dos excepciones:
+  //  - `manual` (localStorage lienzo.collapsed): el usuario colapso a mano una columna con tarjetas.
+  //    Se guarda con los ids que tenia y se respeta mientras solo contenga esas; una tarjeta nueva la
+  //    vuelve a abrir y borra la eleccion.
+  //  - `openEmpty` (solo en memoria): una columna vacia que esta abierta (el usuario la abrio, o se
+  //    vacio estando abierta) se cierra sola a los 10 s.
+  // Mientras el filtro del header (texto o agentes) matchea tarjetas de una columna colapsada, esa
+  // columna se muestra abierta sin tocar nada de lo anterior.
+  const [manual, setManual] = useState<Manual>(loadManual);
+  const [openEmpty, setOpenEmpty] = useState<Partial<Record<ColKey, boolean>>>({});
+  const emptyTimers = useRef<Partial<Record<ColKey, number>>>({});
   const filtering = query.trim() !== "" || Object.values(agents).some((v) => !v);
-  const setCol = (k: ColKey, v: boolean) => {
-    setCollapsed((prev) => {
-      const next = { ...prev, [k]: v };
-      try {
-        localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
-      } catch {
-        /* sin storage, no importa */
-      }
-      return next;
-    });
-  };
-  // colapso automatico: una columna que queda vacia se cierra sola a los 3 s (si le llega una
-  // tarjeta antes, el timer se cancela); si estaba cerrada por esto y le llega una, se abre sola.
-  // Lo que el usuario eligio a mano (collapsed, en localStorage) manda por encima.
-  const [autoCollapsed, setAutoCollapsed] = useState<Collapsed>(() => Object.fromEntries(COLS.map(([k]) => [k, byState[k].length === 0])));
-  const autoTimers = useRef<Partial<Record<ColKey, number>>>({});
-  useEffect(() => {
-    for (const [k] of COLS) {
-      const n = byState[k].length;
-      if (n > 0) {
-        window.clearTimeout(autoTimers.current[k]);
-        autoTimers.current[k] = undefined;
-        if (autoCollapsed[k]) setAutoCollapsed((a) => ({ ...a, [k]: false }));
-      } else if (!autoCollapsed[k] && autoTimers.current[k] === undefined) {
-        autoTimers.current[k] = window.setTimeout(() => {
-          autoTimers.current[k] = undefined;
-          setAutoCollapsed((a) => ({ ...a, [k]: true }));
-        }, 3000);
-      }
+  const saveManual = (next: Manual) => {
+    setManual(next);
+    try {
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+    } catch {
+      /* sin storage, no importa */
     }
-  }, [byState, autoCollapsed]);
-  useEffect(() => () => Object.values(autoTimers.current).forEach((t) => window.clearTimeout(t)), []);
+  };
+  const stopEmptyTimer = (k: ColKey) => {
+    window.clearTimeout(emptyTimers.current[k]);
+    emptyTimers.current[k] = undefined;
+  };
+  // columna vacia abierta: 10 s y se cierra sola
+  const holdOpenEmpty = (k: ColKey) => {
+    stopEmptyTimer(k);
+    setOpenEmpty((o) => ({ ...o, [k]: true }));
+    emptyTimers.current[k] = window.setTimeout(() => {
+      emptyTimers.current[k] = undefined;
+      setOpenEmpty((o) => ({ ...o, [k]: false }));
+    }, EMPTY_COLLAPSE_MS);
+  };
+  const setCol = (k: ColKey, collapse: boolean) => {
+    const ids = byState[k].map((s) => s.session_id);
+    if (collapse) {
+      stopEmptyTimer(k);
+      setOpenEmpty((o) => ({ ...o, [k]: false }));
+      if (ids.length) saveManual({ ...manual, [k]: ids });
+    } else if (ids.length) {
+      const { [k]: _drop, ...rest } = manual;
+      saveManual(rest);
+    } else {
+      holdOpenEmpty(k);
+    }
+  };
+  // con cada cambio de tarjetas: una nueva en una columna colapsada a mano la abre (y borra la
+  // eleccion); una columna abierta que se vacia arranca sus 10 s; una que recibe tarjetas deja de
+  // depender del timer
+  const prevCount = useRef<Record<ColKey, number>>(Object.fromEntries(COLS.map(([k]) => [k, byState[k].length])) as Record<ColKey, number>);
+  useEffect(() => {
+    let next = manual;
+    let changed = false;
+    for (const [k] of COLS) {
+      const ids = byState[k].map((s) => s.session_id);
+      const kept = next[k];
+      if (kept && ids.some((id) => !kept.includes(id))) {
+        const { [k]: _drop, ...rest } = next;
+        next = rest;
+        changed = true;
+      }
+      const n = ids.length;
+      if (n === 0 && prevCount.current[k] > 0) holdOpenEmpty(k);
+      if (n > 0 && emptyTimers.current[k] !== undefined) stopEmptyTimer(k);
+      prevCount.current[k] = n;
+    }
+    if (changed) saveManual(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byState]);
+  useEffect(() => () => Object.values(emptyTimers.current).forEach((t) => window.clearTimeout(t)), []);
 
   const isCollapsed = (k: ColKey, n: number) => {
     if (filtering && n > 0) return false;
-    return collapsed[k] ?? !!autoCollapsed[k];
+    if (n === 0) return !openEmpty[k];
+    return !!manual[k];
   };
 
   // aprovechar el ancho: hasta 4 subcolumnas de tarjetas en total (2 en pantallas angostas),
@@ -218,11 +279,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       .map((k) => ({ key: k, n: byState[k].length }));
     return splitLanes(open, laneBudget);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collapsed, autoCollapsed, byState, filtering, laneBudget]);
+  }, [manual, openEmpty, byState, filtering, laneBudget]);
 
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
-  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, collapsed, autoCollapsed, query, agents, laneBudget]);
+  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, manual, openEmpty, query, agents, laneBudget]);
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
   // tarjeta se abre el reenvio con ese destino
@@ -237,14 +298,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     const y1 = r ? (r.top + r.bottom) / 2 - b.top : cy - b.top;
     setDrag({ from: sid, x1, y1, x2: cx - b.left, y2: cy - b.top, over: null });
   };
-  const startDrag = (sid: string, e: React.MouseEvent) => {
-    draggedRef.current = true;
-    startDragAt(sid, e.clientX, e.clientY);
-  };
-
   useEffect(() => {
     if (!drag) return;
-    const move = (e: MouseEvent) => {
+    const move = (e: PointerEvent) => {
       const board = boardRef.current;
       if (!board) return;
       const b = board.getBoundingClientRect();
@@ -255,7 +311,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       const over = cand && canReceive(sessions[cand]) ? cand : null;
       setDrag((d) => (d ? { ...d, x2: e.clientX - b.left, y2: e.clientY - b.top, over } : d));
     };
-    const up = (e: MouseEvent) => {
+    const up = (e: PointerEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]");
       const to = el?.dataset.sid;
       setDrag(null);
@@ -267,12 +323,15 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") setDrag(null); // soltar en cualquier lado o Esc cancela
     };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
+    const cancel = () => setDrag(null); // el navegador se quedo el puntero (scroll, gesto del sistema)
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", cancel);
     document.addEventListener("keydown", key);
     return () => {
-      document.removeEventListener("mousemove", move);
-      document.removeEventListener("mouseup", up);
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", cancel);
       document.removeEventListener("keydown", key);
     };
   }, [drag?.from, onConnect]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -289,6 +348,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       <div
         className={`board ${drag ? "dragging" : ""}`}
         ref={boardRef}
+        onPointerDown={onPointerDown}
         onMouseOver={(e) => {
           const sid = (e.target as HTMLElement).closest<HTMLElement>("[data-sid]")?.dataset.sid ?? null;
           setHover((h) => (h === sid ? h : sid));
@@ -370,14 +430,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         }}
                         onDecide={onDecide}
                         onDrop={() => onDrop(s.session_id)}
-                        onGrip={(e) => startDrag(s.session_id, e)}
-                        onPress={
-                          canReceive(s)
-                            ? (e) => {
-                                pressRef.current = { sid: s.session_id, x: e.clientX, y: e.clientY };
-                              }
-                            : undefined
-                        }
+                        // el agarre y la presion sobre el cuerpo se manejan con Pointer Events en el
+                        // tablero (onPointerDown); onGrip solo hace que la tarjeta dibuje el agarre
+                        onGrip={() => undefined}
                       />
                     </div>
                   ))}

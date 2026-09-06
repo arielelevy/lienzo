@@ -28,9 +28,9 @@ import transcripts  # noqa: E402
 from rules import connections_of, purge_stale_at_rules, rules_loop  # noqa: E402
 from sessions import (add_link, answer_pending, clean_attachments, consume_events, drop_session, liveness_loop,  # noqa: E402
                       load_sessions, public_pending, read_screen, save_attachment, scan_pending, screen_loop,
-                      send_to_session, set_title, sweep_once, touch)
+                      send_to_session, set_coordinator, set_title, sweep_once, touch)
 from state import (ADJUNTOS, ANSWERS, DIST, EVENTS, MIME, PENDING, SESSIONS, STALE_SESSION_H, UI_CONFIG_KEYS, clients,  # noqa: E402
-                   links, lock, log, now, pending, public_config, rules, sessions, set_config_key, short)
+                   is_disconnect, links, lock, log, now, pending, public_config, rules, sessions, set_config_key, short)
 
 CLOUDFLARED = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "cloudflared", "cloudflared.exe")
 remote_url: str | None = None
@@ -78,6 +78,89 @@ def at_fields(d: dict, current: dict | None = None) -> tuple[dict | None, str | 
         skip_busy = bool(every)
     return {"every_s": every, "max_fires": int(max_fires or 1), "skip_busy": bool(skip_busy),
             "repeat": bool(every)}, None
+
+
+AT_CLASH_S = 120   # dos programadas a la misma consola a menos de 2 min se pisan (misma tolerancia que ensure_continue_rule)
+
+
+def create_rule(d: dict) -> tuple[int, dict]:
+    """POST /rules: valida y crea una regla on_stop o at. Devuelve (codigo, cuerpo)."""
+    kind = d.get("kind")
+    if kind not in ("on_stop", "at"):
+        return 400, {"error": "kind debe ser on_stop o at"}
+    if d.get("to") not in sessions:
+        return 404, {"error": "sesion destino desconocida"}
+    if kind == "on_stop" and d.get("from") not in sessions:
+        return 404, {"error": "sesion origen desconocida"}
+    text = str(d.get("text") or "")
+    if kind == "on_stop":
+        with lock:
+            inverse = next((r for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop"
+                            and r.get("from") == d["to"] and r.get("to") == d["from"]), None)
+            dup = next((r for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop"
+                        and r.get("to") == d["to"] and (r.get("from") or None) == (d.get("from") or None)
+                        and (r.get("text") or "").strip() == text.strip()), None)
+        if inverse:
+            return 409, {"error": f"crearía un bucle {d['from'][:8]}↔{d['to'][:8]}: "
+                                  f"ya existe la regla {inverse['id']} en sentido inverso"}
+        if dup:
+            return 409, {"error": "ya existe esa conexión", "rule_id": dup["id"]}
+        rule = {"id": secrets.token_hex(6), "kind": kind, "from": d.get("from") or None, "to": d["to"],
+                "text": text, "at": None, "repeat": bool(d.get("repeat")),
+                "max_fires": max(1, min(int(d.get("max_fires") or 1), 50)),
+                "fired": 0, "enabled": True, "created": now()}
+        rules.add(rule, cap=500)
+        log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]}")
+        return 200, rule
+    try:
+        # siempre en hora local: naive se asume local, aware (la UI manda UTC con Z) se convierte,
+        # asi todas las reglas guardan `at` con el mismo offset
+        at = dt.datetime.fromisoformat(str(d.get("at"))).astimezone()
+    except ValueError:
+        return 400, {"error": "at debe ser una fecha ISO"}
+    extra, err = at_fields(d)
+    if err:
+        return 400, {"error": err}
+
+    def clashes(r: dict) -> bool:
+        if not r.get("enabled") or r.get("kind") != "at" or r.get("to") != d["to"]:
+            return False
+        try:
+            return abs((dt.datetime.fromisoformat(str(r.get("at"))) - at).total_seconds()) <= AT_CLASH_S
+        except ValueError:
+            return False
+
+    # dos programadas a la misma consola en el mismo minuto se inyectan juntas ("Continuar" y
+    # "continua" a las 01:01): choca cualquier `at` habilitada a +-2 min, periodica o no, sea cual
+    # sea el texto; con "replace": true la nueva reemplaza a la existente
+    with lock:
+        clash = next((r for r in rules.items if clashes(r)), None)
+    if clash:
+        if d.get("replace") is not True:
+            hhmm = dt.datetime.fromisoformat(clash["at"]).astimezone().strftime("%H:%M")
+            return 409, {"error": f"ya hay una programada a las {hhmm} para esa sesión", "rule_id": clash["id"],
+                         "at": clash["at"], "text": clash.get("text") or "", "replace": True}
+        rules.remove(lambda r: r["id"] == clash["id"])
+        log(f"regla {clash['id']} ({clash.get('at')} {short(clash.get('text') or '', 40)!r}) reemplazada por una nueva a la misma hora")
+    rule = {"id": secrets.token_hex(6), "kind": kind, "from": d.get("from") or None, "to": d["to"],
+            "text": text, "at": at.isoformat(timespec="seconds"), "fired": 0, "enabled": True, "created": now()}
+    rule.update(extra)   # every_s, max_fires, skip_busy, repeat=bool(every_s)
+    rules.add(rule, cap=500)
+    cada = f" cada {rule['every_s']} s x{rule['max_fires']}" if rule.get("every_s") else ""
+    log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]} {rule['at']}{cada}")
+    return 200, rule
+
+
+class QuietServer(ThreadingHTTPServer):
+    """socketserver imprime un traceback entero en stderr cada vez que el navegador cierra una
+    conexion keep-alive mientras se lee la proxima peticion (WinError 10053). Eso no es un error
+    nuestro: se calla. Cualquier otra excepcion va al log propio, en una linea en consola."""
+
+    def handle_error(self, request, client_address):
+        e = sys.exc_info()[1]
+        if e is not None and is_disconnect(e):
+            return
+        log(traceback.format_exc())
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -228,6 +311,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n))
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:  # noqa: BLE001
+            if is_disconnect(e):
+                return   # el navegador cerro la conexion a mitad de la respuesta: no hay a quien contestar
             log(traceback.format_exc())
             return self._json(500, {"error": str(e)})
 
@@ -274,65 +359,8 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=sweep_once, daemon=True).start()
                 return self._json(202, {"ok": True})
             if parts == ["rules"]:
-                d = self._json_body()
-                kind = d.get("kind")
-                if kind not in ("on_stop", "at"):
-                    return self._json(400, {"error": "kind debe ser on_stop o at"})
-                if d.get("to") not in sessions:
-                    return self._json(404, {"error": "sesion destino desconocida"})
-                if kind == "on_stop" and d.get("from") not in sessions:
-                    return self._json(404, {"error": "sesion origen desconocida"})
-                if kind == "on_stop":
-                    with lock:
-                        inverse = next((r for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop"
-                                        and r.get("from") == d["to"] and r.get("to") == d["from"]), None)
-                    if inverse:
-                        return self._json(409, {"error": f"crearía un bucle {d['from'][:8]}↔{d['to'][:8]}: "
-                                                         f"ya existe la regla {inverse['id']} en sentido inverso"})
-                at = None
-                if kind == "at":
-                    try:
-                        at = dt.datetime.fromisoformat(str(d.get("at")))
-                        # siempre en hora local: naive se asume local, aware (la UI manda UTC con Z)
-                        # se convierte, asi todas las reglas guardan `at` con el mismo offset
-                        at = at.astimezone()
-                    except ValueError:
-                        return self._json(400, {"error": "at debe ser una fecha ISO"})
-                text = str(d.get("text") or "")
-                extra = {}
-                if kind == "at":
-                    extra, err = at_fields(d)
-                    if err:
-                        return self._json(400, {"error": err})
-
-                def same_rule(r: dict) -> bool:
-                    if not r.get("enabled") or r.get("kind") != kind or r.get("to") != d["to"]:
-                        return False
-                    if (r.get("from") or None) != (d.get("from") or None) or (r.get("text") or "").strip() != text.strip():
-                        return False
-                    if kind != "at":
-                        return True
-                    if (r.get("every_s") or None) != (extra.get("every_s") or None):
-                        return False   # misma hora pero una es periodica y la otra no (o distinto periodo)
-                    try:
-                        return dt.datetime.fromisoformat(str(r.get("at"))) == at
-                    except ValueError:
-                        return False
-
-                with lock:
-                    dup = next((r for r in rules.items if same_rule(r)), None)
-                if dup:
-                    return self._json(409, {"error": "ya existe esa conexión", "rule_id": dup["id"]})
-                rule = {"id": secrets.token_hex(6), "kind": kind, "from": d.get("from") or None, "to": d["to"],
-                        "text": text, "at": at.isoformat(timespec="seconds") if at else None,
-                        "repeat": bool(d.get("repeat")), "max_fires": max(1, min(int(d.get("max_fires") or 1), 50)),
-                        "fired": 0, "enabled": True, "created": now()}
-                if kind == "at":
-                    rule.update(extra)   # every_s, max_fires, skip_busy, repeat=bool(every_s)
-                rules.add(rule, cap=500)
-                cada = f" cada {rule['every_s']} s x{rule['max_fires']}" if rule.get("every_s") else ""
-                log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]} {rule.get('at') or ''}{cada}")
-                return self._json(200, rule)
+                code, res = create_rule(self._json_body())
+                return self._json(code, res)
             if len(parts) == 2 and parts[0] == "pending":
                 d = self._json_body()
                 if d.get("decision") not in ("allow", "deny"):
@@ -368,6 +396,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, {"path": path, "bytes": len(data)})
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:  # noqa: BLE001
+            if is_disconnect(e):
+                return   # el navegador cerro la conexion a mitad de la respuesta: no hay a quien contestar
             log(traceback.format_exc())
             return self._json(500, {"error": str(e)})
 
@@ -404,6 +434,18 @@ class Handler(BaseHTTPRequestHandler):
                     touch(s)
                 log(f"titulo de {parts[1][:8]} -> {s['title']!r} ({s.get('title_source')})")
                 return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
+            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "coordinator":
+                d = self._json_body()
+                if not isinstance(d.get("on"), bool):
+                    return self._json(400, {"error": "on debe ser true o false"})
+                with lock:
+                    s = sessions.get(parts[1])
+                if s is None:
+                    return self._json(404, {"error": "sesion desconocida"})
+                changed = set_coordinator(s, d["on"])
+                log(f"coordinadora de {s.get('repo')}: {parts[1][:8]} -> {d['on']} "
+                    f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})")
+                return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
             if len(parts) == 2 and parts[0] == "rules":
                 # editar una conexion pendiente (doble click en la flecha): texto, hora, repeticion.
                 # Una programada que ya disparo se puede reprogramar: vuelve a quedar vigente.
@@ -452,6 +494,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, r)
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:  # noqa: BLE001
+            if is_disconnect(e):
+                return   # el navegador cerro la conexion a mitad de la respuesta: no hay a quien contestar
             log(traceback.format_exc())
             return self._json(500, {"error": str(e)})
 
@@ -576,7 +620,7 @@ def main() -> int:
     threading.Thread(target=rules_loop, daemon=True).start()
     if a.remote:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()
-    srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    srv = QuietServer(("127.0.0.1", a.port), Handler)
     srv.daemon_threads = True
     with lock:
         n_alive = sum(1 for s in sessions.values() if s.get("alive"))

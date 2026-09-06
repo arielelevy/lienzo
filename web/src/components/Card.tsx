@@ -75,6 +75,17 @@ export function clashingAt(rules: Rule[], sid: string): Set<string> {
   return out;
 }
 
+/** "22:19" si es hoy; "vie 11/9 22:19" si es otro dia: un "Continuar" programado para dentro de
+ *  cinco dias no puede leerse como si fuera esta noche. */
+export function whenLabel(iso: string): string {
+  const d = new Date(iso);
+  const t = hhmm(d);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return t;
+  const wd = d.toLocaleDateString("es-AR", { weekday: "short" }).replace(".", "");
+  return `${wd} ${d.getDate()}/${d.getMonth() + 1} ${t}`;
+}
+
 /** Reglas con la misma etiqueta agrupadas (×N), como maximo `max` grupos. `clash` marca los grupos
  *  con alguna regla que comparte minuto con otra de la tarjeta. */
 function groupRules(rules: Rule[], sid: string, sessions: Record<string, Session>, max = 3) {
@@ -100,17 +111,36 @@ export function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session
     let head: string;
     let tail = "";
     if (r.every_s) {
-      const next = r.at && new Date(r.at).getTime() > now ? ` · próx. ${hhmm(new Date(r.at))}` : "";
+      const next = r.at && new Date(r.at).getTime() > now ? ` · próx. ${whenLabel(r.at)}` : "";
       head = `↻ ${periodLabel(r.every_s)}${next}`;
       tail = ` ${periodicCount(r.fired, r.max_fires, null)}`;
     } else {
-      head = `⏰ ${r.at ? hhmm(new Date(r.at)) : "?"}`;
+      head = `⏰ ${r.at ? whenLabel(r.at) : "?"}`;
     }
     if (r.to === sid) return r.from && r.from !== sid ? `${head} → "${r.text}"${tail} (desde ${other(r.from)})` : `${head} → "${r.text}"${tail}`;
     return `${head} → "${r.text}"${tail} a ${other(r.to)}`;
   }
   const count = r.repeat ? ` (${r.fired}/${r.max_fires})` : "";
   return r.from === sid ? `⏹ al terminar → ${other(r.to)}${count}` : `⏹ recibe de ${other(r.from)} al terminar${count}`;
+}
+
+/** Markdown a texto plano legible para la tarjeta (que no renderiza markdown, por peso y altura):
+ *  saca `**`, `__`, `` ` `` y cercos de codigo, `#` de encabezados, marcadores de lista al inicio
+ *  de linea (`- `, `* `, `1. `), citas `>`, reglas `---`, deja el texto de los links
+ *  `[texto](url)`, y colapsa lineas en blanco repetidas. La vista Conversacion del panel no la
+ *  usa: ahi si se renderiza con react-markdown. */
+export function plainText(md: string): string {
+  let t = (md || "").replace(/\r\n?/g, "\n");
+  t = t.replace(/^\s*```[^\n]*$/gm, ""); // cercos de codigo (la linea entera)
+  t = t.replace(/^\s*[-*_]{3,}\s*$/gm, ""); // reglas horizontales
+  t = t.replace(/^#{1,6}\s+/gm, ""); // encabezados
+  t = t.replace(/^(\s*)(?:[-*+]|\d+[.)])\s+/gm, "$1"); // marcadores de lista, con su sangria
+  t = t.replace(/^\s*>\s?/gm, ""); // citas
+  t = t.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1"); // links e imagenes: queda el texto
+  t = t.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2"); // negrita
+  t = t.replace(/`([^`\n]*)`/g, "$1"); // codigo inline
+  t = t.replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n"); // lineas en blanco repetidas
+  return t.trim();
 }
 
 const PROMPT_CHARS = 90;
@@ -200,7 +230,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   // remitente como "repo · título" (varias sesiones comparten repo); título largo cortado a 24
   const recentFrom = recent ? shortName(sessions[recent.from]) : "";
 
-  const { head, cut } = foldPrompt(s.last_prompt);
+  // la tarjeta muestra texto plano: sin asteriscos ni almohadillas del markdown de la respuesta
+  const promptText = plainText(s.last_prompt);
+  const replyText = plainText(s.last_reply);
+  const { head, cut } = foldPrompt(promptText);
   const dupPrompt = titleIsPrompt(s);
   const err = foldSentence(s.last_error || "");
   const working = WORKING_RE.test(s.last_reply || "");
@@ -242,6 +275,23 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       toast(`Enviado (${r.chars} caracteres)`);
     } catch (e) {
       toast(`No se pudo enviar: ${(e as Error).message}`, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // estrella de coordinadora: a lo sumo una por repo; recibe los avisos "cuando termine" del
+  // SendBox y el "avisame" del parser. PUT /sessions/<sid>/coordinator; un server anterior a la
+  // ruta contesta 404 y la estrella solo avisa
+  const toggleCoordinator = async () => {
+    const on = !s.coordinator;
+    setBusy(true);
+    try {
+      await api.put(`/sessions/${s.session_id}/coordinator`, { on });
+      toast(on ? `${shortName(s)} es la coordinadora de ${s.repo}` : `${shortName(s)} ya no es la coordinadora`);
+    } catch (e) {
+      const m = (e as Error).message;
+      toast(m === "404" || m === "ruta desconocida" ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`, true);
     } finally {
       setBusy(false);
     }
@@ -332,6 +382,23 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               ✓
             </span>
           ) : null}
+          {s.agent === "claude" && canWrite && (
+            <button
+              type="button"
+              className={`star ${s.coordinator ? "on" : ""}`}
+              disabled={busy}
+              title={s.coordinator ? "coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame' (click para quitarle el rol)" : "marcar como coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame'"}
+              aria-label={s.coordinator ? "coordinadora del repo" : "marcar como coordinadora"}
+              aria-pressed={!!s.coordinator}
+              onClick={(e) => {
+                e.stopPropagation();
+                window.clearTimeout(clickTimer.current);
+                toggleCoordinator();
+              }}
+            >
+              {s.coordinator ? "★" : "☆"}
+            </button>
+          )}
           {ago(s.state_since)}
           {onGrip && canWrite && (
             <button
@@ -395,7 +462,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       {/* el pedido no se repite si el titulo ya es su primera linea; si hay mas texto queda el "…más" */}
       {s.title && s.last_prompt && (!dupPrompt || cut) && (
         <div className={`prompt ${promptOpen ? "open" : ""}`}>
-          {(!dupPrompt || promptOpen) && <span className="ptext">› {promptOpen ? s.last_prompt : head}</span>}
+          {(!dupPrompt || promptOpen) && <span className="ptext">› {promptOpen ? promptText : head}</span>}
           {cut && (
             <button
               type="button"
@@ -412,7 +479,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       )}
       {recent && (
-        <div className="chip recent" title={`informe de ${recentFrom}: ${recent.text}`}>
+        <div className="chip recent" title={`informe de ${recentFrom}: ${plainText(recent.text)}`}>
           ✓ {recentFrom} · hace {ago(recent.ts)}
         </div>
       )}
@@ -467,7 +534,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       ) : free ? null : (
         <div className="replyrow">
-          <div className="reply">{s.last_reply}</div>
+          <div className="reply">{replyText}</div>
           {s.last_reply && (
             <button
               type="button"

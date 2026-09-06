@@ -10,7 +10,7 @@ import type { Session } from "./types";
  *   todos los días a las 9 continuá         -> at periodica: primera a las 9, cada 24 h
  *   en 10 min cada 30 min seguí hasta las 18:00 -> primera en 10 min, cada 30, tantas como entren hasta las 18
  *   cuando termine mandale la respuesta a MAPO   -> on_stop, destino MAPO
- *   cuando termine avisame                   -> on_stop, destino la coordinadora ("me": lo resuelve Forward)
+ *   cuando termine avisame                   -> on_stop, destino la coordinadora (coordinatorOf)
  *   cada vez que termine pasale a Teorema, hasta 5 veces -> on_stop repeat
  *   ahora a Teorema                          -> now
  */
@@ -33,6 +33,22 @@ export type Parsed =
   | { kind: "none"; summary: string };
 
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+/** La coordinadora de un repo: la sesion marcada `coordinator` (estrella en la tarjeta) del mismo
+ *  repo; si no hay ninguna, la primera sesion de Claude del mismo repo. `exclude` es la sesion que
+ *  pregunta (no se coordina a si misma). Lo usan el checkbox "avisarme" del SendBox, el `me` de
+ *  Conectar y el "avisame" del parser: una sola definicion. */
+export function coordinatorOf(repo: string, sessions: Session[], exclude?: string): Session | undefined {
+  const same = sessions.filter((o) => o.repo === repo && o.session_id !== exclude);
+  return same.find((o) => o.coordinator) ?? same.find((o) => o.agent === "claude");
+}
+
+/** Ajustes del resumen: `current` es como se llama el destino que ya tiene el dialogo (para las frases
+ *  que no nombran destino), `name` como se muestra una sesion (Forward pasa shortName; por defecto el repo). */
+export interface ParseOpts {
+  current?: string;
+  name?: (s: Session) => string;
+}
 
 /** HH:MM en hora local, con ceros a la izquierda. */
 export const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -76,9 +92,8 @@ function findTarget(phrase: string, from: Session, others: Session[]): { to: Ses
     const hit = others.find((o) => norm(o.repo) === word) || others.find((o) => norm(o.repo).includes(word) || norm(o.title || "").includes(word));
     if (hit) return { to: hit, toSelf: false, toMe: false, rest: phrase.replace(new RegExp(`(^|\\s)(?:a|para|hacia|pasale a|mandale a|decile a)\\s+${word}`, "i"), " ") };
   }
-  // "avisame" / "decime": la coordinadora (la primera sesion de Claude del mismo repo que no sea el
-  // origen). Aca no se conoce: Forward la resuelve con el mismo `me` del checkbox "avisarme"
-  if (ME_RE.test(norm(phrase))) return { to: null, toSelf: false, toMe: true, rest: phrase.replace(ME_RE, " ") };
+  // "avisame" / "decime": la coordinadora del repo del origen (coordinatorOf); si no hay, queda sin destino
+  if (ME_RE.test(norm(phrase))) return { to: coordinatorOf(from.repo, others, from.session_id) ?? null, toSelf: false, toMe: true, rest: phrase.replace(ME_RE, " ") };
   return { to: null, toSelf: false, toMe: false, rest: phrase };
 }
 
@@ -147,19 +162,19 @@ function cleanText(rest: string): string {
     .trim();
 }
 
-export function parseConnection(phrase: string, from: Session, others: Session[]): Parsed {
+export function parseConnection(phrase: string, from: Session, others: Session[], opts: ParseOpts = {}): Parsed {
   const raw = phrase.trim();
   if (!raw) return { kind: "none", summary: "" };
   const n = norm(raw);
   const target = findTarget(raw, from, others);
-  const name = (s: Session | null) => (s ? s.repo : null);
+  const name = (s: Session | null) => (s ? (opts.name ?? ((x: Session) => x.repo))(s) : null);
 
   if (/\b(cuando|al|cada vez que)\b.*\b(termin|acab|cierr)/.test(n) || /\b(al terminar|al acabar)\b/.test(n)) {
     const repeat = /\bcada vez\b|\bsiempre\b/.test(n);
     const mm = n.match(/\bhasta\s+(\d+)\s*(veces)?/);
     const maxFires = mm ? Math.min(50, Math.max(1, Number(mm[1]))) : repeat ? 5 : 1;
     const to = target.to && !target.toSelf ? target.to : null;
-    const dest = to ? name(to) : target.toMe ? "la coordinadora" : null;
+    const dest = to ? name(to) : target.toMe ? "la coordinadora (no hay ninguna viva)" : null;
     return {
       kind: "on_stop", to, toMe: target.toMe, repeat, maxFires,
       summary: dest
@@ -190,8 +205,16 @@ export function parseConnection(phrase: string, from: Session, others: Session[]
       else if (lim?.untilH !== undefined) maxFires = firesUntil(at, every, lim.untilH, lim.untilM ?? 0);
       else maxFires = 5;
     }
-    // sin destino explicito, el dialogo conserva el que ya tenia (la tarjeta donde se solto)
-    const dest = target.toSelf ? "a esta sesión" : target.to ? `a ${name(target.to)}` : target.toMe ? "a la coordinadora" : "al destino elegido";
+    // sin destino explicito, el dialogo conserva el que ya tenia (la tarjeta donde se solto): opts.current
+    const dest = target.toSelf
+      ? "a esta sesión"
+      : target.to
+        ? `a ${name(target.to)}`
+        : target.toMe
+          ? "a la coordinadora (no hay ninguna viva)"
+          : opts.current
+            ? `a ${opts.current}`
+            : "al destino elegido";
     const summary = every
       ? `Cada ${fmtEvery(every)} desde las ${hhmm(at)} → "${text}" ${dest} (hasta ${maxFires} ${maxFires === 1 ? "vez" : "veces"})`
       : `A las ${hhmm(at)} → "${text}" ${dest}`;
@@ -200,7 +223,7 @@ export function parseConnection(phrase: string, from: Session, others: Session[]
 
   if (/\b(ahora|ya)\b/.test(n) || target.to || target.toMe) {
     const to = target.to && !target.toSelf ? target.to : null;
-    const dest = to ? name(to) : target.toMe ? "la coordinadora" : null;
+    const dest = to ? name(to) : target.toMe ? "la coordinadora (no hay ninguna viva)" : null;
     return { kind: "now", to, toMe: target.toMe, summary: dest ? `Ahora → última respuesta de ${from.repo} a ${dest}` : "¿A qué sesión? Agregá “a <nombre>”" };
   }
   return {

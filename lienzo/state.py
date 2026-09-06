@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import queue
 import sys
 import threading
@@ -54,14 +55,82 @@ def now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
+# --- log --------------------------------------------------------------------------------
+# Una linea por hecho: `HH:MM:SS  etiqueta  mensaje`. La etiqueta sale del propio mensaje (no hay
+# que pasarla en cada llamada), los ids de sesion se muestran como `repo/1a2b3c4d`, y un traceback
+# va entero al archivo pero en consola queda en una linea con la excepcion. El archivo lleva la
+# fecha completa para poder grep-ear por dia; la consola solo la hora, con una linea separadora
+# cuando cambia el dia. Colores solo si stdout es una terminal.
+_TAGS = (("Traceback", "error"), ("lienzo-server", "server"), ("send ", "envio"), ("regla", "regla"),
+         ("tunel", "tunel"), ("cloudflared", "tunel"), ("permiso", "permiso"), ("pending", "permiso"),
+         ("evento", "evento"), ("barrido", "barrido"), ("purgad", "limpieza"), ("tarjeta", "sesion"),
+         ("titulo", "sesion"), ("config", "config"), ("login", "acceso"), ("bloqueado", "acceso"))
+_COLORS = {"error": "\x1b[31m", "envio": "\x1b[36m", "regla": "\x1b[35m", "server": "\x1b[32m",
+           "sesion": "\x1b[34m", "permiso": "\x1b[33m", "tunel": "\x1b[32m"}
+_SID_RE = re.compile(r"(?<![0-9a-f/])([0-9a-f]{8})(?![0-9a-f])")
+_last_day = [""]
+_tty = [None]
+
+
+def _tag(msg: str) -> str:
+    if _SID_RE.match(msg) and msg[8:9] == ":":
+        return "sesion"
+    low = msg.lower()
+    for needle, tag in _TAGS:
+        if needle.lower() in low:
+            return tag
+    return "info"
+
+
+def _with_names(msg: str) -> str:
+    """`5c8f1c91` -> `lienzo/5c8f1c91` cuando ese prefijo es una sesion conocida."""
+    def sub(m: re.Match) -> str:
+        sid = m.group(1)
+        for full, s in list(sessions.items()):
+            if full.startswith(sid):
+                return f"{s.get('repo') or '?'}/{sid}"
+        return sid
+    try:
+        return _SID_RE.sub(sub, msg)
+    except Exception:  # noqa: BLE001
+        return msg
+
+
 def log(msg: str) -> None:
-    line = f"{now()} {msg}"
-    print(line, flush=True)
+    t = dt.datetime.now().astimezone()
+    msg = _with_names(str(msg).rstrip())
+    tag = _tag(msg)
+    is_tb = msg.lstrip().startswith("Traceback") or "\nTraceback" in msg
+    # archivo: fecha completa, mensaje entero (con el traceback si lo hay)
     try:
         with open(LOG, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+            f.write(f"{t.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}  {tag:<8} {msg}\n")
     except OSError:
         pass
+    # consola: hora corta, separador de dia, traceback resumido a su ultima linea
+    if _tty[0] is None:
+        _tty[0] = bool(getattr(sys.stdout, "isatty", lambda: False)())
+    if is_tb:
+        lines = [l for l in msg.splitlines() if l.strip()]
+        head = next((l for l in lines if not l.startswith("Traceback") and not l.startswith(" ")), "")
+        msg = f"{lines[-1].strip()}" + (f"  ({head.strip()})" if head and head.strip() != lines[-1].strip() else "") + "  · detalle en lienzo.log"
+    day = t.strftime("%Y-%m-%d")
+    if day != _last_day[0]:
+        _last_day[0] = day
+        print(f"── {day} ──", flush=True)
+    if _tty[0]:
+        c = _COLORS.get(tag, "\x1b[90m")
+        print(f"\x1b[90m{t.strftime('%H:%M:%S')}\x1b[0m  {c}{tag:<8}\x1b[0m {msg}", flush=True)
+    else:
+        print(f"{t.strftime('%H:%M:%S')}  {tag:<8} {msg}", flush=True)
+
+
+def is_disconnect(e: BaseException) -> bool:
+    """El navegador cerro la conexion (cambio de pestaña, recarga, SSE que se corta): no es un
+    error nuestro y no merece traceback. WinError 10053/10054 son las variantes de Windows."""
+    if isinstance(e, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+        return True
+    return isinstance(e, OSError) and getattr(e, "winerror", None) in (10053, 10054)
 
 
 def atomic_write(path: str, text: str) -> None:

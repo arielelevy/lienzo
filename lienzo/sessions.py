@@ -34,32 +34,70 @@ on_limit_notice = lambda s: None        # noqa: E731
 ATTACH_WRAPPER = "Leé el archivo adjunto y respondé:"
 
 
-def unwrap_attachment(prompt: str) -> str:
-    """Un texto largo viaja como 'Leé el archivo adjunto y respondé: Adjunto: <ruta>'. En la
-    tarjeta se muestra el contenido del adjunto, no el envoltorio."""
+def attachment_path(prompt: str) -> str | None:
+    """Ruta del .md que viaja en 'Leé el archivo adjunto y respondé: Adjunto: <ruta>', si existe."""
     p = (prompt or "").strip()
     if not p.startswith(ATTACH_WRAPPER):
-        return prompt
+        return None
     for part in p.split("Adjunto: ")[1:]:
         path = part.strip().split(" Adjunto: ")[0].strip()
         if path.lower().endswith(".md") and os.path.isfile(path):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    return f.read(600)
-            except OSError:
-                pass
+            return path
+    return None
+
+
+def unwrap_attachment(prompt: str) -> str:
+    """Un texto largo viaja como 'Leé el archivo adjunto y respondé: Adjunto: <ruta>'. En la
+    tarjeta se muestra el contenido del adjunto, no el envoltorio."""
+    path = attachment_path(prompt)
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read(600)
+        except OSError:
+            pass
     return prompt
 
 
+HEADING_RE = re.compile(r"^#{1,6}\s*(.*?)\s*#*\s*$")
+
+
+def attachment_title(s: dict) -> str | None:
+    """Pedido que llego como adjunto: el titulo es el primer encabezado markdown del .md (sin los
+    '#'), o su primera linea no vacia. Le gana al ai-title, que para estos pedidos no sirve
+    ('Mensaje 20260906'). La ruta queda en last_attachment (o en el envoltorio de una tarjeta
+    vieja que todavia lo tenga en last_prompt)."""
+    path = s.get("last_attachment") or attachment_path(s.get("last_prompt") or "")
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [l.strip() for l in f.read(4000).splitlines()]
+    except OSError:
+        return None
+    for l in lines:
+        m = HEADING_RE.match(l)
+        if m and m.group(1):
+            return short(m.group(1), 60)
+    first = next((l for l in lines if l), "")
+    return short(first, 60) if first else None
+
+
+def set_last_prompt(s: dict, raw: str) -> None:
+    """Guarda el ultimo pedido tal como se muestra y, si llego como adjunto, la ruta del .md."""
+    s["last_prompt"] = short(clean_prompt(raw), 500)
+    s["last_attachment"] = attachment_path(raw)
+
+
 USELESS_TITLE_WORDS = ("adjunto", "archivo")
-USELESS_TITLE_RE = re.compile(r"^mensaje del \d{6,8}$")
+USELESS_TITLE_RE = re.compile(r"^(mensaje(\s+\d+|\s+del\b.*)?|encargo)$")
 
 
 def bad_title(title) -> bool:
     """Titulos que no dicen nada: vacio, el XML de un mensaje entre sesiones, o el ai-title que
     Claude arma cuando el pedido llego como adjunto ('Leer archivo adjunto', 'Archivo adjunto
-    análisis', 'Mensaje del 20260905')."""
-    t = (title or "").strip().lower()
+    análisis', 'Mensaje', 'Mensaje 20260906', 'Mensaje del 20260905', 'Encargo')."""
+    t = " ".join((title or "").strip().lower().split())
     return not t or t.startswith("<") or any(w in t for w in USELESS_TITLE_WORDS) or bool(USELESS_TITLE_RE.match(t))
 
 
@@ -74,10 +112,16 @@ def clean_prompt(prompt: str) -> str:
 
 def prompt_title(s: dict) -> str | None:
     """Primera linea del ultimo pedido, si sirve de titulo (no el envoltorio del adjunto ni XML)."""
+    at = attachment_title(s)
+    if at:
+        return at
     p = (s.get("last_prompt") or "").strip()
     if not p or p.startswith(ATTACH_WRAPPER) or p.startswith("<"):
         return None
     first = next((l.strip() for l in p.splitlines() if l.strip()), "")
+    m = HEADING_RE.match(first)
+    if m and m.group(1):
+        first = m.group(1)     # tarjeta vieja: el contenido del .md ya esta en last_prompt
     return short(first, 60) if first else None
 
 
@@ -89,7 +133,11 @@ def choose_title(s: dict, transcript_title: str | None) -> None:
         return
     lp = s.get("last_prompt") or ""
     if lp.startswith(ATTACH_WRAPPER) or "<cross-session-message" in lp:
-        s["last_prompt"] = short(clean_prompt(lp), 500)   # tarjetas viejas: limpiar con el parser actual
+        set_last_prompt(s, lp)   # tarjetas viejas: limpiar con el parser actual
+    at = attachment_title(s)
+    if at:
+        s["title"], s["title_source"] = at, "prompt"   # el pedido llego como adjunto: su encabezado manda
+        return
     pt = prompt_title(s)
     cur, src = s.get("title"), s.get("title_source")
     if transcript_title is None and src == "transcript" and not bad_title(cur):
@@ -199,7 +247,7 @@ def continue_session(old: dict, new: dict) -> None:
             rules.save()
         if n_links:
             links.save()
-        for k in ("pid", "agent_exe", "no_console", "in_vscode"):
+        for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator"):
             if old.get(k) is not None:
                 new[k] = old[k]
         if not new.get("cwd") and old.get("cwd"):
@@ -221,7 +269,7 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "last_prompt": "", "last_reply": "", "started": now(),
         "last_event": None, "last_event_ts": None, "alive": True, "dead_since": None,
         "source": source, "hooked": source == "hook", "pending_id": None,
-        "typing": False,
+        "typing": False, "coordinator": False,
     }
 
 
@@ -319,7 +367,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
             want = transcript_state(s, t)
             if want:
                 if want == "corriendo" and t.get("prompt") and not t["prompt"].startswith("(turno anterior"):
-                    s["last_prompt"] = short(clean_prompt(t["prompt"]), 500)
+                    set_last_prompt(s, t["prompt"])
                 state.log(f"{s['session_id'][:8]}: la transcripcion dice {want} y los hooks {s['state']} "
                     f"(ultimo evento {s.get('last_event')}); corregido")
                 set_state(s, want)
@@ -327,7 +375,7 @@ def refresh_from_transcript(s: dict, force_state: bool = False) -> bool:
                 s["last_reply"] = f"usando {tools[-1]['name']}"
         else:
             if t.get("prompt") and not t["prompt"].startswith("(turno anterior"):
-                s["last_prompt"] = short(clean_prompt(t["prompt"]), 500)
+                set_last_prompt(s, t["prompt"])
             if t.get("final"):
                 s["last_reply"] = short(t["final"], 600)
             elif not t.get("ended") and tools:
@@ -361,6 +409,25 @@ def set_title(s: dict, title: str) -> None:
     refresh_from_transcript(s)
     if s.get("title") is None:      # sin transcripcion: solo queda el pedido
         choose_title(s, None)
+
+
+def set_coordinator(s: dict, on: bool) -> list[dict]:
+    """Marca (o desmarca) la coordinadora del repo: a lo sumo una por repo, asi que al prender una
+    se apagan las demas del mismo repo. Devuelve las sesiones que cambiaron (ya guardadas y
+    publicadas)."""
+    changed = []
+    with lock:
+        if on:
+            for other in sessions.values():
+                if other is not s and other.get("coordinator") and other.get("repo") == s.get("repo"):
+                    other["coordinator"] = False
+                    changed.append(other)
+        if bool(s.get("coordinator")) != on:
+            s["coordinator"] = on
+            changed.append(s)
+        for x in changed:
+            touch(x)
+    return changed
 
 
 def recalc_title(s: dict) -> bool:
@@ -447,11 +514,13 @@ def apply_event(ev: dict) -> None:
             s["prompt_id"] = ev.get("prompt_id")
             s["prompt_ts"] = s["last_event_ts"]
             if not transcripts.is_system_prompt(ev.get("prompt", "")):
-                s["last_prompt"] = short(clean_prompt(ev.get("prompt", "")), 500)
+                set_last_prompt(s, ev.get("prompt", ""))
                 # sin ai-title todavia (o con uno inutil): la tarjeta se titula con la primera linea
-                # del pedido; un ai-title que sirva lo pisa despues (refresh_from_transcript)
+                # del pedido; un ai-title que sirva lo pisa despues (refresh_from_transcript), salvo
+                # que el pedido haya llegado como adjunto: ahi manda su encabezado
                 first = prompt_title(s)
-                if first and s.get("title_source") != "user" and (bad_title(s.get("title")) or s.get("title_source") == "prompt"):
+                if first and s.get("title_source") != "user" and (
+                        s.get("last_attachment") or bad_title(s.get("title")) or s.get("title_source") == "prompt"):
                     s["title"] = first
                     s["title_source"] = "prompt"
             s["pending_id"] = None
@@ -467,7 +536,11 @@ def apply_event(ev: dict) -> None:
             s["pending_id"] = None
         elif name == "Notification":
             nt = ev.get("notification_type") or ""
-            if nt in NEEDS_NOTIFICATIONS:
+            if nt == "idle_prompt" and s.get("last_prompt") and not (s.get("last_reply") or "").rstrip().endswith("?"):
+                # termino con un informe que no pregunta nada: no "te necesita", solo termino. La
+                # tarjeta libre (sin pedido) si pasa a te_necesita/idle, para ofrecer "Darle trabajo"
+                state.log(f"{sid[:8]}: idle_prompt sin pregunta al final; la tarjeta queda en {s['state']}")
+            elif nt in NEEDS_NOTIFICATIONS:
                 set_state(s, "te_necesita")
                 s["needs"] = {"kind": "idle" if nt == "idle_prompt" else "permission" if nt == "permission_prompt" else nt,
                               "detail": short(ev.get("message", ""), 300), "where": "terminal"}
@@ -779,7 +852,11 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
                 os.remove(tf)
             except OSError:
                 pass
-    state.log(f"send {s['session_id'][:8]} pid {s['pid']}: {out}")
+    if out.get("ok"):
+        state.log(f"send {s['session_id'][:8]}: {len(orig) if orig else out.get('chars')} caracteres"
+                  + (" (como adjunto)" if attachments else "") + f", pid {s['pid']}")
+    else:
+        state.log(f"send {s['session_id'][:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
     if out.get("ok"):
         if orig:
             # send.py cuenta lo tipeado en la consola, que con un mensaje largo es el envoltorio
@@ -852,6 +929,7 @@ def load_sessions() -> tuple[int, int]:
             s.setdefault("hooked", s.get("source") == "hook")
             s.setdefault("pending_id", None)
             s.setdefault("typing", False)
+            s.setdefault("coordinator", False)
             if s.get("state") not in STATES:
                 s["state"], s["state_since"] = "termino", s.get("state_since") or now()
             if not procs.agent_alive(s.get("pid")):

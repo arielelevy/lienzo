@@ -39,6 +39,7 @@ def aislado(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "broadcast", lambda ev: None)
     monkeypatch.setattr(ses, "on_turn_end", lambda sid: None)
     monkeypatch.setattr(st, "log", lambda msg: None)
+    monkeypatch.setattr(server, "log", lambda msg: None)   # server importa log por nombre: el parche sobre st no lo alcanza
     st.sessions.clear()
     yield tmp_path
     st.sessions.clear()
@@ -502,3 +503,118 @@ def test_at_fields_valida_every_s_y_pone_los_defaults():
     assert ok["every_s"] is None and ok["repeat"] is False and ok["max_fires"] == 5
     ok, _ = server.at_fields({"max_fires": 2}, cur)
     assert ok == {"every_s": 600, "max_fires": 2, "skip_busy": True, "repeat": True}
+
+
+# 9. fase 2: titulo desde el adjunto, idle_prompt sin pregunta, programadas que chocan, coordinadora
+
+def test_titulo_del_adjunto_le_gana_al_ai_title(aislado):
+    md = aislado / "20260906-encargo.md"
+    md.write_text("\n# Encargo B: tarjetas y flechas de la fase 2\n\ntexto del encargo\n", encoding="utf-8")
+    s = ses.new_session(SID, "claude", "hook")
+    st.sessions[SID] = s
+    # tarjeta vieja: el envoltorio quedo en last_prompt y la transcripcion trae el ai-title inutil
+    s["last_prompt"] = f"{ses.ATTACH_WRAPPER} Adjunto: {md}"
+    ses.choose_title(s, "Mensaje 20260906")
+    assert s["title"] == "Encargo B: tarjetas y flechas de la fase 2" and s["title_source"] == "prompt"
+    assert s["last_prompt"].startswith("# Encargo B"), "la tarjeta muestra el contenido, no el envoltorio"
+    assert s["last_attachment"] == str(md)
+    # el hook real: UserPromptSubmit con el envoltorio, y despues el ai-title de la transcripcion no lo pisa
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt=f"{ses.ATTACH_WRAPPER} Adjunto: {md}", host_ts=local(0)))
+    assert s["title"] == "Encargo B: tarjetas y flechas de la fase 2"
+    ses.choose_title(s, "Revisar archivo de tareas")
+    assert s["title"] == "Encargo B: tarjetas y flechas de la fase 2"
+    # sin encabezado: la primera linea no vacia
+    md.write_text("\n\nprimera linea del pedido\nsegunda\n", encoding="utf-8")
+    ses.choose_title(s, "Mensaje")
+    assert s["title"] == "primera linea del pedido"
+    # el titulo puesto a mano sigue mandando
+    ses.set_title(s, "Mi titulo")
+    ses.choose_title(s, "Mensaje 20260906")
+    assert s["title"] == "Mi titulo" and s["title_source"] == "user"
+
+
+def test_bad_title_reconoce_mensaje_y_encargo():
+    for t in ("Mensaje", "mensaje 20260906", "Mensaje del 20260905", "MENSAJE DEL 6 de septiembre", "Encargo", "Leer archivo adjunto", "", None):
+        assert ses.bad_title(t), t
+    for t in ("Encargo B: tarjetas", "Mensaje a Marian sobre el tablero", "Reglas periodicas"):
+        assert not ses.bad_title(t), t
+
+
+def test_idle_prompt_solo_es_te_necesita_con_pregunta_o_sin_pedido(aislado):
+    idle = ev("Notification", notification_type="idle_prompt", message="Claude is waiting for your input", host_ts=local(60))
+    # informe entregado sin pregunta: queda en termino, sin needs
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="hace X", host_ts=local(-60)))
+    ses.apply_event(ev("Stop", prompt_id="A", last_assistant_message="Listo, quedó en X.", host_ts=local(0)))
+    ses.apply_event(idle)
+    s = st.sessions[SID]
+    assert s["state"] == "termino" and s["needs"] is None
+    # la respuesta termina en pregunta: si te necesita
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="hace Y", host_ts=local(10)))
+    ses.apply_event(ev("Stop", prompt_id="B", last_assistant_message="Hice Y. ¿Sigo con Z?", host_ts=local(20)))
+    ses.apply_event(idle)
+    assert s["state"] == "te_necesita" and s["needs"]["kind"] == "idle"
+    # tarjeta libre, nunca tuvo pedido: te_necesita/idle como hoy (para "Darle trabajo")
+    st.sessions.clear()
+    ses.apply_event(ev("SessionStart", host_ts=local(0)))
+    ses.apply_event(idle)
+    s = st.sessions[SID]
+    assert s["state"] == "te_necesita" and s["needs"]["kind"] == "idle"
+    # permission_prompt no cambia
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="C", prompt="hace W", host_ts=local(30)))
+    ses.apply_event(ev("Notification", notification_type="permission_prompt", message="Bash", host_ts=local(31)))
+    assert s["state"] == "te_necesita" and s["needs"]["kind"] == "permission"
+
+
+def test_dos_programadas_al_mismo_minuto_chocan_y_replace_reemplaza(aislado, con_pid, monkeypatch):
+    import datetime as dt
+    s = ses.new_session(SID, "claude", "hook")
+    st.sessions[SID] = s
+    at = dt.datetime.now().astimezone().replace(microsecond=0) + dt.timedelta(hours=1)
+    code, r1 = server.create_rule({"kind": "at", "to": SID, "text": "Continuar", "at": at.isoformat()})
+    assert code == 200
+    # otro texto, 90 s despues, periodica: choca igual
+    code, res = server.create_rule({"kind": "at", "to": SID, "text": "continua", "at": (at + dt.timedelta(seconds=90)).isoformat(), "every_s": 600})
+    assert code == 409
+    assert res["rule_id"] == r1["id"] and res["replace"] is True and res["text"] == "Continuar" and res["at"] == r1["at"]
+    assert res["error"] == f"ya hay una programada a las {at.strftime('%H:%M')} para esa sesión"
+    assert len(st.rules.items) == 1
+    # a 3 min no choca
+    code, r3 = server.create_rule({"kind": "at", "to": SID, "text": "otra", "at": (at + dt.timedelta(minutes=3)).isoformat()})
+    assert code == 200 and len(st.rules.items) == 2
+    # con replace: true la nueva reemplaza a la que chocaba
+    code, r4 = server.create_rule({"kind": "at", "to": SID, "text": "continua", "at": at.isoformat(), "every_s": 600, "replace": True})
+    assert code == 200 and r4["every_s"] == 600
+    assert [r["id"] for r in st.rules.items] == [r3["id"], r4["id"]]
+    # validaciones que ya existian siguen pasando por aca
+    assert server.create_rule({"kind": "at", "to": SID, "text": "x", "at": at.isoformat(), "every_s": 30})[0] == 400
+    assert server.create_rule({"kind": "at", "to": "nadie", "text": "x", "at": at.isoformat()})[0] == 404
+    assert server.create_rule({"kind": "at", "to": SID, "text": "x", "at": "ayer"})[0] == 400
+
+
+def test_coordinadora_una_por_repo(aislado, con_pid):
+    A, B, C = COORD, SID, NEW
+    for sid, repo in ((A, "lienzo"), (B, "lienzo"), (C, "otro")):
+        s = st.sessions.get(sid) or ses.new_session(sid, "claude", "hook")
+        s["repo"] = repo
+        st.sessions[sid] = s
+    assert st.sessions[A]["coordinator"] is False
+    ses.set_coordinator(st.sessions[B], True)
+    ses.set_coordinator(st.sessions[C], True)
+    changed = ses.set_coordinator(st.sessions[A], True)
+    assert [x["session_id"] for x in changed] == [B, A]
+    assert st.sessions[A]["coordinator"] is True and st.sessions[B]["coordinator"] is False
+    assert st.sessions[C]["coordinator"] is True, "otro repo: no se toca"
+    # persistido, y apagar solo apaga esa
+    with open(os.path.join(st.SESSIONS, f"{A}.json"), encoding="utf-8") as f:
+        assert json.load(f)["coordinator"] is True
+    ses.set_coordinator(st.sessions[A], False)
+    assert st.sessions[A]["coordinator"] is False and st.sessions[C]["coordinator"] is True
+
+
+def test_coordinadora_se_hereda_con_el_pid(aislado, con_pid):
+    old = sesion_vieja(aislado)
+    old["coordinator"] = True
+    ses.apply_event(evp("SessionEnd", OLD, reason="clear", host_ts=local(-10)))
+    tp_new = str(aislado / f"{NEW}.jsonl")
+    ses.apply_event(evp("SessionStart", NEW, source="clear", transcript_path=tp_new, host_ts=local(-9.9)))
+    assert st.sessions[NEW]["coordinator"] is True

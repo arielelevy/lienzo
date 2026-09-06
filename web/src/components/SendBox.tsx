@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
+import { coordinatorOf } from "../nl";
 import type { Rule, Session } from "../types";
 import { shortName } from "./Card";
 import "../card.css";
@@ -41,12 +42,10 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     if (autoFocus) textRef.current?.focus();
   }, [autoFocus, s.session_id]);
   // "avisarme cuando termine": delegar en un gesto. Tras enviar, se crea la regla on_stop desde
-  // esta sesion hacia la coordinadora (la primera sesion de Claude del mismo repo que no sea el
-  // destino, igual que Conectar). Recordado por navegador; apagado por defecto.
-  const me = useMemo(
-    () => others.find((o) => o.agent === "claude" && o.repo === s.repo && o.session_id !== s.session_id),
-    [others, s.repo, s.session_id],
-  );
+  // esta sesion hacia la coordinadora (coordinatorOf: la marcada con estrella del mismo repo, o la
+  // primera Claude del repo; igual que Conectar y el "avisame" del parser). Recordado por navegador;
+  // apagado por defecto.
+  const me = useMemo(() => coordinatorOf(s.repo, others, s.session_id), [others, s.repo, s.session_id]);
   const [notifyMe, setNotifyMe] = useState(loadNotify);
   const toggleNotify = (on: boolean) => {
     setNotifyMe(on);
@@ -199,7 +198,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
         <span className="sp" />
         {me && (
           <label className="small notifyme pointer" title={`al terminar este pedido, su respuesta se manda sola a ${shortName(me)}`}>
-            <input type="checkbox" checked={notifyMe} onChange={(e) => toggleNotify(e.target.checked)} /> avisarme cuando termine
+            <input type="checkbox" checked={notifyMe} onChange={(e) => toggleNotify(e.target.checked)} /> avisarme cuando termine ({shortName(me)})
           </label>
         )}
         <button className="primary" disabled={disabled} onClick={() => send(text)}>

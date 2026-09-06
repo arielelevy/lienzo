@@ -1,11 +1,31 @@
-import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { ago, api } from "../api";
 import { hhmm } from "../nl";
 import { periodLabel } from "./Card";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
-import type { ConnectionsResponse, DigestResponse, OtherSession, Session, Turn, TurnsResponse } from "../types";
+import type { ConnectionRule, ConnectionsResponse, DigestResponse, OtherSession, Session, Turn, TurnsResponse } from "../types";
+
+/** "a las 22:19" si es hoy, "el jue 11/9 a las 22:19" si es otro dia */
+export function whenLabel(iso: string, now = new Date()): string {
+  const d = new Date(iso);
+  const hm = hhmm(d);
+  if (d.toDateString() === now.toDateString()) return `a las ${hm}`;
+  const wd = d.toLocaleDateString("es-AR", { weekday: "short" }).replace(".", "");
+  return `el ${wd} ${d.getDate()}/${d.getMonth() + 1} a las ${hm}`;
+}
+
+/** Fila fija del panel: una regla "at" habilitada hacia esta sesion, en una linea. `(auto)` cuando
+ *  la creo el server por un limite de uso (el campo `auto` todavia no esta en el tipo). */
+export function schedLabel(r: ConnectionRule, now = new Date()): { text: string; auto: boolean } {
+  const auto = !!(r as { auto?: boolean }).auto;
+  if (r.every_s) {
+    const next = r.at ? ` · próx. ${whenLabel(r.at, now).replace(/^a las /, "").replace(/^el /, "")}` : "";
+    return { text: `↻ ${r.text} ${periodLabel(r.every_s)}${next} (${r.fired}/${r.max_fires})`, auto };
+  }
+  return { text: `⏰ ${r.text} ${r.at ? whenLabel(r.at, now) : "sin hora"}`, auto };
+}
 
 /** La otra punta de un vinculo o regla, en texto: el server la manda como objeto
  *  {session_id, name}; uno anterior la mandaba como string. Nunca renderizar `other` crudo. */
@@ -137,6 +157,33 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
     api.get<Screen>(`/sessions/${s.session_id}/screen`).catch((e) => ({ ok: false, error: (e as Error).message }));
   // conexiones: null mientras carga; "old" si el server no tiene el endpoint todavia
   const [conn, setConn] = useState<ConnectionsResponse | "old" | null>(null);
+  // lo programado hacia esta sesion (reglas "at" habilitadas), visible al abrir la tarjeta. Las
+  // reglas llegan por SSE al App pero el Panel no las recibe: se piden a /connections al montar,
+  // con cada transcriptTick y cada 30 s. Sin la ruta (server viejo) la fila no aparece.
+  const [sched, setSched] = useState<ConnectionRule[]>([]);
+  const loadSched = useCallback(async () => {
+    try {
+      const c = await api.get<ConnectionsResponse>(`/sessions/${s.session_id}/connections`);
+      setSched(c.rules.filter((r) => r.kind === "at" && r.enabled && r.to === s.session_id));
+    } catch {
+      setSched([]);
+    }
+  }, [s.session_id]);
+  useEffect(() => {
+    loadSched();
+    const id = setInterval(loadSched, 30_000);
+    return () => clearInterval(id);
+  }, [loadSched, transcriptTick]);
+  const dropSched = async (r: ConnectionRule) => {
+    if (!confirm("Quitar esta programación?")) return;
+    try {
+      await api.del(`/rules/${r.id}`);
+      toast("programación quitada");
+    } catch (e) {
+      toast(`No se pudo quitar: ${(e as Error).message}`, true);
+    }
+    loadSched();
+  };
   const [digest, setDigest] = useState<DigestResponse | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -215,7 +262,14 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
     <div className="panel">
       <div className="ph">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
-        <span className="t">{s.title || s.repo}</span>
+        <span className="t">
+          {s.title || s.repo}
+          {s.coordinator && (
+            <span className="coord" title="coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame'">
+              ★ coordinadora
+            </span>
+          )}
+        </span>
         <div className="tabs">
           <button className={tab === "digest" ? "on" : ""} onClick={() => setTab("digest")}>Destacados</button>
           <button className={tab === "chat" ? "on" : ""} onClick={() => setTab("chat")}>Conversación</button>
@@ -236,6 +290,24 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
             : `${s.cwd}${s.branch ? ` · ${s.branch}` : ""} · ${s.state}`}
         </div>
       </div>
+      {sched.length > 0 && (
+        <div className="sched" title="mensajes programados hacia esta sesión">
+          {sched.map((r) => {
+            const { text, auto } = schedLabel(r);
+            return (
+              <div key={r.id} className="item">
+                <span title={text}>
+                  {text}
+                  {auto && <span className="auto"> (auto)</span>}
+                </span>
+                <button type="button" className="del" title="quitar" aria-label="quitar programación" onClick={() => dropSched(r)}>
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="body" ref={bodyRef}>
         <ErrorBoundary resetKey={`${s.session_id}:${tab}:${transcriptTick}`}>
         {tab === "screen" ? (

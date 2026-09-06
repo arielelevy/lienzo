@@ -3,7 +3,7 @@
  */
 import assert from "node:assert/strict";
 // @ts-ignore TS5097: extension .ts en el import, necesaria para que Node lo resuelva
-import { parseConnection, hhmm, firesUntil } from "./nl.ts";
+import { parseConnection, hhmm, firesUntil, coordinatorOf } from "./nl.ts";
 
 const S = (repo: string, id: string, title = ""): any => ({ session_id: id, repo, title, agent: "claude", alive: true, pid: 1, state: "termino" });
 const from = S("lienzo", "f64c2a31aaaa");
@@ -55,11 +55,11 @@ p = at("a las 16:00 mandale \"revisá el PR 42\" a mapo");
 assert.equal(p.text, "revisá el PR 42"); assert.equal(p.to?.repo, "mapo"); assert.equal(p.every, null);
 
 p = at("a las 9 avisame");
-assert.equal(p.toMe, true); assert.match(p.summary, /a la coordinadora/);
+assert.equal(p.toMe, true); assert.equal(p.to?.session_id, others[1].session_id); assert.match(p.summary, /a lienzo$/);
 
 // on_stop con avisame -> coordinadora
 let q = P("cuando termine avisame");
-assert.equal(q.kind, "on_stop"); assert.equal((q as any).toMe, true); assert.match(q.summary, /a la coordinadora/);
+assert.equal(q.kind, "on_stop"); assert.equal((q as any).toMe, true); assert.equal((q as any).to.session_id, others[1].session_id); assert.match(q.summary, /a lienzo \(una vez\)/);
 q = P("cada vez que termine pasale a mapo hasta 5 veces");
 assert.equal(q.kind, "on_stop"); assert.equal((q as any).repeat, true); assert.equal((q as any).to.repo, "mapo");
 q = P("cuando termine");
@@ -69,5 +69,27 @@ q = P("ahora a mapo");
 assert.equal(q.kind, "now");
 q = P("qué onda");
 assert.equal(q.kind, "none"); assert.match(q.summary, /quedan como estaban/);
+
+// coordinatorOf: la marcada gana, si no la primera Claude del repo; nunca la excluida
+const c1 = S("lienzo", "c1c1c1c1c1c1", "primera claude");
+const c2 = { ...S("lienzo", "c2c2c2c2c2c2", "marcada"), coordinator: true };
+const cx = { ...S("mapo", "cxcxcxcxcxcx", "otro repo"), coordinator: true };
+assert.equal(coordinatorOf("lienzo", [mapo, c1, c2, cx], from.session_id)?.session_id, c2.session_id);
+assert.equal(coordinatorOf("lienzo", [mapo, c1], from.session_id)?.session_id, c1.session_id);
+assert.equal(coordinatorOf("lienzo", [mapo, c2], c2.session_id), undefined);
+assert.equal(coordinatorOf("lienzo", [mapo, { ...c1, agent: "codex" }], from.session_id), undefined);
+// el parser resuelve "avisame" con la misma funcion y nombra con opts.name
+const nm = (s: any) => `${s.repo} · ${s.title}`;
+q = parseConnection("cuando termine avisame", from, [mapo, c1, c2], { name: nm });
+assert.equal(q.kind, "on_stop"); assert.equal((q as any).to.session_id, c2.session_id); assert.match(q.summary, /a lienzo · marcada \(una vez\)/);
+q = parseConnection("cuando termine avisame", from, [mapo], { name: nm });
+assert.equal((q as any).to, null); assert.equal((q as any).toMe, true); assert.match(q.summary, /no hay ninguna viva/);
+// destino actual del dialogo en el resumen
+p = parseConnection("en 2 horas seguí", from, others, { current: "esta sesión" }) as any;
+assert.match(p.summary, /"seguí" a esta sesión$/);
+p = parseConnection("cada 30 min continuá", from, others, { current: "mapo · Tablero" }) as any;
+assert.match(p.summary, /a mapo · Tablero \(hasta 5 veces\)$/);
+p = parseConnection("a las 9 continuá a mapo", from, others, { current: "esta sesión", name: nm }) as any;
+assert.match(p.summary, /a mapo · Tablero$/);
 
 console.log("nl.test.ts OK");

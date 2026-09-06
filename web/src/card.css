@@ -22,6 +22,33 @@
 .board .col.wide .cards { column-count: var(--lanes, 2); column-gap: 24px; }
 @media (max-width: 900px) { .board .col.wide .cards { column-count: 1; } }
 
+/* flechas: apagadas (0,35) salvo las de la tarjeta bajo el mouse (1) o un envio recien hecho; con
+   hover sobre alguna tarjeta, styles.css baja las demas a 0,12. Una flecha "dim" no encontro camino
+   sin cruzar una tercera tarjeta: se dibuja mas apagada todavia, para no tapar texto */
+.arrows .arrow { opacity: .35; }
+.arrows .arrow.mine, .arrows .arrow.fresh { opacity: 1; }
+.arrows .arrow.dim { opacity: .15; }
+.arrows .arrow.dim.mine { opacity: .55; }
+.arrows .arrow .dot:hover { opacity: 1; }
+
+/* estrella de coordinadora en la fila de arriba: ☆ aparece al pasar el mouse (como los botones
+   rapidos), ★ prendida siempre visible */
+.card .top .star { background: none; border: 0; padding: 0 3px; font-size: 14px; line-height: 1; color: var(--dim); cursor: pointer; flex: 0 0 auto; opacity: 0; transition: opacity .12s; }
+.card:hover .top .star, .card:focus-within .top .star, .card .top .star.on { opacity: 1; }
+.card .top .star.on { color: var(--need); }
+.card .top .star:hover { color: var(--need); border-color: transparent; }
+.card .top .star:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; opacity: 1; }
+@media (hover: none) and (pointer: coarse) { .card .top .star { opacity: 1; } }
+
+/* panel: "★ coordinadora" junto al nombre, y la fila de lo programado hacia esa sesion */
+.panel .ph .coord { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--need); white-space: nowrap; }
+.panel .sched { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.panel .sched .item { display: inline-flex; align-items: center; gap: 6px; color: var(--acc); background: #1a2438; border-radius: 6px; padding: 3px 8px; max-width: 100%; }
+.panel .sched .item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel .sched .item .auto { color: var(--dim); }
+.panel .sched .item .del { background: none; border: 0; padding: 0 2px; color: var(--dim); cursor: pointer; font: inherit; line-height: 1; flex: 0 0 auto; }
+.panel .sched .item .del:hover { color: var(--dead); border-color: transparent; }
+
 /* agarre ⇢ en la fila de arriba, junto al "hace X" (abajo chocaba con la ✕ del ultimo chip de
    regla); Board saca la linea del arrastre desde este boton */
 .card .top .grip { position: static; font-size: 14px; padding: 0 3px; line-height: 1; }

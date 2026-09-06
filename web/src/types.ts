@@ -38,6 +38,8 @@ export interface Session {
   suggestion?: string | null;
   /** alguien esta escribiendo en esa terminal (lo detecta screen_loop): lo que se mande se mezcla */
   typing?: boolean;
+  /** coordinadora del repo (estrella en la tarjeta): recibe los avisos "cuando termine" y "avisame". A lo sumo una por repo */
+  coordinator?: boolean;
 }
 
 export interface Pending {
