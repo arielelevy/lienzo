@@ -117,10 +117,15 @@ mandó, lo que le escribiste desde el lienzo, y las conexiones activas con su es
   como coordinadora del repo, una por repo. Es a quien van los avisos "cuando termine" del
   SendBox y el "avisame" de las frases. Sin estrella, la coordinadora es la primera sesión de
   Claude del mismo repo.
-- Último pedido plegado a una línea ("…más" lo abre), última respuesta, y un botón para
-  copiarla.
+- Último pedido plegado a dos líneas ("…más" lo abre entero), última respuesta, y un botón
+  para copiarla. Mientras la sesión trabaja, la respuesta es **lo que el agente viene
+  escribiendo** en ese turno, no el nombre de la herramienta.
+- Debajo, lo que pasa adentro: cuántos pasos lleva el turno, cuántos volvieron con error, los
+  últimos archivos que tocó y el último comando que corrió.
 - Sesión ociosa con consola: botones rápidos "Continuá", "sí", "no", que se escriben en su
-  terminal. Si está esperando input, la misma línea lo dice.
+  terminal, sólo cuando de verdad espera algo. Si está esperando input, la misma línea lo dice.
+- Una sesión que figura corriendo pero está quieta (sin cupo, o sin actividad hace más de
+  quince minutos) lleva el punto apagado en vez del verde, y su tarjeta se ordena al final.
 - Sesión libre (viva, con consola y sin ningún pedido todavía): borde punteado, la línea
   "Libre · sin pedidos todavía · desde hace N" en vez de "(sin título)", y un único botón
   "Darle trabajo" que abre el panel con el cursor en la caja de envío.
@@ -323,7 +328,9 @@ lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 48 tests
+python -m pytest tests -q                                   # 62 tests
+python -m ruff check lienzo tests install.py                # lint
+python -m black lienzo tests install.py                     # formato
 cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 31 tests de las flechas
 cd web; node --experimental-strip-types src/nl.test.ts                # 77 aserciones del parser de frases
 ```

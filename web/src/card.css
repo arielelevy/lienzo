@@ -22,10 +22,10 @@
 /* subcolumnas de tarjetas: Board reparte hasta 4 entre las columnas abiertas y las pasa en --lanes
    (styles.css fija 2 para .col.wide; esta regla, mas especifica, toma la variable). El hueco de
    24 px queda como canal para las flechas. En movil, una sola. */
-.board .col.wide .cards { column-count: var(--lanes, 2); column-gap: var(--col-gap, 30px); }
+.board .col.wide .cards { column-count: var(--lanes, 2); column-gap: var(--col-gap, 35px); }
 /* el mismo aire que hay entre dos subcolumnas queda a la derecha de la ultima, para que la
    ultima tarjeta no termine pegada al borde de la columna ni a la tira de al lado */
-.board .col.wide .cards, .board .col:not(.wide) .cards { padding-right: calc(var(--col-gap, 30px) - 8px); }
+.board .col.wide .cards, .board .col:not(.wide) .cards { padding-right: calc(var(--col-gap, 35px) - 8px); }
 @media (max-width: 900px) { .board .col.wide .cards { column-count: 1; } }
 
 /* flechas: apagadas (0,35) salvo las de la tarjeta bajo el mouse (1) o un envio recien hecho; con
@@ -77,7 +77,7 @@
    orden visual con `order`. El canal de 30 px entre columnas no puede seguir saliendo de
    `.col + .col`, que mira la adyacencia del DOM: mientras dura el adelanto lo da el orden visual,
    con la columna de la izquierda marcada `.first`. En móvil se ve una sola columna y no hay canal. */
-.board.reordered .col.gapwide { margin-left: var(--col-gap, 30px); }
+.board.reordered .col.gapwide { margin-left: var(--col-gap, 35px); }
 .board.reordered .col.gapthin { margin-left: 8px; }
 .board.reordered .col.first { margin-left: 0; }
 @media (max-width: 900px) { .board.reordered .col.gapwide, .board.reordered .col.gapthin { margin-left: 0; } }
