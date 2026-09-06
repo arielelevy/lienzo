@@ -91,6 +91,8 @@ export interface Formatters {
 }
 
 export interface GeometryInput {
+  /** reloj, para que los tests fijen la hora; por defecto Date.now() */
+  now?: number;
   /** tarjetas visibles, por session id, relativas al tablero */
   rects: Map<string, Rect>;
   /** extremos posibles de una flecha: las tarjetas mas las tiras colapsadas de sesiones sin tarjeta */
@@ -567,10 +569,16 @@ export function topRoute(ra: Rect, rc: Rect, xa: number, xc: number, cards: Rect
 /** primera letra en mayuscula, para arrancar una frase con "cada 2 h" o "el vie 11/9 a las 22:19" */
 const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
-/** 1) que hay que dibujar: canal nativo y ultimo envio por par (sin limite de tiempo; los
- *  anteriores del mismo par van al contador), mas las reglas activas con los dos extremos visibles.
- *  Orden: grupos de links en orden de primera aparicion, despues las reglas en su orden. */
-export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Rect>, fmt: Formatters): Item[] {
+/** Cuanto vive en el tablero la flecha de un envio ya hecho. Pasado ese rato se va sola: el
+ *  tablero es lo que esta pasando ahora, no el historial. Lo que se mando queda igual en la
+ *  pestaña Conexiones de cada sesion y en `GET /links`. El canal nativo no caduca: es un vinculo
+ *  abierto, no un hecho puntual; y las reglas pendientes tampoco, porque todavia no pasaron. */
+export const LINK_TTL_MS = 10 * 60_000;
+
+/** 1) que hay que dibujar: canal nativo, envios de los ultimos LINK_TTL_MS por par (el mas nuevo,
+ *  con los anteriores del par en el contador), mas las reglas activas con los dos extremos
+ *  visibles. Orden: grupos de links en orden de primera aparicion, despues las reglas. */
+export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Rect>, fmt: Formatters, now = Date.now()): Item[] {
   const items: Item[] = [];
   const groups = new Map<string, Link[]>();
   for (const l of links) {
@@ -585,6 +593,9 @@ export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Re
     const newest = g[0];
     if (!anchors.has(newest.from) || !anchors.has(newest.to)) continue;
     const native = newest.kind === "native";
+    // un envio viejo se va del tablero; el canal nativo se queda mientras exista
+    const edad = now - new Date(newest.ts).getTime();
+    if (!native && !(edad < LINK_TTL_MS)) continue;
     const n = g.length;
     const a = fmt.name(newest.from);
     const b = fmt.name(newest.to);
@@ -830,7 +841,7 @@ export function loopSeg(it: Item, r: Rect, boardWidth: number): Seg {
 export function computeSegs(input: GeometryInput): Seg[] {
   const cards = Array.from(input.rects.values());
   const cols = groupColumns(cards);
-  const all = buildItems(input.links, input.rules, input.anchors, input.fmt);
+  const all = buildItems(input.links, input.rules, input.anchors, input.fmt, input.now);
   const items = all.filter((it) => it.from !== it.to);
   const loops = all.filter((it) => it.from === it.to);
   const zone: Zone = { bands: input.bands ?? [], strips: input.strips };
