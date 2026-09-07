@@ -143,7 +143,9 @@ def main() -> int:
     try:
         data = json.loads(raw)
         if not isinstance(data, dict):
-            raise ValueError("no es un objeto")
+            # el mismo camino que un JSON roto: se guarda el crudo y el hook devuelve 0, asi el
+            # agente sigue. Por eso ValueError y no TypeError, que este except no atrapa
+            raise ValueError("no es un objeto")  # noqa: TRY004
     except ValueError:
         try:
             atomic_write(os.path.join(EVENTS, f"bad-{time.time_ns()}.txt"), raw)

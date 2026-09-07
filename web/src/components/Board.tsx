@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Arrows } from "./Arrows";
-import { Card, shortName } from "./Card";
+import { Card, freeGroups, shortName } from "./Card";
 import type { Link, Pending, Rule, Session, State } from "../types";
 import { searchText, stalledReason } from "../names";
 
@@ -63,45 +63,102 @@ function loadManual(): Manual {
 }
 const EMPTY_COLLAPSE_MS = 5_000;   // pedido de Ariel: 10 s se sentia largo
 
-/** Subcolumnas de tarjetas disponibles en total: 4 si hay lugar de verdad, 2 por debajo de
- *  ~1100 px (en movil el CSS fuerza 1). Se mide el ancho **de contenido** del tablero, no el de la
- *  ventana: con el panel abierto el tablero conserva su ancho pero su contenido queda en la mitad
- *  de la pantalla (el relleno cuenta en clientWidth), y repartir 4 subcolumnas ahi dejaba tarjetas
- *  de 129 px. Hasta la primera medicion vale el ancho de la ventana, para no arrancar en 2. */
+/** Ancho al que se lee comoda una tarjeta del lienzo: titulo de una linea, dos del pedido, hasta
+ *  seis de la respuesta y una del comando. Con 300 px entra todo eso, pero 300 como objetivo dejaba
+ *  **3 subcolumnas de 350 px** en una ventana de 1280, que es donde se usa el lienzo: la tarjeta
+ *  queda ancha y vacia y se pierde una subcolumna. Con 265 la misma ventana da 4 de 253 px, y el
+ *  resto no se mueve (1440: 4 de 294; 1600: 5 de 260; 1920: 6 de 264). Abajo de 1200 sigue en 3,
+ *  para no caer a 220. Mas ancho que esto no agrega lineas de texto, solo aire.
+ *  El titulo si se corta: el server los recorta a 60 caracteres, que son ~380 px, asi que a este
+ *  ancho la mayoria queda con puntos suspensivos. Es a proposito: se prefiere ver mas tarjetas. */
+const ANCHO_TARJETA = 265;
+
+/** Cuantas subcolumnas de tarjetas entran en total. No hay tope fijo: se mide el ancho que queda
+ *  **para las tarjetas** (la suma de los `.cards` de las columnas abiertas, sin su relleno) y se
+ *  elige la cantidad que deje la tarjeta mas cerca de ANCHO_TARJETA, en proporcion (350 y 260 estan
+ *  igual de lejos de 300 en pixeles, pero 260 se lee peor). Se mide del DOM y no de la ventana
+ *  porque el ancho util no es el de la ventana: las tiras de las columnas colapsadas ocupan lo
+ *  suyo, cada columna tiene su relleno y el tablero se puede angostar (el panel de hoy flota por
+ *  encima, pero abajo de 900 px le come lugar). Ese ancho no depende de cuantas subcolumnas haya
+ *  (medido: 2401, 2400 y 2401 px con 4, 5 y 6), asi que la cuenta no se realimenta.
+ *  El ancho de la tarjeta no puede ser estrictamente monotono con subcolumnas enteras --al pasar de
+ *  4 a 3 el ancho sube por definicion, porque es el mismo lugar dividido en menos partes--, pero
+ *  con esta regla el diente de sierra queda chico: 293 a 350 px entre 1152 y 2560. */
+const MAX_LANES = 12;
+
 function useLaneBudget(ref: React.RefObject<HTMLElement | null>): number {
-  const [width, setWidth] = useState(0);
+  const [budget, setBudget] = useState(2);
+  const medir = () => {
+    const board = ref.current;
+    if (!board) return;
+    const gap = parseFloat(getComputedStyle(board).getPropertyValue("--col-gap")) || 35;
+    let util = 0;
+    for (const el of board.querySelectorAll<HTMLElement>(".col:not(.collapsed) .cards")) {
+      const cs = getComputedStyle(el);
+      util += el.clientWidth - parseFloat(cs.paddingLeft || "0") - parseFloat(cs.paddingRight || "0");
+    }
+    if (util <= 0) return; // todas colapsadas: se queda con el reparto que tenia
+    let mejor = 1;
+    let dist = Infinity;
+    for (let n = 1; n <= MAX_LANES; n++) {
+      const ancho = (util - gap * (n - 1)) / n;
+      if (ancho <= 0) break;
+      const d = Math.max(ancho / ANCHO_TARJETA, ANCHO_TARJETA / ancho);
+      if (d < dist) {
+        dist = d;
+        mejor = n;
+      }
+    }
+    setBudget(mejor);
+  };
+  // en cada render (una columna que se abre o se colapsa cambia el ancho util sin que cambie el
+  // del tablero) y ademas con cada cambio de tamano del tablero
+  useEffect(medir);
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const o = new ResizeObserver(([e]) => setWidth(e.contentRect.width));
+    const o = new ResizeObserver(medir);
     o.observe(el);
     return () => o.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref]);
-  const w = width || (typeof window !== "undefined" ? window.innerWidth : 0);
-  return w >= 1100 ? 4 : 2;
+  return budget;
 }
 
-/** Reparte `budget` subcolumnas entre las columnas abiertas segun cuantas tarjetas tienen: una
- *  abierta se lleva todas; dos, mitad y mitad (3 y 1 si una tiene muchas mas); tres, 2 para la
- *  que mas tiene y 1 para las otras. Ninguna recibe mas subcolumnas que tarjetas. */
+/** Reparte `budget` subcolumnas entre las columnas abiertas: una para cada una y el resto en
+ *  proporcion a cuantas tarjetas tiene, sin que ninguna se lleve mas subcolumnas que tarjetas. Lo
+ *  que sobra por ese tope vuelve a la que mas tarjetas tenga, asi el ancho util no se desperdicia.
+ *  Cada columna crece despues en proporcion a sus subcolumnas (flexGrow), y por eso todas las
+ *  tarjetas del tablero terminan del mismo ancho. */
 export function splitLanes(open: { key: ColKey; n: number }[], budget: number): Record<ColKey, number> {
   const out = { trabajo: 1, te_necesita: 1, muerta: 1 } as Record<ColKey, number>;
   if (!open.length) return out;
-  const sorted = [...open].sort((a, b) => b.n - a.n);
-  if (open.length === 1) out[open[0].key] = budget;
-  else if (open.length === 2) {
-    const [a, b] = sorted;
-    if (budget >= 4 && a.n >= 3 * Math.max(b.n, 1)) {
-      out[a.key] = 3;
-      out[b.key] = 1;
-    } else {
-      out[a.key] = budget / 2;
-      out[b.key] = budget / 2;
+  const tope = (o: { n: number }) => Math.max(1, o.n);
+  for (const o of open) out[o.key] = 1;
+  let resto = budget - open.length;
+  const total = open.reduce((a, o) => a + o.n, 0);
+  if (resto > 0 && total > 0) {
+    for (const o of open) {
+      const suma = Math.max(0, Math.min(Math.floor((resto * o.n) / total), tope(o) - out[o.key]));
+      out[o.key] += suma;
     }
-  } else {
-    out[sorted[0].key] = budget >= 4 ? 2 : 1;
+    resto = budget - open.reduce((a, o) => a + out[o.key], 0);
+    // el sobrante (por el redondeo hacia abajo y por el tope) va de a una a las que mas tarjetas
+    // tienen, mientras quede lugar
+    const orden = [...open].sort((a, b) => b.n - a.n);
+    let cambio = true;
+    while (resto > 0 && cambio) {
+      cambio = false;
+      for (const o of orden) {
+        if (resto <= 0) break;
+        if (out[o.key] < tope(o)) {
+          out[o.key]++;
+          resto--;
+          cambio = true;
+        }
+      }
+    }
   }
-  for (const o of open) out[o.key] = Math.max(1, Math.min(out[o.key], o.n));
   return out;
 }
 
@@ -477,6 +534,10 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         )}
         {domCols.map(({ k, label, visual }) => {
           const list = byState[k];
+          // las libres de un mismo repo y agente se leen como un dato solo ("4 sesiones libres
+          // en lienzo"), no como cuatro tarjetas que dicen exactamente lo mismo. La elegida y la
+          // que tiene el panel abierto quedan afuera del grupo, asi siguen enteras
+          const grupos = freeGroups(list, [selected, picked]);
           const col = collapsedOf[k];
           // canal a la izquierda, mirando al vecino *visual*: 8 px si alguno de los dos es una tira
           // colapsada, 30 si no (es lo mismo que dice styles.css, pero ahi sale de la adyacencia del
@@ -541,6 +602,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         selected={selected === s.session_id}
                         picked={picked === s.session_id}
                         related={related.get(s.session_id)}
+                        freeGroup={grupos.get(s.session_id)}
                         onPick={() => {
                           // el click que cierra un arrastre tampoco elige la tarjeta
                           if (draggedRef.current) return;

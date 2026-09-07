@@ -236,3 +236,64 @@ def test_la_pregunta_se_recorta_a_QUESTION_MAX():
     final = "x" * 300 + "\n¿" + "y" * 400 + "?"
     q = _preguntas(final)
     assert len(q) == 1 and len(q[0]) == tr.QUESTION_MAX
+
+
+# 8. Los dos parsers y lo que de verdad comparten (encargo A6) --------------------
+
+
+def _tool(name, inp, result=None):
+    return {"kind": "tool", "name": name, "input": inp, "result": result, "id": "x"}
+
+
+def _files(blocks):
+    return tr.digest_turn(_turno("listo", blocks))["files"]
+
+
+def test_una_herramienta_de_archivo_sin_ruta_no_deja_una_entrada_vacia():
+    """Las dos ramas de `files` (paths de Codex, file_path de Claude) pueden quedar sin nada:
+    el vacio se filtra una sola vez al deduplicar, no en cada rama."""
+    assert _files([_tool("Edit", {})]) == []
+    assert _files([_tool("apply_patch", {"paths": [{}]})]) == []
+
+
+def test_los_dos_formatos_de_ruta_llegan_al_mismo_campo():
+    assert _files([_tool("Edit", {"file_path": "lienzo/transcripts.py"})]) == ["lienzo/transcripts.py"]
+    assert _files([_tool("NotebookEdit", {"notebook_path": "a.ipynb"})]) == ["a.ipynb"]
+    assert _files([_tool("apply_patch", {"paths": [{"type": "M", "path": "server.py"}]})]) == ["M server.py"]
+
+
+def test_los_archivos_repetidos_se_deduplican_conservando_orden():
+    blocks = [
+        _tool("Write", {"file_path": "a.py"}),
+        _tool("Edit", {"file_path": "b.py"}),
+        _tool("Edit", {"file_path": "a.py"}),
+    ]
+    assert _files(blocks) == ["a.py", "b.py"]
+
+
+def test_los_dos_parsers_arman_el_mismo_turno(claude_path, codex_path):
+    """La forma del turno es lo unico que comparten de verdad los dos parsers, y la garantiza
+    _new_turn. Si un parser empieza a devolver otras claves, la mitad de web/ lee de menos."""
+    base = set(tr._new_turn("claude", "t", None))
+    for agent, path in (("claude", claude_path), ("codex", codex_path)):
+        turns = tr.parse(agent, path)["turns"]
+        assert turns, f"{agent}: sin turnos"
+        for t in turns:
+            assert set(t) - {"from_peer"} == base, f"{agent}: claves de mas o de menos en {t['id']}"
+
+
+def test_claude_no_pone_id_de_turno_en_las_lineas_del_asistente(claude_path):
+    """El motivo medido de que parse_claude no pueda indexar turnos por id como parse_codex: el
+    contenido del asistente viene sin promptId, asi que el turno solo se arma por posicion. Si esto
+    falla, el formato cambio y el argumento para no unificar los dos parsers hay que volver a medirlo."""
+    lines, _ = tr.tail_lines(claude_path)
+    asistente = [d for d in tr.iter_json(lines) if d.get("type") == "assistant"]
+    assert asistente, "la transcripcion no tiene lineas de assistant"
+    assert not [d for d in asistente if d.get("promptId")]
+
+
+def test_codex_si_pone_id_de_turno_en_el_evento(codex_path):
+    """La otra mitad: en Codex el turn_id viaja en el evento, y por eso turn_for busca por id."""
+    lines, _ = tr.tail_lines(codex_path)
+    eventos = [d for d in tr.iter_json(lines) if d.get("type") == "event_msg"]
+    assert [d for d in eventos if (d.get("payload") or {}).get("turn_id")]

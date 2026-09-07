@@ -422,11 +422,16 @@ test("freeLanes: uno arriba, uno entre filas y uno abajo, apoyados en las tarjet
   assert.equal(ls.length, 3);
   assert.deepEqual(ls[0], { y: 102 - LANE_H / 2, room: 62, t: 40, b: 102 }); // arriba: se apoya en la primera fila
   assert.deepEqual(ls[1], { y: 220, room: 40, t: 200, b: 240 }); // entre las dos filas: al medio
-  assert.deepEqual(ls[2], { y: 320 + LANE_H / 2, room: 280, t: 320, b: 600 }); // abajo: se apoya en la ultima
+  assert.deepEqual(ls[2], { y: 320 + LANE_H / 2, room: 280, t: 320, b: 600, under: true }); // abajo: se apoya en la ultima
   // franja mas fina que el carril: se usa igual, centrada (el aire que hay hoy sin reservar nada)
   const tight = freeLanes(BANDS, [CA, CB, CC]);
   assert.deepEqual(tight[0], { y: 97, room: 10, t: 92, b: 102 });
-  assert.ok(tight[0].room < 2 * LANE_CLEAR, "10 px no alcanzan para un carril");
+  assert.equal(tight[0].room, 2 * LANE_CLEAR, "10 px son justo un carril: una pista con su aire");
+  const finito = freeLanes(BANDS.map((b) => ({ ...b, t: 96 })), [CA, CB, CC]);
+  assert.ok(finito[0].room < 2 * LANE_CLEAR, "6 px no alcanzan ni para el aire de una pista");
+  // el ultimo carril es el de abajo de todo, y viene marcado: es el que la flecha usa ultimo
+  assert.equal(ls[2].under, true);
+  assert.equal(ls[0].under, undefined);
   // sin columnas medidas, arriba y abajo quedan a medio carril de la primera y la ultima fila
   assert.deepEqual(freeLanes([], cards).map((l) => l.y), [102 - LANE_H / 2, 220, 320 + LANE_H / 2]);
   assert.deepEqual(freeLanes(ROWS, []), []);
@@ -481,17 +486,17 @@ function checkSeg(s: Seg, bands: Band[], cards: Rect[]) {
   assert.ok(!inside(cards, s.x, s.y), `glifo (${s.x}, ${s.y}) adentro de una tarjeta`);
 }
 
-test("sin carril reservado arriba, la flecha baja: no cruza el titulo ni roza una tarjeta", () => {
+test("sin carril reservado arriba la flecha igual va por arriba: abajo de todo es ultimo recurso", () => {
   const rects = new Map([["a", CA], ["b", CB], ["c", CC]]);
   const [s] = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1000, bands: BANDS, links: [], rules: [rule({ id: "r", from: "a", to: "c" })], fmt });
-  assert.equal(s.lane, 375 + LANE_H / 2);
+  // arriba hay 10 px entre el encabezado y la primera fila: justo un carril. El de abajo de todo
+  // tiene mas aire pero deja la corrida y el glifo por debajo de la ultima tarjeta, en el vacio,
+  // asi que pierde contra cualquier carril que este entre las tarjetas
+  assert.equal(s.lane, 97);
+  assert.equal(s.y, 97);
   assert.ok(!s.dim);
-  // arriba solo hay 10 px entre el encabezado y la primera fila: el carril de abajo, que si tiene
-  // aire, gana aunque el camino sea mas largo
-  assert.equal(s.y, 375 + LANE_H / 2);
   checkSeg(s, BANDS, [CA, CB, CC]);
-  // el glifo queda centrado en el carril: medio carril por debajo de la fila de tarjetas
-  assert.equal(s.y - 375, LANE_H / 2);
+  assert.ok(s.y > Math.max(...BANDS.map((b) => b.t)), "por debajo del encabezado");
 });
 
 test("con el carril reservado arriba, la flecha cruza por arriba y no toca el encabezado", () => {
@@ -511,8 +516,8 @@ test("con el carril reservado arriba, la flecha cruza por arriba y no toca el en
 test("tracks: pistas paralelas centradas en el carril, siempre con aire, comprimidas si no entran", () => {
   const ancho: Lane = { y: 400, room: 200, t: 300, b: 500 };
   assert.deepEqual(tracks(1, ancho), [400]); // una sola: por el medio del carril
-  assert.deepEqual(tracks(4, ancho), [389.5, 396.5, 403.5, 410.5]); // 7 px entre pistas, centradas
-  assert.deepEqual(tracks(2, ancho), [396.5, 403.5]);
+  assert.deepEqual(tracks(4, ancho), [392.5, 397.5, 402.5, 407.5]); // TRACK_GAP entre pistas, centradas
+  assert.deepEqual(tracks(2, ancho), [397.5, 402.5]);
   // el carril se apoya arriba y las pistas no se salen de la franja: nunca a menos de LANE_CLEAR
   const apoyado: Lane = { y: 314, room: 200, t: 300, b: 500 };
   const ys = tracks(4, apoyado);
@@ -522,22 +527,28 @@ test("tracks: pistas paralelas centradas en el carril, siempre con aire, comprim
   const angosto: Lane = { y: 101, room: 18, t: 92, b: 110 };
   const cuatro = tracks(4, angosto);
   assert.equal(cuatro.length, 4);
-  assert.ok(cuatro[0] >= 100 && cuatro[3] <= 102, `comprimidas: ${cuatro.join(", ")}`);
+  assert.ok(cuatro[0] >= 97 && cuatro[3] <= 105, `comprimidas: ${cuatro.join(", ")}`);
   assert.ok(cuatro[3] - cuatro[0] <= 3 * TRACK_GAP);
   // sin lugar ni para el aire minimo: todas en la misma y, que es lo que hay
   assert.deepEqual(tracks(3, { y: 50, room: 4, t: 48, b: 52 }), [50, 50, 50]);
 });
 
 test("laneHeight: el carril crece con lo que lleva, con tope", () => {
-  assert.equal(laneHeight(1), 2 * LANE_CLEAR + TRACK_GAP);
-  assert.equal(laneHeight(4), 2 * LANE_CLEAR + 4 * TRACK_GAP);
+  // una sola pista no necesita ninguna separacion: solo el aire de los dos costados
+  assert.equal(laneHeight(1), 2 * LANE_CLEAR);
+  assert.equal(laneHeight(4), 2 * LANE_CLEAR + 3 * TRACK_GAP);
   assert.equal(laneHeight(40), LANE_MAX);
 });
 
 test("cuatro flechas en el mismo carril van en cuatro pistas, no encimadas", () => {
-  const CD = R(1012, 102, 1288, 270);
+  // el tablero ya reservo el carril de arriba (la primera fila arranca 40 px debajo del
+  // encabezado): sin esa reserva no hay franja donde repartir cuatro pistas y se encimarian
+  const A4 = R(28, 132, 304, 405);
+  const B4 = R(356, 132, 632, 300);
+  const C4 = R(684, 132, 960, 300);
+  const CD = R(1012, 132, 1288, 300);
   const bands: Band[] = [...BANDS, { l: 1000, r: 1300, t: 92, b: 578 }];
-  const rects = new Map([["a", CA], ["b", CB], ["c", CC], ["d", CD]]);
+  const rects = new Map([["a", A4], ["b", B4], ["c", C4], ["d", CD]]);
   const rules = [
     rule({ id: "r1", from: "a", to: "c" }),
     rule({ id: "r2", from: "a", to: "d" }),
@@ -557,7 +568,7 @@ test("cuatro flechas en el mismo carril van en cuatro pistas, no encimadas", () 
     const orden = [...g].sort((a, b) => a - b);
     for (let i = 1; i < orden.length; i++) assert.ok(orden[i] - orden[i - 1] >= TRACK_GAP - 0.01, `pistas a ${orden[i] - orden[i - 1]} px`);
   }
-  for (const s of segs) checkSeg(s, bands, [CA, CB, CC, CD]);
+  for (const s of segs) checkSeg(s, bands, [A4, B4, C4, CD]);
   // el orden es estable: los mismos datos dan las mismas pistas
   const otra = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 1320, bands, links: [], rules, fmt });
   assert.deepEqual(otra.map((s) => runY(s.d)), ys);
@@ -621,7 +632,73 @@ test("si bajar derecho cruzaria la tarjeta de encima, la flecha baja por el cana
   assert.ok(pathPts(s.d).some(([x, y]) => Math.abs(x - (bb.r + c1.l) / 2) < 0.01 && y > 200), "baja por el canal");
 });
 
-test("el area sensible del glifo nunca se pasa del borde de la tarjeta mas cercana", () => {
+/** Tablero de prueba parecido al real: tres columnas de dos filas, una tira colapsada a la derecha
+ *  y una flecha por cada par ordenado de anclas (envio, canal nativo y regla), mas los bucles. Es
+ *  la cama de las dos invariantes que se rompieron una vez: puntas sueltas y glifos en el vacio. */
+function tableroDePrueba() {
+  const cards: Record<string, Rect> = {
+    a1: R(28, 132, 304, 300), a2: R(28, 315, 304, 470),
+    b1: R(332, 132, 608, 300), b2: R(332, 315, 608, 520),
+    c1: R(636, 132, 912, 300), c2: R(636, 315, 912, 430),
+  };
+  const bands: Band[] = [
+    { l: 16, r: 316, t: 92, b: 560 },
+    { l: 320, r: 620, t: 92, b: 560 },
+    { l: 624, r: 924, t: 92, b: 560 },
+    { l: 932, r: 966, t: 12, b: 560 },
+  ];
+  const rects = new Map(Object.entries(cards));
+  const anchors = new Map([...rects, ["z", R(938, 30, 960, 150)]]); // sesion sin tarjeta, en la tira
+  return { rects, anchors, bands, strips: [{ l: 932, r: 966 }], boardWidth: 980 };
+}
+
+/** los segmentos de todas las flechas posibles del tablero de prueba */
+function todasLasFlechas() {
+  const { rects, anchors, bands, strips, boardWidth } = tableroDePrueba();
+  const ids = [...anchors.keys()];
+  const links: Link[] = [];
+  const rules: Rule[] = [];
+  let n = 0;
+  for (const from of ids) {
+    for (const to of ids) {
+      if (from === to) continue;
+      links.push(link({ id: `l${n}`, from, to, ts: new Date(AHORA - 60_000).toISOString() }));
+      links.push({ ...link({ id: `n${n}`, from, to, ts: new Date(AHORA - 60_000).toISOString() }), kind: "native" });
+      rules.push(rule({ id: `r${n}`, from, to }));
+      n++;
+    }
+    rules.push(rule({ id: `b${from}`, from, to: from })); // bucle
+  }
+  return { segs: computeSegs({ rects, anchors, strips, boardWidth, bands, links, rules, fmt, now: AHORA }), anchors, bands };
+}
+
+test("ninguna punta suelta: las dos puntas de cada camino caen sobre el borde de su ancla", () => {
+  const { segs } = todasLasFlechas();
+  assert.ok(segs.length > 100, `${segs.length} flechas`);
+  /** el punto esta sobre uno de los cuatro bordes del rect (no adentro ni afuera) */
+  const enElBorde = (c: Rect, [x, y]: Pt, tol = 0.6) =>
+    x >= c.l - tol && x <= c.r + tol && y >= c.t - tol && y <= c.b + tol &&
+    Math.min(Math.abs(x - c.l), Math.abs(x - c.r), Math.abs(y - c.t), Math.abs(y - c.b)) <= tol;
+  for (const s of segs) {
+    const pts = pathPts(s.d);
+    const [p, q] = [pts[0], pts[pts.length - 1]];
+    assert.ok(enElBorde(s.ends[0], p), `${s.ids[0]}: sale de (${p}) y su ancla es ${JSON.stringify(s.ends[0])}`);
+    assert.ok(enElBorde(s.ends[1], q), `${s.ids[0]}: entra en (${q}) y su ancla es ${JSON.stringify(s.ends[1])}`);
+  }
+});
+
+test("ningun glifo en el vacio: ni por debajo de la ultima ancla ni por encima del techo", () => {
+  const { segs, anchors, bands } = todasLasFlechas();
+  const piso = Math.max(...[...anchors.values()].map((r) => r.b));
+  const techo = Math.min(...bands.map((b) => b.t));
+  for (const s of segs) {
+    assert.ok(s.y <= piso, `glifo de ${s.ids[0]} en (${s.x.toFixed(0)},${s.y.toFixed(0)}), por debajo de todo (piso ${piso})`);
+    assert.ok(s.y >= techo, `glifo de ${s.ids[0]} en (${s.x.toFixed(0)},${s.y.toFixed(0)}), por encima del techo (${techo})`);
+    assert.ok(allowed(bands, s.x, s.y), `glifo de ${s.ids[0]} fuera del area util`);
+  }
+});
+
+test("el area sensible del glifo: se recorta contra la tarjeta, con un piso, y nunca supera el dibujo", () => {
   const a1 = R(0, 60, 300, 200);
   const a2 = R(0, 215, 300, 380);
   const b1 = R(335, 60, 635, 200);
@@ -637,7 +714,11 @@ test("el area sensible del glifo nunca se pasa del borde de la tarjeta mas cerca
     const libre = clearance(cards, s.x, s.y);
     assert.ok(s.hit !== undefined, "computeSegs le pone hit a todos");
     assert.ok(s.hit! >= 0 && s.hit! <= GLYPH_HIT, `hit ${s.hit} fuera de [0, ${GLYPH_HIT}]`);
-    assert.ok(s.hit! <= libre + 1e-9, `hit ${s.hit} se pasa de lo libre (${libre.toFixed(1)})`);
+    // el recorte contra la tarjeta vale mientras deje un blanco usable; con menos que el piso
+    // manda el piso, que igual es menor que los 11 px de radio del circulo que se ve, asi que el
+    // area sensible nunca se pasa de lo que el usuario ve pintado como glifo
+    assert.ok(s.hit! <= Math.max(8, libre) + 1e-9, `hit ${s.hit} se pasa de lo libre (${libre.toFixed(1)}) y del piso`);
+    assert.ok(s.hit! >= Math.min(8, libre) - 1e-9, `hit ${s.hit} por debajo del piso con ${libre.toFixed(1)} libres`);
   }
 });
 

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "pretest:ui": "playwright install chromium",
+    "test:ui": "playwright test --config tests-ui/playwright.config.ts"
   },
   "dependencies": {
     "qrcode": "^1.5.4",
@@ -15,6 +17,7 @@
     "react-markdown": "^9.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

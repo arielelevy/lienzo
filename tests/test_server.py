@@ -1263,3 +1263,125 @@ def test_una_tarjeta_vieja_recupera_la_forma_al_cargarla(aislado, monkeypatch):
     assert set(s) == set(ses.new_session(SID, "claude", "hook"))
     assert s["orphan"] is False and s["suggestion"] is None and s["last_files"] == []
     assert s["state"] == "termino", "lo que ya tenia no se pisa"
+
+
+# 15. encargo A5: los handlers en tandas y create_rule partido en validar y armar --------------
+
+
+def test_edit_rule_valida_todo_antes_de_escribir(aislado, con_pid):
+    """PUT /rules/<id> rechaza con 400 y no deja la regla editada por partes: el texto viene bien y
+    el every_s mal, y lo que queda guardado es la regla entera como estaba."""
+    import datetime as dt
+
+    st.sessions[SID] = ses.new_session(SID, "claude", "hook")
+    at = dt.datetime.now().astimezone().replace(microsecond=0) + dt.timedelta(hours=2)
+    code, r = server.create_rule({"kind": "at", "to": SID, "text": "Continuar", "at": at.isoformat()})
+    assert code == 200
+    antes = dict(r)
+
+    code, res = server.edit_rule(r["id"], {"text": "pisado", "every_s": 10})
+    assert code == 400 and res == {"error": "every_s debe ser al menos 60 segundos"}
+    assert st.rules.items[0] == antes, "un 400 no puede dejar la mitad del cambio escrita"
+
+    code, res = server.edit_rule(r["id"], {"text": 9})
+    assert code == 400 and res == {"error": "text debe ser un texto"}
+    assert st.rules.items[0] == antes
+
+    assert server.edit_rule("nadie", {"text": "x"}) == (404, {"error": "conexion desconocida"})
+    assert server.edit_rule(r["id"], {"at": "ayer"})[0] == 400
+    assert st.rules.items[0] == antes
+
+
+def test_edit_rule_reprograma_una_at_que_ya_disparo(aislado, con_pid):
+    """Una programada que disparo queda deshabilitada; darle una hora nueva la vuelve a poner
+    vigente, con la cuenta de disparos en cero y sin la marca de cuando se apago."""
+    import datetime as dt
+
+    st.sessions[SID] = ses.new_session(SID, "claude", "hook")
+    regla_at(None, max_fires=1, at_offset_s=-60, enabled=False, fired=1, disabled_at=st.now())
+    nueva = (dt.datetime.now().astimezone().replace(microsecond=0) + dt.timedelta(hours=3)).isoformat()
+
+    code, r = server.edit_rule("p1", {"at": nueva, "text": "de nuevo"})
+    assert code == 200
+    assert r["enabled"] is True and r["fired"] == 0 and "disabled_at" not in r
+    assert r["at"] == nueva and r["text"] == "de nuevo"
+
+
+def test_las_claves_de_una_regla_nueva_no_cambian_de_orden(aislado, con_pid):
+    """El cuerpo de POST /rules es json.dumps de este dict, asi que el orden en que se arma es el
+    orden que ve la UI. new_rule pone los campos comunes y cada clase agrega los suyos detras."""
+    import datetime as dt
+
+    st.sessions[SID] = ses.new_session(SID, "claude", "hook")
+    st.sessions[NEW] = ses.new_session(NEW, "claude", "hook")
+    at = (dt.datetime.now().astimezone().replace(microsecond=0) + dt.timedelta(hours=4)).isoformat()
+
+    code, r = server.create_rule({"kind": "at", "to": SID, "text": "x", "at": at, "every_s": 600})
+    assert code == 200
+    assert list(r) == [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "text",
+        "at",
+        "fired",
+        "enabled",
+        "created",
+        "every_s",
+        "max_fires",
+        "skip_busy",
+        "repeat",
+    ]
+
+    code, r = server.create_rule({"kind": "on_stop", "to": SID, "from": NEW, "text": "y"})
+    assert code == 200
+    assert list(r) == ["id", "kind", "from", "to", "text", "at", "repeat", "max_fires", "fired", "enabled", "created"]
+
+
+def test_check_rule_rechaza_sin_tocar_la_lista_de_reglas(aislado, con_pid):
+    """La validacion comun de POST /rules es lo unico que corre cuando el pedido no sirve: ni
+    on_stop ni at llegan a armar nada."""
+    st.sessions[SID] = ses.new_session(SID, "claude", "hook")
+    assert server.check_rule({"kind": "nada", "to": SID}) == (400, {"error": "kind debe ser on_stop o at"})
+    assert server.check_rule({"kind": "at", "to": "nadie"}) == (404, {"error": "sesion destino desconocida"})
+    assert server.check_rule({"kind": "on_stop", "to": SID}) == (404, {"error": "sesion origen desconocida"})
+    assert server.check_rule({"kind": "at", "to": SID}) is None
+    assert server.check_rule({"kind": "on_stop", "to": SID, "from": SID}) is None
+    assert st.rules.items == []
+
+
+def test_una_vista_desconocida_de_una_tarjeta_no_dice_sesion_desconocida(aislado):
+    """Las vistas de /sessions/<id>/... se atienden juntas y con una sola busqueda de la sesion,
+    pero la lista de vistas se mira primero: /sessions/<id>/loquesea sigue siendo ruta desconocida.
+    Y en las que validan el cuerpo, el 400 sigue ganandole al 404 de la sesion."""
+    import http.client
+    import threading
+
+    st.sessions[SID] = ses.new_session(SID, "claude", "hook")
+    srv = server.QuietServer(("127.0.0.1", 0), server.Handler)
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        casos = (
+            ("GET", f"/sessions/{SID}/loquesea", None, 404, "ruta desconocida"),
+            ("GET", f"/sessions/{SID}", None, 404, "ruta desconocida"),
+            ("GET", f"/sessions/{SID}/screen/extra", None, 404, "ruta desconocida"),
+            ("GET", "/sessions/nadie/screen", None, 404, "sesion desconocida"),
+            ("GET", "/sessions/nadie/connections", None, 404, "sesion desconocida"),
+            ("GET", "/sessions/nadie/turns", None, 404, "sesion desconocida"),
+            ("GET", "/sessions/nadie/digest", None, 404, "sesion desconocida"),
+            ("PUT", "/sessions/nadie/title", '{"title": 7}', 400, "title debe ser un texto"),
+            ("PUT", "/sessions/nadie/title", '{"title": "hola"}', 404, "sesion desconocida"),
+            ("PUT", "/sessions/nadie/coordinator", '{"on": "si"}', 400, "on debe ser true o false"),
+            ("PUT", "/sessions/nadie/coordinator", '{"on": true}', 404, "sesion desconocida"),
+        )
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=3)
+        for metodo, path, body, code, error in casos:
+            c.request(metodo, path, body=body, headers={"X-Lienzo": "1", "Content-Type": "application/json"})
+            r = c.getresponse()
+            cuerpo = json.loads(r.read())
+            assert (r.status, cuerpo.get("error")) == (code, error), (metodo, path, r.status, cuerpo)
+        c.close()
+    finally:
+        srv.shutdown()

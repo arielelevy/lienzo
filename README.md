@@ -339,7 +339,13 @@ python -m ruff check lienzo tests install.py                # lint
 python -m black lienzo tests install.py                     # formato
 cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 31 tests de las flechas
 cd web; node --experimental-strip-types src/nl.test.ts                # 77 aserciones del parser de frases
+cd web; npm run test:ui                                               # 25 pruebas de interfaz en el navegador (Playwright)
 ```
+
+Las de interfaz miden el tablero pintado (alturas, subcolumnas, flechas, scroll, contraste) contra
+un tablero fijo que interceptan, más una prueba de humo con los datos de verdad; piden el server
+andando en el 7321 —no lo arrancan ni lo reinician—, la primera vez bajan Chromium solas y
+`LIENZO_URL=http://otro:puerto` las apunta a otro lado.
 
 ## Qué es cada archivo de estado
 

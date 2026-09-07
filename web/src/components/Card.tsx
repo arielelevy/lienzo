@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
 import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
@@ -143,6 +143,96 @@ function CardWords({ sid, rules, links, sessions, onDelete }: { sid: string; rul
   );
 }
 
+/** Cuatro sesiones recien abiertas del mismo repo dicen exactamente lo mismo ("Libre · sin pedidos
+ *  todavía · desde hace 1 min") y ocupan una fila entera del tablero para no decir nada: para el que
+ *  mira, "hay cuatro libres" es **un solo dato**. Se juntan entonces en una tarjeta sola, que se
+ *  despliega cuando hace falta elegir a cual. La primera de la lista la encabeza (el orden lo fijo
+ *  el tablero); en cuanto una recibe un pedido deja de ser libre, sale del grupo y vuelve a ser su
+ *  tarjeta, sin que nadie tenga que acordarse de sacarla. */
+export type FreeGroup = { lead: true; mates: Session[] } | { lead: false };
+
+/** Las libres de un mismo repo y agente, de a dos o mas, forman grupo. Mismo agente porque la
+ *  tarjeta lleva un solo badge y "4 libres en lienzo" con dos agentes adentro seria mentira a
+ *  medias. `keep` son las que quedan afuera pase lo que pase: la elegida y la que tiene el panel
+ *  abierto se siguen viendo enteras, y asi el numero del grupo tampoco miente. */
+export function freeGroups(list: Session[], keep: (string | null | undefined)[] = []): Map<string, FreeGroup> {
+  const skip = new Set(keep.filter(Boolean) as string[]);
+  const by = new Map<string, Session[]>();
+  for (const s of list) {
+    if (!isFree(s) || skip.has(s.session_id)) continue;
+    const k = `${s.repo}|${s.agent}`;
+    const arr = by.get(k);
+    if (arr) arr.push(s);
+    else by.set(k, [s]);
+  }
+  const out = new Map<string, FreeGroup>();
+  for (const mates of by.values()) {
+    if (mates.length < 2) continue;
+    out.set(mates[0].session_id, { lead: true, mates });
+    for (const m of mates.slice(1)) out.set(m.session_id, { lead: false });
+  }
+  return out;
+}
+
+/** Que grupos estan desplegados. Vive afuera de los componentes porque al grupo lo dibuja la
+ *  primera tarjeta y lo obedecen las demas, que son hermanas: no hay un padre comun donde poner el
+ *  estado sin subirlo al tablero, que es de otro archivo. Es el mismo recurso que usa Arrows con
+ *  `data-lanes`, pero en React en vez de en el DOM. */
+const openGroups = new Set<string>();
+const groupWatchers = new Set<() => void>();
+function useGroupOpen(key: string) {
+  const open = useSyncExternalStore(
+    (cb) => {
+      groupWatchers.add(cb);
+      return () => groupWatchers.delete(cb);
+    },
+    () => openGroups.has(key),
+  );
+  const toggle = () => {
+    if (openGroups.has(key)) openGroups.delete(key);
+    else openGroups.add(key);
+    for (const cb of [...groupWatchers]) cb();
+  };
+  return { open, toggle };
+}
+
+/** La tarjeta del grupo plegado: un dato en vez de cuatro iguales. "Darle trabajo" abre el panel de
+ *  la primera (que es la que viene esperando hace mas), y "ver las N" despliega para elegir a cual;
+ *  desplegado, cada una vuelve a ser su tarjeta entera, con su arrastre, su estrella y su menu. */
+function FreeGroupCard({ mates, onOpen, onExpand }: { mates: Session[]; onOpen: () => void; onExpand: () => void }) {
+  const first = mates[0];
+  const oldest = mates.reduce((a, b) => (a.started <= b.started ? a : b));
+  return (
+    <div
+      className="card free freegroup"
+      data-sid={first.session_id}
+      role="group"
+      aria-label={`${mates.length} sesiones libres en ${first.repo}`}
+      onDoubleClick={onOpen}
+    >
+      <div className="top">
+        <span className={`badge ${first.agent}`}>{first.agent}</span>
+        <span className="repo">{first.repo}</span>
+        <span className="right">{ago(oldest.started)}</span>
+      </div>
+      <div className="title">
+        {mates.length} sesiones libres en {first.repo}
+      </div>
+      <div className="freeline" title={mates.map((m) => `${shortName(m)} · abierta hace ${ago(m.started)}`).join("\n")}>
+        sin pedidos todavía · la más vieja, hace {ago(oldest.started)}
+      </div>
+      <div className="quickact freeact">
+        <button type="button" title={`abre el panel de ${shortName(first)}, la que viene esperando hace más`} onClick={onOpen}>
+          Darle trabajo
+        </button>
+        <button type="button" className="expand" title="verlas una por una para elegir a cual" onClick={onExpand}>
+          ver las {mates.length}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Envoltorio con que el lienzo manda un texto largo: la sugerencia que arranca asi es nuestra. */
 const ATTACH_WRAPPER = "Leé el archivo adjunto y respondé";
 /** "usando Bash": la transcripcion dice que herramienta corre; es actividad, no una respuesta */
@@ -195,6 +285,9 @@ interface Props {
   /** esta en el otro extremo de una conexion de la elegida: muestra en palabras **solo** eso que
    *  comparte con ella (lo arma Board), no todas las conexiones que tenga */
   related?: { links: Link[]; rules: Rule[] };
+  /** agrupada con las otras libres de su repo: la encabeza (`lead`) o se pliega adentro. Lo calcula
+   *  el tablero con `freeGroups`; sin esto la tarjeta se dibuja como siempre */
+  freeGroup?: FreeGroup;
   /** un click: elegir la tarjeta, sin abrir nada */
   onPick?: () => void;
   /** doble click (o Enter): abrir el panel */
@@ -207,12 +300,14 @@ interface Props {
   toast?: ToastFn;
 }
 
-export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, onPick, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, onPick, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const [promptOpen, setPromptOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const rename = useRename(s, toast);
+  // el grupo de libres se abre y se cierra para todas sus tarjetas a la vez (ver `useGroupOpen`)
+  const group = useGroupOpen(`${s.repo}|${s.agent}`);
   const rootRef = useRef<HTMLDivElement>(null);
   // el foco esta en un control de la tarjeta (no en la tarjeta misma): recien ahi sus botones
   // entran en el orden de tabulacion. El CSS ya usa :focus-within para mostrarlos
@@ -321,7 +416,24 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`));
   };
 
+  // Plegada adentro de un grupo de libres: no se dibuja, la representa la tarjeta del grupo. Va
+  // despues de todos los hooks a proposito: el orden de los hooks no puede depender de esto.
+  if (freeGroup && !freeGroup.lead && !group.open) return null;
+  if (freeGroup?.lead && !group.open) return <FreeGroupCard mates={freeGroup.mates} onOpen={onSelect} onExpand={group.toggle} />;
+
   return (
+    <>
+      {/* desplegado: una tira arriba de la primera dice de que grupo son y permite volver a plegarlo */}
+      {freeGroup?.lead && group.open && (
+        <div className="freegrouphead">
+          <span>
+            {freeGroup.mates.length} sesiones libres en {s.repo}
+          </span>
+          <button type="button" onClick={group.toggle} title="volver a juntarlas en una sola tarjeta">
+            ocultar
+          </button>
+        </div>
+      )}
     <div
       ref={rootRef}
       className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${menuOpen ? "menuopen" : ""} ${words ? "haswords" : ""}`}
@@ -685,5 +797,6 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       </div>
       {toastNode}
     </div>
+    </>
   );
 }
