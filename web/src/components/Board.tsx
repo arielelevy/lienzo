@@ -425,12 +425,25 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
 
   return (
     <>
+      {/* selector de columna, solo abajo de 900 px (una columna por vez). Un permiso pendiente en
+          otra columna se marca con un punto: ahi no se ven las tarjetas, y sin la marca el pedido
+          pasaba desapercibido hasta que vencia */}
       <div className="filters">
-        {COLS.map(([k, label]) => (
-          <button key={k} className={colOfState(filter) === k ? "on" : ""} onClick={() => onFilter(FILTER_STATE[k])}>
-            {label} {byState[k].length}
-          </button>
-        ))}
+        {COLS.map(([k, label]) => {
+          const pide = byState[k].some((x) => x.pending_id && pending[x.pending_id]);
+          const aca = colOfState(filter) === k;
+          return (
+            <button
+              key={k}
+              className={`${aca ? "on" : ""} ${pide && !aca ? "pide" : ""}`}
+              title={pide ? "una sesión de esta columna está esperando un permiso" : undefined}
+              onClick={() => onFilter(FILTER_STATE[k])}
+            >
+              {label} {byState[k].length}
+              {pide && !aca && <span className="pin" aria-label="hay un permiso esperando" />}
+            </button>
+          );
+        })}
       </div>
       <div
         className={`board ${drag ? "dragging" : ""} ${urgent ? "reordered" : ""}`}

@@ -167,20 +167,9 @@ export interface ConnectionLink extends Omit<Link, "from"> {
   other: OtherSession;
 }
 
-export interface ConnectionRule {
-  id: string;
-  kind: "on_stop" | "at";
-  from: string | null;
-  to: string;
-  text: string;
-  at: string | null;
-  enabled: boolean;
-  fired: number;
-  max_fires: number;
-  every_s?: number | null;
-  skip_busy?: boolean;
-  /** la creo el server por un limite de uso con hora (auto_continue), no el usuario */
-  auto?: boolean;
+/** Una regla como la devuelve `GET /sessions/<sid>/connections`: la misma que `Rule`, con la otra
+ *  punta ya resuelta a nombre por el server. `last_fired` puede venir en null ahi. */
+export interface ConnectionRule extends Omit<Rule, "last_fired"> {
   last_fired?: string | null;
   other: OtherSession;
 }

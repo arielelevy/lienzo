@@ -537,14 +537,16 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       )}
       {/* lo que pide la sesion va antes que la respuesta: Permitir/Denegar es lo primero visible */}
       {p ? (
-        <div className="needs" onClick={(e) => e.stopPropagation()}>
+        // no se frena la propagacion del bloque entero: es la mitad de la tarjeta y frenarlo dejaba
+        // el doble click sin abrir el panel. Los dos botones la frenan por su cuenta
+        <div className="needs">
           <b>Pide permiso: {p.tool_name}</b>
           <code>{detail(p.tool_input)}</code>
           <div className="btns">
             {/* los unicos dos botones que quedan siempre en el orden de tabulacion: el permiso vence */}
-            <button className="allow" data-always-tab="" onClick={() => onDecide(p.request_id, "allow")}>Permitir</button>
-            <button className="deny" data-always-tab="" onClick={() => onDecide(p.request_id, "deny")}>Denegar</button>
-            <span className="dim small">vence {new Date(p.expires_at).toLocaleTimeString()}</span>
+            <button className="allow" data-always-tab="" onClick={(e) => { e.stopPropagation(); onDecide(p.request_id, "allow"); }}>Permitir</button>
+            <button className="deny" data-always-tab="" onClick={(e) => { e.stopPropagation(); onDecide(p.request_id, "deny"); }}>Denegar</button>
+            <span className="dim small">vence {hhmm(new Date(p.expires_at))}</span>
           </div>
         </div>
       ) : s.state === "te_necesita" && s.needs && !(quick && s.needs.kind === "idle") ? (
