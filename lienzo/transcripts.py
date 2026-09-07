@@ -541,6 +541,21 @@ def turns(agent: str, path: str, n: int = 10, before: str | None = None, max_byt
     return {"meta": r["meta"], "turns": page, "has_more": len(ts) > len(page)}
 
 
+QUESTION_MAX = 200  # recorte de cada pregunta de Destacados
+# fin de oracion: punto/signo, los cierres que puedan venir pegados (comillas, parentesis) y espacio
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?…])[\"')\]»]*\s+")
+
+
+def _last_question(final: str) -> str:
+    """La pregunta con la que cierra un turno: la ultima oracion de la ultima linea del final. Se
+    corta por oracion y no por el '¿' de apertura, porque el '¿' suele venir despues del contexto
+    que hace entendible la pregunta ("Decime que queres — ¿escribirle, o algo distinto?": cortar en
+    el '¿' se come el "Decime que queres")."""
+    linea = final.split("\n")[-1].strip()
+    oraciones = [o for o in _SENTENCE_END_RE.split(linea) if o.strip()]
+    return oraciones[-1].strip() if oraciones else linea
+
+
 def digest_turn(turn: dict) -> dict:
     files, commands, errors, questions, reads = [], [], [], [], 0
     peers: list[str] = []
@@ -583,8 +598,14 @@ def digest_turn(turn: dict) -> dict:
         if res and res.get("is_error"):
             errors.append(f"{name}: {_first_line(res.get('text', ''))}")
     final = (turn.get("final") or "").strip()
-    if final.endswith("?") and not questions:
-        questions.append(_short(final.split("\n")[-1], 200))
+    # el turno cierra preguntando y no hubo AskUserQuestion (esas son explicitas y mandan): se
+    # destaca la pregunta sola. Dos casos en que la seccion no agrega nada y solo repite: cuando el
+    # final entero no es mas largo que el recorte de la pregunta (se lee completo ahi arriba) y
+    # cuando el final es una sola oracion, que entonces ES la pregunta.
+    if final.endswith("?") and not questions and len(final) > QUESTION_MAX:
+        pregunta = _last_question(final)
+        if pregunta and pregunta != final:
+            questions.append(_short(pregunta, QUESTION_MAX))
     if turn.get("error"):
         errors.append(turn["error"])
     # dedupe conservando orden

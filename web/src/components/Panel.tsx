@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { ago, api } from "../api";
 import { hhmm } from "../nl";
-import { isFree, periodLabel, schedLabel } from "../names";
+import { isFree, periodLabel, schedLabel, stalledReason } from "../names";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
@@ -59,6 +59,34 @@ const cut = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n).trimEnd()}�
 /** ancho de pantalla en el que el panel pasa a ocupar todo: el mismo numero que el
  *  `@media (max-width: 900px)` de styles.css. */
 const MOBILE = 900;
+
+/** El estado en palabras, con la misma palabra que la columna del tablero: `te_necesita` es el
+ *  nombre interno de la API y no es para leer. (Viviria mejor en names.ts, al lado de COLS, pero
+ *  ese archivo lo esta tocando otra sesion.) */
+const ESTADO: Record<Session["state"], string> = {
+  corriendo: "corriendo",
+  termino: "terminó",
+  te_necesita: "te necesita",
+  muerta: "muerta",
+};
+
+/** La linea que va al lado del titulo: rama y estado. Tres decisiones de producto:
+ *  - "HEAD" no es una rama, es lo que devuelve un repo en detached: no se muestra.
+ *  - muerta o sin terminal mandan sobre lo que diga `state`, igual que la columna del tablero:
+ *    a una huerfana no se le puede escribir aunque figure corriendo.
+ *  - una que figura corriendo pero esta quieta (sin cupo, o sin actividad hace rato) lo dice en
+ *    palabras y con el motivo medido; en la tarjeta eso es solo un punto apagado. */
+function headLine(s: Session): string {
+  const parts: string[] = [];
+  if (s.branch && s.branch !== "HEAD") parts.push(s.branch);
+  if (s.alive === false) parts.push(ESTADO.muerta);
+  else if (s.orphan) parts.push("sin terminal");
+  else {
+    const quieta = stalledReason(s);
+    parts.push(quieta ? `quieta · ${quieta}` : ESTADO[s.state] ?? s.state);
+  }
+  return parts.join(" · ");
+}
 
 /** Pestana "Conexiones": dos listas, lo que paso (links) y lo que sigue armado (rules). */
 function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "old" | null }) {
@@ -305,7 +333,7 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           {/* rama y estado al lado del nombre: es lo unico que servia de la fila de la ruta, que
               ya no esta. La ruta vuelve abajo solo con "Detalles tecnicos" */}
           <span className="sub dim small" title={s.cwd ?? ""}>
-            {s.branch ? `${s.branch} · ` : ""}{s.state}
+            {headLine(s)}
           </span>
         </span>
         <div className="tabs">

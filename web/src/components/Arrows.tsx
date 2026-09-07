@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ago, api } from "../api";
 import { everySeconds, hhmm, nextAt, splitEvery, type EveryUnit } from "../nl";
 import { periodLabel, shortName, whenLabel } from "../names";
-import { computeSegs, laneHeight, type Band, type Rect, type Seg } from "../arrows-geometry";
+import { GLYPH_HIT, computeSegs, laneHeight, type Band, type Rect, type Seg } from "../arrows-geometry";
 import type { Link, Rule, Session } from "../types";
 
 interface Props {
@@ -630,9 +630,11 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
               }}
             >
               <title>{s.title}</title>
-              {/* blanco de 32 px: el texto del glifo mide 13x14 y pedirle al mouse que caiga ahi
-                  justo era pedirle demasiado */}
-              <circle cx={s.x} cy={s.y} r={16} fill="transparent" style={{ pointerEvents: "all", cursor: "pointer" }} />
+              {/* blanco ancho para el mouse: el texto del glifo mide 13x14 y pedirle que caiga ahi
+                  justo era pedirle demasiado. Se recorta a lo que haya libre hasta la tarjeta mas
+                  cercana (`Seg.hit`): un circulo invisible por encima de una tarjeta le roba el
+                  click a algo que se ve debajo. El circulo visible sigue siendo clickeable. */}
+              <circle cx={s.x} cy={s.y} r={s.hit ?? GLYPH_HIT} fill="transparent" style={{ pointerEvents: "all", cursor: "pointer" }} />
               <circle cx={s.x} cy={s.y} r={11} className="dot" style={on ? { strokeWidth: 2.5 } : undefined} />
               <text x={s.x} y={s.y + 3.5} textAnchor="middle" className={`lbl ${many ? "count" : ""}`}>{s.glyph}</text>
             </g>

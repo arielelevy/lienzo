@@ -1,6 +1,6 @@
 import { ago } from "./api";
 import { hhmm } from "./nl";
-import { periodLabel, periodicCount } from "./arrows-geometry";
+import { periodLabel } from "./arrows-geometry";
 import type { Link, Rule, Session } from "./types";
 
 /** Nombres y textos que comparten la tarjeta, el panel, las flechas y Conectar: como se llama una
@@ -42,60 +42,9 @@ export function whenLabel(iso: string, long = false, now = new Date()): string {
 }
 
 /** minuto (ms truncados) en que dispara una regla "at"; null si no tiene hora */
-const minuteOf = (r: Rule): number | null => (r.kind === "at" && r.at ? Math.floor(new Date(r.at).getTime() / 60_000) : null);
 
-/** Reglas "at" que le escriben a esta sesion y caen en el mismo minuto que otra: dos inyecciones
- *  a la misma consola en el mismo minuto (el server no lo impide todavia; la tarjeta lo marca). */
-export function clashingAt(rules: Rule[], sid: string): Set<string> {
-  const byMinute = new Map<number, string[]>();
-  for (const r of rules) {
-    if (!r.enabled || r.to !== sid) continue;
-    const m = minuteOf(r);
-    if (m === null) continue;
-    const arr = byMinute.get(m);
-    if (arr) arr.push(r.id);
-    else byMinute.set(m, [r.id]);
-  }
-  const out = new Set<string>();
-  for (const ids of byMinute.values()) if (ids.length > 1) ids.forEach((id) => out.add(id));
-  return out;
-}
 
-/** Etiqueta del chip de una regla vista desde la tarjeta `sid`. Una "at" periodica dice el periodo,
- *  la proxima hora si esta en el futuro y cuantas veces fue: `↻ cada 30 min · próx. 09:30 → "Continuá" (1/5)`. */
-export function ruleLabel(r: Rule, sid: string, sessions: Record<string, Session>, now = Date.now()): string {
-  const other = (id: string | null) => shortName(id ? sessions[id] : undefined, "?");
-  if (r.kind === "at") {
-    let head: string;
-    let tail = "";
-    if (r.every_s) {
-      const next = r.at && new Date(r.at).getTime() > now ? ` · próx. ${whenLabel(r.at)}` : "";
-      head = `↻ ${periodLabel(r.every_s)}${next}`;
-      tail = ` ${periodicCount(r.fired, r.max_fires, null)}`;
-    } else {
-      head = `⏰ ${r.at ? whenLabel(r.at) : "?"}`;
-    }
-    if (r.to === sid) return r.from && r.from !== sid ? `${head} → "${r.text}"${tail} (desde ${other(r.from)})` : `${head} → "${r.text}"${tail}`;
-    return `${head} → "${r.text}"${tail} a ${other(r.to)}`;
-  }
-  const count = r.repeat ? ` (${r.fired}/${r.max_fires})` : "";
-  return r.from === sid ? `⏹ al terminar → ${other(r.to)}${count}` : `⏹ recibe de ${other(r.from)} al terminar${count}`;
-}
 
-/** Conexiones de la tarjeta en un contador chico, para el modo compacto: `⏰1 ⏹3`, con la lista
- *  completa en el `title`. null si no hay ninguna. */
-export function ruleSummary(rules: Rule[], sid: string, sessions: Record<string, Session>): { text: string; title: string } | null {
-  if (!rules.length) return null;
-  const n = new Map<string, number>();
-  for (const r of rules) {
-    const g = r.kind === "at" ? (r.every_s ? "↻" : "⏰") : "⏹";
-    n.set(g, (n.get(g) ?? 0) + 1);
-  }
-  return {
-    text: ["⏰", "↻", "⏹"].filter((g) => n.has(g)).map((g) => `${g}${n.get(g)}`).join(" "),
-    title: rules.map((r) => ruleLabel(r, sid, sessions)).join("\n"),
-  };
-}
 
 const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 
