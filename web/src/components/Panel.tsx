@@ -50,8 +50,8 @@ interface Props {
   toast: (msg: string, err?: boolean) => void;
   /** "Detalles tecnicos" del menu: PID y nombre del .jsonl en el encabezado, contadores en cero */
   details: boolean;
-  /** rect de la tarjeta que abrio el panel: el panel se dibuja ahi mismo */
-  anchor?: { left: number; top: number } | null;
+  /** rect de la tarjeta que abrio el panel: el panel se dibuja al lado, del lado mas libre */
+  anchor?: { left: number; top: number; width: number; height: number } | null;
   /** permiso pendiente de esta sesion, si lo hay: se contesta desde aca tambien */
   pending?: Pending;
   onDecide: (requestId: string, decision: "allow" | "deny") => void;
@@ -209,6 +209,10 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
   const [hasMore, setHasMore] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // El ajuste del borde a la grilla de tarjetas se mide una vez por apertura y ancho de ventana:
+  // si se recalculara en cada render, el panel cambiaria de ancho solo cada vez que el tablero se
+  // mueve atras. El componente se remonta por sesion (key en App), asi que el ref muere con ella
+  const snapRef = useRef<{ vw: number; left: number; width: number; out: { left: number; width: number } } | null>(null);
   // el tamano del panel se calcula al pintar: si la ventana cambia (girar el celular, abrir el
   // teclado, agrandar la ventana) hay que volver a pintar. visualViewport tambien avisa cuando
   // el teclado achica o desplaza lo visible sin tocar innerHeight (iOS)
@@ -310,18 +314,75 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
         height: Math.max(200, Math.round(vv?.height ?? vh) - top),
       };
     }
-    const width = Math.min(720, vw - 24);
+    // Escritorio: al lado de la tarjeta, nunca encima, y del lado que tenga mas lugar. El ancho
+    // sale de la ventana (46 %, entre 380 y 720) y no de un numero fijo: con 720 sobre un tablero
+    // de 1152 el panel tapaba 8 de 10 tarjetas y quedaban 3,4 legibles en promedio; asi quedan 5,1
+    // y la tarjeta que abrio el panel se ve siempre (antes, nunca). Medido abriendo el panel en
+    // cada una de las 10 tarjetas. Achicarlo mas no gana ninguna tarjeta (la grilla de subcolumnas
+    // manda), asi que se queda en el ancho comodo para leer.
+    const width = Math.max(380, Math.min(720, Math.round(vw * 0.46), vw - 24));
     const h = Math.min(vh * 0.84, vh - 70);
-    if (!anchor) return { left: Math.round((vw - width) / 2), top: 56, width };
-    return {
-      left: Math.round(Math.min(Math.max(anchor.left - 8, 12), Math.max(12, vw - width - 12))),
-      top: Math.round(Math.min(Math.max(anchor.top - 8, 52), Math.max(52, vh - h - 12))),
-      width,
+    // El ancla se mide una sola vez al abrir, a proposito: si se remidiera, el panel saltaria
+    // mientras el tablero se reacomoda detras. El costo es que, si la ventana se achica despues,
+    // esas coordenadas son de la ventana vieja y el panel se iba entero para afuera: es `fixed`,
+    // asi que no hay barra de scroll con la que alcanzarlo y el tablero quedaba difuminado sin
+    // panel a la vista. Medido abriendolo a 2560 y achicando: se salia 89 px en 1440, 377 en 1152
+    // y 569 en 960. Este clamp cierra las tres ramas de abajo, no una sola.
+    const dentro = (b: { left: number; top: number; width: number }) => {
+      const w = Math.min(b.width, vw - 24);
+      return { ...b, width: w, left: Math.round(Math.min(Math.max(b.left, 12), Math.max(12, vw - w - 12))) };
     };
+    const top = (t: number) => Math.round(Math.min(Math.max(t - 8, 52), Math.max(52, vh - h - 12)));
+    if (!anchor) return dentro({ left: Math.round((vw - width) / 2), top: 56, width });
+    const libreDer = vw - (anchor.left + anchor.width) - 24;
+    const libreIzq = anchor.left - 24;
+    const alLado = Math.max(libreDer, libreIzq);
+    // El borde del panel no parte una tarjeta al medio: si cae adentro de una, se retrae hasta el
+    // hueco anterior, siempre que el panel no baje de 380 px. Medido en 1440 sobre las 10 tarjetas:
+    // pasa de tapar 5,7 a tapar 3,3, y de 4,3 a 6,7 tarjetas legibles, a cambio de 60-110 px de
+    // ancho. En 1152 el borde ya caia en un hueco y no cambia nada.
+    const alaGrilla = (left: number, w: number): { left: number; width: number } => {
+      const c = snapRef.current;
+      if (c && c.vw === vw && c.left === left && c.width === w) return c.out;
+      const alto = { top: top(anchor.top), bottom: top(anchor.top) + h };
+      const cruzan = Array.from(document.querySelectorAll(".card"))
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.top < alto.bottom && r.bottom > alto.top);
+      let l = left;
+      let ancho = w;
+      const cortaDer = cruzan.filter((r) => r.left < l + ancho && l + ancho < r.right);
+      if (cortaDer.length) {
+        const borde = Math.min(...cortaDer.map((r) => r.left)) - 12;
+        if (borde - l >= 380) ancho = borde - l;
+      }
+      const cortaIzq = cruzan.filter((r) => r.left < l && l < r.right);
+      if (cortaIzq.length) {
+        const borde = Math.max(...cortaIzq.map((r) => r.right)) + 12;
+        if (l + ancho - borde >= 380) {
+          ancho = l + ancho - borde;
+          l = borde;
+        }
+      }
+      const out = { left: Math.round(l), width: Math.round(ancho) };
+      snapRef.current = { vw, left, width: w, out };
+      return out;
+    };
+    if (alLado >= 380) {
+      // entra al costado: se pega al borde de la tarjeta del lado mas libre y usa lo que haya
+      const w = Math.min(width, alLado);
+      const izquierda = libreDer >= libreIzq ? anchor.left + anchor.width + 12 : anchor.left - 12 - w;
+      const ajustado = alaGrilla(izquierda, w);
+      return dentro({ left: ajustado.left, top: top(anchor.top), width: ajustado.width });
+    }
+    // ventana angosta: no hay costado donde entre, vuelve a abrirse sobre la tarjeta
+    return dentro({ left: anchor.left - 8, top: top(anchor.top), width });
   })();
 
   return (
-    <div className="panel" style={{ left: box.left, top: box.top, width: box.width, height: box.height, maxHeight: box.height }}>
+    /* angosto: el encabezado usa las pestanas compactas, las mismas del celular, para no comerse
+       filas cuando el panel se achica para dejar ver el tablero. El corte esta en 700 px porque
+       abajo de eso las cuatro pestanas mas Conectar no entran en una fila con el tamano grande */
+    <div className={`panel ${box.width < 700 ? "narrow" : ""}`} style={{ left: box.left, top: box.top, width: box.width, height: box.height, maxHeight: box.height }}>
       <div className="ph">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         {/* una linea sola: el titulo largo se corta con puntos suspensivos y va entero en el title,

@@ -131,64 +131,74 @@ def parse_at(value) -> dt.datetime:
     return dt.datetime.fromisoformat(str(value)).astimezone()
 
 
-def create_rule(d: dict) -> tuple[int, dict]:
-    """POST /rules: valida y crea una regla on_stop o at. Devuelve (codigo, cuerpo)."""
-    kind = d.get("kind")
-    if kind not in ("on_stop", "at"):
+def find_enabled(pred) -> dict | None:
+    """La primera regla habilitada que cumple `pred`, leyendo la lista con el lock tomado. Es el
+    "¿ya hay una parecida?" de las tres validaciones que miran las reglas que ya existen."""
+    with lock:
+        return next((r for r in rules.items if r.get("enabled") and pred(r)), None)
+
+
+def check_rule(d: dict) -> tuple[int, dict] | None:
+    """Lo que se valida igual para las dos clases de regla: el kind y que las sesiones existan.
+    Devuelve el (codigo, cuerpo) del rechazo, o None si el pedido pasa."""
+    if d.get("kind") not in ("on_stop", "at"):
         return 400, {"error": "kind debe ser on_stop o at"}
     if d.get("to") not in sessions:
         return 404, {"error": "sesion destino desconocida"}
-    if kind == "on_stop" and d.get("from") not in sessions:
+    if d["kind"] == "on_stop" and d.get("from") not in sessions:
         return 404, {"error": "sesion origen desconocida"}
-    text = str(d.get("text") or "")
-    if kind == "on_stop":
-        with lock:
-            inverse = next(
-                (
-                    r
-                    for r in rules.items
-                    if r.get("enabled")
-                    and r.get("kind") == "on_stop"
-                    and r.get("from") == d["to"]
-                    and r.get("to") == d["from"]
-                ),
-                None,
-            )
-            dup = next(
-                (
-                    r
-                    for r in rules.items
-                    if r.get("enabled")
-                    and r.get("kind") == "on_stop"
-                    and r.get("to") == d["to"]
-                    and (r.get("from") or None) == (d.get("from") or None)
-                    and (r.get("text") or "").strip() == text.strip()
-                ),
-                None,
-            )
-        if inverse:
-            return 409, {
-                "error": f"crearía un bucle {d['from'][:8]}↔{d['to'][:8]}: "
-                f"ya existe la regla {inverse['id']} en sentido inverso"
-            }
-        if dup:
-            return 409, {"error": "ya existe esa conexión", "rule_id": dup["id"]}
-        rule = {
-            "id": secrets.token_hex(6),
-            "kind": kind,
-            "from": d.get("from") or None,
-            "to": d["to"],
-            "text": text,
-            "at": None,
-            "repeat": bool(d.get("repeat")),
-            "max_fires": max(1, min(int(d.get("max_fires") or 1), 50)),
-            "fired": 0,
-            "enabled": True,
-            "created": now(),
+    return None
+
+
+def new_rule(d: dict, text: str, **extra) -> dict:
+    """Los campos que toda regla nueva tiene iguales; `extra` agrega los propios de cada clase. El
+    orden de las claves es el del cuerpo que devuelve /rules, asi que se arma en ese orden."""
+    return {
+        "id": secrets.token_hex(6),
+        "kind": d["kind"],
+        "from": d.get("from") or None,
+        "to": d["to"],
+        "text": text,
+        **extra,
+    }
+
+
+def create_on_stop(d: dict, text: str) -> tuple[int, dict]:
+    """Regla on_stop nueva: se rechaza el bucle (ya hay una en sentido inverso) y la conexion
+    repetida (mismo origen, mismo destino y mismo texto)."""
+    inverse = find_enabled(
+        lambda r: r.get("kind") == "on_stop" and r.get("from") == d["to"] and r.get("to") == d["from"]
+    )
+    if inverse:
+        return 409, {
+            "error": f"crearía un bucle {d['from'][:8]}↔{d['to'][:8]}: "
+            f"ya existe la regla {inverse['id']} en sentido inverso"
         }
-        rules.add(rule, cap=500)
-        log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]}")
-        return 200, rule
+    dup = find_enabled(
+        lambda r: r.get("kind") == "on_stop"
+        and r.get("to") == d["to"]
+        and (r.get("from") or None) == (d.get("from") or None)
+        and (r.get("text") or "").strip() == text.strip()
+    )
+    if dup:
+        return 409, {"error": "ya existe esa conexión", "rule_id": dup["id"]}
+    rule = new_rule(
+        d,
+        text,
+        at=None,
+        repeat=bool(d.get("repeat")),
+        max_fires=max(1, min(int(d.get("max_fires") or 1), 50)),
+        fired=0,
+        enabled=True,
+        created=now(),
+    )
+    rules.add(rule, cap=500)
+    log(f"regla nueva {rule['id']}: on_stop -> {rule['to'][:8]}")
+    return 200, rule
+
+
+def create_at(d: dict, text: str) -> tuple[int, dict]:
+    """Regla at nueva: una programada, con repeticion o de un solo disparo."""
     try:
         at = parse_at(d.get("at"))
     except ValueError:
@@ -199,15 +209,7 @@ def create_rule(d: dict) -> tuple[int, dict]:
     # dos programadas a la misma consola en el mismo minuto se inyectan juntas ("Continuar" y
     # "continua" a las 01:01): choca cualquier `at` habilitada a +-2 min, periodica o no, sea cual
     # sea el texto; con "replace": true la nueva reemplaza a la existente
-    with lock:
-        clash = next(
-            (
-                r
-                for r in rules.items
-                if r.get("enabled") and r.get("kind") == "at" and r.get("to") == d["to"] and at_near(r, at)
-            ),
-            None,
-        )
+    clash = find_enabled(lambda r: r.get("kind") == "at" and r.get("to") == d["to"] and at_near(r, at))
     if clash:
         if d.get("replace") is not True:
             hhmm = dt.datetime.fromisoformat(clash["at"]).astimezone().strftime("%H:%M")
@@ -222,22 +224,70 @@ def create_rule(d: dict) -> tuple[int, dict]:
         log(
             f"regla {clash['id']} ({clash.get('at')} {short(clash.get('text') or '', 40)!r}) reemplazada por una nueva a la misma hora"
         )
-    rule = {
-        "id": secrets.token_hex(6),
-        "kind": kind,
-        "from": d.get("from") or None,
-        "to": d["to"],
-        "text": text,
-        "at": at.isoformat(timespec="seconds"),
-        "fired": 0,
-        "enabled": True,
-        "created": now(),
-    }
-    rule.update(extra)  # every_s, max_fires, skip_busy, repeat=bool(every_s)
+    # de at_fields salen every_s, max_fires, skip_busy y repeat=bool(every_s)
+    rule = new_rule(d, text, at=at.isoformat(timespec="seconds"), fired=0, enabled=True, created=now(), **extra)
     rules.add(rule, cap=500)
     cada = f" cada {rule['every_s']} s x{rule['max_fires']}" if rule.get("every_s") else ""
-    log(f"regla nueva {rule['id']}: {kind} -> {rule['to'][:8]} {rule['at']}{cada}")
+    log(f"regla nueva {rule['id']}: at -> {rule['to'][:8]} {rule['at']}{cada}")
     return 200, rule
+
+
+def create_rule(d: dict) -> tuple[int, dict]:
+    """POST /rules: valida lo comun y deja el armado en la funcion de la clase que corresponda.
+    Devuelve (codigo, cuerpo)."""
+    rechazo = check_rule(d)
+    if rechazo is not None:
+        return rechazo
+    text = str(d.get("text") or "")
+    return create_on_stop(d, text) if d["kind"] == "on_stop" else create_at(d, text)
+
+
+def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
+    """PUT /rules/<id>: edita una conexion pendiente (doble click en la flecha): texto, hora,
+    repeticion. Una programada que ya disparo se puede reprogramar: vuelve a quedar vigente.
+    Devuelve (codigo, cuerpo), como create_rule. Primero valida todo y despues escribe: un 400 a
+    mitad de camino dejaria la regla editada por partes."""
+    at = None
+    if d.get("at") is not None:
+        try:
+            at = parse_at(d["at"])
+        except ValueError:
+            return 400, {"error": "at debe ser una fecha ISO"}
+    if "text" in d and not isinstance(d["text"], str):
+        return 400, {"error": "text debe ser un texto"}
+    try:
+        max_fires = max(1, min(int(d["max_fires"]), 50)) if d.get("max_fires") is not None else None
+    except (TypeError, ValueError):
+        return 400, {"error": "max_fires debe ser un numero"}
+    with lock:
+        r = next((x for x in rules.items if x["id"] == rule_id), None)
+        if r is None:
+            return 404, {"error": "conexion desconocida"}
+        extra = None
+        if r.get("kind") == "at":
+            extra, err = at_fields(d, r)
+            if err:
+                return 400, {"error": err}
+        # de aca en adelante no se rechaza nada mas: `extra` con algo adentro es la regla 'at' ya validada
+        if "text" in d:
+            r["text"] = d["text"]
+        if extra is not None:
+            r.update(extra)  # every_s (null = un disparo), max_fires, skip_busy, repeat
+            if at is not None:
+                r["at"] = at.isoformat(timespec="seconds")
+                if not r.get("enabled"):
+                    r["enabled"] = True
+                    r["fired"] = 0
+                    r.pop("disabled_at", None)
+        if r.get("kind") == "on_stop":
+            if "repeat" in d:
+                r["repeat"] = bool(d["repeat"])
+            if max_fires is not None:
+                r["max_fires"] = max_fires
+        rules.save()
+    rules.publish()
+    log(f"regla {r['id']} editada: {r['kind']} -> {r['to'][:8]} {r.get('at') or ''} {short(r.get('text') or '', 60)!r}")
+    return 200, r
 
 
 class QuietServer(ThreadingHTTPServer):
@@ -250,6 +300,10 @@ class QuietServer(ThreadingHTTPServer):
         if e is not None and is_disconnect(e):
             return
         log(traceback.format_exc())
+
+
+# Las vistas de una tarjeta, /sessions/<id>/<vista>: las atiende _session_view con una sola busqueda.
+SESSION_VIEWS = ("screen", "connections", "turns", "digest")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -287,13 +341,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _body(self) -> bytes:
-        """Se llama al entrar a cada do_*, antes de decidir nada: si el cuerpo queda sin leer en el
+    def _route(self) -> list[str]:
+        """Primera linea de cada do_*, antes de decidir nada. Lee el cuerpo: si queda sin leer en el
         socket (un 403 o un 404 tempranos), el siguiente request de la misma conexion keep-alive lo
-        toma como linea de pedido y contesta 501."""
+        toma como linea de pedido y contesta 501. Y parte la ruta: devuelve los tramos de la URL, que
+        es con lo que cada handler elige, y deja la query en `self.query`."""
         n = int(self.headers.get("Content-Length") or 0)
         self.raw = self.rfile.read(n) if n else b""
-        return self.raw
+        u = urllib.parse.urlparse(self.path)
+        self.query = urllib.parse.parse_qs(u.query)
+        return [p for p in u.path.split("/") if p]
 
     def _json_body(self) -> dict:
         """JSON del cuerpo tolerante a clientes que mandan latin-1 (un curl desde Git Bash)."""
@@ -336,10 +393,7 @@ class Handler(BaseHTTPRequestHandler):
         return ohost == host or ohost.split(":")[0] in ("localhost", "127.0.0.1")
 
     def do_GET(self):
-        self._body()
-        u = urllib.parse.urlparse(self.path)
-        parts = [p for p in u.path.split("/") if p]
-        q = urllib.parse.parse_qs(u.query)
+        parts = self._route()
         try:
             if not parts:
                 index = os.path.join(DIST, "index.html")
@@ -347,16 +401,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(503, {"error": "falta el build de la UI: cd web && npm install && npm run build"})
                 return self._file(index, "text/html; charset=utf-8")
             if parts[0] == "assets" and len(parts) == 2 and os.path.isdir(DIST):
-                # estaticos del build de Vite; sin ".." posibles porque parts viene partido por "/"
-                name = parts[1]
-                if "\\" in name or name.startswith("."):
-                    return self._json(404, {"error": "ruta invalida"})
-                path = os.path.join(DIST, "assets", name)
-                return self._file(
-                    path,
-                    MIME.get(os.path.splitext(name)[1].lower(), "application/octet-stream"),
-                    cache="public, max-age=31536000, immutable",
-                )
+                return self._asset(parts[1])
             if parts == ["favicon.svg"] and os.path.isdir(DIST):
                 # el icono de la pestaña: vive en la raiz del build, no en assets/
                 return self._file(os.path.join(DIST, "favicon.svg"), "image/svg+xml", cache="public, max-age=86400")
@@ -380,25 +425,7 @@ class Handler(BaseHTTPRequestHandler):
                 cur = auth.current_otpauth(os.environ.get("USERNAME", "lienzo"))
                 return self._json(200, cur) if cur else self._json(404, {"error": "sin acceso configurado"})
             if parts == ["enroll"]:
-                # el token del QR es la credencial; vale 15 min desde el alta y se apaga solo
-                global enroll
-                tok = q.get("token", [""])[0]
-                with lock:
-                    e = enroll
-                    if e and time.time() > e["expires"]:
-                        enroll = e = None
-                if not e or not tok or not secrets.compare_digest(tok, e["token"]):
-                    log(f"enroll rechazado desde {self._client_ip()}")
-                    return self._json(410, {"error": "el enlace de alta vencio o no es valido; rehacer desde la PC"})
-                log(f"enroll entregado a {self._client_ip()}")
-                return self._json(
-                    200,
-                    {
-                        "passphrase": e["passphrase"],
-                        "otpauth": e["otpauth"],
-                        "expires_in": int(e["expires"] - time.time()),
-                    },
-                )
+                return self._enroll()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
             if parts == ["sessions"]:
@@ -419,86 +446,75 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, public_config())
             if parts == ["events"]:
                 return self._sse()
-            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "screen":
-                with lock:
-                    s = sessions.get(parts[1])
-                if s is None:
-                    return self._json(404, {"error": "sesion desconocida"})
-                if not s.get("pid") or s.get("orphan"):
-                    return self._json(409, {"ok": False, "error": "sin consola que leer"})
-                return self._json(200, read_screen(s["pid"]))
-            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "connections":
-                with lock:
-                    known = parts[1] in sessions
-                if not known:
-                    return self._json(404, {"error": "sesion desconocida"})
-                return self._json(200, connections_of(parts[1]))
-            if len(parts) == 3 and parts[0] == "sessions" and parts[2] in ("turns", "digest"):
-                with lock:
-                    s = sessions.get(parts[1])
-                if s is None:
-                    return self._json(404, {"error": "sesion desconocida"})
-                if not s.get("transcript_path") or not os.path.exists(s["transcript_path"]):
-                    return self._json(200, {"meta": {}, "turns": [], "has_more": False, "note": "sin transcripcion"})
-                n = int(q.get("n", ["10"])[0])
-                before = q.get("before", [None])[0]
-                if parts[2] == "turns":
-                    return self._json(200, transcripts.turns(s["agent"], s["transcript_path"], n, before))
-                return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n))
+            if len(parts) == 3 and parts[0] == "sessions" and parts[2] in SESSION_VIEWS:
+                return self._session_view(parts[1], parts[2])
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:
             return self._server_error(e)
 
+    def _asset(self, name: str) -> None:
+        """Un estatico del build de Vite. Sin ".." posibles: el nombre sale de partir la ruta por
+        "/", y de ahi no puede venir un separador de Windows ni un archivo oculto."""
+        if "\\" in name or name.startswith("."):
+            return self._json(404, {"error": "ruta invalida"})
+        return self._file(
+            os.path.join(DIST, "assets", name),
+            MIME.get(os.path.splitext(name)[1].lower(), "application/octet-stream"),
+            cache="public, max-age=31536000, immutable",
+        )
+
+    def _enroll(self) -> None:
+        """GET /enroll?token=...: entrega passphrase y otpauth una sola vez, para el alta desde el
+        celular con un QR. El token es la credencial; vale 15 min desde el alta y se apaga solo."""
+        global enroll
+        tok = self.query.get("token", [""])[0]
+        with lock:
+            e = enroll
+            if e and time.time() > e["expires"]:
+                enroll = e = None
+        if not e or not tok or not secrets.compare_digest(tok, e["token"]):
+            log(f"enroll rechazado desde {self._client_ip()}")
+            return self._json(410, {"error": "el enlace de alta vencio o no es valido; rehacer desde la PC"})
+        log(f"enroll entregado a {self._client_ip()}")
+        return self._json(
+            200,
+            {"passphrase": e["passphrase"], "otpauth": e["otpauth"], "expires_in": int(e["expires"] - time.time())},
+        )
+
+    def _session_view(self, sid: str, view: str) -> None:
+        """Las cuatro vistas de una tarjeta (SESSION_VIEWS), con una sola busqueda de la sesion. Una
+        vista que no este en la lista no llega hasta aca: sigue cayendo en el 404 de ruta
+        desconocida de do_GET, no en el de sesion desconocida."""
+        with lock:
+            s = sessions.get(sid)
+        if s is None:
+            return self._json(404, {"error": "sesion desconocida"})
+        if view == "connections":
+            return self._json(200, connections_of(sid))
+        if view == "screen":
+            if not s.get("pid") or s.get("orphan"):
+                return self._json(409, {"ok": False, "error": "sin consola que leer"})
+            return self._json(200, read_screen(s["pid"]))
+        if not s.get("transcript_path") or not os.path.exists(s["transcript_path"]):
+            return self._json(200, {"meta": {}, "turns": [], "has_more": False, "note": "sin transcripcion"})
+        n = int(self.query.get("n", ["10"])[0])
+        if view == "turns":
+            before = self.query.get("before", [None])[0]
+            return self._json(200, transcripts.turns(s["agent"], s["transcript_path"], n, before))
+        return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n))
+
     def do_POST(self):
-        self._body()
-        parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
+        parts = self._route()
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
         try:
             if parts == ["login"]:
-                d = self._json_body()
-                ok, motivo, token = auth.login(
-                    str(d.get("passphrase", "")),
-                    str(d.get("code", "")),
-                    self._client_ip(),
-                    self.headers.get("User-Agent", ""),
-                )
-                if not ok:
-                    log(f"login fallido desde {self._client_ip()}: {motivo}")
-                    # hacia afuera un solo mensaje, salvo el bloqueo, que conviene que se vea
-                    msg = (
-                        motivo if motivo.startswith("bloqueado") or "no configurado" in motivo else "codigo incorrecto"
-                    )
-                    return self._json(401, {"ok": False, "error": msg})
-                log(f"login ok desde {self._client_ip()}")
-                return self._json(
-                    200, {"ok": True}, {"Set-Cookie": auth.cookie_header(token, secure=self._via_tunnel())}
-                )
+                return self._login()
             if parts == ["logout"]:
                 auth.logout(auth.parse_cookie(self.headers.get("Cookie")))
                 return self._json(200, {"ok": True}, {"Set-Cookie": f"{auth.COOKIE}=; Path=/; Max-Age=0"})
             if parts == ["setup"]:
-                # alta del acceso remoto: solo desde la propia PC y solo una vez
-                if not self._is_local():
-                    return self._json(403, {"error": "el alta se hace desde la PC"})
-                if auth.configured():
-                    return self._json(409, {"error": "ya esta configurado; borrar ~/.lienzo/auth.json para rehacerlo"})
-                d = self._json_body()
-                res = auth.setup(
-                    account=os.environ.get("USERNAME", "lienzo"), mode="full" if d.get("mode") == "full" else "code"
-                )
-                global enroll
-                with lock:
-                    enroll = {
-                        "token": secrets.token_urlsafe(24),
-                        "passphrase": res["passphrase"],
-                        "otpauth": res["otpauth"],
-                        "expires": time.time() + ENROLL_S,
-                    }
-                    res["enroll_token"] = enroll["token"]
-                    res["enroll_expires_s"] = ENROLL_S
-                log("acceso remoto configurado (passphrase + TOTP); enlace de alta valido 15 min")
-                return self._json(200, res)
+                return self._setup()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
             if parts == ["rescan"]:
@@ -519,20 +535,7 @@ class Handler(BaseHTTPRequestHandler):
                 if s is None:
                     return self._json(404, {"error": "sesion desconocida"})
                 if parts[2] == "send":
-                    d = self._json_body()
-                    code, res = send_to_session(s, d.get("text", ""), list(d.get("attachments") or []))
-                    src, link_to = d.get("from"), d.get("link_to")
-                    kind = "native" if d.get("native") else "send"
-                    if code == 200 and link_to and link_to in sessions and link_to != s["session_id"]:
-                        # canal nativo: se le habla a A para que abra conversacion con B; la flecha es A -> B
-                        add_link(s["session_id"], link_to, d.get("text", ""), kind)
-                    elif code == 200 and src and src in sessions and src != s["session_id"]:
-                        add_link(src, s["session_id"], d.get("text", ""), kind)
-                    elif code == 200 and not src and not link_to:
-                        # lo que el usuario escribio desde el lienzo: queda en el historial de la
-                        # sesion (pestana Conexiones) como 'recibido de vos'; sin flecha
-                        add_link(None, s["session_id"], d.get("text", ""), "user")
-                    return self._json(code, res)
+                    return self._send(s)
                 if parts[2] == "attach":
                     name = urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin")
                     data = self.raw
@@ -544,9 +547,66 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._server_error(e)
 
+    def _login(self) -> None:
+        """POST /login: passphrase mas codigo TOTP a cambio de la cookie. Hacia afuera va un solo
+        mensaje de error, salvo el bloqueo por intentos, que conviene que se vea."""
+        d = self._json_body()
+        ok, motivo, token = auth.login(
+            str(d.get("passphrase", "")), str(d.get("code", "")), self._client_ip(), self.headers.get("User-Agent", "")
+        )
+        if not ok:
+            log(f"login fallido desde {self._client_ip()}: {motivo}")
+            msg = motivo if motivo.startswith("bloqueado") or "no configurado" in motivo else "codigo incorrecto"
+            return self._json(401, {"ok": False, "error": msg})
+        log(f"login ok desde {self._client_ip()}")
+        return self._json(200, {"ok": True}, {"Set-Cookie": auth.cookie_header(token, secure=self._via_tunnel())})
+
+    def _setup(self) -> None:
+        """POST /setup: alta del acceso remoto, solo desde la propia PC y solo una vez. Deja armado
+        el enlace de alta, un token de 15 min que el celular canjea una sola vez por /enroll."""
+        if not self._is_local():
+            return self._json(403, {"error": "el alta se hace desde la PC"})
+        if auth.configured():
+            return self._json(409, {"error": "ya esta configurado; borrar ~/.lienzo/auth.json para rehacerlo"})
+        d = self._json_body()
+        res = auth.setup(
+            account=os.environ.get("USERNAME", "lienzo"), mode="full" if d.get("mode") == "full" else "code"
+        )
+        global enroll
+        with lock:
+            enroll = {
+                "token": secrets.token_urlsafe(24),
+                "passphrase": res["passphrase"],
+                "otpauth": res["otpauth"],
+                "expires": time.time() + ENROLL_S,
+            }
+            res["enroll_token"] = enroll["token"]
+            res["enroll_expires_s"] = ENROLL_S
+        log("acceso remoto configurado (passphrase + TOTP); enlace de alta valido 15 min")
+        return self._json(200, res)
+
+    def _send(self, s: dict) -> None:
+        """POST /sessions/<id>/send: inyecta el texto en la consola y, solo si entro, deja la flecha
+        en el historial. Quien queda de cada lado depende de como se pidio el envio."""
+        d = self._json_body()
+        code, res = send_to_session(s, d.get("text", ""), list(d.get("attachments") or []))
+        if code == 200:
+            sid, text = s["session_id"], d.get("text", "")
+            src, link_to = d.get("from"), d.get("link_to")
+            kind = "native" if d.get("native") else "send"
+            if link_to and link_to in sessions and link_to != sid:
+                # canal nativo: se le habla a A para que abra conversacion con B; la flecha es A -> B
+                add_link(sid, link_to, text, kind)
+            elif src and src in sessions and src != sid:
+                add_link(src, sid, text, kind)
+            elif not src and not link_to:
+                # lo que el usuario escribio desde el lienzo: queda en el historial de la sesion
+                # (pestana Conexiones) como 'recibido de vos'; sin flecha
+                add_link(None, sid, text, "user")
+        return self._json(code, res)
+
     def do_PUT(self):
-        self._body()
-        parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
+        parts = self._route()
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
         if not self._authed():
@@ -594,57 +654,14 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
             if len(parts) == 2 and parts[0] == "rules":
-                # editar una conexion pendiente (doble click en la flecha): texto, hora, repeticion.
-                # Una programada que ya disparo se puede reprogramar: vuelve a quedar vigente.
-                d = self._json_body()
-                at = None
-                if d.get("at") is not None:
-                    try:
-                        at = parse_at(d["at"])
-                    except ValueError:
-                        return self._json(400, {"error": "at debe ser una fecha ISO"})
-                if "text" in d and not isinstance(d["text"], str):
-                    return self._json(400, {"error": "text debe ser un texto"})
-                try:
-                    max_fires = max(1, min(int(d["max_fires"]), 50)) if d.get("max_fires") is not None else None
-                except (TypeError, ValueError):
-                    return self._json(400, {"error": "max_fires debe ser un numero"})
-                with lock:
-                    r = next((x for x in rules.items if x["id"] == parts[1]), None)
-                    if r is None:
-                        return self._json(404, {"error": "conexion desconocida"})
-                    if r.get("kind") == "at":
-                        extra, err = at_fields(d, r)
-                        if err:
-                            return self._json(400, {"error": err})
-                    if "text" in d:
-                        r["text"] = d["text"]
-                    if r.get("kind") == "at":
-                        r.update(extra)  # every_s (null = un disparo), max_fires, skip_busy, repeat
-                        if at is not None:
-                            r["at"] = at.isoformat(timespec="seconds")
-                            if not r.get("enabled"):
-                                r["enabled"] = True
-                                r["fired"] = 0
-                                r.pop("disabled_at", None)
-                    if r.get("kind") == "on_stop":
-                        if "repeat" in d:
-                            r["repeat"] = bool(d["repeat"])
-                        if max_fires is not None:
-                            r["max_fires"] = max_fires
-                    rules.save()
-                rules.publish()
-                log(
-                    f"regla {r['id']} editada: {r['kind']} -> {r['to'][:8]} {r.get('at') or ''} {short(r.get('text') or '', 60)!r}"
-                )
-                return self._json(200, r)
+                code, res = edit_rule(parts[1], self._json_body())
+                return self._json(code, res)
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:
             return self._server_error(e)
 
     def do_DELETE(self):
-        self._body()
-        parts = [p for p in urllib.parse.urlparse(self.path).path.split("/") if p]
+        parts = self._route()
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo"})
         if not self._authed():

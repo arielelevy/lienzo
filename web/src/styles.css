@@ -222,6 +222,11 @@ details.fold > summary,
 .panel .ph .t .sub { flex: none; font-weight: 400; white-space: nowrap; }
 /* pestanas mas justas: cada pixel que sueltan es titulo que se lee en la misma fila */
 .panel .tabs button { padding: 6px 9px; }
+/* panel angosto (se achica para no tapar el tablero): mismas pestanas compactas que el celular */
+.panel.narrow .ph { padding: 8px 30px 8px 10px; gap: 6px; }
+.panel.narrow .tabs button { padding: 6px 8px; font-size: 12.5px; }
+.panel.narrow .body { padding: 10px; }
+.panel.narrow .send { padding: 8px 10px; }
 /* chica y discreta como la ✕ de una tarjeta */
 .panel .ph .x { position: absolute; top: 6px; right: 8px; background: none; border: 0; border-radius: 4px; color: var(--dim); font: inherit; font-size: 11px; line-height: 1; padding: 3px 6px; cursor: pointer; }
 .panel .ph .x:hover { color: var(--fg); border-color: transparent; }

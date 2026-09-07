@@ -106,21 +106,89 @@ export function schedLabel(r: Pick<Rule, "text" | "at" | "every_s" | "fired" | "
   return { text: `⏰ ${r.text} ${r.at ? whenLabel(r.at, true, now) : "sin hora"}`, auto };
 }
 
+const FENCE_RE = /^[ \t]*(`{3,}|~{3,})\s*(\S*)/;
+
+/** Un bloque cercado de varias lineas volcado como prosa es lo que peor se lee en la tarjeta: los
+ *  espacios se colapsan y una tabla alineada a mano queda en palabras sueltas. Medido en el informe
+ *  de Z4: cinco lineas de columnas que en la tarjeta se leen "ANTES DESPUÉS" y nada mas. Se
+ *  reemplaza por una linea que dice que es. El de una sola linea se deja tal cual, que casi siempre
+ *  es un comando o un valor y se entiende (9 de 34 bloques reales). Corre antes que el resto, con
+ *  los cercos todavia puestos, y aguanta el bloque sin cerrar: `last_reply` llega cortado a 600. */
+function foldFenced(t: string): string {
+  const lines = t.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const open = lines[i].match(FENCE_RE);
+    if (!open) {
+      out.push(lines[i]);
+      continue;
+    }
+    const ch = open[1][0];
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      const s = lines[j].trim();
+      if (s.length >= 3 && s === ch.repeat(s.length)) break; // el cerco de cierre
+    }
+    const body = lines.slice(i + 1, j).filter((l) => l.trim());
+    const lang = /^[\w+#-]+$/.test(open[2]) ? ` ${open[2]}` : "";
+    out.push(body.length === 1 ? body[0].trim() : body.length ? `código${lang}, ${body.length} líneas` : "");
+    i = j; // la linea de cierre tambien se consume
+  }
+  return out.join("\n");
+}
+
+const TABLE_COLS = 60;
+const isTableSep = (l: string) => /^[\s|:-]+$/.test(l) && l.includes("-") && l.includes("|");
+
+/** Una tabla de markdown en la tarjeta queda como los encabezados sueltos, sin columnas ni datos:
+ *  peor que no mostrarla. Se reemplaza por una linea que dice que es y de que: "tabla de 5 filas:
+ *  ventana · ancho". Los encabezados se ganan el lugar porque dicen de que habla la tabla (de 18
+ *  tablas reales de ~/.lienzo/adjuntos, 17 los tienen); cuando la primera columna es la de las
+ *  etiquetas y viene vacia, se saltea. Corre al final, con el markdown de las celdas ya limpio. */
+function foldTables(t: string): string {
+  const lines = t.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].includes("|") || !isTableSep(lines[i + 1] ?? "")) {
+      out.push(lines[i]);
+      continue;
+    }
+    let j = i + 2;
+    while (j < lines.length && lines[j].includes("|") && lines[j].trim()) j++;
+    const n = j - i - 2;
+    const que = `tabla de ${n} fila${n === 1 ? "" : "s"}`;
+    const cols = lines[i]
+      .split("|")
+      .map((c) => c.trim())
+      .filter(Boolean)
+      .join(" · ");
+    out.push(cols ? `${que}: ${cols.length > TABLE_COLS ? cols.slice(0, TABLE_COLS - 1) + "…" : cols}` : que);
+    i = j - 1;
+  }
+  return out.join("\n");
+}
+
 /** Markdown a texto plano legible para la tarjeta (que no renderiza markdown, por peso y altura):
- *  saca `**`, `__`, `` ` `` y cercos de codigo, `#` de encabezados, marcadores de lista al inicio
- *  de linea (`- `, `* `, `1. `), citas `>`, reglas `---`, deja el texto de los links
- *  `[texto](url)`, y colapsa lineas en blanco repetidas. La vista Conversacion del panel no la
- *  usa: ahi si se renderiza con react-markdown. */
+ *  resume tablas y bloques de codigo de varias lineas en una linea que dice que son, saca `**`,
+ *  `__`, `*`, `_`, `` ` ``, `#` de encabezados, marcadores de lista al inicio de linea (`- `, `* `,
+ *  `1. `), citas `>` (todos los niveles), reglas `---`, deja el texto de los links `[texto](url)`, y
+ *  colapsa lineas en blanco repetidas. Los tres usos son la tarjeta (pedido, respuesta y el tooltip
+ *  del chip de informe recibido), donde hay dos o tres lineas: por eso resume en vez de aplanar, y
+ *  por eso no necesita parametro. La vista Conversacion del panel no la usa: ahi se renderiza con
+ *  react-markdown y la tabla se ve entera. */
 export function plainText(md: string): string {
   let t = (md || "").replace(/\r\n?/g, "\n");
-  t = t.replace(/^\s*```[^\n]*$/gm, ""); // cercos de codigo (la linea entera)
+  t = foldFenced(t); // primero: necesita los cercos, y se come las tablas que vengan adentro
   t = t.replace(/^\s*[-*_]{3,}\s*$/gm, ""); // reglas horizontales
   t = t.replace(/^#{1,6}\s+/gm, ""); // encabezados
   t = t.replace(/^(\s*)(?:[-*+]|\d+[.)])\s+/gm, "$1"); // marcadores de lista, con su sangria
-  t = t.replace(/^\s*>\s?/gm, ""); // citas
+  t = t.replace(/^\s*(?:>\s?)+/gm, ""); // citas, incluidas las anidadas
   t = t.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1"); // links e imagenes: queda el texto
   t = t.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2"); // negrita
+  t = t.replace(/(^|[^*\w])\*(?=\S)([^*\n]*?\S)\*(?![*\w])/g, "$1$2"); // italica con *
+  t = t.replace(/(^|[^_\w])_(?=\S)([^_\n]*?\S)_(?![_\w])/g, "$1$2"); // italica con _, sin tocar snake_case
   t = t.replace(/`([^`\n]*)`/g, "$1"); // codigo inline
+  t = foldTables(t); // al final: las celdas ya vienen sin markdown
   t = t.replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n"); // lineas en blanco repetidas
   return t.trim();
 }

@@ -19,4 +19,9 @@ DISENO.es.md
 
 # videos de la UI (pesados)
 docs/video/
+
+# artefactos de las pruebas de interfaz (la config los manda a node_modules, pero un --reporter
+# distinto o un playwright suelto los deja aca)
+web/test-results/
+web/playwright-report/
 node_modules/

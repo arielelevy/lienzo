@@ -226,6 +226,32 @@ def set_prompt(turn: dict, text: str) -> None:
     turn["prompt"] = (turn["prompt"] + "\n" + text).strip() if turn["prompt"] else text
 
 
+# --- por que los dos parsers no comparten el armado del turno -------------------
+#
+# Tercera vez que se propone unirlos; esta vez medido, el 2026-09-06, sobre las 498 transcripciones
+# de la maquina (3470 turnos: 1123 de Claude, 2347 de Codex). El resultado es que no.
+#
+# Lo comun ya esta afuera: _new_turn, add_text, set_prompt, _content_text, _short, looks_like_error.
+# Lo que queda adentro no es el mismo codigo con otro nombre, es el modelo de turno de cada formato:
+#
+#   - Claude no pone id de turno en las lineas del asistente: 0 de 26640 traen promptId. El turno
+#     solo se puede armar por posicion, con un cursor secuencial, y cierra cuando llega el pedido
+#     siguiente o un system/turn_duration (1048 lineas para 1123 turnos).
+#   - Codex trae turn_id en el evento (5392 eventos con id para 2321 turnos), los direcciona por
+#     diccionario -- uno vuelve despues de que arranco otro -- y los cierra con un task_complete
+#     explicito (2317) o un turn_aborted (24).
+#   - "agregar resultado" existe solo en Claude: 16 lineas para enlazar por tool_use_id un
+#     tool_result que llega en una linea posterior. En Codex el item ya viene completo, 0 lineas.
+#   - "detectar el error del turno" es una heuristica sobre el texto en Claude (looks_like_error)
+#     contra un campo explicito en Codex. Fuera de la asignacion, cero codigo en comun.
+#
+# Reparto por linea de las seis operaciones candidatas (armar / cerrar / agregar texto / agregar
+# herramienta / agregar resultado / detectar el error): 54 de 109 lineas en parse_claude y 72 de 129
+# en parse_codex. Pero de esas la unica porcion identica es el turno parcial del corte, 4 lineas.
+# Unificar mueve ~230 lineas para borrar ~10 y no saca una sola rama: siguen siendo 39 y 38.
+# Tema cerrado: no volver a proponerlo sin medir de nuevo.
+
+
 # --- Claude Code -------------------------------------------------------------
 
 
@@ -499,9 +525,8 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
             turn = turn_for(tid, ts)
             turn["ended"] = True
             turn["error"] = f"turno abortado ({p.get('reason')})"
-        elif pt == "token_count":
-            if cur is not None:
-                cur["usage"] = (p.get("info") or {}).get("total_token_usage") or p.get("info")
+        elif pt == "token_count" and cur is not None:
+            cur["usage"] = (p.get("info") or {}).get("total_token_usage") or p.get("info")
 
     return {"meta": meta, "turns": turns}
 
@@ -575,9 +600,7 @@ def digest_turn(turn: dict) -> dict:
             if "paths" in inp:
                 files.extend(f"{p.get('type', '')} {p.get('path', '')}".strip() for p in inp["paths"])
             else:
-                fp = inp.get("file_path") or inp.get("notebook_path")
-                if fp:
-                    files.append(fp)
+                files.append(inp.get("file_path") or inp.get("notebook_path") or "")
         elif name in SHELL_TOOLS:
             cmd = inp.get("command") or inp.get("cmd") or ""
             if cmd:
@@ -608,8 +631,9 @@ def digest_turn(turn: dict) -> dict:
             questions.append(_short(pregunta, QUESTION_MAX))
     if turn.get("error"):
         errors.append(turn["error"])
-    # dedupe conservando orden
-    files = list(dict.fromkeys(files))
+    # dedupe conservando orden; el vacio sale de las dos ramas (herramienta de archivo sin ruta,
+    # o un paths sin type ni path), asi que se filtra una vez aca y no en cada una
+    files = [f for f in dict.fromkeys(files) if f]
     return {
         "id": turn["id"],
         "ts_start": turn.get("ts_start"),

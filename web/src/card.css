@@ -198,6 +198,23 @@
 .card .title .freeline { display: block; }
 .card .freeact button, .card:hover .freeact button, .card:focus-within .freeact button { opacity: 1; pointer-events: auto; color: var(--acc); border-color: var(--acc); }
 
+/* Grupo de sesiones libres (ver `freeGroups` en Card.tsx): cuatro tarjetas identicas se leen como
+   un dato solo. Se ve como una libre porque lo es, con el titulo un poco mas presente: es lo unico
+   que la distingue de las que agrupa. El "ver las N" queda apagado hasta el hover, como los rapidos:
+   la accion principal es darle trabajo, desplegar es para cuando uno quiere elegir. */
+.card.freegroup .title { font-weight: 600; }
+.card.freegroup .freeact .expand { color: var(--dim); border-color: var(--line); }
+.card.freegroup:hover .freeact .expand, .card.freegroup:focus-within .freeact .expand { color: var(--acc); border-color: var(--acc); }
+
+/* desplegado: la tira que dice de que grupo son las que siguen, y como volver a juntarlas */
+.freegrouphead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; color: var(--dim); font-size: 11px; }
+.freegrouphead span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.freegrouphead button { flex: 0 0 auto; padding: 2px 8px; font-size: 11px; min-height: 24px; }
+
+/* una libre plegada no dibuja nada, y el tablero la envuelve igual en su div: sin esto cada una
+   dejaba el hueco de su margen (--card-gap-y) y el grupo quedaba flotando entre agujeros */
+.col .cards > div:empty { display: none; }
+
 /* dos reglas "at" de la tarjeta caen en el mismo minuto: aviso chico delante del chip */
 .card .rule.clash { border: 1px solid #5c4a12; }
 .card .rule .warn { color: var(--need); flex: 0 0 auto; cursor: help; font-size: 11px; line-height: 1; }
