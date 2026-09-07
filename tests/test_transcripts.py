@@ -167,3 +167,72 @@ def test_limit_reset():
     assert tr.limit_reset("resets in `visualStyles` at level 2:", ref) is None
     assert tr.limit_reset("Listo, la tabla quedo actualizada.", ref) is None
     assert tr.limit_reset("", ref) is None
+
+
+# Destacados: la pregunta con la que cierra un turno, sin repetir la respuesta (encargo Y3)
+
+
+def _turno(final, blocks=None, **k):
+    return {"id": "t", "blocks": blocks or [], "final": final, "ended": True, "prompt": "prueba", **k}
+
+
+def _preguntas(final, blocks=None):
+    return tr.digest_turn(_turno(final, blocks))["questions"]
+
+
+def test_un_final_corto_que_es_la_pregunta_no_se_repite():
+    """El caso medido: la tarjeta mostraba la misma frase como respuesta y como pregunta."""
+    assert _preguntas("Hola, funciona todo bien. ¿Qué necesitás?") == []
+
+
+def test_un_final_largo_deja_solo_la_ultima_oracion():
+    final = (
+        "Corregido y desplegado, con las capas donde corresponde. "
+        + "Detalle del cambio. " * 12
+        + "Con eso la matriz se abre por taxonomía. ¿Las relaciones las hacés vos o las creo yo?"
+    )
+    assert _preguntas(final) == ["¿Las relaciones las hacés vos o las creo yo?"]
+
+
+def test_el_corte_es_por_oracion_y_no_por_el_signo_de_apertura():
+    """El '¿' suele abrir despues del contexto que hace entendible la pregunta: cortar ahi lo pierde."""
+    final = (
+        "x" * 250 + "\nPor convención del repo las facts internas van ocultas — " "¿la oculto o la dejás a la vista?"
+    )
+    assert _preguntas(final) == [
+        "Por convención del repo las facts internas van ocultas — ¿la oculto o la dejás a la vista?"
+    ]
+
+
+def test_un_final_largo_de_una_sola_oracion_tampoco_se_repite():
+    final = "¿Querés que " + "siga con el backend o que arranque por el front, " * 6 + "o lo dejamos acá?"
+    assert len(final) > tr.QUESTION_MAX
+    assert _preguntas(final) == [], "si el final es una sola oracion, la seccion es el final otra vez"
+
+
+def test_el_punto_pegado_a_un_cierre_tambien_corta():
+    final = "x" * 250 + "\nLo dejé andando (ya probado). ¿Sigo con el resto?"
+    assert _preguntas(final) == ["¿Sigo con el resto?"]
+    final = "x" * 250 + '\nMe dijo "listo." ¿Le creo?'
+    assert _preguntas(final) == ["¿Le creo?"]
+
+
+def test_askuserquestion_manda_y_no_se_toca():
+    """Las preguntas explicitas de la herramienta se quedan como estan, aunque el final pregunte."""
+    ask = {
+        "kind": "tool",
+        "name": "AskUserQuestion",
+        "input": {"questions": [{"question": "¿Opción A o B?"}]},
+        "result": None,
+    }
+    assert _preguntas("x" * 300 + " ¿Y esto otro?", [ask]) == ["¿Opción A o B?"]
+
+
+def test_un_final_que_no_pregunta_no_agrega_nada():
+    assert _preguntas("x" * 300 + " Listo, quedó todo en disco.") == []
+
+
+def test_la_pregunta_se_recorta_a_QUESTION_MAX():
+    final = "x" * 300 + "\n¿" + "y" * 400 + "?"
+    q = _preguntas(final)
+    assert len(q) == 1 and len(q[0]) == tr.QUESTION_MAX

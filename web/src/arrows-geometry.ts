@@ -73,6 +73,11 @@ export interface Seg {
   /** rectangulos de las dos puntas: seleccionada, la flecha las resalta para que se vea de quien
    *  a quien es */
   ends: [Rect, Rect];
+  /** Radio del area sensible del glifo: GLYPH_HIT, pero nunca mas que lo que hay libre hasta la
+   *  tarjeta mas cercana. El circulo invisible que agranda el blanco del mouse no puede pasar por
+   *  encima de una tarjeta: le robaria el click a algo que se ve debajo. Lo llena `computeSegs`
+   *  para todos los segmentos; el componente cae en GLYPH_HIT si no viniera. */
+  hit?: number;
 }
 
 /** Lo que hay que dibujar, antes de saber por donde pasa. */
@@ -108,9 +113,11 @@ export interface GeometryInput {
   fmt: Formatters;
 }
 
-/** canal entre dos columnas (y entre dos subcolumnas): el mismo numero que el CSS del tablero.
- *  Todo lo que tiene que pasar por ahi se mide contra el */
-const CHANNEL = 30;
+/** canal entre dos grupos de tarjetas: `--col-gap` del CSS del tablero, que es el que separa dos
+ *  subcolumnas y el que de verdad usa una curva. **No es `--col-sep` (10 px)**, que separa dos
+ *  columnas enteras: por ese hilo no corre ninguna flecha, las flechas entre columnas van por el
+ *  carril horizontal (ver `topRoute`). Todo lo que tiene que pasar por un canal se mide contra el */
+const CHANNEL = 35;
 /** media panza por defecto, si no se puede medir el hueco entre columnas abiertas: medio canal
  *  mas aire, para que la curva no roce el borde de la tarjeta */
 const HALF_GAP = CHANNEL / 2 + 6;
@@ -122,6 +129,9 @@ const SLOT = 14;
 const COL_TOL = 40;
 /** radio de exclusion de un glifo ya puesto, para que dos flechas del mismo canal no se pisen */
 const GLYPH_R = 22;
+/** blanco del mouse sobre un glifo: el circulo se ve de 11 px de radio, pero pedirle al mouse que
+ *  caiga justo ahi es pedirle demasiado. Es un tope, no una promesa: ver `Seg.hit` */
+export const GLYPH_HIT = 16;
 /** alto de un carril de flechas: la corrida horizontal va al medio y queda la mitad de aire a cada
  *  lado. Vale igual arriba, entre dos filas y abajo: es una sola regla (ver `freeLanes`). */
 export const LANE_H = 28;
@@ -420,11 +430,13 @@ export function cubicAt(p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt {
   ];
 }
 
-/** la cubica, muestreada en `n` puntos interiores, pasa por dentro de alguna de `others` */
-export function cubicHits(others: Rect[], p0: Pt, p1: Pt, p2: Pt, p3: Pt, n = 20): boolean {
+/** La cubica, muestreada en `n` puntos interiores, pasa por dentro de alguna de `others`. `eps` es
+ *  el de `inside`: en negativo agranda los rectangulos, o sea que tambien cuenta como choque pasar
+ *  demasiado cerca sin llegar a entrar. */
+export function cubicHits(others: Rect[], p0: Pt, p1: Pt, p2: Pt, p3: Pt, n = 20, eps = 0.5): boolean {
   for (let i = 1; i < n; i++) {
     const [px, py] = cubicAt(p0, p1, p2, p3, i / n);
-    if (inside(others, px, py)) return true;
+    if (inside(others, px, py, eps)) return true;
   }
   return false;
 }
@@ -483,6 +495,30 @@ export function orthoPath(xa: number, ya: number, y: number, xc: number, yc: num
   return `M ${xa} ${ya}${up} Q ${xa} ${y}, ${xa + sx * r} ${y} L ${xc - sx * r} ${y} Q ${xc} ${y}, ${xc} ${y + s2 * r} L ${xc} ${yc}`;
 }
 
+/** Camino ortogonal por una polilinea (tramos alternados vertical/horizontal) con las esquinas
+ *  redondeadas a CORNER, o menos si los tramos que la rodean son cortos. `orthoPath` sigue siendo
+ *  el caso de dos esquinas, escrito a mano; esto es para los de tres. */
+function roundedPath(pts: Pt[]): string {
+  const toward = (from: Pt, c: Pt, r: number): Pt => [c[0] + Math.sign(from[0] - c[0]) * r, c[1] + Math.sign(from[1] - c[1]) * r];
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i - 1];
+    const c = pts[i];
+    const n = pts[i + 1];
+    // media longitud de cada tramo vecino: asi dos esquinas seguidas nunca se pisan
+    const r = Math.min(CORNER, Math.hypot(c[0] - p[0], c[1] - p[1]) / 2, Math.hypot(n[0] - c[0], n[1] - c[1]) / 2);
+    if (r < 1) {
+      d += ` L ${c[0]} ${c[1]}`;
+      continue;
+    }
+    const a = toward(p, c, r);
+    const b = toward(n, c, r);
+    d += ` L ${a[0]} ${a[1]} Q ${c[0]} ${c[1]}, ${b[0]} ${b[1]}`;
+  }
+  const last = pts[pts.length - 1];
+  return `${d} L ${last[0]} ${last[1]}`;
+}
+
 /** un carril: la y por donde corre la flecha, la franja libre que lo aloja y su alto */
 export interface Lane {
   y: number;
@@ -512,10 +548,48 @@ export interface Ortho {
   /** ningun tramo cruza una tercera tarjeta y todo el camino entra en el area util */
   clean: boolean;
   /** por que borde sale del origen y entra al destino */
-  exit: "t" | "b";
-  enter: "t" | "b";
+  exit: "t" | "b" | "l" | "r";
+  enter: "t" | "b" | "l" | "r";
   /** carril elegido: las flechas que comparten uno se reparten en pistas paralelas */
   lane: Lane;
+  /** el mismo camino con la corrida a otra altura: las que comparten carril se reparten en pistas
+   *  paralelas y hay que rehacerlo con la pista definitiva */
+  path: (y: number) => string;
+  /** de donde a donde va la corrida horizontal: es sobre ella que se busca lugar para el glifo */
+  run: [number, number];
+}
+
+/** Como se engancha una punta de la flecha con la corrida horizontal del carril. **Derecho**: sube
+ *  (o baja) desde el borde de arriba o de abajo de la tarjeta, que es lo de siempre. **De costado**:
+ *  sale por el costado a media altura, se mete en un canal entre dos grupos de tarjetas y recien ahi
+ *  sube o baja. El de costado existe porque en una columna llena la tarjeta ocupa todo el ancho: no
+ *  hay ninguna x que esquive a la que tiene encima, y el camino derecho la atraviesa. El canal, en
+ *  cambio, esta libre de arriba abajo. */
+interface Stub {
+  /** del borde de la tarjeta hasta el carril; el ultimo punto siempre es [x, y] */
+  pts: (y: number) => Pt[];
+  /** x donde engancha con la corrida */
+  x: number;
+  side: "t" | "b" | "l" | "r";
+}
+
+/** Las formas en que la punta `r` puede engancharse al carril `y`: la derecha en `xv` si el carril
+ *  le queda por fuera, y una por cada canal que no le caiga debajo. */
+function stubsFor(r: Rect, xv: number, y: number, chans: number[]): Stub[] {
+  const out: Stub[] = [];
+  if (y <= r.t + 0.5 || y >= r.b - 0.5) {
+    const side = y < r.t ? "t" : "b";
+    const edge = side === "t" ? r.t : r.b;
+    out.push({ pts: (yy) => [[xv, edge], [xv, yy]], x: xv, side });
+  }
+  const ym = midY(r);
+  for (const xo of chans) {
+    if (xo > r.l - 1 && xo < r.r + 1) continue; // el canal le cae debajo: no hay costado que valga
+    const side: "l" | "r" = xo < r.l ? "l" : "r";
+    const edge = side === "l" ? r.l : r.r;
+    out.push({ pts: (yy) => [[edge, ym], [xo, ym], [xo, yy]], x: xo, side });
+  }
+  return out;
 }
 
 /** Flecha "por arriba" entre dos tarjetas: sale por el borde superior (o inferior) del origen en
@@ -526,7 +600,7 @@ export interface Ortho {
  *  igualdad, el mas corto. O sea que un hueco interior le gana a uno de afuera aunque el camino sea
  *  mas largo. Si ninguno cumple las dos, el mejor igual, con `clean: false` (se dibuja apagado). El
  *  glifo va al medio de la corrida horizontal, que por construccion esta en un hueco. */
-export function topRoute(ra: Rect, rc: Rect, xa: number, xc: number, cards: Rect[], zone: Zone = FREE_ZONE): Ortho {
+export function topRoute(ra: Rect, rc: Rect, xa: number, xc: number, cards: Rect[], zone: Zone = FREE_ZONE, cols: Col[] = []): Ortho {
   const others = cards.filter((c) => !sameRect(c, ra) && !sameRect(c, rc));
   // los carriles se buscan entre las tarjetas que el tramo horizontal podria cruzar (las que caen
   // en su franja de x). Mirando todas, una tarjeta alta de otra columna tapa el hueco entre dos
@@ -558,12 +632,53 @@ export function topRoute(ra: Rect, rc: Rect, xa: number, xc: number, cards: Rect
     const len = Math.abs(ya - y) + Math.abs(xa - xc) + Math.abs(y - yc);
     const higher = !!best && y < best.y - 0.5;
     if (!best || score > best.score || (score === best.score && (higher || (Math.abs(y - best.y) <= 0.5 && len < best.len - 0.5)))) {
-      best = { d: orthoPath(xa, ya, y, xc, yc), x: (xa + xc) / 2, y, clean: score >= 6, exit, enter, lane, len, score };
+      best = { d: orthoPath(xa, ya, y, xc, yc), x: (xa + xc) / 2, y, clean: score >= 6, exit, enter, lane, path: (yy) => orthoPath(xa, ya, yy, xc, yc), run: [xa, xc], len, score };
+    }
+  }
+  // Ningun camino derecho salio limpio. En una columna llena la tarjeta ocupa todo el ancho, asi
+  // que subir o bajar sobre ella no tiene esquive posible: pasa por adentro de la que tiene encima
+  // (o debajo). Se prueban entonces los caminos que enganchan alguna de las dos puntas por el
+  // costado, metiendose en un canal entre grupos de tarjetas, que si esta libre de arriba abajo.
+  // Solo si el derecho fallo, y solo si el de costado sale limpio: un tablero que hoy rutea bien no
+  // cambia en nada. Entre varios limpios, el mas corto.
+  if (best && !best.clean) {
+    const chans = cols.slice(0, -1).map((c, i) => (c.r + cols[i + 1].l) / 2);
+    for (const lane of ys) {
+      const { y, room } = lane;
+      for (const A of stubsFor(ra, xa, y, chans)) {
+        for (const C of stubsFor(rc, xc, y, chans)) {
+          if (A.side !== "l" && A.side !== "r" && C.side !== "l" && C.side !== "r") continue; // ese ya se probo
+          const pts = [...A.pts(y), ...[...C.pts(y)].reverse()];
+          const segs: [Pt, Pt][] = [];
+          for (let i = 0; i + 1 < pts.length; i++) if (pts[i][0] !== pts[i + 1][0] || pts[i][1] !== pts[i + 1][1]) segs.push([pts[i], pts[i + 1]]);
+          const free = !others.some((c) => segs.some(([p, q]) => segHits(c, p, q)));
+          // cada tramo, entero, dentro del area util: los horizontales con runAllowed, los verticales
+          // mirando las dos puntas (la franja permitida no cambia a lo largo de una misma x)
+          const fits = segs.every(([p, q]) => (p[1] === q[1] ? runAllowed(zone.bands, p[0], q[0], p[1]) : allowed(zone.bands, p[0], p[1]) && allowed(zone.bands, p[0], q[1])));
+          const score = (fits ? 4 : 0) + (free ? 2 : 0) + (room >= 2 * LANE_CLEAR ? 1 : 0);
+          if (score < 6) continue; // si no sale limpio no vale la pena: se queda el derecho
+          const len = segs.reduce((t, [p, q]) => t + Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]), 0);
+          if (best.clean && !(len < best.len - 0.5)) continue;
+          best = {
+            d: roundedPath(pts),
+            x: (A.x + C.x) / 2,
+            y,
+            clean: true,
+            exit: A.side,
+            enter: C.side,
+            lane,
+            path: (yy) => roundedPath([...A.pts(yy), ...[...C.pts(yy)].reverse()]),
+            run: [A.x, C.x],
+            len,
+            score,
+          };
+        }
+      }
     }
   }
   const b = best!; // siempre hay al menos los dos margenes
   const [gx, gy] = placeGlyph(zone, cards, b.x, b.y);
-  return { d: b.d, x: gx, y: gy, clean: b.clean, exit: b.exit, enter: b.enter, lane: b.lane };
+  return { d: b.d, x: gx, y: gy, clean: b.clean, exit: b.exit, enter: b.enter, lane: b.lane, path: b.path, run: b.run };
 }
 
 /** primera letra en mayuscula, para arrancar una frase con "cada 2 h" o "el vie 11/9 a las 22:19" */
@@ -732,11 +847,11 @@ interface Routed {
  *  gruesa. El orden es estable (por el x de donde salen, y a igual x por id) para que no salten de
  *  pista al redibujar por SSE. Devuelve, por indice de item, su segmento; `taken` acumula los
  *  glifos ya puestos y sale con los de aca adentro. */
-function routeTops(idx: number[], plans: { ra: Rect; rc: Rect }[], items: Item[], anchors: Map<string, Rect>, cards: Rect[], zone: Zone, taken: Pt[]): Map<number, Seg> {
+function routeTops(idx: number[], plans: { ra: Rect; rc: Rect }[], items: Item[], anchors: Map<string, Rect>, cards: Rect[], cols: Col[], zone: Zone, taken: Pt[]): Map<number, Seg> {
   const slots = new Map<string, End[]>();
   for (const i of idx) {
     const { ra, rc } = plans[i];
-    const o = topRoute(ra, rc, midX(ra), midX(rc), cards, zone);
+    const o = topRoute(ra, rc, midX(ra), midX(rc), cards, zone, cols);
     pushTo(slots, `${items[i].from}|${o.exit}`, { item: i, end: "from", other: midX(rc) });
     pushTo(slots, `${items[i].to}|${o.enter}`, { item: i, end: "to", other: midX(ra) });
   }
@@ -745,7 +860,7 @@ function routeTops(idx: number[], plans: { ra: Rect; rc: Rect }[], items: Item[]
     const { ra, rc } = plans[i];
     const xa = xOf.get(`${i}|from`) ?? midX(ra);
     const xc = xOf.get(`${i}|to`) ?? midX(rc);
-    return { i, ra, rc, xa, xc, o: topRoute(ra, rc, xa, xc, cards, zone) };
+    return { i, ra, rc, xa, xc, o: topRoute(ra, rc, xa, xc, cards, zone, cols) };
   });
   const byLane = new Map<number, Routed[]>();
   for (const r of routed) pushTo(byLane, r.o.lane.y, r);
@@ -761,13 +876,11 @@ function routeTops(idx: number[], plans: { ra: Rect; rc: Rect }[], items: Item[]
     group.forEach((g, k) => trackY.set(g.i, ys[k]));
   }
   const out = new Map<number, Seg>();
-  for (const { i, ra, rc, xa, xc, o } of routed) {
+  for (const { i, ra, rc, o } of routed) {
     const y = trackY.get(i)!;
-    const ya = o.exit === "t" ? ra.t : ra.b;
-    const yc = o.enter === "t" ? rc.t : rc.b;
-    const [gx, gy] = placeGlyph(zone, cards, ...spreadOnRun(taken, xa, xc, y));
+    const [gx, gy] = placeGlyph(zone, cards, ...spreadOnRun(taken, o.run[0], o.run[1], y));
     taken.push([gx, gy]);
-    out.set(i, { ...items[i], ends: [ra, rc], d: orthoPath(xa, ya, y, xc, yc), x: gx, y: gy, lane: o.lane.y, ...(o.clean ? {} : { dim: true }) });
+    out.set(i, { ...items[i], ends: [ra, rc], d: o.path(y), x: gx, y: gy, lane: o.lane.y, ...(o.clean ? {} : { dim: true }) });
   }
   return out;
 }
@@ -800,7 +913,9 @@ export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rec
       const c2 = channelX(cols, colOf(cols, rc), dir === 1 ? -1 : 1, x2 - dir * half);
       pts = [[x1, y1], [c1, y1], [c2, y2], [x2, y2]];
     }
-    return { ra, rc, pts, top: cubicHits(others, ...pts) };
+    // a la S se le pide el mismo aire que guarda un carril: rozar una tarjeta se lee como si la
+    // cruzara, y con las tarjetas mas juntas la curva pasaba lamiendo la de al lado
+    return { ra, rc, pts, top: cubicHits(others, ...pts, 20, -LANE_CLEAR) };
   });
 
   // 2) los que no cruzan, como siempre
@@ -810,7 +925,7 @@ export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rec
 
   // 3) los que cruzan van por arriba
   const topIdx = plans.map((p, i) => (p.top ? i : -1)).filter((i) => i >= 0);
-  for (const [i, seg] of routeTops(topIdx, plans, items, anchors, cards, zone, taken)) out[i] = seg;
+  for (const [i, seg] of routeTops(topIdx, plans, items, anchors, cards, cols, zone, taken)) out[i] = seg;
   return out as Seg[];
 }
 
@@ -847,5 +962,6 @@ export function computeSegs(input: GeometryInput): Seg[] {
   const zone: Zone = { bands: input.bands ?? [], strips: input.strips };
   const segs = routeItems(items, input.anchors, cards, cols, input.strips, input.boardWidth, zone);
   for (const it of loops) segs.push(loopSeg(it, input.anchors.get(it.to)!, input.boardWidth));
+  for (const s of segs) s.hit = Math.max(0, Math.min(GLYPH_HIT, clearance(cards, s.x, s.y)));
   return segs;
 }

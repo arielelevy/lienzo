@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
-import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, periodLabel, plainText, ruleSentence, ruleSummary, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
+import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
 
@@ -158,27 +158,6 @@ const RECENT_MS = 30 * 60 * 1000;
  *  medio en la tarjeta de Codex, la mas baja del tablero: el doble click no abria el panel). */
 const PICK_MS = 240;
 
-/** Por debajo de este ancho la tarjeta no alcanza para el pedido y la respuesta: pasa a modo
- *  compacto (agente, repo, estado, titulo en una linea y un contador de conexiones). Pasa con el
- *  panel abierto y varias columnas: el tablero tiene que seguir sirviendo de indice. */
-const COMPACT_W = 200;
-
-/** Ancho real de la tarjeta, medido con un ResizeObserver sobre ella misma: sale de la subcolumna
- *  en que cayo, no del ancho de la ventana (con el panel abierto el tablero mide la mitad, y
- *  encima depende de cuantas columnas esten abiertas). El contenido cambia el alto, nunca el
- *  ancho, asi que no hay realimentacion. */
-function useCompact(ref: React.RefObject<HTMLElement | null>): boolean {
-  const [compact, setCompact] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const o = new ResizeObserver(() => setCompact(el.offsetWidth > 0 && el.offsetWidth < COMPACT_W));
-    o.observe(el);
-    return () => o.disconnect();
-  }, [ref]);
-  return compact;
-}
-
 /** Tab recorre las tarjetas, no sus botones. Todo lo que la tarjeta contiene sale del orden de
  *  tabulacion (tabIndex -1) mientras el foco no este ya en uno de sus controles: asi Tab va de
  *  tarjeta en tarjeta y no cae en la ✕ ("quitar tarjeta") ni en la estrella, dos acciones con
@@ -243,10 +222,28 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   // que no quede uno vivo que elija una tarjeta que ya no esta
   const pickTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(pickTimer.current), [s.session_id]);
-  // columna angosta: la tarjeta se reduce a indice. Un permiso pendiente nunca se compacta: es la
-  // unica accion que vence y solo se puede contestar desde la tarjeta
-  const compact = useCompact(rootRef) && !p;
-
+  // Menu ⋯ de la tarjeta: renombrar, coordinadora y quitar. Los tres son de mantenimiento y no
+  // tienen que ver con lo que uno esta haciendo, asi que no ocupan la fila de arriba, donde quedan
+  // solo el agarre y este ⋯ (en tactil no hay hover: escondidos "hasta pasar el mouse" se veian
+  // siempre, justo donde mas molestan). Se abre con click o con Enter desde el teclado, el foco va
+  // al primer item, y se cierra con Escape, al elegir algo o al tocar afuera.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const kebabRef = useRef<HTMLButtonElement>(null);
+  const closeMenu = () => {
+    setMenuOpen(false);
+    kebabRef.current?.focus();
+  };
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const afuera = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!menuRef.current?.contains(t) && !kebabRef.current?.contains(t)) setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", afuera);
+    return () => document.removeEventListener("pointerdown", afuera);
+  }, [menuOpen]);
   // ultimo reenvio recibido en la ultima media hora: "ya te llego el informe de X"
   const recent = links
     .filter((l) => l.to === s.session_id && l.kind !== "native" && Date.now() - new Date(l.ts).getTime() < RECENT_MS)
@@ -274,12 +271,9 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const free = !p && isFree(s);
   const freeTitle = `abierta hace ${ago(s.started)}, sin ningún pedido todavía`;
   const freeText = `Libre · sin pedidos todavía · desde hace ${ago(s.started)}`;
-  // compacto: los chips de conexiones no entran, va un contador con el detalle en el title
-  const summary = compact ? ruleSummary(rules, s.session_id, sessions) : null;
-  // elegida con un click y con lugar para leerlas: las conexiones en palabras, una por linea,
-  // en vez de los chips abreviados
-  // la elegida escribe las suyas; la del otro extremo, solo las del par
-  const words = (picked || !!related) && !compact;
+  // elegida con un click: las conexiones en palabras, una por linea. La elegida escribe las suyas;
+  // la del otro extremo, solo las del par
+  const words = picked || !!related;
   const wordRules = picked ? rules : related?.rules ?? [];
   const wordLinks = picked ? links : related?.links ?? [];
 
@@ -330,7 +324,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   return (
     <div
       ref={rootRef}
-      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${compact ? "compact" : ""} ${words ? "haswords" : ""}`}
+      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${menuOpen ? "menuopen" : ""} ${words ? "haswords" : ""}`}
       role="button"
       tabIndex={0}
       aria-label={`${s.repo}: ${s.title || s.last_prompt || (free ? "libre, sin pedidos todavía" : "sin título")}`}
@@ -350,6 +344,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       }}
       onKeyDown={(e) => {
         const onCard = e.target === e.currentTarget;
+        // con el menú abierto, Escape lo cierra y vuelve al ⋯ (y no le llega al tablero)
+        if (e.key === "Escape" && menuOpen) {
+          e.stopPropagation();
+          closeMenu();
+          return;
+        }
         // Enter sobre la tarjeta misma abre el panel; los botones de adentro manejan su propio Enter
         if (e.key === "Enter" && onCard) {
           e.preventDefault();
@@ -388,22 +388,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         onPress?.(e);
       }}
     >
-      <button
-        type="button"
-        className="x"
-        title="quitar tarjeta"
-        aria-label="quitar tarjeta"
-        onClick={(e) => {
-          e.stopPropagation();
-          onDrop();
-        }}
-      >
-        ✕
-      </button>
       <div className="top">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         <span className="repo">{s.repo}</span>
-        {s.branch && !compact && <span className="branch">⎇ {s.branch}</span>}
+        {s.branch && <span className="branch">⎇ {s.branch}</span>}
         <span className="right">
           {/* estado como icono: corriendo y termino comparten la columna "Trabajo"; la huerfana va a
               "Muerta" con esta etiqueta, para distinguirla de un proceso muerto de verdad */}
@@ -425,41 +413,13 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               ✓
             </span>
           ) : null}
-          {s.agent === "claude" && writable && (
-            <button
-              type="button"
-              className={`star ${s.coordinator ? "on" : ""}`}
-              disabled={busy}
-              title={s.coordinator ? "coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame' (click para quitarle el rol)" : "marcar como coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame'"}
-              aria-label={s.coordinator ? "coordinadora del repo" : "marcar como coordinadora"}
-              aria-pressed={!!s.coordinator}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleCoordinator();
-              }}
-            >
-              {s.coordinator ? "★" : "☆"}
-            </button>
+          {/* la coordinadora se sigue viendo, pero como indicador: la acción vive en el menú ⋯ */}
+          {s.coordinator && (
+            <span className="star on" role="img" aria-label="coordinadora del repo" title="coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame'">
+              ★
+            </span>
           )}
-          {/* renombrar: el doble click sobre el título ahora abre el panel, así que el lápiz es
-              la puerta al modo de renombrar en el lugar */}
-          {writable && (
-            <button
-              type="button"
-              className="pencil"
-              title="renombrar la tarjeta"
-              aria-label="renombrar la tarjeta"
-              onClick={(e) => {
-                e.stopPropagation();
-                rename.start();
-              }}
-              onDoubleClick={(e) => e.stopPropagation()}
-            >
-              ✎
-            </button>
-          )}
-          {/* en compacto no entra el "hace X" junto al agente, el repo y el estado */}
-          {!compact && ago(s.state_since)}
+          {ago(s.state_since)}
           {onGrip && writable && (
             <button
               type="button"
@@ -476,20 +436,69 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               ⇢
             </button>
           )}
+          <button
+            type="button"
+            className="kebab"
+            ref={kebabRef}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="más acciones: renombrar, coordinadora, quitar la tarjeta"
+            aria-label="más acciones de la tarjeta"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen((o) => !o);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            ⋯
+          </button>
         </span>
       </div>
+      {menuOpen && (
+        <div className="cardmenu" role="menu" ref={menuRef} onClick={(e) => e.stopPropagation()}>
+          {writable && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeMenu();
+                rename.start();
+              }}
+            >
+              ✎ Renombrar
+            </button>
+          )}
+          {s.agent === "claude" && writable && (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={busy}
+              aria-pressed={!!s.coordinator}
+              title="la coordinadora del repo recibe los avisos 'cuando termine' y 'avisame'"
+              onClick={() => {
+                closeMenu();
+                toggleCoordinator();
+              }}
+            >
+              {s.coordinator ? "★ Quitarle el rol de coordinadora" : "☆ Coordinadora del repo"}
+            </button>
+          )}
+          <button
+            type="button"
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              closeMenu();
+              onDrop();
+            }}
+          >
+            ✕ Quitar la tarjeta
+          </button>
+        </div>
+      )}
       <div className={`title ${dupPrompt ? "plain" : ""}`}>
         {rename.input ??
-          (compact ? (
-            <>
-              <span className="ttext">{s.title || (free ? "Libre · sin pedidos" : head || "(sin título)")}</span>
-              {summary && (
-                <span className="rulecount" title={summary.title}>
-                  {summary.text}
-                </span>
-              )}
-            </>
-          ) : free && !s.title ? (
+          (free && !s.title ? (
             <span className="freeline" title={freeTitle}>
               {freeText}
             </span>
@@ -497,10 +506,6 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             s.title || s.last_prompt || "(sin título)"
           ))}
       </div>
-      {/* de acá para abajo, todo lo que el modo compacto no muestra: pedido, respuesta, chips,
-          botones rápidos, copiar y la meta. Click abre el panel, que sí lo muestra todo. */}
-      {!compact && (
-      <>
       {free && s.title && (
         <div className="freeline" title={freeTitle}>
           {freeText}
@@ -612,8 +617,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       )}
       {/* qué viene haciendo adentro: cuántas herramientas lleva el turno y sobre qué archivos.
-          En compacto no entra, y una sesión sin pedidos todavía no tiene nada que contar */}
-      {!compact && !free && !!s.tool_count && (
+          Una sesión sin pedidos todavía no tiene nada que contar */}
+      {!free && !!s.tool_count && (
         <div className="activity" title="actividad del turno que corre (o del último)">
           <span className="n">{s.tool_count} {s.tool_count === 1 ? "paso" : "pasos"}</span>
           {!!s.tool_errors && (
@@ -624,7 +629,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           {!!s.last_files?.length && <span className="f">{s.last_files.join(" · ")}</span>}
         </div>
       )}
-      {!compact && !free && s.last_cmd && (
+      {!free && s.last_cmd && (
         <div className="lastcmd" title={s.last_cmd}>
           <span className="p">$</span> {s.last_cmd}
         </div>
@@ -676,8 +681,6 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         {s.no_console && !s.orphan && <span className="warn" title="panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe">sin consola</span>}
         <span>{s.session_id.slice(0, 8)}</span>
       </div>
-      </>
-      )}
       {toastNode}
     </div>
   );

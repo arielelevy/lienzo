@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 // @ts-ignore TS5097: extension .ts en el import, necesaria para que Node lo resuelva
-import { LANE_CLEAR, LANE_H, LANE_MAX, TRACK_GAP, allowed, buildItems, channelX, clearance, colOf, computeSegs, cubic, cubicAt, cubicHits, cut, ejectGlyph, freeAt, freeLanes, groupColumns, inside, laneHeight, layoutEnds, periodLabel, runAllowed, segHits, sideArc, slotAt, topRoute, tracks, type Band, type Formatters, type Lane, type Pt, type Rect, type Seg } from "./arrows-geometry.ts";
+import { GLYPH_HIT, LANE_CLEAR, LANE_H, LANE_MAX, TRACK_GAP, allowed, buildItems, channelX, clearance, colOf, computeSegs, cubic, cubicAt, cubicHits, cut, ejectGlyph, freeAt, freeLanes, groupColumns, inside, laneHeight, layoutEnds, periodLabel, runAllowed, segHits, sideArc, slotAt, topRoute, tracks, type Band, type Formatters, type Lane, type Pt, type Rect, type Seg } from "./arrows-geometry.ts";
 import type { Link, Rule } from "./types";
 
 let failed = 0;
@@ -342,10 +342,12 @@ test("topRoute prefiere el hueco entre filas al margen si es mas corto, y marca 
   assert.equal(o.y, 130); // el carril va al medio del hueco entre las dos filas (120..140)
   assert.deepEqual([o.exit, o.enter], ["t", "t"]);
   // encerrada: tarjetas pegadas arriba y abajo del origen y una torre en el medio. Ningun hueco
-  // sirve: se dibuja igual y avisa
+  // sirve: se dibuja igual y avisa. El tapon de arriba y el de abajo llegan hasta la torre a
+  // proposito: si dejaran abierto el canal que hay entre medio, la flecha se metaria por ahi y
+  // saldria de costado, que es justo lo que tiene que poder hacer cuando el canal existe
   const tower = R(328, -2000, 628, 2000);
-  const above = R(0, -2000, 300, -8);
-  const below = R(0, 128, 300, 2000);
+  const above = R(0, -2000, 628, -8);
+  const below = R(0, 128, 628, 2000);
   const C1 = R(656, 0, 956, 120);
   const d = topRoute(A1, C1, 150, 806, [A1, C1, tower, above, below]);
   assert.ok(!d.clean);
@@ -591,6 +593,52 @@ test("el bucle sale del costado, baja LOOP_SPAN y se va a la izquierda si no ent
   const [z] = computeSegs({ rects, anchors: rects, strips: [], boardWidth: 320, links: [], rules: [solo], fmt });
   assert.equal(z.d, "M 0 16 C -28 16 -28 42 0 42");
   assert.deepEqual([z.x, z.y], [-20, 29]);
+});
+
+test("si bajar derecho cruzaria la tarjeta de encima, la flecha baja por el canal y entra de costado", () => {
+  // tres columnas; la del medio es una sola tarjeta alta, asi que la S la atraviesa y el item va
+  // por arriba. Para llegar a la de abajo de la tercera no hay ninguna x que esquive a la que tiene
+  // encima (ocupa toda la columna), ni yendo por arriba ni por abajo: antes se dibujaba igual,
+  // apagada, metiendose 140 px adentro de esa tarjeta
+  const a1 = R(0, 60, 300, 200);
+  const a2 = R(0, 215, 300, 380);
+  const bb = R(335, 60, 635, 380);
+  const c1 = R(670, 60, 970, 200);
+  const c2 = R(670, 215, 970, 380);
+  const rects = new Map([["a1", a1], ["a2", a2], ["bb", bb], ["c1", c1], ["c2", c2]]);
+  const bands: Band[] = [{ l: -10, r: 980, t: 30, b: 430 }];
+  const [s] = computeSegs({ rects, anchors: rects, strips: [], bands, boardWidth: 1000, links: [], rules: [rule({ id: "r", from: "a1", to: "c2" })], fmt });
+  assert.equal(s.dim, undefined, "hay camino limpio: no tiene que quedar apagada");
+  const otras = [a2, bb, c1];
+  for (const [x, y] of pathPts(s.d)) assert.ok(!inside(otras, x, y), `(${x.toFixed(0)},${y.toFixed(0)}) adentro de otra tarjeta`);
+  // el ultimo tramo entra en horizontal por el costado del destino, no por su borde de arriba
+  const pts = pathPts(s.d, 8);
+  const fin = pts[pts.length - 1];
+  const antes = pts[pts.length - 2];
+  assert.ok(Math.abs(fin[0] - c2.l) < 0.01 && Math.abs(fin[1] - (c2.t + c2.b) / 2) < 0.01, `entra en (${fin[0]}, ${fin[1]})`);
+  assert.ok(Math.abs(fin[1] - antes[1]) < 0.01, "el ultimo tramo es horizontal");
+  // y baja por el canal entre la segunda y la tercera columna, no por encima de una tarjeta
+  assert.ok(pathPts(s.d).some(([x, y]) => Math.abs(x - (bb.r + c1.l) / 2) < 0.01 && y > 200), "baja por el canal");
+});
+
+test("el area sensible del glifo nunca se pasa del borde de la tarjeta mas cercana", () => {
+  const a1 = R(0, 60, 300, 200);
+  const a2 = R(0, 215, 300, 380);
+  const b1 = R(335, 60, 635, 200);
+  const b2 = R(335, 215, 635, 380);
+  const rects = new Map([["a1", a1], ["a2", a2], ["b1", b1], ["b2", b2]]);
+  const cards = [a1, a2, b1, b2];
+  const bands: Band[] = [{ l: -10, r: 645, t: 30, b: 430 }];
+  const ids = [...rects.keys()];
+  const rules = ids.flatMap((from, i) => ids.filter((to) => to !== from).map((to, k) => rule({ id: `r${i}${k}`, from, to })));
+  const segs = computeSegs({ rects, anchors: rects, strips: [], bands, boardWidth: 700, links: [], rules, fmt });
+  assert.ok(segs.length >= 12);
+  for (const s of segs) {
+    const libre = clearance(cards, s.x, s.y);
+    assert.ok(s.hit !== undefined, "computeSegs le pone hit a todos");
+    assert.ok(s.hit! >= 0 && s.hit! <= GLYPH_HIT, `hit ${s.hit} fuera de [0, ${GLYPH_HIT}]`);
+    assert.ok(s.hit! <= libre + 1e-9, `hit ${s.hit} se pasa de lo libre (${libre.toFixed(1)})`);
+  }
 });
 
 if (failed) {
