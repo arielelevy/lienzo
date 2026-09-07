@@ -180,7 +180,9 @@ export interface ConnectionsResponse {
 }
 
 export type ServerEvent =
-  | { type: "snapshot"; sessions: Session[]; pending: Pending[]; links?: Link[]; rules?: Rule[] }
+  | { type: "snapshot"; sessions: Session[]; pending: Pending[]; links?: Link[]; rules?: Rule[]; build?: string }
+  /** latido cada 15 s; `build` es el sello del bundle servido (ver `build_id` en server.py) */
+  | { type: "ping"; build?: string }
   | { type: "links"; links: Link[] }
   | { type: "rules"; rules: Rule[] }
   | { type: "session"; session: Session }

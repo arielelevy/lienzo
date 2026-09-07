@@ -391,7 +391,7 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           <span className="ttext" title={s.title || s.repo}>{s.title || s.repo}</span>
           {s.coordinator && (
             <span className="coord" title="coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame'">
-              ★ coordinadora
+              ★<span className="lbl"> coordinadora</span>
             </span>
           )}
           {/* rama y estado al lado del nombre: es lo unico que servia de la fila de la ruta, que

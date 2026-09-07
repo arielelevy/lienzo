@@ -444,6 +444,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, rules.snapshot())
             if parts == ["config"]:
                 return self._json(200, public_config())
+            # el sello del bundle servido: el tablero lo consulta cada 30 s y se recarga cuando
+            # cambia (ver `build_id`). Ruta propia y no el latido del SSE porque el latido sale
+            # solo cuando la cola esta en silencio 15 s, y con el tablero activo casi nunca lo esta
+            if parts == ["build"]:
+                return self._json(200, {"build": build_id()})
             if parts == ["events"]:
                 return self._sse()
             if len(parts) == 3 and parts[0] == "sessions" and parts[2] in SESSION_VIEWS:
@@ -701,6 +706,7 @@ class Handler(BaseHTTPRequestHandler):
                     "pending": public_pending(),
                     "links": links.snapshot(),
                     "rules": rules.snapshot(),
+                    "build": build_id(),
                 },
                 ensure_ascii=False,
             )
@@ -725,14 +731,29 @@ class Handler(BaseHTTPRequestHandler):
                     data = q.get(timeout=15)
                     chunk(f"data: {data}\n\n".encode())
                 except queue.Empty:
-                    # evento real, no comentario: el navegador lo cuenta como "el stream sigue vivo"
-                    chunk(b'data: {"type": "ping"}\n\n')
+                    # evento real, no comentario: el navegador lo cuenta como "el stream sigue
+                    # vivo". Lleva el sello del build (ver `build_id`) para avisar de una version
+                    # nueva sin agregar ni una ruta ni un timer
+                    chunk(f'data: {{"type": "ping", "build": "{build_id()}"}}\n\n'.encode())
         except (BrokenPipeError, ConnectionError, OSError):
             pass
         finally:
             with lock:
                 if q in clients:
                     clients.remove(q)
+
+
+def build_id() -> str:
+    """Sello del bundle que hay en web/dist. Viaja en cada latido del SSE para que un tablero
+    abierto se entere de que hay una version nueva: el lienzo es una pagina sola y no se recarga
+    sola, asi que despues de un `npm run build` seguia corriendo el bundle viejo y los cambios
+    parecian no haberse aplicado. Vite reescribe index.html en cada build, asi que su mtime y su
+    tamano alcanzan; sin build todavia, cadena vacia y el front no hace nada."""
+    try:
+        st = os.stat(os.path.join(DIST, "index.html"))
+        return f"{int(st.st_mtime)}-{st.st_size}"
+    except OSError:
+        return ""
 
 
 def tunnel_loop(port: int) -> None:

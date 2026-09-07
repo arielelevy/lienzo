@@ -82,8 +82,9 @@ const ANCHO_TARJETA = 265;
  *  encima, pero abajo de 900 px le come lugar). Ese ancho no depende de cuantas subcolumnas haya
  *  (medido: 2401, 2400 y 2401 px con 4, 5 y 6), asi que la cuenta no se realimenta.
  *  El ancho de la tarjeta no puede ser estrictamente monotono con subcolumnas enteras --al pasar de
- *  4 a 3 el ancho sube por definicion, porque es el mismo lugar dividido en menos partes--, pero
- *  con esta regla el diente de sierra queda chico: 293 a 350 px entre 1152 y 2560. */
+ *  4 a 3 el ancho sube por definicion, porque es el mismo lugar dividido en menos partes--, asi que
+ *  ANCHO_TARJETA es tambien un techo: lo que sobra va al canal entre subcolumnas (ver `medir`), y
+ *  la tarjeta queda entre 243 y 300 px en todo el rango en vez de 222 a 574. */
 const MAX_LANES = 12;
 
 function useLaneBudget(ref: React.RefObject<HTMLElement | null>): number {
@@ -93,23 +94,30 @@ function useLaneBudget(ref: React.RefObject<HTMLElement | null>): number {
     if (!board) return;
     const gap = parseFloat(getComputedStyle(board).getPropertyValue("--col-gap")) || 35;
     let util = 0;
+    const cajas: { el: HTMLElement; u: number; n: number }[] = [];
     for (const el of board.querySelectorAll<HTMLElement>(".col:not(.collapsed) .cards")) {
       const cs = getComputedStyle(el);
-      util += el.clientWidth - parseFloat(cs.paddingLeft || "0") - parseFloat(cs.paddingRight || "0");
+      const u = el.clientWidth - parseFloat(cs.paddingLeft || "0") - parseFloat(cs.paddingRight || "0");
+      util += u;
+      cajas.push({ el, u, n: parseInt(cs.columnCount) || 1 });
     }
     if (util <= 0) return; // todas colapsadas: se queda con el reparto que tenia
-    let mejor = 1;
-    let dist = Infinity;
-    for (let n = 1; n <= MAX_LANES; n++) {
-      const ancho = (util - gap * (n - 1)) / n;
-      if (ancho <= 0) break;
-      const d = Math.max(ancho / ANCHO_TARJETA, ANCHO_TARJETA / ancho);
-      if (d < dist) {
-        dist = d;
-        mejor = n;
-      }
+    // Techo del ancho de tarjeta: lo que sobra despues de darle ANCHO_TARJETA a cada subcolumna se
+    // reparte en el canal que las separa, no en estirar las tarjetas. Se usa el column-count que
+    // **aplica** el CSS (en movil lo fuerza a 1, y ahi la tarjeta va a lo ancho de la pantalla), y
+    // se toca solo el column-gap: el ancho de `.cards` no cambia, asi que la cuenta de abajo no se
+    // realimenta. Con una sola subcolumna no hay canal donde poner el sobrante y no se recorta.
+    for (const c of cajas) {
+      const sobra = c.n >= 2 ? c.u - (c.n * ANCHO_TARJETA + (c.n - 1) * gap) : 0;
+      c.el.style.columnGap = sobra > 1 ? `${gap + sobra / (c.n - 1)}px` : "";
     }
-    setBudget(mejor);
+    // cuantas subcolumnas entran con la tarjeta en su ancho objetivo, redondeando. Con el techo
+    // puesto, redondear para abajo ("las que entren justas") deja la tarjeta clavada en
+    // ANCHO_TARJETA pero junta todo el sobrante en el canal, y cuando falta poco para otra
+    // subcolumna eso es casi una tarjeta de aire (medido a 960 px: 2 subcolumnas y un canal de
+    // 320 px, un agujero en el medio del tablero). Redondeando, el sobrante nunca pasa de media
+    // subcolumna y la tarjeta se queda entre 236 y 265 px, siempre por debajo del techo.
+    setBudget(Math.max(1, Math.min(MAX_LANES, Math.round((util + gap) / (ANCHO_TARJETA + gap)))));
   };
   // en cada render (una columna que se abre o se colapsa cambia el ancho util sin que cambie el
   // del tablero) y ademas con cada cambio de tamano del tablero
@@ -351,10 +359,13 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
 
   const isCollapsed = (k: ColKey, n: number) => {
     if (filtering && n > 0) return false;
-    if (n === 0) return !openEmpty[k];
     // "Muerta" arranca colapsada aunque tenga tarjetas: una sesion muerta no se puede hacer nada
     // con ella, es historial. Se abre con un click en la tira y esa eleccion se recuerda.
+    // Va ANTES del caso de la columna vacia: al reves, una Muerta sin tarjetas se decidia por
+    // `openEmpty`, que el click en su tira no toca (llama a `setDead`), y no se abria nunca.
+    // Medido: la tira quedaba en 20 px por mas clicks que recibiera.
     if (k === "muerta") return !openDead;
+    if (n === 0) return !openEmpty[k];
     return !!manual[k];
   };
 
@@ -606,7 +617,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         onPick={() => {
                           // el click que cierra un arrastre tampoco elige la tarjeta
                           if (draggedRef.current) return;
-                          setPicked(s.session_id);
+                          // el segundo click sobre la misma la deselecciona: es el mismo gesto de
+                          // ida y vuelta, sin tener que buscar el vacio ni acordarse de Escape
+                          setPicked((prev) => (prev === s.session_id ? null : s.session_id));
                         }}
                         onSelect={() => {
                           // el click que cierra un arrastre no abre el panel
