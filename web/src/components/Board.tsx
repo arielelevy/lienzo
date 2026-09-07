@@ -273,9 +273,31 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   }, [byState]);
   useEffect(() => () => [...Object.values(emptyTimers.current), draggedTimer.current].forEach((t) => window.clearTimeout(t)), []);
 
+  // la columna Muerta arranca colapsada aunque tenga tarjetas: lo que esta ahi ya no se puede
+  // tocar. El usuario la abre con un click y la eleccion queda en el navegador
+  const [openDead, setOpenDead] = useState(() => {
+    try {
+      return localStorage.getItem("lienzo.openDead") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const setDead = (open: boolean) => {
+    setOpenDead(open);
+    try {
+      localStorage.setItem("lienzo.openDead", open ? "1" : "0");
+    } catch {
+      /* sin storage, no importa */
+    }
+  };
+
   const isCollapsed = (k: ColKey, n: number) => {
     if (filtering && n > 0) return false;
     if (n === 0) return !openEmpty[k];
+    // "Muerta" arranca colapsada aunque tenga tarjetas: una sesion muerta no se puede hacer nada
+    // con ella, es historial. Se abre con un click en la tira y esa eleccion se recuerda.
+    if (k === "muerta") return !openDead;
     return !!manual[k];
   };
 
@@ -464,8 +486,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                     role="button"
                     tabIndex={0}
                     title={`${label}: ${list.length} · click para expandir`}
-                    onClick={() => setCol(k, false)}
-                    onKeyDown={(e) => e.key === "Enter" && setCol(k, false)}
+                    onClick={() => (k === "muerta" ? setDead(true) : setCol(k, false))}
+                    onKeyDown={(e) => e.key === "Enter" && (k === "muerta" ? setDead(true) : setCol(k, false))}
                   >
                     <span>{label}</span>
                     <span className="n">{list.length}</span>
@@ -481,6 +503,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                     title={k === "trabajo" && list.length > 0 ? "la columna del trabajo no se colapsa: es lo que estás mirando" : "click para colapsar la columna"}
                     onClick={() => {
                       if (k === "trabajo" && list.length > 0) return;
+                      if (k === "muerta") return setDead(false);
                       setCol(k, true);
                     }}
                   >
