@@ -1,11 +1,11 @@
 import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
-import { ago, api } from "../api";
+import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
 import { isFree, periodLabel, schedLabel, stalledReason } from "../names";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
-import type { ConnectionRule, ConnectionsResponse, DigestResponse, OtherSession, Session, Turn, TurnsResponse } from "../types";
+import type { ConnectionRule, ConnectionsResponse, DigestResponse, OtherSession, Pending, Session, Turn, TurnsResponse } from "../types";
 
 /** La otra punta de un vinculo o regla, en texto: el server la manda como objeto
  *  {session_id, name}; uno anterior la mandaba como string. Nunca renderizar `other` crudo. */
@@ -52,6 +52,9 @@ interface Props {
   details: boolean;
   /** rect de la tarjeta que abrio el panel: el panel se dibuja ahi mismo */
   anchor?: { left: number; top: number } | null;
+  /** permiso pendiente de esta sesion, si lo hay: se contesta desde aca tambien */
+  pending?: Pending;
+  onDecide: (requestId: string, decision: "allow" | "deny") => void;
 }
 
 const cut = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
@@ -158,7 +161,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
   );
 }
 
-export function Panel({ session: s, others, onConnect, transcriptTick, onClose, toast, details, anchor}: Props) {
+export function Panel({ session: s, others, onConnect, transcriptTick, onClose, toast, details, anchor, pending, onDecide }: Props) {
   const [tab, setTab] = useState<"digest" | "chat" | "screen" | "conn">("digest");
   type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
   const [screen, setScreen] = useState<Screen | null>(null);
@@ -360,6 +363,27 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           </div>
         )}
       </div>
+      {/* El permiso tambien se contesta desde el panel. Con el panel abierto la tarjeta queda
+          atras y difuminada (en el celular, tapada del todo), asi que el "contestalo arriba" de la
+          caja de envio no llevaba a ningun lado. Los estilos van en linea porque este encargo no
+          toca styles.css, donde vive la version de la tarjeta (`.card .needs`); la hora va con
+          hhmm, en 24 h como el resto de la app. */}
+      {pending && (
+        <div
+          className="sched"
+          style={{ background: "#2a2410", borderBottom: "1px solid #5c4a12", flexDirection: "column", alignItems: "stretch", gap: 6 }}
+        >
+          <b>Pide permiso: {pending.tool_name}</b>
+          <code style={{ display: "block", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "#ffd77a" }}>
+            {detail(pending.tool_input)}
+          </code>
+          <div className="row">
+            <button className="allow" onClick={() => onDecide(pending.request_id, "allow")}>Permitir</button>
+            <button className="deny" onClick={() => onDecide(pending.request_id, "deny")}>Denegar</button>
+            <span className="dim small">vence {hhmm(new Date(pending.expires_at))}</span>
+          </div>
+        </div>
+      )}
       {sched.length > 0 && (
         <div className="sched" title="mensajes programados hacia esta sesión">
           {sched.map((r) => {

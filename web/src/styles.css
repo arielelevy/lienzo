@@ -152,6 +152,11 @@ details.fold > summary,
 .empty.free { line-height: 1.55; max-width: 46em; }
 .filters { display: none; gap: 6px; padding: 8px 16px 0; }
 .filters button.on { border-color: var(--acc); color: var(--acc); }
+/* permiso esperando en una columna que no estas mirando: sin esta marca el pedido pasaba
+   desapercibido en el celular hasta que vencia a los 60 s */
+.filters button.pide { border-color: var(--need); color: var(--need); }
+.filters button .pin { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--need); vertical-align: middle; animation: st-pulse 1.6s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { .filters button .pin { animation: none; } }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; position: relative; }
 .card:hover { border-color: var(--acc); }

@@ -1,29 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import QRCode from "qrcode";
+import { copyLabel, useCopyState } from "../names";
 
 /** URL navegable (link en pestaña nueva) con boton Copiar al lado. El boton avisa solo,
  *  cambiando su texto dos segundos, para no depender del toast global. */
 export function UrlLink({ url }: { url: string }) {
-  const [state, setState] = useState<"idle" | "ok" | "err">("idle");
-  const timer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
-      setState("ok");
-    } catch {
-      setState("err");
-    }
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setState("idle"), 2000);
-  };
+  const { state, copy } = useCopyState();
   return (
     <div className="row" style={{ alignItems: "center", gap: 8 }}>
       <a href={url} target="_blank" rel="noopener" className="small" style={{ wordBreak: "break-all", flex: "1 1 auto", minWidth: 0 }}>
         {url}
       </a>
-      <button type="button" onClick={copy} title="copiar la URL" style={{ flex: "0 0 auto" }}>
-        {state === "ok" ? "Copiado ✓" : state === "err" ? "No se pudo" : "Copiar"}
+      <button type="button" onClick={() => copy(url)} title="copiar la URL" style={{ flex: "0 0 auto" }}>
+        {copyLabel(state)}
       </button>
     </div>
   );

@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import { whenLabel } from "../names";
 import type { DigestTurn } from "../types";
 import { copyText, useLocalToast, type ToastFn } from "./Card";
 
@@ -16,7 +17,8 @@ export function Digest({ turn: t, toast: extToast }: { turn: DigestTurn; toast?:
   return (
     <div className="dg">
       <div className="ts">
-        {t.ts_start} {t.ended ? "" : "· en curso"}
+        {/* cruda del server venia en UTC y con milisegundos */}
+        {t.ts_start ? whenLabel(t.ts_start, true) : "sin hora"} {t.ended ? "" : "· en curso"}
       </div>
       <div className="p">› {t.prompt}</div>
       {t.final && (

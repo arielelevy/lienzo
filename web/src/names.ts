@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { ago } from "./api";
 import { hhmm } from "./nl";
 import { periodLabel } from "./arrows-geometry";
@@ -173,3 +174,26 @@ export function stalledReason(s: Session, now = Date.now()): string | null {
   const since = s.state_since ? now - new Date(s.state_since).getTime() : 0;
   return since > STALL_MIN * 60_000 ? "sin actividad" : null;
 }
+
+/** Botón que copia y avisa solo, cambiando su texto dos segundos: lo usan el Copiar de un turno y
+ *  el de la URL del túnel, que no tienen el toast global a mano. Devuelve el estado y la acción. */
+export function useCopyState(): { state: "idle" | "ok" | "err"; copy: (text: string) => Promise<void> } {
+  const [state, setState] = useState<"idle" | "ok" | "err">("idle");
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setState("ok");
+    } catch {
+      setState("err");
+    }
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setState("idle"), 2000);
+  };
+  return { state, copy };
+}
+
+/** El texto del botón según el estado, para que los dos digan lo mismo. */
+export const copyLabel = (state: "idle" | "ok" | "err", idle = "Copiar") =>
+  state === "ok" ? "Copiado ✓" : state === "err" ? "No se pudo" : idle;

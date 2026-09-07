@@ -389,6 +389,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           onClose={() => setSelected(null)}
           toast={toast}
           details={details}
+          /* el permiso pendiente viaja al panel: con el panel abierto la tarjeta con los botones
+             queda atras y difuminada, y en el celular tapada del todo */
+          pending={sel.pending_id ? pending[sel.pending_id] : undefined}
+          onDecide={decide}
         />
         </>
       )}
