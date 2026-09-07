@@ -28,6 +28,9 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
   /** sube cuando la transcripcion de la tarjeta abierta cambio: el panel recarga */
   const [transcriptTick, setTranscriptTick] = useState(0);
   const lastMsgRef = useRef(0);
+  /** sello del bundle que sirvio esta pagina, y si ya vimos uno distinto (ver `verBuild`) */
+  const buildRef = useRef<string | null>(null);
+  const pendienteRef = useRef(false);
   const onRemovedRef = useRef(onRemoved);
   onRemovedRef.current = onRemoved;
 
@@ -49,6 +52,37 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
       setPolling(stale);
       if (stale) load();
     }, 4000);
+
+    /** El lienzo es una pagina sola: despues de un `npm run build` seguia corriendo el bundle
+     *  viejo y los cambios parecian no aplicarse hasta un Ctrl+R a mano. El server manda el sello
+     *  del bundle en cada latido; cuando cambia, esto recarga. No recarga en el momento si el foco
+     *  esta en una caja de texto o hay algo escrito a medias: se anota y recarga en el proximo
+     *  latido en que la pantalla este quieta, porque perder un mensaje a medio escribir es peor
+     *  que ver el tablero viejo quince segundos mas. */
+    const verBuild = (build?: string) => {
+      if (!build) return;
+      if (!buildRef.current) {
+        buildRef.current = build; // el primero que se ve es el de esta pagina
+        return;
+      }
+      if (build === buildRef.current && !pendienteRef.current) return;
+      pendienteRef.current = true;
+      const el = document.activeElement as HTMLElement | null;
+      const escribiendo =
+        !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      const conTexto = [...document.querySelectorAll("textarea")].some((t) => t.value.trim() !== "");
+      // eslint-disable-next-line no-console
+      if (escribiendo || conTexto) console.info("lienzo: hay una version nueva; se recarga al terminar de escribir");
+      if (escribiendo || conTexto) return;
+      window.location.reload();
+    };
+
+    // cada 30 s: el latido del SSE no sirve de portador porque sale solo cuando la cola esta en
+    // silencio 15 s, y con el tablero activo casi nunca lo esta
+    const mirarBuild = () => api.get<{ build: string }>("/build").then((r) => verBuild(r.build)).catch(() => null);
+    mirarBuild(); // el primero fija el sello de esta pagina; sin esto el sello se tomaba recien a
+    // los 30 s, o sea ya con el bundle nuevo, y la comparacion no detectaba nunca un cambio
+    const buildPoll = window.setInterval(mirarBuild, 30000);
 
     const es = new EventSource("/events");
     es.onopen = () => {
@@ -98,6 +132,7 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
     return () => {
       es.close();
       clearInterval(poll);
+      clearInterval(buildPoll);
     };
   }, [refreshAuth, selectedRef]);
 

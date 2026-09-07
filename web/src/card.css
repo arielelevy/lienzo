@@ -25,7 +25,11 @@
 .board .col.wide .cards { column-count: var(--lanes, 2); column-gap: var(--col-gap, 35px); }
 /* el mismo aire que hay entre dos subcolumnas queda a la derecha de la ultima, para que la
    ultima tarjeta no termine pegada al borde de la columna ni a la tira de al lado */
-.board .col.wide .cards, .board .col:not(.wide) .cards { padding-right: calc(var(--col-gap, 35px) - 8px); }
+/* Aire a la derecha de la ultima subcolumna: 20 px de punta a punta, contando los 8 de padding de
+   la columna y los 8 de margen de la tira colapsada que sigue. Es menor que --col-gap a proposito
+   (pedido de Ariel): entre dos subcolumnas de tarjetas corren las flechas y hacen falta 30, contra
+   una tira no corre nada. */
+.board .col.wide .cards, .board .col:not(.wide) .cards { padding-right: 4px; }
 @media (max-width: 900px) { .board .col.wide .cards { column-count: 1; } }
 
 /* flechas: apagadas (0,35) salvo las de la tarjeta bajo el mouse (1) o un envio recien hecho; con
@@ -253,23 +257,6 @@
 /* ultimo comando del turno: lo que mas dice de lo que esta haciendo ahora mismo */
 .card .lastcmd { margin-top: 3px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; color: var(--dim); background: var(--bg); border-radius: 5px; padding: 3px 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .card .lastcmd .p { color: var(--run); opacity: .8; }
-
-@media (pointer: coarse) {
-  .card .top .kebab, .card .top .grip, .card .copy,
-  .card .prompt .more, .card .error .more, .card .cardmenu button,
-  .card .words .w .del, .card .rule .del, .panel .sched .item .del {
-    min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
-  }
-  .card .quickact { min-height: 44px; }
-  .card .quickact button, .card .limitrow button, .card .btns button, .card .freeact button,
-  .card .sugg.act { min-height: 44px; }
-  .card .sugg.act { align-items: center; }
-  /* con el "…más" de 44 px la fila lo tiene que poder contener: se centra (alineada por linea de
-     base lo empuja hacia arriba) y se le saca el tope de 3em que trae styles.css, que si no le
-     recorta 6 px del area sensible. Va con `.board` adelante porque en el bundle card.css entra
-     antes que styles.css y con la misma especificidad gana la otra. */
-  .board .card .prompt, .board .card .error { align-items: center; max-height: none; }
-}
 
 /* el arrastre se toma de la fila de arriba y del titulo; el cuerpo es texto que se selecciona y
    se copia, asi que ahi el cursor es de texto y la seleccion queda habilitada */

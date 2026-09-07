@@ -11,13 +11,15 @@
 body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
 /* el header va por encima del fondo del modal (.gate, z-index 30): con el panel, el dialogo de
    conectar o la ayuda abiertos, el menu ⋯ sigue clickeable y cierra lo que haya detras */
+/* Barra compacta: 48 px de alto se comian una linea de tarjeta antes de empezar y el contenido es
+   una sola fila de controles chicos. Con 1 px de relleno el alto lo fija el blanco de click de los
+   chips (24 px, ver la regla de blancos mas abajo), que es el piso real: 27 px en total. Bajar de
+   ahi es sacarle area sensible a los chips, no aire al header. */
 header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 40; }
 header > .dot { margin: 0 4px 0 -4px; }
 header button.icon { padding: 5px 8px; font-size: 14px; line-height: 1; border-color: transparent; background: transparent; }
 header button.icon:hover, header button.icon[aria-expanded="true"] { background: var(--card); border-color: var(--line); }
 header button.icon svg { display: block; }
-/* en tactil los iconos del encabezado tambien piden 44 px de lado (con el mouse alcanzan 24) */
-@media (pointer: coarse) { header button.icon { min-width: 44px; min-height: 44px; } }
 header button.icon.lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); }
 header button.icon.lbl:hover { color: var(--fg); }
 header .menu { position: relative; }
@@ -44,12 +46,11 @@ button.allow { background: #1f6f3a; border-color: #2b9a51; }
 button.deny { background: #7a2323; border-color: #b23232; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
-/* blancos de click: 24 px de area sensible como minimo, y 44 con el dedo (pointer: coarse). Va
+/* blancos de click: 24 px de area sensible como minimo. Va
    por min-height/min-width y no por font-size: el glifo queda igual y lo que crece es el area.
    Medido antes: 31 de 38 controles del tablero por debajo de 24 px. Los de la tarjeta (✕, grip,
    estrella, lapiz, "mas", copiar) viven en card.css y los toca otra sesion. */
 header .search .chip,
-.col .vlabel,
 .panel .ph .x,
 details.fold > summary,
 .fwd summary,
@@ -122,7 +123,11 @@ details.fold > summary,
 .arrow-edit .msg { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; white-space: pre-wrap; word-break: break-word; overflow: hidden;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .col { flex: 1 1 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-height: 120px; padding: 8px; }
-.col.collapsed { flex: 0 0 34px; padding: 0; display: flex; align-items: flex-start; justify-content: center; }
+/* Tira de una columna colapsada: 20 px. Eran 34, y lo que fijaba el ancho era el blanco de click
+   de 24 de la etiqueta, no el texto (la linea rotada mide 16). Con 16 justo quedaba demasiado
+   angosta; 20 le deja 2 px de aire de cada lado. El blanco sigue comodo: la tira mide 90-120 px de
+   alto. */
+.col.collapsed { flex: 0 0 20px; padding: 0; display: flex; align-items: flex-start; justify-content: center; }
 /* columna ancha (pocas abiertas): las tarjetas en dos subcolumnas */
 /* dos subcolumnas independientes (no una grilla por filas): el aire vertical entre tarjetas es
    siempre el mismo que en una columna simple (8 px), aunque la de al lado sea mas alta */
@@ -132,7 +137,7 @@ details.fold > summary,
 .col.wide .cards { column-count: 2; column-gap: var(--col-gap, 35px); }
 .col.wide .cards > div { break-inside: avoid; margin-bottom: var(--card-gap-y, 15px); }
 .col.wide .cards .card { margin-bottom: 0; }
-.col.collapsed .vlabel { cursor: pointer; border-radius: 8px; }
+.col.collapsed .vlabel { cursor: pointer; border-radius: 8px; min-width: 20px; }
 .col.collapsed .vlabel:hover { background: var(--card); color: var(--fg); }
 .col.collapsed .vlabel:focus-visible { outline: 2px solid var(--acc); }
 .col h2 { cursor: pointer; }
@@ -144,7 +149,14 @@ details.fold > summary,
 .col .vlabel { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); padding: 10px 0; display: flex; gap: 8px; align-items: center; }
 .col.te_necesita .vlabel { color: var(--need); } .col.muerta .vlabel { color: var(--dead); } .col.corriendo .vlabel { color: var(--run); }
 .col .vlabel .n { background: var(--card); border-radius: 10px; padding: 6px 1px; }
-.col h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 4px 6px 10px; display: flex; justify-content: space-between; }
+/* El titulo de la columna gana el click contra el area sensible de una flecha. El area util del
+   ruteo arranca en el borde de abajo del titulo, pero el circulo invisible del glifo mide hasta 16
+   px de radio desde su centro y puede treparse igual. Paso al bajar la barra de 48 a 25 px: el
+   tablero subio y un glifo quedo con su circulo sobre el titulo, que dejo de poder colapsar la
+   columna (lo agarro la prueba de interfaz, no el ojo). Con z-index gana siempre el titulo, que es
+   el control, y la flecha pierde solo los pocos pixeles en que se pisan. El 4 es por el 3 del
+   svg `.arrows`: con 2 seguia ganando la flecha. */
+.col h2 { position: relative; z-index: 4; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 4px 6px 10px; display: flex; justify-content: space-between; }
 .col h2 .n { background: var(--card); border-radius: 10px; padding: 0 8px; }
 .col.corriendo h2 { color: var(--run); } .col.te_necesita h2 { color: var(--need); } .col.muerta h2 { color: var(--dead); }
 .empty { color: var(--dim); font-size: 11.5px; padding: 8px; }
@@ -201,7 +213,7 @@ details.fold > summary,
 
 /* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y
    click en el vacio lo cierra (--hh es el alto del header, que mide App) */
-:root { --hh: 46px; --col-gap: 35px; --col-sep: 10px; --card-gap-y: 15px; }
+:root { --hh: 46px; --col-gap: 30px; --col-sep: 10px; --card-gap-y: 15px; }
 /* el panel se abre sobre la tarjeta que lo abrio y el tablero de atras se atenua y se difumina.
    left, top, width (y en el celular height) van en el style, calculados en Panel.tsx: el ancho
    se declara en un solo lado, porque el clamp del left necesita el mismo numero. Aca no va
@@ -222,8 +234,17 @@ details.fold > summary,
 .panel .ph .t .sub { flex: none; font-weight: 400; white-space: nowrap; }
 /* pestanas mas justas: cada pixel que sueltan es titulo que se lee en la misma fila */
 .panel .tabs button { padding: 6px 9px; }
-/* panel angosto (se achica para no tapar el tablero): mismas pestanas compactas que el celular */
-.panel.narrow .ph { padding: 8px 30px 8px 10px; gap: 6px; }
+/* Panel angosto (se achica para no tapar el tablero): mismas pestanas compactas que el celular, y
+   el encabezado en UNA fila. Con la fila envolviendo, el menu de pestanas se partia en cuatro
+   renglones y el encabezado se iba a 88 px medidos a 1280 y 1920 (75 a 1152) contra 50 cuando
+   entra: el doble de alto comido antes de la primera linea de la conversacion. Lo que cede es el
+   titulo, que se corta con puntos suspensivos y va entero en su tooltip; las pestanas y Conectar
+   no se parten nunca. La rama y el estado se van (estan en la tarjeta) y de "coordinadora" queda
+   la estrella, que es la que se reconoce. */
+.panel.narrow .ph { padding: 8px 30px 8px 10px; gap: 6px; flex-wrap: nowrap; }
+.panel.narrow .ph .t { flex: 1 1 0; min-width: 0; }
+.panel.narrow .ph .t .sub, .panel.narrow .ph .t .coord .lbl { display: none; }
+.panel.narrow .ph .tabs, .panel.narrow .ph > button { flex: 0 0 auto; }
 .panel.narrow .tabs button { padding: 6px 8px; font-size: 12.5px; }
 .panel.narrow .body { padding: 10px; }
 .panel.narrow .send { padding: 8px 10px; }
@@ -415,21 +436,6 @@ header .search .chip:not(.on) { text-decoration: line-through; }
   .filters { display: flex; flex-wrap: wrap; }
 }
 
-/* arrastre con el dedo: el agarre no cede el puntero al scroll, y en pantallas tactiles es mas grande */
-.card .grip { touch-action: none; -webkit-touch-callout: none; }
-@media (pointer: coarse) {
-  .board .card .top .grip { font-size: 19px; padding: 2px 8px; }
-}
-/* con el dedo, 44 px. Va aca abajo a proposito: despues del @media del celular, que si no le
-   gana por orden de fuente a lo que toca las mismas propiedades */
-@media (pointer: coarse) {
-  header button, header .search input, header .search .chip, .filters button, .gate-box button,
-  .fwd summary, .fwd .modes label, .fwd .row label.small, .send .notifyme, .send .quick button,
-  details.fold > summary, .dg .copy, .panel .ph .x, .col .vlabel { min-height: 44px; }
-  .panel .ph .x, .col .vlabel { min-width: 44px; }
-  .col.collapsed { flex-basis: 44px; }
-  .panel .ph { padding-right: 50px; }
-}
 .fwd .row.conflict { background: color-mix(in srgb, var(--acc) 18%, transparent); border: 1px solid var(--acc); border-radius: 6px; padding: 6px 10px; }
 
 /* archivos y comandos del digest: plegados, porque son el ruido del turno y no el resultado */
