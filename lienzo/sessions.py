@@ -286,6 +286,12 @@ def continue_session(old: dict, new: dict) -> None:
 
 
 def new_session(sid: str, agent: str, source: str) -> dict:
+    """Forma canonica de una tarjeta: TODO campo que la UI puede leer existe desde el arranque y con
+    su tipo. Un campo que a veces esta y a veces no es lo que despues rompe el front: medido, de 6
+    tarjetas reales `orphan` venia bool en 1 (las del barrido) y ausente en 5 (las de hooks), y lo
+    mismo `in_vscode`, `no_console`, `suggestion` y `continue_scheduled_for`. Los `None` de aca son
+    "todavia no se sabe" y son parte del tipo (`string | null` en web/src/types.ts); lo que no vale
+    es la ausencia. load_sessions rellena con esto las tarjetas guardadas por versiones viejas."""
     return {
         "session_id": sid,
         "agent": agent,
@@ -295,12 +301,14 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "repo": "?",
         "branch": None,
         "title": None,
+        "title_source": None,
         "transcript_path": None,
         "state": "termino",
         "state_since": now(),
         "needs": None,
         "last_prompt": "",
         "last_reply": "",
+        "last_error": None,
         "started": now(),
         "last_event": None,
         "last_event_ts": None,
@@ -311,6 +319,16 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "pending_id": None,
         "typing": False,
         "coordinator": False,
+        "orphan": False,
+        "in_vscode": False,
+        "no_console": False,
+        "suggestion": None,
+        "limit_until": None,
+        "continue_scheduled_for": None,
+        "tool_count": 0,
+        "last_files": [],
+        "last_cmd": None,
+        "tool_errors": 0,
     }
 
 
@@ -374,11 +392,24 @@ def transcript_state(s: dict, t: dict) -> str | None:
     return want
 
 
-FILE_TOOLS = ("edit", "write", "read", "notebookedit", "multiedit", "apply_patch", "update_file")
+# nombres en minuscula de los dos agentes: Claude escribe con Edit/Write/Read/NotebookEdit y corre
+# con Bash/PowerShell; Codex escribe con apply_patch, mira imagenes con view_image y corre con shell
+FILE_TOOLS = ("edit", "write", "read", "notebookedit", "multiedit", "apply_patch", "update_file", "view_image")
 
 
 CD_PREFIX_RE = re.compile(r'^\s*cd\s+(?:"[^"]*"|\S+)\s*(?:&&|;)\s*')
 CMD_TOOLS = ("bash", "powershell", "shell", "run_terminal_cmd", "exec")
+
+
+def tool_paths(inp: dict) -> list[str]:
+    """Las rutas que toca una herramienta, en las formas que usan los dos agentes: `file_path` /
+    `notebook_path` / `path` traen una sola (Claude, y view_image de Codex), y `paths` trae varias
+    como [{path, type}] (apply_patch de Codex, que puede tocar varios archivos en un mismo bloque:
+    medido, 53 bloques en ~/.codex, y por esta forma la tarjeta de Codex no mostraba ningun archivo)."""
+    una = inp.get("file_path") or inp.get("notebook_path") or inp.get("path")
+    if una:
+        return [str(una)]
+    return [str(p.get("path") or "" if isinstance(p, dict) else p) for p in (inp.get("paths") or [])]
 
 
 def turn_activity(t: dict) -> dict:
@@ -402,10 +433,13 @@ def turn_activity(t: dict) -> dict:
             raw = CD_PREFIX_RE.sub("", raw).strip()
             if raw:
                 cmd = short(raw, 120)
-        if name in FILE_TOOLS and len(files) < 3:
-            base = os.path.basename(str(inp.get("file_path") or inp.get("path") or "").replace("\\", "/").rstrip("/"))
-            if base and base not in files:
-                files.append(base)
+        if name in FILE_TOOLS:
+            for ruta in tool_paths(inp):
+                if len(files) >= 3:
+                    break
+                base = os.path.basename(ruta.replace("\\", "/").rstrip("/"))
+                if base and base not in files:
+                    files.append(base)
     return {"tool_count": n, "last_files": files, "last_cmd": cmd, "tool_errors": errors}
 
 
@@ -1163,10 +1197,10 @@ def load_sessions() -> tuple[int, int]:
         try:
             with open(p, encoding="utf-8") as f:
                 s = json.load(f)
-            s.setdefault("hooked", s.get("source") == "hook")
-            s.setdefault("pending_id", None)
-            s.setdefault("typing", False)
-            s.setdefault("coordinator", False)
+            # tarjeta guardada por una version vieja: completar con la forma canonica, para que
+            # /sessions no devuelva un campo presente en unas y ausente en otras
+            for k, v in new_session(s["session_id"], s.get("agent") or "claude", s.get("source") or "hook").items():
+                s.setdefault(k, v)
             if s.get("state") not in STATES:
                 s["state"], s["state_since"] = "termino", s.get("state_since") or now()
             if not procs.agent_alive(s.get("pid")):

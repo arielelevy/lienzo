@@ -1,6 +1,11 @@
 :root {
   --bg: #0f1115; --panel: #171a21; --card: #1d212b; --line: #2a2f3b; --fg: #e6e8ee; --dim: #8b93a7; --acc: #5b9cff;
   --run: #3fb950; --need: #f0b429; --dead: #f05b5b; --claude: #d97757; --codex: #10a37f; --err: #f05b5b;
+  /* texto sobre un fondo lleno de color (boton principal, badges, chips prendidos, toast de la
+     tarjeta): el blanco no llega al minimo de WCAG AA sobre ninguno de esos colores --2,75 sobre el
+     azul, 3,12 sobre el naranja de Claude, 3,20 sobre el verde de Codex-- y la tinta oscura da de
+     5,9 a 6,9 sin mover ningun color de marca */
+  --ink: #0f1115;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
@@ -34,7 +39,7 @@ header h1 { font-size: 15px; margin: 0; letter-spacing: .5px; }
 .right { margin-left: auto; }
 button { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
 button:hover { border-color: var(--acc); }
-button.primary { background: var(--acc); border-color: var(--acc); color: #fff; }
+button.primary { background: var(--acc); border-color: var(--acc); color: var(--ink); }
 button.allow { background: #1f6f3a; border-color: #2b9a51; }
 button.deny { background: #7a2323; border-color: #b23232; }
 button:disabled { opacity: .45; cursor: not-allowed; }
@@ -133,7 +138,7 @@ details.fold > summary,
 .col h2 { cursor: pointer; }
 .col h2.fixed { cursor: default; }
 .col h2.fixed:hover .n { background: none; color: inherit; }
-.col h2:hover .n { background: var(--acc); color: #fff; }
+.col h2:hover .n { background: var(--acc); color: var(--ink); }
 .col.collapsed .empty { display: none; }
 .col.collapsed.show .empty { display: block; }
 .col .vlabel { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); padding: 10px 0; display: flex; gap: 8px; align-items: center; }
@@ -156,7 +161,7 @@ details.fold > summary,
    "hace X" de la derecha no se encogen, asi la fecha siempre queda visible */
 .card .top > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .top .badge, .card .top .right { flex: 0 0 auto; overflow: visible; }
-.badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #fff; }
+.badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--ink); }
 .badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); }
 .card .repo { font-weight: 600; color: var(--fg); }
 .card .title { font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -185,7 +190,7 @@ details.fold > summary,
 .droptarget .card { border-color: var(--acc); box-shadow: 0 0 0 2px var(--acc); }
 .arrows.draglink { pointer-events: none; width: 100%; height: 100%; }
 .arrows.draglink line { stroke: var(--acc); stroke-width: 2; stroke-dasharray: 6 4; }
-.draghint { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--acc); color: #fff; padding: 8px 14px; border-radius: 20px; font-size: 12px; z-index: 6; pointer-events: none; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+.draghint { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--acc); color: var(--ink); padding: 8px 14px; border-radius: 20px; font-size: 12px; z-index: 6; pointer-events: none; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
 .board.dragging .card:not(.sel) { opacity: .75; }
 .droptarget .card { opacity: 1 !important; }
 
@@ -318,14 +323,14 @@ details.fold > summary,
 .gate-box .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .gate-box .two p { margin: 4px 0 8px; }
 @media (max-width: 700px) { .gate-box .two { grid-template-columns: 1fr; } }
-a.btn { display: block; text-align: center; text-decoration: none; background: var(--acc); color: #fff; border-radius: 6px; padding: 10px; font-weight: 600; }
+a.btn { display: block; text-align: center; text-decoration: none; background: var(--acc); color: var(--ink); border-radius: 6px; padding: 10px; font-weight: 600; }
 /* busqueda + chips de agente en el header: filtran las tarjetas visibles, nada mas */
 header .search { display: flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid transparent; border-radius: 8px; padding: 2px 4px 2px 6px; }
 header .search:focus-within { border-color: var(--line); }
 header .search input { background: transparent; color: var(--fg); border: 0; padding: 4px 6px; font: inherit; font-size: 12px; width: 170px; }
 header .search input:focus { outline: none; }
 header .search .chip { padding: 2px 8px; font-size: 11px; font-weight: 600; border-radius: 10px; opacity: .45; border-color: transparent; background: transparent; }
-header .search .chip.on { opacity: 1; color: #fff; }
+header .search .chip.on { opacity: 1; color: var(--ink); }
 header .search .chip.claude.on { background: var(--claude); }
 header .search .chip.codex.on { background: var(--codex); }
 header .search .chip:not(.on) { text-decoration: line-through; }

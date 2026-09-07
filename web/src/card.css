@@ -217,7 +217,7 @@
 .send .typing-warn { background: #2a2410; border: 1px solid #5c4a12; color: #ffd77a; border-radius: 6px; padding: 6px 10px; font-size: 11.5px; }
 
 /* mini toast local: abajo dentro del contenedor, sin depender del toast global */
-.ctoast { position: absolute; left: 10px; bottom: 6px; background: var(--acc); color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 11px; z-index: 2; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,.4); animation: ctoast-in .15s ease-out; }
+.ctoast { position: absolute; left: 10px; bottom: 6px; background: var(--acc); color: var(--ink); padding: 3px 10px; border-radius: 12px; font-size: 11px; z-index: 2; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,.4); animation: ctoast-in .15s ease-out; }
 .ctoast.err { background: var(--err); }
 @keyframes ctoast-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 

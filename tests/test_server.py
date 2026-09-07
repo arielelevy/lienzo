@@ -1153,3 +1153,113 @@ def test_al_cerrar_el_turno_sigue_mandando_el_final(aislado):
     ses.refresh_from_transcript(s)
     assert s["state"] == "termino"
     assert s["last_reply"] == "Listo el primero."
+
+
+# 14. encargo Z2: la tarjeta de Codex, y una forma sola para todas las tarjetas
+
+
+def test_tool_paths_reconoce_las_formas_de_los_dos_agentes():
+    assert ses.tool_paths({"file_path": "D:/x/a.py"}) == ["D:/x/a.py"]
+    assert ses.tool_paths({"notebook_path": "D:/x/a.ipynb"}) == ["D:/x/a.ipynb"]
+    assert ses.tool_paths({"path": "D:/x/foto.png"}) == ["D:/x/foto.png"]
+    # apply_patch de Codex: varios archivos en un solo bloque
+    assert ses.tool_paths({"paths": [{"path": "a.md", "type": "add"}, {"path": "b.jl", "type": "update"}]}) == [
+        "a.md",
+        "b.jl",
+    ]
+    assert ses.tool_paths({"command": "ls"}) == []
+    assert ses.tool_paths({}) == []
+
+
+def test_turn_activity_lee_un_turno_de_codex_de_verdad():
+    """Bloques copiados de rollout-2026-09-05T14-57-26-01a072b7 (~/.codex). Antes de este arreglo
+    la tarjeta de Codex mostraba archivos: [] porque apply_patch trae `paths`, no `file_path`."""
+    t = {
+        "blocks": [
+            blk("shell", {"command": "rg -n 'biregular' documentos -g '*.md'", "cwd": "file:///D:/Apps/Teorema"}),
+            blk(
+                "apply_patch",
+                {
+                    "paths": [
+                        {"path": r"D:\Apps\Teorema\documentos\ensamblaje_interfaces_2026-09-05.md", "type": "add"},
+                        {"path": r"D:\Apps\Teorema\codigo\ensamblaje_interfaces.jl", "type": "add"},
+                    ]
+                },
+            ),
+            blk("shell", {"command": "julia.exe --startup-file=no codigo/ensamblaje_interfaces.jl"}),
+        ],
+        "final": "",
+    }
+    a = ses.turn_activity(t)
+    assert a["tool_count"] == 3
+    assert a["last_files"] == ["ensamblaje_interfaces_2026-09-05.md", "ensamblaje_interfaces.jl"]
+    assert a["last_cmd"] == "julia.exe --startup-file=no codigo/ensamblaje_interfaces.jl"
+    assert a["tool_errors"] == 0
+
+
+def test_el_tope_de_tres_archivos_vale_tambien_dentro_de_un_bloque():
+    t = {"blocks": [blk("apply_patch", {"paths": [{"path": f"{i}.md"} for i in range(6)]})], "final": ""}
+    assert ses.turn_activity(t)["last_files"] == ["0.md", "1.md", "2.md"]
+
+
+def test_view_image_de_codex_cuenta_como_archivo_tocado():
+    t = {"blocks": [blk("view_image", {"path": "D:/Apps/lienzo/docs/img/tablero.png"})], "final": ""}
+    assert ses.turn_activity(t)["last_files"] == ["tablero.png"]
+
+
+def test_una_transcripcion_real_de_codex_muestra_sus_archivos():
+    """Contra ~/.codex de esta maquina: si hay un turno con apply_patch, la tarjeta lo tiene que ver."""
+    import lienzo.transcripts as tr
+
+    paths = sorted(
+        glob.glob(os.path.join(HOME, ".codex", "sessions", "*", "*", "*", "rollout-*.jsonl")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
+    for p in paths[:60]:
+        try:
+            turnos = tr.turns("codex", p, 40)["turns"]
+        except OSError:
+            continue
+        for t in turnos:
+            if any(b.get("kind") == "tool" and b.get("name") == "apply_patch" for b in t["blocks"]):
+                a = ses.turn_activity(t)
+                assert a["tool_count"] > 0
+                assert a["last_files"], f"turno de Codex con apply_patch y sin archivos, en {os.path.basename(p)}"
+                return
+    pytest.skip("sin turnos de Codex con apply_patch en ~/.codex")
+
+
+def test_la_tarjeta_tiene_la_misma_forma_venga_de_hook_o_de_barrido():
+    """Un campo que a veces esta y a veces no es lo que despues rompe el front: `orphan` venia bool
+    en las tarjetas del barrido y ausente en las de hooks."""
+    por_hook = ses.new_session("aaa", "claude", "hook")
+    por_barrido = ses.new_session("bbb", "codex", "sweep")
+    assert set(por_hook) == set(por_barrido)
+    for campo in ("orphan", "in_vscode", "no_console", "typing", "coordinator"):
+        assert por_hook[campo] is False, f"{campo} tiene que ser bool, no None ni ausente"
+    for campo in ("suggestion", "last_error", "limit_until", "continue_scheduled_for", "title_source", "last_cmd"):
+        assert campo in por_hook and por_hook[campo] is None
+    assert por_hook["last_files"] == [] and por_hook["tool_count"] == 0 and por_hook["tool_errors"] == 0
+
+
+def test_una_tarjeta_vieja_recupera_la_forma_al_cargarla(aislado, monkeypatch):
+    """Las guardadas por versiones anteriores tienen la mitad de los campos: al cargarlas se
+    completan, para que GET /sessions no devuelva un campo en unas tarjetas y no en otras."""
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    vieja = {
+        "session_id": SID,
+        "agent": "claude",
+        "source": "hook",
+        "state": "termino",
+        "state_since": local(0),
+        "started": local(0),
+        "last_event_ts": local(0),
+        "pid": PID,
+    }
+    (aislado / f"{SID}.json").write_text(json.dumps(vieja), encoding="utf-8")
+    ses.load_sessions()
+    s = st.sessions[SID]
+    assert set(s) == set(ses.new_session(SID, "claude", "hook"))
+    assert s["orphan"] is False and s["suggestion"] is None and s["last_files"] == []
+    assert s["state"] == "termino", "lo que ya tenia no se pisa"

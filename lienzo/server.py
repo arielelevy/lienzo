@@ -357,6 +357,9 @@ class Handler(BaseHTTPRequestHandler):
                     MIME.get(os.path.splitext(name)[1].lower(), "application/octet-stream"),
                     cache="public, max-age=31536000, immutable",
                 )
+            if parts == ["favicon.svg"] and os.path.isdir(DIST):
+                # el icono de la pestaña: vive en la raiz del build, no en assets/
+                return self._file(os.path.join(DIST, "favicon.svg"), "image/svg+xml", cache="public, max-age=86400")
             if parts == ["health"]:
                 return self._json(200, {"ok": True, "sessions": len(sessions), "pending": len(pending), "ts": now()})
             if parts == ["auth"]:
