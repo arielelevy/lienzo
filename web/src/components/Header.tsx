@@ -130,14 +130,15 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
             {flags.map((f) => (
               <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle}>
                 <span className="row">
-                  {f.icon} {f.label} <span className={`state ${f.on ? "on" : ""}`}>{f.on ? "on" : "off"}</span>
+                  {/* "sí"/"no" y no "on"/"off": es lo único que quedaba en inglés en toda la app */}
+                  {f.icon} {f.label} <span className={`state ${f.on ? "on" : ""}`}>{f.on ? "sí" : "no"}</span>
                 </span>
                 <span className="desc">{f.title}</span>
               </button>
             ))}
             <hr />
             <button role="menuitem" onClick={closeAnd(onRescan)}>
-              <span className="row">↻ Rescan</span>
+              <span className="row">↻ Barrer procesos</span>
               <span className="desc">barrer ahora los procesos de la PC en busca de sesiones (solo se hace cada 30 s)</span>
             </button>
             <button role="menuitem" onClick={closeAnd(onHelp)}>

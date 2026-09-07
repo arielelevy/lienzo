@@ -31,7 +31,7 @@ class ErrorBoundary extends Component<{ resetKey: string; children: ReactNode },
       return (
         <div className="empty" role="alert">
           no pude mostrar esto
-          <div className="small dim" style={{ marginTop: 4, wordBreak: "break-all" }}>{this.state.error}</div>
+          <div className="small dim" style={{ marginTop: 4, overflowWrap: "anywhere" }}>{this.state.error}</div>
           <button style={{ marginTop: 8 }} onClick={() => this.setState({ error: null })}>reintentar</button>
         </div>
       );
@@ -396,7 +396,9 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           )}
           {/* rama y estado al lado del nombre: es lo unico que servia de la fila de la ruta, que
               ya no esta. La ruta vuelve abajo solo con "Detalles tecnicos" */}
-          <span className="sub dim small" title={s.cwd ?? ""}>
+          {/* el texto entero en el title: cuando la fila viene justa, esta parte se recorta para
+              que el nombre entre entero */}
+          <span className="sub dim small" title={[headLine(s), s.cwd].filter(Boolean).join("\n")}>
             {headLine(s)}
           </span>
         </span>
@@ -426,19 +428,14 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
       </div>
       {/* El permiso tambien se contesta desde el panel. Con el panel abierto la tarjeta queda
           atras y difuminada (en el celular, tapada del todo), asi que el "contestalo arriba" de la
-          caja de envio no llevaba a ningun lado. Los estilos van en linea porque este encargo no
-          toca styles.css, donde vive la version de la tarjeta (`.card .needs`); la hora va con
-          hhmm, en 24 h como el resto de la app. */}
+          caja de envio no llevaba a ningun lado. Es el mismo bloque `.needs` de la tarjeta: antes
+          era un `.sched` (una fila de chips) al que seis estilos en linea le daban vuelta la
+          maqueta. La hora va con hhmm, en 24 h como el resto de la app. */}
       {pending && (
-        <div
-          className="sched"
-          style={{ background: "#2a2410", borderBottom: "1px solid #5c4a12", flexDirection: "column", alignItems: "stretch", gap: 6 }}
-        >
+        <div className="needs">
           <b>Pide permiso: {pending.tool_name}</b>
-          <code style={{ display: "block", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "#ffd77a" }}>
-            {detail(pending.tool_input)}
-          </code>
-          <div className="row">
+          <code>{detail(pending.tool_input)}</code>
+          <div className="btns">
             <button className="allow" onClick={() => onDecide(pending.request_id, "allow")}>Permitir</button>
             <button className="deny" onClick={() => onDecide(pending.request_id, "deny")}>Denegar</button>
             <span className="dim small">vence {hhmm(new Date(pending.expires_at))}</span>

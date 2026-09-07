@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
-import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
+import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
 
@@ -502,8 +502,14 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     >
       <div className="top">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
-        <span className="repo">{s.repo}</span>
-        {s.branch && <span className="branch">⎇ {s.branch}</span>}
+        <span className="repo" title={s.repo}>
+          {s.repo}
+        </span>
+        {s.branch && (
+          <span className="branch" title={`rama ${s.branch}`}>
+            ⎇ {s.branch}
+          </span>
+        )}
         <span className="right">
           {/* estado como icono: corriendo y termino comparten la columna "Trabajo"; la huerfana va a
               "Muerta" con esta etiqueta, para distinguirla de un proceso muerto de verdad */}
@@ -664,13 +670,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       ) : s.state === "te_necesita" && s.needs && !(quick && s.needs.kind === "idle") ? (
         /* ociosa con botones rapidos: el aviso va en una linea con los botones, mas abajo */
         <div className="needs terminal">
-          <b>
-            {s.needs.kind === "idle"
-              ? "Espera tu input"
-              : s.needs.kind === "permission"
-                ? `Pide permiso: ${s.needs.tool ?? ""}`
-                : s.needs.kind}
-          </b>
+          <b>{needsLabel(s.needs)}</b>
           {s.needs.detail && <code>{s.needs.detail}</code>}
           <div className="dim small">
             {s.needs.kind === "idle" ? "podés escribirle desde acá" : s.needs.where === "terminal" ? "contestar en VS Code" : "esperando al lienzo"}
@@ -779,7 +779,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       ) : quick && (
         <div className="quickact" onClick={(e) => e.stopPropagation()}>
-          {s.state === "te_necesita" && <span className="dim small">Espera tu input</span>}
+          {s.state === "te_necesita" && <span className="dim small">Espera que le escribas</span>}
           {QUICK.map((q) => (
             <button key={q} type="button" disabled={busy} title="se escribe en su terminal" onClick={() => quickSend(q)}>
               {q}

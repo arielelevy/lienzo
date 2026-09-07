@@ -61,51 +61,34 @@ def entry(agent: str, asyn: bool, timeout: int) -> dict:
     return {"hooks": [e]}
 
 
-def install_claude(uninstall: bool) -> None:
-    path = os.path.join(HOME, ".claude", "settings.json")
-    settings = {}
+def merge_hooks(path: str, agent: str, events: dict, uninstall: bool, backup=False, prune=False) -> None:
+    """Registra (o saca) los hooks del lienzo en un archivo de configuracion sin pisar lo que ya
+    hay: de cada evento se filtran solo los grupos propios (is_ours) y se vuelve a agregar el
+    nuestro. `backup` guarda una copia antes de tocar, para el settings.json de Claude, que ademas
+    de hooks tiene todo lo del usuario; `prune` saca la clave "hooks" entera si queda vacia."""
+    data = {}
     if os.path.exists(path):
-        bak = path + ".bak-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        shutil.copy2(path, bak)
-        print("backup:", bak)
-        with open(path, encoding="utf-8") as f:
-            settings = json.load(f)
-    hooks = settings.setdefault("hooks", {})
-    for ev, (asyn, to) in CLAUDE_EVENTS.items():
-        groups = [g for g in hooks.get(ev, []) if not is_ours(g)]
-        if not uninstall:
-            groups.append(entry("claude", asyn, to))
-        if groups:
-            hooks[ev] = groups
-        else:
-            hooks.pop(ev, None)
-    if not hooks:
-        settings.pop("hooks", None)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    print(("quitados" if uninstall else "registrados"), "hooks de Claude en", path)
-
-
-def install_codex(uninstall: bool) -> None:
-    path = os.path.join(HOME, ".codex", "hooks.json")
-    data = {"hooks": {}}
-    if os.path.exists(path):
+        if backup:
+            bak = path + ".bak-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            shutil.copy2(path, bak)
+            print("backup:", bak)
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     hooks = data.setdefault("hooks", {})
-    for ev, (asyn, to) in CODEX_EVENTS.items():
+    for ev, (asyn, to) in events.items():
         groups = [g for g in hooks.get(ev, []) if not is_ours(g)]
         if not uninstall:
-            groups.append(entry("codex", asyn, to))
+            groups.append(entry(agent, asyn, to))
         if groups:
             hooks[ev] = groups
         else:
             hooks.pop(ev, None)
+    if prune and not hooks:
+        data.pop("hooks", None)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
-    print(("quitados" if uninstall else "registrados"), "hooks de Codex en", path)
+    print(("quitados" if uninstall else "registrados"), f"hooks de {agent.capitalize()} en", path)
 
 
 def ensure_state() -> None:
@@ -124,7 +107,8 @@ if __name__ == "__main__":
     print("python para el hook:", PY)
     ensure_state()
     if "--codex-only" not in sys.argv:
-        install_claude(un)
+        settings = os.path.join(HOME, ".claude", "settings.json")
+        merge_hooks(settings, "claude", CLAUDE_EVENTS, un, backup=True, prune=True)
     if "--claude-only" not in sys.argv:
-        install_codex(un)
+        merge_hooks(os.path.join(HOME, ".codex", "hooks.json"), "codex", CODEX_EVENTS, un)
     print("listo. Las sesiones nuevas de Claude/Codex ya reportan; las abiertas antes las encuentra el barrido.")

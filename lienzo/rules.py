@@ -20,6 +20,19 @@ from sessions import add_link, send_to_session
 from state import links, load_config, lock, now, rules, sessions, short
 
 
+def local_dt(value) -> dt.datetime | None:
+    """ISO a datetime en hora local, o None si no parsea. Todas las horas de una regla (`at`,
+    `created`, `last_fired`, `disabled_at`) las escribe este modulo o server.parse_at ya con
+    offset; lo que llegue sin zona (un rules.json editado a mano) se asume local, no UTC, que es
+    lo que quiso decir quien lo escribio. (state.parse_ts hace lo contrario: es para los hooks y
+    las transcripciones, que hablan UTC.)"""
+    try:
+        d = dt.datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return d if d.tzinfo else d.astimezone()
+
+
 def session_name(sid: str | None) -> str:
     """Nombre corto para mostrar: 'repo · titulo' (o lo que haya)."""
     s = sessions.get(sid or "")
@@ -81,6 +94,7 @@ def render_template(tpl: str, s: dict | None) -> str:
     )
 
 
+ON_STOP_COOLDOWN_S = 30  # dos sesiones conectadas en ambos sentidos no se contestan en bucle
 CONTINUE_TEXT = "Continuar"
 CONTINUE_DELAY_S = 60
 AT_NEAR_S = 120  # dos programadas a menos de 2 min son "la misma hora" (la UI guarda UTC, aca local)
@@ -88,10 +102,8 @@ AT_NEAR_S = 120  # dos programadas a menos de 2 min son "la misma hora" (la UI g
 
 def at_near(r: dict, at: dt.datetime) -> bool:
     """La regla `r` (kind at) cae a menos de AT_NEAR_S segundos de `at`."""
-    try:
-        return abs((dt.datetime.fromisoformat(str(r.get("at"))) - at).total_seconds()) <= AT_NEAR_S
-    except ValueError:
-        return False
+    ref = local_dt(r.get("at"))
+    return ref is not None and abs((ref - at).total_seconds()) <= AT_NEAR_S
 
 
 def ensure_continue_rule(s: dict) -> None:
@@ -103,10 +115,10 @@ def ensure_continue_rule(s: dict) -> None:
         return
     if s.get("continue_scheduled_for") == until:
         return  # este aviso ya se atendio; si el usuario borro la regla, no se vuelve a crear
-    try:
-        at = dt.datetime.fromisoformat(until) + dt.timedelta(seconds=CONTINUE_DELAY_S)
-    except ValueError:
+    hasta = local_dt(until)
+    if hasta is None:
         return
+    at = hasta + dt.timedelta(seconds=CONTINUE_DELAY_S)
     if at < dt.datetime.now().astimezone() - dt.timedelta(minutes=5):
         return  # aviso viejo: el cupo ya volvio, no hay nada que programar
     at_iso = at.isoformat(timespec="seconds")
@@ -142,13 +154,7 @@ def advance_at(rule: dict, ref: dt.datetime | None = None) -> None:
     que no se hicieron. Se guarda en hora local con segundos, como el resto."""
     every = int(rule["every_s"])
     ref = ref or dt.datetime.now().astimezone()
-    try:
-        at = dt.datetime.fromisoformat(str(rule.get("at")))
-    except (TypeError, ValueError):
-        at = ref
-    if at.tzinfo is None:
-        at = at.astimezone()
-    at += dt.timedelta(seconds=every)
+    at = (local_dt(rule.get("at")) or ref) + dt.timedelta(seconds=every)
     if at <= ref:
         missed = int((ref - at).total_seconds() // every) + 1
         at += dt.timedelta(seconds=missed * every)
@@ -199,13 +205,20 @@ def fire_rule(rule: dict) -> None:
 
 
 def fire_on_stop(sid: str) -> None:
-    """La sesion `sid` cerro un turno: disparar sus reglas 'cuando termine' (con enfriamiento
-    de 30 s para que dos sesiones conectadas en ambos sentidos no se contesten en bucle)."""
-    due = []
+    """La sesion `sid` cerro un turno: disparar sus reglas 'cuando termine' (las que no esten
+    enfriando, ver ON_STOP_COOLDOWN_S)."""
+    ahora = dt.datetime.now().astimezone()
+
+    def suya(r: dict) -> bool:
+        return bool(r.get("enabled")) and r.get("kind") == "on_stop" and r.get("from") == sid
+
+    def enfriando(r: dict) -> bool:
+        last = local_dt(r.get("last_fired")) if r.get("last_fired") else None
+        return last is not None and (ahora - last).total_seconds() < ON_STOP_COOLDOWN_S
+
     with lock:
         s = sessions.get(sid)
-        has_rules = any(r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid for r in rules.items)
-        if s and has_rules:
+        if s and any(suya(r) for r in rules.items):
             if s.get("last_error"):
                 state.log(
                     f"on_stop de {sid[:8]} no disparado: el turno termino con error ({short(s['last_error'], 80)})"
@@ -214,16 +227,7 @@ def fire_on_stop(sid: str) -> None:
             if (s.get("last_reply") or "").rstrip().endswith("?"):
                 state.log(f"on_stop de {sid[:8]} no disparado: la respuesta termina en pregunta al usuario")
                 return
-        for r in rules.items:
-            if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid:
-                last = r.get("last_fired")
-                if last:
-                    try:
-                        if (dt.datetime.now().astimezone() - dt.datetime.fromisoformat(last)).total_seconds() < 30:
-                            continue
-                    except ValueError:
-                        pass
-                due.append(r)
+        due = [r for r in rules.items if suya(r) and not enfriando(r)]
     for r in due:
         fire_rule(r)
 
@@ -235,13 +239,14 @@ def rules_loop() -> None:
             due = []
             with lock:
                 for r in rules.items:
-                    if r.get("enabled") and r.get("kind") == "at" and r.get("at"):
-                        try:
-                            if dt.datetime.fromisoformat(r["at"]) <= t:
-                                due.append(r)
-                        except ValueError:
-                            r["enabled"] = False
-                            r["disabled_at"] = now()
+                    if not (r.get("enabled") and r.get("kind") == "at" and r.get("at")):
+                        continue
+                    at = local_dt(r["at"])
+                    if at is None:  # hora ilegible: la regla no se puede disparar nunca
+                        r["enabled"] = False
+                        r["disabled_at"] = now()
+                    elif at <= t:
+                        due.append(r)
             for r in due:
                 fire_rule(r)
         except Exception:
@@ -257,13 +262,8 @@ def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
     def stale(r: dict) -> bool:
         if r.get("kind") != "at" or r.get("enabled"):
             return False
-        ref = r.get("disabled_at") or r.get("last_fired") or r.get("created")
-        if not ref:
-            return True
-        try:
-            return dt.datetime.fromisoformat(ref) < limit
-        except ValueError:
-            return True
+        ref = local_dt(r.get("disabled_at") or r.get("last_fired") or r.get("created"))
+        return ref is None or ref < limit
 
     with lock:
         n = sum(1 for r in rules.items if stale(r))

@@ -178,7 +178,8 @@ def choose_title(s: dict, transcript_title: str | None) -> None:
         s["title"], s["title_source"] = None, None
 
 
-def tool_detail(tool_name: str | None, tool_input) -> str:
+def tool_detail(tool_input) -> str:
+    """Una linea que describa lo que la herramienta va a hacer, para el pedido de permiso."""
     if not isinstance(tool_input, dict):
         return short(str(tool_input or ""), 200)
     for k in ("command", "cmd", "file_path", "notebook_path", "url", "pattern", "description"):
@@ -215,19 +216,28 @@ def limit_until_of(turn: dict) -> str | None:
     return at.astimezone().isoformat(timespec="seconds") if at else None
 
 
-def drop_session(sid: str, reason: str) -> None:
-    with lock:
-        if sessions.pop(sid, None) is None:
-            return
-        # la firma (tamaño, mtime) de su transcripcion no le sirve a nadie mas: si queda, es una
-        # entrada por cada tarjeta que existio desde que arranco el server, sin techo
-        transcript_stat.pop(sid, None)
-    links.remove(lambda l: sid in (l["from"], l["to"]))
-    rules.remove(lambda r: sid in (r.get("from"), r["to"]))
+def forget_session(sid: str) -> bool:
+    """Saca la tarjeta de memoria y de disco; devuelve si existia. No toca links ni reglas ni avisa
+    al front: eso lo pone cada quien. La usan el borrado de verdad (drop_session, que si borra sus
+    conexiones) y el cambio de id de una tarjeta del barrido, que se las queda. Con el lock tomado."""
+    if sessions.pop(sid, None) is None:
+        return False
+    # la firma (tamaño, mtime) de su transcripcion no le sirve a nadie mas: si queda, es una
+    # entrada por cada tarjeta que existio desde que arranco el server, sin techo
+    transcript_stat.pop(sid, None)
     try:
         os.remove(os.path.join(state.SESSIONS, f"{sid}.json"))
     except OSError:
         pass
+    return True
+
+
+def drop_session(sid: str, reason: str) -> None:
+    with lock:
+        if not forget_session(sid):
+            return
+    links.remove(lambda l: sid in (l["from"], l["to"]))
+    rules.remove(lambda r: sid in (r.get("from"), r["to"]))
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
     state.broadcast({"type": "removed", "session_id": sid})
 
@@ -489,33 +499,44 @@ REFRESH_KEYS = (
 )
 
 
+def apply_turn_hooked(s: dict, t: dict) -> None:
+    """Sesion con hooks: el pedido y la respuesta final ya vinieron por UserPromptSubmit / Stop. De
+    la transcripcion se toma lo que el agente viene diciendo mientras corre, y el estado solo
+    cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido)."""
+    want = transcript_state(s, t)
+    if want:
+        if want == "corriendo" and (p := turn_prompt(t)):
+            set_last_prompt(s, p)
+        state.log(
+            f"{s['session_id'][:8]}: la transcripcion dice {want} y los hooks {s['state']} "
+            f"(ultimo evento {s.get('last_event')}); corregido"
+        )
+        set_state(s, want)
+    if s["state"] == "corriendo" and not t.get("ended"):
+        s["last_reply"] = turn_say(t) or s["last_reply"]
+
+
+def apply_turn_unhooked(s: dict, t: dict) -> None:
+    """Sesion sin hooks (o refresco forzado): la transcripcion es la unica fuente, y de ella sale
+    tambien el reparto corriendo/termino. `muerta` la dicta la liveness y `te_necesita` los hooks:
+    ninguno de los dos se pisa desde aca."""
+    if p := turn_prompt(t):
+        set_last_prompt(s, p)
+    if t.get("final") or not t.get("ended"):
+        s["last_reply"] = turn_say(t) or s["last_reply"]
+    if s["state"] != "muerta" and not s.get("needs"):
+        set_state(s, "termino" if t.get("ended") else "corriendo")
+
+
 def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     """Vuelca el ultimo turno de la transcripcion a la tarjeta: actividad de adentro, pedido y
     respuesta, estado (solo si la sesion no tiene hooks, o force_state) y el error del turno."""
     # lo que pasa adentro, para la tarjeta: cuanto lleva hecho y sobre que archivos
     s.update(turn_activity(t))
     if s.get("hooked") and not force_state:
-        # el pedido y la respuesta final ya vienen por hook (UserPromptSubmit / Stop); de la
-        # transcripcion se toma lo que el agente viene diciendo mientras corre, y el estado solo
-        # cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido)
-        want = transcript_state(s, t)
-        if want:
-            if want == "corriendo" and (p := turn_prompt(t)):
-                set_last_prompt(s, p)
-            state.log(
-                f"{s['session_id'][:8]}: la transcripcion dice {want} y los hooks {s['state']} "
-                f"(ultimo evento {s.get('last_event')}); corregido"
-            )
-            set_state(s, want)
-        if s["state"] == "corriendo" and not t.get("ended"):
-            s["last_reply"] = turn_say(t) or s["last_reply"]
+        apply_turn_hooked(s, t)
     else:
-        if p := turn_prompt(t):
-            set_last_prompt(s, p)
-        if t.get("final") or not t.get("ended"):
-            s["last_reply"] = turn_say(t) or s["last_reply"]
-        if s["state"] != "muerta" and not s.get("needs"):
-            set_state(s, "termino" if t.get("ended") else "corriendo")
+        apply_turn_unhooked(s, t)
     # error del turno (Codex: limite de uso, abortado; Claude: no aplica hoy) va aparte, en rojo
     s["last_error"] = short(t.get("error") or "", 300) or None
     if s["last_error"] and not t.get("final"):
@@ -667,64 +688,79 @@ def claim_pid(s: dict, ev: dict) -> None:
         s["no_console"] = not procs.is_tui(pid)
 
 
+def title_from_prompt(s: dict) -> None:
+    """Sin ai-title todavia (o con uno inutil): la tarjeta se titula con la primera linea del
+    pedido. Un ai-title que sirva lo pisa despues (refresh_from_transcript), salvo que el pedido
+    haya llegado como adjunto: ahi manda su encabezado."""
+    if s.get("title_source") == "user":
+        return
+    if not (s.get("last_attachment") or bad_title(s.get("title")) or s.get("title_source") == "prompt"):
+        return
+    if first := prompt_title(s):
+        s["title"], s["title_source"] = first, "prompt"
+
+
+def hook_prompt_submit(s: dict, ev: dict) -> None:
+    set_state(s, "corriendo")
+    # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
+    s["prompt_id"] = ev.get("prompt_id")
+    s["prompt_ts"] = s["last_event_ts"]
+    if not transcripts.is_system_prompt(ev.get("prompt", "")):
+        set_last_prompt(s, ev.get("prompt", ""))
+        title_from_prompt(s)
+    s["pending_id"] = None
+    s["typing"] = False  # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
+
+
+def hook_stop(s: dict, ev: dict) -> None:
+    if stale_stop(s, ev):
+        state.log(
+            f"Stop tardio de {s['session_id'][:8]} (pedido {str(ev.get('prompt_id'))[:8]}, ya corre "
+            f"{str(s.get('prompt_id'))[:8]}): la tarjeta sigue corriendo"
+        )
+    else:
+        set_state(s, "termino")
+        if ev.get("last_assistant_message"):
+            # entero, igual que turn_say: el recorte se lo hace la tarjeta por CSS
+            s["last_reply"] = (ev["last_assistant_message"] or "").strip()
+    s["pending_id"] = None
+
+
+def hook_notification(s: dict, ev: dict) -> None:
+    nt = ev.get("notification_type") or ""
+    if nt == "idle_prompt" and s.get("last_prompt") and not (s.get("last_reply") or "").rstrip().endswith("?"):
+        # termino con un informe que no pregunta nada: no "te necesita", solo termino. La
+        # tarjeta libre (sin pedido) si pasa a te_necesita/idle, para ofrecer "Darle trabajo"
+        state.log(f"{s['session_id'][:8]}: idle_prompt sin pregunta al final; la tarjeta queda en {s['state']}")
+        return
+    if nt not in NEEDS_NOTIFICATIONS:
+        return
+    set_state(s, "te_necesita")
+    s["needs"] = {
+        "kind": "idle" if nt == "idle_prompt" else "permission" if nt == "permission_prompt" else nt,
+        "detail": short(ev.get("message", ""), 300),
+        "where": "terminal",
+    }
+
+
 def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
     """Lo propio de cada evento de hook sobre una tarjeta que apply_event ya puso al dia (pid, cwd,
     transcripcion, ultimo evento). Se llama con el lock tomado."""
-    sid = s["session_id"]
     if name == "SessionStart":
         if created:
             set_state(s, "termino")
     elif name == "UserPromptSubmit":
-        set_state(s, "corriendo")
-        # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
-        s["prompt_id"] = ev.get("prompt_id")
-        s["prompt_ts"] = s["last_event_ts"]
-        if not transcripts.is_system_prompt(ev.get("prompt", "")):
-            set_last_prompt(s, ev.get("prompt", ""))
-            # sin ai-title todavia (o con uno inutil): la tarjeta se titula con la primera linea
-            # del pedido; un ai-title que sirva lo pisa despues (refresh_from_transcript), salvo
-            # que el pedido haya llegado como adjunto: ahi manda su encabezado
-            first = prompt_title(s)
-            if (
-                first
-                and s.get("title_source") != "user"
-                and (s.get("last_attachment") or bad_title(s.get("title")) or s.get("title_source") == "prompt")
-            ):
-                s["title"] = first
-                s["title_source"] = "prompt"
-        s["pending_id"] = None
-        s["typing"] = False  # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
+        hook_prompt_submit(s, ev)
     elif name == "Stop":
-        if stale_stop(s, ev):
-            state.log(
-                f"Stop tardio de {sid[:8]} (pedido {str(ev.get('prompt_id'))[:8]}, ya corre "
-                f"{str(s.get('prompt_id'))[:8]}): la tarjeta sigue corriendo"
-            )
-        else:
-            set_state(s, "termino")
-            if ev.get("last_assistant_message"):
-                # entero, igual que turn_say: el recorte se lo hace la tarjeta por CSS
-                s["last_reply"] = (ev["last_assistant_message"] or "").strip()
-        s["pending_id"] = None
+        hook_stop(s, ev)
     elif name == "Notification":
-        nt = ev.get("notification_type") or ""
-        if nt == "idle_prompt" and s.get("last_prompt") and not (s.get("last_reply") or "").rstrip().endswith("?"):
-            # termino con un informe que no pregunta nada: no "te necesita", solo termino. La
-            # tarjeta libre (sin pedido) si pasa a te_necesita/idle, para ofrecer "Darle trabajo"
-            state.log(f"{sid[:8]}: idle_prompt sin pregunta al final; la tarjeta queda en {s['state']}")
-        elif nt in NEEDS_NOTIFICATIONS:
-            set_state(s, "te_necesita")
-            s["needs"] = {
-                "kind": "idle" if nt == "idle_prompt" else "permission" if nt == "permission_prompt" else nt,
-                "detail": short(ev.get("message", ""), 300),
-                "where": "terminal",
-            }
+        hook_notification(s, ev)
     elif name == "PermissionRequest":
         set_state(s, "te_necesita")
         s["needs"] = {
             "kind": "permission",
             "tool": ev.get("tool_name"),
-            "detail": tool_detail(ev.get("tool_name"), ev.get("tool_input")),
+            "detail": tool_detail(ev.get("tool_input")),
             "tool_use_id": ev.get("tool_use_id"),
             "where": "lienzo",
         }
@@ -815,33 +851,48 @@ def consume_events() -> None:
 # --- pendientes de permiso -----------------------------------------------------------
 
 
+def read_pending() -> dict:
+    """Los pedidos de permiso que hay ahora en ~/.lienzo/pending, por request_id. Un archivo a
+    medio escribir (el hook lo escribe con atomic_write, pero igual) se saltea, no rompe la vuelta."""
+    found = {}
+    for n in os.listdir(PENDING):
+        if not n.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(PENDING, n), encoding="utf-8") as f:
+                d = json.load(f)
+            found[d["request_id"]] = d
+        except (OSError, ValueError, KeyError):
+            continue
+    return found
+
+
+def mark_pending(found: dict) -> None:
+    """Le pone a cada tarjeta el permiso que la esta esperando, y se lo saca a la que ya no tiene
+    ninguno: es lo que prende el boton de contestar en la tarjeta. Con el lock tomado."""
+    for d in found.values():
+        s = sessions.get(d.get("session_id"))
+        if s is not None and s.get("pending_id") != d["request_id"]:
+            s["pending_id"] = d["request_id"]
+            touch(s)
+    for s in sessions.values():
+        if s.get("pending_id") and s["pending_id"] not in found:
+            s["pending_id"] = None
+            touch(s)
+
+
 def scan_pending() -> None:
+    """Cada medio segundo: que permisos estan esperando respuesta. El hook los deja en disco y se
+    los lleva el mismo al contestar o al vencer, asi que el directorio es la verdad."""
     while True:
         try:
-            found = {}
-            for n in os.listdir(PENDING):
-                if not n.endswith(".json"):
-                    continue
-                try:
-                    with open(os.path.join(PENDING, n), encoding="utf-8") as f:
-                        d = json.load(f)
-                    found[d["request_id"]] = d
-                except (OSError, ValueError, KeyError):
-                    continue
+            found = read_pending()
             with lock:
                 changed = set(found) != set(pending)
                 pending.clear()
                 pending.update(found)
                 if changed:
-                    for d in found.values():
-                        s = sessions.get(d.get("session_id"))
-                        if s is not None and s.get("pending_id") != d["request_id"]:
-                            s["pending_id"] = d["request_id"]
-                            touch(s)
-                    for s in sessions.values():
-                        if s.get("pending_id") and s["pending_id"] not in found:
-                            s["pending_id"] = None
-                            touch(s)
+                    mark_pending(found)
             if changed:
                 state.broadcast({"type": "pending", "pending": public_pending()})
         except Exception:
@@ -870,28 +921,29 @@ def answer_pending(request_id: str, decision: str, reason: str = "") -> tuple[in
 # --- liveness, barrido y transcripciones ----------------------------------------------
 
 
-def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[str | None, str | None]:
-    """(session_id, transcript_path) mas probable para un agente encontrado por barrido."""
-    if not cwd:
+BIRTH_MARGIN_S = 120  # margen a los dos lados del nacimiento del proceso, que el barrido fecha grueso
+
+
+def guess_claude(cwd: str, t0: float) -> tuple[str | None, str | None]:
+    """Claude guarda una transcripcion por sesion en un directorio por cwd, y el nombre del archivo
+    ES el session_id: alcanza con la mas nueva que siga viva despues de `t0`."""
+    d = os.path.join(HOME, ".claude", "projects", claude_slug(cwd))
+    cands = [p for p in glob.glob(os.path.join(d, "*.jsonl")) if os.path.getmtime(p) >= t0]
+    if not cands:
         return None, None
-    born = parse_ts(created)
-    t0 = born.timestamp() - 120 if born else 0
-    if agent == "claude":
-        d = os.path.join(HOME, ".claude", "projects", claude_slug(cwd))
-        cands = [p for p in glob.glob(os.path.join(d, "*.jsonl")) if os.path.getmtime(p) >= t0]
-        if not cands:
-            return None, None
-        p = max(cands, key=os.path.getmtime)
-        return os.path.splitext(os.path.basename(p))[0], p
-    # codex: entre los rollouts de la TUI con el mismo cwd, el que arranco mas cerca (despues)
-    # del nacimiento del proceso. "El mas nuevo" se equivoca si despues corrio un `codex exec`.
-    cands = [
-        p
-        for p in glob.glob(os.path.join(HOME, ".codex", "sessions", "*", "*", "*", "rollout-*.jsonl"))
-        if os.path.getmtime(p) >= t0
-    ]
+    p = max(cands, key=os.path.getmtime)
+    return os.path.splitext(os.path.basename(p))[0], p
+
+
+def guess_codex(cwd: str, t0: float) -> tuple[str | None, str | None]:
+    """Codex mezcla todos los rollouts en un arbol por fecha, asi que hay que abrirlos: entre los
+    de la TUI con el mismo cwd, gana el que arranco mas cerca del nacimiento del proceso. "El mas
+    nuevo" se equivoca si despues de abrir la TUI corrio un `codex exec` en el mismo directorio."""
+    nacio = t0 + BIRTH_MARGIN_S  # t0 ya viene con el margen restado
     best, best_gap = None, None
-    for p in cands:
+    for p in glob.glob(os.path.join(HOME, ".codex", "sessions", "*", "*", "*", "rollout-*.jsonl")):
+        if os.path.getmtime(p) < t0:
+            continue
         try:
             with open(p, "rb") as f:
                 first = json.loads(f.readline().decode("utf-8", errors="replace"))
@@ -903,88 +955,123 @@ def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[
         if pl.get("originator") not in (None, "codex-tui", "codex_cli_rs"):
             continue  # Codex Desktop (importados), codex_exec, app-server: no son la TUI
         birth = parse_ts(pl.get("timestamp") or first.get("timestamp"))
-        started = birth.timestamp() if birth else os.path.getmtime(p)
-        gap = started - (t0 + 120)  # t0 ya tiene 120 s de margen
-        if gap < -120:
+        gap = (birth.timestamp() if birth else os.path.getmtime(p)) - nacio
+        if gap < -BIRTH_MARGIN_S:
             continue  # arranco antes que el proceso: no es suyo
         if best_gap is None or abs(gap) < abs(best_gap):
             best, best_gap = (pl.get("id") or pl.get("session_id"), p), gap
     return best or (None, None)
 
 
+def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[str | None, str | None]:
+    """(session_id, transcript_path) mas probable para un agente encontrado por barrido: el barrido
+    solo sabe pid y cwd, y de ahi hay que deducir de que sesion se trata. `created` es el
+    nacimiento del proceso, con BIRTH_MARGIN_S de margen porque las dos fechas no son la misma
+    (el rollout se crea un rato despues de abrir la TUI)."""
+    if not cwd:
+        return None, None
+    born = parse_ts(created)
+    t0 = born.timestamp() - BIRTH_MARGIN_S if born else 0
+    return guess_claude(cwd, t0) if agent == "claude" else guess_codex(cwd, t0)
+
+
+def attach_transcript(s: dict) -> None:
+    """Tarjeta del barrido que todavia no tenia transcripcion (Codex crea el rollout recien en el
+    primer turno, no al abrir): buscarla y, si aparece, tomar tambien el session_id real que trae,
+    con lo que la tarjeta deja de llamarse `pid-N`. La busqueda va sin el lock; lo que escribe, con
+    el lock y revalidando que la tarjeta siga siendo la misma."""
+    cwd = s.get("cwd") or procs.cwd_of(s["pid"])
+    sid, tpath = guess_transcript(s["agent"], cwd, s.get("started"))
+    if not tpath:
+        return
+    with lock:
+        if sessions.get(s["session_id"]) is not s:
+            return  # la borraron mientras buscabamos su transcripcion: no revivirla
+        if sid and sid != s["session_id"] and sid not in sessions:
+            viejo = s["session_id"]  # la tarjeta cambia de id: la de antes se olvida entera
+            forget_session(viejo)
+            state.broadcast({"type": "removed", "session_id": viejo})
+            s["session_id"] = sid
+            sessions[sid] = s
+        s["transcript_path"] = tpath
+        s["cwd"] = s.get("cwd") or cwd
+        s["repo"] = repo_of(s["cwd"])
+        if s.get("title_source") != "user":
+            s["title"] = None
+        refresh_from_transcript(s)
+        touch(s)
+        state.log(f"barrido: pid {s['pid']} ahora con transcripcion {os.path.basename(tpath)}")
+
+
+def adopt_process(p: dict) -> None:
+    """Agente vivo que ninguna tarjeta reclama: si su transcripcion ya tiene tarjeta, esa recupera
+    el pid (venia de una corrida anterior); si no, se abre una nueva."""
+    cwd = procs.cwd_of(p["pid"])
+    sid, tpath = guess_transcript(p["agent"], cwd, p.get("created"))
+    with lock:
+        s = sessions.get(sid) if sid else None
+        if s is not None:
+            if not s.get("pid") or not procs.agent_alive(s["pid"]):
+                s.update({"pid": p["pid"], "agent_exe": p["exe"], "alive": True, "dead_since": None})
+                if s["state"] == "muerta":
+                    set_state(s, "termino")
+                touch(s)
+            return
+        s = new_session(sid or f"pid-{p['pid']}", p["agent"], "sweep")
+        s.update(
+            {
+                "pid": p["pid"],
+                "agent_exe": p["exe"],
+                "cwd": cwd,
+                "repo": repo_of(cwd),
+                "transcript_path": tpath,
+                "started": p.get("created") or now(),
+                "in_vscode": p.get("in_vscode"),
+                "orphan": p.get("orphan"),
+            }
+        )
+        if not tpath:
+            s["title"] = "sesion sin transcripcion identificada"
+        sessions[s["session_id"]] = s
+        refresh_from_transcript(s)
+        touch(s)
+        state.log(f"barrido: {p['agent']} pid {p['pid']} cwd={cwd} sid={s['session_id'][:8]}")
+
+
 def sweep_once() -> None:
+    """Barrido de respaldo: los agentes vivos que los hooks no reportaron."""
     global last_sweep
     last_sweep = time.time()
     found = procs.sweep()
     with lock:
         known_pids = {s.get("pid") for s in sessions.values() if s.get("pid")}
-        # tarjetas del barrido que todavia no tienen transcripcion: reintentar (Codex crea el
-        # rollout recien en el primer turno, no al abrir)
-        retry = [
+        sin_transcripcion = [
             s for s in sessions.values() if s.get("source") == "sweep" and not s.get("transcript_path") and s.get("pid")
         ]
-    for s in retry:
-        cwd = s.get("cwd") or procs.cwd_of(s["pid"])
-        sid, tpath = guess_transcript(s["agent"], cwd, s.get("started"))
-        if not tpath:
-            continue
-        with lock:
-            if sessions.get(s["session_id"]) is not s:
-                continue  # la borraron mientras buscabamos su transcripcion: no revivirla
-            if sid and sid != s["session_id"] and sid not in sessions:
-                sessions.pop(s["session_id"], None)
-                transcript_stat.pop(s["session_id"], None)  # la tarjeta cambia de id: la firma vieja no vuelve
-                try:
-                    os.remove(os.path.join(state.SESSIONS, f"{s['session_id']}.json"))
-                except OSError:
-                    pass
-                state.broadcast({"type": "removed", "session_id": s["session_id"]})
-                s["session_id"] = sid
-                sessions[sid] = s
-            s["transcript_path"] = tpath
-            s["cwd"] = s.get("cwd") or cwd
-            s["repo"] = repo_of(s["cwd"])
-            if s.get("title_source") != "user":
-                s["title"] = None
-            refresh_from_transcript(s)
-            touch(s)
-            state.log(f"barrido: pid {s['pid']} ahora con transcripcion {os.path.basename(tpath)}")
+    for s in sin_transcripcion:
+        attach_transcript(s)
     for p in found:
-        if p["pid"] in known_pids:
-            continue
-        cwd = procs.cwd_of(p["pid"])
-        sid, tpath = guess_transcript(p["agent"], cwd, p.get("created"))
-        with lock:
-            if sid and sid in sessions:
-                s = sessions[sid]
-                if not s.get("pid") or not procs.agent_alive(s["pid"]):
-                    s["pid"] = p["pid"]
-                    s["agent_exe"] = p["exe"]
-                    s["alive"] = True
-                    s["dead_since"] = None
-                    if s["state"] == "muerta":
-                        set_state(s, "termino")
-                    touch(s)
-                continue
-            s = new_session(sid or f"pid-{p['pid']}", p["agent"], "sweep")
-            s.update(
-                {
-                    "pid": p["pid"],
-                    "agent_exe": p["exe"],
-                    "cwd": cwd,
-                    "repo": repo_of(cwd),
-                    "transcript_path": tpath,
-                    "started": p.get("created") or now(),
-                    "in_vscode": p.get("in_vscode"),
-                    "orphan": p.get("orphan"),
-                }
-            )
-            if not tpath:
-                s["title"] = "sesion sin transcripcion identificada"
-            sessions[s["session_id"]] = s
-            refresh_from_transcript(s)
-            touch(s)
-            state.log(f"barrido: {p['agent']} pid {p['pid']} cwd={cwd} sid={s['session_id'][:8]}")
+        if p["pid"] not in known_pids:
+            adopt_process(p)
+
+
+def refresh_alive(s: dict) -> bool:
+    """Pone `alive` / `dead_since` (y el estado `muerta`) al dia con el proceso. Devuelve si cambio
+    algo. Una tarjeta sin pid no se toca: nunca se supo de ningun proceso suyo."""
+    if not s.get("pid"):
+        return False
+    if procs.agent_alive(s["pid"]):
+        if s["alive"]:
+            return False
+        s["alive"] = True
+        s["dead_since"] = None
+        return True
+    if not s["alive"]:
+        return False
+    s["alive"] = False
+    s["dead_since"] = now()
+    set_state(s, "muerta")
+    return True
 
 
 def check_liveness(sid: str) -> None:
@@ -995,17 +1082,7 @@ def check_liveness(sid: str) -> None:
         s = sessions.get(sid)
         if s is None:
             return
-        changed = False
-        alive = procs.agent_alive(s.get("pid")) if s.get("pid") else None
-        if alive is False and s["alive"]:
-            s["alive"] = False
-            s["dead_since"] = now()
-            set_state(s, "muerta")
-            changed = True
-        elif alive and not s["alive"]:
-            s["alive"] = True
-            s["dead_since"] = None
-            changed = True
+        changed = refresh_alive(s)
         dead_since = parse_ts(s["dead_since"]) if s["state"] == "muerta" else None
         if dead_since and (dt.datetime.now().astimezone() - dead_since).total_seconds() > DEAD_GRACE_S:
             drop_session(sid, "muerta hace mas de 60 s")
@@ -1059,7 +1136,8 @@ def save_attachment(sid: str, name: str, data: bytes) -> str:
     return path
 
 
-def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
+def send_blocked(s: dict) -> tuple[int, dict] | None:
+    """Por que no se le puede escribir a esta sesion, o None si se puede."""
     if not s.get("pid") or not procs.agent_alive(s["pid"]):
         return 409, {"ok": False, "error": "la sesion no tiene un PID vivo"}
     if s.get("orphan"):
@@ -1071,19 +1149,50 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
         }
     if s.get("pending_id"):
         return 409, {"ok": False, "error": "hay un permiso pendiente; contestalo primero"}
+    return None
+
+
+_BIDI = set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A))
+
+
+def strip_control(s: str) -> str:
+    """Saca los caracteres de control y los overrides de direccion Unicode (hallazgo A4 del
+    pentest): en la consola destino no llegan como caracteres, se teclean como teclas reales
+    (ESC, Tab, Backspace, Ctrl-C) o alteran el orden visible del texto. El texto normal no los
+    tiene, y lo largo o multilinea viaja como adjunto .md, no por aca."""
+    return "".join(ch for ch in s if ord(ch) >= 0x20 and ord(ch) != 0x7F and ord(ch) not in _BIDI)
+
+
+def _under_adjuntos(path: str) -> bool:
+    """El adjunto esta realmente bajo ~/.lienzo/adjuntos (hallazgo M5): las rutas llegan crudas del
+    cliente, y sin esto un send podia hacerle leer al agente cualquier archivo del disco (una clave
+    privada, auth.json). Todo adjunto legitimo sale de /attach, que escribe ahi."""
+    try:
+        root = os.path.realpath(ADJUNTOS)
+        return os.path.commonpath([os.path.realpath(path), root]) == root
+    except (ValueError, OSError):
+        return False
+
+
+def compose_send(sid: str, text: str, attachments: list[str]) -> tuple[str, str, list[str]]:
+    """(lo que se tipea, lo que escribio el usuario, los adjuntos). Un mensaje largo o de varias
+    lineas no se tipea: se guarda como .md y viaja como 'Leé el archivo adjunto...' (§6.5)."""
+    attachments = [a for a in (attachments or []) if _under_adjuntos(a)]  # M5: confinar al buzon
     text = (text or "").replace("\r", "")
     orig = text.strip()  # lo que escribio el usuario: es lo que se cuenta y lo que muestra la tarjeta
     if len(text) > LONG_TEXT or "\n" in orig:
-        path = save_attachment(s["session_id"], "mensaje.md", text.encode("utf-8"))
-        attachments = [path] + list(attachments)
+        attachments = [save_attachment(sid, "mensaje.md", text.encode("utf-8"))] + list(attachments)
         text = ATTACH_WRAPPER
-    parts = [text.strip()] if text.strip() else []
+    parts = [strip_control(text).strip()] if text.strip() else []  # A4: sin teclas de control
     parts += [f"Adjunto: {a}" for a in attachments]
-    final = " ".join(parts)
-    if not final:
-        return 400, {"ok": False, "error": "texto vacio"}
-    tf = save_attachment(s["session_id"], ".send.txt", final.encode("utf-8")) if len(final) > 2000 else None
-    cmd = [PYTHON, os.path.join(HERE, "send.py"), "--pid", str(s["pid"])]
+    return " ".join(parts), orig, attachments
+
+
+def run_send(sid: str, pid: int, final: str) -> tuple[int, dict]:
+    """Subproceso send.py, que teclea `final` en la consola de `pid`. Un texto largo va por archivo:
+    la linea de comando de Windows no lo aguanta. (codigo, respuesta de send.py)."""
+    tf = save_attachment(sid, ".send.txt", final.encode("utf-8")) if len(final) > 2000 else None
+    cmd = [PYTHON, os.path.join(HERE, "send.py"), "--pid", str(pid)]
     cmd += ["--text-file", tf] if tf else ["--text", final]
     try:
         r = subprocess.run(
@@ -1095,7 +1204,7 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
             timeout=60,
             creationflags=0x00000008,
         )  # DETACHED_PROCESS: sin consola propia
-        out = json.loads(r.stdout.strip() or "{}")
+        return 200, json.loads(r.stdout.strip() or "{}")
     except subprocess.TimeoutExpired:
         return 500, {"ok": False, "error": "send.py no termino en 60 s"}
     except ValueError:
@@ -1106,11 +1215,25 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
                 os.remove(tf)
             except OSError:
                 pass
-    if not out.get("ok"):
-        state.log(f"send {s['session_id'][:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
-        return 500, out
+
+
+def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
+    """Inyecta texto en la consola de la sesion y deja la tarjeta corriendo. El subproceso (hasta
+    60 s) y la lectura del adjunto van fuera del lock; solo la tarjeta se toca con el lock."""
+    if frenado := send_blocked(s):
+        return frenado
+    sid = s["session_id"]
+    final, orig, attachments = compose_send(sid, text, attachments)
+    if not final:
+        return 400, {"ok": False, "error": "texto vacio"}
+    code, out = run_send(sid, s["pid"], final)
+    if code == 200 and not out.get("ok"):
+        state.log(f"send {sid[:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
+        code = 500
+    if code != 200:
+        return code, out
     state.log(
-        f"send {s['session_id'][:8]}: {len(orig) if orig else out.get('chars')} caracteres"
+        f"send {sid[:8]}: {len(orig) if orig else out.get('chars')} caracteres"
         + (" (como adjunto)" if attachments else "")
         + f", pid {s['pid']}"
     )

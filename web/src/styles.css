@@ -144,8 +144,11 @@ details.fold > summary,
 .col h2.fixed { cursor: default; }
 .col h2.fixed:hover .n { background: none; color: inherit; }
 .col h2:hover .n { background: var(--acc); color: var(--ink); }
+/* En la tira colapsada no entra un texto: mide 20 px. `.show` (la columna que elige el filtro)
+   solo abre el estado vacio abajo de 900 px, donde `.col.show` es la pestana entera; en escritorio
+   la tira se queda muda. Medido con el tablero vacio a 1440: las tres columnas colapsan y la de
+   Trabajo escribia "nada aca" adentro de la tira, partido en "nad / aca". */
 .col.collapsed .empty { display: none; }
-.col.collapsed.show .empty { display: block; }
 .col .vlabel { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); padding: 10px 0; display: flex; gap: 8px; align-items: center; }
 .col.te_necesita .vlabel { color: var(--need); } .col.muerta .vlabel { color: var(--dead); } .col.corriendo .vlabel { color: var(--run); }
 .col .vlabel .n { background: var(--card); border-radius: 10px; padding: 6px 1px; }
@@ -160,6 +163,13 @@ details.fold > summary,
 .col h2 .n { background: var(--card); border-radius: 10px; padding: 0 8px; }
 .col.corriendo h2 { color: var(--run); } .col.te_necesita h2 { color: var(--need); } .col.muerta h2 { color: var(--dead); }
 .empty { color: var(--dim); font-size: 11.5px; padding: 8px; }
+/* Tablero sin una sola tarjeta: las tres columnas son tiras de 20 px y el resto de la pantalla
+   queda en negro. El cartel va al lado de las tiras, no adentro (ahí no entra: el texto salía
+   partido en dos letras por renglón). `order: 3` lo manda a la derecha de las tres: las columnas
+   llevan order 0, 1 y 2, y sin esto caía entre Trabajo y Te necesita. */
+.empty.primeravez { order: 3; display: flex; flex-direction: column; gap: 6px; align-self: flex-start; margin-left: 12px; padding: 16px 18px; max-width: 46em; font-size: 12.5px; line-height: 1.55; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.empty.primeravez b { color: var(--fg); font-size: 13px; }
+.empty.primeravez code { background: #0c0e12; border-radius: 4px; padding: 1px 5px; }
 /* sesion sin pedidos: el estado vacio dice que hacer (dos lineas, con aire) */
 .empty.free { line-height: 1.55; max-width: 46em; }
 .filters { display: none; gap: 6px; padding: 8px 16px 0; }
@@ -181,6 +191,19 @@ details.fold > summary,
 .badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--ink); }
 .badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); }
 .card .repo { font-weight: 600; color: var(--fg); }
+/* De los dos que ceden ancho, cede primero la rama: el repo dice de qué es la tarjeta y la rama
+   casi siempre es "main". Y los dos se cortan al ras, sin elipsis, porque acá los tres puntos
+   cuestan más de lo que avisan.
+   Medido en la tarjeta de la coordinadora a 1680, que es la que lleva dos glifos de más a la
+   derecha (punto de estado y estrella): a la fila le faltaban 6 px. Con el encogido parejo de antes
+   los pagaban los dos y quedaba "lien… · ⎇ m…". Ahora la rama pone 5 y el sexto le toca al repo
+   —0,025 px, puro redondeo—, pero eso solo ya alcanzaba para disparar la elipsis, que se come tres
+   letras: "lienzo" volvía a leerse "lien…" teniendo el ancho para escribirlo entero. Cortados al
+   ras se leen "lienzo" y "⎇ mai", y los nombres enteros están en el `title` de cada uno.
+   El selector va con `.card .top .x` y no `.card .x`: `.card .top > span`, arriba, tiene un tipo
+   de más y gana. */
+.card .top .repo { flex-shrink: 1; text-overflow: clip; }
+.card .top .branch { flex-shrink: 200; text-overflow: clip; }
 .card .title { font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .prompt { color: var(--dim); font-size: 11.5px; }
 /* el recorte del pedido lo hace .ptext con line-clamp (card.css). Aca habia un max-height de
@@ -189,10 +212,16 @@ details.fold > summary,
 .card .reply { margin-top: 6px; font-size: 11.5px; overflow: hidden; white-space: pre-wrap;
   /* corta por linea y con puntos suspensivos: con max-height la ultima quedaba partida al medio */
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; }
-.card .needs { margin-top: 8px; padding: 8px; border-radius: 6px; background: #2a2410; border: 1px solid #5c4a12; font-size: 11.5px; }
+.card .needs, .panel .needs { margin-top: 8px; padding: 8px; border-radius: 6px; background: #2a2410; border: 1px solid #5c4a12; font-size: 11.5px; }
 .card .needs.terminal { background: #24262e; border-color: #3b4050; }
-.card .needs code { display: block; white-space: pre-wrap; word-break: break-all; margin: 4px 0; color: #ffd77a; }
-.card .btns { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+/* en el panel el mismo bloque es una tira a lo ancho, pegada abajo del encabezado: sin margen ni
+   esquinas redondeadas, y el borde solo abajo */
+.panel .needs { margin: 0; padding: 8px 14px; border-radius: 0; border: 0; border-bottom: 1px solid #5c4a12; }
+/* `anywhere` y no `break-all`: acá adentro cae tanto un comando (que hay que poder partir donde
+   sea) como el texto del aviso de un agente, que es prosa. Con break-all la prosa se partía a mitad
+   de palabra aunque hubiera espacios: "El agente espera una respuesta en la termi/nal". */
+.card .needs code, .panel .needs code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; color: #ffd77a; }
+.card .btns, .panel .needs .btns { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
 .card .meta { margin-top: 6px; font-size: 11px; color: var(--dim); display: flex; gap: 10px; flex-wrap: wrap; }
 /* .x, .grip y .del son <button> por accesibilidad, pero se ven como los glifos sueltos de antes */
 .card .x, .card .grip, .card .rule .del { background: none; border: 0; border-radius: 4px; line-height: 1; font: inherit; }
@@ -225,13 +254,17 @@ details.fold > summary,
    El padding derecho es el lugar de la ✕, que sale del flujo para no llevarse una fila entera */
 .panel .ph { position: relative; padding: 10px 34px 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .panel .ph .t { font-weight: 600; flex: 1; min-width: 120px; display: flex; align-items: center; gap: 8px; overflow: hidden; }
-/* si la fila no da, se achica primero el titulo (shrink 100) y despues la estrella (shrink 1);
-   la rama y el estado no se achican nunca, que es el dato que reemplazo a la fila de la ruta */
+/* Si la fila no da, el primero que cede es la rama+estado, después la estrella y último el nombre:
+   el nombre es lo que dice de qué sesión es este panel. Al revés, que es como estaba (título con
+   shrink 100 y `sub` con flex none), el panel más ancho posible en escritorio -717 px medidos a
+   1680- escribía "Tablero de …" con "main · terminó" entero al lado: le faltaban 21 px al título y
+   los tenía la rama. El piso de 3.5em deja que la rama se recorte, pero no que quede en una
+   elipsis suelta; el texto entero está en el `title`. */
 .panel .ph .t .ttext, .panel .ph .t .coord { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.panel .ph .t .ttext { flex: 0 100 auto; }
+.panel .ph .t .ttext { flex: 0 1 auto; }
 .panel .ph .t .coord { flex: 0 1 auto; }
 /* rama y estado pegados al nombre: lo unico que valia de la fila de la ruta */
-.panel .ph .t .sub { flex: none; font-weight: 400; white-space: nowrap; }
+.panel .ph .t .sub { flex: 0 100 auto; min-width: 3.5em; overflow: hidden; text-overflow: ellipsis; font-weight: 400; white-space: nowrap; }
 /* pestanas mas justas: cada pixel que sueltan es titulo que se lee en la misma fila */
 .panel .tabs button { padding: 6px 9px; }
 /* Panel angosto (se achica para no tapar el tablero): mismas pestanas compactas que el celular, y
@@ -419,6 +452,7 @@ header .search .chip:not(.on) { text-decoration: line-through; }
   .col.wide .cards { column-count: 1; }
   .col.wide .cards > div { margin-bottom: 0; }
   .col.wide .cards .card { margin-bottom: 10px; }
+  .col.collapsed.show .empty { display: block; }
   .col.show .empty { padding: 24px 8px; text-align: center; }
   .card { margin-bottom: 10px; }
   /* sin width/top/left: los pone Panel.tsx, que ya sabe que abajo de 900 px va pantalla entera */

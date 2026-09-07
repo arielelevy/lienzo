@@ -77,12 +77,14 @@ def is_impostor(exe: str | None, cmdline: str | None) -> bool:
     return "--type=" in c  # electron renderer/utility/gpu
 
 
-def is_tui(pid: int, cmdline: str | None = None) -> bool:
-    """Algo a lo que tiene sentido inyectarle teclas: un agente que no es impostor."""
+def is_tui(pid: int) -> bool:
+    """Algo a lo que tiene sentido inyectarle teclas: un agente que no es impostor. Con un pid a
+    mano solo se tiene la ruta del ejecutable, que es la que descarta la app de escritorio y las
+    extensiones; el barrido, que si lee la linea de comando, llama a is_impostor directamente."""
     exe = image_path(pid)
     if not exe or not agent_of(exe):
         return False
-    return not is_impostor(exe, cmdline)
+    return not is_impostor(exe, None)
 
 
 _PS = r"""
