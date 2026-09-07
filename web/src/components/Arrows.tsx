@@ -8,7 +8,7 @@ import type { Link, Rule, Session } from "../types";
 interface Props {
   links: Link[];
   rules: Rule[];
-  /** para saber en que columna esta una sesion cuya tarjeta no se ve (columna colapsada) */
+  /** nombres y estado para la descripcion de la flecha elegida y la vista de un envio */
   sessions: Record<string, Session>;
   boardRef: React.RefObject<HTMLDivElement | null>;
   /** sube cuando cambian sesiones, filtro o seleccion: las tarjetas se movieron, hay que recalcular */
@@ -60,10 +60,10 @@ function boardContent(board: HTMLDivElement): { w: number; h: number } {
   };
 }
 
-/** Lo que la geometria necesita del DOM: los rects de las tarjetas, los anchors (que suman las
- *  tiras de las columnas colapsadas), los obstaculos laterales, el area util de cada columna y los
- *  links y reglas que de verdad se pueden dibujar. `null` si no hay ninguna tarjeta a la vista. */
-function measureBoard(board: HTMLDivElement, sessions: Record<string, Session>, links: Link[], rules: Rule[]) {
+/** Lo que la geometria necesita del DOM: los rects de las tarjetas (que son todos los anchors
+ *  posibles: una tarjeta escondida en una columna colapsada no es extremo de nada), los obstaculos
+ *  laterales y el area util de cada columna. `null` si no hay ninguna tarjeta a la vista. */
+function measureBoard(board: HTMLDivElement) {
   const b = board.getBoundingClientRect();
   const rel = (el: Element): Rect => {
     const r = el.getBoundingClientRect();
@@ -87,36 +87,17 @@ function measureBoard(board: HTMLDivElement, sessions: Record<string, Session>, 
     const h2 = col.querySelector<HTMLElement>(":scope > h2");
     return { ...r, t: h2 ? rel(h2).b : r.t };
   });
-  // sesion en una columna colapsada (por ejemplo la tarjeta paso a "Terminó"): la flecha llega a
-  // la etiqueta vertical de esa tira en vez de perderse. Esos extremos van en `anchors`, aparte de
-  // `rects`: la tira no es una tarjeta, no cuenta como columna ni dos veces como obstaculo
-  const stripOf = (sid: string): Rect | undefined => {
-    const st = sessions[sid]?.state;
-    const el = st ? board.querySelector<HTMLElement>(`.col.${st}.collapsed .vlabel`) : null;
-    return el ? rel(el) : undefined;
-  };
-  const anchors = new Map(rects);
-  const onStrip = new Set<string>();
-  for (const sid of new Set([...links.flatMap((l) => [l.from, l.to]), ...rules.flatMap((r) => [r.from, r.to])])) {
-    if (sid && !anchors.has(sid)) {
-      const r = stripOf(sid);
-      if (r) {
-        anchors.set(sid, r);
-        onStrip.add(sid);
-      }
-    }
-  }
-  // las dos puntas en la misma tira colapsada: la flecha no dice nada y se apila sobre el titulo
-  // de la columna (medido: 7 flechas encimadas al colapsar "Trabajo"). Esas no se dibujan; la
-  // conexion se sigue viendo al abrir la columna, en el chip y en la pestaña Conexiones
-  const bothHidden = (a: string | null, b: string) =>
-    !!a && onStrip.has(a) && onStrip.has(b) && anchors.get(a) === anchors.get(b);
+  // una punta en una columna colapsada no se dibuja: la flecha llegaba a la etiqueta vertical de la
+  // tira y su glifo se apoyaba sobre el titulo de la columna, tapandolo. Lo que esta colapsado no
+  // muestra flechas; la conexion se sigue viendo al abrir la columna, en el chip de la tarjeta y en
+  // la pestaña Conexiones. `anchors` queda igual a `rects` y `buildItems` descarta lo que no este
+  const anchors = rects;
   // columnas colapsadas: obstaculos laterales para el arco de misma columna (no son columnas)
   const strips = Array.from(board.querySelectorAll<HTMLElement>(".col.collapsed")).map((el) => {
     const r = rel(el);
     return { l: r.l, r: r.r };
   });
-  return { rects, anchors, strips, bands, links: links.filter((l) => !bothHidden(l.from, l.to)), rules: rules.filter((r) => !bothHidden(r.from ?? r.to, r.to)) };
+  return { rects, anchors, strips, bands };
 }
 
 /** Los tres globos del tablero (la descripcion de la flecha elegida, el editor de una conexion y la
@@ -359,7 +340,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     }
     const { w, h } = boardContent(board);
     setSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
-    const measured = measureBoard(board, sessions, links, rules);
+    const measured = measureBoard(board);
     if (!measured) {
       setSegs([]);
       setLanes(board, 0);
@@ -367,6 +348,8 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     }
     const out = computeSegs({
       ...measured,
+      links,
+      rules,
       boardWidth: w,
       fmt: {
         ago,

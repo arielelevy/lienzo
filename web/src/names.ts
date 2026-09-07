@@ -113,7 +113,9 @@ const FENCE_RE = /^[ \t]*(`{3,}|~{3,})\s*(\S*)/;
  *  de Z4: cinco lineas de columnas que en la tarjeta se leen "ANTES DESPUÉS" y nada mas. Se
  *  reemplaza por una linea que dice que es. El de una sola linea se deja tal cual, que casi siempre
  *  es un comando o un valor y se entiende (9 de 34 bloques reales). Corre antes que el resto, con
- *  los cercos todavia puestos, y aguanta el bloque sin cerrar: `last_reply` llega cortado a 600. */
+ *  los cercos todavia puestos, y aguanta el bloque sin cerrar: en un turno en curso el agente
+ *  puede estar en medio de un bloque de codigo (antes tambien pasaba porque `last_reply` llegaba
+ *  cortado a 600 caracteres; ya llega entero). */
 function foldFenced(t: string): string {
   const lines = t.split("\n");
   const out: string[] = [];

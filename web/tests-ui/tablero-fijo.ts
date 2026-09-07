@@ -269,7 +269,14 @@ function respuestaDePanel(pathname: string): unknown | null {
           ts_start: iso(12),
           ended: true,
           prompt: "armá la capa de calor",
-          final: "Listo: la capa de calor sale de la vista gold.viajes.",
+          // lo que el agente fue diciendo antes de la respuesta
+          says: ["Miro cómo está armada la vista.", "La vista no tiene la columna: la agrego."],
+          // largo a proposito (arriba de los 600 caracteres del recorte que Destacados tenia):
+          // tiene que llegar entero y terminar donde termina, sin puntos suspensivos
+          final: `Listo: la capa de calor sale de la vista gold.viajes.
+
+${"Detalle del corte por zona y franja horaria. ".repeat(20)}
+Y con esto cierra el pedido.`,
           files: ["capa.py"],
           commands: ["python capa.py"],
           errors: [],

@@ -567,6 +567,21 @@ def turns(agent: str, path: str, n: int = 10, before: str | None = None, max_byt
 
 
 QUESTION_MAX = 200  # recorte de cada pregunta de Destacados
+# Destacados mostraba solo el ultimo texto del asistente (`final`) y tiraba todo lo que el agente
+# habia dicho antes en el mismo turno. Medido el 2026-09-07 sobre las 40 transcripciones mas
+# recientes (131 turnos): 72 turnos --el 55%-- dicen mas de una cosa. Peor en un turno en curso,
+# que es cuando uno abre la tarjeta: ahi el "final" es el ultimo aviso de avance y lo anterior era
+# lo que explicaba que estaba pasando. Van entonces todos, en orden.
+#
+# Y van **enteros**. Antes esto recortaba el final a 600 caracteres y cada intermedio a 400: sobre
+# los mismos 131 turnos, el 63% de los finales pasaba de 600 (mediana 1125, p90 3880, maximo 7863),
+# asi que la frase cortada con "…" era la regla y no la excepcion, justo en el turno que uno abre
+# para leer que paso. Lo mismo con los topes por lista (20 comandos, 10 errores): 19 de 131 turnos
+# tenian mas de 20 comandos. El cuerpo del panel scrollea (`.panel .body`, overflow-y auto), asi
+# que el largo lo resuelve el scroll. Costo medido de no recortar nada: el texto de una sesion de
+# 10 turnos pasa a 5,6 KB de mediana, 16 KB en el p90 y 29 KB en el peor caso de la maquina, sobre
+# una transcripcion que ya se lee de a 2 MB. Cada comando y cada error siguen entrando por su
+# primera linea: son una lista para ubicarse, y el texto completo esta en Conversacion.
 # fin de oracion: punto/signo, los cierres que puedan venir pegados (comillas, parentesis) y espacio
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?…])[\"')\]»]*\s+")
 
@@ -588,10 +603,15 @@ def digest_turn(turn: dict) -> dict:
         body = (turn.get("prompt") or "").split(": ", 1)[-1]
         peers.append(f"← {turn['from_peer']}: {_first_line(body, 100)}")
     subagents = 0
+    says: list[str] = []
     for b in turn["blocks"]:
         k = b["kind"]
         if k == "subagent":
             subagents += b.get("n", 0)
+            continue
+        if k == "text":
+            if (b.get("text") or "").strip():
+                says.append(b["text"].strip())
             continue
         if k != "tool":
             continue
@@ -621,6 +641,9 @@ def digest_turn(turn: dict) -> dict:
         if res and res.get("is_error"):
             errors.append(f"{name}: {_first_line(res.get('text', ''))}")
     final = (turn.get("final") or "").strip()
+    # el ultimo texto es el `final`, que se muestra aparte
+    if says and says[-1] == final:
+        says.pop()
     # el turno cierra preguntando y no hubo AskUserQuestion (esas son explicitas y mandan): se
     # destaca la pregunta sola. Dos casos en que la seccion no agrega nada y solo repite: cuando el
     # final entero no es mas largo que el recorte de la pregunta (se lee completo ahi arriba) y
@@ -640,12 +663,13 @@ def digest_turn(turn: dict) -> dict:
         "ts_end": turn.get("ts_end"),
         "ended": turn.get("ended"),
         "prompt": turn.get("prompt", ""),
-        "final": _short(final, 600),
+        "says": says,
+        "final": final,
         "files": files,
-        "commands": commands[:20],
-        "errors": errors[:10],
+        "commands": commands,
+        "errors": errors,
         "questions": questions,
-        "peers": peers[:10],
+        "peers": peers,
         "reads": reads,
         "subagents": subagents,
         "extensions": turn.get("extensions", 0),

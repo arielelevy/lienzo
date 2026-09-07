@@ -21,6 +21,20 @@ export function Digest({ turn: t, toast: extToast }: { turn: DigestTurn; toast?:
         {t.ts_start ? whenLabel(t.ts_start, true) : "sin hora"} {t.ended ? "" : "· en curso"}
       </div>
       <div className="p">› {t.prompt}</div>
+      {/* Lo que el agente fue diciendo en el turno, antes de la respuesta. Sin esto Destacados
+          mostraba el pedido y una sola frase: en un turno en curso, esa frase es el ultimo aviso
+          de avance y lo que explicaba el problema quedaba afuera (medido: 55% de los turnos dicen
+          mas de una cosa). Van atenuados, que la respuesta se siga leyendo como la respuesta, y
+          enteros: lo largo lo resuelve el scroll del panel, no un recorte con puntos suspensivos. */}
+      {!!t.says?.length && (
+        <div className="said">
+          {t.says.map((x, i) => (
+            <div className="md" key={i}>
+              <ReactMarkdown>{x}</ReactMarkdown>
+            </div>
+          ))}
+        </div>
+      )}
       {t.final && (
         <>
           <div className="f md">

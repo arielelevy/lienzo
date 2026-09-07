@@ -238,6 +238,83 @@ def test_la_pregunta_se_recorta_a_QUESTION_MAX():
     assert len(q) == 1 and len(q[0]) == tr.QUESTION_MAX
 
 
+# Destacados: lo que el agente fue diciendo en el turno, no solo la ultima frase
+
+
+def _texto(t):
+    return {"kind": "text", "text": t, "phase": None}
+
+
+def _dice(textos, final=None, **k):
+    """Un turno donde el agente dijo `textos` en orden; el final es el ultimo, como lo deja
+    `add_text`, salvo que se pida otro."""
+    blocks = [_texto(t) for t in textos]
+    return tr.digest_turn(_turno(final if final is not None else (textos[-1] if textos else ""), blocks, **k))
+
+
+def test_los_mensajes_previos_del_agente_llegan_en_orden_y_sin_repetir_el_final():
+    d = _dice(["Miro los correos.", "Ahí está: el filtro no es sobre Dim.Marca.", "Verifico los 5 SKU."])
+    assert d["says"] == ["Miro los correos.", "Ahí está: el filtro no es sobre Dim.Marca."]
+    assert d["final"] == "Verifico los 5 SKU."
+
+
+def test_un_turno_que_dijo_una_sola_cosa_no_repite_nada_arriba():
+    """El caso mas comun (51 de 130 turnos medidos): Destacados se ve igual que antes."""
+    d = _dice(["Listo, quedó en disco."])
+    assert d["says"] == [] and d["final"] == "Listo, quedó en disco."
+
+
+def test_los_intermedios_vacios_no_dejan_lineas_en_blanco():
+    d = _dice(["Arranco.", "   ", "", "Listo."])
+    assert d["says"] == ["Arranco."]
+
+
+def test_vienen_todos_los_mensajes_por_muchos_que_sean():
+    """El maximo medido en la maquina es 21 en un turno; no hay tope ni "y N mas"."""
+    textos = [f"paso {i}" for i in range(1, 30)] + ["listo"]
+    d = _dice(textos)
+    assert d["says"] == textos[:-1]
+
+
+# Destacados no recorta el texto del agente: lo largo lo resuelve el scroll del panel
+
+
+def test_el_final_va_entero_y_sin_puntos_suspensivos():
+    """El caso medido: el 63% de los finales pasaba de los 600 caracteres del recorte viejo, asi
+    que la frase cortada era la regla justo en el turno que uno abre para leer que paso."""
+    final = "Lo que medí: los 5 SKU existen en la dim, cargados hoy 08:32:55. " + "Detalle. " * 300
+    d = _dice(["Analizado.", final])
+    assert d["final"] == final.strip()
+    assert "…" not in d["final"]
+
+
+def test_los_mensajes_previos_tambien_van_enteros():
+    largo = "y" * 3000
+    d = _dice([largo, "listo"])
+    assert d["says"] == [largo]
+
+
+def test_los_comandos_no_tienen_tope_de_cantidad():
+    """19 de 131 turnos medidos pasaban los 20 comandos del tope viejo: "comandos (20)" era el
+    tope, no la cuenta."""
+    blocks = [_tool("Bash", {"command": f"echo {i}"}) for i in range(35)]
+    d = tr.digest_turn(_turno("listo", blocks))
+    assert len(d["commands"]) == 35 and d["commands"][-1] == "echo 34"
+
+
+def test_cada_comando_sigue_entrando_por_su_primera_linea():
+    """La lista es para ubicarse; el comando entero se lee en Conversación."""
+    d = tr.digest_turn(_turno("listo", [_tool("Bash", {"command": "python - <<PY\nprint(1)\nPY"})]))
+    assert d["commands"] == ["python - <<PY"]
+
+
+def test_el_final_propio_de_codex_no_se_duplica_arriba():
+    """Codex fija el final en `task_complete` con `last_agent_message`: es el mismo texto del
+    ultimo bloque, y tiene que salir una sola vez."""
+    d = _dice(["Reviso el rollout.", "Quedó andando."], final="Quedó andando.")
+    assert d["says"] == ["Reviso el rollout."] and d["final"] == "Quedó andando."
+
+
 # 8. Los dos parsers y lo que de verdad comparten (encargo A6) --------------------
 
 
