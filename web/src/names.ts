@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ago } from "./api";
 import { hhmm } from "./nl";
 import { periodLabel } from "./arrows-geometry";
-import type { Link, Rule, Session } from "./types";
+import type { Link, Needs, Rule, Session } from "./types";
 
 /** Nombres y textos que comparten la tarjeta, el panel, las flechas y Conectar: como se llama una
  *  sesion, como se lee una regla, como se pliega un pedido. Sin React ni DOM. `periodLabel` vive en
@@ -243,6 +243,29 @@ export function stalledReason(s: Session, now = Date.now()): string | null {
   if (until > now) return `sin cupo hasta ${whenLabel(s.limit_until!, true, new Date(now))}`;
   const since = s.state_since ? now - new Date(s.state_since).getTime() : 0;
   return since > STALL_MIN * 60_000 ? "sin actividad" : null;
+}
+
+/** Lo que la sesión está esperando, en castellano. Los `kind` llegan del server con el nombre del
+ *  hook que los produjo (`state.py`: permission_prompt, idle_prompt, agent_needs_input,
+ *  elicitation_dialog, elicitation_url_dialog) y la tarjeta los escribía crudos: en el tablero se
+ *  leía "agent_needs_input" en negrita, en inglés y con guiones bajos. El que no esté en la lista
+ *  cae en un texto genérico: abajo va el detalle, que es lo que de verdad dice qué pasa. */
+export function needsLabel(needs: Needs): string {
+  switch (needs.kind) {
+    case "idle":
+      return "Espera que le escribas";
+    case "permission":
+      // sin herramienta no se escribe el ":" colgando, que es como quedaba antes
+      return needs.tool ? `Pide permiso: ${needs.tool}` : "Pide permiso";
+    case "agent_needs_input":
+      return "Espera que le contestes";
+    case "elicitation_dialog":
+      return "Te pide un dato";
+    case "elicitation_url_dialog":
+      return "Te pide abrir un enlace";
+    default:
+      return "Te necesita";
+  }
 }
 
 /** Botón que copia y avisa solo, cambiando su texto dos segundos: lo usan el Copiar de un turno y

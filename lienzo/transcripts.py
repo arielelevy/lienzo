@@ -66,6 +66,10 @@ def iter_json(lines):
 
 
 def _short(s: str, n: int) -> str:
+    """Copia deliberada de state.short. Este modulo no importa nada del lienzo --solo stdlib-- para
+    poder correrse solo sobre una transcripcion cualquiera (`python transcripts.py claude <ruta>`,
+    ver el __main__ del final) y para que los tests del parser no arrastren el lock ni el registro
+    de sesiones. Unificar tres lineas costaria esa propiedad: no vale la pena."""
     s = (s or "").strip()
     return s if len(s) <= n else s[: n - 1] + "…"
 

@@ -56,6 +56,12 @@ def now() -> dt.datetime:
     return dt.datetime.now().astimezone()
 
 
+def _key(token: str) -> str:
+    """Clave con la que una sesion web vive en sessions-web.json: el token no se guarda en claro,
+    asi que leerlo del archivo no alcanza para hacerse pasar por nadie."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 # --- passphrase ------------------------------------------------------------------
 
 
@@ -145,20 +151,21 @@ def mode() -> str:
 
 
 def _blocked(ip: str) -> float:
-    """Segundos que faltan de bloqueo (0 si no esta bloqueado)."""
-    t = time.time()
-    return max(0.0, max(_blocked_until.get(ip, 0), _blocked_until.get("*", 0)) - t)
+    """Segundos que faltan de bloqueo (0 si no esta bloqueado). Hallazgo M1: el bloqueo es por IP,
+    no global. Como la IP viene de CF-Connecting-IP (que Cloudflare reescribe, confiable por el
+    tunel), el freno por IP alcanza y ya no sirve de arma: cinco fallos de un tercero no dejaban a
+    Ariel afuera de su propio lienzo."""
+    return max(0.0, _blocked_until.get(ip, 0) - time.time())
 
 
 def _register_fail(ip: str) -> None:
     t = time.time()
-    for key in (ip, "*"):
-        lst = [x for x in _fails.get(key, []) if t - x < BLOCK_S]
-        lst.append(t)
-        _fails[key] = lst
-        if len(lst) >= MAX_FAILS:
-            _blocked_until[key] = t + BLOCK_S
-            _fails[key] = []
+    lst = [x for x in _fails.get(ip, []) if t - x < BLOCK_S]
+    lst.append(t)
+    _fails[ip] = lst
+    if len(lst) >= MAX_FAILS:
+        _blocked_until[ip] = t + BLOCK_S
+        _fails[ip] = []
 
 
 def login(passphrase: str, code: str, ip: str, ua: str = "") -> tuple[bool, str, str | None]:
@@ -174,7 +181,9 @@ def login(passphrase: str, code: str, ip: str, ua: str = "") -> tuple[bool, str,
             ok_pass = hmac.compare_digest(_hash(passphrase or "", bytes.fromhex(a["salt"])), bytes.fromhex(a["hash"]))
         else:
             ok_pass = True  # modo "code": solo el TOTP
-        code = (code or "").strip().replace(" ", "")
+        # hallazgo B2: dejar solo digitos. Un codigo con no-ASCII hacia reventar compare_digest con
+        # un 500 (str exige ASCII), que ademas no contaba como intento fallido.
+        code = "".join(ch for ch in (code or "") if ch in "0123456789")
         ok_code = False
         used_counter = None
         for delta in (-1, 0, 1):
@@ -193,7 +202,7 @@ def login(passphrase: str, code: str, ip: str, ua: str = "") -> tuple[bool, str,
         token = secrets.token_hex(32)
         sessions = _load(WEB_SESSIONS)
         exp = now() + dt.timedelta(days=SESSION_DAYS)
-        sessions[hashlib.sha256(token.encode()).hexdigest()] = {
+        sessions[_key(token)] = {
             "created": now().isoformat(timespec="seconds"),
             "expires": exp.isoformat(timespec="seconds"),
             "ip": ip,
@@ -235,7 +244,7 @@ def check(token: str | None) -> bool:
         return False
     with _lock:
         sessions = _web_sessions()
-        entry = sessions.get(hashlib.sha256(token.encode()).hexdigest())
+        entry = sessions.get(_key(token))
         if not entry:
             return False
         try:
@@ -249,7 +258,7 @@ def logout(token: str | None) -> None:
         return
     with _lock:
         sessions = _load(WEB_SESSIONS)
-        sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)
+        sessions.pop(_key(token), None)
         _atomic(WEB_SESSIONS, sessions)
 
 

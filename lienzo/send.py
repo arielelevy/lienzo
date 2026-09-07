@@ -76,7 +76,9 @@ u32.MapVirtualKeyW.argtypes = [wt.UINT, wt.UINT]
 u32.MapVirtualKeyW.restype = wt.UINT
 
 
-def key_records(text: str, shift_enter: bool = False) -> list[INPUT_RECORD]:
+def key_records(text: str) -> list[INPUT_RECORD]:
+    """Los eventos de teclado (down y up por tecla) que tipean `text`. Un salto de linea es Enter:
+    quien no quiera que el agente lo tome como envio manda el texto en una sola linea."""
     recs: list[INPUT_RECORD] = []
 
     def push(vk: int, ch: str, state: int) -> None:
@@ -95,7 +97,7 @@ def key_records(text: str, shift_enter: bool = False) -> list[INPUT_RECORD]:
 
     for ch in text:
         if ch in ("\r", "\n"):
-            push(VK_RETURN, "\r", SHIFT_PRESSED if shift_enter else 0)
+            push(VK_RETURN, "\r", 0)
             continue
         res = u32.VkKeyScanW(ch)
         if res == -1:

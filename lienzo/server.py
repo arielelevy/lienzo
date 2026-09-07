@@ -26,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import auth
 import transcripts
-from rules import at_near, connections_of, purge_stale_at_rules, rules_loop
+from rules import at_near, connections_of, local_dt, purge_stale_at_rules, rules_loop
 from sessions import (
     add_link,
     answer_pending,
@@ -78,36 +78,57 @@ remote_url: str | None = None
 enroll: dict | None = None
 ENROLL_S = 15 * 60
 
+# Techos del cuerpo del pedido (hallazgo A3 del pentest): se rechaza con 413 antes de leer un byte,
+# asi un cuerpo gigante y sin autenticar no puede inflar la memoria. /attach sube archivos e
+# imagenes, por eso tiene su propio techo, mas alto.
+MAX_BODY = 8 * 1024 * 1024
+MAX_ATTACH = 64 * 1024 * 1024
+
 # --- HTTP ------------------------------------------------------------------------------
 
 
+MIN_EVERY_S = 60
+MAX_FIRES = 50
+
+
+def clamp_fires(value) -> int:
+    """max_fires: cuantas veces puede disparar una regla, entre 1 y MAX_FIRES."""
+    return max(1, min(int(value), MAX_FIRES))
+
+
+def parse_every_s(v) -> tuple[int | None, str | None]:
+    """Periodo de una regla 'at': (segundos, error). None sin error es un solo disparo."""
+    malo = "every_s debe ser un entero en segundos"
+    if v is None:
+        return None, None
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        return None, malo
+    try:
+        f = float(v)
+    except ValueError:
+        return None, malo
+    if f != int(f):
+        return None, malo
+    if int(f) < MIN_EVERY_S:
+        return None, f"every_s debe ser al menos {MIN_EVERY_S} segundos"
+    return int(f), None
+
+
 def at_fields(d: dict, current: dict | None = None) -> tuple[dict | None, str | None]:
-    """Campos de repeticion de una regla 'at' (POST o PUT): every_s (entero >= 60, o None = un solo
-    disparo), max_fires (1..50; 5 por defecto si es periodica), skip_busy (True por defecto si es
-    periodica). `current` es la regla que se edita (PUT), para no pisar lo que no vino. Devuelve
-    (campos, error)."""
+    """Campos de repeticion de una regla 'at' (POST o PUT): every_s (entero >= MIN_EVERY_S, o None
+    = un solo disparo), max_fires (1..MAX_FIRES; 5 por defecto si es periodica), skip_busy (True por
+    defecto si es periodica). `current` es la regla que se edita (PUT), para no pisar lo que no
+    vino. Devuelve (campos, error)."""
     cur = current or {}
     every = cur.get("every_s")
     if "every_s" in d:
-        v = d["every_s"]
-        if v is None:
-            every = None
-        else:
-            if isinstance(v, bool) or not isinstance(v, (int, float, str)):
-                return None, "every_s debe ser un entero en segundos"
-            try:
-                f = float(v)
-            except ValueError:
-                return None, "every_s debe ser un entero en segundos"
-            if f != int(f):
-                return None, "every_s debe ser un entero en segundos"
-            every = int(f)
-            if every < 60:
-                return None, "every_s debe ser al menos 60 segundos"
+        every, err = parse_every_s(d["every_s"])
+        if err:
+            return None, err
     max_fires = cur.get("max_fires")
     if d.get("max_fires") is not None:
         try:
-            max_fires = max(1, min(int(d["max_fires"]), 50))
+            max_fires = clamp_fires(d["max_fires"])
         except (TypeError, ValueError):
             return None, "max_fires debe ser un numero"
     elif every and (max_fires or 1) <= 1:
@@ -126,9 +147,14 @@ def at_fields(d: dict, current: dict | None = None) -> tuple[dict | None, str | 
 
 
 def parse_at(value) -> dt.datetime:
-    """Hora de una regla `at`, siempre en hora local: naive se asume local, aware (la UI manda UTC
-    con Z) se convierte, asi todas las reglas guardan `at` con el mismo offset. ValueError si no es ISO."""
-    return dt.datetime.fromisoformat(str(value)).astimezone()
+    """Hora de una regla `at`, siempre local: naive se asume local, aware (la UI manda UTC con Z) se
+    convierte, asi todas las reglas guardan `at` con el mismo offset. Es rules.local_dt, que es de
+    donde sale toda hora del lienzo, pero levantando ValueError: aca un `at` ilegible es un 400 al
+    cliente, no una regla que se saltea en silencio."""
+    at = local_dt(value)
+    if at is None:
+        raise ValueError(f"{value!r} no es una fecha ISO")
+    return at
 
 
 def find_enabled(pred) -> dict | None:
@@ -187,7 +213,7 @@ def create_on_stop(d: dict, text: str) -> tuple[int, dict]:
         text,
         at=None,
         repeat=bool(d.get("repeat")),
-        max_fires=max(1, min(int(d.get("max_fires") or 1), 50)),
+        max_fires=clamp_fires(d.get("max_fires") or 1),
         fired=0,
         enabled=True,
         created=now(),
@@ -212,7 +238,7 @@ def create_at(d: dict, text: str) -> tuple[int, dict]:
     clash = find_enabled(lambda r: r.get("kind") == "at" and r.get("to") == d["to"] and at_near(r, at))
     if clash:
         if d.get("replace") is not True:
-            hhmm = dt.datetime.fromisoformat(clash["at"]).astimezone().strftime("%H:%M")
+            hhmm = parse_at(clash["at"]).strftime("%H:%M")
             return 409, {
                 "error": f"ya hay una programada a las {hhmm} para esa sesión",
                 "rule_id": clash["id"],
@@ -256,7 +282,7 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
     if "text" in d and not isinstance(d["text"], str):
         return 400, {"error": "text debe ser un texto"}
     try:
-        max_fires = max(1, min(int(d["max_fires"]), 50)) if d.get("max_fires") is not None else None
+        max_fires = clamp_fires(d["max_fires"]) if d.get("max_fires") is not None else None
     except (TypeError, ValueError):
         return 400, {"error": "max_fires debe ser un numero"}
     with lock:
@@ -309,6 +335,10 @@ SESSION_VIEWS = ("screen", "connections", "turns", "digest")
 class Handler(BaseHTTPRequestHandler):
     server_version = "lienzo/0.1"
     protocol_version = "HTTP/1.1"
+    # cierra un socket que no manda nada en 30 s (slow-loris, hallazgo A3 del pentest): un cuerpo
+    # declarado y no enviado retenia el hilo para siempre. El SSE escribe un latido cada 15 s, asi
+    # que las conexiones /events largas no lo alcanzan.
+    timeout = 30
 
     def log_message(self, fmt, *args):  # silencio; el log propio alcanza
         pass
@@ -346,11 +376,52 @@ class Handler(BaseHTTPRequestHandler):
         socket (un 403 o un 404 tempranos), el siguiente request de la misma conexion keep-alive lo
         toma como linea de pedido y contesta 501. Y parte la ruta: devuelve los tramos de la URL, que
         es con lo que cada handler elige, y deja la query en `self.query`."""
-        n = int(self.headers.get("Content-Length") or 0)
-        self.raw = self.rfile.read(n) if n else b""
         u = urllib.parse.urlparse(self.path)
         self.query = urllib.parse.parse_qs(u.query)
-        return [p for p in u.path.split("/") if p]
+        parts = [p for p in u.path.split("/") if p]
+        n = int(self.headers.get("Content-Length") or 0)
+        # hallazgo A3: rechazar un cuerpo gigante ANTES de leerlo. /attach sube archivos (techo
+        # alto); el resto son cuerpos JSON chicos. Si excede, no se drena: se cierra la conexion.
+        cap = MAX_ATTACH if (len(parts) == 3 and parts[0] == "sessions" and parts[2] == "attach") else MAX_BODY
+        if n > cap:
+            self.oversize = n
+            self.raw = b""
+            self.close_connection = True
+            return parts
+        self.oversize = 0
+        self.raw = self.rfile.read(n) if n else b""
+        return parts
+
+    def _too_big(self) -> bool:
+        """True (con el 413 ya contestado) si el cuerpo excedio el techo de _route."""
+        if getattr(self, "oversize", 0):
+            self._json(413, {"error": "cuerpo demasiado grande"})
+            return True
+        return False
+
+    def _host_ok(self) -> bool:
+        """Valida el Host de cada pedido (hallazgo C1: sin esto un reencuadre DNS le entrega el
+        lienzo entero a cualquier pagina web que la victima abra). Acepta solo los nombres locales
+        y, si el tunel esta arriba, exactamente el host de remote_url. Cualquier otro Host: afuera.
+        Con esto _csrf_ok queda parado sobre un Host ya de confianza."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        hostname = host.rsplit(":", 1)[0].strip("[]") if host else ""
+        if hostname in ("127.0.0.1", "localhost", "::1"):
+            return True
+        if remote_url:
+            rh = (urllib.parse.urlparse(remote_url).hostname or "").lower()
+            if rh and hostname == rh:
+                return True
+        return False
+
+    def _session(self, sid: str) -> dict | None:
+        """La tarjeta pedida, o None con el 404 ya contestado. Es el arranque de toda ruta
+        /sessions/<id>/..., que si no repite la busqueda con el lock y el mismo mensaje de error."""
+        with lock:
+            s = sessions.get(sid)
+        if s is None:
+            self._json(404, {"error": "sesion desconocida"})
+        return s
 
     def _json_body(self) -> dict:
         """JSON del cuerpo tolerante a clientes que mandan latin-1 (un curl desde Git Bash)."""
@@ -376,10 +447,11 @@ class Handler(BaseHTTPRequestHandler):
     def _authed(self) -> bool:
         """Decision del autor (2026-09-05): en la propia PC no se pide login. El server solo
         escucha en 127.0.0.1, asi que 'local' es una conexion sin cabeceras del tunel. Lo que
-        entra por cloudflared trae CF-Connecting-IP y exige la cookie (passphrase + TOTP)."""
-        if self._is_local() or not auth.configured():
-            return True
-        return auth.check(auth.parse_cookie(self.headers.get("Cookie")))
+        entra por cloudflared trae CF-Connecting-IP y exige la cookie (passphrase + TOTP).
+        Hallazgo A2: cae CERRADA. Si auth.json desaparece con el tunel arriba, lo remoto pasa a
+        exigir cookie igual (auth.check da False sin sesiones), no queda abierto. El alta (/setup,
+        /enroll, /login) sigue saliendo por su lista blanca de rutas, antes de este chequeo."""
+        return self._is_local() or auth.check(auth.parse_cookie(self.headers.get("Cookie")))
 
     def _csrf_ok(self) -> bool:
         if self.headers.get("X-Lienzo") != "1":
@@ -387,13 +459,16 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if not origin:
             return True
-        ohost = origin.split("//", 1)[-1]
-        host = self.headers.get("Host") or ""
-        # el propio host, o el dev server de Vite en la misma maquina (localhost:5173)
-        return ohost == host or ohost.split(":")[0] in ("localhost", "127.0.0.1")
+        ohost = origin.split("//", 1)[-1].lower()
+        host = (self.headers.get("Host") or "").lower()
+        # el propio host, o el dev server de Vite en la misma maquina (hallazgo A1: puerto fijo
+        # 5173, no cualquier puerto de localhost)
+        return ohost == host or ohost in ("localhost:5173", "127.0.0.1:5173")
 
     def do_GET(self):
         parts = self._route()
+        if not self._host_ok():
+            return self._json(400, {"error": "Host no valido"})
         try:
             if not parts:
                 index = os.path.join(DIST, "index.html")
@@ -480,7 +555,12 @@ class Handler(BaseHTTPRequestHandler):
         if not e or not tok or not secrets.compare_digest(tok, e["token"]):
             log(f"enroll rechazado desde {self._client_ip()}")
             return self._json(410, {"error": "el enlace de alta vencio o no es valido; rehacer desde la PC"})
-        log(f"enroll entregado a {self._client_ip()}")
+        log(f"enroll entregado a {self._client_ip()} (token consumido)")
+        # hallazgo M4: el token es de un solo uso. Consumirlo aca deja que una filtracion del enlace
+        # (queda en el historial del celular y en los logs de Cloudflare) se note: el canje legitimo
+        # invalida el token, un segundo intento con el mismo cae en el 410.
+        with lock:
+            enroll = None
         return self._json(
             200,
             {"passphrase": e["passphrase"], "otpauth": e["otpauth"], "expires_in": int(e["expires"] - time.time())},
@@ -490,10 +570,9 @@ class Handler(BaseHTTPRequestHandler):
         """Las cuatro vistas de una tarjeta (SESSION_VIEWS), con una sola busqueda de la sesion. Una
         vista que no este en la lista no llega hasta aca: sigue cayendo en el 404 de ruta
         desconocida de do_GET, no en el de sesion desconocida."""
-        with lock:
-            s = sessions.get(sid)
+        s = self._session(sid)
         if s is None:
-            return self._json(404, {"error": "sesion desconocida"})
+            return None
         if view == "connections":
             return self._json(200, connections_of(sid))
         if view == "screen":
@@ -502,7 +581,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, read_screen(s["pid"]))
         if not s.get("transcript_path") or not os.path.exists(s["transcript_path"]):
             return self._json(200, {"meta": {}, "turns": [], "has_more": False, "note": "sin transcripcion"})
-        n = int(self.query.get("n", ["10"])[0])
+        try:
+            n = int(self.query.get("n", ["10"])[0])
+        except ValueError:
+            return self._json(400, {"error": "n debe ser un numero"})  # hallazgo B3: antes tiraba 500
         if view == "turns":
             before = self.query.get("before", [None])[0]
             return self._json(200, transcripts.turns(s["agent"], s["transcript_path"], n, before))
@@ -510,6 +592,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parts = self._route()
+        if self._too_big():
+            return
+        if not self._host_ok():
+            return self._json(400, {"error": "Host no valido"})
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
         try:
@@ -535,10 +621,9 @@ class Handler(BaseHTTPRequestHandler):
                 code, res = answer_pending(parts[1], d["decision"], d.get("reason", ""))
                 return self._json(code, res)
             if len(parts) == 3 and parts[0] == "sessions":
-                with lock:
-                    s = sessions.get(parts[1])
+                s = self._session(parts[1])
                 if s is None:
-                    return self._json(404, {"error": "sesion desconocida"})
+                    return None
                 if parts[2] == "send":
                     return self._send(s)
                 if parts[2] == "attach":
@@ -612,52 +697,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         parts = self._route()
+        if self._too_big():
+            return
+        if not self._host_ok():
+            return self._json(400, {"error": "Host no valido"})
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
         if not self._authed():
             return self._json(401, {"error": "hace falta iniciar sesion"})
         try:
             if parts == ["config"]:
-                # solo auto_continue, y solo como bool; el resto de config.json (ejemplos, wait) no se toca
-                d = self._json_body()
-                unknown = [k for k in d if k not in UI_CONFIG_KEYS]
-                if unknown or not d:
-                    return self._json(400, {"error": f"solo se puede cambiar {', '.join(UI_CONFIG_KEYS)}"})
-                for k, v in d.items():
-                    if not isinstance(v, bool):
-                        return self._json(400, {"error": f"{k} debe ser true o false"})
-                for k, v in d.items():
-                    set_config_key(k, v)
-                    log(f"config: {k} = {v} (desde la UI, {self._client_ip()})")
-                return self._json(200, public_config())
+                return self._put_config()
             if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "title":
-                d = self._json_body()
-                title = d.get("title")
-                if title is not None and not isinstance(title, str):
-                    return self._json(400, {"error": "title debe ser un texto"})
-                with lock:
-                    s = sessions.get(parts[1])
-                if s is None:
-                    return self._json(404, {"error": "sesion desconocida"})
-                set_title(s, title or "")  # toma el lock por dentro; leer la transcripcion, no
-                with lock:
-                    touch(s)
-                log(f"titulo de {parts[1][:8]} -> {s['title']!r} ({s.get('title_source')})")
-                return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
+                return self._put_title(parts[1])
             if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "coordinator":
-                d = self._json_body()
-                if not isinstance(d.get("on"), bool):
-                    return self._json(400, {"error": "on debe ser true o false"})
-                with lock:
-                    s = sessions.get(parts[1])
-                if s is None:
-                    return self._json(404, {"error": "sesion desconocida"})
-                changed = set_coordinator(s, d["on"])
-                log(
-                    f"coordinadora de {s.get('repo')}: {parts[1][:8]} -> {d['on']} "
-                    f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"
-                )
-                return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
+                return self._put_coordinator(parts[1])
             if len(parts) == 2 and parts[0] == "rules":
                 code, res = edit_rule(parts[1], self._json_body())
                 return self._json(code, res)
@@ -665,8 +719,54 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._server_error(e)
 
+    def _put_config(self) -> None:
+        """PUT /config: solo las claves de UI_CONFIG_KEYS (hoy auto_continue) y solo como bool; el
+        resto de config.json (ejemplos, wait) es de hook.py y no se toca. Se valida todo el cuerpo
+        antes de escribir nada: media tanda aplicada seria peor que ninguna."""
+        d = self._json_body()
+        if not d or [k for k in d if k not in UI_CONFIG_KEYS]:
+            return self._json(400, {"error": f"solo se puede cambiar {', '.join(UI_CONFIG_KEYS)}"})
+        for k, v in d.items():
+            if not isinstance(v, bool):
+                return self._json(400, {"error": f"{k} debe ser true o false"})
+        for k, v in d.items():
+            set_config_key(k, v)
+            log(f"config: {k} = {v} (desde la UI, {self._client_ip()})")
+        return self._json(200, public_config())
+
+    def _put_title(self, sid: str) -> None:
+        """PUT /sessions/<id>/title: titulo a mano. Vacio vuelve a la logica automatica."""
+        title = self._json_body().get("title")
+        if title is not None and not isinstance(title, str):
+            return self._json(400, {"error": "title debe ser un texto"})
+        s = self._session(sid)
+        if s is None:
+            return None
+        set_title(s, title or "")  # toma el lock por dentro; leer la transcripcion, no
+        with lock:
+            touch(s)
+        log(f"titulo de {sid[:8]} -> {s['title']!r} ({s.get('title_source')})")
+        return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
+
+    def _put_coordinator(self, sid: str) -> None:
+        """PUT /sessions/<id>/coordinator: marca la coordinadora del repo (a lo sumo una)."""
+        on = self._json_body().get("on")
+        if not isinstance(on, bool):
+            return self._json(400, {"error": "on debe ser true o false"})
+        s = self._session(sid)
+        if s is None:
+            return None
+        changed = set_coordinator(s, on)
+        log(
+            f"coordinadora de {s.get('repo')}: {sid[:8]} -> {on} "
+            f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"
+        )
+        return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
+
     def do_DELETE(self):
         parts = self._route()
+        if not self._host_ok():
+            return self._json(400, {"error": "Host no valido"})
         if not self._csrf_ok():
             return self._json(403, {"error": "falta X-Lienzo"})
         if not self._authed():
@@ -685,7 +785,10 @@ class Handler(BaseHTTPRequestHandler):
             with open(path, "rb") as f:
                 body = f.read()
         except OSError:
-            return self._json(404, {"error": f"no encuentro {path}"})
+            # hallazgo M3: la ruta absoluta (letra de unidad, arbol del repo) va solo al log, no al
+            # cliente, que por el tunel podria ser un anonimo. Mismo criterio que _server_error.
+            log(f"404 estatico: {path}")
+            return self._json(404, {"error": "no encontrado"})
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))

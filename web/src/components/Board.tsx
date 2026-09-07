@@ -385,6 +385,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // (mientras una columna se adelanta por un permiso pendiente no son el mismo)
   const collapsedOf = Object.fromEntries(COLS.map(([k]) => [k, isCollapsed(k, byState[k].length)])) as Record<ColKey, boolean>;
 
+  // el server no conoce ninguna sesión (no: "el filtro no dejó ninguna"): recién instalado, o
+  // arrancado antes que los agentes. Es el único caso que se explica; si lo que vacía el tablero
+  // es el filtro del header, el que lo escribió ya sabe por qué no ve nada
+  const sinTarjetas = Object.keys(sessions).length === 0;
+
   // las flechas se recalculan cuando algo pudo mover una tarjeta
   const versionRef = useRef(0);
   // al elegir una tarjeta se explican sus conexiones, y tambien las de la del otro extremo: una
@@ -577,7 +582,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                     <span>{label}</span>
                     <span className="n">{list.length}</span>
                   </div>
-                  <div className="empty">{list.length ? `${list.length} ocultas` : "nada acá"}</div>
+                  {/* con el tablero entero vacío no se repite "nada acá" por columna: eso ya lo
+                      dice, y mejor, el cartel de primera vez */}
+                  {!sinTarjetas && <div className="empty">{list.length ? `${list.length} ocultas` : "nada acá"}</div>}
                 </>
               ) : (
                 <>
@@ -595,7 +602,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                     <span>{label}</span>
                     <span className="n">{list.length}</span>
                   </h2>
-                  {list.length === 0 && <div className="empty">nada acá</div>}
+                  {list.length === 0 && !sinTarjetas && <div className="empty">nada acá</div>}
                   <div className="cards">
                   {/* columna ancha: subcolumnas por CSS (column-count: var(--lanes) en .col.wide .cards),
                       no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
@@ -641,6 +648,18 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
             </div>
           );
         })}
+        {/* Tablero sin una sola tarjeta (recién instalado, o el server arrancado antes que los
+            agentes): las tres columnas colapsan a sus tiras y la pantalla queda en negro sin decir
+            nada. Las columnas siguen colapsadas —esa regla no cambia—, el cartel va al lado. */}
+        {sinTarjetas && (
+          <div className="empty primeravez">
+            <b>Todavía no hay ninguna sesión.</b>
+            <span>Abrí Claude Code o Codex en un repo y la tarjeta aparece sola.</span>
+            <span>
+              Si no aparece, corré <code>python install.py</code> en la carpeta del lienzo: registra los hooks.
+            </span>
+          </div>
+        )}
       </div>
     </>
   );
