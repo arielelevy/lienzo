@@ -102,7 +102,9 @@ export interface GeometryInput {
   now?: number;
   /** tarjetas visibles, por session id, relativas al tablero */
   rects: Map<string, Rect>;
-  /** extremos posibles de una flecha: las tarjetas mas las tiras colapsadas de sesiones sin tarjeta */
+  /** extremos posibles de una flecha. Hoy es el mismo mapa que `rects`: una tarjeta escondida en
+   *  una columna colapsada no es extremo de nada (la flecha no se dibuja). El parametro sigue
+   *  aparte porque `rects` entra como obstaculo y `anchors` como punta: no cumplen el mismo papel */
   anchors: Map<string, Rect>;
   /** columnas colapsadas (obstaculos laterales) */
   strips: Strip[];

@@ -91,6 +91,8 @@ export interface DigestTurn {
   ts_start: string | null;
   ended: boolean;
   prompt: string;
+  /** lo que el agente dijo antes del `final`, en orden y entero: nada se recorta, el panel scrollea */
+  says?: string[];
   final: string;
   files: string[];
   commands: string[];

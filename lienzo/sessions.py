@@ -461,8 +461,15 @@ def turn_say(t: dict) -> str | None:
     cuando el turno cierra es la respuesta final. Si todavia no escribio nada, el nombre de la
     herramienta que esta usando. `transcripts` ya mantiene `final` = ultimo bloque de texto no vacio,
     y el pensamiento (kind "thinking") nunca pasa por ahi: a la tarjeta no va (el toggle
-    "Pensamiento" del menu es para la conversacion). Lo de "que herramienta" es turn_activity."""
-    return short(t.get("final") or "", 600) or using_tool(t)
+    "Pensamiento" del menu es para la conversacion). Lo de "que herramienta" es turn_activity.
+
+    Va entero. Estaba recortado a 600 caracteres y la tarjeta no lo notaba --el CSS la corta en 6
+    lineas de todos modos-- pero si lo notaban el boton de copiar de la tarjeta (copiaba media
+    respuesta), la caja de reenviar y el freno del on_stop, que mira si la respuesta termina en
+    pregunta: con el recorte terminaba en "…" y nunca frenaba. Medido el 2026-09-07 sobre 124
+    turnos: 86 finales pasan de 600 caracteres (mediana 1125, maximo 7863) y el snapshot de
+    /sessions pasa de 7,3 a 11,3 KB con cuatro sesiones abiertas."""
+    return (t.get("final") or "").strip() or using_tool(t)
 
 
 REFRESH_KEYS = (
@@ -696,7 +703,8 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
         else:
             set_state(s, "termino")
             if ev.get("last_assistant_message"):
-                s["last_reply"] = short(ev["last_assistant_message"], 600)
+                # entero, igual que turn_say: el recorte se lo hace la tarjeta por CSS
+                s["last_reply"] = (ev["last_assistant_message"] or "").strip()
         s["pending_id"] = None
     elif name == "Notification":
         nt = ev.get("notification_type") or ""

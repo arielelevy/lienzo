@@ -83,3 +83,44 @@ test("Esc pela una capa por vez: primero el panel, después la elección", async
   await page.keyboard.press("Escape");
   await expect(card).not.toHaveClass(/\bpicked\b/); // segunda capa: la elección
 });
+
+test("Destacados muestra lo que el agente fue diciendo, no solo la respuesta", async ({ page }) => {
+  await abrirTablero(page);
+  await page.locator(`.card[data-sid="${SID.mapas}"] .title`).dblclick();
+  await expect(page.locator(".panel")).toHaveCount(1);
+
+  // Destacados es la pestaña con la que abre el panel
+  const dg = page.locator(".panel .dg").first();
+  await expect(dg.locator(".f")).toContainText("la capa de calor sale de la vista");
+  const dichos = dg.locator(".said .md");
+  await expect(dichos).toHaveCount(2);
+  await expect(dichos.first()).toContainText("Miro cómo está armada la vista");
+  await expect(dichos.last()).toContainText("La vista no tiene la columna");
+});
+
+test("Destacados no corta la respuesta: va entera y se llega al final con el scroll", async ({ page }) => {
+  // ventana baja a propósito: así el texto no entra en el panel y el scroll es el que tiene que
+  // resolverlo, que es el caso del pedido ("si hay scroll que muestre todo")
+  await page.setViewportSize({ width: 1440, height: 600 });
+  await abrirTablero(page);
+  await page.locator(`.card[data-sid="${SID.mapas}"] .title`).dblclick();
+  const body = page.locator(".panel .body");
+  const f = page.locator(".panel .dg .f").first();
+
+  // el final del tablero fijo mide más de 900 caracteres: con el recorte viejo (600) se cortaba
+  const texto = (await f.textContent()) ?? "";
+  expect(texto.length).toBeGreaterThan(900);
+  expect(texto).not.toContain("…");
+  await expect(f).toContainText("Y con esto cierra el pedido.");
+
+  // el cuerpo scrollea en vertical y no desborda a lo ancho
+  const m = await body.evaluate((el) => ({ v: el.scrollHeight > el.clientHeight, h: el.scrollWidth - el.clientWidth }));
+  expect(m.v, "con la ventana baja el cuerpo del panel tiene que scrollear").toBe(true);
+  expect(m.h, "y no desbordar a lo ancho").toBeLessThanOrEqual(1);
+
+  // y el último párrafo se alcanza de verdad: scrolleando queda a la vista
+  const ultimo = f.locator("p").last();
+  await ultimo.scrollIntoViewIfNeeded();
+  await expect(ultimo).toBeInViewport();
+  await expect(ultimo).toContainText("Y con esto cierra el pedido.");
+});

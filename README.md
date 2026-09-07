@@ -3,8 +3,11 @@
 Tablero para las sesiones de **Claude Code** y **Codex CLI** que corren en terminales de
 Windows: la integrada de VS Code, Windows Terminal, una PowerShell o un cmd sueltos. Una
 tarjeta por sesión, agrupadas por columna (trabajo, te necesita, muerta), con la
-conversación a un click, una caja para contestarles, aprobación de permisos sin ir a la
-terminal, conexiones entre sesiones y acceso desde el celular con Microsoft Authenticator.
+conversación a un click, una caja para contestarles, **aprobación de permisos sin ir a la
+terminal**, capturas pegadas con Ctrl+V y conexiones entre sesiones.
+
+Corre local, en `127.0.0.1:7321`. El acceso desde el celular es opcional y no hace falta
+instalar nada para usarlo en la propia PC.
 
 No hospeda terminales ni guarda historial propio: es un monitor con derecho a contestar.
 
@@ -44,11 +47,27 @@ de una sesión viva no la reemplaza.
 
 ## Requisitos
 
-- Windows 10/11. Todo lo de consola es Win32 (`ctypes`), no hay versión para Linux o Mac.
+- Windows 10/11: es donde está probado. Hoy no corre en Mac ni en Linux.
 - Python 3.12 o más nuevo, sólo biblioteca estándar. Sin `psutil`, sin frameworks.
 - Node 20 o más nuevo para compilar la interfaz (Vite + React + TypeScript).
 - Claude Code 2.1 o más nuevo, Codex CLI 0.153 o más nuevo, o los dos.
-- Para el acceso remoto: `cloudflared` (`winget install Cloudflare.cloudflared`).
+- Sólo para el acceso desde el celular, y sólo si lo querés: `cloudflared`
+  (`winget install Cloudflare.cloudflared`). Para usarlo local no hace falta.
+
+### Por qué Windows, y qué haría falta para Mac
+
+El núcleo no depende del sistema operativo: el estado sale de los hooks de los propios agentes y
+el contenido, de las transcripciones `.jsonl`. Lo atado a Win32 son dos archivos: `send.py`
+(escribir en la consola de otro proceso, `AttachConsole` + `WriteConsoleInputW`) y `screen.py`
+(leer su buffer, `ReadConsoleOutputCharacterW`).
+
+En Mac o Linux esas dos piezas salen **más fáciles**, con tmux en el medio: `tmux send-keys -t
+<pane>` en vez de attachearse a la consola ajena, `tmux capture-pane -p` en vez de leer el
+buffer —y encima con scrollback y con la sesión sobreviviendo al cierre de la terminal, que en
+Windows no existe—. La condición es que los agentes arranquen adentro de tmux, y el
+direccionamiento pasa a ser por pane en vez de por PID. Sin tmux, en Mac queda peor que en
+Windows: un PTY es de quien lo creó y no hay forma de leer la pantalla de otra terminal ni de
+escribirle a un PID. **No está hecho: se podría.**
 
 ## Instalación
 
@@ -72,174 +91,81 @@ Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json
 
 ### Tablero
 
-Tres columnas: *Trabajo* (corriendo y terminó, el estado se ve como un punto verde o una
-tilde en la tarjeta), *Te necesita* y *Muerta*. Entre columnas hay un hilo de 10 px; el aire
-grande, 35 px, va entre las tarjetas, que es donde se ve, y por ahí pasan las flechas. Cada columna está abierta si tiene tarjetas
-y colapsada a una tira vertical si no; una columna vacía que quede abierta se cierra sola a
-los 5 segundos. Click en la tira la expande, click en el título la colapsa; si la colapsás con
-tarjetas adentro se respeta hasta que llegue una tarjeta nueva. Cuando hay pocas columnas
-abiertas, las tarjetas se reparten en hasta cuatro subcolumnas según el ancho de la pantalla.
+Tres columnas: **Trabajo** (corriendo y terminó), **Te necesita** y **Muerta**. Una columna sin
+tarjetas se colapsa a una tira vertical: click en la tira la abre, click en el título la cierra.
+Cuando hay lugar, las tarjetas se reparten en hasta cuatro subcolumnas.
 
-Una sesión pasa a *Te necesita* cuando pide permiso, cuando su respuesta termina con una
-pregunta para vos, o cuando está libre sin ningún pedido. Un informe entregado sin pregunta la
-deja en *Trabajo* con la tilde.
+Una sesión pasa a *Te necesita* cuando pide permiso, cuando su respuesta termina con una pregunta
+para vos, o cuando está libre sin ningún pedido. Un informe entregado sin pregunta la deja en
+*Trabajo*.
 
-El buscador del encabezado (`/` lo enfoca) filtra por agente, repo, rama, título y último
-pedido, así que escribir "codex" encuentra las sesiones de Codex, y los chips filtran por agente. Si el filtro matchea tarjetas de una columna colapsada, esa
-columna se abre sola mientras dure el filtro.
+`/` enfoca el buscador (agente, repo, rama, título, último pedido) y los chips filtran por agente.
+Un click en una tarjeta **la elige**: se resaltan sus flechas y sus conexiones se leen en palabras
+("Al terminar le manda su respuesta a lienzo · Coordinadora. Van 4 de 20."). El **doble click abre
+el panel**. Esc cierra de a una capa: primero el panel, después la elección. Todo se alcanza con
+el teclado: Tab recorre las tarjetas y las flechas los controles de la que tenga el foco.
 
-Un click en una tarjeta **la elige**: se resalta, sus flechas quedan opacas y las demás se
-atenúan, y sus conexiones se leen en palabras ("Al terminar le manda su respuesta a lienzo ·
-Coordinadora. Van 4 de 20."), también en la tarjeta del otro extremo. El **doble click abre el
-panel**, sobre la tarjeta que abriste, con el tablero atenuado y difuminado detrás; mientras está
-abierto no se mueve de lugar, pase lo que pase abajo. Se cierra con Esc, con la ✕ de su esquina o
-con un click afuera. Esc cierra de a una capa: primero el panel, después la elección.
+### La tarjeta
 
-Tabulando se recorren las tarjetas; los controles de una tarjeta se alcanzan con las flechas
-cuando esa tarjeta tiene el foco, y Esc vuelve a la tarjeta. Permitir y Denegar de un permiso
-pendiente son la excepción y siempre están en el Tab directo, porque vencen a los 60 segundos. Pestañas: *Destacados*
-(por turno: pedido, respuesta, archivos tocados, comandos, errores, preguntas, mensajes a
-otras sesiones), *Conversación* (la transcripción completa, con las herramientas
-colapsadas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo que recibió, lo que
-mandó, lo que le escribiste desde el lienzo, y las conexiones activas con su estado).
+Título (✎ para renombrarlo), último pedido, y **lo que el agente viene escribiendo en este turno**
+—no el nombre de la herramienta—. Debajo, en qué anda: pasos, cuántos volvieron con error, los
+últimos archivos que tocó, el último comando, los chips de sus conexiones y la sugerencia 💡 que
+la terminal esté mostrando en ese momento.
 
-### Tarjeta
+La ★ marca la coordinadora del repo, una por repo: es a quien van los avisos "cuando termine". Una
+sesión libre muestra un solo botón, "Darle trabajo". Si llegó al límite de uso y el aviso trae la
+hora de vuelta, aparece "Continuar a las HH:MM", que deja programado el "Continuá". Con *Detalles
+técnicos* apagado (menú ⋯) no se ven PID, hooks ni ids.
 
-- Título: el que Claude le pone a la sesión, o la primera línea del pedido; si el pedido
-  llegó como adjunto `.md`, el primer encabezado del archivo. El lápiz ✎ de la fila de arriba lo
-  renombra en el lugar; el nombre queda fijo aunque la sesión cambie de tema. Cuando el título
-  es el propio pedido, la línea del pedido no se repite.
-- Cuando la tarjeta queda angosta (tres columnas abiertas, o el panel abierto en una pantalla
-  chica) pasa a **modo compacto**: agente, repo, estado, título en una línea y un contador de
-  conexiones. Una tarjeta con un permiso pendiente nunca se compacta.
-- La última respuesta y el pedido se muestran como texto plano (sin asteriscos ni almohadillas
-  del markdown); el botón copiar copia el markdown original.
-- Estrella ★ a la derecha de la fila de arriba (aparece al pasar el mouse): marca la sesión
-  como coordinadora del repo, una por repo. Es a quien van los avisos "cuando termine" del
-  SendBox y el "avisame" de las frases. Sin estrella, la coordinadora es la primera sesión de
-  Claude del mismo repo.
-- Último pedido plegado a dos líneas ("…más" lo abre entero), última respuesta, y un botón
-  para copiarla. Mientras la sesión trabaja, la respuesta es **lo que el agente viene
-  escribiendo** en ese turno, no el nombre de la herramienta.
-- Debajo, lo que pasa adentro: cuántos pasos lleva el turno, cuántos volvieron con error, los
-  últimos archivos que tocó y el último comando que corrió.
-- Sesión ociosa con consola: botones rápidos "Continuá", "sí", "no", que se escriben en su
-  terminal, sólo cuando de verdad espera algo. Si está esperando input, la misma línea lo dice.
-- Una sesión que figura corriendo pero está quieta (sin cupo, o sin actividad hace más de
-  quince minutos) lleva el punto apagado en vez del verde, y su tarjeta se ordena al final.
-- Sesión libre (viva, con consola y sin ningún pedido todavía): borde punteado, la línea
-  "Libre · sin pedidos todavía · desde hace N" en vez de "(sin título)", y un único botón
-  "Darle trabajo" que abre el panel con el cursor en la caja de envío.
-- Límite de uso: el error se ve en rojo. Si el aviso trae la hora en que vuelve el cupo
-  ("try again at 1:00 AM", "resets 2:40pm"), aparece el botón "Continuar a las HH:MM", que
-  deja programado escribir "Continuar" un minuto después de esa hora. Si ya hay una regla a
-  esa hora, se muestra el chip en vez del botón.
-- Chips de conexiones: "al terminar → repo · título", "recibe de …", "⏰ 01:01 → Continuar",
-  "↻ cada 30 min · próx. 09:30 → Continuá (1/5)". Si la hora no es de hoy, el chip dice el
-  día ("⏰ vie 11/9 22:19"). Las iguales se agrupan (×N); con más de tres, el resto se ve en la
-  pestaña Conexiones. Dos programadas al mismo minuto hacia la misma tarjeta llevan un ⚠.
-- Chip "✓ informe de X hace N min" cuando otra sesión le mandó algo en la última media hora.
-- La sugerencia 💡 que la terminal esté mostrando en ese momento.
-- Con *Detalles técnicos* apagado (menú ⋯, el estado por defecto), no se ven el PID, los
-  hooks ni el id de la sesión, ni los contadores en cero del digest, ni el nombre del
-  `.jsonl` en el panel. Prendelo para depurar.
+### Contestar, aprobar, adjuntar
 
-### Enviar
+- **Contestarle**: la caja al pie del panel, Enter manda. Se le escribe en su terminal aunque esté
+  oculta y sin robarte el foco. Más de 500 caracteres o varias líneas viajan como `.md` adjunto,
+  que el agente lee por ruta. Si la terminal está mostrando una sugerencia, Tab la escribe.
+- **Aprobar o denegar un permiso** sin ir a la terminal: la tarjeta muestra el comando con
+  Permitir y Denegar. Nunca "permitir siempre". El pedido vence a los 60 segundos y ahí el prompt
+  aparece en la terminal como siempre.
+- **Adjuntar imágenes y archivos**: se arrastran a la caja, o **se pega una captura con Ctrl+V**
+  (sube con nombre por fecha y hora). Es la forma corta de mostrarle un error de pantalla.
+- **Botones rápidos** "Continuá", "sí", "no" en la tarjeta, sólo cuando la sesión de verdad está
+  esperando algo.
+- La casilla **"avisarme cuando termine"** convierte el envío en delegación: manda el texto y crea
+  la regla "cuando termine" hacia la coordinadora. Un gesto en vez de dos.
 
-Caja de texto al pie del panel. Enter manda. Más de 500 caracteres o varias líneas viajan
-como un `.md` adjunto y el agente lo lee por ruta. Se pueden arrastrar archivos e imágenes, y
-**pegar una captura con Ctrl+V**: sube como adjunto con un nombre con la fecha y la hora. Si la terminal muestra una sugerencia, aparece en gris en la caja y Tab la
-escribe, igual que en Claude Code.
-
-La casilla "avisarme cuando termine" convierte el envío en una delegación: además de
-mandar el texto, crea la regla "cuando termine" desde esa sesión hacia la coordinadora (la
-que tiene la estrella, o la primera sesión de Claude del mismo repo que no sea el destino). Un
-gesto en vez de dos.
-
-Lo que escribís desde el lienzo queda en la pestaña Conexiones de esa sesión como
-"recibido de vos (lienzo)". No dibuja flecha.
-
-### Permisos
-
-Cuando una sesión pide permiso, la tarjeta muestra el comando y dos botones, Permitir y
-Denegar. Nunca "permitir siempre".
+Las cuatro pestañas del panel: *Destacados* (por turno: pedido, lo que fue diciendo, respuesta,
+archivos, comandos, errores, preguntas), *Conversación* (la transcripción, con las herramientas
+plegadas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo que recibió, lo que mandó y
+las conexiones activas).
 
 ### Conectar sesiones
 
-Arrastrá una tarjeta **desde su fila de arriba, su título o el agarre ⇢** y soltala sobre otra
-(o "Conectar…" en el panel). El cuerpo de la tarjeta no arrastra: ahí el texto se selecciona y se
-copia. Se abre un diálogo
-chico donde podés escribirlo en una frase, y se interpreta mientras tipeás: "continuá a las
-16:00", "en 30 min seguí", "cada 30 min continuá hasta 6 veces", "todos los días a las 9
-continuá", "cuando termine mandale a MAPO", "cuando termine avisame", "cada vez que termine
-pasale a Teorema hasta 3 veces". "Avisame" es la coordinadora (la primera sesión de Claude del
-mismo repo). Enter confirma. Si no se entiende la frase, los controles de abajo quedan como
-estaban y el resumen lo dice.
+Arrastrá una tarjeta **desde su fila de arriba, su título o el agarre ⇢** y soltala sobre otra (o
+"Conectar…" en el panel). Se escribe en una frase, que se interpreta mientras tipeás: "continuá a
+las 16:00", "en 30 min seguí", "cada 30 min continuá hasta 6 veces", "cuando termine mandale a
+MAPO", "cuando termine avisame". Enter confirma. Soltarla **sobre sí misma** es el bucle.
 
-Soltar la tarjeta **sobre sí misma** es el bucle: abre el mismo diálogo en modo Programar con
-destino "esta misma sesión". El aviso durante el arrastre cambia cuando el mouse está sobre
-la tarjeta de origen. Cuatro modos:
+Cuatro modos: *Ahora* (le manda la última respuesta de la otra, con plantilla editable), *Cuando
+termine* (su respuesta viaja al cerrar cada turno, una vez o hasta un tope), *Programar* (un texto
+a una hora, o cada tanto con tope, y opcionalmente sólo si el destino está libre) y *Canal nativo*
+sólo entre sesiones de Claude, que se hablan con `SendMessage` y se contestan entre ellas.
 
-- *Ahora*: manda la última respuesta de A a B, con plantilla editable
-  (`{repo} {agente} {titulo} {pedido} {respuesta}`).
-- *Cuando A termine*: al cerrar cada turno, su respuesta completa va a B. Una vez, o
-  repetida hasta un tope (50 como máximo). No dispara si el turno terminó con error o con
-  una pregunta para vos, y hay un enfriamiento de 30 s entre disparos.
-- *Programar*: un texto fijo (por defecto "Continuá") a una sesión, que puede ser la misma,
-  a una hora. Es el "seguí" para cuando vuelven los créditos. Con "repetir cada N min/h" se
-  vuelve periódica: se manda cada tanto hasta un tope de veces (5 por defecto, 50 como máximo;
-  no hay periódica sin tope), y con "sólo si está libre" (prendido por defecto) los disparos
-  que caen mientras la sesión trabaja se saltean sin contar. Si el server estuvo caído, los
-  disparos perdidos no se recuperan: el siguiente cae en la grilla original.
-- *Canal nativo* (sólo Claude a Claude): A ubica a B con `ListAgents` y le habla con
-  `SendMessage`; los mensajes llegan aunque B esté trabajando y se responden por el mismo
-  canal. Vos les das el tema; ellas conversan.
-
-El server rechaza con 409 una regla "cuando termine" que cierre un bucle A↔B, y también una
-regla igual a otra que ya existe. Una programada que caiga a menos de dos minutos de otra hacia
-la misma sesión también da 409, sin importar el texto: dos mensajes en el mismo minuto a la
-misma consola nunca es lo que uno quiere. El diálogo lo muestra como "Ya hay una programada a
-las HH:MM" con Reemplazar o Cancelar.
-
-En el celular el agarre ⇢ se arrastra con el dedo; el cuerpo de la tarjeta scrollea.
+Toda regla tiene tope, y el server rechaza el bucle A↔B, la regla repetida y dos programadas al
+mismo minuto hacia la misma sesión.
 
 ### Flechas
 
-Cada conexión se dibuja entre las tarjetas: el último envío de cada par con ↪ (o ×N si hubo
-varios), las reglas pendientes punteadas con ⏹, ⏰ o ↻ (periódica), el canal nativo con una
-flecha doble gruesa. **La flecha de un envío vive diez minutos** y después se va sola: el tablero
-muestra lo que está pasando ahora, y lo que se mandó queda en la pestaña Conexiones. El canal
-nativo no caduca, porque es un vínculo abierto, y las reglas pendientes tampoco, porque todavía
-no pasaron. Las corridas horizontales van por un **carril** propio, debajo del título de
-la columna, entre dos filas o debajo de la última: el mismo criterio en los tres casos. Varias
-flechas en el mismo carril se reparten en pistas paralelas, a 7 px, como un mapa de subte, y la
-columna reserva justo el alto que ese carril necesita. Sin flechas, o con las flechas apagadas, la
-columna no reserva nada. Las reglas de una sesión hacia sí misma no tienen flecha, sólo chip. Entre
-tarjetas de la misma columna la flecha va por arriba, por el hueco entre filas, sin cruzar
-ninguna tarjeta; si no hay camino limpio se dibuja igual, casi transparente. Sin hover, todas
-van al 35 %; la tarjeta bajo el mouse sube las suyas a opaco. Viajan por el canal entre columnas, el glifo cae en el hueco para no robarle el
-click a ninguna tarjeta, y al pasar el mouse sobre una tarjeta se resaltan las suyas. Un
-botón del menú las oculta.
-
-- Un click en el glifo **elige la flecha**: se resalta, se marcan las dos tarjetas que une y
-  aparece al lado qué es y qué hace, en una frase que termina diciendo qué abre el doble click.
-  No borra nada.
-- Doble click en una regla la edita en el lugar: texto, hora, repetición, tope y, en una
-  programada, "repetir cada" y "sólo si está libre". Una programada que ya disparó se puede
-  reprogramar y vuelve a quedar vigente.
-- Doble click en un envío hecho muestra los mensajes de ese par y, si el destino tiene
-  consola, "Mandar de nuevo" escribe el último otra vez. Un envío hecho no se edita.
-- **Quitar** vive adentro del editor y de la vista, con confirmación. Con una flecha elegida,
-  Supr también la quita y Esc la suelta.
-- Mientras el editor o la vista están abiertos, el tablero de atrás se atenúa y se difumina.
+Cada conexión se dibuja entre las tarjetas: el último envío con ↪ (×N si hubo varios), las reglas
+pendientes punteadas con ⏹, ⏰ o ↻, el canal nativo con una flecha doble. **La flecha de un envío
+vive diez minutos** y después se va sola: el tablero muestra lo que está pasando ahora, y lo
+mandado queda en la pestaña Conexiones. Un click en el glifo elige la flecha y explica qué hace;
+el doble click abre el editor de la regla o los mensajes de ese par; Quitar vive adentro, con
+confirmación. Un botón del menú las oculta, y en pantallas de menos de 900 px no se dibujan.
 
 ### Continuar solo tras límite de uso
 
-En el menú ⋯ hay un toggle "Continuar solo tras límite de uso". Prendido, cuando una
-sesión avisa que llegó al límite con hora de vuelta, el server deja programada la regla
-"Continuar" un minuto después, una sola vez por aviso; si borrás la regla, no la vuelve a
-crear. El toggle escribe `auto_continue` en `~/.lienzo/config.json`. Es la única
-automatización que corre sin que hagas nada, y tiene tope: una regla de un disparo.
+En el menú ⋯, apagado por defecto. Prendido, cuando una sesión avisa que llegó al límite con hora
+de vuelta, deja programada la regla "Continuar" un minuto después, una sola vez por aviso; si
+borrás la regla, no la vuelve a crear. Es la única automatización que corre sin que hagas nada.
 
 ## Delegar trabajo a varias sesiones
 
@@ -261,6 +187,10 @@ los créditos, por eso el server rechaza el bucle y cada regla tiene tope.
 ![Conectar escribiendo una frase](docs/img/conectar.png)
 
 ## Acceso desde el celular
+
+**Opcional.** Para usar el lienzo en la propia PC no hace falta nada de esto: el server escucha en
+`127.0.0.1:7321` y listo. El túnel es sólo si querés abrir el tablero desde afuera —tiene sentido
+si el lienzo corre en una máquina que se queda trabajando en casa—.
 
 ```powershell
 .\lienzo-server.cmd --remote
@@ -334,12 +264,12 @@ lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 62 tests
+python -m pytest tests -q                                   # 97 tests
 python -m ruff check lienzo tests install.py                # lint
 python -m black lienzo tests install.py                     # formato
-cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 31 tests de las flechas
-cd web; node --experimental-strip-types src/nl.test.ts                # 77 aserciones del parser de frases
-cd web; npm run test:ui                                               # 25 pruebas de interfaz en el navegador (Playwright)
+cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 37 tests de las flechas
+cd web; node --experimental-strip-types src/nl.test.ts                # 79 aserciones del parser de frases
+cd web; npm run test:ui                                               # 28 pruebas de interfaz en el navegador (Playwright)
 ```
 
 Las de interfaz miden el tablero pintado (alturas, subcolumnas, flechas, scroll, contraste) contra

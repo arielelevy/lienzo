@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { abrirTablero, esperarQuietud } from "./tablero-fijo";
+import { SID, abrirTablero, esperarQuietud } from "./tablero-fijo";
 import { crucesDeFlechas, glifosFueraDeColumnas } from "./medidas";
 
 /** Por debajo de 900 px no hay flechas (Arrows.tsx sale temprano), así que se mide donde las hay. */
@@ -40,4 +40,26 @@ test("con una tarjeta elegida las flechas se recalculan y siguen sin cruzar tarj
   expect(r.cruces.map((c) => `${c.en} entra ${c.adentro}px en la tarjeta ${c.tarjeta}`)).toEqual([]);
   const g = await glifosFueraDeColumnas(page);
   expect(g.fuera).toEqual([]);
+});
+
+test("una columna colapsada no muestra las flechas de sus tarjetas", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await abrirTablero(page);
+  await esperarQuietud(page);
+
+  const flechas = page.locator("svg.arrows g.arrow");
+  const antes = await flechas.count();
+  expect(antes, "el tablero fijo tiene que dibujar flechas").toBeGreaterThan(2);
+  // el envío l2 entra en la tarjeta que pide permiso, la única punta que vive en "Te necesita"
+  await expect(page.locator(`.card[data-sid="${SID.permiso}"]`)).toBeVisible();
+
+  await page.locator(".board .col.te_necesita h2").click();
+  await esperarQuietud(page);
+  await expect(page.locator(".board .col.te_necesita")).toHaveClass(/\bcollapsed\b/);
+
+  // la flecha de la tarjeta escondida no se dibuja en ningún lado: ni llegando a la tira ni
+  // apoyando su glifo sobre la etiqueta vertical
+  expect(await flechas.count()).toBe(antes - 1);
+  const g = await glifosFueraDeColumnas(page);
+  expect(g.fuera.map((f) => `glifo "${f.glifo}" ${f.motivo}`)).toEqual([]);
 });

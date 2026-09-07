@@ -1100,6 +1100,18 @@ def test_turn_say_cae_a_la_herramienta_si_todavia_no_escribio_nada():
     assert ses.turn_say(turno([texto("   ")])) is None
 
 
+def test_turn_say_no_recorta_la_respuesta():
+    """Estaba cortada a 600 caracteres: la tarjeta no lo notaba (el CSS la corta en 6 lineas) pero
+    su boton de copiar copiaba media respuesta y el freno del on_stop nunca veia el '?' del final.
+    Medido: 86 de 124 finales pasan de 600 caracteres."""
+    largo = "Lo que medí: " + "un renglón más de detalle. " * 60 + "¿Sigo con el resto?"
+    assert len(largo) > 600
+    t = turno([texto(largo)], final=largo)
+    assert ses.turn_say(t) == largo
+    assert "…" not in ses.turn_say(t)
+    assert ses.turn_say(t).endswith("?"), "el freno del on_stop mira justo esto"
+
+
 def test_turn_say_no_muestra_el_pensamiento():
     """kind 'thinking' no pasa por add_text, asi que nunca entra en `final`: el toggle
     "Pensamiento" del menu es para la conversacion, no para la tarjeta."""
@@ -1109,11 +1121,6 @@ def test_turn_say_no_muestra_el_pensamiento():
     dicho = ses.turn_say(t)
     assert dicho == "usando Read", "sin texto del agente, el respaldo es la herramienta"
     assert "lock" not in (dicho or ""), "el pensamiento no puede llegar a la tarjeta"
-
-
-def test_turn_say_recorta_como_la_respuesta_final():
-    largo = "x" * 900
-    assert len(ses.turn_say(turno([texto(largo)], final=largo))) == 600
 
 
 def test_la_tarjeta_con_hooks_muestra_el_comentario_del_turno_abierto(aislado):

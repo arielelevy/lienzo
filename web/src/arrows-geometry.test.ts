@@ -259,15 +259,13 @@ test("computeSegs: una regla entre columnas vecinas viaja por el canal, con el g
   assert.equal(s.glyph, "⏹");
 });
 
-test("computeSegs: una flecha hacia una tira colapsada usa el anchor sin contarla como columna", () => {
+test("computeSegs: una punta escondida en una columna colapsada no dibuja nada", () => {
+  // el tablero no ancla flechas en la tira de una columna colapsada: la tarjeta escondida no esta
+  // en `anchors` y la flecha se descarta entera (antes llegaba a la etiqueta vertical y su glifo
+  // se apoyaba encima, tapando el titulo de la columna)
   const rects = new Map([["a", A1], ["b", B1]]);
-  const vlabel = R(640, 100, 668, 220);
-  const anchors = new Map([...rects, ["t", vlabel]]);
-  const segs = computeSegs({ rects, anchors, strips: [STRIP], boardWidth: W, links: [], rules: [rule({ id: "r", from: "b", to: "t" })], fmt });
-  assert.equal(segs.length, 1);
-  // sale por la derecha de B1 y entra por la izquierda de la tira; la tira no tiene columna vecina,
-  // asi que el control de llegada usa el fallback (x2 - half, con half = min(20, 12/2) = 6)
-  assert.equal(segs[0].d, "M 628 60 C 634 60, 634 160, 640 160");
+  const segs = computeSegs({ rects, anchors: rects, strips: [STRIP], boardWidth: W, links: [], rules: [rule({ id: "r", from: "b", to: "escondida" })], fmt });
+  assert.deepEqual(segs, []);
 });
 
 test("computeSegs: misma columna, arco por el costado; y sin extremos visibles, nada", () => {
