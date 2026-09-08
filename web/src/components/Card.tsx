@@ -792,7 +792,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         <span>PID {s.pid ?? "?"}</span>
         <span>{s.source === "sweep" ? "barrido" : "hooks"}</span>
         {s.alive === false && <span>proceso muerto</span>}
-        {s.no_console && !s.orphan && <span className="warn" title="panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe">sin consola</span>}
+        {s.no_console && !s.orphan && <span className="warn" title={s.backend === "tmux" ? "corre suelto, fuera de tmux: se ve, no se le escribe (para escribirle, en tmux)" : "panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe"}>sin consola</span>}
         <span>{s.session_id.slice(0, 8)}</span>
       </div>
       {toastNode}

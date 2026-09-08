@@ -34,6 +34,8 @@ export interface Session {
   pending_id: string | null;
   orphan?: boolean;
   no_console?: boolean;
+  /** que fuente maneja la tarjeta: "win32" (Windows) o "tmux" (Mac/Linux/WSL). Ausente = primario. */
+  backend?: string;
   in_vscode?: boolean;
   suggestion?: string | null;
   /** alguien esta escribiendo en esa terminal (lo detecta screen_loop): lo que se mande se mezcla */

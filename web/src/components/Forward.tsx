@@ -121,7 +121,13 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     if (!targetSession) return "elegí primero una sesión destino";
     if (targetSession.session_id === from.session_id) return "es un canal entre dos sesiones: elegí otra como destino";
     const bad = [from, targetSession].filter((s) => s.agent !== "claude");
-    if (!bad.length) return null;
+    if (!bad.length) {
+      // el canal nativo se apoya en ListAgents, que es por entorno: un claude de Windows no ve a
+      // uno de WSL/Unix (registros separados). Si una esta en tmux y la otra no, no se hablan.
+      if ((from.backend === "tmux") !== (targetSession.backend === "tmux"))
+        return "el canal nativo es entre sesiones del mismo entorno; una corre en Windows y la otra en WSL/Unix, y no se ven entre sí con ListAgents";
+      return null;
+    }
     const who = bad.map((s) => (s.session_id === from.session_id ? "esta sesión" : shortName(s))).join(" y ");
     return `las dos tienen que ser Claude Code; ${who} ${bad.length > 1 ? "son" : "es"} ${agentLabel(bad[0])}`;
   }, [from, targetSession]);

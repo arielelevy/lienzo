@@ -128,8 +128,9 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     return (
       <div className="send">
         <div className="small dim">
-          Esta sesión corre en el panel de Claude Code de VS Code o en una app de escritorio: no tiene consola, así que se
-          puede leer pero no escribirle desde acá. Otra sesión de Claude sí puede hablarle con el canal nativo.
+          {s.backend === "tmux"
+            ? `Esta sesión corre suelta, fuera de tmux: se puede leer, pero para escribirle desde acá tiene que correr adentro de tmux (tmux new -s trabajo ${s.agent}).`
+            : "Esta sesión corre en el panel de Claude Code de VS Code o en una app de escritorio: no tiene consola, así que se puede leer pero no escribirle desde acá. Otra sesión de Claude sí puede hablarle con el canal nativo."}
         </div>
       </div>
     );
