@@ -604,6 +604,54 @@ test("el bucle sale del costado, baja LOOP_SPAN y se va a la izquierda si no ent
   assert.deepEqual([z.x, z.y], [-20, 29]);
 });
 
+test("el bucle de la ultima columna no pisa la tira colapsada de al lado", () => {
+  // medidas reales del tablero a 1680 px: una columna ancha con cinco subcolumnas y dos tiras
+  // colapsadas ("TE NECESITA" y "MUERTA") a la derecha. La tarjeta del Codex "Teorema" es la
+  // ultima, con su borde derecho a 21 px de la tira: el bucle salia igual para la derecha y su
+  // glifo (11 px de radio) quedaba con media rueda encima de la tira
+  const teorema = R(1330, 51, 1595, 187);
+  const vecina = R(1004, 51, 1269, 237);
+  const tira1 = { l: 1616, r: 1636 };
+  const tira2 = { l: 1644, r: 1664 };
+  const bandas: Band[] = [
+    { l: 16, r: 1608, t: 44, b: 588 },
+    { ...tira1, t: 12, b: 588 },
+    { ...tira2, t: 12, b: 588 },
+  ];
+  const rects = new Map([["v", vecina], ["t", teorema]]);
+  const solo = rule({ id: "r1", from: null, to: "t", text: "seguir" });
+  const [s] = computeSegs({ rects, anchors: rects, strips: [tira1, tira2], boardWidth: 1680, bands: bandas, links: [], rules: [solo], fmt });
+  // se fue al costado que tiene lugar, con la panza entera: 20 px a la izquierda del borde
+  assert.equal(s.d, "M 1330 67 C 1302 67 1302 93 1330 93");
+  assert.deepEqual([s.x, s.y], [1310, 80]);
+  // ni la curva ni el circulo del glifo llegan a la tira, y el glifo sigue dentro de la columna
+  for (const [x] of pathPts(s.d)) assert.ok(x > vecina.r && x < tira1.l, `x=${x.toFixed(1)} fuera de la columna`);
+  assert.ok(s.x + 12 < tira1.l, `el glifo llega a ${s.x + 12} y la tira empieza en ${tira1.l}`);
+  assert.ok(s.x - 12 > vecina.r, `el glifo llega a ${s.x - 12} y la vecina termina en ${vecina.r}`);
+});
+
+test("acorralada entre dos tiras colapsadas, el bucle recorta la panza y la curva no entra en la tira", () => {
+  // una columna abierta con una tira colapsada a cada lado (pasa cuando la de "TE NECESITA"
+  // adelanta su lugar en el DOM): ningun costado tiene los 32 px que pide la panza entera
+  const izq = { l: 0, r: 20 };
+  const der = { l: 308, r: 328 };
+  const bandas: Band[] = [
+    { ...izq, t: 12, b: 400 },
+    { l: 28, r: 300, t: 40, b: 400 },
+    { ...der, t: 12, b: 400 },
+  ];
+  const c = R(36, 60, 292, 180);
+  const rects = new Map([["c", c]]);
+  const solo = rule({ id: "r1", from: null, to: "c", text: "seguir" });
+  const [s] = computeSegs({ rects, anchors: rects, strips: [izq, der], boardWidth: 340, bands: bandas, links: [], rules: [solo], fmt });
+  // 16 px de aire de los 32 que hacen falta: media panza (10 en vez de 20) y medio tiron (4 de 8)
+  assert.equal(s.d, "M 36 76 C 22 76 22 102 36 102");
+  for (const [x] of pathPts(s.d)) assert.ok(x > izq.r && x < der.l, `x=${x.toFixed(1)} adentro de una tira`);
+  // el glifo queda pegado a la panza y no llega al centro de la tira
+  assert.deepEqual([s.x, s.y], [26, 89]);
+  assert.ok(s.x > izq.r, `el glifo cayo en la tira, en x=${s.x}`);
+});
+
 test("si bajar derecho cruzaria la tarjeta de encima, la flecha baja por el canal y entra de costado", () => {
   // tres columnas; la del medio es una sola tarjeta alta, asi que la S la atraviesa y el item va
   // por arriba. Para llegar a la de abajo de la tercera no hay ninguna x que esquive a la que tiene
