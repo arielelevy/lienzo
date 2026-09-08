@@ -927,10 +927,18 @@ def answer_pending(request_id: str, decision: str, reason: str = "") -> tuple[in
 BIRTH_MARGIN_S = 120  # margen a los dos lados del nacimiento del proceso, que el barrido fecha grueso
 
 
-def guess_claude(cwd: str, t0: float) -> tuple[str | None, str | None]:
+def transcript_home(d: dict) -> str:
+    """La base donde viven las transcripciones de este agente. Los de WSL vistos desde Windows estan
+    en la home de WSL, que se lee por UNC (\\wsl.localhost\\...); el resto, en la home local."""
+    if d.get("backend") == "tmux" and tmux._VIA_WSL:
+        return tmux.wsl_unc_home() or HOME
+    return HOME
+
+
+def guess_claude(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str | None]:
     """Claude guarda una transcripcion por sesion en un directorio por cwd, y el nombre del archivo
     ES el session_id: alcanza con la mas nueva que siga viva despues de `t0`."""
-    d = os.path.join(HOME, ".claude", "projects", claude_slug(cwd))
+    d = os.path.join(home, ".claude", "projects", claude_slug(cwd))
     cands = [p for p in glob.glob(os.path.join(d, "*.jsonl")) if os.path.getmtime(p) >= t0]
     if not cands:
         return None, None
@@ -938,13 +946,13 @@ def guess_claude(cwd: str, t0: float) -> tuple[str | None, str | None]:
     return os.path.splitext(os.path.basename(p))[0], p
 
 
-def guess_codex(cwd: str, t0: float) -> tuple[str | None, str | None]:
+def guess_codex(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str | None]:
     """Codex mezcla todos los rollouts en un arbol por fecha, asi que hay que abrirlos: entre los
     de la TUI con el mismo cwd, gana el que arranco mas cerca del nacimiento del proceso. "El mas
     nuevo" se equivoca si despues de abrir la TUI corrio un `codex exec` en el mismo directorio."""
     nacio = t0 + BIRTH_MARGIN_S  # t0 ya viene con el margen restado
     best, best_gap = None, None
-    for p in glob.glob(os.path.join(HOME, ".codex", "sessions", "*", "*", "*", "rollout-*.jsonl")):
+    for p in glob.glob(os.path.join(home, ".codex", "sessions", "*", "*", "*", "rollout-*.jsonl")):
         if os.path.getmtime(p) < t0:
             continue
         try:
@@ -966,16 +974,19 @@ def guess_codex(cwd: str, t0: float) -> tuple[str | None, str | None]:
     return best or (None, None)
 
 
-def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[str | None, str | None]:
+def guess_transcript(
+    agent: str, cwd: str | None, created: str | None, home: str = HOME
+) -> tuple[str | None, str | None]:
     """(session_id, transcript_path) mas probable para un agente encontrado por barrido: el barrido
     solo sabe pid y cwd, y de ahi hay que deducir de que sesion se trata. `created` es el
     nacimiento del proceso, con BIRTH_MARGIN_S de margen porque las dos fechas no son la misma
-    (el rollout se crea un rato despues de abrir la TUI)."""
+    (el rollout se crea un rato despues de abrir la TUI). `home` es la base de las transcripciones
+    (la home de WSL por UNC para los agentes de WSL)."""
     if not cwd:
         return None, None
     born = parse_ts(created)
     t0 = born.timestamp() - BIRTH_MARGIN_S if born else 0
-    return guess_claude(cwd, t0) if agent == "claude" else guess_codex(cwd, t0)
+    return guess_claude(cwd, t0, home) if agent == "claude" else guess_codex(cwd, t0, home)
 
 
 def attach_transcript(s: dict) -> None:
@@ -984,7 +995,7 @@ def attach_transcript(s: dict) -> None:
     con lo que la tarjeta deja de llamarse `pid-N`. La busqueda va sin el lock; lo que escribe, con
     el lock y revalidando que la tarjeta siga siendo la misma."""
     cwd = s.get("cwd") or backend.cwd_of(s)
-    sid, tpath = guess_transcript(s["agent"], cwd, s.get("started"))
+    sid, tpath = guess_transcript(s["agent"], cwd, s.get("started"), transcript_home(s))
     if not tpath:
         return
     with lock:
@@ -1010,7 +1021,7 @@ def adopt_process(p: dict) -> None:
     """Agente vivo que ninguna tarjeta reclama: si su transcripcion ya tiene tarjeta, esa recupera
     el pid (venia de una corrida anterior); si no, se abre una nueva."""
     cwd = p.get("cwd") or backend.cwd_of(p)  # en tmux el cwd viene del pane; en win32, del backend
-    sid, tpath = guess_transcript(p["agent"], cwd, p.get("created"))
+    sid, tpath = guess_transcript(p["agent"], cwd, p.get("created"), transcript_home(p))
     with lock:
         s = sessions.get(sid) if sid else None
         if s is not None:

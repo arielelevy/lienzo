@@ -14,6 +14,7 @@ plataforma."""
 
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 import sys
@@ -43,6 +44,30 @@ def available() -> bool:
         return _tmux("-V").returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+@functools.lru_cache(maxsize=1)
+def wsl_unc_home() -> str | None:
+    """La home de WSL vista desde Windows por UNC: \\wsl.localhost\\<distro>\\home\\<user>. Con esto el
+    server de Windows lee las transcripciones .jsonl de los agentes de WSL (que viven en la home de
+    WSL). None si no se corre via wsl.exe, o si no se pudo averiguar."""
+    if not _VIA_WSL:
+        return None
+    try:
+        r = subprocess.run(
+            [*_PREFIX, "bash", "-lc", 'printf "%s\\n%s" "$WSL_DISTRO_NAME" "$HOME"'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = r.stdout.splitlines()
+    if r.returncode != 0 or len(lines) < 2 or not lines[0].strip() or not lines[1].startswith("/"):
+        return None
+    return rf"\\wsl.localhost\{lines[0].strip()}" + lines[1].strip().replace("/", "\\")
 
 
 def list_panes() -> list[dict]:
