@@ -75,13 +75,34 @@ def find_agent_pid(max_hops: int = 8):
 # --- decision de permisos ----------------------------------------------------
 
 
-def decision_json(decision: str, reason: str = "") -> dict:
+def decision_json(decision: str, reason: str = "", updated_input: dict | None = None) -> dict:
     """Forma del JSON de salida: hookSpecificOutput.decision.behavior. Los dos agentes la comparten
-    (verificado en T6 contra la doc); si alguna vez difieren, aca se parte por agente."""
+    (verificado en T6 contra la doc); si alguna vez difieren, aca se parte por agente.
+    `updated_input` va en decision.updatedInput: el input con el que corre la herramienta en vez
+    del original. Es lo que deja contestar una pregunta desde el lienzo (ver answered_input)."""
     body = {"behavior": decision}
     if decision == "deny":
         body["message"] = reason or "Denegado desde el lienzo"
+    if updated_input is not None:
+        body["updatedInput"] = updated_input
     return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": body}}
+
+
+def answered_input(data: dict, ans: dict) -> dict | None:
+    """El tool_input con la respuesta adentro, para un AskUserQuestion contestado desde el lienzo.
+
+    AskUserQuestion pasa por PermissionRequest como cualquier otra herramienta (medido el
+    2026-09-08: llega con tool_name AskUserQuestion, el tool_input con las preguntas y sus
+    opciones, y tool_use_id en null), pero no es un permiso: no hay nada que permitir ni que
+    denegar, hay una opcion que elegir. Un 'allow' pelado solo devuelve la pregunta al selector de
+    la terminal. La respuesta viaja en el propio input, en `answers` {pregunta: opcion elegida},
+    que es donde la deja el selector de la consola."""
+    answers = ans.get("answers")
+    inp = data.get("tool_input")
+    if data.get("tool_name") != "AskUserQuestion" or not isinstance(answers, dict) or not isinstance(inp, dict):
+        return None
+    limpio = {str(k): v for k, v in answers.items() if isinstance(v, str) and v.strip()}
+    return {**inp, "answers": limpio} if limpio else None
 
 
 def wait_for_answer(agent: str, data: dict, wait_s: float) -> dict | None:
@@ -122,7 +143,8 @@ def wait_for_answer(agent: str, data: dict, wait_s: float) -> dict | None:
                     and secrets.compare_digest(str(ans.get("nonce", "")), nonce)
                     and ans.get("decision") in ("allow", "deny")
                 ):
-                    result = decision_json(ans["decision"], ans.get("reason", ""))
+                    upd = answered_input(data, ans) if ans["decision"] == "allow" else None
+                    result = decision_json(ans["decision"], ans.get("reason", ""), upd)
                 break
             time.sleep(0.25)
     finally:

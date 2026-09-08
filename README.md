@@ -32,6 +32,7 @@ Después, cuatro canales, cada uno por su lado:
 | Contenido | Las transcripciones `.jsonl` que Claude Code y Codex ya escriben en disco. Se leen por la cola, nunca enteras. |
 | Mandar un mensaje | Inyección de teclas en la consola del proceso por PID (`AttachConsole` + `WriteConsoleInputW`). Funciona sin foco y aunque la pestaña esté oculta. Los adjuntos viajan como ruta en el texto. |
 | Contestar un permiso | El hook `PermissionRequest` es sincrónico: deja el pedido en una carpeta y espera hasta 60 s la respuesta que el tablero escribe. Si nadie contesta, el prompt aparece en la terminal como siempre. |
+| Contestar una pregunta | El mismo hook: `AskUserQuestion` pide permiso como cualquier herramienta. La opción elegida vuelve adentro del `updatedInput` de la decisión, que es donde la deja el menú de la consola. |
 
 Además: conexiones entre sesiones (reenvío ahora, cuando termine, programado a una hora o
 cada tanto con tope, canal nativo Claude a Claude), flechas entre las tarjetas por cada
@@ -95,8 +96,8 @@ Tres columnas: **Trabajo** (corriendo y terminó), **Te necesita** y **Muerta**.
 tarjetas se colapsa a una tira vertical: click en la tira la abre, click en el título la cierra.
 Cuando hay lugar, las tarjetas se reparten en hasta cuatro subcolumnas.
 
-Una sesión pasa a *Te necesita* cuando pide permiso, cuando su respuesta termina con una pregunta
-para vos, o cuando está libre sin ningún pedido. Un informe entregado sin pregunta la deja en
+Una sesión pasa a *Te necesita* cuando pide permiso, cuando te hace una pregunta con opciones,
+cuando su respuesta termina con una pregunta para vos, o cuando está libre sin ningún pedido. Un informe entregado sin pregunta la deja en
 *Trabajo*.
 
 `/` enfoca el buscador (agente, repo, rama, título, último pedido) y los chips filtran por agente.
@@ -125,6 +126,10 @@ técnicos* apagado (menú ⋯) no se ven PID, hooks ni ids.
 - **Aprobar o denegar un permiso** sin ir a la terminal: la tarjeta muestra el comando con
   Permitir y Denegar. Nunca "permitir siempre". El pedido vence a los 60 segundos y ahí el prompt
   aparece en la terminal como siempre.
+- **Elegir una opción cuando la sesión te pregunta**: `AskUserQuestion` llega por el mismo hook
+  que un permiso, pero no es un permiso. La tarjeta muestra la pregunta y sus opciones con la
+  descripción de cada una; se toca la que va (o se escribe otra cosa) y el agente sigue, sin
+  pasar por la terminal.
 - **Adjuntar imágenes y archivos**: se arrastran a la caja, o **se pega una captura con Ctrl+V**
   (sube con nombre por fecha y hora). Es la forma corta de mostrarle un error de pantalla.
 - **Botones rápidos** "Continuá", "sí", "no" en la tarjeta, sólo cuando la sesión de verdad está

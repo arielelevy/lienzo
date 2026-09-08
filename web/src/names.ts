@@ -257,6 +257,9 @@ export function needsLabel(needs: Needs): string {
     case "permission":
       // sin herramienta no se escribe el ":" colgando, que es como quedaba antes
       return needs.tool ? `Pide permiso: ${needs.tool}` : "Pide permiso";
+    case "question":
+      // AskUserQuestion: llega por el hook de permisos pero no es un permiso (ver Ask.tsx)
+      return "Te hace una pregunta";
     case "agent_needs_input":
       return "Espera que le contestes";
     case "elicitation_dialog":

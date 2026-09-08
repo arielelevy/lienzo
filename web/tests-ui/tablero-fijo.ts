@@ -69,7 +69,8 @@ export const SID = {
   huerfana: "m2",
 } as const;
 
-/** Seis en Trabajo, dos en Te necesita (una pidiendo permiso, que adelanta su columna en el DOM),
+/** Seis en Trabajo, dos en Te necesita (una pidiendo permiso, que adelanta su columna en el DOM,
+ *  y una haciendo una pregunta con opciones),
  *  dos en Muerta (una con el proceso muerto y una huerfana). Diez tarjetas es lo que tenia el
  *  tablero el dia que aparecieron los problemas que estas pruebas miden. */
 export function sesiones(): Session[] {
@@ -155,7 +156,8 @@ export function sesiones(): Session[] {
       agent: "codex",
       state: "te_necesita",
       title: "Estilos del mapa",
-      needs: { kind: "question", detail: "¿la leyenda va arriba o abajo?", where: "terminal" },
+      pending_id: "p2",
+      needs: { kind: "question", tool: "AskUserQuestion", detail: "¿La leyenda va arriba o abajo?", where: "lienzo" },
       last_prompt: "elegí la paleta",
       last_reply: "¿La leyenda va arriba o abajo?",
       state_since: iso(6),
@@ -193,6 +195,28 @@ export function pendientes(): Pending[] {
       agent: "claude",
       tool_name: "Bash",
       tool_input: { command: "npm run test:ui" },
+      expires_at: enMin(1),
+    },
+    // AskUserQuestion: llega por el mismo hook que un permiso pero no es uno, y la tarjeta muestra
+    // las opciones en vez de Permitir/Denegar (Ask.tsx). La forma es la real, medida el 2026-09-08.
+    {
+      request_id: "p2",
+      session_id: SID.pregunta,
+      agent: "codex",
+      tool_name: "AskUserQuestion",
+      tool_input: {
+        questions: [
+          {
+            question: "¿La leyenda va arriba o abajo?",
+            header: "Leyenda",
+            multiSelect: false,
+            options: [
+              { label: "Arriba, sobre el mapa", description: "Flota sobre la esquina, con fondo semitransparente." },
+              { label: "Abajo, fuera del mapa", description: "Una tira debajo del mapa, siempre visible." },
+            ],
+          },
+        ],
+      },
       expires_at: enMin(1),
     },
   ];

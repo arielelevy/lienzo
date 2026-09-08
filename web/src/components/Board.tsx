@@ -28,6 +28,7 @@ interface Props {
   onFilter: (s: State) => void;
   onSelect: (sid: string) => void;
   onDecide: (requestId: string, decision: "allow" | "deny") => void;
+  onAnswer: (requestId: string, answers: Record<string, string>) => Promise<void>;
   onDrop: (sid: string) => void;
   links: Link[];
   rules: Rule[];
@@ -74,7 +75,7 @@ const EMPTY_COLLAPSE_MS = 5_000;   // pedido de Ariel: 10 s se sentia largo
 const ANCHO_TARJETA = 265;
 
 /** Cuantas subcolumnas de tarjetas entran en total. No hay tope fijo: se mide el ancho que queda
- *  **para las tarjetas** (la suma de los `.cards` de las columnas abiertas, sin su relleno) y se
+ *  **para las tarjetas** (la suma de las columnas abiertas, sin su relleno ni el de `.cards`) y se
  *  elige la cantidad que deje la tarjeta mas cerca de ANCHO_TARJETA, en proporcion (350 y 260 estan
  *  igual de lejos de 300 en pixeles, pero 260 se lee peor). Se mide del DOM y no de la ventana
  *  porque el ancho util no es el de la ventana: las tiras de las columnas colapsadas ocupan lo
@@ -83,8 +84,9 @@ const ANCHO_TARJETA = 265;
  *  (medido: 2401, 2400 y 2401 px con 4, 5 y 6), asi que la cuenta no se realimenta.
  *  El ancho de la tarjeta no puede ser estrictamente monotono con subcolumnas enteras --al pasar de
  *  4 a 3 el ancho sube por definicion, porque es el mismo lugar dividido en menos partes--, asi que
- *  ANCHO_TARJETA es tambien un techo: lo que sobra va al canal entre subcolumnas (ver `medir`), y
- *  la tarjeta queda entre 243 y 300 px en todo el rango en vez de 222 a 574. */
+ *  ANCHO_TARJETA es tambien un techo: las tarjetas se apoyan a la izquierda con el canal de siempre
+ *  y lo que sobra queda a la derecha de la ultima subcolumna (ver `medir`), asi que la tarjeta queda
+ *  entre 243 y 265 px en todo el rango en vez de 222 a 574. */
 const MAX_LANES = 12;
 
 function useLaneBudget(ref: React.RefObject<HTMLElement | null>): number {
@@ -94,29 +96,41 @@ function useLaneBudget(ref: React.RefObject<HTMLElement | null>): number {
     if (!board) return;
     const gap = parseFloat(getComputedStyle(board).getPropertyValue("--col-gap")) || 35;
     let util = 0;
-    const cajas: { el: HTMLElement; u: number; n: number }[] = [];
+    const cajas: { el: HTMLElement; u: number; pad: number; n: number }[] = [];
     for (const el of board.querySelectorAll<HTMLElement>(".col:not(.collapsed) .cards")) {
       const cs = getComputedStyle(el);
-      const u = el.clientWidth - parseFloat(cs.paddingLeft || "0") - parseFloat(cs.paddingRight || "0");
+      const pad = parseFloat(cs.paddingLeft || "0") + parseFloat(cs.paddingRight || "0");
+      // el lugar disponible se mide en la **columna**, no en `.cards`: unas lineas mas abajo
+      // `.cards` puede quedar con un techo de ancho, y medirlo a el realimentaria la cuenta (menos
+      // ancho -> menos subcolumnas -> menos ancho). La columna no la toca nadie: la estira el flex.
+      const caja = el.parentElement;
+      const ccs = caja && getComputedStyle(caja);
+      const libre = caja && ccs ? caja.clientWidth - parseFloat(ccs.paddingLeft || "0") - parseFloat(ccs.paddingRight || "0") : el.clientWidth;
+      const u = libre - pad;
       util += u;
-      cajas.push({ el, u, n: parseInt(cs.columnCount) || 1 });
+      cajas.push({ el, u, pad, n: parseInt(cs.columnCount) || 1 });
     }
     if (util <= 0) return; // todas colapsadas: se queda con el reparto que tenia
-    // Techo del ancho de tarjeta: lo que sobra despues de darle ANCHO_TARJETA a cada subcolumna se
-    // reparte en el canal que las separa, no en estirar las tarjetas. Se usa el column-count que
-    // **aplica** el CSS (en movil lo fuerza a 1, y ahi la tarjeta va a lo ancho de la pantalla), y
-    // se toca solo el column-gap: el ancho de `.cards` no cambia, asi que la cuenta de abajo no se
-    // realimenta. Con una sola subcolumna no hay canal donde poner el sobrante y no se recorta.
+    // Techo del ancho de tarjeta: lo que sobra despues de darle ANCHO_TARJETA a cada subcolumna
+    // queda **a la derecha** de la ultima, no en el canal que las separa ni en estirar las
+    // tarjetas. Antes iba al canal, y eso se rompia cuando la columna tiene menos tarjetas que
+    // subcolumnas le entrarian: con dos tarjetas en 1920 el reparto da dos subcolumnas (el tope es
+    // una por tarjeta), la columna igual se estira a todo el tablero y el canal se iba a ~1200 px,
+    // con una tarjeta contra cada borde y un agujero en el medio (lo reporto Ariel el 2026-09-08).
+    // Se usa el column-count que **aplica** el CSS, no --lanes.
     for (const c of cajas) {
-      const sobra = c.n >= 2 ? c.u - (c.n * ANCHO_TARJETA + (c.n - 1) * gap) : 0;
-      c.el.style.columnGap = sobra > 1 ? `${gap + sobra / (c.n - 1)}px` : "";
+      const necesita = c.n * ANCHO_TARJETA + (c.n - 1) * gap;
+      // pantalla angosta (el CSS fuerza una sola subcolumna y no entran dos tarjetas): sin techo,
+      // la tarjeta va a lo ancho de la pantalla
+      const angosta = c.u < 2 * ANCHO_TARJETA + gap;
+      c.el.style.maxWidth = !angosta && c.u > necesita + 1 ? `${necesita + c.pad}px` : "";
     }
     // cuantas subcolumnas entran con la tarjeta en su ancho objetivo, redondeando. Con el techo
     // puesto, redondear para abajo ("las que entren justas") deja la tarjeta clavada en
-    // ANCHO_TARJETA pero junta todo el sobrante en el canal, y cuando falta poco para otra
-    // subcolumna eso es casi una tarjeta de aire (medido a 960 px: 2 subcolumnas y un canal de
-    // 320 px, un agujero en el medio del tablero). Redondeando, el sobrante nunca pasa de media
-    // subcolumna y la tarjeta se queda entre 236 y 265 px, siempre por debajo del techo.
+    // ANCHO_TARJETA pero junta todo el sobrante en un agujero, y cuando falta poco para otra
+    // subcolumna eso es casi una tarjeta de aire (medido a 960 px: 2 subcolumnas y 320 px de
+    // sobra). Redondeando, el sobrante nunca pasa de media subcolumna y la tarjeta se queda entre
+    // 236 y 265 px, siempre por debajo del techo.
     setBudget(Math.max(1, Math.min(MAX_LANES, Math.round((util + gap) / (ANCHO_TARJETA + gap)))));
   };
   // en cada render (una columna que se abre o se colapsa cambia el ancho util sin que cambie el
@@ -185,7 +199,7 @@ interface Drag {
   over: string | null;
 }
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   // el arrastre vive en el ref (los listeners de document lo leen al instante, sin esperar el
   // render) y se copia al estado para dibujar la linea
@@ -637,6 +651,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                           onSelect(s.session_id);
                         }}
                         onDecide={onDecide}
+                        onAnswer={onAnswer}
                         onDrop={() => onDrop(s.session_id)}
                         onGrip={noGrip}
                       />

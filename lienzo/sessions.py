@@ -178,6 +178,29 @@ def choose_title(s: dict, transcript_title: str | None) -> None:
         s["title"], s["title_source"] = None, None
 
 
+def is_question(d: dict) -> bool:
+    """El pendiente no es un permiso sino una pregunta con opciones. AskUserQuestion viene por
+    PermissionRequest igual que todo lo demas, pero Permitir/Denegar no le sirve a nadie: permitir
+    devuelve la pregunta al selector de la terminal y denegar la cancela."""
+    return d.get("tool_name") == "AskUserQuestion" and isinstance(d.get("tool_input"), dict)
+
+
+def questions_of(d: dict) -> list[dict]:
+    """Las preguntas de un AskUserQuestion, cada una con su texto y sus opciones."""
+    if not is_question(d):
+        return []
+    return [q for q in (d["tool_input"].get("questions") or []) if isinstance(q, dict) and q.get("question")]
+
+
+def first_question(d: dict) -> str:
+    """La primera pregunta, para la linea de la tarjeta. Con mas de una se avisa cuantas faltan."""
+    qs = questions_of(d)
+    if not qs:
+        return ""
+    resto = f" (+{len(qs) - 1})" if len(qs) > 1 else ""
+    return short(str(qs[0]["question"]), 300) + resto
+
+
 def tool_detail(tool_input) -> str:
     """Una linea que describa lo que la herramienta va a hacer, para el pedido de permiso."""
     if not isinstance(tool_input, dict):
@@ -757,10 +780,12 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
         hook_notification(s, ev)
     elif name == "PermissionRequest":
         set_state(s, "te_necesita")
+        pregunta = is_question(ev)
         s["needs"] = {
-            "kind": "permission",
+            # una pregunta con opciones no es un permiso: la tarjeta la muestra distinto
+            "kind": "question" if pregunta else "permission",
             "tool": ev.get("tool_name"),
-            "detail": tool_detail(ev.get("tool_input")),
+            "detail": first_question(ev) if pregunta else tool_detail(ev.get("tool_input")),
             "tool_use_id": ev.get("tool_use_id"),
             "where": "lienzo",
         }
@@ -772,7 +797,11 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
             s["needs"]["where"] = "terminal"
         s["pending_id"] = None
     elif name == "PostToolUse":
-        if s["state"] == "te_necesita" and (s.get("needs") or {}).get("tool_use_id") == ev.get("tool_use_id"):
+        # con el id en null no hay con que emparejar y cualquier PostToolUse limpiaria el aviso:
+        # AskUserQuestion pide permiso con tool_use_id null (medido el 2026-09-08), y su cierre lo
+        # trae igual el PermissionDecision / PermissionTimeout
+        tuid = (s.get("needs") or {}).get("tool_use_id")
+        if s["state"] == "te_necesita" and tuid and tuid == ev.get("tool_use_id"):
             set_state(s, "corriendo")
     elif name == "Interrupt":
         set_state(s, "termino")
@@ -905,16 +934,38 @@ def public_pending() -> list[dict]:
         return [{k: v for k, v in d.items() if k != "nonce"} for d in pending.values()]
 
 
-def answer_pending(request_id: str, decision: str, reason: str = "") -> tuple[int, dict]:
+ANSWER_MAX = 2000  # techo de cada respuesta; una opcion es corta y el texto libre no es un ensayo
+
+
+def question_answers(d: dict, answers: object) -> dict:
+    """Lo que se le puede contestar a un AskUserQuestion: solo las preguntas que el pedido trae y
+    solo texto. Lo que no coincide se descarta sin romper (el hook igual revalida antes de armar
+    el updatedInput). El valor puede ser una opcion, varias separadas por coma (multiSelect) o
+    texto libre, que es el "Other" del selector de la terminal."""
+    if not isinstance(answers, dict):
+        return {}
+    preguntas = {q["question"] for q in questions_of(d)}
+    return {
+        k: strip_control(str(v))[:ANSWER_MAX]
+        for k, v in answers.items()
+        if k in preguntas and isinstance(v, str) and v.strip()
+    }
+
+
+def answer_pending(request_id: str, decision: str, reason: str = "", answers: object = None) -> tuple[int, dict]:
     with lock:
         d = pending.get(request_id)
     if d is None:
         return 410, {"ok": False, "error": "el pedido ya vencio o fue contestado"}
-    atomic_write(
-        os.path.join(ANSWERS, f"{request_id}.json"),
-        json.dumps({"nonce": d["nonce"], "decision": decision, "reason": reason, "answered": now()}),
-    )
-    state.log(f"permiso {request_id[:8]} -> {decision} ({d.get('tool_name')})")
+    body = {"nonce": d["nonce"], "decision": decision, "reason": reason, "answered": now()}
+    elegido = question_answers(d, answers) if decision == "allow" else {}
+    if elegido:
+        body["answers"] = elegido
+    atomic_write(os.path.join(ANSWERS, f"{request_id}.json"), json.dumps(body, ensure_ascii=False))
+    if elegido:
+        state.log(f"pregunta {request_id[:8]} contestada: {short(' | '.join(elegido.values()), 200)}")
+    else:
+        state.log(f"permiso {request_id[:8]} -> {decision} ({d.get('tool_name')})")
     return 200, {"ok": True}
 
 
@@ -1148,6 +1199,9 @@ def send_blocked(s: dict) -> tuple[int, dict] | None:
             "error": "esta sesion no tiene consola (panel de VS Code o app de escritorio): no se le puede escribir",
         }
     if s.get("pending_id"):
+        # el mismo pendiente puede ser un permiso o una pregunta con opciones: el mensaje lo dice
+        if is_question(pending.get(s["pending_id"]) or {}):
+            return 409, {"ok": False, "error": "esa sesion te esta preguntando algo; elegi una opcion primero"}
         return 409, {"ok": False, "error": "hay un permiso pendiente; contestalo primero"}
     return None
 
