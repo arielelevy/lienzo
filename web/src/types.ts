@@ -6,6 +6,8 @@ export interface Needs {
   detail?: string;
   tool_use_id?: string | null;
   where?: "lienzo" | "terminal";
+  /** hora del aviso (ISO): el server mide contra esto si la transcripcion siguio despues */
+  since?: string;
 }
 
 export interface Session {

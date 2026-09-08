@@ -383,6 +383,15 @@ def set_state(s: dict, new: str) -> None:
         s["needs"] = None
 
 
+def set_needs(s: dict, needs: dict) -> None:
+    """Pone a la tarjeta en "te necesita" con lo que espera. `since` es la hora del aviso, no la del
+    estado: en una misma tanda de te_necesita se encadenan varios (tres preguntas seguidas el
+    2026-09-08) y `state_since` se queda en el primero, que es la marca contra la que mide
+    needs_answered para saber si la transcripcion siguio despues."""
+    set_state(s, "te_necesita")
+    s["needs"] = {**needs, "since": now()}
+
+
 def touch(s: dict) -> None:
     save_session(s)
     state.broadcast({"type": "session", "session": s})
@@ -522,10 +531,56 @@ REFRESH_KEYS = (
 )
 
 
+def needs_answered(s: dict, t: dict) -> bool:
+    """La transcripcion dice que el permiso (o la pregunta) que tiene frenada a la tarjeta ya se
+    contesto, casi siempre en la terminal. Mientras uno esta abierto Claude no escribe una sola
+    linea --medido el 2026-09-08 en 6024f728: entre el tool_use del AskUserQuestion (20:50:14.002Z)
+    y su tool_result (20:54:22.166Z) no hay ninguna otra linea-- y el tool_use ya estaba escrito
+    0,4 s antes de que llegara el PermissionRequest, asi que actividad posterior al aviso solo
+    puede ser el desenlace.
+
+    Es la unica salida cuando se contesta en la terminal: el hook sigue esperando su respuesta y a
+    los 60 s manda un PermissionTimeout, que solo dice donde hay que contestar. Con AskUserQuestion
+    no hay ninguna otra, porque su PermissionRequest trae tool_use_id null y no habria con que
+    emparejar un PostToolUse (que ademas no esta registrado). La tarjeta se quedaba en "te
+    necesita" hasta el Stop del turno: 19 minutos el 2026-09-08 en esa misma sesion, que habia
+    contestado a los 4 segundos y siguio trabajando."""
+    needs = s.get("needs") or {}
+    if s["state"] != "te_necesita" or needs.get("kind") not in ("permission", "question"):
+        return False  # idle no frena nada: lo cierra el UserPromptSubmit
+    aviso, ultimo = parse_ts(needs.get("since")), parse_ts(t.get("ts_end"))
+    # el mismo margen de 2 s que transcript_state, y por lo mismo: la lectura que cae entre el
+    # tool_use y el hook que lo anuncia no es actividad posterior
+    return aviso is not None and ultimo is not None and (ultimo - aviso).total_seconds() > 2.0
+
+
+def drop_pending(s: dict) -> None:
+    """Le saca a la tarjeta el pedido que tenia abierto: ya se contesto en otro lado y los botones
+    del lienzo no contestan nada. El hook borra el archivo cuando termina de esperar, hasta 60 s
+    despues; borrarlo aca es lo que apaga los botones ahora (`read_pending` mira el directorio, que
+    es la verdad). Con el lock tomado."""
+    rid = s.get("pending_id")
+    if not rid:
+        return
+    s["pending_id"] = None
+    try:
+        os.remove(os.path.join(PENDING, rid + ".json"))
+    except OSError:
+        pass
+
+
 def apply_turn_hooked(s: dict, t: dict) -> None:
     """Sesion con hooks: el pedido y la respuesta final ya vinieron por UserPromptSubmit / Stop. De
     la transcripcion se toma lo que el agente viene diciendo mientras corre, y el estado solo
-    cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido)."""
+    cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido, o un
+    permiso contestado en la terminal, que no deja hook de cierre)."""
+    if needs_answered(s, t):
+        state.log(
+            f"{s['session_id'][:8]}: la transcripcion siguio despues del aviso "
+            f"({(s.get('needs') or {}).get('kind')}); se contesto en la terminal, la tarjeta vuelve a corriendo"
+        )
+        set_state(s, "corriendo")  # set_state limpia `needs` al salir de te_necesita
+        drop_pending(s)
     want = transcript_state(s, t)
     if want:
         if want == "corriendo" and (p := turn_prompt(t)):
@@ -758,12 +813,14 @@ def hook_notification(s: dict, ev: dict) -> None:
         return
     if nt not in NEEDS_NOTIFICATIONS:
         return
-    set_state(s, "te_necesita")
-    s["needs"] = {
-        "kind": "idle" if nt == "idle_prompt" else "permission" if nt == "permission_prompt" else nt,
-        "detail": short(ev.get("message", ""), 300),
-        "where": "terminal",
-    }
+    set_needs(
+        s,
+        {
+            "kind": "idle" if nt == "idle_prompt" else "permission" if nt == "permission_prompt" else nt,
+            "detail": short(ev.get("message", ""), 300),
+            "where": "terminal",
+        },
+    )
 
 
 def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
@@ -779,16 +836,18 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
     elif name == "Notification":
         hook_notification(s, ev)
     elif name == "PermissionRequest":
-        set_state(s, "te_necesita")
         pregunta = is_question(ev)
-        s["needs"] = {
-            # una pregunta con opciones no es un permiso: la tarjeta la muestra distinto
-            "kind": "question" if pregunta else "permission",
-            "tool": ev.get("tool_name"),
-            "detail": first_question(ev) if pregunta else tool_detail(ev.get("tool_input")),
-            "tool_use_id": ev.get("tool_use_id"),
-            "where": "lienzo",
-        }
+        set_needs(
+            s,
+            {
+                # una pregunta con opciones no es un permiso: la tarjeta la muestra distinto
+                "kind": "question" if pregunta else "permission",
+                "tool": ev.get("tool_name"),
+                "detail": first_question(ev) if pregunta else tool_detail(ev.get("tool_input")),
+                "tool_use_id": ev.get("tool_use_id"),
+                "where": "lienzo",
+            },
+        )
     elif name == "PermissionDecision":
         s["pending_id"] = None
         set_state(s, "corriendo")  # set_state ya limpia `needs` al salir de te_necesita

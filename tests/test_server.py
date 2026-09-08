@@ -194,6 +194,75 @@ def test_transcripcion_respeta_te_necesita_y_el_envio_reciente(aislado):
     assert s["state"] == "corriendo"
 
 
+def rows_pregunta(contestada: bool) -> list[dict]:
+    """Un AskUserQuestion en el medio del turno. El tool_use se escribe antes de que llegue el
+    PermissionRequest (0,4 s antes, medido en 6024f728) y mientras la pregunta esta abierta no se
+    escribe una sola linea mas; el tool_result aparece recien al contestarla."""
+    filas = [
+        {"type": "user", "timestamp": utc(-50), "promptId": "A", "message": {"role": "user", "content": "hace X"}},
+        {
+            "type": "assistant",
+            "timestamp": utc(-1),
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "t9", "name": "AskUserQuestion", "input": {"questions": []}}],
+            },
+        },
+    ]
+    if contestada:
+        filas.append(
+            {
+                "type": "user",
+                "timestamp": utc(30),
+                "promptId": "A",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "t9", "content": "Your questions have been answered"}
+                    ],
+                },
+            }
+        )
+    return filas
+
+
+def esperando(path: str, kind: str) -> dict:
+    s = tarjeta(path, "te_necesita", local(-40))
+    s["needs"] = {"kind": kind, "tool": "AskUserQuestion", "tool_use_id": None, "where": "terminal", "since": local(0)}
+    return s
+
+
+def test_la_pregunta_abierta_sigue_esperando(aislado):
+    # nada escrito despues del aviso: la pregunta esta ahi, la tarjeta no se mueve
+    s = esperando(write_jsonl(aislado / "t.jsonl", rows_pregunta(False)), "question")
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "te_necesita" and s["needs"]["kind"] == "question"
+
+
+def test_contestada_en_la_terminal_la_tarjeta_vuelve_a_corriendo(aislado, monkeypatch):
+    """Contestar en la terminal no deja hook de cierre: el hook espera su respuesta y a los 60 s
+    manda un PermissionTimeout, que solo dice donde contestar. La tarjeta se quedaba en te_necesita
+    hasta el Stop del turno (19 minutos el 2026-09-08). El tool_result de la transcripcion la libera."""
+    monkeypatch.setattr(ses, "PENDING", str(aislado))
+    s = esperando(write_jsonl(aislado / "t.jsonl", rows_pregunta(True)), "question")
+    s["pending_id"] = "req-9"
+    with open(aislado / "req-9.json", "w", encoding="utf-8") as f:
+        f.write("{}")
+    ses.apply_event(ev("PermissionTimeout", host_ts=local(60)))  # el cierre que manda el hook al vencer
+    assert s["state"] == "te_necesita", "el timeout no contesta nada: solo dice donde hay que contestar"
+    s["pending_id"] = "req-9"  # PermissionTimeout ya lo limpia; aca se mide el borrado del archivo
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "corriendo" and s["needs"] is None
+    # y los botones se apagan ahora, no cuando el hook borre su pedido
+    assert s["pending_id"] is None and not os.path.exists(aislado / "req-9.json")
+
+
+def test_un_permiso_comun_contestado_afuera_tambien_libera_la_tarjeta(aislado):
+    s = esperando(write_jsonl(aislado / "t.jsonl", rows_pregunta(True)), "permission")
+    ses.refresh_from_transcript(s)
+    assert s["state"] == "corriendo"
+
+
 # 3. la transcripcion real ------------------------------------------------------------
 
 
