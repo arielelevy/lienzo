@@ -1009,30 +1009,50 @@ export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rec
 /** Medidas del bucle: cuanto se aleja la panza del costado de la tarjeta (OUT), cuanto baja entre
  *  que sale y vuelve a entrar (SPAN), desde donde sale medido desde el techo de la tarjeta, o sea
  *  por debajo de su titulo (TOP), cuanto tiran los controles de la cubica mas alla de la panza para
- *  que la vuelta sea redonda (PULL) y el aire que necesita contra el borde del tablero (EDGE). */
-const LOOP_OUT = 20, LOOP_SPAN = 26, LOOP_TOP = 16, LOOP_PULL = 8, LOOP_EDGE = 6;
+ *  que la vuelta sea redonda (PULL). */
+const LOOP_OUT = 20, LOOP_SPAN = 26, LOOP_TOP = 16, LOOP_PULL = 8;
+
+/** Aire que necesita el glifo a cada costado de su centro: el circulo se dibuja de 11 px de radio
+ *  con 1.5 de trazo. Medir solo el centro no alcanza -- un centro un pixel antes de una tira
+ *  colapsada deja media rueda encima de la tira, que es como el bucle del Codex pisaba
+ *  "TE NECESITA". No confundir con `GLYPH_HIT`, que es el blanco del mouse. */
+const GLYPH_VIS = 12;
 
 /** Bucle: una regla de una tarjeta hacia si misma. Sale del costado, da la vuelta y vuelve a
  *  entrar LOOP_SPAN mas abajo, con el glifo en la panza. Va por el costado y no por arriba porque
  *  el carril de arriba no siempre existe (se reserva solo cuando alguna flecha corre en
- *  horizontal); el costado tiene el canal entre columnas, que siempre esta. Si no hay lugar a la
- *  derecha del tablero, el bucle se dibuja a la izquierda de la tarjeta. */
+ *  horizontal); el costado tiene el canal entre columnas, que siempre esta.
+ *
+ *  El costado se elige por el aire que hay: la derecha si el bucle entra entero (panza mas el
+ *  circulo del glifo, dentro del tablero y del area util); si no la izquierda, que es el desahogo
+ *  de siempre. Si tampoco entra ahi -- una tarjeta acorralada entre dos tiras colapsadas -- va al
+ *  costado con mas aire y la panza se recorta a la fraccion del aire que hay del que hace falta:
+ *  recortar la panza es lo unico que no mueve ninguna tarjeta. Recortada asi, la curva nunca entra
+ *  en la tira (su maximo se aleja 0.75*(OUT+PULL)*k, o sea menos de 2/3 del aire); el circulo del
+ *  glifo puede quedar rozandola, que es lo mejor que se consigue sin despegarlo de la panza. */
 export function loopSeg(it: Item, r: Rect, boardWidth: number, zone: Zone = FREE_ZONE, cards: Rect[] = []): Seg {
   const y1 = r.t + LOOP_TOP;
   const y2 = y1 + LOOP_SPAN;
-  // la panza tiene que entrar en el tablero y quedar dentro del area util: sobre una tira colapsada
-  // pegada al borde derecho, la de la derecha caia en el padding y el glifo aparecia suelto afuera
-  const cabe = (dir: 1 | -1) => {
-    const borde = dir === 1 ? r.r : r.l;
-    const panza = borde + dir * (LOOP_OUT + LOOP_EDGE);
-    return panza >= 0 && panza <= boardWidth && glyphOk(zone, borde + dir * LOOP_OUT, (y1 + y2) / 2);
+  const ym = (y1 + y2) / 2;
+  const bordeDe = (dir: 1 | -1) => (dir === 1 ? r.r : r.l);
+  /** aire de ese costado hasta la primera pared: una tira colapsada o el borde del tablero */
+  const aire = (dir: 1 | -1) => {
+    const borde = bordeDe(dir);
+    return dir === 1
+      ? Math.min(boardWidth, ...zone.strips.filter((s) => s.l >= borde).map((s) => s.l)) - borde
+      : borde - Math.max(0, ...zone.strips.filter((s) => s.r <= borde).map((s) => s.r));
   };
-  const dir: 1 | -1 = cabe(1) ? 1 : -1;
-  const x = dir === 1 ? r.r : r.l;
-  const out = x + dir * LOOP_OUT;
-  const ctrl = out + dir * LOOP_PULL;
+  /** el bucle entra entero de ese lado: la panza con el circulo del glifo, y el centro del glifo
+   *  dentro del area util (debajo de los encabezados, ni en el padding del tablero ni en una tira) */
+  const cabe = (dir: 1 | -1) => aire(dir) >= LOOP_OUT + GLYPH_VIS && glyphOk(zone, bordeDe(dir) + dir * LOOP_OUT, ym);
+  // sin columnas medidas no hay nada contra lo que recortar: la izquierda sigue siendo el desahogo
+  const dir: 1 | -1 = cabe(1) ? 1 : !zone.bands.length || cabe(-1) || aire(-1) >= aire(1) ? -1 : 1;
+  const k = !zone.bands.length || cabe(dir) ? 1 : Math.min(1, aire(dir) / (LOOP_OUT + GLYPH_VIS));
+  const x = bordeDe(dir);
+  const out = x + dir * LOOP_OUT * k;
+  const ctrl = out + dir * LOOP_PULL * k;
   const d = `M ${x} ${y1} C ${ctrl} ${y1} ${ctrl} ${y2} ${x} ${y2}`;
-  const [gx, gy] = placeGlyph(zone, cards, out, (y1 + y2) / 2);
+  const [gx, gy] = placeGlyph(zone, cards, out, ym);
   return { ...it, d, x: gx, y: gy, ends: [r, r] };
 }
 
