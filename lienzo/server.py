@@ -578,7 +578,7 @@ class Handler(BaseHTTPRequestHandler):
         if view == "screen":
             if not s.get("pid") or s.get("orphan"):
                 return self._json(409, {"ok": False, "error": "sin consola que leer"})
-            return self._json(200, read_screen(s["pid"]))
+            return self._json(200, read_screen(s))
         if not s.get("transcript_path") or not os.path.exists(s["transcript_path"]):
             return self._json(200, {"meta": {}, "turns": [], "has_more": False, "note": "sin transcripcion"})
         try:

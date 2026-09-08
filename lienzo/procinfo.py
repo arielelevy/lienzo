@@ -9,24 +9,43 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wt
 import os
+import sys
 
-_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-_nt = ctypes.WinDLL("ntdll")
+# Solo Windows carga las DLL. En Mac/Linux/WSL este modulo se importa igual (ahi el backend es tmux):
+# `import ctypes.wintypes` funciona en todos lados, lo unico atado a Windows es ctypes.WinDLL. Con
+# esto el server levanta en WSL; las funciones Win32 devuelven "nada" sin reventar porque
+# open_process corta primero (ver abajo).
+_WIN = sys.platform == "win32"
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 PROCESS_QUERY_INFORMATION = 0x0400
 PROCESS_VM_READ = 0x0010
 STILL_ACTIVE = 259
 
-_k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
-_k32.OpenProcess.restype = wt.HANDLE
-_k32.CloseHandle.argtypes = [wt.HANDLE]
-_k32.GetExitCodeProcess.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
-_k32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
-_k32.QueryFullProcessImageNameW.restype = wt.BOOL
-_k32.ReadProcessMemory.argtypes = [wt.HANDLE, wt.LPCVOID, wt.LPVOID, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
-_k32.ReadProcessMemory.restype = wt.BOOL
-_nt.NtQueryInformationProcess.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.ULONG, ctypes.POINTER(wt.ULONG)]
+if _WIN:
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _nt = ctypes.WinDLL("ntdll")
+    _k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+    _k32.OpenProcess.restype = wt.HANDLE
+    _k32.CloseHandle.argtypes = [wt.HANDLE]
+    _k32.GetExitCodeProcess.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
+    _k32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
+    _k32.QueryFullProcessImageNameW.restype = wt.BOOL
+    _k32.ReadProcessMemory.argtypes = [
+        wt.HANDLE,
+        wt.LPCVOID,
+        wt.LPVOID,
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    _k32.ReadProcessMemory.restype = wt.BOOL
+    _nt.NtQueryInformationProcess.argtypes = [
+        wt.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wt.ULONG,
+        ctypes.POINTER(wt.ULONG),
+    ]
 
 AGENTS = {"claude.exe": "claude", "codex.exe": "codex"}
 
@@ -44,8 +63,9 @@ class _PBI(ctypes.Structure):
 
 
 def open_process(pid: int | None, access: int = PROCESS_QUERY_LIMITED_INFORMATION):
-    """HANDLE o None. El que abre cierra con close_handle."""
-    if not pid:
+    """HANDLE o None. El que abre cierra con close_handle. Fuera de Windows devuelve None y toda la
+    cadena Win32 (alive, image_path, proc_info, cwd_of) queda en 'nada' sin reventar."""
+    if not _WIN or not pid:
         return None
     return _k32.OpenProcess(access, False, int(pid)) or None
 

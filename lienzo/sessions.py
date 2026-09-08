@@ -17,8 +17,9 @@ import threading
 import time
 import traceback
 
-import procs
+import backend
 import state
+import tmux
 import transcripts
 from state import (
     ADJUNTOS,
@@ -306,6 +307,8 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "session_id": sid,
         "agent": agent,
         "pid": None,
+        "target": None,  # backend tmux: el pane (%0, %1, ...) donde escribir/leer. None en Windows.
+        "backend": None,  # "win32" | "tmux": que fuente maneja esta tarjeta. None = primario de la plataforma.
         "agent_exe": None,
         "cwd": None,
         "repo": "?",
@@ -685,7 +688,7 @@ def claim_pid(s: dict, ev: dict) -> None:
         s["agent_exe"] = ev.get("agent_exe")
         # el panel de Claude Code de VS Code y las apps de escritorio disparan hooks pero no
         # tienen consola: se ven y se leen, no se les escribe
-        s["no_console"] = not procs.is_tui(pid)
+        s["no_console"] = not backend.is_tui(s)
 
 
 def title_from_prompt(s: dict) -> None:
@@ -797,7 +800,7 @@ def apply_event(ev: dict) -> None:
         s["source"] = "hook"
         if s.get("state") not in STATES:
             s["state"], s["state_since"] = "termino", now()
-        if ev.get("pid") and procs.agent_alive(ev["pid"]):
+        if ev.get("pid") and backend.agent_alive(ev):
             claim_pid(s, ev)
         if ev.get("cwd") and (not s.get("cwd") or name == "SessionStart"):
             # el cwd de los hooks sigue al shell del agente (cambia con un cd de una tool);
@@ -980,7 +983,7 @@ def attach_transcript(s: dict) -> None:
     primer turno, no al abrir): buscarla y, si aparece, tomar tambien el session_id real que trae,
     con lo que la tarjeta deja de llamarse `pid-N`. La busqueda va sin el lock; lo que escribe, con
     el lock y revalidando que la tarjeta siga siendo la misma."""
-    cwd = s.get("cwd") or procs.cwd_of(s["pid"])
+    cwd = s.get("cwd") or backend.cwd_of(s)
     sid, tpath = guess_transcript(s["agent"], cwd, s.get("started"))
     if not tpath:
         return
@@ -1006,21 +1009,34 @@ def attach_transcript(s: dict) -> None:
 def adopt_process(p: dict) -> None:
     """Agente vivo que ninguna tarjeta reclama: si su transcripcion ya tiene tarjeta, esa recupera
     el pid (venia de una corrida anterior); si no, se abre una nueva."""
-    cwd = procs.cwd_of(p["pid"])
+    cwd = p.get("cwd") or backend.cwd_of(p)  # en tmux el cwd viene del pane; en win32, del backend
     sid, tpath = guess_transcript(p["agent"], cwd, p.get("created"))
     with lock:
         s = sessions.get(sid) if sid else None
         if s is not None:
-            if not s.get("pid") or not procs.agent_alive(s["pid"]):
-                s.update({"pid": p["pid"], "agent_exe": p["exe"], "alive": True, "dead_since": None})
+            s["backend"] = p.get("backend")  # la fuente que la vio es la que la maneja
+            if p.get("target"):
+                s["target"] = p["target"]  # en tmux el pane manda, aunque el pid siga vivo. No-op en Windows.
+            if not s.get("pid") or not backend.agent_alive(s):
+                s.update(
+                    {
+                        "pid": p["pid"],
+                        "target": p.get("target"),
+                        "agent_exe": p["exe"],
+                        "alive": True,
+                        "dead_since": None,
+                    }
+                )
                 if s["state"] == "muerta":
                     set_state(s, "termino")
                 touch(s)
             return
-        s = new_session(sid or f"pid-{p['pid']}", p["agent"], "sweep")
+        s = new_session(sid or f"{p.get('backend') or 'win'}-{p['pid']}", p["agent"], "sweep")
         s.update(
             {
                 "pid": p["pid"],
+                "target": p.get("target"),
+                "backend": p.get("backend"),
                 "agent_exe": p["exe"],
                 "cwd": cwd,
                 "repo": repo_of(cwd),
@@ -1042,7 +1058,7 @@ def sweep_once() -> None:
     """Barrido de respaldo: los agentes vivos que los hooks no reportaron."""
     global last_sweep
     last_sweep = time.time()
-    found = procs.sweep()
+    found = backend.sweep()
     with lock:
         known_pids = {s.get("pid") for s in sessions.values() if s.get("pid")}
         sin_transcripcion = [
@@ -1060,7 +1076,7 @@ def refresh_alive(s: dict) -> bool:
     algo. Una tarjeta sin pid no se toca: nunca se supo de ningun proceso suyo."""
     if not s.get("pid"):
         return False
-    if procs.agent_alive(s["pid"]):
+    if backend.agent_alive(s):
         if s["alive"]:
             return False
         s["alive"] = True
@@ -1138,7 +1154,7 @@ def save_attachment(sid: str, name: str, data: bytes) -> str:
 
 def send_blocked(s: dict) -> tuple[int, dict] | None:
     """Por que no se le puede escribir a esta sesion, o None si se puede."""
-    if not s.get("pid") or not procs.agent_alive(s["pid"]):
+    if not s.get("pid") or not backend.agent_alive(s):
         return 409, {"ok": False, "error": "la sesion no tiene un PID vivo"}
     if s.get("orphan"):
         return 409, {"ok": False, "error": "la sesion perdio su terminal (huerfana): no hay consola donde escribir"}
@@ -1188,9 +1204,19 @@ def compose_send(sid: str, text: str, attachments: list[str]) -> tuple[str, str,
     return " ".join(parts), orig, attachments
 
 
-def run_send(sid: str, pid: int, final: str) -> tuple[int, dict]:
-    """Subproceso send.py, que teclea `final` en la consola de `pid`. Un texto largo va por archivo:
-    la linea de comando de Windows no lo aguanta. (codigo, respuesta de send.py)."""
+def run_send(s: dict, final: str) -> tuple[int, dict]:
+    """Teclea `final` en la consola del agente. En tmux es send-keys al pane; en Windows, el
+    subproceso send.py por PID (un texto largo va por archivo: la linea de comando no lo aguanta).
+    (codigo, respuesta)."""
+    if backend.is_tmux(s):
+        if not tmux.target_valid(s.get("target"), s.get("pid")):
+            return 409, {
+                "ok": False,
+                "error": "el pane cambió (¿tmux reinició?): no se envía, para no teclear en la terminal equivocada",
+            }
+        r = tmux.send(s.get("target"), final, enter=True)
+        return (200, r) if r.get("ok") else (500, r)
+    sid, pid = s["session_id"], s["pid"]
     tf = save_attachment(sid, ".send.txt", final.encode("utf-8")) if len(final) > 2000 else None
     cmd = [PYTHON, os.path.join(HERE, "send.py"), "--pid", str(pid)]
     cmd += ["--text-file", tf] if tf else ["--text", final]
@@ -1226,7 +1252,7 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     final, orig, attachments = compose_send(sid, text, attachments)
     if not final:
         return 400, {"ok": False, "error": "texto vacio"}
-    code, out = run_send(sid, s["pid"], final)
+    code, out = run_send(s, final)
     if code == 200 and not out.get("ok"):
         state.log(f"send {sid[:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
         code = 500
@@ -1256,11 +1282,17 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
 # --- pantalla (solo para las sugerencias de la TUI de Claude, DISENO §12) ------------------
 
 
-def read_screen(pid: int) -> dict:
-    """Subproceso: screen.py hace FreeConsole/AttachConsole y no puede correr dentro del server."""
+def read_screen(s: dict) -> dict:
+    """La pantalla del agente: capture-pane del pane en tmux, o el subproceso screen.py por PID en
+    Windows (FreeConsole/AttachConsole no puede correr dentro del server)."""
+    if backend.is_tmux(s):
+        tgt = s.get("target")
+        if not tmux.target_valid(tgt, s.get("pid")):
+            return {"ok": False, "error": "el pane ya no es de esta sesión"}
+        return tmux.screen(tgt, scrollback=200)
     try:
         r = subprocess.run(
-            [PYTHON, os.path.join(HERE, "screen.py"), "--pid", str(pid), "--json"],
+            [PYTHON, os.path.join(HERE, "screen.py"), "--pid", str(s["pid"]), "--json"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -1284,7 +1316,7 @@ def screen_once() -> None:
             if s.get("agent") == "claude" and s.get("pid") and s.get("alive") and not s.get("orphan")
         ]
     for s in items:
-        r = read_screen(s["pid"])
+        r = read_screen(s)
         area = r.get("area") if r.get("ok") else None
         escrito = bool(area and not area["placeholder"])
         with lock:
@@ -1334,7 +1366,7 @@ def load_sessions() -> tuple[int, int]:
                 s.setdefault(k, v)
             if s.get("state") not in STATES:
                 s["state"], s["state_since"] = "termino", s.get("state_since") or now()
-            if not procs.agent_alive(s.get("pid")):
+            if not backend.agent_alive(s):
                 ref = parse_ts(s.get("last_event_ts") or s.get("started"))
                 if ref is None or ref < limit:
                     os.remove(p)
