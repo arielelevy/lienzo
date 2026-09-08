@@ -198,6 +198,20 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     [toast],
   );
 
+  /** Contestar una pregunta con opciones: es el mismo pendiente que un permiso, pero la respuesta
+   *  elegida viaja en `answers` y el hook la mete en el input de la herramienta. */
+  const answer = useCallback(
+    async (requestId: string, answers: Record<string, string>) => {
+      try {
+        await api.post(`/pending/${requestId}`, { decision: "allow", answers });
+        toast(`Contestado: ${Object.values(answers).join(" · ")}`);
+      } catch (e) {
+        toast(`No se pudo contestar: ${(e as Error).message}`, true);
+      }
+    },
+    [toast],
+  );
+
   const drop = useCallback(
     async (sid: string) => {
       if (!confirm("Quitar la tarjeta? No toca la sesión.")) return;
@@ -339,6 +353,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onFilter={setFilter}
         onSelect={setSelected}
         onDecide={decide}
+        onAnswer={answer}
         onDrop={drop}
         links={links}
         rules={rules}
@@ -395,6 +410,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
              queda atras y difuminada, y en el celular tapada del todo */
           pending={sel.pending_id ? pending[sel.pending_id] : undefined}
           onDecide={decide}
+          onAnswer={answer}
         />
         </>
       )}

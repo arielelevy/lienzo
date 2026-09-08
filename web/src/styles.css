@@ -222,6 +222,25 @@ details.fold > summary,
    de palabra aunque hubiera espacios: "El agente espera una respuesta en la termi/nal". */
 .card .needs code, .panel .needs code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; color: #ffd77a; }
 .card .btns, .panel .needs .btns { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+/* Pregunta con opciones (AskUserQuestion). Llega por el mismo hook que un permiso y usa el mismo
+   recuadro, pero adentro no van Permitir/Denegar: van las opciones que escribió el agente, cada
+   una a lo ancho con su título y su descripción. En el celular se contesta con un toque. */
+.needs.ask .q { margin-top: 6px; }
+.needs.ask .qtext { color: #ffd77a; overflow-wrap: anywhere; }
+.needs.ask .opt { display: block; width: 100%; text-align: left; margin-top: 4px; padding: 5px 7px;
+  background: #1d1b12; border: 1px solid #5c4a12; border-radius: 5px; font-size: 11.5px; }
+.needs.ask .opt.on { border-color: var(--acc); background: #332d17; }
+.needs.ask .opt .olabel { display: block; font-weight: 600; overflow-wrap: anywhere; }
+/* la descripción es prosa del agente y puede ser larga: tres líneas y corta, el texto entero
+   queda en la terminal y en la conversación del panel */
+.needs.ask .opt .odesc { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden; color: var(--dim); margin-top: 2px; }
+.needs.ask .otro { display: block; width: 100%; box-sizing: border-box; margin-top: 5px; padding: 4px 6px;
+  background: #14161c; border: 1px solid var(--line); border-radius: 5px; color: var(--fg); font: inherit; font-size: 11.5px; }
+.needs.ask .btns { flex-wrap: wrap; }
+/* salida al selector de la consola: es la escapatoria, no la acción principal */
+.needs.ask .term { background: none; border: 0; padding: 0; color: var(--dim); text-decoration: underline; font-size: 11px; }
+.needs.ask .term:hover { color: var(--fg); }
 .card .meta { margin-top: 6px; font-size: 11px; color: var(--dim); display: flex; gap: 10px; flex-wrap: wrap; }
 /* .x, .grip y .del son <button> por accesibilidad, pero se ven como los glifos sueltos de antes */
 .card .x, .card .grip, .card .rule .del { background: none; border: 0; border-radius: 4px; line-height: 1; font: inherit; }
@@ -281,6 +300,16 @@ details.fold > summary,
 .panel.narrow .tabs button { padding: 6px 8px; font-size: 12.5px; }
 .panel.narrow .body { padding: 10px; }
 .panel.narrow .send { padding: 8px 10px; }
+/* Panel al minimo (abajo de 470 px: es lo que mide cuando se retrae para no partir una tarjeta, o
+   en una ventana de 900-1020). En una fila sola no entran el badge, el titulo, las cuatro pestanas
+   compactas y "Conectar…": la fila no envuelve y se salia del panel --y con el panel pegado al
+   borde derecho, de la pantalla, donde no hay barra de scroll con la que alcanzarlo (medido a
+   1152 con el panel abierto: 26 px afuera)--. Aca vuelve a envolver: el titulo se lleva el primer
+   renglon entero y las pestanas con Conectar bajan al segundo, con las pestanas mas apretadas para
+   que los dos entren juntos incluso en 380 px. */
+.panel.narrow.tight .ph { flex-wrap: wrap; }
+.panel.narrow.tight .ph .t { flex: 1 1 100px; }
+.panel.narrow.tight .tabs button { padding: 6px 5px; }
 /* chica y discreta como la ✕ de una tarjeta */
 .panel .ph .x { position: absolute; top: 6px; right: 8px; background: none; border: 0; border-radius: 4px; color: var(--dim); font: inherit; font-size: 11px; line-height: 1; padding: 3px 6px; cursor: pointer; }
 .panel .ph .x:hover { color: var(--fg); border-color: transparent; }

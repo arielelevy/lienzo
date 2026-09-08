@@ -2,6 +2,7 @@ import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode 
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
 import { isFree, periodLabel, schedLabel, stalledReason } from "../names";
+import { Ask, askQuestions } from "./Ask";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import { TurnView } from "./Turn";
@@ -55,6 +56,7 @@ interface Props {
   /** permiso pendiente de esta sesion, si lo hay: se contesta desde aca tambien */
   pending?: Pending;
   onDecide: (requestId: string, decision: "allow" | "deny") => void;
+  onAnswer: (requestId: string, answers: Record<string, string>) => Promise<void>;
 }
 
 const cut = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n).trimEnd()}…` : t);
@@ -161,7 +163,9 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
   );
 }
 
-export function Panel({ session: s, others, onConnect, transcriptTick, onClose, toast, details, anchor, pending, onDecide }: Props) {
+export function Panel({ session: s, others, onConnect, transcriptTick, onClose, toast, details, anchor, pending, onDecide, onAnswer }: Props) {
+  // el pendiente puede ser una pregunta con opciones y no un permiso: ahi van las opciones
+  const preguntas = askQuestions(pending);
   const [tab, setTab] = useState<"digest" | "chat" | "screen" | "conn">("digest");
   type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
   const [screen, setScreen] = useState<Screen | null>(null);
@@ -381,8 +385,12 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
   return (
     /* angosto: el encabezado usa las pestanas compactas, las mismas del celular, para no comerse
        filas cuando el panel se achica para dejar ver el tablero. El corte esta en 700 px porque
-       abajo de eso las cuatro pestanas mas Conectar no entran en una fila con el tamano grande */
-    <div className={`panel ${box.width < 700 ? "narrow" : ""}`} style={{ left: box.left, top: box.top, width: box.width, height: box.height, maxHeight: box.height }}>
+       abajo de eso las cuatro pestanas mas Conectar no entran en una fila con el tamano grande.
+       Abajo de 470 ni con las compactas: `tight` deja que la fila envuelva y baja las pestanas y
+       Conectar a un segundo renglon (ver styles.css). Sin eso se salian del panel: son `flex: 0 0
+       auto` en una fila `nowrap`, y el panel puede quedar en 380 px (el minimo al que se retrae
+       para no partir una tarjeta) o en 414 en una ventana de 900. */
+    <div className={`panel ${box.width < 700 ? "narrow" : ""} ${box.width < 470 ? "tight" : ""}`} style={{ left: box.left, top: box.top, width: box.width, height: box.height, maxHeight: box.height }}>
       <div className="ph">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         {/* una linea sola: el titulo largo se corta con puntos suspensivos y va entero en el title,
@@ -431,7 +439,8 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           caja de envio no llevaba a ningun lado. Es el mismo bloque `.needs` de la tarjeta: antes
           era un `.sched` (una fila de chips) al que seis estilos en linea le daban vuelta la
           maqueta. La hora va con hhmm, en 24 h como el resto de la app. */}
-      {pending && (
+      {pending && preguntas.length > 0 && <Ask pending={pending} questions={preguntas} onAnswer={onAnswer} onDecide={onDecide} />}
+      {pending && preguntas.length === 0 && (
         <div className="needs">
           <b>Pide permiso: {pending.tool_name}</b>
           <code>{detail(pending.tool_input)}</code>

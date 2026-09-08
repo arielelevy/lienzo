@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
 import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
+import { Ask, askQuestions } from "./Ask";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
 
@@ -293,6 +294,7 @@ interface Props {
   /** doble click (o Enter): abrir el panel */
   onSelect: () => void;
   onDecide: (requestId: string, decision: "allow" | "deny") => void;
+  onAnswer: (requestId: string, answers: Record<string, string>) => Promise<void>;
   onDrop: () => void;
   onGrip?: (e: React.MouseEvent) => void;
   onPress?: (e: React.MouseEvent) => void;
@@ -300,7 +302,7 @@ interface Props {
   toast?: ToastFn;
 }
 
-export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, onPick, onSelect, onDecide, onDrop, onGrip, onPress, toast: extToast }: Props) {
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const [promptOpen, setPromptOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
@@ -360,6 +362,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   // botones rapidos: solo si la sesion espera input de verdad o pregunto algo. Una que entrego un
   // informe y no pregunto nada no tiene nada que continuar ni que contestar: alcanza la caja del panel
   const quick = writable && !s.pending_id && !p && (s.needs?.kind === "idle" || asks);
+  // pendiente que en realidad es una pregunta con opciones: se contesta eligiendo (Ask.tsx)
+  const preguntas = askQuestions(p);
   // libre: viva, con consola y sin ningun pedido todavia (sesion recien abierta). No hay nada que
   // continuar ni que contestar: en vez de los botones rapidos, un solo "Darle trabajo" que abre el
   // panel con el cursor en la caja
@@ -653,8 +657,11 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           ✓ {recentFrom} · hace {ago(recent.ts)}
         </div>
       )}
-      {/* lo que pide la sesion va antes que la respuesta: Permitir/Denegar es lo primero visible */}
-      {p ? (
+      {/* lo que pide la sesion va antes que la respuesta: Permitir/Denegar es lo primero visible.
+          Si lo que espera es una pregunta con opciones, van las opciones: no hay nada que permitir */}
+      {p && preguntas.length > 0 ? (
+        <Ask pending={p} questions={preguntas} onAnswer={onAnswer} onDecide={onDecide} />
+      ) : p ? (
         // no se frena la propagacion del bloque entero: es la mitad de la tarjeta y frenarlo dejaba
         // el doble click sin abrir el panel. Los dos botones la frenan por su cuenta
         <div className="needs">

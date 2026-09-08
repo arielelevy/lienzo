@@ -62,6 +62,21 @@ export interface Pending {
   expires_at: string;
 }
 
+/** Una opción de una pregunta con opciones (AskUserQuestion), tal como la escribió el agente. */
+export interface AskOption {
+  label: string;
+  description?: string;
+}
+
+/** Pregunta con opciones. Llega adentro del `tool_input` de un pendiente de AskUserQuestion, que
+ *  no es un permiso: se contesta eligiendo, no permitiendo (ver Ask.tsx). */
+export interface AskQuestion {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options?: AskOption[];
+}
+
 export interface ToolResult {
   text: string;
   is_error: boolean;

@@ -618,7 +618,7 @@ class Handler(BaseHTTPRequestHandler):
                 d = self._json_body()
                 if d.get("decision") not in ("allow", "deny"):
                     return self._json(400, {"error": "decision debe ser allow o deny"})
-                code, res = answer_pending(parts[1], d["decision"], d.get("reason", ""))
+                code, res = answer_pending(parts[1], d["decision"], d.get("reason", ""), d.get("answers"))
                 return self._json(code, res)
             if len(parts) == 3 and parts[0] == "sessions":
                 s = self._session(parts[1])
