@@ -61,13 +61,48 @@ el contenido, de las transcripciones `.jsonl`. Lo atado a Win32 son dos archivos
 (escribir en la consola de otro proceso, `AttachConsole` + `WriteConsoleInputW`) y `screen.py`
 (leer su buffer, `ReadConsoleOutputCharacterW`).
 
-En Mac o Linux esas dos piezas salen **más fáciles**, con tmux en el medio: `tmux send-keys -t
-<pane>` en vez de attachearse a la consola ajena, `tmux capture-pane -p` en vez de leer el
-buffer —y encima con scrollback y con la sesión sobreviviendo al cierre de la terminal, que en
-Windows no existe—. La condición es que los agentes arranquen adentro de tmux, y el
-direccionamiento pasa a ser por pane en vez de por PID. Sin tmux, en Mac queda peor que en
-Windows: un PTY es de quien lo creó y no hay forma de leer la pantalla de otra terminal ni de
-escribirle a un PID. **No está hecho: se podría.**
+En Mac o Linux esas dos piezas salen con tmux en el medio: `tmux send-keys -t <pane>` en vez de
+attachearse a la consola ajena, `tmux capture-pane -p` en vez de leer el buffer —y encima con
+scrollback—. El direccionamiento pasa a ser por pane en vez de por PID.
+
+**Está hecho, en la rama [`porting-linux`](https://github.com/arielelevy/lienzo/tree/porting-linux)**
+(ver `docs/porting-linux-2026-09-08.md`): un backend tmux portable Mac/Linux/WSL (descubrimiento por
+`ps`, no `/proc`), y un backend **multi-fuente** para que un board corriendo en Windows vea también
+los agentes de WSL (los maneja por `wsl.exe`, y les lee la transcripción por `\\wsl.localhost`).
+
+Ahora bien, hay un límite de fondo que no es de lienzo sino de Unix, y conviene tenerlo claro:
+
+- **Leer** un agente (su conversación, su estado) **no necesita tmux**: sale del proceso (`ps`), su
+  cwd y su transcripción `.jsonl`. Un claude/codex que abrís normal en una terminal aparece en el
+  board **en solo lectura**.
+- **Escribirle** sí necesita tmux. En Unix un PTY es de quien lo creó: no hay forma soportada de que
+  otro proceso le teclee a una terminal ajena que ya corre (en Windows sí, con `AttachConsole`).
+  tmux es lo que da ese acceso —por eso el agente tiene que **nacer** adentro—.
+
+Para que un agente sea escribible desde el board, arrancalo en tmux. El helper lo esconde en un
+comando:
+
+```bash
+./lienzo-new.sh claude          # (o codex, o: ./lienzo-new.sh claude mirepo)
+# Ctrl+b, d  para salir sin cerrarlo ; tmux attach -t <nombre>  para volver
+```
+
+#### TIOCSTI: escribirle a un agente suelto sin tmux (apagado por seguridad)
+
+El único mecanismo para inyectarle entrada a una terminal ajena sin tmux es el ioctl **`TIOCSTI`**.
+Lo **desactivaron por defecto** en los kernels modernos (CVE-2017-5226: cualquier proceso podía
+inyectar comandos en cualquier terminal del usuario). Si alguien lo quiere habilitar —su máquina,
+su decisión— es un `sysctl`:
+
+```bash
+cat /proc/sys/dev/tty/legacy_tiocsti          # 0 = apagado (lo normal)
+sudo sysctl -w dev.tty.legacy_tiocsti=1        # prenderlo (o en /etc/sysctl.d para que persista)
+```
+
+Prenderlo **baja una defensa** (vuelve a permitir que cualquier proceso local teclee en tus
+terminales). Con eso prendido se podría escribir a agentes sueltos como en Windows, pero el camino
+**seguro** es tmux: no inyecta desde afuera, sino que uno es dueño del PTY desde el arranque (que es
+justo lo que recomendaron los del kernel al sacar TIOCSTI). Lienzo, por ahora, **no** usa TIOCSTI.
 
 ## Instalación
 

@@ -91,12 +91,26 @@ distro.
 nombre del directorio de proyecto. O sea el puente de conversación para los agentes de WSL es
 factible (falta cablearlo).
 
+## Hecho después de la primera versión
+
+- **Puente de transcripciones de WSL** (`\\wsl.localhost`): las tarjetas de agentes de WSL traen
+  título y pestaña Conversación. `guess_transcript` toma un `home` opcional (`tmux.wsl_unc_home`).
+- **Fuente de procesos sueltos (solo lectura)**: `tmux.all_agents()` descubre los claude/codex de
+  WSL/Mac que corren **fuera de tmux**, con su conversación, marcados `no_console` (se leen, no se
+  les escribe). `proc_cwd` portable (readlink /proc en Linux/WSL, lsof en Mac).
+- **Mensajes correctos**: el cartel de "sin consola" distingue app de escritorio (Windows) de
+  agente suelto (WSL/Unix); `nativeWhy` bloquea el canal nativo entre entornos distintos.
+- **Helper `lienzo-new.sh`**: `./lienzo-new.sh claude` abre el agente adentro de tmux (esconde tmux
+  en un comando). Ver el README.
+- **Pantalla de codex**: era un falso problema. `capture-pane -p` lee tanto la pantalla normal
+  (`alternate_on=0`, p.ej. el prompt de confianza de codex) como la alternativa (`=1`, la TUI de
+  claude). Lo que se veía vacío era un pane que ya había salido, no la pantalla alternativa.
+
 ## Pendiente
 
-- **Fuente de procesos sueltos (solo lectura)**: mostrar los claude/codex de WSL/Mac que corren
-  fuera de tmux, con su conversación (por `ps` + `\\wsl.localhost` / `~/.claude`), marcados "sin
-  consola" (como las apps de escritorio). Diseñado, no cableado.
-- **Puente de transcripciones de WSL** (B2): título y pestaña Conversación para las tarjetas de WSL.
-- **Helper `lienzo new "<tarea>"`**: esconder tmux en un comando (agente visible + escribible).
-- **Pantalla de codex**: usa pantalla alternativa; `capture-pane -p` la trae vacía (probar `-e`).
+- **Escribirle a un agente suelto sin tmux**: solo con TIOCSTI (apagado por seguridad; ver el
+  README). El camino seguro es tmux.
+- **Nativo entre entornos**: un claude de Windows no ve a uno de WSL por `ListAgents` (registros
+  separados) — verificado. Queda bloqueado en la UI; un puente real seria otro proyecto.
 - **Mac real**: no verificable sin un Mac; el `ps` usado es la sintaxis compartida BSD/Linux.
+- **Multi-distro de WSL**: hoy se mira el distro default; una fuente por distro es la extensión.
