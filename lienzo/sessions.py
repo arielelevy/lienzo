@@ -1026,6 +1026,7 @@ def adopt_process(p: dict) -> None:
         s = sessions.get(sid) if sid else None
         if s is not None:
             s["backend"] = p.get("backend")  # la fuente que la vio es la que la maneja
+            s["no_console"] = bool(p.get("no_console"))  # suelto (sin pane) = solo lectura
             if p.get("target"):
                 s["target"] = p["target"]  # en tmux el pane manda, aunque el pid siga vivo. No-op en Windows.
             if not s.get("pid") or not backend.agent_alive(s):
@@ -1048,6 +1049,7 @@ def adopt_process(p: dict) -> None:
                 "pid": p["pid"],
                 "target": p.get("target"),
                 "backend": p.get("backend"),
+                "no_console": bool(p.get("no_console")),
                 "agent_exe": p["exe"],
                 "cwd": cwd,
                 "repo": repo_of(cwd),

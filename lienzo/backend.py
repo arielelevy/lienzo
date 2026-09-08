@@ -33,28 +33,25 @@ def is_tmux(d: dict) -> bool:
     return b == "tmux" if b else NAME == "tmux"
 
 
-def _agent_of(a: dict) -> str:
-    """claude vs codex: el comm suele ser 'node', asi que se mira la linea de comando completa."""
-    cl = (a.get("command", "") + " " + a.get("cmd", "")).lower()
-    return "codex" if "codex" in cl else "claude"
-
-
 def _tmux_sweep() -> list[dict]:
-    """Panes con un agente, con la forma de procs.sweep() mas `cwd`, `target` (el pane) y backend."""
+    """Todos los agentes claude/codex (en tmux o sueltos), con la forma de procs.sweep() mas `cwd`,
+    `target` (el pane, o None si esta suelto) y `backend`. Los sueltos van en solo lectura
+    (no_console): se ven y se leen, pero no se les escribe (no hay pane; ver docs/porting-linux)."""
     out = []
-    for a in _t.find_agent_panes(_AGENT_COMMS):
+    for a in _t.all_agents():
         out.append(
             {
                 "pid": a["pid"],
-                "agent": _agent_of(a),
-                "exe": a.get("command") or a["cmd"],
+                "agent": a["agent"],
+                "exe": a.get("command") or a["comm"],
                 "created": None,
                 "parent": "tmux",
                 "grandparent": None,
                 "in_vscode": False,
                 "orphan": False,
                 "cwd": a.get("cwd"),
-                "target": a["target"],
+                "target": a.get("target"),
+                "no_console": a.get("target") is None,
                 "backend": "tmux",
             }
         )

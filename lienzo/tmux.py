@@ -214,6 +214,77 @@ def find_agent_panes(names: set[str]) -> list[dict]:
     return res
 
 
+def _wsl_run(*args: str) -> subprocess.CompletedProcess | None:
+    """Un comando cualquiera dentro de WSL (readlink, etc.), con el prefijo wsl.exe."""
+    try:
+        return subprocess.run(
+            [*_PREFIX, *args], capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace"
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def proc_cwd(pid: int | None) -> str:
+    """cwd de un proceso cualquiera (este o no en un pane). Portable: readlink /proc en Linux/WSL,
+    lsof en Mac. Para los agentes sueltos, que no tienen pane del que sacar el cwd."""
+    if not pid:
+        return ""
+    if _VIA_WSL:
+        r = _wsl_run("readlink", f"/proc/{int(pid)}/cwd")
+        return r.stdout.strip() if r and r.returncode == 0 else ""
+    try:
+        return os.readlink(f"/proc/{int(pid)}/cwd")  # Linux nativo
+    except OSError:
+        pass
+    try:  # macOS: no hay /proc, se pregunta con lsof
+        r = subprocess.run(
+            ["lsof", "-a", "-d", "cwd", "-Fn", "-p", str(int(pid))], capture_output=True, text=True, timeout=10
+        )
+        return next((ln[1:] for ln in r.stdout.splitlines() if ln.startswith("n")), "")
+    except (OSError, subprocess.SubprocessError, StopIteration):
+        return ""
+
+
+def _is_agent(comm: str, cmd: str) -> bool:
+    """El proceso es un agente (claude/codex nativo, o el CLI corriendo sobre node). No cuenta un
+    `node` cualquiera —los MCP servers son node— salvo que la linea de comando sea la del CLI."""
+    if comm in ("claude", "codex"):
+        return True
+    if comm == "node":
+        low = cmd.lower()
+        return "claude-code" in low or "codex" in low or "claude/cli" in low
+    return False
+
+
+def all_agents() -> list[dict]:
+    """TODOS los agentes claude/codex de la maquina (Mac/Linux) o de WSL, esten o no en tmux. Los que
+    corren en un pane traen `target` (se les puede escribir); los sueltos, target None (solo lectura,
+    como las apps de escritorio en Windows). Una sola foto de `ps` mas los panes."""
+    snap = _ps_all()
+    pid_pane: dict[int, tuple[str, str]] = {}
+    for p in list_panes():
+        if p["pane_pid"] is not None:
+            for q in _descendants(p["pane_pid"], snap):
+                pid_pane[q] = (p["target"], p["cwd"])
+    out = []
+    for pid, (_ppid, comm, cmd) in snap.items():
+        if not _is_agent(comm, cmd):
+            continue
+        pane = pid_pane.get(pid)
+        target, cwd = (pane[0], pane[1]) if pane else (None, proc_cwd(pid))
+        out.append(
+            {
+                "pid": pid,
+                "agent": "codex" if "codex" in (comm + " " + cmd).lower() else "claude",
+                "comm": comm,
+                "command": cmd,
+                "cwd": cwd,
+                "target": target,
+            }
+        )
+    return out
+
+
 def send(target: str, text: str, enter: bool = True) -> dict:
     """Teclea `text` literal en el pane y, salvo enter=False, un Enter aparte. El filtrado de
     caracteres de control (hallazgo A4) ya vino hecho en compose_send, que es agnostico del backend."""
