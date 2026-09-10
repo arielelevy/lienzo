@@ -3,6 +3,7 @@ import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
 import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
+import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
 
@@ -304,6 +305,7 @@ interface Props {
 
 export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
+  const workClipboard = useWorkClipboard(s, !!p || !!s.pending_id, toast);
   const [promptOpen, setPromptOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -405,6 +407,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       await api.post("/rules", { kind: "at", from: null, to: s.session_id, text: "Continuar", at: limitAt.toISOString() });
       return `A las ${hhmm(limitAt)} se le escribe "Continuar"`;
     }, (m) => `No se pudo programar: ${m}`);
+  /** una opción del diálogo de la TUI: se teclea el número en su terminal, sin Enter */
+  const pickDialog = (n: number, text: string) =>
+    act(async () => {
+      await api.post(`/sessions/${s.session_id}/dialog`, { choice: n });
+      return `Elegido: ${text}`;
+    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo elegir: ${m}`));
   const quickSend = (text: string) =>
     act(async () => {
       const r = await api.post<{ chars: number }>(`/sessions/${s.session_id}/send`, { text, attachments: [] });
@@ -460,6 +468,15 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       }}
       onKeyDown={(e) => {
         const onCard = e.target === e.currentTarget;
+        if (onCard && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !window.getSelection()?.toString()) {
+          const key = e.key.toLowerCase();
+          if (key === "c" && workClipboard.canCopy) {
+            e.preventDefault(); e.stopPropagation(); void workClipboard.copy(); return;
+          }
+          if (key === "v" && workClipboard.canPaste) {
+            e.preventDefault(); e.stopPropagation(); workClipboard.paste(); return;
+          }
+        }
         // con el menú abierto, Escape lo cierra y vuelve al ⋯ (y no le llega al tablero)
         if (e.key === "Escape" && menuOpen) {
           e.stopPropagation();
@@ -578,6 +595,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       </div>
       {menuOpen && (
         <div className="cardmenu" role="menu" ref={menuRef} onClick={(e) => e.stopPropagation()}>
+          <button type="button" role="menuitem" disabled={!workClipboard.canCopy}
+            onClick={() => { closeMenu(); void workClipboard.copy(); }}>Copiar trabajo · Ctrl+C</button>
+          <button type="button" role="menuitem" disabled={!workClipboard.canPaste}
+            onClick={() => { closeMenu(); workClipboard.paste(); }}>Pegar trabajo · Ctrl+V</button>
           {writable && (
             <button
               type="button"
@@ -684,6 +705,34 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           </div>
         </div>
       ) : null}
+      {/* diálogo de la TUI ("Switch model?"): no es un permiso, no dispara hooks y nadie lo ve
+          desde afuera; se lee de la pantalla cada 5 s. Un permiso pendiente le gana (el server ya
+          no publica el diálogo en ese caso) */}
+      {!p && s.dialog && writable && (
+        <div className="needs ask tui">
+          <b>Espera que elijas en la terminal</b>
+          <div className="q">
+            <div className="qtext">{s.dialog.question}</div>
+            {s.dialog.detail && <div className="dim small">{s.dialog.detail}</div>}
+            {s.dialog.options.map((o) => (
+              <button
+                key={o.n}
+                type="button"
+                className={`opt ${o.n === s.dialog!.selected ? "on" : ""}`}
+                disabled={busy}
+                data-always-tab=""
+                title={o.n === s.dialog!.selected ? "la que está marcada en la terminal" : "se teclea el número en su terminal"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  pickDialog(o.n, o.text);
+                }}
+              >
+                <span className="olabel">{o.n}. {o.text}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {s.last_error ? (
         <div className={`error ${errorOpen ? "open" : ""}`}>
           <span className="etext">⚠ {errorOpen ? s.last_error : err.head}</span>
@@ -723,6 +772,15 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               📋
             </button>
           )}
+        </div>
+      )}
+      {/* el turno se cortó con un error de API: lo único que falta es volver a pedirlo. Con
+          auto_retry prendido el server ya lo mandó solo y el botón no hace falta */}
+      {s.retryable && writable && !s.pending_id && (
+        <div className="limitrow" onClick={(e) => e.stopPropagation()}>
+          <button type="button" disabled={busy} title='se escribe "Continuar" en su terminal' onClick={() => quickSend("Continuar")}>
+            ↻ Reintentar
+          </button>
         </div>
       )}
       {limitPending && !hasContinue && writable && limitAt && (
@@ -803,6 +861,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         <span>{s.session_id.slice(0, 8)}</span>
       </div>
       {toastNode}
+      {workClipboard.preview}
     </div>
     </>
   );

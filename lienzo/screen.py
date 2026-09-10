@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """lienzo-screen: lee el texto visible de la consola de un agente por PID (AttachConsole +
 ReadConsoleOutputCharacterW sobre CONOUT$). Es la unica excepcion a "no raspar la pantalla"
-(DISENO §10) y existe para una sola cosa: las sugerencias de prompt que Claude Code muestra
-en la TUI y que no quedan en ningun archivo ni hook.
+(DISENO §10) y existe para lo que la TUI de Claude Code muestra y no queda en ningun archivo ni
+hook: las sugerencias de prompt, y los dialogos de opciones numeradas ("Switch model?"), que no
+son un pedido de permiso y por eso no los ve nadie desde afuera.
 
     python screen.py --pid N            # imprime la pantalla
     python screen.py --pid N --json     # {"ok":true,"cols":..,"rows":..,"lines":[...]}
@@ -15,6 +16,7 @@ import ctypes
 import ctypes.wintypes as wt
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -105,7 +107,22 @@ def read_screen(pid: int, whole_buffer: bool = False) -> dict:
 
 
 PLACEHOLDERS = ("Press up to edit queued messages", 'Try "', 'Try "', "Type a message", "? for shortcuts")
-RULE_CHARS = ("─", "━", "═")
+# el simbolo del cursor de la caja de entrada. Segun la version y la fuente, el buffer de consola
+# lo devuelve como ❯ o como > pelado, y lo que sigue puede ser un espacio duro
+PROMPT_CHARS = ("❯", ">", "›")
+# la raya que abre y cierra la caja de entrada. Claude Code 2.1.267 la dibuja con medio bloque
+# (▔) y las versiones anteriores con guion de caja (─): valen las dos
+RULE_CHARS = ("─", "━", "═", "▔", "▁", "▄", "▀")
+
+
+def sin_cursor(line: str) -> str:
+    """La linea de la caja sin el simbolo del cursor. Sin esto una caja vacia se lee como ">" y el
+    lienzo la toma por texto tipeado: la tarjeta decia "estan tipeando en esa terminal" en toda
+    sesion ocupada (medido el 2026-09-09: 4 de 4 sesiones corriendo)."""
+    s = line.lstrip().replace(" ", " ")
+    if s[:1] in PROMPT_CHARS:
+        s = s[1:]
+    return s.strip()
 
 
 def input_area(lines: list[str]) -> dict:
@@ -122,13 +139,57 @@ def input_area(lines: list[str]) -> dict:
             s = l.strip()
             if s.startswith("❯ ") and not any(p in s for p in PLACEHOLDERS):
                 queued.append(s[2:].strip())
-    text = " ".join(b[2:].strip() if b.startswith("❯") else b for b in box).strip()
+    text = " ".join(sin_cursor(b) for b in box).strip()
     is_placeholder = any(p in text for p in PLACEHOLDERS) or not text
     return {
         "input": text,
         "placeholder": is_placeholder,
         "queued": queued,
         "status": (lines[-1].strip() if lines else ""),
+    }
+
+
+# "❯ 1. Yes, switch to Opus 5" / "  2. No, go back": una opcion del menu, con o sin el cursor
+_OPT_RE = re.compile(r"^(?P<cur>[>❯›])?\s*(?P<n>\d{1,2})\.\s+(?P<txt>\S.*)$")
+
+
+def dialog(lines: list[str]) -> dict | None:
+    """El dialogo de opciones numeradas que la TUI de Claude dibuja donde va la caja de entrada
+    ("Switch model?", "Do you want to...?"). No dispara ningun hook --no es una herramienta pidiendo
+    permiso-- asi que si nadie mira la pantalla la sesion se queda esperando para siempre: es el
+    caso de `/model` mandado desde el lienzo, que abre el dialogo y nadie confirma.
+
+    Devuelve {"question", "options": [{"n", "text"}], "selected"} o None. Para no confundirlo con
+    una lista numerada cualquiera de la salida se piden tres cosas: dos opciones o mas, numeradas
+    1..n corridas, y exactamente una con el cursor (❯ o >) adelante."""
+    run: list[tuple[int, dict]] = []
+    best: list[tuple[int, dict]] = []
+    for i, raw in enumerate(lines):
+        m = _OPT_RE.match(raw.strip())
+        if m and int(m.group("n")) == len(run) + 1:
+            run.append((i, {"n": int(m.group("n")), "text": m.group("txt").strip(), "cursor": bool(m.group("cur"))}))
+            continue
+        if len(run) >= 2:
+            best = run
+        run = (
+            []
+            if not m or int(m.group("n")) != 1
+            else [(i, {"n": 1, "text": m.group("txt").strip(), "cursor": bool(m.group("cur"))})]
+        )
+    if len(run) >= 2:
+        best = run
+    if len(best) < 2 or sum(1 for _, o in best if o["cursor"]) != 1:
+        return None
+    top = best[0][0]
+    # el cuerpo del dialogo es lo que va entre la regla horizontal de arriba y la primera opcion;
+    # su primera linea es la pregunta ("Switch model?") y el resto, la explicacion
+    rule = max((i for i, l in enumerate(lines[:top]) if l.strip() and set(l.strip()) <= set(RULE_CHARS)), default=-1)
+    body = [l.strip() for l in lines[max(rule + 1, top - 12) : top] if l.strip()]
+    return {
+        "question": body[0] if body else "",
+        "detail": " ".join(body[1:])[:400],
+        "options": [{"n": o["n"], "text": o["text"]} for _, o in best],
+        "selected": next(o["n"] for _, o in best if o["cursor"]),
     }
 
 
@@ -141,6 +202,7 @@ def main() -> int:
     r = read_screen(a.pid, a.all)
     if r.get("ok"):
         r["area"] = input_area(r["lines"])
+        r["dialog"] = dialog(r["lines"])
     if a.json:
         print(json.dumps(r, ensure_ascii=False))
     elif r.get("ok"):

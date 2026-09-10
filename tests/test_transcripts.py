@@ -140,6 +140,17 @@ def test_looks_like_error():
     assert tr.looks_like_error("") is False
 
 
+def test_retryable_error():
+    """El turno que se corto solo se reintenta; el que espera cupo o credito, no."""
+    assert tr.retryable_error("API Error: The response stopped arriving. The response above may be incomplete.") is True
+    assert tr.retryable_error('API Error: 500 {"type":"overloaded_error"}') is True
+    assert tr.retryable_error("Request timed out.") is True
+    assert tr.retryable_error("You've hit your session limit · resets 2:40pm") is False
+    assert tr.retryable_error("API Error: 429 rate limit exceeded") is False
+    assert tr.retryable_error("Credit balance is too low") is False
+    assert tr.retryable_error("") is False
+
+
 # 6. limit_reset -----------------------------------------------------------------
 
 
@@ -196,9 +207,7 @@ def test_un_final_largo_deja_solo_la_ultima_oracion():
 
 def test_el_corte_es_por_oracion_y_no_por_el_signo_de_apertura():
     """El '¿' suele abrir despues del contexto que hace entendible la pregunta: cortar ahi lo pierde."""
-    final = (
-        "x" * 250 + "\nPor convención del repo las facts internas van ocultas — " "¿la oculto o la dejás a la vista?"
-    )
+    final = "x" * 250 + "\nPor convención del repo las facts internas van ocultas — ¿la oculto o la dejás a la vista?"
     assert _preguntas(final) == [
         "Por convención del repo las facts internas van ocultas — ¿la oculto o la dejás a la vista?"
     ]
@@ -374,3 +383,53 @@ def test_codex_si_pone_id_de_turno_en_el_evento(codex_path):
     lines, _ = tr.tail_lines(codex_path)
     eventos = [d for d in tr.iter_json(lines) if d.get("type") == "event_msg"]
     assert [d for d in eventos if (d.get("payload") or {}).get("turn_id")]
+
+
+# 7. un "API Error" con trabajo despues no es el final del turno ------------------------------
+
+
+def _jsonl(tmp_path, filas):
+    import json
+
+    p = tmp_path / "sesion.jsonl"
+    p.write_text(chr(10).join(json.dumps(f, ensure_ascii=False) for f in filas), encoding="utf-8")
+    return str(p)
+
+
+def _asistente(texto=None, tool=None, ts="2026-09-10T00:41:18.775Z", **extra):
+    b = (
+        {"type": "text", "text": texto}
+        if texto is not None
+        else {"type": "tool_use", "id": "t1", "name": tool, "input": {}}
+    )
+    return {"type": "assistant", "timestamp": ts, "message": {"role": "assistant", "content": [b]}, **extra}
+
+
+ERROR_API = "API Error: The response stopped arriving. The response above may be incomplete."
+
+
+def test_error_de_api_con_trabajo_despues_no_cuenta(tmp_path):
+    """Claude Code escribe el aviso y a veces sigue solo: medido en 88182904 el 2026-09-09, el
+    error quedo 170 lineas antes del final y la tarjeta lo mostraba en rojo (y el reintento
+    automatico mandaba un "Continuar" de mas) con la sesion trabajando."""
+    filas = [
+        {"type": "user", "timestamp": "2026-09-10T00:01:11.172Z", "message": {"role": "user", "content": "Continuar"}},
+        _asistente(texto=ERROR_API, isApiErrorMessage=True),
+        _asistente(tool="Bash", ts="2026-09-10T01:12:21.000Z"),
+    ]
+    t = tr.turns("claude", _jsonl(tmp_path, filas), 1)["turns"][-1]
+    assert t["error"] is None, "el turno siguio trabajando: el aviso no fue el final"
+    assert t["ended"] is False
+
+
+def test_error_de_api_al_final_si_cuenta(tmp_path):
+    """Sin nada despues, el turno murio ahi: es el caso que se reintenta."""
+    filas = [
+        {"type": "user", "timestamp": "2026-09-10T00:01:11.172Z", "message": {"role": "user", "content": "Continuar"}},
+        _asistente(tool="Bash", ts="2026-09-10T00:30:00.000Z"),
+        _asistente(texto=ERROR_API, isApiErrorMessage=True),
+    ]
+    t = tr.turns("claude", _jsonl(tmp_path, filas), 1)["turns"][-1]
+    assert t["error"] == ERROR_API
+    assert t["ended"] is True
+    assert tr.retryable_error(t["error"]) is True

@@ -61,10 +61,9 @@ export default function App() {
 function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; refreshAuth: () => void; onSetup: () => void }) {
   const [showQr, setShowQr] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
-  // dialogo de conectar (por arrastre o desde el boton del panel): flotante, sin abrir nada mas
+  // dialogo de conectar (se abre arrastrando una tarjeta sobre otra): flotante, sin abrir nada mas
   const [connect, setConnect] = useState<{ from: string; to: string } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [showThinking, setShowThinking] = useState(false);
   const [filter, setFilter] = useState<State>("corriendo");
   // flechas visibles u ocultas, recordado por navegador
   const [showArrows, toggleArrows] = useLocalFlag("lienzo.arrows", true);
@@ -83,26 +82,37 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // notificaciones del navegador cuando una sesion pide permiso; el click abre su panel
   const { notify, toggleNotify } = useNotifications({ sessions, pending, onOpen: setSelected, toast });
 
-  // auto_continue vive en ~/.lienzo/config.json (lo lee el server): GET/PUT /config. null mientras
-  // carga o si el server que corre no tiene la ruta todavia
+  // auto_continue y auto_retry viven en ~/.lienzo/config.json (lo lee el server): GET/PUT /config.
+  // null mientras carga o si el server que corre no tiene la ruta todavia
   const [config, setConfig] = useState<Config | null>(null);
   const loadConfig = useCallback(() => api.get<Config>("/config").then(setConfig).catch(() => setConfig(null)), []);
   useEffect(() => {
     loadConfig();
   }, [loadConfig]);
-  const toggleAutoContinue = useCallback(async () => {
-    if (!config) {
-      toast("El server que corre no tiene /config todavía: reiniciá el server", true);
-      return;
-    }
-    try {
-      const c = await api.put<Config>("/config", { auto_continue: !config.auto_continue });
-      setConfig(c);
-      toast(c.auto_continue ? "Ante un límite de uso con hora, se programa \"Continuar\" solo" : "Continuar automático apagado");
-    } catch (e) {
-      toast(`No se pudo cambiar: ${(e as Error).message}`, true);
-    }
-  }, [config, toast]);
+  const toggleConfig = useCallback(
+    async (key: keyof Config, on: string, off: string) => {
+      if (!config) {
+        toast("El server que corre no tiene /config todavía: reiniciá el server", true);
+        return;
+      }
+      try {
+        const c = await api.put<Config>("/config", { [key]: !config[key] });
+        setConfig(c);
+        toast(c[key] ? on : off);
+      } catch (e) {
+        toast(`No se pudo cambiar: ${(e as Error).message}`, true);
+      }
+    },
+    [config, toast],
+  );
+  const toggleAutoContinue = useCallback(
+    () => toggleConfig("auto_continue", 'Ante un límite de uso con hora, se programa "Continuar" solo', "Continuar automático apagado"),
+    [toggleConfig],
+  );
+  const toggleAutoRetry = useCallback(
+    () => toggleConfig("auto_retry", 'Ante un error de API, se reintenta solo (una vez por error)', "Reintento automático apagado"),
+    [toggleConfig],
+  );
 
   // filtro visual del header: texto + agentes. "/" enfoca la caja, Esc la limpia.
   const [query, setQuery] = useState("");
@@ -265,8 +275,16 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const flags = [
     { label: "Avisos", icon: "🔔", on: notify, toggle: toggleNotify, title: "aviso del navegador (aunque la pestaña esté atrás) cuando una sesión pide permiso o te hace una pregunta" },
     { label: "Flechas", icon: "↪", on: showArrows, toggle: toggleArrows, title: "dibujar las conexiones entre tarjetas: envíos hechos, reglas pendientes y canal nativo" },
-    { label: "Pensamiento", icon: "💭", on: showThinking, toggle: () => setShowThinking((v) => !v), title: "en la pestaña Conversación, mostrar también lo que el agente razona antes de contestar (los bloques de pensamiento). Apagado se ve solo lo que dijo e hizo" },
     { label: "Detalles técnicos", icon: "🛠", on: details, toggle: toggleDetails, title: "para depurar: PID, hooks e id de sesión en las tarjetas, contadores en cero del digest, nombre del .jsonl en el panel" },
+    {
+      label: "Reintentar solo tras un error de API",
+      icon: "↻",
+      on: !!config?.auto_retry,
+      toggle: toggleAutoRetry,
+      title: config
+        ? "cuando un turno muere con \"API Error: The response stopped arriving\" (o parecido), mandar \"Continuar\" diez segundos después, una sola vez por error (auto_retry en ~/.lienzo/config.json)"
+        : "el server que corre no tiene /config: reiniciá el server",
+    },
     {
       label: "Continuar solo tras límite de uso",
       icon: "⏰",
@@ -279,7 +297,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   ];
 
   return (
-    <div className={`${showThinking ? "showthink" : ""} ${details ? "details" : ""} ${sel ? "panel-open" : ""}`}>
+    <div className={`${details ? "details" : ""} ${sel ? "panel-open" : ""}`}>
       <Header
         authInfo={authInfo}
         connected={connected}
@@ -401,7 +419,6 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           key={sel.session_id}
           session={sel}
           others={writable.filter((s) => s.session_id !== sel.session_id)}
-          onConnect={() => setConnect({ from: sel.session_id, to: "" })}
           transcriptTick={transcriptTick}
           onClose={() => setSelected(null)}
           toast={toast}

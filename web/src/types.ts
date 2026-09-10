@@ -29,6 +29,11 @@ export interface Session {
   limit_until?: string | null;
   /** aviso de limite ya atendido por el server (regla automatica creada para ese limit_until) */
   continue_scheduled_for?: string | null;
+  /** el turno murio con un error de API que se arregla reintentando (no es limite de uso) */
+  retryable?: boolean;
+  /** dialogo de opciones de la TUI leido de la pantalla ("Switch model?"): no dispara ningun hook,
+   *  asi que sin el lienzo se queda esperando una tecla que nadie aprieta */
+  dialog?: TuiDialog | null;
   started: string;
   last_event: string | null;
   alive: boolean;
@@ -79,30 +84,6 @@ export interface AskQuestion {
   options?: AskOption[];
 }
 
-export interface ToolResult {
-  text: string;
-  is_error: boolean;
-}
-
-export type Block =
-  | { kind: "text"; text: string; phase?: string }
-  | { kind: "thinking"; text: string }
-  | { kind: "user_text"; text: string }
-  | { kind: "subagent"; n: number }
-  | { kind: "tool"; id: string; name: string; input: Record<string, unknown>; result: ToolResult | null };
-
-export interface Turn {
-  id: string;
-  agent: string;
-  ts_start: string | null;
-  ts_end: string | null;
-  prompt: string;
-  blocks: Block[];
-  final: string;
-  ended: boolean;
-  error: string | null;
-}
-
 export interface DigestTurn {
   id: string;
   ts_start: string | null;
@@ -119,12 +100,6 @@ export interface DigestTurn {
   reads: number;
   subagents: number;
   tools: number;
-}
-
-export interface TurnsResponse {
-  turns: Turn[];
-  has_more: boolean;
-  note?: string;
 }
 
 export interface DigestResponse {
@@ -145,10 +120,21 @@ export interface Link {
   kind?: "send" | "native" | "rule" | "user";
 }
 
+/** Dialogo de opciones numeradas de la TUI de Claude, leido del buffer de la consola. */
+export interface TuiDialog {
+  question: string;
+  detail?: string;
+  options: { n: number; text: string }[];
+  /** la opcion que tiene el cursor: la que se elige con Enter en la terminal */
+  selected: number;
+}
+
 /** ~/.lienzo/config.json, la parte que la UI puede leer y escribir (GET/PUT /config). */
 export interface Config {
   /** ante un aviso de limite de uso con hora, programar "Continuar" solo */
   auto_continue: boolean;
+  /** turno muerto por un error de API ("stopped arriving"): reintentar solo, una vez por error */
+  auto_retry: boolean;
 }
 
 export interface Rule {

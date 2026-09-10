@@ -109,6 +109,20 @@ def looks_like_error(text: str) -> bool:
     return 0 < len(t) < 400 and any(p.lower() in t.lower() for p in ERROR_PATTERNS)
 
 
+# el turno se corto solo y volver a pedirlo alcanza: no hay hora de vuelta que esperar (eso es
+# limit_reset) ni nada que pagar. Medido en la transcripcion: el aviso es un mensaje del asistente
+# con isApiErrorMessage, texto "API Error: The response stopped arriving. ..." (2026-09-09).
+RETRY_PATTERNS = ("api error", "overloaded", "request timed out", "stopped arriving", "connection error")
+# aunque digan "API Error", estos no se arreglan reintentando: hay que esperar o pagar
+NO_RETRY_PATTERNS = ("credit balance", "usage limit", "session limit", "rate limit", "hit your")
+
+
+def retryable_error(text: str) -> bool:
+    """El error con el que murio el turno se arregla mandando "Continuar" de nuevo."""
+    t = (text or "").strip().lower()
+    return bool(t) and any(p in t for p in RETRY_PATTERNS) and not any(p in t for p in NO_RETRY_PATTERNS)
+
+
 # "try again at 7:57 PM", "try again at Sep 5th, 2026 3:08 AM", "resets 2:40pm" (Claude)
 _RESET_AT_RE = re.compile(
     r"(?:try again|resets?)\s+(?:at\s+)?"
@@ -289,7 +303,7 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
 
         if t == "system":
             if d.get("subtype") == "turn_duration" and cur is not None:
-                cur["ended"] = True
+                cur["ended"] = cur["_ended_real"] = True
                 cur["ts_end"] = ts or cur["ts_end"]
             continue
 
@@ -316,7 +330,8 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                     turn["blocks"].append({"kind": "user_text", "text": _short(human, 300)})
                     continue
                 if cur is not None:
-                    cur["ended"] = True  # un pedido nuevo cierra el anterior aunque no haya turn_duration
+                    # un pedido nuevo cierra el anterior aunque no haya turn_duration
+                    cur["ended"] = cur["_ended_real"] = True
                 peer = peer_message(human)
                 if peer:
                     # pedido real de otra sesion de Claude: sin el XML ni el aviso de permisos que lo envuelve
@@ -361,6 +376,7 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                 if looks_like_error(b.get("text", "")):
                     turn["error"] = _short(b["text"].strip(), 300)
                     turn["ended"] = True
+                    turn["_error_at"] = len(turn["blocks"])  # si despues sigue trabajando, se recupero
             elif k == "thinking":
                 turn["blocks"].append({"kind": "thinking", "text": b.get("thinking", "")})
             elif k == "tool_use":
@@ -381,6 +397,15 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
         n = sidechain.get(tr["id"])
         if n:
             tr["blocks"].append({"kind": "subagent", "n": n})
+    for tr in turns:
+        # un "API Error" con trabajo despues no es el final del turno: Claude Code lo escribe y
+        # sigue solo. Medido el 2026-09-09 en 88182904: el aviso quedo 170 lineas antes del final y
+        # la tarjeta mostraba el error en rojo (y el reintento automatico mandaba un "Continuar" de
+        # mas) mientras la sesion trabajaba. El error vale solo si es lo ultimo que hay.
+        at, real = tr.pop("_error_at", None), tr.pop("_ended_real", False)
+        if at is not None and len(tr["blocks"]) > at:
+            tr["error"] = None
+            tr["ended"] = real
     return {"meta": meta, "turns": turns}
 
 

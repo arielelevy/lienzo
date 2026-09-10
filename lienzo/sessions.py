@@ -50,10 +50,12 @@ from state import (
 
 last_sweep = 0.0
 
-# ganchos que rellena rules.py: cierre de turno (reglas "cuando termine") y aviso de limite de uso
-# con hora (regla automatica "Continuar"). Sin rules.py cargado no pasa nada.
+# ganchos que rellena rules.py: cierre de turno (reglas "cuando termine"), aviso de limite de uso
+# con hora y turno muerto por un error de API (las dos reglas automaticas "Continuar"). Sin
+# rules.py cargado no pasa nada.
 on_turn_end = lambda sid: None
 on_limit_notice = lambda s: None
+on_api_error = lambda s, sig: None
 
 
 ATTACH_WRAPPER = "Leé el archivo adjunto y respondé:"
@@ -356,8 +358,11 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "in_vscode": False,
         "no_console": False,
         "suggestion": None,
+        "dialog": None,
         "limit_until": None,
         "continue_scheduled_for": None,
+        "retryable": False,
+        "retry_done_for": None,
         "tool_count": 0,
         "last_files": [],
         "last_cmd": None,
@@ -524,6 +529,7 @@ REFRESH_KEYS = (
     "last_error",
     "limit_until",
     "continue_scheduled_for",
+    "retryable",
     "tool_count",
     "last_files",
     "last_cmd",
@@ -624,6 +630,14 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     s["limit_until"] = limit_until_of(t)
     if s["limit_until"]:
         on_limit_notice(s)
+    # el turno murio por un error de API ("API Error: The response stopped arriving"): no hay hora
+    # que esperar, lo unico que falta es volver a pedirlo. La tarjeta ofrece "Reintentar" y, con
+    # auto_retry en config.json, se manda solo una vez por error
+    s["retryable"] = bool(
+        s["last_error"] and not s["limit_until"] and t.get("ended") and transcripts.retryable_error(t.get("error"))
+    )
+    if s["retryable"]:
+        on_api_error(s, f"{t.get('id')}:{s['last_error']}")
 
 
 def read_transcript(s: dict) -> dict | None:
@@ -1301,12 +1315,15 @@ def compose_send(sid: str, text: str, attachments: list[str]) -> tuple[str, str,
     return " ".join(parts), orig, attachments
 
 
-def run_send(sid: str, pid: int, final: str) -> tuple[int, dict]:
+def run_send(sid: str, pid: int, final: str, enter: bool = True) -> tuple[int, dict]:
     """Subproceso send.py, que teclea `final` en la consola de `pid`. Un texto largo va por archivo:
-    la linea de comando de Windows no lo aguanta. (codigo, respuesta de send.py)."""
+    la linea de comando de Windows no lo aguanta. Sin `enter` solo se tipea (una opcion de un
+    dialogo de la TUI se elige con la tecla del numero, sin confirmar). (codigo, respuesta)."""
     tf = save_attachment(sid, ".send.txt", final.encode("utf-8")) if len(final) > 2000 else None
     cmd = [PYTHON, os.path.join(HERE, "send.py"), "--pid", str(pid)]
     cmd += ["--text-file", tf] if tf else ["--text", final]
+    if not enter:
+        cmd.append("--no-enter")
     try:
         r = subprocess.run(
             cmd,
@@ -1328,6 +1345,33 @@ def run_send(sid: str, pid: int, final: str) -> tuple[int, dict]:
                 os.remove(tf)
             except OSError:
                 pass
+
+
+def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
+    """Elegir una opcion del dialogo de la TUI que la tarjeta esta mostrando. Se teclea el numero
+    y nada mas: en los menus de Claude Code la tecla del numero elige y confirma de una, y un Enter
+    de mas caeria en la caja de entrada. Se acepta solo un numero que este en el dialogo leido, no
+    texto libre: esto escribe en la consola de otro proceso."""
+    if frenado := send_blocked(s):
+        return frenado
+    d = s.get("dialog") or {}
+    opciones = [o.get("n") for o in d.get("options") or []]
+    if choice not in opciones:
+        return 409, {"ok": False, "error": f"esa sesion no esta mostrando la opcion {choice}"}
+    code, out = run_send(s["session_id"], s["pid"], str(choice), enter=False)
+    if code == 200 and not out.get("ok"):
+        state.log(f"dialogo {s['session_id'][:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
+        code = 500
+    if code != 200:
+        return code, out
+    elegida = next((o.get("text") for o in d["options"] if o.get("n") == choice), str(choice))
+    state.log(f"dialogo {s['session_id'][:8]}: {short(d.get('question') or '', 60)} -> {choice}. {short(elegida, 60)}")
+    with lock:
+        s["dialog"] = None  # el proximo barrido de pantalla (5 s) dira si quedo algo
+        touch(s)
+    out["choice"] = choice
+    out["text"] = elegida
+    return 200, out
 
 
 def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
@@ -1399,6 +1443,7 @@ def screen_once() -> None:
     for s in items:
         r = read_screen(s["pid"])
         area = r.get("area") if r.get("ok") else None
+        dlg = r.get("dialog") if r.get("ok") else None
         escrito = bool(area and not area["placeholder"])
         with lock:
             if sessions.get(s["session_id"]) is not s:
@@ -1409,9 +1454,14 @@ def screen_once() -> None:
             )
             sug = short(area["input"], 300) if escrito and idle else None
             typing = escrito and not idle
-            if s.get("suggestion") != sug or bool(s.get("typing")) != typing:
+            # un dialogo de opciones de la TUI ("Switch model?") no dispara ningun hook: sin esto
+            # la sesion se queda esperando una tecla que nadie va a apretar. Si ademas hay un
+            # pendiente de verdad (un permiso), manda ese: la tarjeta ya lo muestra
+            d = None if s.get("pending_id") else dlg
+            if s.get("suggestion") != sug or bool(s.get("typing")) != typing or s.get("dialog") != d:
                 s["suggestion"] = sug
                 s["typing"] = typing
+                s["dialog"] = d
                 touch(s)
 
 
