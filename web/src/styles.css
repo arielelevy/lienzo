@@ -119,7 +119,7 @@ details.fold > summary,
   background: rgba(8, 10, 14, .55); backdrop-filter: blur(3px); }
 /* vista de un envio hecho: los ultimos mensajes del par, sin editar */
 .arrow-edit.view { width: 320px; }
-.arrow-edit .msgs { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; }
+.arrow-edit .msgs { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; overscroll-behavior: contain; }
 .arrow-edit .msg { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; white-space: pre-wrap; word-break: break-word; overflow: hidden;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .col { flex: 1 1 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-height: 120px; padding: 8px; }
@@ -238,6 +238,9 @@ details.fold > summary,
 .needs.ask .otro { display: block; width: 100%; box-sizing: border-box; margin-top: 5px; padding: 4px 6px;
   background: #14161c; border: 1px solid var(--line); border-radius: 5px; color: var(--fg); font: inherit; font-size: 11.5px; }
 .needs.ask .btns { flex-wrap: wrap; }
+/* dialogo de la TUI leido de la pantalla: mismas opciones que una pregunta, pero la marcada es la
+   que tiene el cursor en la terminal (no una eleccion del usuario), y no hay caja de texto */
+.needs.ask.tui .opt.on::after { content: " · marcada en la terminal"; color: var(--dim); font-weight: 400; }
 /* salida al selector de la consola: es la escapatoria, no la acción principal */
 .needs.ask .term { background: none; border: 0; padding: 0; color: var(--dim); text-decoration: underline; font-size: 11px; }
 .needs.ask .term:hover { color: var(--fg); }
@@ -269,6 +272,12 @@ details.fold > summary,
 .panel { position: fixed; max-height: 84vh; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 60px rgba(0,0,0,.6); z-index: 10; display: flex; flex-direction: column; overflow: hidden; }
 .panel-backdrop { position: fixed; inset: 0; z-index: 9; pointer-events: none; background: rgba(8, 10, 14, .55); backdrop-filter: blur(3px); }
 .panel-open .toast { max-width: 100%; }
+/* con el panel abierto, la rueda es del panel: el tablero de atras (difuminado, y en el celular
+   tapado del todo) no se mueve. Sin esto, al llegar al final del panel el scroll seguia en el
+   fondo y la tarjeta que uno estaba mirando se iba de la pantalla. `scrollbar-gutter: stable`
+   reserva el lugar de la barra: si no, al esconderla el tablero salta 9 px al costado. */
+html { scrollbar-gutter: stable; }
+body:has(.panel-open) { overflow: hidden; }
 /* una sola fila: badge, titulo con rama y estado, pestanas, Conectar, y la ✕ en la esquina.
    El padding derecho es el lugar de la ✕, que sale del flujo para no llevarse una fila entera */
 .panel .ph { position: relative; padding: 10px 34px 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -289,9 +298,8 @@ details.fold > summary,
 /* Panel angosto (se achica para no tapar el tablero): mismas pestanas compactas que el celular, y
    el encabezado en UNA fila. Con la fila envolviendo, el menu de pestanas se partia en cuatro
    renglones y el encabezado se iba a 88 px medidos a 1280 y 1920 (75 a 1152) contra 50 cuando
-   entra: el doble de alto comido antes de la primera linea de la conversacion. Lo que cede es el
-   titulo, que se corta con puntos suspensivos y va entero en su tooltip; las pestanas y Conectar
-   no se parten nunca. La rama y el estado se van (estan en la tarjeta) y de "coordinadora" queda
+   entra: el doble de alto comido antes de la primera linea del chat. Lo que cede es el titulo,
+   que se corta con puntos suspensivos y va entero en su tooltip; las pestanas no se parten nunca. La rama y el estado se van (estan en la tarjeta) y de "coordinadora" queda
    la estrella, que es la que se reconoce. */
 .panel.narrow .ph { padding: 8px 30px 8px 10px; gap: 6px; flex-wrap: nowrap; }
 .panel.narrow .ph .t { flex: 1 1 0; min-width: 0; }
@@ -316,10 +324,13 @@ details.fold > summary,
 .panel .tabs { display: flex; gap: 4px; }
 .panel .tabs button.on { border-color: var(--acc); color: var(--acc); }
 .panel .pmeta { width: 100%; word-break: break-all; }
-.panel .body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 12px 14px; overflow-wrap: anywhere; word-break: break-word; }
+/* overscroll-behavior: contain --al llegar al final del panel la rueda seguia moviendo el tablero
+   difuminado de atras, que es justo lo que el panel abierto viene a tapar. Lo mismo en cualquier
+   caja que scrollee adentro (una tabla, un bloque de codigo, la pantalla de la terminal). */
+.panel .body { flex: 1; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 12px 14px; overflow-wrap: anywhere; word-break: break-word; }
 .panel .body pre, .panel .body code, .panel .body li, .panel .body p { overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; max-width: 100%; }
 .panel .body img { max-width: 100%; }
-.panel .body table { display: block; max-width: 100%; overflow-x: auto; }
+.panel .body table { display: block; max-width: 100%; overflow-x: auto; overscroll-behavior: contain; }
 .send { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; background: var(--panel); }
 .send.drag { outline: 2px dashed var(--acc); }
 .send .inputwrap { position: relative; background: var(--card); border-radius: 6px; }
@@ -335,26 +346,15 @@ details.fold > summary,
 .att { font-size: 11px; color: var(--dim); }
 .att span { display: inline-block; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin: 2px; }
 
-.turn { margin-bottom: 18px; border-left: 2px solid var(--line); padding-left: 10px; }
-.turn .u { background: #20304a; border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; margin-bottom: 8px; }
-.turn .a { padding: 2px 0 2px 2px; }
 .md p { margin: 4px 0; }
-.md pre { background: #0c0e12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow: auto; font-size: 11px; }
+.md pre { background: #0c0e12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow: auto; overscroll-behavior: contain; font-size: 11px; }
 .md code { background: #0c0e12; padding: 0 4px; border-radius: 3px; font-size: 11.5px; }
 .md pre code { background: none; padding: 0; }
 .md table { border-collapse: collapse; font-size: 11.5px; }
 .md td, .md th { border: 1px solid var(--line); padding: 3px 8px; }
 .md a { color: var(--acc); }
-.tool { font-family: Consolas, monospace; font-size: 11px; color: var(--dim); padding: 2px 0; cursor: pointer; }
-.tool.err { color: var(--err); }
-.tool b { color: var(--fg); font-weight: 600; }
-.tool pre { margin: 4px 0 6px; white-space: pre-wrap; max-height: 400px; overflow: auto; background: #0c0e12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
-.think { color: var(--dim); font-style: italic; font-size: 11.5px; white-space: pre-wrap; display: none; }
-.showthink .think { display: block; }
-.ut { color: var(--dim); font-style: italic; font-size: 11.5px; }
 .sub { color: var(--dim); font-size: 11px; }
 .ts { font-size: 11px; color: var(--dim); margin-bottom: 4px; }
-.errtxt { color: var(--err); }
 
 .dg { margin-bottom: 16px; padding: 10px; background: var(--card); border-radius: 8px; border: 1px solid var(--line); }
 .dg .p { font-weight: 600; margin-bottom: 6px; white-space: pre-wrap; }
@@ -455,7 +455,7 @@ header .search .chip:not(.on) { text-decoration: line-through; }
 .conn .who { font-weight: 600; flex: 1; min-width: 120px; }
 .conn .txt { margin-top: 4px; color: var(--dim); white-space: pre-wrap; }
 .card .sugg { margin-top: 6px; font-size: 11.5px; color: #ffd77a; background: #2a2410; border-radius: 6px; padding: 5px 8px; }
-.screen { font-family: Consolas, monospace; font-size: 11px; line-height: 1.3; background: #0c0e12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre; overflow-x: auto; }
+.screen { font-family: Consolas, monospace; font-size: 11px; line-height: 1.3; background: #0c0e12; border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre; overflow-x: auto; overscroll-behavior: contain; }
 .card .error { margin-top: 6px; font-size: 11.5px; color: var(--err); white-space: pre-wrap; }
 
 @media (max-width: 900px) {
@@ -500,19 +500,20 @@ header .search .chip:not(.on) { text-decoration: line-through; }
      del tercero. Solo con pantalla alta: con el teclado abierto el alto hace falta para el cuerpo */
   @media (min-height: 600px) { .send textarea { min-height: 86px; } }
   /* Conectar en el celular: si no entra, scrollea la caja y los botones no quedan contra el borde */
-  .gate-box.connect { max-height: calc(100vh - 32px); overflow-y: auto; }
+  .gate-box.connect { max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; }
   .filters { display: flex; flex-wrap: wrap; }
 }
 
 .fwd .row.conflict { background: color-mix(in srgb, var(--acc) 18%, transparent); border: 1px solid var(--acc); border-radius: 6px; padding: 6px 10px; }
 
-/* archivos y comandos del digest: plegados, porque son el ruido del turno y no el resultado */
-.turn details.fold { margin: 0; }
-.turn details.fold > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 5px; }
-.turn details.fold > summary::-webkit-details-marker { display: none; }
-.turn details.fold > summary::before { content: "▸"; font-size: 8px; color: var(--dim); transition: transform .12s; }
-.turn details.fold[open] > summary::before { transform: rotate(90deg); }
-.turn details.fold > summary:hover { color: var(--fg); }
+/* archivos y comandos del digest: plegados, porque son el ruido del turno y no el resultado.
+   Colgaban de .turn --la vista Conversacion, que ya no existe-- y por eso salian sin estilo */
+.dg details.fold { margin: 0; }
+.dg details.fold > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 5px; }
+.dg details.fold > summary::-webkit-details-marker { display: none; }
+.dg details.fold > summary::before { content: "▸"; font-size: 8px; color: var(--dim); transition: transform .12s; }
+.dg details.fold[open] > summary::before { transform: rotate(90deg); }
+.dg details.fold > summary:hover { color: var(--fg); }
 
 /* barras de scroll con el tema oscuro: las nativas salen claras y cualquier caja que scrollee
    (el pedido, un error largo, el panel) se veia con una barra blanca encima del fondo */

@@ -12,10 +12,10 @@ async function recorrido(page: Page) {
   await expect(card(SID.coordinadora)).toHaveClass(/\bpicked\b/);
   await esperarQuietud(page);
 
-  // abrir el panel y pasar por sus cuatro pestañas
+  // abrir el panel y pasar por sus tres pestañas
   await card(SID.mapas).locator(".title").dblclick();
   await expect(page.locator(".panel")).toHaveCount(1);
-  for (const t of ["Conversación", "Conexiones", "Pantalla", "Destacados"]) {
+  for (const t of ["Conexiones", "Pantalla", "Chat"]) {
     await page.locator(".panel .tabs button", { hasText: t }).click();
     await expect(page.locator(".panel .body")).toBeVisible();
   }

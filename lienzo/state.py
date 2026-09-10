@@ -54,7 +54,7 @@ STATES = ("corriendo", "te_necesita", "termino", "muerta")
 LINKS_FILE = os.path.join(LIENZO, "links.json")
 RULES_FILE = os.path.join(LIENZO, "rules.json")
 CONFIG_FILE = os.path.join(LIENZO, "config.json")
-UI_CONFIG_KEYS = ("auto_continue",)  # lo unico que la UI puede leer y escribir por /config
+UI_CONFIG_KEYS = ("auto_continue", "auto_retry")  # lo unico que la UI puede leer y escribir por /config
 
 # Regla del lock (RLock, reentrante). Toda escritura sobre `sessions`, sobre `pending` o sobre el
 # dict de una tarjeta va con el lock tomado. Lo lento queda AFUERA y se aplica despues: el subproceso
@@ -298,7 +298,7 @@ rules = JsonList(RULES_FILE, "rules")  # {id, kind: on_stop|at, from, to, text, 
 
 
 def load_config() -> dict:
-    """~/.lienzo/config.json (lo comparte con hook.py): ejemplos, wait, auto_continue."""
+    """~/.lienzo/config.json (lo comparte con hook.py): ejemplos, wait, auto_continue, auto_retry."""
     try:
         with open(CONFIG_FILE, encoding="utf-8") as f:
             d = json.load(f)

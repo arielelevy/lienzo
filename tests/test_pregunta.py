@@ -23,7 +23,7 @@ import sessions as ses
 import state as st
 
 SID = "3f2b7c10-0000-4000-8000-000000000000"
-PREGUNTA = "¿Qué querés decir con \"en análisis\"?"
+PREGUNTA = '¿Qué querés decir con "en análisis"?'
 OTRA = "¿Qué escribo en Planner?"
 
 PEDIDO = {
@@ -39,7 +39,7 @@ PEDIDO = {
                 "header": "En análisis",
                 "multiSelect": False,
                 "options": [
-                    {"label": "Crear bucket \"En análisis\"", "description": "Agregar un bucket nuevo al plan."},
+                    {"label": 'Crear bucket "En análisis"', "description": "Agregar un bucket nuevo al plan."},
                     {"label": "Marcar estado, sin bucket nuevo", "description": "Dejar los buckets como están."},
                 ],
             },
@@ -102,11 +102,11 @@ def test_la_respuesta_sale_sin_caracteres_de_control():
 
 
 def test_contestar_deja_la_opcion_elegida_en_el_buzon(pendiente):
-    code, res = ses.answer_pending("req-1", "allow", "", {PREGUNTA: "Crear bucket \"En análisis\""})
+    code, res = ses.answer_pending("req-1", "allow", "", {PREGUNTA: 'Crear bucket "En análisis"'})
     assert (code, res) == (200, {"ok": True})
     r = respuesta(pendiente)
     assert r["decision"] == "allow"
-    assert r["answers"] == {PREGUNTA: "Crear bucket \"En análisis\""}
+    assert r["answers"] == {PREGUNTA: 'Crear bucket "En análisis"'}
 
 
 def test_permitir_sin_elegir_nada_es_el_permiso_de_siempre(pendiente):
@@ -116,7 +116,7 @@ def test_permitir_sin_elegir_nada_es_el_permiso_de_siempre(pendiente):
 
 
 def test_denegar_no_arrastra_respuestas(pendiente):
-    ses.answer_pending("req-1", "deny", "", {PREGUNTA: "Crear bucket \"En análisis\""})
+    ses.answer_pending("req-1", "deny", "", {PREGUNTA: 'Crear bucket "En análisis"'})
     r = respuesta(pendiente)
     assert r["decision"] == "deny" and "answers" not in r
 

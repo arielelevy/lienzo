@@ -333,10 +333,10 @@ def test_set_config_key_solo_toca_esa_clave(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({"ejemplos": "D:/x", "wait": 60, "auto_continue": True}), encoding="utf-8")
     monkeypatch.setattr(st, "CONFIG_FILE", str(cfg))
-    assert st.public_config() == {"auto_continue": True}
+    assert st.public_config() == {"auto_continue": True, "auto_retry": False}
     st.set_config_key("auto_continue", False)
     assert json.loads(cfg.read_text(encoding="utf-8")) == {"ejemplos": "D:/x", "wait": 60, "auto_continue": False}
-    assert st.public_config() == {"auto_continue": False}
+    assert st.public_config() == {"auto_continue": False, "auto_retry": False}
     # sin archivo: se crea con la clave sola
     cfg.unlink()
     st.set_config_key("auto_continue", True)
@@ -1461,3 +1461,110 @@ def test_una_vista_desconocida_de_una_tarjeta_no_dice_sesion_desconocida(aislado
         c.close()
     finally:
         srv.shutdown()
+
+
+# 12. error de API: reintento automatico ------------------------------------------------------
+
+
+def test_retry_tras_error_de_api_deja_una_sola_regla(periodica, monkeypatch):
+    """Un turno muerto con "API Error: The response stopped arriving" deja programado "Continuar"
+    para dentro de RETRY_DELAY_S segundos, una sola vez por error, y solo con auto_retry."""
+    import datetime as dt
+
+    s, sent = periodica
+    err = "API Error: The response stopped arriving. The response above may be incomplete."
+    sig = f"turno-1:{err}"
+
+    monkeypatch.setattr(rl, "load_config", dict)
+    rl.retry_after_api_error(s, sig)
+    assert st.rules.items == [], "sin auto_retry no se programa nada"
+
+    monkeypatch.setattr(rl, "load_config", lambda: {"auto_retry": True})
+    rl.retry_after_api_error(s, sig)
+    assert len(st.rules.items) == 1
+    r = st.rules.items[0]
+    assert (r["kind"], r["to"], r["text"], r["max_fires"], r["auto"]) == ("at", SID, "Continuar", 1, True)
+    falta = (dt.datetime.fromisoformat(r["at"]) - dt.datetime.now().astimezone()).total_seconds()
+    assert 0 < falta <= rl.RETRY_DELAY_S + 1, f"la reintenta en {falta:.0f} s"
+
+    rl.retry_after_api_error(s, sig)  # el mismo error otra vez: ya se atendio
+    assert len(st.rules.items) == 1
+
+
+def test_error_de_api_marca_la_tarjeta_reintentable(periodica, monkeypatch):
+    """apply_turn marca `retryable` y llama al gancho; un limite de uso con hora, no (ese espera)."""
+    s, _ = periodica
+    visto: list[str] = []
+    monkeypatch.setattr(ses, "on_api_error", lambda card, sig: visto.append(sig))
+
+    api = {"id": "t1", "ended": True, "error": "API Error: The response stopped arriving.", "final": "", "blocks": []}
+    ses.apply_turn(s, api, force_state=False)
+    assert s["retryable"] is True and len(visto) == 1
+
+    cupo = {
+        "id": "t2",
+        "ended": True,
+        "error": "You've hit your usage limit · try again at 11:00 PM",
+        "final": "",
+        "blocks": [],
+    }
+    ses.apply_turn(s, cupo, force_state=False)
+    assert s["retryable"] is False, "el limite de uso no se reintenta: se espera"
+    assert len(visto) == 1
+
+
+# 13. dialogos de la TUI leidos de la pantalla ------------------------------------------------
+
+PANTALLA_MODELO = """* Finagling... (1m 33s . 8.1k tokens . thinking)
+  |_ Tip: Use git worktrees to run multiple Claude sessions in parallel.
+--------------------------------------------------------------------------------
+  Switch model?
+  Your next response will be slower and use more tokens
+
+  This conversation is cached for the current model. Switching to Opus 5 means the
+  full history gets re-read on your next message.
+
+> 1. Yes, switch to Opus 5
+  2. No, go back
+""".replace("-" * 80, "─" * 80).splitlines()
+
+
+def test_dialogo_de_la_tui_se_lee_de_la_pantalla():
+    """El "Switch model?" que deja colgada a la sesion: no hay hook, solo la pantalla."""
+    import screen
+
+    d = screen.dialog(PANTALLA_MODELO)
+    assert d is not None
+    assert d["question"] == "Switch model?"
+    assert [o["text"] for o in d["options"]] == ["Yes, switch to Opus 5", "No, go back"]
+    assert d["selected"] == 1
+    assert "cached for the current model" in d["detail"]
+
+
+def test_una_lista_numerada_cualquiera_no_es_un_dialogo():
+    """Sin el cursor (o con mas de uno) es texto de la salida, no un menu esperando una tecla."""
+    import screen
+
+    assert screen.dialog(["El plan:", "1. leer", "2. escribir", "3. probar"]) is None
+    assert screen.dialog(["> 1. uno", "> 2. dos"]) is None
+    assert screen.dialog(["> 1. sola"]) is None
+    assert screen.dialog([]) is None
+
+
+def test_la_caja_vacia_no_es_texto_tipeado():
+    """El buffer devuelve ">" para una caja sin nada: sin sacarlo, toda sesion ocupada mostraba
+    "estan tipeando en esa terminal" (medido el 2026-09-09 en las 4 que corrian)."""
+    import screen
+
+    raya = "─" * 40
+    assert screen.input_area([raya, ">", raya]) == {
+        "input": "",
+        "placeholder": True,
+        "queued": [],
+        "status": raya,
+    }
+    # con texto de verdad, el cursor se saca y el texto queda entero (el espacio duro incluido)
+    a = screen.input_area([raya, "> mandale el informe a la coordinadora", raya])
+    assert (a["input"], a["placeholder"]) == ("mandale el informe a la coordinadora", False)
+    # el placeholder de la cola de mensajes sigue siendo placeholder
+    assert screen.input_area([raya, "❯ Press up to edit queued messages", raya])["placeholder"] is True

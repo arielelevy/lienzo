@@ -29,6 +29,7 @@ import transcripts
 from rules import at_near, connections_of, local_dt, purge_stale_at_rules, rules_loop
 from sessions import (
     add_link,
+    answer_dialog,
     answer_pending,
     clean_attachments,
     consume_events,
@@ -201,10 +202,12 @@ def create_on_stop(d: dict, text: str) -> tuple[int, dict]:
             f"ya existe la regla {inverse['id']} en sentido inverso"
         }
     dup = find_enabled(
-        lambda r: r.get("kind") == "on_stop"
-        and r.get("to") == d["to"]
-        and (r.get("from") or None) == (d.get("from") or None)
-        and (r.get("text") or "").strip() == text.strip()
+        lambda r: (
+            r.get("kind") == "on_stop"
+            and r.get("to") == d["to"]
+            and (r.get("from") or None) == (d.get("from") or None)
+            and (r.get("text") or "").strip() == text.strip()
+        )
     )
     if dup:
         return 409, {"error": "ya existe esa conexión", "rule_id": dup["id"]}
@@ -626,6 +629,12 @@ class Handler(BaseHTTPRequestHandler):
                     return None
                 if parts[2] == "send":
                     return self._send(s)
+                if parts[2] == "dialog":
+                    d = self._json_body()
+                    if not isinstance(d.get("choice"), int) or isinstance(d.get("choice"), bool):
+                        return self._json(400, {"error": "choice debe ser el numero de la opcion"})
+                    code, res = answer_dialog(s, d["choice"])
+                    return self._json(code, res)
                 if parts[2] == "attach":
                     name = urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin")
                     data = self.raw
@@ -720,7 +729,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._server_error(e)
 
     def _put_config(self) -> None:
-        """PUT /config: solo las claves de UI_CONFIG_KEYS (hoy auto_continue) y solo como bool; el
+        """PUT /config: solo las claves de UI_CONFIG_KEYS (auto_continue, auto_retry) y solo como bool; el
         resto de config.json (ejemplos, wait) es de hook.py y no se toca. Se valida todo el cuerpo
         antes de escribir nada: media tanda aplicada seria peor que ninguna."""
         d = self._json_body()

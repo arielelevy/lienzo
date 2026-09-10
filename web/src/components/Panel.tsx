@@ -5,8 +5,7 @@ import { isFree, periodLabel, schedLabel, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
-import { TurnView } from "./Turn";
-import type { ConnectionRule, ConnectionsResponse, DigestResponse, OtherSession, Pending, Session, Turn, TurnsResponse } from "../types";
+import type { ConnectionRule, ConnectionsResponse, DigestResponse, OtherSession, Pending, Session } from "../types";
 
 /** La otra punta de un vinculo o regla, en texto: el server la manda como objeto
  *  {session_id, name}; uno anterior la mandaba como string. Nunca renderizar `other` crudo. */
@@ -45,7 +44,6 @@ interface Props {
   session: Session;
   /** las demas sesiones vivas con consola: el SendBox busca ahi a la coordinadora */
   others: Session[];
-  onConnect: () => void;
   transcriptTick: number;
   onClose: () => void;
   toast: (msg: string, err?: boolean) => void;
@@ -163,10 +161,10 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
   );
 }
 
-export function Panel({ session: s, others, onConnect, transcriptTick, onClose, toast, details, anchor, pending, onDecide, onAnswer }: Props) {
+export function Panel({ session: s, others, transcriptTick, onClose, toast, details, anchor, pending, onDecide, onAnswer }: Props) {
   // el pendiente puede ser una pregunta con opciones y no un permiso: ahi van las opciones
   const preguntas = askQuestions(pending);
-  const [tab, setTab] = useState<"digest" | "chat" | "screen" | "conn">("digest");
+  const [tab, setTab] = useState<"digest" | "screen" | "conn">("digest");
   type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
   const [screen, setScreen] = useState<Screen | null>(null);
   // devuelve el resultado en vez de setearlo: el efecto decide si todavia aplica (cancelled)
@@ -209,8 +207,6 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
     setConnTick((t) => t + 1);
   };
   const [digest, setDigest] = useState<DigestResponse | null>(null);
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const [hasMore, setHasMore] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // El ajuste del borde a la grilla de tarjetas se mide una vez por apertura y ancho de ventana:
@@ -235,8 +231,8 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
       vv?.removeEventListener("scroll", on);
     };
   }, []);
-  // sesion libre: viva, con consola y sin ningun pedido todavia. El estado vacio de Destacados y
-  // Conversacion dice que hacer, y la caja de envio arranca con el foco ("Darle trabajo" de la tarjeta)
+  // sesion libre: viva, con consola y sin ningun pedido todavia. El estado vacio de Chat dice que
+  // hacer, y la caja de envio arranca con el foco ("Darle trabajo" de la tarjeta)
   const free = isFree(s);
   const freeEmpty = (
     <div className="empty free">
@@ -256,19 +252,10 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           return;
         }
         if (tab === "conn") return; // ya cargado por el efecto de conexiones
-        if (tab === "digest") {
-          const d = await api.get<DigestResponse>(`/sessions/${s.session_id}/digest?n=10`);
-          if (!cancelled) {
-            setDigest(d);
-            setNote(d.note ?? null);
-          }
-        } else {
-          const d = await api.get<TurnsResponse>(`/sessions/${s.session_id}/turns?n=10`);
-          if (!cancelled) {
-            setTurns(d.turns);
-            setHasMore(d.has_more);
-            setNote(d.note ?? null);
-          }
+        const d = await api.get<DigestResponse>(`/sessions/${s.session_id}/digest?n=10`);
+        if (!cancelled) {
+          setDigest(d);
+          setNote(d.note ?? null);
         }
         if (atBottom && body) requestAnimationFrame(() => (body.scrollTop = body.scrollHeight));
       } catch (e) {
@@ -279,18 +266,6 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
       cancelled = true;
     };
   }, [s.session_id, tab, transcriptTick]);
-
-  const loadMore = async () => {
-    const first = turns[0];
-    if (!first) return;
-    try {
-      const d = await api.get<TurnsResponse>(`/sessions/${s.session_id}/turns?n=20&before=${first.id}`);
-      setTurns((prev) => [...d.turns, ...prev]);
-      setHasMore(d.has_more);
-    } catch (e) {
-      toast(`No pude cargar más: ${(e as Error).message}`, true);
-    }
-  };
 
   // el panel se abre sobre la tarjeta que lo abrio, no en un costado fijo: se ancla a su esquina
   // superior izquierda y se corre lo justo para entrar en la ventana. El ancho se calcula aca y
@@ -385,11 +360,11 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
   return (
     /* angosto: el encabezado usa las pestanas compactas, las mismas del celular, para no comerse
        filas cuando el panel se achica para dejar ver el tablero. El corte esta en 700 px porque
-       abajo de eso las cuatro pestanas mas Conectar no entran en una fila con el tamano grande.
-       Abajo de 470 ni con las compactas: `tight` deja que la fila envuelva y baja las pestanas y
-       Conectar a un segundo renglon (ver styles.css). Sin eso se salian del panel: son `flex: 0 0
-       auto` en una fila `nowrap`, y el panel puede quedar en 380 px (el minimo al que se retrae
-       para no partir una tarjeta) o en 414 en una ventana de 900. */
+       abajo de eso las pestanas no entran en una fila con el tamano grande. Abajo de 470 ni con
+       las compactas: `tight` deja que la fila envuelva y las baja a un segundo renglon (ver
+       styles.css). Sin eso se salian del panel: son `flex: 0 0 auto` en una fila `nowrap`, y el
+       panel puede quedar en 380 px (el minimo al que se retrae para no partir una tarjeta) o en
+       414 en una ventana de 900. */
     <div className={`panel ${box.width < 700 ? "narrow" : ""} ${box.width < 470 ? "tight" : ""}`} style={{ left: box.left, top: box.top, width: box.width, height: box.height, maxHeight: box.height }}>
       <div className="ph">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
@@ -411,18 +386,12 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           </span>
         </span>
         <div className="tabs">
-          <button className={tab === "digest" ? "on" : ""} onClick={() => setTab("digest")}>Destacados</button>
-          <button className={tab === "chat" ? "on" : ""} onClick={() => setTab("chat")}>Conversación</button>
+          <button className={tab === "digest" ? "on" : ""} onClick={() => setTab("digest")} title="lo que pasó en cada turno: pedido, lo que fue diciendo y la respuesta">Chat</button>
           <button className={tab === "conn" ? "on" : ""} onClick={() => setTab("conn")} title="qué mandó, qué recibió y qué conexiones siguen activas">Conexiones</button>
           {s.agent === "claude" && !s.orphan && (
             <button className={tab === "screen" ? "on" : ""} onClick={() => setTab("screen")} title="texto visible de la terminal, leído del buffer">Pantalla</button>
           )}
         </div>
-        {!s.orphan && s.alive && (
-          <button onClick={onConnect} title="conectar con otra sesión: ahora, cuando termine, o a una hora">
-            Conectar…
-          </button>
-        )}
         {/* en la esquina de arriba a la derecha, chica como la ✕ de una tarjeta: antes se llevaba
             una fila entera para un solo boton */}
         <button className="x" onClick={onClose} aria-label="cerrar panel" title="cerrar">✕</button>
@@ -482,24 +451,17 @@ export function Panel({ session: s, others, onConnect, transcriptTick, onClose, 
           </>
         ) : tab === "conn" ? (
           <Connections sid={s.session_id} conn={conn} />
-        ) : tab === "digest" ? (
-          digest && digest.turns.length ? (
-            // "0 herramientas · 0 lecturas" no dice nada: sin "Detalles tecnicos" se esconde (CSS)
-            digest.turns.map((t) => (
-              <div key={t.id} className={!t.tools && !t.reads && !t.subagents ? "nostats" : undefined}>
-                <Digest turn={t} toast={toast} />
-              </div>
-            ))
-          ) : free ? (
-            freeEmpty
-          ) : (
-            <div className="empty">{note || "sin turnos"}</div>
-          )
+        ) : digest && digest.turns.length ? (
+          // "0 herramientas · 0 lecturas" no dice nada: sin "Detalles tecnicos" se esconde (CSS)
+          digest.turns.map((t) => (
+            <div key={t.id} className={!t.tools && !t.reads && !t.subagents ? "nostats" : undefined}>
+              <Digest turn={t} toast={toast} />
+            </div>
+          ))
+        ) : free ? (
+          freeEmpty
         ) : (
-          <>
-            {hasMore && <button onClick={loadMore}>cargar anteriores</button>}
-            {turns.length ? turns.map((t) => <TurnView key={t.id} turn={t} />) : free ? freeEmpty : <div className="empty">{note || "sin turnos"}</div>}
-          </>
+          <div className="empty">{note || "sin turnos"}</div>
         )}
         </ErrorBoundary>
       </div>

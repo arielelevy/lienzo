@@ -115,8 +115,14 @@ la terminal esté mostrando en ese momento.
 
 La ★ marca la coordinadora del repo, una por repo: es a quien van los avisos "cuando termine". Una
 sesión libre muestra un solo botón, "Darle trabajo". Si llegó al límite de uso y el aviso trae la
-hora de vuelta, aparece "Continuar a las HH:MM", que deja programado el "Continuá". Con *Detalles
+hora de vuelta, aparece "Continuar a las HH:MM", que deja programado el "Continuá"; si el turno se
+cortó con un error de API ("The response stopped arriving"), aparece "↻ Reintentar". Con *Detalles
 técnicos* apagado (menú ⋯) no se ven PID, hooks ni ids.
+
+**Diálogos de la terminal**: los menús numerados de la TUI de Claude ("Switch model?", que abre
+`/model`) no son un pedido de permiso y no disparan ningún hook: si nadie mira esa consola, la
+sesión se queda esperando una tecla para siempre. El lienzo los lee de la pantalla y los muestra
+en la tarjeta con sus opciones; elegir una teclea el número en su terminal.
 
 ### Contestar, aprobar, adjuntar
 
@@ -136,16 +142,21 @@ técnicos* apagado (menú ⋯) no se ven PID, hooks ni ids.
   esperando algo.
 - La casilla **"avisarme cuando termine"** convierte el envío en delegación: manda el texto y crea
   la regla "cuando termine" hacia la coordinadora. Un gesto en vez de dos.
+- **Copiar y pegar trabajo entre sesiones**: con una tarjeta elegida, Ctrl+C (o "Copiar trabajo"
+  en su menú ⋯) arma un encargo con el último pedido, la última respuesta y los destacados de los
+  últimos cinco turnos; Ctrl+V sobre otra tarjeta (o "Pegar trabajo") abre una vista previa
+  editable y "Enviar trabajo" se lo escribe en su terminal. Hay un solo portapapeles para todo el
+  tablero, no se puede pegar en la misma sesión de origen ni en una que está esperando un permiso,
+  y la sesión de origen sigue como estaba: se copia el contexto, no se mueve nada.
 
-Las cuatro pestañas del panel: *Destacados* (por turno: pedido, lo que fue diciendo, respuesta,
-archivos, comandos, errores, preguntas), *Conversación* (la transcripción, con las herramientas
-plegadas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo que recibió, lo que mandó y
-las conexiones activas).
+Las tres pestañas del panel: *Chat* (por turno: pedido, lo que fue diciendo, respuesta,
+archivos, comandos, errores, preguntas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo
+que recibió, lo que mandó y las conexiones activas).
 
 ### Conectar sesiones
 
-Arrastrá una tarjeta **desde su fila de arriba, su título o el agarre ⇢** y soltala sobre otra (o
-"Conectar…" en el panel). Se escribe en una frase, que se interpreta mientras tipeás: "continuá a
+Arrastrá una tarjeta **desde su fila de arriba, su título o el agarre ⇢** y soltala sobre otra. Se
+escribe en una frase, que se interpreta mientras tipeás: "continuá a
 las 16:00", "en 30 min seguí", "cada 30 min continuá hasta 6 veces", "cuando termine mandale a
 MAPO", "cuando termine avisame". Enter confirma. Soltarla **sobre sí misma** es el bucle.
 
@@ -166,11 +177,18 @@ mandado queda en la pestaña Conexiones. Un click en el glifo elige la flecha y 
 el doble click abre el editor de la regla o los mensajes de ese par; Quitar vive adentro, con
 confirmación. Un botón del menú las oculta, y en pantallas de menos de 900 px no se dibujan.
 
-### Continuar solo tras límite de uso
+### Las dos automatizaciones
 
-En el menú ⋯, apagado por defecto. Prendido, cuando una sesión avisa que llegó al límite con hora
-de vuelta, deja programada la regla "Continuar" un minuto después, una sola vez por aviso; si
-borrás la regla, no la vuelve a crear. Es la única automatización que corre sin que hagas nada.
+Las dos viven en el menú ⋯ y las dos vienen apagadas. Son lo único que corre sin que hagas nada, y
+las dos tienen tope: un disparo por aviso.
+
+- **Continuar solo tras límite de uso**: cuando una sesión avisa que llegó al límite con hora de
+  vuelta, deja programada la regla "Continuar" un minuto después. Si borrás la regla, no la vuelve
+  a crear.
+- **Reintentar solo tras un error de API**: cuando un turno muere con "API Error: The response
+  stopped arriving" (o un timeout, o un `overloaded_error`), programa "Continuar" diez segundos
+  después —tiempo de sobra para quitarla si no querés—. Un límite de uso o un problema de crédito
+  no entran acá: eso no se arregla reintentando.
 
 ## Delegar trabajo a varias sesiones
 
@@ -221,11 +239,12 @@ túnel, además la cookie de sesión.
 | Método | Ruta | Qué hace |
 |---|---|---|
 | GET | `/sessions` | todas las tarjetas, con `alive` recalculado |
-| GET | `/sessions/<sid>/turns?n=10` | turnos de la transcripción, para la conversación |
+| GET | `/sessions/<sid>/turns?n=10` | turnos completos de la transcripción, con las herramientas (el tablero ya no los muestra: la pestaña Chat usa `digest`) |
 | GET | `/sessions/<sid>/digest?n=10` | destacados por turno |
 | GET | `/sessions/<sid>/screen` | texto visible de la terminal |
 | GET | `/sessions/<sid>/connections` | links y reglas donde esa sesión es origen o destino, con la otra punta resuelta a `{session_id, name}`; lo que mandó el usuario viene como "vos (lienzo)" |
 | POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío entre sesiones, con `native` lo marca como canal nativo |
+| POST | `/sessions/<sid>/dialog` | `{choice: n}`; elige una opción del diálogo de la TUI que la tarjeta está mostrando (se teclea el número, sin Enter). 409 si esa sesión no está mostrando esa opción |
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
 | PUT | `/sessions/<sid>/title` | `{title}`; el título pasa a ser del usuario y no se recalcula |
 | PUT | `/sessions/<sid>/coordinator` | `{on: true\|false}`; una coordinadora por repo, prender una apaga la anterior |
@@ -237,8 +256,8 @@ túnel, además la cookie de sesión.
 | DELETE | `/links/<id>`, `/rules/<id>` | quita la flecha o la conexión |
 | GET | `/pending` | permisos esperando respuesta |
 | POST | `/pending/<id>` | `{decision: allow\|deny}` |
-| GET | `/config` | `{auto_continue}` |
-| PUT | `/config` | `{auto_continue: true\|false}`; sólo esa clave, el resto de `config.json` no se toca |
+| GET | `/config` | `{auto_continue, auto_retry}` |
+| PUT | `/config` | `{auto_continue: true\|false, auto_retry: true\|false}`; sólo esas claves, el resto de `config.json` no se toca |
 | GET | `/events` | SSE con cada cambio de sesiones, pendientes, links, reglas |
 | POST | `/rescan` | barrido de procesos ahora |
 | GET | `/auth`, POST `/setup`, `/login`, `/logout`, GET `/enroll` | acceso remoto |
@@ -249,14 +268,14 @@ túnel, además la cookie de sesión.
 lienzo/
   hook.py          hook único para los dos agentes; espera de permisos con nonce
   procinfo.py      ctypes mínimo compartido: padre, imagen, vivo, agente
-  transcripts.py   lectura por la cola de las transcripciones, digest por turno, hora del límite de uso
+  transcripts.py   lectura por la cola de las transcripciones, digest por turno, hora del límite de uso, error de API reintentable
   procs.py         liveness, barrido de procesos, cwd por PEB
   send.py          inyección de teclas por PID
-  screen.py        lectura del buffer de consola por PID
+  screen.py        lectura del buffer de consola por PID: sugerencias y diálogos de la TUI
   auth.py          TOTP (RFC 6238), cookies, freno de intentos
   state.py         estado compartido: listas JSON (links, reglas), config, broadcast SSE
   sessions.py      registro de sesiones, máquina de estados, eventos de hooks, barrido, envío
-  rules.py         reglas "cuando termine" y "a las HH:MM" (una vez o cada every_s con tope), regla automática "Continuar", disparo y purga
+  rules.py         reglas "cuando termine" y "a las HH:MM" (una vez o cada every_s con tope), las dos reglas automáticas "Continuar" (límite de uso, error de API), disparo y purga
   server.py        handler HTTP + SSE, túnel, arranque de los hilos
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
   src/arrows-geometry.ts   geometría de las flechas y etiquetas de período, funciones puras con tests propios
@@ -269,12 +288,12 @@ lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 97 tests
+python -m pytest tests -q                                   # 125 tests
 python -m ruff check lienzo tests install.py                # lint
 python -m black lienzo tests install.py                     # formato
 cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 37 tests de las flechas
 cd web; node --experimental-strip-types src/nl.test.ts                # 79 aserciones del parser de frases
-cd web; npm run test:ui                                               # 28 pruebas de interfaz en el navegador (Playwright)
+cd web; npm run test:ui                                               # 34 pruebas de interfaz en el navegador (Playwright)
 ```
 
 Las de interfaz miden el tablero pintado (alturas, subcolumnas, flechas, scroll, contraste) contra

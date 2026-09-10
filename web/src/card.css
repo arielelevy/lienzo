@@ -264,3 +264,17 @@
 .card .top *, .card .title, .card .freeline { user-select: none; }
 .card .top button, .card .top .st { cursor: pointer; }
 .card .prompt, .card .reply, .card .lastcmd, .card .activity, .card .words, .card .error { cursor: text; user-select: text; }
+.workpreview {
+  width: min(720px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  box-sizing: border-box;
+  border: 1px solid #64748b;
+  border-radius: 12px;
+  padding: 24px;
+  background: var(--bg, #161b22);
+  color: var(--fg);
+}
+.workpreview::backdrop { background: #0009; }
+.workpreview h2 { margin-top: 0; }
+.workpreview textarea { width: 100%; box-sizing: border-box; min-height: 240px; max-height: 50vh; resize: vertical; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; }
+.workpreview .row { justify-content: flex-end; margin-top: 16px; }

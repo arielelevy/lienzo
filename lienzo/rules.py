@@ -97,6 +97,7 @@ def render_template(tpl: str, s: dict | None) -> str:
 ON_STOP_COOLDOWN_S = 30  # dos sesiones conectadas en ambos sentidos no se contestan en bucle
 CONTINUE_TEXT = "Continuar"
 CONTINUE_DELAY_S = 60
+RETRY_DELAY_S = 10  # error de API: se reintenta en el acto, con diez segundos para cancelarlo
 AT_NEAR_S = 120  # dos programadas a menos de 2 min son "la misma hora" (la UI guarda UTC, aca local)
 
 
@@ -121,9 +122,16 @@ def ensure_continue_rule(s: dict) -> None:
     at = hasta + dt.timedelta(seconds=CONTINUE_DELAY_S)
     if at < dt.datetime.now().astimezone() - dt.timedelta(minutes=5):
         return  # aviso viejo: el cupo ya volvio, no hay nada que programar
-    at_iso = at.isoformat(timespec="seconds")
     with lock:
         s["continue_scheduled_for"] = until
+    schedule_continue(s, at, f"sin cupo hasta {until}")
+
+
+def schedule_continue(s: dict, at: dt.datetime, motivo: str) -> None:
+    """Deja programado "Continuar" para `s` a las `at`, una sola vez, si no hay ya una a esa hora.
+    Con el lock; no envia nada (lo hace rules_loop, que corre cada 5 s)."""
+    at_iso = at.isoformat(timespec="seconds")
+    with lock:
         for r in rules.items:
             if r.get("kind") == "at" and r.get("to") == s["session_id"] and at_near(r, at):
                 return  # ya esta (manual o automatica, vigente o ya disparada)
@@ -143,8 +151,27 @@ def ensure_continue_rule(s: dict) -> None:
         }
         rules.add(rule, cap=500)
     state.log(
-        f"regla automatica {rule['id']}: {s['agent']} {s['session_id'][:8]} sin cupo hasta {until}; "
-        f"'{CONTINUE_TEXT}' a las {at_iso}"
+        f"regla automatica {rule['id']}: {s['agent']} {s['session_id'][:8]} {motivo}; '{CONTINUE_TEXT}' a las {at_iso}"
+    )
+
+
+def retry_after_api_error(s: dict, sig: str) -> None:
+    """El turno murio con un error de API que se arregla reintentando ("API Error: The response
+    stopped arriving"): mandar "Continuar" en el acto, una sola vez por error. Solo con
+    "auto_retry": true en ~/.lienzo/config.json (mismo criterio que auto_continue: nada automatico
+    sin tope; aca el tope es un reintento por aviso). El envio no se hace desde aca --apply_turn
+    corre con el lock tomado y send_to_session puede tardar un minuto--: se deja una regla `at`
+    para dentro de RETRY_DELAY_S segundos, que ademas le da al usuario tiempo de quitarla."""
+    if not load_config().get("auto_retry"):
+        return
+    with lock:
+        if s.get("retry_done_for") == sig:
+            return  # este error ya se reintento; si el usuario borro la regla, no vuelve
+        s["retry_done_for"] = sig
+    schedule_continue(
+        s,
+        dt.datetime.now().astimezone() + dt.timedelta(seconds=RETRY_DELAY_S),
+        f"error de API ({short(sig.split(':', 1)[-1], 80)})",
     )
 
 
@@ -277,3 +304,4 @@ def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
 # sessions.py no importa este modulo: se engancha aca
 ses.on_turn_end = fire_on_stop
 ses.on_limit_notice = ensure_continue_rule
+ses.on_api_error = retry_after_api_error
