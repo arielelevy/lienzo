@@ -147,8 +147,8 @@ en la tarjeta con sus opciones; elegir una teclea el número en su terminal.
   últimos cinco turnos; Ctrl+V sobre otra tarjeta (o "Pegar trabajo") abre una vista previa
   editable. Hay un solo portapapeles para todo el tablero, y no se puede pegar en la misma sesión de
   origen ni en una que está esperando un permiso. Al enviar, la tarjeta destino **hereda el título
-  con la marca "copycat"** y lleva un 🐱 chiquito en su fila de arriba; por defecto la de origen
-  **recibe un Esc si está corriendo y queda marcada "stopped"**, para que no hagan las dos lo
+  con la marca "copycat"** y lleva la etiqueta ⧉ copycat en su fila de arriba; por defecto la de origen
+  **recibe un Esc si está corriendo y queda con la etiqueta roja "stopped"**, para que no hagan las dos lo
   mismo (la marca se levanta con su próximo pedido; si no estaba corriendo no se la toca). La
   casilla **Duplicar** deja las dos trabajando: nadie se detiene, y cuando la copia termine le
   manda su informe a la de origen una sola vez. Es una conexión de un solo sentido a propósito:
