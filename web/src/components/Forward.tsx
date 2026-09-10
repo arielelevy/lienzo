@@ -140,7 +140,6 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from.session_id]);
 
   const applyTemplate = (tpl: string) => {

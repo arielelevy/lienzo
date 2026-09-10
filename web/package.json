@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "lint": "eslint .",
     "preview": "vite preview",
     "pretest:ui": "playwright install chromium",
     "test:ui": "playwright test --config tests-ui/playwright.config.ts"
@@ -17,12 +18,18 @@
     "react-markdown": "^9.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^10.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.6",
+    "globals": "^17.12.0",
     "typescript": "^5.6.3",
+    "typescript-eslint": "^8.70.0",
     "vite": "^6.0.5"
   }
 }

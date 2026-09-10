@@ -58,6 +58,10 @@ export interface Session {
   title_source?: "transcript" | "prompt" | "user" | null;
   /** coordinadora del repo (estrella en la tarjeta): recibe los avisos "cuando termine" y "avisame". A lo sumo una por repo */
   coordinator?: boolean;
+  /** le pegaron el trabajo de esa sesion (Ctrl+V): heredo su titulo con la marca copycat */
+  copycat_of?: string | null;
+  /** su trabajo siguio en esa otra sesion y se la detuvo (Esc); se levanta con su proximo pedido */
+  stopped_by?: string | null;
 }
 
 export interface Pending {
