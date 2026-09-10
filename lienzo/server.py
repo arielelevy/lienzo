@@ -34,6 +34,8 @@ from sessions import (
     clean_attachments,
     consume_events,
     drop_session,
+    hand_over,
+    interrupt_session,
     liveness_loop,
     load_sessions,
     public_pending,
@@ -629,6 +631,9 @@ class Handler(BaseHTTPRequestHandler):
                     return None
                 if parts[2] == "send":
                     return self._send(s)
+                if parts[2] == "interrupt":
+                    code, res = interrupt_session(s)
+                    return self._json(code, res)
                 if parts[2] == "dialog":
                     d = self._json_body()
                     if not isinstance(d.get("choice"), int) or isinstance(d.get("choice"), bool):
@@ -698,6 +703,9 @@ class Handler(BaseHTTPRequestHandler):
                 add_link(sid, link_to, text, kind)
             elif src and src in sessions and src != sid:
                 add_link(src, sid, text, kind)
+                if d.get("copycat") is True:
+                    # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
+                    res.update(hand_over(s, sessions[src], stop=d.get("stop_origin") is not False))
             elif not src and not link_to:
                 # lo que el usuario escribio desde el lienzo: queda en el historial de la sesion
                 # (pestana Conexiones) como 'recibido de vos'; sin flecha

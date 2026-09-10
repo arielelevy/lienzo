@@ -71,7 +71,6 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
       const escribiendo =
         !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
       const conTexto = [...document.querySelectorAll("textarea")].some((t) => t.value.trim() !== "");
-      // eslint-disable-next-line no-console
       if (escribiendo || conTexto) console.info("lienzo: hay una version nueva; se recarga al terminar de escribir");
       if (escribiendo || conTexto) return;
       window.location.reload();

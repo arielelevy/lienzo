@@ -145,9 +145,14 @@ en la tarjeta con sus opciones; elegir una teclea el número en su terminal.
 - **Copiar y pegar trabajo entre sesiones**: con una tarjeta elegida, Ctrl+C (o "Copiar trabajo"
   en su menú ⋯) arma un encargo con el último pedido, la última respuesta y los destacados de los
   últimos cinco turnos; Ctrl+V sobre otra tarjeta (o "Pegar trabajo") abre una vista previa
-  editable y "Enviar trabajo" se lo escribe en su terminal. Hay un solo portapapeles para todo el
-  tablero, no se puede pegar en la misma sesión de origen ni en una que está esperando un permiso,
-  y la sesión de origen sigue como estaba: se copia el contexto, no se mueve nada.
+  editable. Hay un solo portapapeles para todo el tablero, y no se puede pegar en la misma sesión de
+  origen ni en una que está esperando un permiso. Al enviar, la tarjeta destino **hereda el título
+  con la marca "copycat"** y lleva un 🐱 chiquito en su fila de arriba; por defecto la de origen
+  **recibe un Esc si está corriendo y queda marcada "stopped"**, para que no hagan las dos lo
+  mismo (la marca se levanta con su próximo pedido; si no estaba corriendo no se la toca). La
+  casilla **Duplicar** deja las dos trabajando: nadie se detiene, y cuando la copia termine le
+  manda su informe a la de origen una sola vez. Es una conexión de un solo sentido a propósito:
+  la ida y vuelta es el bucle A↔B que el server rechaza.
 
 Las tres pestañas del panel: *Chat* (por turno: pedido, lo que fue diciendo, respuesta,
 archivos, comandos, errores, preguntas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo
@@ -243,7 +248,8 @@ túnel, además la cookie de sesión.
 | GET | `/sessions/<sid>/digest?n=10` | destacados por turno |
 | GET | `/sessions/<sid>/screen` | texto visible de la terminal |
 | GET | `/sessions/<sid>/connections` | links y reglas donde esa sesión es origen o destino, con la otra punta resuelta a `{session_id, name}`; lo que mandó el usuario viene como "vos (lienzo)" |
-| POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío entre sesiones, con `native` lo marca como canal nativo |
+| POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío entre sesiones, con `native` lo marca como canal nativo. Con `from` y `copycat: true` es "pegar trabajo": la tarjeta hereda el título con la marca copycat (`copycat_of`) y, salvo `stop_origin: false`, la de origen recibe un Esc si corre y queda `stopped_by`; la respuesta trae `interrupted` |
+| POST | `/sessions/<sid>/interrupt` | un Esc en su terminal: corta el turno que corre. 409 si la sesión no está corriendo (en una quieta el Esc borra la caja) |
 | POST | `/sessions/<sid>/dialog` | `{choice: n}`; elige una opción del diálogo de la TUI que la tarjeta está mostrando (se teclea el número, sin Enter). 409 si esa sesión no está mostrando esa opción |
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
 | PUT | `/sessions/<sid>/title` | `{title}`; el título pasa a ser del usuario y no se recalcula |
@@ -270,7 +276,7 @@ lienzo/
   procinfo.py      ctypes mínimo compartido: padre, imagen, vivo, agente
   transcripts.py   lectura por la cola de las transcripciones, digest por turno, hora del límite de uso, error de API reintentable
   procs.py         liveness, barrido de procesos, cwd por PEB
-  send.py          inyección de teclas por PID
+  send.py          inyección de teclas por PID; `--key escape` manda un Esc solo (interrumpir)
   screen.py        lectura del buffer de consola por PID: sugerencias y diálogos de la TUI
   auth.py          TOTP (RFC 6238), cookies, freno de intentos
   state.py         estado compartido: listas JSON (links, reglas), config, broadcast SSE
@@ -288,12 +294,14 @@ lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 125 tests
+python -m pytest tests -q                                   # 130 tests
 python -m ruff check lienzo tests install.py                # lint
 python -m black lienzo tests install.py                     # formato
+cd web; npm run build                                       # tsc + vite
+cd web; npm run lint                                        # eslint (typescript-eslint + react-hooks); las reglas del compilador de React quedan como advertencia
 cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 37 tests de las flechas
 cd web; node --experimental-strip-types src/nl.test.ts                # 79 aserciones del parser de frases
-cd web; npm run test:ui                                               # 34 pruebas de interfaz en el navegador (Playwright)
+cd web; npm run test:ui                                               # 35 pruebas de interfaz en el navegador (Playwright)
 ```
 
 Las de interfaz miden el tablero pintado (alturas, subcolumnas, flechas, scroll, contraste) contra

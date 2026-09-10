@@ -1568,3 +1568,75 @@ def test_la_caja_vacia_no_es_texto_tipeado():
     assert (a["input"], a["placeholder"]) == ("mandale el informe a la coordinadora", False)
     # el placeholder de la cola de mensajes sigue siendo placeholder
     assert screen.input_area([raya, "❯ Press up to edit queued messages", raya])["placeholder"] is True
+
+
+# 14. pegar trabajo: la copia hereda el titulo, el origen se detiene ----------------------------
+
+
+def _traspaso(monkeypatch):
+    """Origen corriendo y copia libre, las dos con PID vivo; send.py no tipea, se anota el comando."""
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    typed: list[list[str]] = []
+    monkeypatch.setattr(ses.subprocess, "run", lambda cmd, **k: (typed.append(cmd), _Run(0))[1])
+    origen = ses.new_session(OLD, "claude", "hook")
+    origen.update({"pid": PID, "state": "corriendo", "title": "Tablero de mapas", "title_source": "transcript"})
+    copia = ses.new_session(SID, "claude", "hook")
+    copia.update({"pid": PID + 1, "state": "termino", "last_event": "Stop"})
+    st.sessions[OLD], st.sessions[SID] = origen, copia
+    return origen, copia, typed
+
+
+def test_traspaso_interrumpe_al_origen_y_marca_las_dos(aislado, monkeypatch):
+    origen, copia, typed = _traspaso(monkeypatch)
+    res = ses.hand_over(copia, origen)
+    assert res == {"interrupted": True}
+    assert typed[-1][-2:] == ["--key", "escape"], "al origen le llega un Esc, no texto"
+    assert "--text" not in typed[-1] or typed[-1][typed[-1].index("--text") + 1] == ""
+    assert origen["stopped_by"] == SID
+    assert copia["copycat_of"] == OLD
+    assert (copia["title"], copia["title_source"]) == ("Tablero de mapas · copycat", "user")
+    # copia de una copia: la marca no se duplica
+    nieta = ses.new_session(NEW, "claude", "hook")
+    nieta.update({"pid": PID + 2, "state": "termino"})
+    st.sessions[NEW] = nieta
+    ses.hand_over(nieta, copia)
+    assert nieta["title"] == "Tablero de mapas · copycat"
+
+
+def test_traspaso_no_toca_un_origen_que_no_corre(aislado, monkeypatch):
+    """Un Esc en una sesion quieta le borra la caja: si no esta corriendo no se manda nada, pero la
+    marca de detenida queda igual (su trabajo siguio en otra)."""
+    origen, copia, typed = _traspaso(monkeypatch)
+    origen["state"] = "termino"
+    assert ses.hand_over(copia, origen) == {"interrupted": False}
+    assert typed == []
+    assert origen["stopped_by"] == SID and copia["copycat_of"] == OLD
+    # sin titulo en el origen, la copia se queda con el suyo (automatico)
+    origen2 = ses.new_session(NEW, "codex", "sweep")
+    origen2.update({"pid": PID + 5, "state": "termino"})
+    copia["title"], copia["title_source"] = None, None
+    ses.hand_over(copia, origen2)
+    assert copia["title"] is None and copia["title_source"] is None
+
+
+def test_duplicar_no_toca_al_origen(aislado, monkeypatch):
+    origen, copia, typed = _traspaso(monkeypatch)
+    assert ses.hand_over(copia, origen, stop=False) == {"interrupted": False}
+    assert typed == [] and origen["stopped_by"] is None and origen["state"] == "corriendo"
+    assert copia["copycat_of"] == OLD and copia["title"] == "Tablero de mapas · copycat"
+
+
+def test_la_marca_de_detenida_se_levanta_con_el_pedido_siguiente(aislado, monkeypatch):
+    origen, copia, typed = _traspaso(monkeypatch)
+    ses.hand_over(copia, origen)
+    assert origen["stopped_by"] == SID
+    ses.apply_event(evp("UserPromptSubmit", OLD, prompt_id="Z", prompt="seguí vos igual", transcript_path=None))
+    assert origen["stopped_by"] is None and origen["state"] == "corriendo"
+
+
+def test_interrupt_solo_a_una_sesion_que_corre(aislado, monkeypatch):
+    origen, copia, typed = _traspaso(monkeypatch)
+    code, out = ses.interrupt_session(copia)
+    assert code == 409 and "no esta corriendo" in out["error"]
+    code, out = ses.interrupt_session(origen)
+    assert code == 200 and typed[-1][-2:] == ["--key", "escape"]

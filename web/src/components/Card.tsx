@@ -558,6 +558,16 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               ★
             </span>
           )}
+          {s.copycat_of && (
+            <span className="copycat" role="img" aria-label="copycat" title={`copycat: sigue el trabajo de ${shortName(sessions[s.copycat_of], "otra sesión")}`}>
+              🐱
+            </span>
+          )}
+          {s.stopped_by && (
+            <span className="stopped" title={`detenida: su trabajo siguió en ${shortName(sessions[s.stopped_by], "otra sesión")}. Se levanta con su próximo pedido`}>
+              stopped
+            </span>
+          )}
           {ago(s.state_since)}
           {onGrip && writable && (
             <button

@@ -44,6 +44,8 @@
 /* ★ de coordinadora en la fila de arriba: es un indicador, no un boton (marcarla y quitarle el rol
    viven en el menu ⋯, con renombrar y quitar la tarjeta) */
 .card .top .star { padding: 0 3px; font-size: 13px; line-height: 1; color: var(--need); flex: 0 0 auto; }
+.card .top .copycat { padding: 0 2px; font-size: 12px; line-height: 1; flex: 0 0 auto; }
+.card .top .stopped { color: var(--dim); border: 1px solid var(--dim); border-radius: 8px; padding: 0 6px; font-size: 10px; line-height: 1.5; letter-spacing: .03em; flex: 0 0 auto; }
 
 /* ⋯ de la tarjeta: junto con el agarre, los unicos dos controles a la vista de la fila de arriba.
    Siempre visible, tambien en tactil, porque es la puerta a lo demas */
@@ -278,3 +280,4 @@
 .workpreview h2 { margin-top: 0; }
 .workpreview textarea { width: 100%; box-sizing: border-box; min-height: 240px; max-height: 50vh; resize: vertical; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; }
 .workpreview .row { justify-content: flex-end; margin-top: 16px; }
+.workpreview .dup { display: block; margin-top: 12px; font-size: 13px; color: var(--fg); }

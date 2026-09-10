@@ -9,6 +9,6 @@ export default async function () {
     const r = await fetch(`${BASE}/`, { signal: AbortSignal.timeout(4000) });
     if (!r.ok) throw new Error(`devolvió ${r.status}`);
   } catch (e) {
-    throw new Error(`No hay lienzo escuchando en ${BASE}: arrancá el server (lienzo-server.cmd) y volvé a correr.\n  ${(e as Error).message}`);
+    throw new Error(`No hay lienzo escuchando en ${BASE}: arrancá el server (lienzo-server.cmd) y volvé a correr.\n  ${(e as Error).message}`, { cause: e });
   }
 }

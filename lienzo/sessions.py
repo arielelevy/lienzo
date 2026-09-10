@@ -337,6 +337,8 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "branch": None,
         "title": None,
         "title_source": None,
+        "copycat_of": None,
+        "stopped_by": None,
         "transcript_path": None,
         "state": "termino",
         "state_since": now(),
@@ -794,6 +796,7 @@ def title_from_prompt(s: dict) -> None:
 
 def hook_prompt_submit(s: dict, ev: dict) -> None:
     set_state(s, "corriendo")
+    s["stopped_by"] = None  # volvio a trabajar: la marca de detenida ya no cuenta
     # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
     s["prompt_id"] = ev.get("prompt_id")
     s["prompt_ts"] = s["last_event_ts"]
@@ -1315,7 +1318,7 @@ def compose_send(sid: str, text: str, attachments: list[str]) -> tuple[str, str,
     return " ".join(parts), orig, attachments
 
 
-def run_send(sid: str, pid: int, final: str, enter: bool = True) -> tuple[int, dict]:
+def run_send(sid: str, pid: int, final: str, enter: bool = True, key: str | None = None) -> tuple[int, dict]:
     """Subproceso send.py, que teclea `final` en la consola de `pid`. Un texto largo va por archivo:
     la linea de comando de Windows no lo aguanta. Sin `enter` solo se tipea (una opcion de un
     dialogo de la TUI se elige con la tecla del numero, sin confirmar). (codigo, respuesta)."""
@@ -1324,6 +1327,8 @@ def run_send(sid: str, pid: int, final: str, enter: bool = True) -> tuple[int, d
     cmd += ["--text-file", tf] if tf else ["--text", final]
     if not enter:
         cmd.append("--no-enter")
+    if key:
+        cmd += ["--key", key]
     try:
         r = subprocess.run(
             cmd,
@@ -1374,6 +1379,27 @@ def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
     return 200, out
 
 
+def interrupt_session(s: dict) -> tuple[int, dict]:
+    """Un Esc en la terminal de una sesion que esta corriendo: el turno se corta y la sesion queda
+    esperando, con su contexto entero. Es lo que se hace al pegarle su trabajo a otra tarjeta para
+    que no lo hagan las dos. Solo si esta corriendo: en una sesion quieta un Esc borra lo que haya en
+    la caja, y a un permiso pendiente se le contesta, no se lo interrumpe."""
+    if frenado := send_blocked(s):
+        return frenado
+    if s.get("state") != "corriendo":
+        return 409, {"ok": False, "error": "esa sesion no esta corriendo: no hay nada que detener"}
+    code, out = run_send(s["session_id"], s["pid"], "", enter=False, key="escape")
+    if code == 200 and not out.get("ok"):
+        state.log(f"interrumpir {s['session_id'][:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
+        code = 500
+    if code != 200:
+        return code, out
+    state.log(f"interrumpida {s['session_id'][:8]} (Esc): {short(s.get('last_prompt') or '', 60)}")
+    with lock:
+        touch(s)  # el estado lo dice la transcripcion (Interrupt) o el barrido, no se adivina aca
+    return 200, out
+
+
 def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
     """Inyecta texto en la consola de la sesion y deja la tarjeta corriendo. El subproceso (hasta
     60 s) y la lectura del adjunto van fuera del lock; solo la tarjeta se toca con el lock."""
@@ -1406,8 +1432,42 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
             # tras SessionEnd la consola ya es de otra sesion (/clear, resume): lo que se tipea
             # llega a esa, y esta tarjeta no vuelve a 'corriendo' (la continua apply_event)
             set_state(s, "corriendo")
+            s["stopped_by"] = None
         touch(s)
     return 200, out
+
+
+def hand_over(target: dict, origin: dict, stop: bool = True) -> dict:
+    """Despues de pegarle a `target` el trabajo de `origin`: la copia hereda el titulo con la marca
+    copycat y queda apuntando a su origen. Con `stop` (lo normal) el origen se interrumpe con un Esc
+    si estaba corriendo, para que no lo hagan las dos, y queda marcado como detenido hasta su proximo
+    pedido; sin `stop` ("Duplicar") las dos siguen y el origen no se toca. Devuelve {interrupted}
+    para el toast. Un origen que no corria no recibe el Esc: en una sesion quieta le borra la caja,
+    y a un permiso pendiente se le contesta."""
+    interrupted = False
+    if stop and origin.get("state") == "corriendo" and not send_blocked(origin):
+        code, out = run_send(origin["session_id"], origin["pid"], "", enter=False, key="escape")
+        interrupted = code == 200 and bool(out.get("ok"))
+        if not interrupted:
+            state.log(f"traspaso: no pude interrumpir {origin['session_id'][:8]} (pid {origin['pid']}): {out}")
+    with lock:
+        target["copycat_of"] = origin["session_id"]
+        if stop:
+            origin["stopped_by"] = target["session_id"]
+            touch(origin)
+    if title := (origin.get("title") or "").strip():
+        set_title(target, title if title.endswith(" · copycat") else f"{title} · copycat")
+    with lock:
+        touch(target)
+    state.log(
+        f"traspaso {origin['session_id'][:8]} -> {target['session_id'][:8]}: "
+        + (
+            "origen interrumpida (Esc)"
+            if interrupted
+            else "duplicada, el origen sigue" if not stop else "origen no corria, no se toca"
+        )
+    )
+    return {"interrupted": interrupted}
 
 
 # --- pantalla (solo para las sugerencias de la TUI de Claude, DISENO §12) ------------------

@@ -31,6 +31,7 @@ SHIFT_PRESSED = 0x0010
 LEFT_CTRL_PRESSED = 0x0008
 LEFT_ALT_PRESSED = 0x0002
 VK_RETURN = 0x0D
+VK_ESCAPE = 0x1B
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 FILE_SHARE_READ = 0x1
@@ -116,9 +117,37 @@ def key_records(text: str) -> list[INPUT_RECORD]:
     return recs
 
 
+def escape_records() -> list[INPUT_RECORD]:
+    """Un Esc solo. Es la tecla que interrumpe el turno en las dos TUIs (Claude Code y Codex); no
+    puede ir por `key_records` porque el texto que llega del lienzo viene sin caracteres de control
+    a proposito (strip_control, hallazgo A4)."""
+    recs: list[INPUT_RECORD] = []
+    scan = u32.MapVirtualKeyW(VK_ESCAPE, 0)
+    for down in (True, False):
+        r = INPUT_RECORD()
+        r.EventType = KEY_EVENT
+        k = r.Event.KeyEvent
+        k.bKeyDown = down
+        k.wRepeatCount = 1
+        k.wVirtualKeyCode = VK_ESCAPE
+        k.wVirtualScanCode = scan
+        k.uChar.UnicodeChar = "\x1b"
+        k.dwControlKeyState = 0
+        recs.append(r)
+    return recs
+
+
 def inject(
-    pid: int, text: str, enter_presses: int = 1, key_delay: float = 0.3, chunk: int = 200, chunk_delay: float = 0.05
+    pid: int,
+    text: str,
+    enter_presses: int = 1,
+    key_delay: float = 0.3,
+    chunk: int = 200,
+    chunk_delay: float = 0.05,
+    key: str | None = None,
 ) -> dict:
+    """Teclea `text` (mas Enter) en la consola de `pid`. Con `key="escape"` no se tipea texto: va
+    un Esc solo, que interrumpe el turno que corre."""
     if not procs.alive(pid):
         return {"ok": False, "pid": pid, "error": "el proceso no existe"}
     if not procs.is_tui(pid):
@@ -143,6 +172,9 @@ def inject(
                     return f"WriteConsoleInputW fallo (error {ctypes.get_last_error()}, {written.value}/{len(recs)})"
                 return None
 
+            if key == "escape":
+                err = write(escape_records())
+                return {"ok": False, "pid": pid, "error": err} if err else {"ok": True, "pid": pid, "key": "escape"}
             for i in range(0, len(text), chunk):
                 err = write(key_records(text[i : i + chunk]))
                 if err:
@@ -173,7 +205,12 @@ def main() -> int:
     p.add_argument("--chunk", type=int, default=200)
     p.add_argument("--chunk-delay", type=float, default=0.05)
     p.add_argument("--keep-newlines", action="store_true", help="mandar Enter por cada salto (prueba T5)")
+    p.add_argument("--key", choices=["escape"], default=None, help="una tecla sola en vez de texto: Esc interrumpe")
     a = p.parse_args()
+    if a.key:
+        res = inject(a.pid, "", 0, key=a.key)
+        print(json.dumps(res, ensure_ascii=False))
+        return 0 if res.get("ok") else 1
     text = a.text
     if a.text_file:
         with open(a.text_file, encoding="utf-8") as f:
