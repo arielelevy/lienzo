@@ -559,8 +559,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             </span>
           )}
           {s.copycat_of && (
-            <span className="copycat" role="img" aria-label="copycat" title={`copycat: sigue el trabajo de ${shortName(sessions[s.copycat_of], "otra sesión")}`}>
-              🐱
+            <span className="copycat" title={`copycat: sigue el trabajo de ${shortName(sessions[s.copycat_of], "otra sesión")}`}>
+              ⧉ copycat
             </span>
           )}
           {s.stopped_by && (
