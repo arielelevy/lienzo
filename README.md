@@ -148,11 +148,18 @@ en la tarjeta con sus opciones; elegir una teclea el número en su terminal.
   editable. Hay un solo portapapeles para todo el tablero, y no se puede pegar en la misma sesión de
   origen ni en una que está esperando un permiso. Al enviar, la tarjeta destino **hereda el título
   con la marca "copycat"** y lleva la etiqueta ⧉ copycat en su fila de arriba; por defecto la de origen
-  **recibe un Esc si está corriendo y queda con la etiqueta roja "stopped"**, para que no hagan las dos lo
-  mismo (la marca se levanta con su próximo pedido; si no estaba corriendo no se la toca). La
+  **recibe un Esc si está corriendo y pasa a "stopped"**, para que no hagan las dos lo mismo. La
   casilla **Duplicar** deja las dos trabajando: nadie se detiene, y cuando la copia termine le
   manda su informe a la de origen una sola vez. Es una conexión de un solo sentido a propósito:
   la ida y vuelta es el bucle A↔B que el server rechaza.
+- **La llave "stopped"**: la etiqueta roja en la fila de arriba de la tarjeta. Prendida, la sesión
+  **no recibe nada**: los envíos desde el tablero rebotan, las reglas "cuando termine" y las
+  periódicas que la apuntan se saltean sin gastar el disparo, y no se le puede pegar trabajo. Al
+  prenderse, el lienzo **avisa por su terminal a la coordinadora del repo y a toda sesión que
+  tenga una conexión vigente con ella**, con el motivo (a qué copia se fue el trabajo, o que la
+  detuvieron desde el tablero), para que no le manden nada ni cuenten con sus conexiones. Se
+  prende desde el menú ⋯ ("Detener") o al pegar su trabajo en otra tarjeta; se apaga con un click
+  en la etiqueta, desde el menú ("Habilitar"), o sola cuando llega un pedido nuevo por su terminal.
 
 Las tres pestañas del panel: *Chat* (por turno: pedido, lo que fue diciendo, respuesta,
 archivos, comandos, errores, preguntas), *Pantalla* (el buffer de la terminal) y *Conexiones* (lo
@@ -253,6 +260,7 @@ túnel, además la cookie de sesión.
 | POST | `/sessions/<sid>/dialog` | `{choice: n}`; elige una opción del diálogo de la TUI que la tarjeta está mostrando (se teclea el número, sin Enter). 409 si esa sesión no está mostrando esa opción |
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
 | PUT | `/sessions/<sid>/title` | `{title}`; el título pasa a ser del usuario y no se recalcula |
+| PUT | `/sessions/<sid>/stopped` | `{on: true\|false}`; la llave. Prender: Esc si corre, `stopped_by: "user"`, aviso a la coordinadora y a las conectadas por regla vigente (la respuesta trae `interrupted` y `notified`). Apagar: vuelve a recibir. Mientras está prendida, `/send`, `/dialog` e `/interrupt` devuelven 409 y las reglas hacia ella se saltean |
 | PUT | `/sessions/<sid>/coordinator` | `{on: true\|false}`; una coordinadora por repo, prender una apaga la anterior |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
 | GET | `/links` | envíos hechos; `kind` es `send`, `rule`, `native` o `user` |
@@ -294,7 +302,7 @@ lienzo-server.cmd  arranque
 ```
 
 ```powershell
-python -m pytest tests -q                                   # 130 tests
+python -m pytest tests -q                                   # 132 tests
 python -m ruff check lienzo tests install.py                # lint
 python -m black lienzo tests install.py                     # formato
 cd web; npm run build                                       # tsc + vite

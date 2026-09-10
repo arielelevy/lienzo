@@ -1269,6 +1269,11 @@ def send_blocked(s: dict) -> tuple[int, dict] | None:
         return 409, {"ok": False, "error": "la sesion no tiene un PID vivo"}
     if s.get("orphan"):
         return 409, {"ok": False, "error": "la sesion perdio su terminal (huerfana): no hay consola donde escribir"}
+    if s.get("stopped_by"):
+        return 409, {
+            "ok": False,
+            "error": "esa sesion esta detenida (stopped): no recibe mensajes hasta que la habilites desde su tarjeta",
+        }
     if s.get("no_console"):
         return 409, {
             "ok": False,
@@ -1437,37 +1442,105 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     return 200, out
 
 
-def hand_over(target: dict, origin: dict, stop: bool = True) -> dict:
-    """Despues de pegarle a `target` el trabajo de `origin`: la copia hereda el titulo con la marca
-    copycat y queda apuntando a su origen. Con `stop` (lo normal) el origen se interrumpe con un Esc
-    si estaba corriendo, para que no lo hagan las dos, y queda marcado como detenido hasta su proximo
-    pedido; sin `stop` ("Duplicar") las dos siguen y el origen no se toca. Devuelve {interrupted}
-    para el toast. Un origen que no corria no recibe el Esc: en una sesion quieta le borra la caja,
-    y a un permiso pendiente se le contesta."""
+def _name(s: dict) -> str:
+    t = (s.get("title") or "").strip()
+    return f"{s.get('repo')} · {t}" if t else f"{s.get('repo')} · {s['session_id'][:8]}"
+
+
+def _notify_async(fn) -> None:
+    """El aviso a las conectadas teclea en varias consolas (hasta 60 s cada una): fuera del pedido
+    HTTP. Los tests lo reemplazan por una llamada directa."""
+    threading.Thread(target=fn, daemon=True).start()
+
+
+def stopped_recipients(s: dict) -> list[dict]:
+    """A quien avisar que `s` quedo detenida: la coordinadora de su repo y toda sesion que tenga
+    una regla vigente con ella (la que le iba a mandar algo y la que esperaba su informe). Sin la
+    propia, sin la copia que se llevo su trabajo, sin repetir."""
+    sid = s["session_id"]
+    skip = {sid, s.get("stopped_by")}
+    out: dict[str, dict] = {}
+    with lock:
+        for o in sessions.values():
+            if o.get("coordinator") and o.get("repo") == s.get("repo"):
+                out[o["session_id"]] = o
+        for r in state.rules.items:
+            if not r.get("enabled") or sid not in (r.get("from"), r.get("to")):
+                continue
+            other = r.get("to") if r.get("from") == sid else r.get("from")
+            if other and other in sessions:
+                out[other] = sessions[other]
+    return [o for k, o in out.items() if k not in skip]
+
+
+def notify_stopped(s: dict, recipients: list[dict]) -> None:
+    """Un renglon en la terminal de cada conectada: que no le manden nada ni cuenten con sus
+    conexiones hasta que la habiliten. Con la copia nombrada si la hubo."""
+    by = s.get("stopped_by")
+    copia = sessions.get(by) if by and by != "user" else None
+    motivo = f"su trabajo siguio en {_name(copia)} (copycat)" if copia else "la detuvieron desde el tablero"
+    text = (
+        f"Aviso del lienzo: la sesion {_name(s)} quedo detenida (stopped): {motivo}. No le mandes nada "
+        "ni cuentes con sus conexiones hasta que la habiliten desde el tablero; lo que le llegue rebota."
+    )
+    for r in recipients:
+        code, out = send_to_session(r, text, [])
+        if code == 200:
+            add_link(None, r["session_id"], text, "user")
+        else:
+            state.log(f"aviso de detenida a {r['session_id'][:8]} no salio: {out.get('error')}")
+
+
+def set_stopped(s: dict, on: bool, by: str = "user") -> dict:
+    """La llave stopped de una tarjeta. Prendida: un Esc si estaba corriendo, la marca (con quien la
+    detuvo: la copia que se llevo el trabajo, o "user" desde el tablero), y el aviso a las
+    conectadas. Mientras esta prendida send_blocked rechaza todo y las reglas hacia ella se saltean.
+    Apagada: vuelve a recibir. Un pedido nuevo en su terminal tambien la apaga (hook_prompt_submit)."""
+    if not on:
+        with lock:
+            s["stopped_by"] = None
+            touch(s)
+        state.log(f"habilitada {s['session_id'][:8]}: vuelve a recibir")
+        return {"interrupted": False, "notified": []}
+    if s.get("stopped_by"):
+        return {"interrupted": False, "notified": [], "already": True}
     interrupted = False
-    if stop and origin.get("state") == "corriendo" and not send_blocked(origin):
-        code, out = run_send(origin["session_id"], origin["pid"], "", enter=False, key="escape")
+    if s.get("state") == "corriendo" and not send_blocked(s):
+        code, out = run_send(s["session_id"], s["pid"], "", enter=False, key="escape")
         interrupted = code == 200 and bool(out.get("ok"))
         if not interrupted:
-            state.log(f"traspaso: no pude interrumpir {origin['session_id'][:8]} (pid {origin['pid']}): {out}")
+            state.log(f"detener: no pude interrumpir {s['session_id'][:8]} (pid {s['pid']}): {out}")
+    with lock:
+        s["stopped_by"] = by
+        touch(s)
+    recipients = stopped_recipients(s)
+    if recipients:
+        _notify_async(lambda: notify_stopped(s, recipients))
+    state.log(
+        f"detenida {s['session_id'][:8]} por {by[:8]}: "
+        + ("interrumpida (Esc)" if interrupted else "no corria")
+        + f"; avisadas {len(recipients)}"
+    )
+    return {"interrupted": interrupted, "notified": [_name(r) for r in recipients]}
+
+
+def hand_over(target: dict, origin: dict, stop: bool = True) -> dict:
+    """Despues de pegarle a `target` el trabajo de `origin`: la copia hereda el titulo con la marca
+    copycat y queda apuntando a su origen. Con `stop` (lo normal) el origen pasa a stopped
+    (set_stopped: Esc si corria, aviso a sus conectadas, no recibe nada mas); sin `stop`
+    ("Duplicar") las dos siguen y el origen no se toca. Devuelve {interrupted} para el toast."""
     with lock:
         target["copycat_of"] = origin["session_id"]
-        if stop:
-            origin["stopped_by"] = target["session_id"]
-            touch(origin)
+    res = set_stopped(origin, True, by=target["session_id"]) if stop else {"interrupted": False}
     if title := (origin.get("title") or "").strip():
         set_title(target, title if title.endswith(" · copycat") else f"{title} · copycat")
     with lock:
         touch(target)
     state.log(
         f"traspaso {origin['session_id'][:8]} -> {target['session_id'][:8]}: "
-        + (
-            "origen interrumpida (Esc)"
-            if interrupted
-            else "duplicada, el origen sigue" if not stop else "origen no corria, no se toca"
-        )
+        + ("origen detenida" if stop else "duplicada, el origen sigue")
     )
-    return {"interrupted": interrupted}
+    return {"interrupted": bool(res.get("interrupted"))}
 
 
 # --- pantalla (solo para las sugerencias de la TUI de Claude, DISENO §12) ------------------
