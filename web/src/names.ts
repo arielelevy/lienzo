@@ -17,8 +17,10 @@ export function shortName(o: Session | undefined, fallback = "otra sesión"): st
   return `${o.repo} · ${t.length > 24 ? t.slice(0, 23).trimEnd() + "…" : t}`;
 }
 
-/** viva, con terminal propia y no huerfana: se le puede escribir */
-export const canWrite = (s: Session): boolean => !!s.alive && !s.orphan && !s.no_console;
+/** viva, con terminal propia, no huerfana y no detenida (stopped): se le puede escribir */
+export const canWrite = (s: Session): boolean => !!s.alive && !s.orphan && !s.no_console && !s.stopped_by;
+/** viva con terminal, aunque este detenida: lo que no es escribirle (renombrar, la llave stopped) */
+export const hasConsole = (s: Session): boolean => !!s.alive && !s.orphan && !s.no_console;
 
 /** libre: con consola y sin ningun pedido ni respuesta todavia (sesion recien abierta) */
 export const isFree = (s: Session): boolean => canWrite(s) && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();

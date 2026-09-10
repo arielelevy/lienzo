@@ -1634,6 +1634,60 @@ def test_la_marca_de_detenida_se_levanta_con_el_pedido_siguiente(aislado, monkey
     assert origen["stopped_by"] is None and origen["state"] == "corriendo"
 
 
+def test_stopped_es_una_llave_que_frena_envios_y_reglas(aislado, monkeypatch):
+    """Detenida no recibe: send 409, la on_stop hacia ella se saltea sin gastar el disparo. La
+    llave apagada la devuelve a la normalidad."""
+    origen, copia, typed = _traspaso(monkeypatch)
+    monkeypatch.setattr(st.rules, "path", str(aislado / "rules.json"))
+    monkeypatch.setattr(st.rules, "items", [])
+    monkeypatch.setattr(ses, "_notify_async", lambda fn: None)
+    ses.hand_over(copia, origen)
+    code, out = ses.send_to_session(origen, "hola", [])
+    assert code == 409 and "detenida" in out["error"]
+    r = {"id": "r1", "kind": "on_stop", "from": SID, "to": OLD, "text": "{respuesta}", "enabled": True, "fired": 0}
+    st.rules.items.append(r)
+    antes = len(typed)
+    rl.fire_rule(r)
+    assert r["fired"] == 0 and r["enabled"] is True and r["last_result"] == "salteado: destino detenido (stopped)"
+    assert len(typed) == antes, "no se le tecleo nada"
+    assert ses.set_stopped(origen, False) == {"interrupted": False, "notified": []}
+    assert origen["stopped_by"] is None
+    code, out = ses.send_to_session(origen, "hola", [])
+    assert code == 200 and len(typed) == antes + 1
+    # prenderla desde el tablero, quieta: sin Esc, marcada como "user"
+    origen["state"] = "termino"
+    res = ses.set_stopped(origen, True)
+    assert res["interrupted"] is False and origen["stopped_by"] == "user"
+    assert len(typed) == antes + 1, "a una sesion quieta no se le manda Esc"
+    assert ses.set_stopped(origen, True).get("already") is True
+
+
+def test_detener_avisa_a_la_coordinadora_y_a_las_conectadas(aislado, monkeypatch):
+    origen, copia, typed = _traspaso(monkeypatch)
+    monkeypatch.setattr(st.rules, "path", str(aislado / "rules.json"))
+    monkeypatch.setattr(st.links, "path", str(aislado / "links.json"))
+    monkeypatch.setattr(st.links, "items", [])
+    monkeypatch.setattr(ses, "_notify_async", lambda fn: fn())
+    avisos: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        ses, "send_to_session", lambda s, text, atts: (avisos.append((s["session_id"], text)), (200, {"ok": True}))[1]
+    )
+    coord = ses.new_session(COORD, "claude", "hook")
+    coord.update({"pid": PID + 3, "state": "termino", "coordinator": True, "repo": origen["repo"]})
+    espera = ses.new_session(NEW, "claude", "hook")
+    espera.update({"pid": PID + 4, "state": "termino"})
+    st.sessions[COORD], st.sessions[NEW] = coord, espera
+    monkeypatch.setattr(
+        st.rules, "items", [{"id": "r2", "kind": "on_stop", "from": OLD, "to": NEW, "text": "x", "enabled": True}]
+    )
+    res = ses.hand_over(copia, origen)
+    assert res["interrupted"] is True
+    destinos = sorted(sid for sid, _ in avisos)
+    assert destinos == sorted([COORD, NEW]), "la coordinadora y la que esperaba su informe; ni la propia ni la copia"
+    assert all("quedo detenida (stopped)" in t and "copycat" in t for _, t in avisos)
+    assert [l["to"] for l in st.links.items] == [sid for sid, _ in avisos], "el aviso queda en Conexiones"
+
+
 def test_interrupt_solo_a_una_sesion_que_corre(aislado, monkeypatch):
     origen, copia, typed = _traspaso(monkeypatch)
     code, out = ses.interrupt_session(copia)

@@ -60,7 +60,8 @@ export interface Session {
   coordinator?: boolean;
   /** le pegaron el trabajo de esa sesion (Ctrl+V): heredo su titulo con la marca copycat */
   copycat_of?: string | null;
-  /** su trabajo siguio en esa otra sesion y se la detuvo (Esc); se levanta con su proximo pedido */
+  /** la llave stopped: session_id de la copia que se llevo su trabajo, o "user" si la detuvieron desde
+   *  el tablero. Prendida no recibe mensajes ni reglas; se apaga desde la etiqueta o con su proximo pedido */
   stopped_by?: string | null;
 }
 

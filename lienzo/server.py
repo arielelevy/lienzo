@@ -45,6 +45,7 @@ from sessions import (
     screen_loop,
     send_to_session,
     set_coordinator,
+    set_stopped,
     set_title,
     sweep_once,
     touch,
@@ -729,6 +730,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._put_title(parts[1])
             if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "coordinator":
                 return self._put_coordinator(parts[1])
+            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "stopped":
+                return self._put_stopped(parts[1])
             if len(parts) == 2 and parts[0] == "rules":
                 code, res = edit_rule(parts[1], self._json_body())
                 return self._json(code, res)
@@ -764,6 +767,18 @@ class Handler(BaseHTTPRequestHandler):
             touch(s)
         log(f"titulo de {sid[:8]} -> {s['title']!r} ({s.get('title_source')})")
         return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
+
+    def _put_stopped(self, sid: str) -> None:
+        """PUT /sessions/<id>/stopped: la llave. {on: true} la detiene (Esc si corre, aviso a sus
+        conectadas, no recibe nada); {on: false} la habilita."""
+        on = self._json_body().get("on")
+        if not isinstance(on, bool):
+            return self._json(400, {"error": "on debe ser true o false"})
+        s = self._session(sid)
+        if s is None:
+            return None
+        res = set_stopped(s, on)
+        return self._json(200, {"ok": True, "stopped_by": s.get("stopped_by"), **res})
 
     def _put_coordinator(self, sid: str) -> None:
         """PUT /sessions/<id>/coordinator: marca la coordinadora del repo (a lo sumo una)."""

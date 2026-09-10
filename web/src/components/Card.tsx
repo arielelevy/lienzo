@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
-import { canWrite, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
+import { canWrite, hasConsole, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
@@ -359,6 +359,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const working = WORKING_RE.test(s.last_reply || "");
   const suggestion = s.suggestion && !s.suggestion.trim().startsWith(ATTACH_WRAPPER) ? s.suggestion : null;
   const writable = canWrite(s);
+  const withConsole = hasConsole(s);
   // pregunta abierta: la ultima respuesta termina en "?" (la linea de actividad "usando X" no cuenta)
   const asks = !working && /\?\s*$/.test((s.last_reply || "").trim());
   // botones rapidos: solo si la sesion espera input de verdad o pregunto algo. Una que entrego un
@@ -427,6 +428,19 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       return on ? `${shortName(s)} es la coordinadora de ${s.repo}` : `${shortName(s)} ya no es la coordinadora`;
     }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`));
   };
+
+  // la llave stopped: prendida no recibe mensajes ni reglas (el server avisa a sus conectadas),
+  // apagada vuelve a recibir. La prende el pegado de su trabajo en otra tarjeta, o el menu
+  const toggleStopped = () => {
+    const on = !s.stopped_by;
+    return act(async () => {
+      const r = await api.put<{ interrupted?: boolean; notified?: string[] }>(`/sessions/${s.session_id}/stopped`, { on });
+      if (!on) return `${shortName(s)} habilitada: vuelve a recibir`;
+      const avisadas = r.notified?.length ? `; avisadas: ${r.notified.join(", ")}` : "; sin conectadas a quien avisar";
+      return `${shortName(s)} detenida${r.interrupted ? " (Esc en su terminal)" : ""}${avisadas}`;
+    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`));
+  };
+  const stoppedBy = s.stopped_by === "user" ? "la detuvieron desde el tablero" : s.stopped_by ? `su trabajo siguió en ${shortName(sessions[s.stopped_by], "otra sesión")}` : "";
 
   // Plegada adentro de un grupo de libres: no se dibuja, la representa la tarjeta del grupo. Va
   // despues de todos los hooks a proposito: el orden de los hooks no puede depender de esto.
@@ -564,9 +578,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             </span>
           )}
           {s.stopped_by && (
-            <span className="stopped" title={`detenida: su trabajo siguió en ${shortName(sessions[s.stopped_by], "otra sesión")}. Se levanta con su próximo pedido`}>
+            <button type="button" className="stopped" disabled={busy} aria-pressed="true"
+              title={`detenida: ${stoppedBy}. No recibe mensajes ni conexiones. Click para habilitarla`}
+              onClick={(e) => { e.stopPropagation(); void toggleStopped(); }}
+              onDoubleClick={(e) => e.stopPropagation()}>
               stopped
-            </span>
+            </button>
           )}
           {ago(s.state_since)}
           {onGrip && writable && (
@@ -609,7 +626,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             onClick={() => { closeMenu(); void workClipboard.copy(); }}>Copiar trabajo · Ctrl+C</button>
           <button type="button" role="menuitem" disabled={!workClipboard.canPaste}
             onClick={() => { closeMenu(); workClipboard.paste(); }}>Pegar trabajo · Ctrl+V</button>
-          {writable && (
+          {withConsole && (
             <button
               type="button"
               role="menuitem"
@@ -619,6 +636,21 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               }}
             >
               ✎ Renombrar
+            </button>
+          )}
+          {withConsole && (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={busy}
+              aria-pressed={!!s.stopped_by}
+              title={s.stopped_by ? "vuelve a recibir mensajes y conexiones" : "un Esc si está corriendo; deja de recibir mensajes y conexiones, y se avisa a las que la tienen conectada"}
+              onClick={() => {
+                closeMenu();
+                void toggleStopped();
+              }}
+            >
+              {s.stopped_by ? "▶ Habilitar (quitar stopped)" : "⏹ Detener (stopped)"}
             </button>
           )}
           {s.agent === "claude" && writable && (

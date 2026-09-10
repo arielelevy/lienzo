@@ -196,6 +196,17 @@ def fire_rule(rule: dict) -> None:
         rules.remove(lambda r: r["id"] == rule["id"])
         return
     periodic = rule.get("kind") == "at" and bool(rule.get("every_s"))
+    if dst.get("stopped_by") and (periodic or rule.get("kind") == "on_stop"):
+        # destino detenido (stopped): no se le manda ni se gasta el disparo; la 'at' de una sola
+        # vez sigue abajo y queda con el 409 como resultado, si no se reintentaria cada vuelta
+        with lock:
+            if periodic:
+                advance_at(rule)
+            rule["last_result"] = "salteado: destino detenido (stopped)"
+            rules.save()
+        state.log(f"regla {rule['id']} ({rule['kind']}) -> {rule['to'][:8]}: salteado, destino detenido")
+        rules.publish()
+        return
     if periodic and rule.get("skip_busy", True) and dst.get("state") == "corriendo":
         # el destino esta trabajando: este disparo no cuenta, se pasa al periodo siguiente
         with lock:
