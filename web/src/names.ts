@@ -221,13 +221,15 @@ export function foldSentence(text: string): { head: string; cut: boolean } {
   return { head, cut: head.length < t.length };
 }
 
-/** El titulo salio del pedido (el server lo marca con title_source, o coincide con su primera
- *  linea, aun cortada): la linea "› pedido" diria lo mismo. */
+/** El titulo dice lo mismo que el pedido (coincide con su primera linea, aun cortada, y sin los
+ *  "#" cuando el pedido llego como adjunto markdown): la linea "› pedido" diria lo mismo.
+ *  `title_source: "prompt"` no alcanza: el titulo lo pone el encargo y se queda, mientras que el
+ *  pedido sigue cambiando con lo que se tipea en la terminal, que ahi si hay que mostrar. */
 export function titleIsPrompt(s: Session): boolean {
   const title = (s.title || "").trim();
   if (!title) return false;
-  if (s.title_source === "prompt") return true;
-  const first = (s.last_prompt || "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  const raw = (s.last_prompt || "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  const first = raw.replace(/^#{1,6}\s*/, "").replace(/\s*#*$/, "");
   if (!first) return false;
   const t = title.replace(/…$/, "").replace(/\.\.\.$/, "").trimEnd();
   return first === title || (t.length >= 8 && first.startsWith(t));

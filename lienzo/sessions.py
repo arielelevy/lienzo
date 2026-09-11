@@ -111,10 +111,42 @@ def attachment_title(s: dict) -> str | None:
     return None if not first or bad_title(first) else short(first, 60)
 
 
-def set_last_prompt(s: dict, raw: str) -> None:
-    """Guarda el ultimo pedido tal como se muestra y, si llego como adjunto, la ruta del .md."""
-    s["last_prompt"] = short(clean_prompt(raw), 500)
+def set_last_prompt(s: dict, raw: str, via: str | None = None) -> None:
+    """Guarda el ultimo pedido tal como se muestra y, si llego como adjunto, la ruta del .md.
+    `via` es de donde vino (prompt_via); solo el hook lo sabe. Sin `via`, un pedido que no cambio
+    conserva el origen que ya tenia --la transcripcion repite el mismo pedido-- y uno nuevo queda
+    sin origen, que es como se comportaba todo antes de que existiera la marca."""
+    nuevo = short(clean_prompt(raw), 500)
+    if via is not None:
+        s["prompt_via"] = via
+    elif nuevo != s.get("last_prompt"):
+        s["prompt_via"] = None
+    s["last_prompt"] = nuevo
     s["last_attachment"] = attachment_path(raw)
+
+
+def prompt_mark(text: str) -> str:
+    """Huella de un pedido, para reconocerlo cuando vuelve por el hook: espacios colapsados y los
+    primeros 120 caracteres."""
+    return " ".join((text or "").split())[:120]
+
+
+def mark_sent(s: dict, final: str) -> None:
+    """El lienzo esta por teclear `final` en la consola: deja su huella antes de teclear (despues
+    es tarde, el hook puede llegar primero) para que el UserPromptSubmit que venga se reconozca
+    como encargo y no como algo tipeado en la terminal."""
+    s["sent_mark"] = prompt_mark(final)
+
+
+def prompt_origin(s: dict, raw: str) -> str:
+    """De donde vino el pedido que llego por UserPromptSubmit, y consume la marca del envio:
+    'lienzo' si es el que el tablero acaba de teclear (encargo del coordinador, regla, o la caja
+    de la tarjeta), 'peer' si es un mensaje de otra sesion por el canal nativo, 'terminal' si lo
+    tipeo el usuario en la consola."""
+    mark, s["sent_mark"] = s.get("sent_mark"), None
+    if mark and prompt_mark(raw) == mark:
+        return "lienzo"
+    return "peer" if transcripts.peer_message(raw or "") else "terminal"
 
 
 USELESS_TITLE_WORDS = ("adjunto", "archivo")
@@ -155,6 +187,14 @@ def prompt_title(s: dict) -> str | None:
     return short(first, 60) if first else None
 
 
+def typed_here(s: dict) -> bool:
+    """El ultimo pedido lo tipeo el usuario en su terminal y la tarjeta ya tiene un nombre que
+    sirve: no se la renombra. El nombre de la tarjeta lo pone el encargo --el que manda la
+    coordinadora, o el que se escribe desde el tablero--, no cada cosa que se tipea mientras se
+    trabaja. Si todavia no tiene nombre, lo tipeado sirve igual: poner uno no es cambiarlo."""
+    return s.get("prompt_via") == "terminal" and not bad_title(s.get("title"))
+
+
 def choose_title(s: dict, transcript_title: str | None) -> None:
     """Regla unica del titulo automatico. El puesto a mano (title_source 'user') no se toca.
     Gana el ai-title / thread_name de la transcripcion, salvo que sea inutil (bad_title) y haya
@@ -168,7 +208,7 @@ def choose_title(s: dict, transcript_title: str | None) -> None:
     if at:
         s["title"], s["title_source"] = at, "prompt"  # el pedido llego como adjunto: su encabezado manda
         return
-    pt = prompt_title(s)
+    pt = None if typed_here(s) else prompt_title(s)
     cur, src = s.get("title"), s.get("title_source")
     if transcript_title is None and src == "transcript" and not bad_title(cur):
         return  # el ai-title quedo fuera de la cola leida: se conserva el que ya teniamos
@@ -344,6 +384,8 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "state_since": now(),
         "needs": None,
         "last_prompt": "",
+        "prompt_via": None,
+        "sent_mark": None,
         "last_reply": "",
         "last_error": None,
         "started": now(),
@@ -786,7 +828,7 @@ def title_from_prompt(s: dict) -> None:
     """Sin ai-title todavia (o con uno inutil): la tarjeta se titula con la primera linea del
     pedido. Un ai-title que sirva lo pisa despues (refresh_from_transcript), salvo que el pedido
     haya llegado como adjunto: ahi manda su encabezado."""
-    if s.get("title_source") == "user":
+    if s.get("title_source") == "user" or typed_here(s):
         return
     if not (s.get("last_attachment") or bad_title(s.get("title")) or s.get("title_source") == "prompt"):
         return
@@ -800,8 +842,8 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
     # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
     s["prompt_id"] = ev.get("prompt_id")
     s["prompt_ts"] = s["last_event_ts"]
-    if not transcripts.is_system_prompt(ev.get("prompt", "")):
-        set_last_prompt(s, ev.get("prompt", ""))
+    if not transcripts.is_system_prompt(raw := ev.get("prompt", "")):
+        set_last_prompt(s, raw, prompt_origin(s, raw))
         title_from_prompt(s)
     s["pending_id"] = None
     s["typing"] = False  # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
@@ -1414,11 +1456,15 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     final, orig, attachments = compose_send(sid, text, attachments)
     if not final:
         return 400, {"ok": False, "error": "texto vacio"}
+    with lock:
+        mark_sent(s, final)  # antes de teclear: el hook del pedido puede llegar antes que este vuelva
     code, out = run_send(sid, s["pid"], final)
     if code == 200 and not out.get("ok"):
         state.log(f"send {sid[:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
         code = 500
     if code != 200:
+        with lock:
+            s["sent_mark"] = None  # no entro: lo que se tipee despues es del usuario
         return code, out
     state.log(
         f"send {sid[:8]}: {len(orig) if orig else out.get('chars')} caracteres"
@@ -1433,6 +1479,7 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     nuevo = short(orig, 500) if orig else short(clean_prompt(final), 500)
     with lock:
         s["last_prompt"] = nuevo
+        s["prompt_via"] = "lienzo"  # encargo: este si titula la tarjeta
         if s.get("last_event") != "SessionEnd":
             # tras SessionEnd la consola ya es de otra sesion (/clear, resume): lo que se tipea
             # llega a esa, y esta tarjeta no vuelve a 'corriendo' (la continua apply_event)
