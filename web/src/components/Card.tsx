@@ -360,6 +360,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const suggestion = s.suggestion && !s.suggestion.trim().startsWith(ATTACH_WRAPPER) ? s.suggestion : null;
   const writable = canWrite(s);
   const withConsole = hasConsole(s);
+  /* con el panel abierto, el doble click sobre el titulo ya no abre nada (el panel ya esta): ahi
+     renombra en el lugar, que es lo que uno espera al hacerle doble click a un nombre. Cerrada,
+     el doble click sigue abriendo el panel. */
+  const canRename = selected && withConsole && !rename.editing;
   // pregunta abierta: la ultima respuesta termina en "?" (la linea de actividad "usando X" no cuenta)
   const asks = !working && /\?\s*$/.test((s.last_reply || "").trim());
   // botones rapidos: solo si la sesion espera input de verdad o pregunto algo. Una que entrego un
@@ -681,7 +685,15 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           </button>
         </div>
       )}
-      <div className={`title ${dupPrompt ? "plain" : ""}`}>
+      <div
+        className={`title ${dupPrompt ? "plain" : ""} ${canRename ? "renamable" : ""}`}
+        title={canRename ? "doble click para cambiarle el nombre" : undefined}
+        onDoubleClick={(e) => {
+          if (!canRename) return;
+          e.stopPropagation(); // el doble click de la tarjeta cerraria el panel
+          rename.start();
+        }}
+      >
         {rename.input ??
           (free && !s.title ? (
             <span className="freeline" title={freeTitle}>

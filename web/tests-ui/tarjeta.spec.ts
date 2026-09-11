@@ -29,6 +29,24 @@ test.describe("click, doble click y elección", () => {
     await expect(card).toHaveClass(/\bsel\b/);
   });
 
+  test("con el panel abierto, el doble click sobre el título lo edita en el lugar", async ({ page }) => {
+    await abrirTablero(page);
+    const card = page.locator(sel(SID.mapas));
+    const titulo = card.locator(".title");
+    await titulo.dblclick(); // cerrada: abre el panel, como siempre
+    await expect(page.locator(".panel")).toHaveCount(1);
+    await expect(titulo.locator("input")).toHaveCount(0);
+
+    await titulo.dblclick(); // abierta: el mismo gesto renombra, y el panel no se cierra
+    const caja = titulo.locator('input[aria-label="nuevo título"]');
+    await expect(caja).toHaveValue("Tablero de mapas");
+    await expect(page.locator(".panel")).toHaveCount(1);
+
+    await page.keyboard.press("Escape"); // sale de la edición sin tocar el nombre
+    await expect(titulo.locator("input")).toHaveCount(0);
+    await expect(titulo).toContainText("Tablero de mapas");
+  });
+
   test("el alto de la tarjeta no cambia entre el click y el doble click", async ({ page }) => {
     await abrirTablero(page);
     const card = page.locator(sel(SID.coordinadora));

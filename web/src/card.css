@@ -266,6 +266,8 @@
 /* el arrastre se toma de la fila de arriba y del titulo; el cuerpo es texto que se selecciona y
    se copia, asi que ahi el cursor es de texto y la seleccion queda habilitada */
 .card .top, .card .title, .card .freeline { cursor: grab; }
+/* abierta: el titulo se edita con doble click, y el cursor lo dice */
+.card .title.renamable { cursor: text; }
 .card .top *, .card .title, .card .freeline { user-select: none; }
 .card .top button, .card .top .st { cursor: pointer; }
 .card .prompt, .card .reply, .card .lastcmd, .card .activity, .card .words, .card .error { cursor: text; user-select: text; }
