@@ -742,6 +742,35 @@ def test_bad_title_reconoce_mensaje_y_encargo():
         assert not ses.bad_title(t), t
 
 
+def test_lo_tipeado_en_la_terminal_no_renombra_la_tarjeta(aislado):
+    s = ses.new_session(SID, "claude", "hook")
+    st.sessions[SID] = s
+    # la tarjeta todavia no tiene nombre: el primer pedido tipeado se lo pone (poner no es cambiar)
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="arrancamos con el tablero", host_ts=local(0)))
+    assert (s["title"], s["title_source"], s["prompt_via"]) == ("arrancamos con el tablero", "prompt", "terminal")
+    # ya nombrada: lo que se tipea despues se ve en la tarjeta, pero no la renombra
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="proba de nuevo", host_ts=local(10)))
+    assert s["title"] == "arrancamos con el tablero" and s["last_prompt"] == "proba de nuevo"
+    ses.choose_title(s, None)  # el refresco de la transcripcion tampoco
+    assert s["title"] == "arrancamos con el tablero"
+
+
+def test_el_encargo_que_manda_el_lienzo_si_renombra_la_tarjeta(aislado, monkeypatch):
+    s = ses.new_session(SID, "claude", "hook")
+    s.update({"pid": PID, "title": "arrancamos con el tablero", "title_source": "prompt", "prompt_via": "terminal"})
+    st.sessions[SID] = s
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: pid == PID)
+    monkeypatch.setattr(ses, "run_send", lambda *a, **k: (200, {"ok": True, "chars": 30}))
+    code, _ = ses.send_to_session(s, "Encargo R2: revisar el backend", [])
+    assert code == 200 and s["prompt_via"] == "lienzo"
+    # el hook del mismo texto se reconoce como encargo, no como algo tipeado
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="C", prompt="Encargo R2: revisar el backend", host_ts=local(0)))
+    assert (s["title"], s["prompt_via"], s["sent_mark"]) == ("Encargo R2: revisar el backend", "lienzo", None)
+    # y el siguiente pedido, tipeado en la terminal, ya no lo pisa
+    ses.apply_event(ev("UserPromptSubmit", prompt_id="D", prompt="dale, segui", host_ts=local(10)))
+    assert s["title"] == "Encargo R2: revisar el backend" and s["prompt_via"] == "terminal"
+
+
 def test_idle_prompt_solo_es_te_necesita_con_pregunta_o_sin_pedido(aislado):
     idle = ev(
         "Notification", notification_type="idle_prompt", message="Claude is waiting for your input", host_ts=local(60)
