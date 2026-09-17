@@ -106,6 +106,19 @@ Un click en una tarjeta **la elige**: se resaltan sus flechas y sus conexiones s
 el panel**. Esc cierra de a una capa: primero el panel, después la elección. Todo se alcanza con
 el teclado: Tab recorre las tarjetas y las flechas los controles de la que tenga el foco.
 
+### Correr las tarjetas
+
+El lugar de cada tarjeta lo decide el estado de su sesión, pero se puede mover: **arrastrala desde
+su fila de arriba o su título** y queda donde la sueltes. Las demás cierran el hueco y siguen
+acomodándose solas; la corrida no cambia de columna ni de estado, y se queda ahí aunque pase a *Te
+necesita* (el borde avisa igual). Esc a mitad del arrastre la devuelve.
+
+En cuanto hay alguna corrida aparece **⤢ Ordenar** arriba a la derecha del tablero: las devuelve a
+todas al orden automático. Las posiciones viven en el navegador —sobreviven al refresco, no viajan
+al server ni a otra máquina— y la de una sesión que se fue se descarta sola.
+
+Con **Alt** apretado, ese mismo arrastre conecta en vez de mover (ver *Conectar sesiones*).
+
 ### La tarjeta
 
 Título (✎ para renombrarlo), último pedido, y **lo que el agente viene escribiendo en este turno**
@@ -167,8 +180,9 @@ que recibió, lo que mandó y las conexiones activas).
 
 ### Conectar sesiones
 
-Arrastrá una tarjeta **desde su fila de arriba, su título o el agarre ⇢** y soltala sobre otra. Se
-escribe en una frase, que se interpreta mientras tipeás: "continuá a
+Arrastrá una tarjeta **desde el agarre ⇢**, o con **Alt** apretado desde su fila de arriba o su
+título, y soltala sobre otra. (Sin Alt, ese mismo arrastre **mueve** la tarjeta: ver *Correr las
+tarjetas*.) Se escribe en una frase, que se interpreta mientras tipeás: "continuá a
 las 16:00", "en 30 min seguí", "cada 30 min continuá hasta 6 veces", "cuando termine mandale a
 MAPO", "cuando termine avisame". Enter confirma. Soltarla **sobre sí misma** es el bucle.
 

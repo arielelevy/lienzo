@@ -262,6 +262,39 @@ details.fold > summary,
 .board.dragging .card:not(.sel) { opacity: .75; }
 .droptarget .card { opacity: 1 !important; }
 
+/* Capa de las tarjetas corridas a mano: cubre el tablero entero y deja pasar el puntero salvo en
+   las tarjetas. Existe porque una columna ancha es una multicolumna, y ahi adentro un absoluto se
+   ancla al fragmento de columna en vez de al tablero. Las tarjetas llegan por portal (Board.tsx),
+   asi el hueco se cierra en la columna sin que el componente se remonte. */
+.board .capa-libre { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.board .capa-libre > div { position: absolute; pointer-events: auto; }
+.board .capa-libre > div .card { margin-bottom: 0; }
+/* la que se esta moviendo va arriba de todo y no captura el puntero, asi elementFromPoint ve lo
+   que hay abajo y no se tapa a si misma */
+.board .capa-libre > div.moviendo { z-index: 8; pointer-events: none; }
+.board .capa-libre > div.moviendo .card { box-shadow: 0 10px 28px rgba(0,0,0,.5); border-color: var(--acc); }
+.board.moving { cursor: grabbing; user-select: none; }
+/* durante el movimiento la geometria de las flechas no se recalcula (es cara y no aporta), asi que
+   se atenuan en vez de quedar apuntando al lugar viejo */
+.board.moving .arrows { opacity: .15; }
+/* mientras no se arrastra, un cambio de posicion se ve como un acomodarse */
+.board:not(.moving) .capa-libre > div { transition: left .18s ease, top .18s ease; }
+@media (prefers-reduced-motion: reduce) { .board .capa-libre > div { transition: none; } }
+
+/* ayuda al pie del tablero: los gestos que no se ven solos. En una sola linea si entra, y partida
+   en varias en una ventana angosta (nunca empuja el ancho: el tablero no scrollea de costado) */
+.ayuda { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; margin: 2px 16px 18px;
+  font-size: 11px; color: var(--dim); }
+.ayuda span + span::before { content: "·"; margin-right: 14px; }
+.ayuda b { font-weight: 600; color: var(--fg); }
+
+.board .ordenar { position: absolute; right: 16px; top: -2px; z-index: 7; display: flex; align-items: center; gap: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px; color: var(--dim);
+  font-size: 11.5px; padding: 4px 12px; cursor: pointer; }
+/* el cartel del movimiento no grita como el de conectar: no hay nada que decidir */
+.draghint.suave { background: var(--panel); color: var(--dim); border: 1px solid var(--line); }
+.board .ordenar:hover { color: var(--fg); border-color: var(--acc); }
+
 /* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y
    click en el vacio lo cierra (--hh es el alto del header, que mide App) */
 :root { --hh: 46px; --col-gap: 30px; --col-sep: 10px; --card-gap-y: 15px; }
