@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Arrows } from "./Arrows";
 import { Card, freeGroups, shortName } from "./Card";
 import type { Link, Pending, Rule, Session, State } from "../types";
@@ -199,6 +200,49 @@ interface Drag {
   over: string | null;
 }
 
+/** Tarjetas que el usuario corrio a mano, por session_id, en coordenadas del tablero. Es una
+ *  preferencia de como mirar y no un dato de la sesion, asi que vive en el navegador y no en el
+ *  server. El ancho va con la posicion porque al salir del flujo la tarjeta lo perderia: absoluta,
+ *  se encogeria al ancho de su texto. La columna la sigue decidiendo el estado del proceso; correr
+ *  una tarjeta no la cambia de columna, solo la saca del lugar donde la puso el layout. */
+const POS_KEY = "lienzo.pos";
+interface Pos {
+  x: number;
+  y: number;
+  w: number;
+  /** alto al momento de soltarla: solo se usa para estirar el tablero, asi que envejecer no importa */
+  h: number;
+}
+type Libres = Record<string, Pos>;
+function loadLibres(): Libres {
+  try {
+    const raw = localStorage.getItem(POS_KEY);
+    const j = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const out: Libres = {};
+    for (const [sid, v] of Object.entries(j)) {
+      const p = v as Partial<Pos>;
+      if (typeof p?.x === "number" && typeof p?.y === "number" && typeof p?.w === "number" && typeof p?.h === "number") out[sid] = { x: p.x, y: p.y, w: p.w, h: p.h };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Tarjeta que se esta moviendo ahora. `ox`/`oy` son donde se agarro dentro de la tarjeta: se
+ *  restan al puntero para que no salte al tomarla. `antes` es de donde salio (su posicion libre
+ *  previa, o null si estaba en el grid) y es a donde vuelve si se cancela con Esc. */
+interface Move {
+  sid: string;
+  ox: number;
+  oy: number;
+  w: number;
+  h: number;
+  x: number;
+  y: number;
+  antes: Pos | null;
+}
+
 export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   // el arrastre vive en el ref (los listeners de document lo leen al instante, sin esperar el
@@ -208,6 +252,34 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   const setDrag = (d: Drag | null) => {
     dragRef.current = d;
     setDragState(d);
+  };
+  // lo mismo para el movimiento de una tarjeta: el ref lo leen los listeners de document, el estado
+  // lo dibuja el render
+  const moveRef = useRef<Move | null>(null);
+  const [moving, setMovingState] = useState<Move | null>(null);
+  const setMoving = (m: Move | null) => {
+    moveRef.current = m;
+    setMovingState(m);
+  };
+  // Capa donde viven las tarjetas corridas. Hace falta una capa propia: dentro de `.cards` una
+  // columna ancha es una multicolumna (column-count), y ahi un absoluto se ancla al fragmento de
+  // columna y no al tablero, asi que la tarjeta aterrizaba corrida (medido: 18 px). Se llega por
+  // portal y no cambiandole el padre en el JSX: el portal mueve el nodo del DOM pero deja el
+  // componente en el mismo lugar del arbol de React, asi la tarjeta no se remonta y no pierde lo
+  // que tenga abierto. Es estado y no ref para que el primer montaje provoque el render que las
+  // manda ahi.
+  const [capa, setCapa] = useState<HTMLDivElement | null>(null);
+  const [libres, setLibres] = useState<Libres>(loadLibres);
+  // espejo para los listeners de document, que no se resuscriben cuando cambian las posiciones
+  const libresRef = useRef(libres);
+  const guardarLibres = (next: Libres) => {
+    libresRef.current = next;
+    setLibres(next);
+    try {
+      localStorage.setItem(POS_KEY, JSON.stringify(next));
+    } catch {
+      /* sin localStorage las posiciones duran lo que la pestaña */
+    }
   };
   // tarjeta bajo el mouse: Arrows resalta sus flechas y atenua las demas
   const [hover, setHover] = useState<string | null>(null);
@@ -222,7 +294,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // cuerpo de una tarjeta (solo mouse: con el dedo el cuerpo scrollea): es arrastre si se mueve mas
   // de 8 px, si no es click. Desde el agarre ⇢ arrastra de una, con cualquier puntero (.grip lleva
   // touch-action: none para que el scroll no se lo lleve).
-  const pressRef = useRef<{ sid: string; x: number; y: number } | null>(null);
+  const pressRef = useRef<{ sid: string; x: number; y: number; alt: boolean } | null>(null);
   const draggedRef = useRef(false);
   const draggedTimer = useRef<number | undefined>(undefined);
 
@@ -230,9 +302,12 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const t = e.target as HTMLElement;
     const sid = t.closest<HTMLElement>("[data-sid]")?.dataset.sid;
-    // una muerta, huerfana o sin consola no arrastra: no habria a donde escribir ni que programarle
-    if (!sid || !canReceive(sessions[sid])) return;
+    if (!sid) return;
+    // conectar pide una sesion viva y con consola (a una muerta, huerfana o sin terminal no habria
+    // a donde escribirle ni que programarle); moverla de lugar, no: eso es solo mirar el tablero
+    const conecta = canReceive(sessions[sid]);
     if (t.closest(".grip")) {
+      if (!conecta) return;
       draggedRef.current = true;
       startDragAt(sid, e.clientX, e.clientY);
       return;
@@ -241,7 +316,49 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // se arrastra desde la fila de arriba y el titulo; el cuerpo de la tarjeta es texto que se
     // lee y se copia, y arrastrar desde ahi se llevaba puesta la seleccion
     if (!t.closest(".top, .title, .freeline")) return;
-    pressRef.current = { sid, x: e.clientX, y: e.clientY };
+    // Alt decide que gesto es, y se congela aca: soltar Alt a mitad del arrastre no lo cambia de
+    // idea. Con Alt la tarjeta conecta con otra (el agarre tambien, que es la forma que funciona
+    // con el dedo); sin Alt se mueve por el tablero.
+    const alt = e.altKey && conecta;
+    pressRef.current = { sid, x: e.clientX, y: e.clientY, alt };
+  };
+
+  /** Arranca a mover una tarjeta: la saca del flujo dejandola donde se la ve ahora mismo, asi el
+   *  primer pixel de movimiento no la teletransporta. */
+  const startMoveAt = (sid: string, cx: number, cy: number) => {
+    const board = boardRef.current;
+    const card = board?.querySelector<HTMLElement>(`[data-sid="${sid}"]`);
+    if (!board || !card) return;
+    const b = board.getBoundingClientRect();
+    const r = card.getBoundingClientRect();
+    setMoving({
+      sid,
+      ox: cx - r.left,
+      oy: cy - r.top,
+      w: libres[sid]?.w ?? r.width,
+      h: r.height,
+      x: r.left - b.left,
+      y: r.top - b.top,
+      antes: libres[sid] ?? null,
+    });
+  };
+
+  /** Deja la tarjeta como estaba antes de agarrarla: en su posicion libre anterior, o de vuelta en
+   *  el grid si no tenia ninguna. */
+  const cancelMove = () => {
+    const m = moveRef.current;
+    if (!m) return;
+    setMoving(null);
+    const next = { ...libresRef.current };
+    if (m.antes) next[m.sid] = m.antes;
+    else delete next[m.sid];
+    guardarLibres(next);
+  };
+
+  /** El icono del tablero: todas vuelven al orden que decide el estado. */
+  const ordenar = () => {
+    setMoving(null);
+    guardarLibres({});
   };
 
   // una pasada por render: las sesiones que pasan el filtro del header, agrupadas por columna.
@@ -399,6 +516,19 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // (mientras una columna se adelanta por un permiso pendiente no son el mismo)
   const collapsedOf = Object.fromEntries(COLS.map(([k]) => [k, isCollapsed(k, byState[k].length)])) as Record<ColKey, boolean>;
 
+  /** Hasta donde llega la tarjeta corrida mas baja, para que el tablero se estire hasta taparla: es
+   *  absoluta y no lo empuja sola. Cuentan solo las que se estan viendo, asi una posicion guardada
+   *  de una sesion filtrada o de una columna colapsada no deja un hueco al pie del tablero. */
+  let altoLibre = moving ? moving.y + moving.h : 0;
+  for (const [k] of COLS) {
+    if (collapsedOf[k]) continue;
+    for (const s of byState[k]) {
+      const p = libres[s.session_id];
+      if (p) altoLibre = Math.max(altoLibre, p.y + p.h);
+    }
+  }
+  if (altoLibre) altoLibre += 24;
+
   // el server no conoce ninguna sesión (no: "el filtro no dejó ninguna"): recién instalado, o
   // arrancado antes que los agentes. Es el único caso que se explica; si lo que vacía el tablero
   // es el filtro del header, el que lo escribió ya sabe por qué no ve nada
@@ -428,7 +558,10 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     return out;
   }, [picked, links, rules]);
 
-  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, picked, manual, openEmpty, query, agents, laneBudget]);
+  // `libres` entra, `moving` no: mientras se arrastra, recalcular la geometria en cada pixel es
+  // caro y no hace falta. Las flechas se atenuan durante el movimiento (.board.moving) y vuelven a
+  // su lugar al soltar, que es cuando cambia `libres`
+  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, picked, manual, openEmpty, query, agents, laneBudget, libres]);
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
   // tarjeta se abre el reenvio con ese destino
@@ -461,15 +594,51 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         setDrag({ ...d, x2: e.clientX - b.left, y2: e.clientY - b.top, over: cardAt(e) });
         return;
       }
+      // lleva la tarjeta que se esta moviendo al puntero
+      const alPuntero = () => {
+        const m = moveRef.current;
+        if (!m) return;
+        const b = board.getBoundingClientRect();
+        // la tarjeta no se va del tablero: a lo ancho queda entera adentro, y para abajo el tablero
+        // crece con ella (minHeight), asi que ahi solo se frena en el borde de arriba
+        const x = Math.max(0, Math.min(e.clientX - b.left - m.ox, Math.max(0, b.width - m.w)));
+        const y = Math.max(0, e.clientY - b.top - m.oy);
+        setMoving({ ...m, x, y });
+      };
+      if (moveRef.current) {
+        alPuntero();
+        return;
+      }
       const pr = pressRef.current;
       if (pr && Math.hypot(e.clientX - pr.x, e.clientY - pr.y) > 8) {
         pressRef.current = null;
         draggedRef.current = true;
-        startDragAt(pr.sid, e.clientX, e.clientY);
+        if (pr.alt) {
+          startDragAt(pr.sid, e.clientX, e.clientY);
+          return;
+        }
+        // el agarre se mide desde donde se apreto, no desde aca: en el medio ya se recorrieron los
+        // 8 px del umbral y mas, y contarlos como parte del agarre corria la tarjeta ese tanto
+        startMoveAt(pr.sid, pr.x, pr.y);
+        alPuntero();
       }
     };
     const up = (e: PointerEvent) => {
       pressRef.current = null;
+      const m = moveRef.current;
+      if (m) {
+        setMoving(null);
+        // de paso se van las posiciones de sesiones que ya no existen: sin esto la lista crece
+        // sola y para siempre
+        const vivas = Object.entries(libresRef.current).filter(([sid]) => sessions[sid]);
+        guardarLibres({ ...Object.fromEntries(vivas), [m.sid]: { x: m.x, y: m.y, w: m.w, h: m.h } });
+        // el click que cierra el movimiento tampoco elige la tarjeta ni le abre el panel
+        window.clearTimeout(draggedTimer.current);
+        draggedTimer.current = window.setTimeout(() => {
+          draggedRef.current = false;
+        }, 400);
+        return;
+      }
       // el click (si lo hay) llega despues del pointerup, y la tarjeta lo demora PICK_MS para
       // distinguirlo del doble click: la marca tiene que sobrevivir a esa demora (y a un arrastre
       // anterior muy reciente, cuyo timer no debe borrarla antes de tiempo)
@@ -489,13 +658,15 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     const key = (e: KeyboardEvent) => {
       // Esc durante un arrastre lo cancela (soltar en cualquier lado, tambien); si no, deselecciona
       if (e.key !== "Escape") return;
-      if (dragRef.current) setDrag(null);
+      if (moveRef.current) cancelMove();
+      else if (dragRef.current) setDrag(null);
       // Esc pela una capa por vez: con el panel abierto lo cierra App y la eleccion queda; el
       // siguiente Esc la suelta. Sin este guard, un solo Esc hacia las dos cosas.
       else if (!selected) setPicked(null);
     };
     const cancel = () => {
       pressRef.current = null;
+      cancelMove();
       setDrag(null); // el navegador se quedo el puntero (scroll, gesto del sistema)
     };
     document.addEventListener("pointermove", move);
@@ -533,8 +704,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         })}
       </div>
       <div
-        className={`board ${drag ? "dragging" : ""} ${urgent ? "reordered" : ""}`}
+        className={`board ${drag ? "dragging" : ""} ${moving ? "moving" : ""} ${urgent ? "reordered" : ""}`}
         ref={boardRef}
+        // una tarjeta corrida para abajo sale del alto natural del tablero (absoluta, no lo empuja):
+        // el tablero se estira hasta taparla, asi no queda media tarjeta cortada
+        style={altoLibre ? { minHeight: altoLibre } : undefined}
         onPointerDown={onPointerDown}
         onClick={(e) => {
           // click en el vacio del tablero: deselecciona (como Esc)
@@ -548,6 +722,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       >
         {/* sin nada bajo el mouse, las flechas resaltadas son las de la tarjeta elegida */}
         {showArrows && <Arrows links={links} rules={rules} sessions={sessions} boardRef={boardRef} version={arrowsVersion} hover={hover ?? picked} onDelete={onDeleteLink} onDeleteRule={onDeleteRule} toast={toast} />}
+        {moving && (
+          <div className="draghint suave">Soltá para dejarla acá · Esc la devuelve · «Ordenar» devuelve todas</div>
+        )}
         {drag && (
           <>
             <svg className="arrows draglink">
@@ -621,8 +798,18 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   {/* columna ancha: subcolumnas por CSS (column-count: var(--lanes) en .col.wide .cards),
                       no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
                       y perderia su estado (pedido expandido, input de renombrar, toast) */}
-                  {list.map((s) => (
-                    <div key={s.session_id} className={drag?.over === s.session_id ? "droptarget" : ""}>
+                  {list.map((s) => {
+                    // la que se esta moviendo manda sobre la posicion guardada: es la de ahora
+                    const pos = moving?.sid === s.session_id ? moving : libres[s.session_id];
+                    const caja = (
+                    <div
+                      key={s.session_id}
+                      className={`${drag?.over === s.session_id ? "droptarget" : ""} ${pos ? "libre" : ""} ${moving?.sid === s.session_id ? "moviendo" : ""}`}
+                      // el tope de la derecha lo pone el CSS y no un numero fijo: al angostar la
+                      // ventana la tarjeta se recuesta contra el borde en vez de salirse del
+                      // tablero y estrenar un scroll horizontal
+                      style={pos ? { left: `min(${pos.x}px, calc(100% - ${pos.w}px))`, top: pos.y, width: pos.w } : undefined}
+                    >
                       <Card
                         session={s}
                         pending={s.pending_id ? pending[s.pending_id] : undefined}
@@ -656,13 +843,28 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         onGrip={noGrip}
                       />
                     </div>
-                  ))}
+                    );
+                    return pos && capa ? createPortal(caja, capa, s.session_id) : caja;
+                  })}
                   </div>
                 </>
               )}
             </div>
           );
         })}
+        {/* la capa va despues de las columnas: sin z-index de por medio, lo corrido queda encima */}
+        <div className="capa-libre" ref={setCapa} />
+        {/* Solo aparece cuando hay algo que ordenar: si nunca corriste una tarjeta, el botón no
+            existe y el tablero queda como estaba */}
+        {Object.keys(libres).length > 0 && (
+          <button
+            className="ordenar"
+            title="Devolver las tarjetas corridas a su lugar"
+            onClick={ordenar}
+          >
+            ⤢ Ordenar
+          </button>
+        )}
         {/* Tablero sin una sola tarjeta (recién instalado, o el server arrancado antes que los
             agentes): las tres columnas colapsan a sus tiras y la pantalla queda en negro sin decir
             nada. Las columnas siguen colapsadas —esa regla no cambia—, el cartel va al lado. */}
@@ -676,6 +878,18 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           </div>
         )}
       </div>
+      {/* Los dos gestos del tablero, al pie y en voz baja: se arrastra desde el titulo, y lo que
+          antes conectaba ahora pide Alt. Sin tarjetas no se dice nada: el cartel de primera vez ya
+          esta explicando otra cosa y esto seria ruido */}
+      {!sinTarjetas && (
+        <p className="ayuda">
+          <span>Arrastrá una tarjeta desde su título para moverla</span>
+          <span>
+            <b>Alt</b> + arrastrar la conecta con otra
+          </span>
+          <span>⤢ Ordenar las devuelve a su lugar</span>
+        </p>
+      )}
     </>
   );
 }

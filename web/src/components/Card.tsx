@@ -594,7 +594,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             <button
               type="button"
               className="grip"
-              title="arrastrá hasta otra tarjeta para reenviarle la última respuesta"
+              title="arrastrá hasta otra tarjeta para reenviarle la última respuesta (o Alt + arrastrar desde el título)"
               aria-label="arrastrar para conectar con otra tarjeta"
               onClick={(e) => e.stopPropagation()}
               onMouseDown={(e) => {
