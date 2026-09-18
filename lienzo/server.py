@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import ipaddress
 import json
 import os
 import queue
@@ -414,6 +415,15 @@ class Handler(BaseHTTPRequestHandler):
         hostname = host.rsplit(":", 1)[0].strip("[]") if host else ""
         if hostname in ("127.0.0.1", "localhost", "::1"):
             return True
+        # Una IP literal de la LAN: el tablero abierto desde el celular con --host 0.0.0.0. **No
+        # debilita el hallazgo C1**: el reencuadre de DNS necesita un NOMBRE que el atacante pueda
+        # volver a resolver contra 192.168.x.x, y aca se exige que el Host sea la direccion escrita
+        # a mano. Un nombre que no sea localhost sigue afuera.
+        try:
+            if ipaddress.ip_address(hostname).is_private:
+                return True
+        except ValueError:
+            pass
         if remote_url:
             rh = (urllib.parse.urlparse(remote_url).hostname or "").lower()
             if rh and hostname == rh:
@@ -448,7 +458,22 @@ class Handler(BaseHTTPRequestHandler):
         return bool(self.headers.get("CF-Connecting-IP")) or self.headers.get("X-Forwarded-Proto") == "https"
 
     def _is_local(self) -> bool:
-        return self.client_address[0] in ("127.0.0.1", "::1") and not self._via_tunnel()
+        """La propia PC y la LAN de casa. Lo que entra por el tunel nunca, aunque mienta la IP.
+
+        Decision de Ariel del 2026-09-18: con `--host 0.0.0.0` el tablero se abre desde el celular
+        de la LAN **sin login**. La red de casa se trata como la propia maquina; lo que llega por
+        cloudflared trae `CF-Connecting-IP` o `X-Forwarded-Proto`, cae en `_via_tunnel` y sigue
+        exigiendo la cookie de passphrase + TOTP.
+
+        Quien este en la LAN maneja las terminales: la puerta la da la red, no una credencial.
+        """
+        if self._via_tunnel():
+            return False
+        try:
+            ip = ipaddress.ip_address(self.client_address[0])
+        except ValueError:
+            return False
+        return ip.is_loopback or ip.is_private or ip.is_link_local
 
     def _authed(self) -> bool:
         """Decision del autor (2026-09-05): en la propia PC no se pide login. El server solo
@@ -933,6 +958,12 @@ def tunnel_loop(port: int) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(prog="lienzo-server")
     ap.add_argument("--port", type=int, default=7321)
+    ap.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="interfaz donde escuchar. 0.0.0.0 lo publica en la LAN: lo que no sea loopback "
+        "exige la cookie de login igual que el tunel, porque _is_local() mira la IP del cliente",
+    )
     ap.add_argument("--no-sweep", action="store_true")
     ap.add_argument("--sweep-every", type=float, default=30.0)
     ap.add_argument("--remote", action="store_true", help="publicar por cloudflared (exige login configurado)")
@@ -953,14 +984,14 @@ def main() -> int:
     threading.Thread(target=rules_loop, daemon=True).start()
     if a.remote:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()
-    srv = QuietServer(("127.0.0.1", a.port), Handler)
+    srv = QuietServer((a.host, a.port), Handler)
     srv.daemon_threads = True
     with lock:
         n_alive = sum(1 for s in sessions.values() if s.get("alive"))
         n_rules = sum(1 for r in rules.items if r.get("enabled"))
         n_links = len(links.items)
     log(
-        f"lienzo-server en http://127.0.0.1:{a.port}  sesiones={len(sessions)} (vivas={n_alive}, purgadas={purged}"
+        f"lienzo-server en http://{a.host}:{a.port}  sesiones={len(sessions)} (vivas={n_alive}, purgadas={purged}"
         f" de mas de {STALE_SESSION_H} h, retituladas={retitled})  reglas_activas={n_rules}  links={n_links}"
         f"  login={'si' if auth.configured() else 'no'}"
     )
