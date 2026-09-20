@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Instala (o desinstala) los hooks del lienzo en Claude Code y Codex.
+"""Instala (o desinstala) los hooks del lienzo en Claude Code, Codex y Pi.
 
     python install.py            # registra hooks en ~/.claude/settings.json y ~/.codex/hooks.json
     python install.py --uninstall
@@ -8,6 +8,7 @@ Hace merge, nunca pisa: guarda ~/.claude/settings.json.bak-<fecha> antes de toca
 Los hooks apuntan a D:/Apps/lienzo/lienzo/hook.py (este repo), sin copiar nada a ~/.lienzo/bin.
 """
 
+import argparse
 import datetime
 import json
 import os
@@ -18,12 +19,8 @@ HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
 HERE = os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
 HOOK = f"{HERE}/lienzo/hook.py"
 
-CANDIDATES = [
-    os.path.join(HOME, r"AppData\Local\Python\pythoncore-3.14-64\python.exe"),  # ~200 ms de arranque
-    os.path.join(HOME, r"AppData\Local\Python\bin\python.exe"),
-    sys.executable,  # el de la Store, ~300 ms
-]
-PY = next((p for p in CANDIDATES if p and os.path.exists(p)), "python").replace("\\", "/")
+# El mismo interprete con el que se instala; ejecutar con py -3.14.
+PY = sys.executable.replace("\\", "/")
 
 CLAUDE_EVENTS = {
     "SessionStart": (True, 5),
@@ -85,10 +82,47 @@ def merge_hooks(path: str, agent: str, events: dict, uninstall: bool, backup=Fal
             hooks.pop(ev, None)
     if prune and not hooks:
         data.pop("hooks", None)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
     print(("quitados" if uninstall else "registrados"), f"hooks de {agent.capitalize()} en", path)
+
+
+def merge_pi(path: str, uninstall: bool) -> None:
+    """Registra la extension por ruta absoluta sin tocar otras extensiones ni settings."""
+    if uninstall and not os.path.exists(path):
+        return
+    data = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    extension = f"{HERE}/extensions/pi-lienzo.ts"
+    existing = data.get("extensions", [])
+    if not isinstance(existing, list):
+        raise TypeError(f"extensions no es una lista en {path}")
+    paths = [
+        p
+        for p in existing
+        if not (isinstance(p, str) and os.path.normcase(os.path.abspath(p)) == os.path.normcase(extension))
+    ]
+    if not uninstall:
+        paths.append(extension)
+    if paths:
+        data["extensions"] = paths
+    else:
+        data.pop("extensions", None)
+    if os.path.exists(path):
+        bak = path + ".bak-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        shutil.copy2(path, bak)
+        print("backup:", bak)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".lienzo.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+    print("extension Pi", "quitada de" if uninstall else "registrada en", path)
 
 
 def ensure_state() -> None:
@@ -103,12 +137,23 @@ def ensure_state() -> None:
 
 
 if __name__ == "__main__":
-    un = "--uninstall" in sys.argv
+    if sys.version_info < (3, 14):  # noqa: UP036 -- instalador ejecutable antes de instalar el proyecto
+        raise SystemExit("Lienzo requiere Python 3.14 o posterior. Usá: py -3.14 install.py")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--uninstall", action="store_true")
+    only = parser.add_mutually_exclusive_group()
+    for agent in ("claude", "codex", "pi"):
+        only.add_argument(f"--{agent}-only", dest="only", action="store_const", const=agent)
+    args = parser.parse_args()
+    un = args.uninstall
     print("python para el hook:", PY)
     ensure_state()
-    if "--codex-only" not in sys.argv:
+    if args.only in (None, "claude"):
         settings = os.path.join(HOME, ".claude", "settings.json")
         merge_hooks(settings, "claude", CLAUDE_EVENTS, un, backup=True, prune=True)
-    if "--claude-only" not in sys.argv:
+    if args.only in (None, "codex"):
         merge_hooks(os.path.join(HOME, ".codex", "hooks.json"), "codex", CODEX_EVENTS, un)
-    print("listo. Las sesiones nuevas de Claude/Codex ya reportan; las abiertas antes las encuentra el barrido.")
+    if args.only in (None, "pi"):
+        pi_dir = os.path.expanduser(os.environ.get("PI_CODING_AGENT_DIR") or os.path.join(HOME, ".pi", "agent"))
+        merge_pi(os.path.join(pi_dir, "settings.json"), un)
+    print("listo. Pi: abrir una sesion nueva o ejecutar /reload en las abiertas.")

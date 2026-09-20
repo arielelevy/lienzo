@@ -352,8 +352,8 @@ export async function bloquearEscrituras(page: Page) {
 
 /** Interceptar las rutas de datos y sembrar el SSE. Devuelve el tablero servido, por si la prueba
  *  necesita contar contra el (cuántas tarjetas van en cada columna, por ejemplo). */
-export async function instalarTablero(page: Page) {
-  const board = { sessions: sesiones(), pending: pendientes(), links: vinculos(), rules: reglas() };
+export async function instalarTablero(page: Page, sessionList: Session[] = sesiones()) {
+  const board = { sessions: sessionList, pending: pendientes(), links: vinculos(), rules: reglas() };
   const snapshot = { type: "snapshot", sessions: board.sessions, pending: board.pending, links: board.links, rules: board.rules };
 
   // el EventSource del navegador, reemplazado por un doble que entrega el snapshot y se queda

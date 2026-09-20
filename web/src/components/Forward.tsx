@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, ago, api } from "../api";
 import { coordinatorOf, everySeconds, fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection, splitEvery, type EveryUnit } from "../nl";
 import type { DigestResponse, Session } from "../types";
-import { shortName } from "./Card";
+import { shortName } from "../names";
+import { AGENTS } from "../agents";
 
 const DEFAULT_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
 const KEY = "lienzo.forward.template";
@@ -32,9 +33,6 @@ function fill(tpl: string, s: Session, reply: string): string {
     .replaceAll("{pedido}", s.last_prompt || "")
     .replaceAll("{respuesta}", reply);
 }
-
-/** como se nombra un agente en un texto para el usuario */
-const agentLabel = (s: Session) => (s.agent === "claude" ? "Claude Code" : "Codex");
 
 /** pantalla angosta (celular): la plantilla arranca plegada y los textos ocupan menos filas, asi
  *  el dialogo entra sin que los botones queden contra el borde */
@@ -123,12 +121,11 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     const bad = [from, targetSession].filter((s) => s.agent !== "claude");
     if (!bad.length) return null;
     const who = bad.map((s) => (s.session_id === from.session_id ? "esta sesión" : shortName(s))).join(" y ");
-    return `las dos tienen que ser Claude Code; ${who} ${bad.length > 1 ? "son" : "es"} ${agentLabel(bad[0])}`;
+    return `las dos tienen que ser Claude Code; ${who} ${bad.length > 1 ? "son" : "es"} ${bad.map((s) => AGENTS[s.agent].label).join(" y ")}`;
   }, [from, targetSession]);
 
-  useEffect(() => {
-    if (mode !== "at" && target === from.session_id) setTarget(others[0]?.session_id ?? "");
-  }, [mode, target, from.session_id, others]);
+  // Mantener la seleccion valida en este render, sin pintar primero un destino incompatible.
+  if (mode !== "at" && target === from.session_id) setTarget(others[0]?.session_id ?? "");
 
   useEffect(() => {
     let cancelled = false;
@@ -227,12 +224,10 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const parsed = useMemo(() => parseConnection(phrase, from, others, { current: currentLabel, name: shortName }), [phrase, from, others, currentLabel]);
   // "avisame" ya viene resuelto a la coordinadora (coordinatorOf); si no hay ninguna, la frase no alcanza
   const parsedOk = parsed.kind !== "none" && (parsed.kind === "at" || !!parsed.to);
-  useEffect(() => {
-    // solo cuando cambia la frase: `others`/`from` llegan nuevos con cada evento SSE y no deben
-    // pisar lo que el usuario ajusto a mano. Si no se entiende nada, los controles quedan como
-    // estaban (el resumen lo dice); si se entiende el modo pero falta el destino, el radio cambia
-    // igual para que no contradiga al resumen
-    const p = parseConnection(phrase, from, others);
+  const changePhrase = (value: string) => {
+    setPhrase(value);
+    // Es una accion de edicion, no un efecto: SSE no debe pisar los ajustes manuales.
+    const p = parseConnection(value, from, others);
     if (p.kind === "none") return;
     setMode(p.kind);
     const to = p.to;
@@ -253,13 +248,10 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         setMaxFires(p.maxFires);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phrase]);
+  };
 
   // si el destino cambia a uno que no admite canal nativo, el modo vuelve a "ahora"
-  useEffect(() => {
-    if (mode === "native" && nativeWhy) setMode("now");
-  }, [mode, nativeWhy]);
+  if (mode === "native" && nativeWhy) setMode("now");
 
   return (
     <div className="fwd">
@@ -268,7 +260,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           type="text"
           value={phrase}
           autoFocus
-          onChange={(e) => setPhrase(e.target.value)}
+          onChange={(e) => changePhrase(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && parsedOk && !busy) {
               e.preventDefault();

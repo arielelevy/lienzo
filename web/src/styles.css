@@ -1,6 +1,6 @@
 :root {
   --bg: #0f1115; --panel: #171a21; --card: #1d212b; --line: #2a2f3b; --fg: #e6e8ee; --dim: #8b93a7; --acc: #5b9cff;
-  --run: #3fb950; --need: #f0b429; --dead: #f05b5b; --claude: #d97757; --codex: #10a37f; --err: #f05b5b;
+  --run: #3fb950; --need: #f0b429; --dead: #f05b5b; --claude: #d97757; --codex: #10a37f; --pi: #9b7fe8; --err: #f05b5b;
   /* texto sobre un fondo lleno de color (boton principal, badges, chips prendidos, toast de la
      tarjeta): el blanco no llega al minimo de WCAG AA sobre ninguno de esos colores --2,75 sobre el
      azul, 3,12 sobre el naranja de Claude, 3,20 sobre el verde de Codex-- y la tinta oscura da de
@@ -189,7 +189,7 @@ details.fold > summary,
 .card .top > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .top .badge, .card .top .right { flex: 0 0 auto; overflow: visible; }
 .badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--ink); }
-.badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); }
+.badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); } .badge.pi { background: var(--pi); }
 .card .repo { font-weight: 600; color: var(--fg); }
 /* De los dos que ceden ancho, cede primero la rama: el repo dice de qué es la tarjeta y la rama
    casi siempre es "main". Y los dos se cortan al ras, sin elipsis, porque acá los tres puntos
@@ -464,6 +464,7 @@ header .search .chip { padding: 2px 8px; font-size: 11px; font-weight: 600; bord
 header .search .chip.on { opacity: 1; color: var(--ink); }
 header .search .chip.claude.on { background: var(--claude); }
 header .search .chip.codex.on { background: var(--codex); }
+header .search .chip.pi.on { background: var(--pi); }
 header .search .chip:not(.on) { text-decoration: line-through; }
 /* overlay de atajos */
 .gate-box.help dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin: 0; font-size: 12px; }

@@ -12,24 +12,29 @@ export class ApiError extends Error {
 }
 
 async function parse<T>(r: Response): Promise<T> {
-  const j = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+  const j = (await r.json().catch(() => {
+    if (r.ok) throw new Error("El servidor devolvió una respuesta que no es JSON");
+    return {};
+  })) as Record<string, unknown>;
   if (!r.ok) throw new ApiError(typeof j.error === "string" ? j.error : String(r.status), r.status, j);
   return j as T;
 }
 
+const request = <T,>(path: string, options?: RequestInit): Promise<T> => fetch(path, options).then(parse<T>);
+const jsonRequest = <T,>(method: string, path: string, body: unknown) =>
+  request<T>(path, { method, headers: HEADERS, body: JSON.stringify(body) });
+
 export const api = {
-  get: <T,>(path: string) => fetch(path).then((r) => parse<T>(r)),
-  post: <T,>(path: string, body: unknown) =>
-    fetch(path, { method: "POST", headers: HEADERS, body: JSON.stringify(body) }).then((r) => parse<T>(r)),
-  put: <T,>(path: string, body: unknown) =>
-    fetch(path, { method: "PUT", headers: HEADERS, body: JSON.stringify(body) }).then((r) => parse<T>(r)),
-  del: <T,>(path: string) => fetch(path, { method: "DELETE", headers: { "X-Lienzo": "1" } }).then((r) => parse<T>(r)),
+  get: request,
+  post: <T,>(path: string, body: unknown) => jsonRequest<T>("POST", path, body),
+  put: <T,>(path: string, body: unknown) => jsonRequest<T>("PUT", path, body),
+  del: <T,>(path: string) => request<T>(path, { method: "DELETE", headers: { "X-Lienzo": "1" } }),
   upload: (sid: string, file: File) =>
-    fetch(`/sessions/${sid}/attach`, {
+    request<{ path: string; bytes: number }>(`/sessions/${sid}/attach`, {
       method: "POST",
       headers: { "X-Lienzo": "1", "X-Filename": encodeURIComponent(file.name) },
       body: file,
-    }).then((r) => parse<{ path: string; bytes: number }>(r)),
+    }),
 };
 
 export interface AuthInfo {

@@ -48,7 +48,7 @@ def load_config() -> dict:
     try:
         with open(os.path.join(LIENZO, "config.json"), encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
 
 
@@ -136,7 +136,7 @@ def wait_for_answer(agent: str, data: dict, wait_s: float) -> dict | None:
                 try:
                     with open(apath, encoding="utf-8") as f:
                         ans = json.load(f)
-                except (OSError, ValueError):
+                except OSError, ValueError:
                     ans = None
                 if (
                     isinstance(ans, dict)

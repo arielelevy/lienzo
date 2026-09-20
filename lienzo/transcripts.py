@@ -32,9 +32,9 @@ import os
 import re
 
 TAIL_BYTES = 2 * 1024 * 1024
-FILE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch"}
-SHELL_TOOLS = {"Bash", "PowerShell", "shell", "exec", "exec_command"}
-READ_TOOLS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch"}
+FILE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "edit", "write"}
+SHELL_TOOLS = {"Bash", "PowerShell", "shell", "exec", "exec_command", "bash", "powershell"}
+READ_TOOLS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch", "read", "grep", "find", "ls"}
 
 
 # --- utilidades --------------------------------------------------------------
@@ -576,16 +576,127 @@ def codex_title(thread_id: str) -> str | None:
     return name
 
 
+# --- Pi: JSONL en arbol, toolCall / toolResult ----------------------------------
+
+
+def parse_pi(path: str, max_bytes: int = TAIL_BYTES, leaf_id: str | None = None) -> dict:
+    """Solo la rama activa dentro de la cola. None infiere la ultima hoja; '' es la raiz vacia.
+    Una rama anterior fuera de la cola no se sustituye por la rama abandonada."""
+    lines, truncated = tail_lines(path, max_bytes)
+    if truncated:
+        with open(path, "rb") as f:
+            lines.insert(0, f.readline(65536).decode("utf-8", errors="replace"))
+    entries = list(iter_json(lines))
+    meta = {"agent": "pi", "title": None, "branch": None, "cwd": None, "version": None, "truncated": truncated}
+    for d in entries:
+        if d.get("type") == "session":
+            meta.update(cwd=d.get("cwd"), version=d.get("version"))
+        elif d.get("type") == "session_info":
+            meta["title"] = d.get("name")
+    nodes = {d["id"]: d for d in entries if d.get("id") and d.get("type") != "session"}
+    leaf = leaf_id if leaf_id is not None else next(reversed(nodes), None)
+    branch, seen = [], set()
+    while leaf in nodes and leaf not in seen:
+        seen.add(leaf)
+        d = nodes[leaf]
+        branch.append(d)
+        leaf = d.get("parentId")
+    branch.reverse()
+    turns, tools = [], {}
+    cur = None
+    for d in branch:
+        kind, ts = d.get("type"), d.get("timestamp")
+        if kind in ("compaction", "branch_summary"):
+            if cur is not None:
+                cur["blocks"].append({"kind": "user_text", "text": "(" + kind + ") " + d.get("summary", "")})
+            continue
+        if kind == "custom_message":
+            msg = {"role": "custom", "content": d.get("content"), "display": d.get("display")}
+        elif kind == "message" and isinstance(d.get("message"), dict):
+            msg = d["message"]
+        else:
+            continue
+        role, content = msg.get("role"), msg.get("content")
+        if role not in ("user", "assistant", "toolResult", "custom", "bashExecution"):
+            continue
+        if role == "user":
+            if cur is not None:
+                cur["ended"] = True
+            cur = _new_turn("pi", d["id"], ts, _content_text(content) or "(imagen)")
+            turns.append(cur)
+            continue
+        if cur is None:
+            cur = _new_turn("pi", "parcial", ts, "(turno anterior al corte)")
+            turns.append(cur)
+        cur["ts_end"] = ts or cur["ts_end"]
+        if role == "assistant":
+            cur["usage"] = msg.get("usage") or cur["usage"]
+            reason = msg.get("stopReason")
+            cur["ended"] = reason in ("stop", "length", "error", "aborted")
+            cur["error"] = msg.get("errorMessage") if reason in ("error", "aborted") else None
+            if reason == "aborted" and not cur["error"]:
+                cur["error"] = "turno abortado"
+            for b in content if isinstance(content, list) else []:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "text":
+                    add_text(cur, b.get("text", ""), "final" if reason == "stop" else "commentary")
+                elif b.get("type") == "thinking":
+                    cur["blocks"].append({"kind": "thinking", "text": b.get("thinking", "")})
+                elif b.get("type") == "toolCall":
+                    block = {
+                        "kind": "tool",
+                        "id": b.get("id"),
+                        "name": b.get("name", "?"),
+                        "input": b.get("arguments") or {},
+                        "result": None,
+                    }
+                    tools[b.get("id")] = block
+                    cur["blocks"].append(block)
+        elif role == "toolResult":
+            result = {"text": _short(_content_text(content), 4000), "is_error": bool(msg.get("isError"))}
+            block = tools.get(msg.get("toolCallId"))
+            if block is None:
+                block = {"kind": "tool", "id": msg.get("toolCallId"), "name": msg.get("toolName", "?"), "input": {}}
+                cur["blocks"].append(block)
+            block["result"] = result
+        elif role == "bashExecution":
+            cur["blocks"].append(
+                {
+                    "kind": "tool",
+                    "id": d["id"],
+                    "name": "bash",
+                    "input": {"command": msg.get("command", "")},
+                    "result": {
+                        "text": _short(msg.get("output", ""), 4000),
+                        "is_error": bool(msg.get("cancelled") or msg.get("exitCode")),
+                    },
+                }
+            )
+        elif msg.get("display"):
+            cur["blocks"].append({"kind": "user_text", "text": _content_text(content)})
+    return {"meta": meta, "turns": turns}
+
+
 # --- API comun -----------------------------------------------------------------
 
 
-def parse(agent: str, path: str, max_bytes: int = TAIL_BYTES) -> dict:
+def parse(agent: str, path: str, max_bytes: int = TAIL_BYTES, leaf_id: str | None = None) -> dict:
+    if agent == "pi":
+        return parse_pi(path, max_bytes, leaf_id)
     return parse_codex(path, max_bytes) if agent == "codex" else parse_claude(path, max_bytes)
 
 
-def turns(agent: str, path: str, n: int = 10, before: str | None = None, max_bytes: int = TAIL_BYTES) -> dict:
+def turns(
+    agent: str,
+    path: str,
+    n: int = 10,
+    before: str | None = None,
+    max_bytes: int = TAIL_BYTES,
+    leaf_id: str | None = None,
+) -> dict:
     """Ultimos n turnos (o los n anteriores a `before`)."""
-    r = parse(agent, path, max_bytes)
+    r = parse(agent, path, max_bytes, leaf_id)
     ts = r["turns"]
     if before:
         ids = [t["id"] for t in ts]
@@ -649,7 +760,7 @@ def digest_turn(turn: dict) -> dict:
             if "paths" in inp:
                 files.extend(f"{p.get('type', '')} {p.get('path', '')}".strip() for p in inp["paths"])
             else:
-                files.append(inp.get("file_path") or inp.get("notebook_path") or "")
+                files.append(inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or "")
         elif name in SHELL_TOOLS:
             cmd = inp.get("command") or inp.get("cmd") or ""
             if cmd:
@@ -706,8 +817,8 @@ def digest_turn(turn: dict) -> dict:
     }
 
 
-def digest(agent: str, path: str, n: int = 10, max_bytes: int = TAIL_BYTES) -> dict:
-    r = turns(agent, path, n, None, max_bytes)
+def digest(agent: str, path: str, n: int = 10, max_bytes: int = TAIL_BYTES, leaf_id: str | None = None) -> dict:
+    r = turns(agent, path, n, None, max_bytes, leaf_id)
     return {"meta": r["meta"], "turns": [digest_turn(t) for t in r["turns"]], "has_more": r["has_more"]}
 
 

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type AuthInfo } from "./api";
-import { Board, type Agent } from "./components/Board";
-import { shortName } from "./components/Card";
+import { Board } from "./components/Board";
+import { allAgents } from "./agents";
+import { canWrite, shortName } from "./names";
 import { Enroll } from "./components/Enroll";
 import { Forward } from "./components/Forward";
 import { Header } from "./components/Header";
@@ -64,6 +65,13 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // dialogo de conectar (se abre arrastrando una tarjeta sobre otra): flotante, sin abrir nada mas
   const [connect, setConnect] = useState<{ from: string; to: string } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [anchor, setAnchor] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  // Medir al abrir, no durante render: SSE no mueve un panel que ya esta abierto.
+  const openPanel = useCallback((sid: string) => {
+    const rect = document.querySelector(`.card[data-sid="${CSS.escape(sid)}"]`)?.getBoundingClientRect();
+    setAnchor(rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null);
+    setSelected(sid);
+  }, []);
   const [filter, setFilter] = useState<State>("corriendo");
   // flechas visibles u ocultas, recordado por navegador
   const [showArrows, toggleArrows] = useLocalFlag("lienzo.arrows", true);
@@ -72,15 +80,15 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [details, toggleDetails] = useLocalFlag("lienzo.details", false);
   const { toasts, toast } = useToasts();
   const selectedRef = useRef<string | null>(null);
-  selectedRef.current = selected;
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
   // una sesion que desaparece del tablero cierra su panel y el dialogo de conectar que la tenia
   const onRemoved = useCallback((sid: string) => {
-    if (selectedRef.current === sid) setSelected(null);
+    setSelected((current) => current === sid ? null : current);
     setConnect((c) => (c && (c.from === sid || c.to === sid) ? null : c));
   }, []);
   const { sessions, pending, links, rules, connected, polling, transcriptTick } = useLienzoData({ refreshAuth, selectedRef, onRemoved });
   // notificaciones del navegador cuando una sesion pide permiso; el click abre su panel
-  const { notify, toggleNotify } = useNotifications({ sessions, pending, onOpen: setSelected, toast });
+  const { notify, toggleNotify } = useNotifications({ sessions, pending, onOpen: openPanel, toast });
 
   // auto_continue y auto_retry viven en ~/.lienzo/config.json (lo lee el server): GET/PUT /config.
   // null mientras carga o si el server que corre no tiene la ruta todavia
@@ -116,7 +124,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
 
   // filtro visual del header: texto + agentes. "/" enfoca la caja, Esc la limpia.
   const [query, setQuery] = useState("");
-  const [agents, setAgents] = useState<Record<Agent, boolean>>({ claude: true, codex: true });
+  const [agents, setAgents] = useState(allAgents);
   const searchRef = useRef<HTMLInputElement>(null);
   const [showHelp, setShowHelp] = useState(false);
   // el panel va pegado a la derecha, debajo del header: su alto sale de aca (--hh)
@@ -248,29 +256,9 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const deleteRule = useCallback((id: string) => api.del(`/rules/${id}`).catch((e) => toast((e as Error).message, true)), [toast]);
   const connectCards = useCallback((from: string, to: string) => setConnect({ from, to }), []);
 
-  // rect de la tarjeta que abrio el panel, medido al abrir: el panel se dibuja al lado de ella.
-  // Va el rect entero (no solo la esquina) porque el panel se corre al costado que quede libre y
-  // para eso necesita saber donde termina la tarjeta
-  const anchorRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
-  const anchoredTo = useRef<string | null>(null);
-  // el rect se mide una sola vez, al abrir: mientras el panel esta abierto no se mueve, pase lo
-  // que pase abajo. Antes se recalculaba en cada render y el panel saltaba cada vez que llegaba un
-  // evento por SSE y las tarjetas se reordenaban
-  if (!selected) {
-    anchorRef.current = null;
-    anchoredTo.current = null;
-  } else if (anchoredTo.current !== selected) {
-    const el = typeof document !== "undefined" ? document.querySelector(`.card[data-sid="${selected}"]`) : null;
-    if (el) {
-      const r = el.getBoundingClientRect();
-      anchorRef.current = { left: r.left, top: r.top, width: r.width, height: r.height };
-    }
-    anchoredTo.current = selected;
-  }
-
   const sel = selected ? sessions[selected] : null;
   // sesiones a las que se les puede escribir: destinos de Conectar y coordinadora del SendBox
-  const writable = Object.values(sessions).filter((s) => s.alive && s.pid);
+  const writable = Object.values(sessions).filter(canWrite);
 
   const flags = [
     { label: "Avisos", icon: "🔔", on: notify, toggle: toggleNotify, title: "aviso del navegador (aunque la pestaña esté atrás) cuando una sesión pide permiso o te hace una pregunta" },
@@ -369,7 +357,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         selected={selected}
         filter={filter}
         onFilter={setFilter}
-        onSelect={setSelected}
+        onSelect={openPanel}
         onDecide={decide}
         onAnswer={answer}
         onDrop={drop}
@@ -415,7 +403,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <>
         <div className="panel-backdrop" />
         <Panel
-          anchor={anchorRef.current}
+          anchor={anchor}
           key={sel.session_id}
           session={sel}
           others={writable.filter((s) => s.session_id !== sel.session_id)}

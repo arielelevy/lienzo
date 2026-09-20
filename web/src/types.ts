@@ -1,3 +1,5 @@
+import type { Agent } from "./agents";
+
 export type State = "corriendo" | "te_necesita" | "termino" | "muerta";
 
 export interface Needs {
@@ -12,7 +14,7 @@ export interface Needs {
 
 export interface Session {
   session_id: string;
-  agent: "claude" | "codex";
+  agent: Agent;
   pid: number | null;
   cwd: string | null;
   repo: string;
@@ -38,6 +40,8 @@ export interface Session {
   last_event: string | null;
   alive: boolean;
   source: "hook" | "sweep";
+  /** La extension/hook ya publico la identidad exacta de esta sesion. */
+  hooked?: boolean;
   pending_id: string | null;
   orphan?: boolean;
   no_console?: boolean;

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Arrows } from "./Arrows";
-import { Card, freeGroups, shortName } from "./Card";
+import { Card, freeGroups } from "./Card";
 import type { Link, Pending, Rule, Session, State } from "../types";
-import { searchText, stalledReason } from "../names";
+import { searchText, shortName, stalledReason } from "../names";
 
 /** Columnas del tablero. "Trabajo" junta corriendo y termino (el estado se ve como icono en la
  *  tarjeta); "Te necesita" y "Muerta" siguen aparte porque piden accion. El tipo State es del
@@ -44,8 +44,6 @@ interface Props {
   /** toast global para las acciones de la tarjeta (copiar, botones rapidos, renombrar) */
   toast?: (msg: string, err?: boolean) => void;
 }
-
-export type Agent = Session["agent"];
 
 /** Columnas que el usuario colapso a mano teniendo tarjetas: por columna, los ids que tenia en ese
  *  momento. Se respeta mientras la columna solo contenga esas tarjetas; una nueva la abre y borra la
@@ -287,9 +285,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // quedan resaltadas (por el mismo camino que el hover). Es distinto de `selected`, que es la que
   // tiene el panel abierto: se puede tener el panel de una y elegida otra.
   const [picked, setPicked] = useState<string | null>(null);
-  useEffect(() => {
-    if (picked && !sessions[picked]) setPicked(null); // se fue la sesion elegida
-  }, [sessions, picked]);
+  if (picked && !sessions[picked]) setPicked(null); // no pintar una seleccion que ya no existe
   // El arrastre va por Pointer Events, asi funciona igual con mouse y con el dedo. Presion sobre el
   // cuerpo de una tarjeta (solo mouse: con el dedo el cuerpo scrollea): es arrastre si se mueve mas
   // de 8 px, si no es click. Desde el agarre ⇢ arrastra de una, con cualquier puntero (.grip lleva
@@ -410,14 +406,14 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   const [openEmpty, setOpenEmpty] = useState<Partial<Record<ColKey, boolean>>>({});
   const emptyTimers = useRef<Partial<Record<ColKey, number>>>({});
   const filtering = query.trim() !== "" || Object.values(agents).some((v) => !v);
-  const saveManual = (next: Manual) => {
-    setManual(next);
+  // Persistir despues del commit, tanto elecciones del usuario como aperturas por tarjetas nuevas.
+  useEffect(() => {
     try {
-      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+      localStorage.setItem(COLLAPSE_KEY, JSON.stringify(manual));
     } catch {
       /* sin storage, no importa */
     }
-  };
+  }, [manual]);
   const stopEmptyTimer = (k: ColKey) => {
     window.clearTimeout(emptyTimers.current[k]);
     emptyTimers.current[k] = undefined;
@@ -426,20 +422,17 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   const holdOpenEmpty = (k: ColKey) => {
     stopEmptyTimer(k);
     setOpenEmpty((o) => ({ ...o, [k]: true }));
-    emptyTimers.current[k] = window.setTimeout(() => {
-      emptyTimers.current[k] = undefined;
-      setOpenEmpty((o) => ({ ...o, [k]: false }));
-    }, EMPTY_COLLAPSE_MS);
+
   };
   const setCol = (k: ColKey, collapse: boolean) => {
     const ids = byState[k].map((s) => s.session_id);
     if (collapse) {
       stopEmptyTimer(k);
       setOpenEmpty((o) => ({ ...o, [k]: false }));
-      if (ids.length) saveManual({ ...manual, [k]: ids });
+      if (ids.length) setManual({ ...manual, [k]: ids });
     } else if (ids.length) {
       const { [k]: _drop, ...rest } = manual;
-      saveManual(rest);
+      setManual(rest);
     } else {
       holdOpenEmpty(k);
     }
@@ -447,26 +440,38 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // con cada cambio de tarjetas: una nueva en una columna colapsada a mano la abre (y borra la
   // eleccion); una columna abierta que se vacia arranca sus 5 s; una que recibe tarjetas deja de
   // depender del timer
-  const prevCount = useRef<Record<ColKey, number>>(Object.fromEntries(COLS.map(([k]) => [k, byState[k].length])) as Record<ColKey, number>);
-  useEffect(() => {
-    let next = manual;
-    let changed = false;
+  const [previousGroups, setPreviousGroups] = useState(byState);
+  if (previousGroups !== byState) {
+    setPreviousGroups(byState);
+    let nextManual = manual;
+    let nextEmpty = openEmpty;
     for (const [k] of COLS) {
       const ids = byState[k].map((s) => s.session_id);
-      const kept = next[k];
+      const kept = nextManual[k];
       if (kept && ids.some((id) => !kept.includes(id))) {
-        const { [k]: _drop, ...rest } = next;
-        next = rest;
-        changed = true;
+        const { [k]: _drop, ...rest } = nextManual;
+        nextManual = rest;
       }
-      const n = ids.length;
-      if (n === 0 && prevCount.current[k] > 0) holdOpenEmpty(k);
-      if (n > 0 && emptyTimers.current[k] !== undefined) stopEmptyTimer(k);
-      prevCount.current[k] = n;
+      if (ids.length === 0 && previousGroups[k].length > 0) nextEmpty = { ...nextEmpty, [k]: true };
+      if (ids.length > 0 && nextEmpty[k]) nextEmpty = { ...nextEmpty, [k]: false };
     }
-    if (changed) saveManual(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [byState]);
+    if (nextManual !== manual) setManual(nextManual);
+    if (nextEmpty !== openEmpty) setOpenEmpty(nextEmpty);
+  }
+  // Los timers son externos a React: no reiniciar los 5 s con cada snapshot del servidor.
+  useEffect(() => {
+    for (const [k] of COLS) {
+      if (!openEmpty[k] || byState[k].length > 0) {
+        window.clearTimeout(emptyTimers.current[k]);
+        emptyTimers.current[k] = undefined;
+      } else if (emptyTimers.current[k] === undefined) {
+        emptyTimers.current[k] = window.setTimeout(() => {
+          emptyTimers.current[k] = undefined;
+          setOpenEmpty((o) => ({ ...o, [k]: false }));
+        }, EMPTY_COLLAPSE_MS);
+      }
+    }
+  }, [byState, openEmpty]);
   useEffect(() => () => [...Object.values(emptyTimers.current), draggedTimer.current].forEach((t) => window.clearTimeout(t)), []);
 
   // la columna Muerta arranca colapsada aunque tenga tarjetas: lo que esta ahi ya no se puede
@@ -504,13 +509,10 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // repartidas entre las columnas abiertas. Cada columna crece en proporcion a sus subcolumnas,
   // asi todas las tarjetas del tablero quedan del mismo ancho
   const laneBudget = useLaneBudget(boardRef);
-  const lanes = useMemo(() => {
-    const open = COLS.map(([k]) => k)
-      .filter((k) => !isCollapsed(k, byState[k].length))
-      .map((k) => ({ key: k, n: byState[k].length }));
-    return splitLanes(open, laneBudget);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manual, openEmpty, byState, filtering, laneBudget]);
+  const openColumns = COLS.map(([k]) => k)
+    .filter((k) => !isCollapsed(k, byState[k].length))
+    .map((k) => ({ key: k, n: byState[k].length }));
+  const lanes = splitLanes(openColumns, laneBudget);
 
   // colapso por columna, para que el canal entre columnas mire al vecino *visual* y no al del DOM
   // (mientras una columna se adelanta por un permiso pendiente no son el mismo)
@@ -534,8 +536,6 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // es el filtro del header, el que lo escribió ya sabe por qué no ve nada
   const sinTarjetas = Object.keys(sessions).length === 0;
 
-  // las flechas se recalculan cuando algo pudo mover una tarjeta
-  const versionRef = useRef(0);
   // al elegir una tarjeta se explican sus conexiones, y tambien las de la del otro extremo: una
   // conexion tiene dos puntas y se entiende mirando las dos. La del otro extremo muestra *solo* lo
   // que comparte con la elegida (si ademas tiene reglas con otras tres sesiones, esas no vienen al
@@ -561,7 +561,10 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // `libres` entra, `moving` no: mientras se arrastra, recalcular la geometria en cada pixel es
   // caro y no hace falta. Las flechas se atenuan durante el movimiento (.board.moving) y vuelven a
   // su lugar al soltar, que es cuando cambia `libres`
-  const arrowsVersion = useMemo(() => ++versionRef.current, [sessions, filter, selected, picked, manual, openEmpty, query, agents, laneBudget, libres]);
+  const arrowsVersion = useMemo(
+    () => ({ sessions, filter, selected, picked, manual, openEmpty, openDead, query, agents, laneBudget, libres }),
+    [sessions, filter, selected, picked, manual, openEmpty, openDead, query, agents, laneBudget, libres],
+  );
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
   // tarjeta se abre el reenvio con ese destino

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AuthInfo } from "../api";
-import type { Agent } from "./Board";
+import { agentIds, type Agent } from "../agents";
 
 interface Props {
   authInfo: AuthInfo;
@@ -88,7 +88,7 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
             }
           }}
         />
-        {(["claude", "codex"] as Agent[]).map((a) => (
+        {agentIds.map((a) => (
           <button
             key={a}
             className={`chip ${a} ${agents[a] ? "on" : ""}`}

@@ -10,6 +10,7 @@ escritorio de Codex (ambos `app-server`), y el claude.exe de la extension de VS 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 try:
@@ -62,7 +63,7 @@ SHELLS = {"powershell.exe", "pwsh.exe", "cmd.exe", "bash.exe", "wsl.exe", "nu.ex
 
 def agent_alive(pid: int | None) -> bool:
     """Vivo Y sigue siendo un agente: un PID reciclado por otro programa no cuenta."""
-    return alive(pid) and agent_of(image_path(int(pid))) is not None
+    return alive(pid) and procinfo.process_agent(int(pid)) is not None
 
 
 def is_impostor(exe: str | None, cmdline: str | None) -> bool:
@@ -82,7 +83,7 @@ def is_tui(pid: int) -> bool:
     mano solo se tiene la ruta del ejecutable, que es la que descarta la app de escritorio y las
     extensiones; el barrido, que si lee la linea de comando, llama a is_impostor directamente."""
     exe = image_path(pid)
-    if not exe or not agent_of(exe):
+    if not exe or not procinfo.process_agent(pid):
         return False
     return not is_impostor(exe, None)
 
@@ -93,17 +94,40 @@ $ErrorActionPreference='SilentlyContinue'
 $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate
 $byId = @{}; foreach ($p in $all) { $byId[$p.ProcessId] = $p }
 $out = @()
-foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' })) {
+foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' -or $_.Name -eq 'node.exe' -or $_.Name -eq 'pi.exe' })) {
   $par = $byId[$a.ParentProcessId]; $gp = if ($par) { $byId[$par.ParentProcessId] } else { $null }
   $out += [pscustomobject]@{
     pid = $a.ProcessId; exe = $a.ExecutablePath; cmd = $a.CommandLine
     created = if ($a.CreationDate) { $a.CreationDate.ToString('o') } else { $null }
     parent = if ($par) { $par.Name } else { $null }; parent_pid = $a.ParentProcessId
     grandparent = if ($gp) { $gp.Name } else { $null }; grandparent_cmd = if ($gp) { $gp.CommandLine } else { $null }
+    children = @($all | Where-Object { $_.ParentProcessId -eq $a.ProcessId -and $_.Name -in @('bash.exe', 'pwsh.exe', 'powershell.exe', 'cmd.exe') } | ForEach-Object { $_.ProcessId })
   }
 }
 ConvertTo-Json -InputObject @($out) -Compress -Depth 3
 """
+
+
+def pi_session_from_children(pid: int, children: list[int]) -> tuple[str, str] | None:
+    """Identidad exacta publicada por Pi en sus shells; no buscar por cwd/mtime.
+
+    Dos hijos con distintas sesiones pueden quedar vivos durante un cambio de sesion:
+    no elegir ninguno en ese caso. La extension siempre tiene prioridad.
+    """
+    candidates = set()
+    for child in children:
+        env = procinfo.pi_session_environment(child, pid)
+        sid, path = env.get("PI_SESSION_ID"), env.get("PI_SESSION_FILE")
+        if not sid or not path or not os.path.isabs(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                header = json.loads(f.readline(65536))
+        except OSError, ValueError:
+            continue
+        if isinstance(header, dict) and header.get("type") == "session" and header.get("id") == sid:
+            candidates.add((sid, os.path.normcase(os.path.abspath(path))))
+    return next(iter(candidates)) if len(candidates) == 1 else None
 
 
 def sweep() -> list[dict]:
@@ -118,14 +142,14 @@ def sweep() -> list[dict]:
             errors="replace",
         )
         rows = json.loads(r.stdout or "[]")
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+    except OSError, ValueError, subprocess.TimeoutExpired:
         return []
     if isinstance(rows, dict):
         rows = [rows]
     found = []
     for p in rows:
         exe = p.get("exe") or ""
-        agent = agent_of(exe)
+        agent = agent_of(exe, p.get("cmd"))
         if not agent or is_impostor(exe, p.get("cmd")):
             continue
         parent = (p.get("parent") or "").lower()
@@ -141,6 +165,7 @@ def sweep() -> list[dict]:
                 "grandparent": p.get("grandparent"),
                 "in_vscode": in_vscode,
                 "orphan": p.get("parent") is None,
+                "pi_session": pi_session_from_children(p["pid"], p.get("children") or []) if agent == "pi" else None,
             }
         )
     return found

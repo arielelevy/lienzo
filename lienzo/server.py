@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import ipaddress
 import json
+import math
 import os
 import queue
 import re
@@ -112,7 +113,7 @@ def parse_every_s(v) -> tuple[int | None, str | None]:
         f = float(v)
     except ValueError:
         return None, malo
-    if f != int(f):
+    if not math.isfinite(f) or f != int(f):
         return None, malo
     if int(f) < MIN_EVERY_S:
         return None, f"every_s debe ser al menos {MIN_EVERY_S} segundos"
@@ -134,7 +135,7 @@ def at_fields(d: dict, current: dict | None = None) -> tuple[dict | None, str | 
     if d.get("max_fires") is not None:
         try:
             max_fires = clamp_fires(d["max_fires"])
-        except (TypeError, ValueError):
+        except TypeError, ValueError, OverflowError:
             return None, "max_fires debe ser un numero"
     elif every and (max_fires or 1) <= 1:
         max_fires = 5  # pasa a periodica sin tope explicito: 5 disparos
@@ -215,12 +216,16 @@ def create_on_stop(d: dict, text: str) -> tuple[int, dict]:
     )
     if dup:
         return 409, {"error": "ya existe esa conexión", "rule_id": dup["id"]}
+    try:
+        max_fires = clamp_fires(d.get("max_fires") or 1)
+    except TypeError, ValueError, OverflowError:
+        return 400, {"error": "max_fires debe ser un numero"}
     rule = new_rule(
         d,
         text,
         at=None,
         repeat=bool(d.get("repeat")),
-        max_fires=clamp_fires(d.get("max_fires") or 1),
+        max_fires=max_fires,
         fired=0,
         enabled=True,
         created=now(),
@@ -290,7 +295,7 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
         return 400, {"error": "text debe ser un texto"}
     try:
         max_fires = clamp_fires(d["max_fires"]) if d.get("max_fires") is not None else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError, OverflowError:
         return 400, {"error": "max_fires debe ser un numero"}
     with lock:
         r = next((x for x in rules.items if x["id"] == rule_id), None)
@@ -339,6 +344,14 @@ class QuietServer(ThreadingHTTPServer):
 SESSION_VIEWS = ("screen", "connections", "turns", "digest")
 
 
+class RequestError(ValueError):
+    """Pedido invalido: respuesta al cliente, no un error interno con traceback."""
+
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "lienzo/0.1"
     protocol_version = "HTTP/1.1"
@@ -357,6 +370,8 @@ class Handler(BaseHTTPRequestHandler):
         eso sale hacia afuera. El id esta en las dos puntas para poder cruzarlas."""
         if is_disconnect(e):
             return
+        if isinstance(e, RequestError):
+            return self._json(e.status, {"error": str(e)})
         eid = secrets.token_hex(4)
         log(f"error {eid} en {self.command} {self.path}:\n{traceback.format_exc()}")
         # el id va tambien dentro de `error`: la UI muestra ese campo tal cual, asi se ve sin tocar web/
@@ -386,25 +401,36 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         self.query = urllib.parse.parse_qs(u.query)
         parts = [p for p in u.path.split("/") if p]
-        n = int(self.headers.get("Content-Length") or 0)
-        # hallazgo A3: rechazar un cuerpo gigante ANTES de leerlo. /attach sube archivos (techo
-        # alto); el resto son cuerpos JSON chicos. Si excede, no se drena: se cierra la conexion.
+        lengths = self.headers.get_all("Content-Length", [])
+        length = lengths[0].strip() if len(lengths) == 1 else "0"
+        if self.headers.get("Transfer-Encoding") or len(lengths) > 1 or not re.fullmatch(r"[0-9]{1,20}", length):
+            self.close_connection = True
+            raise RequestError("Content-Length invalido o Transfer-Encoding no soportado")
+        n = int(length)
         cap = MAX_ATTACH if (len(parts) == 3 and parts[0] == "sessions" and parts[2] == "attach") else MAX_BODY
         if n > cap:
-            self.oversize = n
-            self.raw = b""
             self.close_connection = True
-            return parts
-        self.oversize = 0
+            raise RequestError("cuerpo demasiado grande", 413)
         self.raw = self.rfile.read(n) if n else b""
+        if len(self.raw) != n:
+            self.close_connection = True
+            raise RequestError("cuerpo incompleto")
         return parts
 
-    def _too_big(self) -> bool:
-        """True (con el 413 ya contestado) si el cuerpo excedio el techo de _route."""
-        if getattr(self, "oversize", 0):
-            self._json(413, {"error": "cuerpo demasiado grande"})
-            return True
-        return False
+    def _prepare(self, *, write: bool = False, authenticated: bool = False) -> list[str] | None:
+        """Mismos limites, Host y CSRF para todos los metodos; None si ya se rechazo."""
+        try:
+            parts = self._route()
+            if not self._host_ok():
+                raise RequestError("Host no valido")
+            if write and not self._csrf_ok():
+                raise RequestError("falta X-Lienzo o el Origin no es propio", 403)
+            if authenticated and not self._authed():
+                raise RequestError("hace falta iniciar sesion", 401)
+            return parts
+        except Exception as e:
+            self._server_error(e)
+            return None
 
     def _host_ok(self) -> bool:
         """Valida el Host de cada pedido (hallazgo C1: sin esto un reencuadre DNS le entrega el
@@ -445,10 +471,16 @@ class Handler(BaseHTTPRequestHandler):
         if not raw:
             return {}
         try:
-            d = json.loads(raw.decode("utf-8"))
+            text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            d = json.loads(raw.decode("cp1252", errors="replace"))
-        return d if isinstance(d, dict) else {}
+            text = raw.decode("cp1252", errors="replace")
+        try:
+            d = json.loads(text)
+        except ValueError as e:
+            raise RequestError("JSON invalido") from e
+        if not isinstance(d, dict):
+            raise RequestError("el cuerpo debe ser un objeto JSON")
+        return d
 
     # --- identidad del cliente ------------------------------------------------------
     def _client_ip(self) -> str:
@@ -497,9 +529,9 @@ class Handler(BaseHTTPRequestHandler):
         return ohost == host or ohost in ("localhost:5173", "127.0.0.1:5173")
 
     def do_GET(self):
-        parts = self._route()
-        if not self._host_ok():
-            return self._json(400, {"error": "Host no valido"})
+        parts = self._prepare()
+        if parts is None:
+            return
         try:
             if not parts:
                 index = os.path.join(DIST, "index.html")
@@ -583,15 +615,14 @@ class Handler(BaseHTTPRequestHandler):
             e = enroll
             if e and time.time() > e["expires"]:
                 enroll = e = None
-        if not e or not tok or not secrets.compare_digest(tok, e["token"]):
+            if e and tok and secrets.compare_digest(tok, e["token"]):
+                enroll = None  # validar y consumir bajo el mismo lock: canje unico
+            else:
+                e = None
+        if e is None:
             log(f"enroll rechazado desde {self._client_ip()}")
             return self._json(410, {"error": "el enlace de alta vencio o no es valido; rehacer desde la PC"})
         log(f"enroll entregado a {self._client_ip()} (token consumido)")
-        # hallazgo M4: el token es de un solo uso. Consumirlo aca deja que una filtracion del enlace
-        # (queda en el historial del celular y en los logs de Cloudflare) se note: el canje legitimo
-        # invalida el token, un segundo intento con el mismo cae en el 410.
-        with lock:
-            enroll = None
         return self._json(
             200,
             {"passphrase": e["passphrase"], "otpauth": e["otpauth"], "expires_in": int(e["expires"] - time.time())},
@@ -611,24 +642,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(409, {"ok": False, "error": "sin consola que leer"})
             return self._json(200, read_screen(s["pid"]))
         if not s.get("transcript_path") or not os.path.exists(s["transcript_path"]):
-            return self._json(200, {"meta": {}, "turns": [], "has_more": False, "note": "sin transcripcion"})
+            note = "sin transcripcion"
+            if s["agent"] == "pi" and not s.get("hooked"):
+                note = "Pi detectado sin extension activa: ejecutá /reload en esa terminal tras instalar con py -3.14 install.py --pi-only"
+            elif s["agent"] == "pi" and not s.get("transcript_path"):
+                note = "Pi todavía no guardó una transcripción (primer turno pendiente o --no-session)"
+            return self._json(200, {"meta": {}, "turns": [], "has_more": False, "note": note})
         try:
             n = int(self.query.get("n", ["10"])[0])
         except ValueError:
             return self._json(400, {"error": "n debe ser un numero"})  # hallazgo B3: antes tiraba 500
         if view == "turns":
             before = self.query.get("before", [None])[0]
-            return self._json(200, transcripts.turns(s["agent"], s["transcript_path"], n, before))
-        return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n))
+            return self._json(
+                200, transcripts.turns(s["agent"], s["transcript_path"], n, before, leaf_id=s.get("pi_leaf_id"))
+            )
+        return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n, leaf_id=s.get("pi_leaf_id")))
 
     def do_POST(self):
-        parts = self._route()
-        if self._too_big():
+        parts = self._prepare(write=True)
+        if parts is None:
             return
-        if not self._host_ok():
-            return self._json(400, {"error": "Host no valido"})
-        if not self._csrf_ok():
-            return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
         try:
             if parts == ["login"]:
                 return self._login()
@@ -719,7 +753,14 @@ class Handler(BaseHTTPRequestHandler):
         """POST /sessions/<id>/send: inyecta el texto en la consola y, solo si entro, deja la flecha
         en el historial. Quien queda de cada lado depende de como se pidio el envio."""
         d = self._json_body()
-        code, res = send_to_session(s, d.get("text", ""), list(d.get("attachments") or []))
+        text, attachments = d.get("text", ""), d.get("attachments") or []
+        if (
+            not isinstance(text, str)
+            or not isinstance(attachments, list)
+            or any(not isinstance(a, str) for a in attachments)
+        ):
+            raise RequestError("text debe ser texto y attachments una lista de rutas")
+        code, res = send_to_session(s, text, attachments)
         if code == 200:
             sid, text = s["session_id"], d.get("text", "")
             src, link_to = d.get("from"), d.get("link_to")
@@ -739,15 +780,9 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(code, res)
 
     def do_PUT(self):
-        parts = self._route()
-        if self._too_big():
+        parts = self._prepare(write=True, authenticated=True)
+        if parts is None:
             return
-        if not self._host_ok():
-            return self._json(400, {"error": "Host no valido"})
-        if not self._csrf_ok():
-            return self._json(403, {"error": "falta X-Lienzo o el Origin no es propio"})
-        if not self._authed():
-            return self._json(401, {"error": "hace falta iniciar sesion"})
         try:
             if parts == ["config"]:
                 return self._put_config()
@@ -821,21 +856,20 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
 
     def do_DELETE(self):
-        parts = self._route()
-        if not self._host_ok():
-            return self._json(400, {"error": "Host no valido"})
-        if not self._csrf_ok():
-            return self._json(403, {"error": "falta X-Lienzo"})
-        if not self._authed():
-            return self._json(401, {"error": "hace falta iniciar sesion"})
-        if len(parts) == 2 and parts[0] == "sessions":
-            drop_session(parts[1], "borrada desde la UI")
-            return self._json(200, {"ok": True})
-        if len(parts) == 2 and parts[0] in ("links", "rules"):
-            log(f"{parts[0][:-1]} {parts[1]} borrada desde la UI ({self._client_ip()})")
-            (links if parts[0] == "links" else rules).remove(lambda x: x["id"] == parts[1])
-            return self._json(200, {"ok": True})
-        return self._json(404, {"error": "ruta desconocida"})
+        parts = self._prepare(write=True, authenticated=True)
+        if parts is None:
+            return
+        try:
+            if len(parts) == 2 and parts[0] == "sessions":
+                drop_session(parts[1], "borrada desde la UI")
+                return self._json(200, {"ok": True})
+            if len(parts) == 2 and parts[0] in ("links", "rules"):
+                log(f"{parts[0][:-1]} {parts[1]} borrada desde la UI ({self._client_ip()})")
+                (links if parts[0] == "links" else rules).remove(lambda x: x["id"] == parts[1])
+                return self._json(200, {"ok": True})
+            return self._json(404, {"error": "ruta desconocida"})
+        except Exception as e:
+            return self._server_error(e)
 
     def _file(self, path: str, ctype: str, cache: str = "no-store") -> None:
         try:
@@ -895,7 +929,7 @@ class Handler(BaseHTTPRequestHandler):
                     # vivo". Lleva el sello del build (ver `build_id`) para avisar de una version
                     # nueva sin agregar ni una ruta ni un timer
                     chunk(f'data: {{"type": "ping", "build": "{build_id()}"}}\n\n'.encode())
-        except (BrokenPipeError, ConnectionError, OSError):
+        except BrokenPipeError, ConnectionError, OSError:
             pass
         finally:
             with lock:
@@ -961,8 +995,8 @@ def main() -> int:
     ap.add_argument(
         "--host",
         default="127.0.0.1",
-        help="interfaz donde escuchar. 0.0.0.0 lo publica en la LAN: lo que no sea loopback "
-        "exige la cookie de login igual que el tunel, porque _is_local() mira la IP del cliente",
+        help="interfaz donde escuchar. 0.0.0.0 permite controlar las terminales desde la LAN sin login; "
+        "el tunel siempre exige autenticacion",
     )
     ap.add_argument("--no-sweep", action="store_true")
     ap.add_argument("--sweep-every", type=float, default=30.0)

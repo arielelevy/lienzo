@@ -1,6 +1,6 @@
 # Lienzo
 
-Tablero para las sesiones de **Claude Code** y **Codex CLI** que corren en terminales de
+Tablero para las sesiones de **Claude Code**, **Codex CLI** y **Pi CLI** que corren en terminales de
 Windows: la integrada de VS Code, Windows Terminal, una PowerShell o un cmd sueltos. Una
 tarjeta por sesión, agrupadas por columna (trabajo, te necesita, muerta), con la
 conversación a un click, una caja para contestarles, **aprobación de permisos sin ir a la
@@ -24,12 +24,20 @@ estén corriendo, aunque se hayan abierto antes de instalar nada: lee el directo
 trabajo de cada proceso, ubica su transcripción y arma la tarjeta. Descarta las apps de
 escritorio y las extensiones de VS Code, que usan los mismos nombres de ejecutable.
 
-Después, cuatro canales, cada uno por su lado:
+Pi se detecta por su ejecutable o por Node ejecutando el CLI oficial; no se incluyen los
+modos RPC, print ni JSON. Su extensión publica el PID y la ruta exacta de la sesión. Para las TUIs ya abiertas sin
+extensión, el backend también lee `PI_SESSION_ID`/`PI_SESSION_FILE` de sus shells hijos y
+valida la cabecera del JSONL. Si no encuentra un shell y hay una sola Pi en ese proyecto,
+busca el JSONL con actividad más reciente posterior al arranque del proceso y verifica su
+`cwd` e ID: también contempla sesiones reanudadas. Ese respaldo es heurístico; con varias
+Pi en el mismo proyecto exige identidad exacta. La vinculación queda guardada en la tarjeta.
+
+Después, estos canales, cada uno por su lado:
 
 | Qué | Cómo |
 |---|---|
 | Estado de cada sesión | Hooks de los propios agentes (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`…) que escriben un archivo en `~/.lienzo/events`. Nunca se raspa la pantalla para esto. |
-| Contenido | Las transcripciones `.jsonl` que Claude Code y Codex ya escriben en disco. Se leen por la cola, nunca enteras. |
+| Contenido | Las transcripciones `.jsonl` que Claude Code, Codex y Pi ya escriben en disco; en Pi se sigue la rama activa. Se leen por la cola, nunca enteras. |
 | Mandar un mensaje | Inyección de teclas en la consola del proceso por PID (`AttachConsole` + `WriteConsoleInputW`). Funciona sin foco y aunque la pestaña esté oculta. Los adjuntos viajan como ruta en el texto. |
 | Contestar un permiso | El hook `PermissionRequest` es sincrónico: deja el pedido en una carpeta y espera hasta 60 s la respuesta que el tablero escribe. Si nadie contesta, el prompt aparece en la terminal como siempre. |
 | Contestar una pregunta | El mismo hook: `AskUserQuestion` pide permiso como cualquier herramienta. La opción elegida vuelve adentro del `updatedInput` de la decisión, que es donde la deja el menú de la consola. |
@@ -49,9 +57,9 @@ de una sesión viva no la reemplaza.
 ## Requisitos
 
 - Windows 10/11: es donde está probado. Hoy no corre en Mac ni en Linux.
-- Python 3.12 o más nuevo, sólo biblioteca estándar. Sin `psutil`, sin frameworks.
-- Node 20 o más nuevo para compilar la interfaz (Vite + React + TypeScript).
-- Claude Code 2.1 o más nuevo, Codex CLI 0.153 o más nuevo, o los dos.
+- Python 3.14 o más nuevo, sólo biblioteca estándar. Sin `psutil`, sin frameworks.
+- Node 24 LTS para compilar la interfaz (Vite + React + TypeScript).
+- Claude Code 2.1+, Codex CLI 0.153+ o Pi CLI (integración desarrollada contra 0.86.0).
 - Sólo para el acceso desde el celular, y sólo si lo querés: `cloudflared`
   (`winget install Cloudflare.cloudflared`). Para usarlo local no hace falta.
 
@@ -78,7 +86,7 @@ cd lienzo\web
 npm install
 npm run build
 cd ..
-python install.py          # registra los hooks en ~/.claude/settings.json (con backup) y ~/.codex/hooks.json
+py -3.14 install.py        # registra hooks de Claude/Codex y la extensión Pi
 .\lienzo-server.cmd        # http://127.0.0.1:7321
 ```
 
@@ -87,6 +95,26 @@ saca los hooks. El estado vive en `%USERPROFILE%\.lienzo\` (eventos, permisos pe
 adjuntos, tarjetas); no toca AppData.
 
 Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json` nuevo.
+
+### Pi CLI
+
+`py -3.14 install.py --pi-only` registra `extensions/pi-lienzo.ts` en
+`~/.pi/agent/settings.json`, conservando la configuración y guardando un backup. Respeta
+`PI_CODING_AGENT_DIR` si está definido. Abrí una sesión nueva o ejecutá `/reload` en Pi
+para cargarla; si el servidor ya estaba abierto, debe reiniciarse de forma coordinada para
+cargar el backend nuevo.
+
+Pi participa del envío, reenvío y copiar/pegar trabajo con Claude y Codex en ambos sentidos.
+El canal nativo sigue siendo exclusivo de Claude a Claude. Los diálogos de extensiones Pi
+se contestan en su terminal: mientras están abiertos se bloquea la inyección de mensajes.
+El reenvío «cuando termine» espera `agent_settled`, no una respuesta intermedia ni
+`agent_end`, para no adelantarse a reintentos o mensajes encolados. La lectura de logs
+sin extensión muestra la conversación y un estado inferido, pero no dispara esos reenvíos
+ni reintentos automáticos: para eso hay que cargar la extensión con `/reload`.
+
+La validación automatizada cubre parsers, eventos y transporte simulado. La recepción real
+por `WriteConsoleInputW` entre las tres TUIs requiere una prueba con terminales de prueba;
+no se debe usar una sesión de trabajo activa para ese ensayo.
 
 ## Uso
 
