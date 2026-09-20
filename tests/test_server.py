@@ -532,6 +532,7 @@ def test_state_nunca_queda_en_none(aislado, monkeypatch):
 
 class _Run:
     def __init__(self, chars):
+        self.returncode = 0
         self.stdout = json.dumps({"ok": True, "pid": PID, "chars": chars, "enter": 1})
         self.stderr = ""
 

@@ -28,7 +28,36 @@ _k32.ReadProcessMemory.argtypes = [wt.HANDLE, wt.LPCVOID, wt.LPVOID, ctypes.c_si
 _k32.ReadProcessMemory.restype = wt.BOOL
 _nt.NtQueryInformationProcess.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.ULONG, ctypes.POINTER(wt.ULONG)]
 
-AGENTS = {"claude.exe": "claude", "codex.exe": "codex"}
+AGENTS = {"claude.exe": "claude", "codex.exe": "codex", "pi.exe": "pi"}
+
+_shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+_shell32.CommandLineToArgvW.argtypes = [wt.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+_shell32.CommandLineToArgvW.restype = ctypes.POINTER(wt.LPWSTR)
+_k32.LocalFree.argtypes = [wt.HLOCAL]
+
+
+def command_args(command: str) -> list[str]:
+    """Argumentos Windows, sin confundir rutas con espacios ni texto del prompt."""
+    count = ctypes.c_int()
+    argv = _shell32.CommandLineToArgvW(command, ctypes.byref(count)) if command else None
+    if not argv:
+        return []
+    try:
+        return [argv[i] for i in range(count.value)]
+    finally:
+        _k32.LocalFree(argv)
+
+
+def pi_interactive(args: list[str]) -> bool:
+    """Excluye print, RPC, JSON y comandos administrativos; -- termina las opciones."""
+    options = args[: args.index("--")] if "--" in args else args
+    if args and args[0] in ("install", "remove", "uninstall", "update", "list", "config"):
+        return False
+    return not any(
+        a in ("-p", "--print", "--mode", "--export", "--help", "-h", "--version", "-v", "--list-models")
+        or a.startswith(("--mode=", "--export=", "--list-models="))
+        for a in options
+    )
 
 
 class _PBI(ctypes.Structure):
@@ -114,11 +143,89 @@ def alive(pid: int | None) -> bool:
         close_handle(h)
 
 
-def agent_of(exe: str | None) -> str | None:
-    """'claude' | 'codex' | None. Tolera el binario renombrado por el auto-update
+def command_line(pid: int) -> str | None:
+    """CommandLine del PEB x64. Sin CIM por cada chequeo de liveness."""
+    h = open_process(pid, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)
+    if not h:
+        return None
+    try:
+        pbi = basic_info(h)
+        raw = read_memory(h, pbi.PebBaseAddress + 0x20, 8) if pbi and pbi.PebBaseAddress else None
+        params = int.from_bytes(raw, "little") if raw else 0
+        raw = read_memory(h, params + 0x70, 16) if params else None
+        if not raw:
+            return None
+        length, addr = int.from_bytes(raw[:2], "little"), int.from_bytes(raw[8:], "little")
+        data = read_memory(h, addr, length) if addr and 0 < length <= 65534 else None
+        return data.decode("utf-16-le", errors="replace") if data else None
+    finally:
+        close_handle(h)
+
+
+def pi_session_environment(pid: int, parent_pid: int) -> dict[str, str]:
+    """Solo PI_SESSION_ID/FILE de un hijo directo; nunca devuelve credenciales del entorno.
+
+    Pi inyecta estas variables al lanzar sus herramientas de shell. No leer el entorno del
+    propio agente: podria haber heredado la identidad de otro Pi que lo lanzo.
+    """
+    h = open_process(pid, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)
+    if not h:
+        return {}
+    try:
+        pbi = basic_info(h)
+        if not pbi or not pbi.PebBaseAddress or pbi.InheritedFromUniqueProcessId != parent_pid:
+            return {}
+        raw = read_memory(h, pbi.PebBaseAddress + 0x20, 8)
+        params = int.from_bytes(raw, "little") if raw else 0
+        raw = read_memory(h, params + 0x80, 8) if params else None  # PEB64.Environment
+        address = int.from_bytes(raw, "little") if raw else 0
+        if not address:
+            return {}
+        data = b""
+        while len(data) < 256 * 1024:
+            start = address + len(data)
+            block = read_memory(h, start, min(4096 - start % 4096, 256 * 1024 - len(data)))
+            if not block:
+                return {}
+            data += block
+            text = data[: len(data) // 2 * 2].decode("utf-16-le", errors="replace")
+            if "\0\0" not in text:
+                continue
+            values = {}
+            for entry in text.split("\0\0", 1)[0].split("\0"):
+                key, sep, value = entry.partition("=")
+                if sep and key in ("PI_SESSION_ID", "PI_SESSION_FILE"):
+                    values[key] = value
+            return values
+        return {}
+    finally:
+        close_handle(h)
+
+
+def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
+    """Claude / Codex / Pi. Node solo cuenta si ejecuta la CLI interactiva de Pi.
+    Tolera el binario renombrado por el auto-update
     (claude.exe.old.<ts>), que sigue corriendo con ese nombre de imagen."""
     name = os.path.basename(exe or "").lower()
+    if name == "node.exe":
+        args = command_args(cmdline or "")
+        entry = args[1].replace("\\", "/").lower() if len(args) > 1 else ""
+        if any(
+            entry.endswith(f"/{scope}/pi-coding-agent/dist/{script}")
+            for scope in ("@earendil-works", "@mariozechner")
+            for script in ("cli.js", "bundle/cli.js")
+        ):
+            return "pi" if pi_interactive(args[2:]) else None
+        return None
     for k, v in AGENTS.items():
         if name == k or name.startswith(k + "."):
+            if v == "pi" and cmdline and not pi_interactive(command_args(cmdline)[1:]):
+                return None
             return v
     return None
+
+
+def process_agent(pid: int) -> str | None:
+    exe = image_path(pid)
+    cmdline = command_line(pid) if os.path.basename(exe or "").lower() in ("node.exe", "pi.exe") else None
+    return agent_of(exe, cmdline)

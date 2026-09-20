@@ -18,12 +18,15 @@ export function shortName(o: Session | undefined, fallback = "otra sesión"): st
 }
 
 /** viva, con terminal propia, no huerfana y no detenida (stopped): se le puede escribir */
-export const canWrite = (s: Session): boolean => !!s.alive && !s.orphan && !s.no_console && !s.stopped_by;
+export const canWrite = (s: Session): boolean => hasConsole(s) && !s.stopped_by && s.needs?.kind !== "pi_dialog";
 /** viva con terminal, aunque este detenida: lo que no es escribirle (renombrar, la llave stopped) */
-export const hasConsole = (s: Session): boolean => !!s.alive && !s.orphan && !s.no_console;
+export const hasConsole = (s: Session): boolean => !!s.alive && !!s.pid && !s.orphan && !s.no_console;
 
-/** libre: con consola y sin ningun pedido ni respuesta todavia (sesion recien abierta) */
-export const isFree = (s: Session): boolean => canWrite(s) && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();
+/** El barrido encontro Pi, pero su extension aun no publico la identidad y el log. */
+export const needsPiReload = (s: Session): boolean => s.agent === "pi" && s.source === "sweep" && !s.hooked && !s.transcript_path;
+
+/** Sin identidad no sabemos si esta libre: no confundir un log desconocido con una sesion nueva. */
+export const isFree = (s: Session): boolean => !needsPiReload(s) && canWrite(s) && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();
 
 /** Texto sobre el que busca el filtro del header. El agente va primero porque su nombre ("codex",
  *  "claude") es lo primero que uno escribe, y hasta ahora sólo se filtraba por los chips; despues
@@ -43,11 +46,6 @@ export function whenLabel(iso: string, long = false, now = new Date()): string {
   const day = `${d.toLocaleDateString("es-AR", { weekday: "short" }).replace(".", "")} ${d.getDate()}/${d.getMonth() + 1}`;
   return long ? `el ${day} a las ${t}` : `${day} ${t}`;
 }
-
-/** minuto (ms truncados) en que dispara una regla "at"; null si no tiene hora */
-
-
-
 
 const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 
@@ -264,6 +262,8 @@ export function needsLabel(needs: Needs): string {
     case "question":
       // AskUserQuestion: llega por el hook de permisos pero no es un permiso (ver Ask.tsx)
       return "Te hace una pregunta";
+    case "pi_dialog":
+      return "Espera una respuesta en la terminal";
     case "agent_needs_input":
       return "Espera que le contestes";
     case "elicitation_dialog":

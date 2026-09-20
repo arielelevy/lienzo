@@ -1,7 +1,7 @@
-import { Component, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
-import { isFree, periodLabel, schedLabel, stalledReason } from "../names";
+import { isFree, needsPiReload, periodLabel, schedLabel, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
@@ -62,6 +62,13 @@ const cut = (t: string, n = 160) => (t.length > n ? `${t.slice(0, n).trimEnd()}�
 /** ancho de pantalla en el que el panel pasa a ocupar todo: el mismo numero que el
  *  `@media (max-width: 900px)` de styles.css. */
 const MOBILE = 900;
+
+function measureGrid() {
+  return {
+    vw: document.documentElement.clientWidth || window.innerWidth,
+    rects: Array.from(document.querySelectorAll(".card"), (el) => el.getBoundingClientRect()),
+  };
+}
 
 /** El estado en palabras, con la misma palabra que la columna del tablero: `te_necesita` es el
  *  nombre interno de la API y no es para leer. (Viviria mejor en names.ts, al lado de COLS, pero
@@ -168,15 +175,16 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
   type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
   const [screen, setScreen] = useState<Screen | null>(null);
   // devuelve el resultado en vez de setearlo: el efecto decide si todavia aplica (cancelled)
-  const fetchScreen = (): Promise<Screen> =>
-    api.get<Screen>(`/sessions/${s.session_id}/screen`).catch((e) => ({ ok: false, error: (e as Error).message }));
+  const fetchScreen = useCallback((): Promise<Screen> =>
+    api.get<Screen>(`/sessions/${s.session_id}/screen`).catch((e) => ({ ok: false, error: (e as Error).message })),
+  [s.session_id]);
   // conexiones de la sesion: alimentan la pestana Conexiones y la fila de programadas del
   // encabezado. Las reglas llegan por SSE al App pero el Panel no las recibe: se piden a
   // /connections al abrir, con cada transcriptTick, cada 30 s y despues de quitar una. null
   // mientras carga; "old" si el server no tiene la ruta (la fila no aparece).
   const [conn, setConn] = useState<ConnectionsResponse | "old" | null>(null);
   const [connTick, setConnTick] = useState(0);
-  useEffect(() => setConn(null), [s.session_id]);
+  // App usa key=session_id: una sesion nueva ya monta conn=null, sin un segundo render.
   useEffect(() => {
     let cancelled = false;
     const load = () =>
@@ -209,16 +217,19 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
   const [digest, setDigest] = useState<DigestResponse | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  // El ajuste del borde a la grilla de tarjetas se mide una vez por apertura y ancho de ventana:
-  // si se recalculara en cada render, el panel cambiaria de ancho solo cada vez que el tablero se
-  // mueve atras. El componente se remonta por sesion (key en App), asi que el ref muere con ella
-  const snapRef = useRef<{ vw: number; left: number; width: number; out: { left: number; width: number } } | null>(null);
+  // Capturar la grilla al abrir y al cambiar el ancho, no modificar un cache durante render.
+  // Los movimientos del tablero detras del panel no deben cambiar su anclaje.
+  const [grid, setGrid] = useState(measureGrid);
   // el tamano del panel se calcula al pintar: si la ventana cambia (girar el celular, abrir el
   // teclado, agrandar la ventana) hay que volver a pintar. visualViewport tambien avisa cuando
   // el teclado achica o desplaza lo visible sin tocar innerHeight (iOS)
   const [, redraw] = useState(0);
   useEffect(() => {
-    const on = () => redraw((n) => n + 1);
+    const on = () => {
+      const measured = measureGrid();
+      setGrid((prev) => prev.vw === measured.vw ? prev : measured);
+      redraw((n) => n + 1);
+    };
     const vv = window.visualViewport;
     window.addEventListener("resize", on);
     window.addEventListener("scroll", on, { passive: true }); // en el celular el tope depende del header
@@ -265,7 +276,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
     return () => {
       cancelled = true;
     };
-  }, [s.session_id, tab, transcriptTick]);
+  }, [s.session_id, tab, transcriptTick, fetchScreen]);
 
   // el panel se abre sobre la tarjeta que lo abrio, no en un costado fijo: se ancla a su esquina
   // superior izquierda y se corre lo justo para entrar en la ventana. El ancho se calcula aca y
@@ -321,12 +332,8 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
     // pasa de tapar 5,7 a tapar 3,3, y de 4,3 a 6,7 tarjetas legibles, a cambio de 60-110 px de
     // ancho. En 1152 el borde ya caia en un hueco y no cambia nada.
     const alaGrilla = (left: number, w: number): { left: number; width: number } => {
-      const c = snapRef.current;
-      if (c && c.vw === vw && c.left === left && c.width === w) return c.out;
       const alto = { top: top(anchor.top), bottom: top(anchor.top) + h };
-      const cruzan = Array.from(document.querySelectorAll(".card"))
-        .map((el) => el.getBoundingClientRect())
-        .filter((r) => r.top < alto.bottom && r.bottom > alto.top);
+      const cruzan = grid.rects.filter((r) => r.top < alto.bottom && r.bottom > alto.top);
       let l = left;
       let ancho = w;
       const cortaDer = cruzan.filter((r) => r.left < l + ancho && l + ancho < r.right);
@@ -342,9 +349,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
           l = borde;
         }
       }
-      const out = { left: Math.round(l), width: Math.round(ancho) };
-      snapRef.current = { vw, left, width: w, out };
-      return out;
+      return { left: Math.round(l), width: Math.round(ancho) };
     };
     if (alLado >= 380) {
       // entra al costado: se pega al borde de la tarjeta del lado mas libre y usa lo que haya
@@ -458,6 +463,15 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
               <Digest turn={t} toast={toast} />
             </div>
           ))
+        ) : s.agent === "pi" && !s.transcript_path ? (
+          <div className="empty" role="status">
+            {needsPiReload(s) ? (
+              <>Pi detectado, pero la extensión todavía no identificó esta sesión.
+                <p>Cuando termine el turno, ejecutá <code>/reload</code> en esa terminal Pi.</p>
+                <p>Si sigue igual, registrá la extensión con <code>py -3.14 install.py --pi-only</code> desde la carpeta de Lienzo y volvé a ejecutar <code>/reload</code>.</p>
+              </>
+            ) : "Pi todavía no guardó una transcripción. Aparecerá cuando persista el primer turno; las sesiones --no-session no guardan logs."}
+          </div>
         ) : free ? (
           freeEmpty
         ) : (

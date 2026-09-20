@@ -425,7 +425,7 @@ def set_state(s: dict, new: str) -> None:
     if prev != new:
         s["state"] = new
         s["state_since"] = now()
-        if new == "termino" and prev in ("corriendo", "te_necesita"):
+        if new == "termino" and prev in ("corriendo", "te_necesita") and (s.get("agent") != "pi" or s.get("hooked")):
             # cierre de turno: reglas "cuando termine" (en otro hilo, el envio tarda)
             threading.Thread(target=on_turn_end, args=(s["session_id"],), daemon=True).start()
     if new != "te_necesita":
@@ -624,14 +624,16 @@ def apply_turn_hooked(s: dict, t: dict) -> None:
     la transcripcion se toma lo que el agente viene diciendo mientras corre, y el estado solo
     cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido, o un
     permiso contestado en la terminal, que no deja hook de cierre)."""
-    if needs_answered(s, t):
+    if s.get("agent") != "pi" and needs_answered(s, t):
         state.log(
             f"{s['session_id'][:8]}: la transcripcion siguio despues del aviso "
             f"({(s.get('needs') or {}).get('kind')}); se contesto en la terminal, la tarjeta vuelve a corriendo"
         )
         set_state(s, "corriendo")  # set_state limpia `needs` al salir de te_necesita
         drop_pending(s)
-    want = transcript_state(s, t)
+    # Pi's stopReason ends a model response, not necessarily the agent run (retry/follow-up).
+    # Only agent_settled may close a hooked Pi turn and trigger forwarding rules.
+    want = None if s.get("agent") == "pi" else transcript_state(s, t)
     if want:
         if want == "corriendo" and (p := turn_prompt(t)):
             set_last_prompt(s, p)
@@ -640,7 +642,7 @@ def apply_turn_hooked(s: dict, t: dict) -> None:
             f"(ultimo evento {s.get('last_event')}); corregido"
         )
         set_state(s, want)
-    if s["state"] == "corriendo" and not t.get("ended"):
+    if s["state"] == "corriendo" and (not t.get("ended") or s.get("agent") == "pi"):
         s["last_reply"] = turn_say(t) or s["last_reply"]
 
 
@@ -678,7 +680,11 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     # que esperar, lo unico que falta es volver a pedirlo. La tarjeta ofrece "Reintentar" y, con
     # auto_retry en config.json, se manda solo una vez por error
     s["retryable"] = bool(
-        s["last_error"] and not s["limit_until"] and t.get("ended") and transcripts.retryable_error(t.get("error"))
+        s["last_error"]
+        and not s["limit_until"]
+        and t.get("ended")
+        and transcripts.retryable_error(t.get("error"))
+        and not (s.get("agent") == "pi" and (not s.get("hooked") or s["state"] != "termino"))
     )
     if s["retryable"]:
         on_api_error(s, f"{t.get('id')}:{s['last_error']}")
@@ -692,7 +698,7 @@ def read_transcript(s: dict) -> dict | None:
     if not path or not os.path.exists(path):
         return None
     try:
-        r = transcripts.turns(s["agent"], path, 1)
+        r = transcripts.turns(s["agent"], path, 1, leaf_id=s.get("pi_leaf_id"))
     except Exception as e:
         state.log(f"transcripcion {path}: {e}")
         return None
@@ -781,7 +787,7 @@ def recalc_title(s: dict) -> bool:
     path = s.get("transcript_path")
     if path and os.path.exists(path):
         try:
-            tt = transcripts.turns(s["agent"], path, 1)["meta"].get("title")
+            tt = transcripts.turns(s["agent"], path, 1, leaf_id=s.get("pi_leaf_id"))["meta"].get("title")
         except Exception as e:
             state.log(f"transcripcion {path}: {e}")
     if not tt and s.get("agent") == "codex":
@@ -886,8 +892,18 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
     """Lo propio de cada evento de hook sobre una tarjeta que apply_event ya puso al dia (pid, cwd,
     transcripcion, ultimo evento). Se llama con el lock tomado."""
     if name == "SessionStart":
-        if created:
+        if s["agent"] == "pi":
+            set_state(s, "termino" if ev.get("pi_idle", True) else "corriendo")
+        elif created:
             set_state(s, "termino")
+    elif name == "PiBusy" and s["agent"] == "pi":
+        set_state(s, "corriendo")
+    elif name == "PiPromptStart" and s["agent"] == "pi":
+        set_needs(s, {"kind": "pi_dialog", "detail": short(ev.get("message", ""), 300), "where": "terminal"})
+    elif name == "PiPromptEnd" and s["agent"] == "pi":
+        # Closing an idle dialog is not completion of a job: do not fire on_stop.
+        if (s.get("needs") or {}).get("kind") == "pi_dialog":
+            s["state"], s["state_since"], s["needs"] = ("termino" if ev.get("pi_idle") else "corriendo"), now(), None
     elif name == "UserPromptSubmit":
         hook_prompt_submit(s, ev)
     elif name == "Stop":
@@ -951,15 +967,27 @@ def apply_event(ev: dict) -> None:
             # el repo de la tarjeta se fija al arrancar y no baila
             s["cwd"] = ev["cwd"]
             s["repo"] = repo_of(ev["cwd"])
-        if ev.get("transcript_path"):
+        if ev.get("transcript_path") or (s["agent"] == "pi" and "transcript_path" in ev):
             s["transcript_path"] = ev["transcript_path"]
+        if s["agent"] == "pi":
+            if "pi_leaf_id" in ev:
+                s["pi_leaf_id"] = ev["pi_leaf_id"]
+            if "pi_title" in ev and s.get("title_source") != "user":
+                choose_title(s, ev["pi_title"])
         s["last_event"] = name
         s["last_event_ts"] = ev.get("host_ts") or now()
         s["alive"] = True
         s["dead_since"] = None
         apply_hook(s, ev, name, created)
-        if created or name == "SessionStart":
-            refresh_from_transcript(s)
+        if created or name in ("SessionStart", "PiTree", "PiMetadata") or (s["agent"] == "pi" and name == "Stop"):
+            r = read_transcript(s)
+            if r is not None:
+                apply_transcript(s, r)
+            if s["agent"] == "pi" and name in ("SessionStart", "PiTree"):
+                ts = r["turns"] if r else []
+                s["last_prompt"] = (turn_prompt(ts[-1]) or "") if ts else ""
+                s["last_reply"] = (ts[-1].get("final") or "") if ts else ""
+                state.broadcast({"type": "transcript", "session_id": sid, "size": 0})
         touch(s)
 
 
@@ -1009,7 +1037,7 @@ def read_pending() -> dict:
             with open(os.path.join(PENDING, n), encoding="utf-8") as f:
                 d = json.load(f)
             found[d["request_id"]] = d
-        except (OSError, ValueError, KeyError):
+        except OSError, ValueError, KeyError:
             continue
     return found
 
@@ -1116,7 +1144,7 @@ def guess_codex(cwd: str, t0: float) -> tuple[str | None, str | None]:
         try:
             with open(p, "rb") as f:
                 first = json.loads(f.readline().decode("utf-8", errors="replace"))
-        except (OSError, ValueError):
+        except OSError, ValueError:
             continue
         pl = first.get("payload") or {}
         if (pl.get("cwd") or "").lower() != cwd.lower():
@@ -1132,6 +1160,39 @@ def guess_codex(cwd: str, t0: float) -> tuple[str | None, str | None]:
     return best or (None, None)
 
 
+def guess_pi(cwd: str, born: float) -> tuple[str | None, str | None]:
+    """Respaldo para una unica Pi en el proyecto, sin extension ni shell hijo observable.
+
+    Pi puede reanudar un archivo anterior al proceso: importa su actividad, no el nombre
+    ni la fecha de creacion. Verificar cwd e id de la cabecera, y actividad posterior al
+    nacimiento. El llamador excluye proyectos compartidos por varias TUIs de Pi.
+    """
+    agent_dir = os.environ.get("PI_CODING_AGENT_DIR") or os.path.join(HOME, ".pi", "agent")
+    slug = "--" + re.sub(r"[\\/:]", "-", re.sub(r"^[\\/]", "", cwd)) + "--"
+    folder = os.environ.get("PI_CODING_AGENT_SESSION_DIR") or os.path.join(agent_dir, "sessions", slug)
+    candidates = []
+    for path in glob.glob(os.path.join(folder, "*.jsonl")):
+        try:
+            modified = os.path.getmtime(path)
+            if modified < born:
+                continue
+            with open(path, encoding="utf-8") as f:
+                header = json.loads(f.readline(65536))
+            if not isinstance(header, dict) or header.get("type") != "session":
+                continue
+            if not isinstance(header.get("id"), str) or not header["id"]:
+                continue
+            if not isinstance(header.get("cwd"), str) or os.path.normcase(header["cwd"]) != os.path.normcase(cwd):
+                continue
+            candidates.append((modified, header["id"], path))
+        except OSError, ValueError:
+            continue
+    candidates.sort(reverse=True)
+    if not candidates or (len(candidates) > 1 and candidates[0][0] == candidates[1][0]):
+        return None, None
+    return candidates[0][1], candidates[0][2]
+
+
 def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[str | None, str | None]:
     """(session_id, transcript_path) mas probable para un agente encontrado por barrido: el barrido
     solo sabe pid y cwd, y de ahi hay que deducir de que sesion se trata. `created` es el
@@ -1140,20 +1201,30 @@ def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[
     if not cwd:
         return None, None
     born = parse_ts(created)
+    if agent == "pi":
+        return guess_pi(cwd, born.timestamp()) if born else (None, None)
     t0 = born.timestamp() - BIRTH_MARGIN_S if born else 0
     return guess_claude(cwd, t0) if agent == "claude" else guess_codex(cwd, t0)
 
 
-def attach_transcript(s: dict) -> None:
+def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_guess: bool = False) -> None:
     """Tarjeta del barrido que todavia no tenia transcripcion (Codex crea el rollout recien en el
     primer turno, no al abrir): buscarla y, si aparece, tomar tambien el session_id real que trae,
     con lo que la tarjeta deja de llamarse `pid-N`. La busqueda va sin el lock; lo que escribe, con
     el lock y revalidando que la tarjeta siga siendo la misma."""
+    if s["agent"] == "pi" and not pi_session and not pi_guess:
+        return
     cwd = s.get("cwd") or procs.cwd_of(s["pid"])
-    sid, tpath = guess_transcript(s["agent"], cwd, s.get("started"))
+    sid, tpath = (
+        pi_session if s["agent"] == "pi" and pi_session else guess_transcript(s["agent"], cwd, s.get("started"))
+    )
     if not tpath:
         return
     with lock:
+        if s.get("hooked"):
+            return  # la extension tiene prioridad sobre el entorno de un comando anterior
+        if sid and sid != s["session_id"] and sid in sessions:
+            return  # no vincular un archivo cuya sesion ya tiene otra tarjeta
         if sessions.get(s["session_id"]) is not s:
             return  # la borraron mientras buscabamos su transcripcion: no revivirla
         if sid and sid != s["session_id"] and sid not in sessions:
@@ -1176,7 +1247,10 @@ def adopt_process(p: dict) -> None:
     """Agente vivo que ninguna tarjeta reclama: si su transcripcion ya tiene tarjeta, esa recupera
     el pid (venia de una corrida anterior); si no, se abre una nueva."""
     cwd = procs.cwd_of(p["pid"])
-    sid, tpath = guess_transcript(p["agent"], cwd, p.get("created"))
+    if p["agent"] == "pi" and not p.get("pi_guess_allowed"):
+        sid, tpath = p.get("pi_session") or (None, None)
+    else:
+        sid, tpath = p.get("pi_session") or guess_transcript(p["agent"], cwd, p.get("created"))
     with lock:
         s = sessions.get(sid) if sid else None
         if s is not None:
@@ -1212,13 +1286,29 @@ def sweep_once() -> None:
     global last_sweep
     last_sweep = time.time()
     found = procs.sweep()
+    pi_cwds = {p["pid"]: os.path.normcase(procs.cwd_of(p["pid"]) or "") for p in found if p["agent"] == "pi"}
+    for p in found:
+        cwd = pi_cwds.get(p["pid"])
+        p["pi_guess_allowed"] = bool(cwd) and list(pi_cwds.values()).count(cwd) == 1
     with lock:
         known_pids = {s.get("pid") for s in sessions.values() if s.get("pid")}
         sin_transcripcion = [
-            s for s in sessions.values() if s.get("source") == "sweep" and not s.get("transcript_path") and s.get("pid")
+            s
+            for s in sessions.values()
+            if s.get("source") == "sweep" and s.get("pid") and (not s.get("transcript_path") or s["agent"] == "pi")
         ]
+    found_by_pid = {p["pid"]: p for p in found}
     for s in sin_transcripcion:
-        attach_transcript(s)
+        observed = found_by_pid.get(s["pid"], {})
+        identity = observed.get("pi_session")
+        if s["agent"] == "pi":
+            if identity:
+                if identity != (s["session_id"], s.get("transcript_path")):
+                    attach_transcript(s, identity)
+            elif not s.get("transcript_path") and observed.get("pi_guess_allowed"):
+                attach_transcript(s, pi_guess=True)
+        else:
+            attach_transcript(s)
     for p in found:
         if p["pid"] not in known_pids:
             adopt_process(p)
@@ -1299,8 +1389,8 @@ def save_attachment(sid: str, name: str, data: bytes) -> str:
     safe = "".join(c for c in os.path.basename(name) if c.isalnum() or c in "._- ") or "adjunto"
     d = os.path.join(ADJUNTOS, sid)
     os.makedirs(d, exist_ok=True)
-    path = os.path.join(d, f"{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{safe}")
-    with open(path, "wb") as f:
+    path = os.path.join(d, f"{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(6)}-{safe}")
+    with open(path, "xb") as f:
         f.write(data)
     return path
 
@@ -1321,6 +1411,8 @@ def send_blocked(s: dict) -> tuple[int, dict] | None:
             "ok": False,
             "error": "esta sesion no tiene consola (panel de VS Code o app de escritorio): no se le puede escribir",
         }
+    if s.get("agent") == "pi" and (s.get("needs") or {}).get("kind") == "pi_dialog":
+        return 409, {"ok": False, "error": "Pi espera una respuesta en su terminal; cerrá ese dialogo primero"}
     if s.get("pending_id"):
         # el mismo pendiente puede ser un permiso o una pregunta con opciones: el mensaje lo dice
         if is_question(pending.get(s["pending_id"]) or {}):
@@ -1347,7 +1439,7 @@ def _under_adjuntos(path: str) -> bool:
     try:
         root = os.path.realpath(ADJUNTOS)
         return os.path.commonpath([os.path.realpath(path), root]) == root
-    except (ValueError, OSError):
+    except ValueError, OSError:
         return False
 
 
@@ -1386,11 +1478,21 @@ def run_send(sid: str, pid: int, final: str, enter: bool = True, key: str | None
             timeout=60,
             creationflags=0x00000008,
         )  # DETACHED_PROCESS: sin consola propia
-        return 200, json.loads(r.stdout.strip() or "{}")
+        out = json.loads(r.stdout)
+        if not isinstance(out, dict) or not isinstance(out.get("ok"), bool):
+            raise TypeError("respuesta sin ok booleano")
+        if r.returncode or not out["ok"]:
+            state.log(f"send {sid[:8]} fallo (pid {pid}, codigo {r.returncode}): {out}")
+            return 500, {**out, "ok": False, "error": out.get("error") or "send.py no pudo enviar"}
+        return 200, out
     except subprocess.TimeoutExpired:
         return 500, {"ok": False, "error": "send.py no termino en 60 s"}
-    except ValueError:
-        return 500, {"ok": False, "error": f"send.py devolvio basura: {r.stdout[:200]} {r.stderr[:200]}"}
+    except ValueError, TypeError:
+        state.log(f"send {sid[:8]}: respuesta invalida: {r.stdout[:200]} {r.stderr[:200]}")
+        return 500, {"ok": False, "error": "send.py devolvio una respuesta invalida"}
+    except OSError as e:
+        state.log(f"send {sid[:8]}: no se pudo ejecutar send.py: {e}")
+        return 500, {"ok": False, "error": "no se pudo ejecutar send.py"}
     finally:
         if tf:
             try:
@@ -1411,9 +1513,6 @@ def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
     if choice not in opciones:
         return 409, {"ok": False, "error": f"esa sesion no esta mostrando la opcion {choice}"}
     code, out = run_send(s["session_id"], s["pid"], str(choice), enter=False)
-    if code == 200 and not out.get("ok"):
-        state.log(f"dialogo {s['session_id'][:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
-        code = 500
     if code != 200:
         return code, out
     elegida = next((o.get("text") for o in d["options"] if o.get("n") == choice), str(choice))
@@ -1436,9 +1535,6 @@ def interrupt_session(s: dict) -> tuple[int, dict]:
     if s.get("state") != "corriendo":
         return 409, {"ok": False, "error": "esa sesion no esta corriendo: no hay nada que detener"}
     code, out = run_send(s["session_id"], s["pid"], "", enter=False, key="escape")
-    if code == 200 and not out.get("ok"):
-        state.log(f"interrumpir {s['session_id'][:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
-        code = 500
     if code != 200:
         return code, out
     state.log(f"interrumpida {s['session_id'][:8]} (Esc): {short(s.get('last_prompt') or '', 60)}")
@@ -1459,9 +1555,6 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     with lock:
         mark_sent(s, final)  # antes de teclear: el hook del pedido puede llegar antes que este vuelva
     code, out = run_send(sid, s["pid"], final)
-    if code == 200 and not out.get("ok"):
-        state.log(f"send {sid[:8]} fallo (pid {s['pid']}): {out.get('error') or out}")
-        code = 500
     if code != 200:
         with lock:
             s["sent_mark"] = None  # no entro: lo que se tipee despues es del usuario
@@ -1554,7 +1647,7 @@ def set_stopped(s: dict, on: bool, by: str = "user") -> dict:
     interrupted = False
     if s.get("state") == "corriendo" and not send_blocked(s):
         code, out = run_send(s["session_id"], s["pid"], "", enter=False, key="escape")
-        interrupted = code == 200 and bool(out.get("ok"))
+        interrupted = code == 200
         if not interrupted:
             state.log(f"detener: no pude interrumpir {s['session_id'][:8]} (pid {s['pid']}): {out}")
     with lock:
@@ -1606,7 +1699,7 @@ def read_screen(pid: int) -> dict:
             creationflags=0x00000008,
         )
         return json.loads(r.stdout.strip() or "{}")
-    except (subprocess.TimeoutExpired, ValueError):
+    except subprocess.TimeoutExpired, ValueError:
         return {"ok": False, "error": "screen.py no respondio"}
 
 
@@ -1688,7 +1781,7 @@ def load_sessions() -> tuple[int, int]:
                 s["dead_since"] = s.get("dead_since") or now()
                 s["state"] = "muerta"
             sessions[s["session_id"]] = s
-        except (OSError, ValueError, KeyError):
+        except OSError, ValueError, KeyError:
             continue
     retitled = 0
     for s in list(sessions.values()):

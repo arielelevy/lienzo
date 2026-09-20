@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ago, api, detail } from "../api";
 import { hhmm } from "../nl";
-import { canWrite, hasConsole, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, periodLabel, plainText, ruleSentence, shortName, titleIsPrompt, whenLabel, stalledReason } from "../names";
+import { canWrite, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
-
-/** Los nombres y textos viven en names.ts; App, Board, Forward, SendBox, Arrows y Panel los
- *  siguen importando de aca. */
-export { shortName, plainText, whenLabel, periodLabel };
 
 export type ToastFn = (msg: string, err?: boolean) => void;
 
@@ -308,6 +304,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const workClipboard = useWorkClipboard(s, !!p || !!s.pending_id, toast);
   const [promptOpen, setPromptOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
+  // El reloj cambia desde un timer, no al azar durante render; tambien vence avisos sin SSE.
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 10_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [busy, setBusy] = useState(false);
   const rename = useRename(s, toast);
   // el grupo de libres se abre y se cierra para todas sus tarjetas a la vez (ver `useGroupOpen`)
@@ -345,7 +347,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   }, [menuOpen]);
   // ultimo reenvio recibido en la ultima media hora: "ya te llego el informe de X"
   const recent = links
-    .filter((l) => l.to === s.session_id && l.kind !== "native" && Date.now() - new Date(l.ts).getTime() < RECENT_MS)
+    .filter((l) => l.to === s.session_id && l.kind !== "native" && now - new Date(l.ts).getTime() < RECENT_MS)
     .sort((a, b) => b.ts.localeCompare(a.ts))[0];
   // remitente como "repo · título" (varias sesiones comparten repo); título largo cortado a 24
   const recentFrom = recent ? shortName(sessions[recent.from]) : "";
@@ -390,7 +392,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const stalled = stalledWhy === "sin actividad" ? `sin actividad desde hace ${ago(s.state_since)}` : stalledWhy;
   // 30 s de margen: si la regla ya disparo y el navegador va unos segundos adelantado, no se ofrece
   // programar otra; y si el server ya la creo solo, tampoco
-  const limitPending = !!limitAt && limitAt.getTime() > Date.now() + 30_000 && s.continue_scheduled_for !== s.limit_until;
+  const limitPending = !!limitAt && limitAt.getTime() > now + 30_000 && s.continue_scheduled_for !== s.limit_until;
   const hasContinue =
     !!limitAt && rules.some((r) => r.kind === "at" && r.to === s.session_id && !!r.at && Math.abs(new Date(r.at).getTime() - limitAt.getTime()) < 5 * 60_000);
 
@@ -703,6 +705,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             s.title || s.last_prompt || "(sin título)"
           ))}
       </div>
+      {needsPiReload(s) && <div className="small dim">Falta vincular el log: ejecutá /reload en Pi al terminar el turno.</div>}
       {free && s.title && (
         <div className="freeline" title={freeTitle}>
           {freeText}
@@ -755,7 +758,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           <b>{needsLabel(s.needs)}</b>
           {s.needs.detail && <code>{s.needs.detail}</code>}
           <div className="dim small">
-            {s.needs.kind === "idle" ? "podés escribirle desde acá" : s.needs.where === "terminal" ? "contestar en VS Code" : "esperando al lienzo"}
+            {s.needs.kind === "idle" ? "podés escribirle desde acá" : s.needs.where === "terminal" ? "contestar en la terminal" : "esperando al lienzo"}
           </div>
         </div>
       ) : null}

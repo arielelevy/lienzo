@@ -1,6 +1,7 @@
 # dependencias y builds
 web/node_modules/
 web/dist/
+*.tsbuildinfo
 
 # python
 __pycache__/

@@ -1,25 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
+import { AGENTS } from "../agents";
 import { coordinatorOf } from "../nl";
 import type { Rule, Session } from "../types";
-import { shortName } from "./Card";
+import { canWrite, needsPiReload, shortName } from "../names";
+import { useLocalFlag } from "../hooks/useLocalFlag";
 import "../card.css";
 
 const QUICK = ["Continuá", "sí", "no", "dale"];
 const NOTIFY_KEY = "lienzo.send.notifyme";
 // misma plantilla que Conectar > "cuando termine": la respuesta completa, con quien la manda
 const NOTIFY_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
-
-/** alguien esta escribiendo en esa terminal: lo que se mande se mezcla con lo suyo */
-const isTyping = (s: Session): boolean => !!s.typing;
-
-function loadNotify(): boolean {
-  try {
-    return localStorage.getItem(NOTIFY_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
 
 interface Props {
   session: Session;
@@ -46,15 +37,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
   // primera Claude del repo; igual que Conectar y el "avisame" del parser). Recordado por navegador;
   // apagado por defecto.
   const me = useMemo(() => coordinatorOf(s.repo, others, s.session_id), [others, s.repo, s.session_id]);
-  const [notifyMe, setNotifyMe] = useState(loadNotify);
-  const toggleNotify = (on: boolean) => {
-    setNotifyMe(on);
-    try {
-      localStorage.setItem(NOTIFY_KEY, on ? "1" : "0");
-    } catch {
-      /* sin storage, no importa */
-    }
-  };
+  const [notifyMe, , toggleNotify] = useLocalFlag(NOTIFY_KEY, false);
 
   const notifyRule = async () => {
     if (!notifyMe || !me) return;
@@ -102,12 +85,13 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
   };
 
   const send = async (t: string) => {
+    if (busy || !canWrite(s)) return;
     if (s.pending_id) {
       toast("Hay un permiso pendiente, contestalo primero", true);
       return;
     }
     if (!t.trim() && attachments.length === 0) return;
-    if (isTyping(s) && !confirm("Están tipeando en esa terminal; lo que mandes se mezcla con lo que escriben. Enviar igual?")) return;
+    if (s.typing && !confirm("Están tipeando en esa terminal; lo que mandes se mezcla con lo que escriben. Enviar igual?")) return;
     setBusy(true);
     try {
       const r = await api.post<{ chars: number }>(`/sessions/${s.session_id}/send`, { text: t, attachments });
@@ -122,7 +106,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     }
   };
 
-  const disabled = busy || !!s.pending_id || !s.alive || !!s.orphan || !!s.no_console;
+  const disabled = busy || !!s.pending_id || !canWrite(s);
 
   if (s.no_console && !s.orphan) {
     return (
@@ -138,8 +122,8 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     return (
       <div className="send">
         <div className="small dim">
-          Esta sesión perdió su terminal de VS Code (el shell padre murió). El proceso sigue vivo y se puede leer,
-          pero no hay consola donde escribirle. Si la necesitás, reabrila desde VS Code con <code>claude --resume</code>.
+          Esta sesión perdió su terminal (el shell padre murió). El proceso sigue vivo y se puede leer,
+          pero no hay consola donde escribirle. Reabrila con <code>{AGENTS[s.agent].resume}</code>.
         </div>
       </div>
     );
@@ -160,13 +144,13 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
         if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
       }}
     >
-      {isTyping(s) && (
+      {s.typing && (
         <div className="typing-warn" role="alert">
           ⌨ están tipeando en esa terminal; lo que mandes se mezcla
         </div>
       )}
       <div className="row quick">
-        {QUICK.map((q) => (
+        {!needsPiReload(s) && QUICK.map((q) => (
           <button key={q} disabled={disabled} onClick={() => send(q)}>
             {q}
           </button>

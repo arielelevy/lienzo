@@ -254,7 +254,7 @@ class JsonList:
         try:
             with open(self.path, encoding="utf-8") as f:
                 self.items = [x for x in json.load(f) if keep(x)]
-        except (OSError, ValueError):
+        except OSError, ValueError:
             self.items = []
 
     def save(self) -> None:
@@ -303,7 +303,7 @@ def load_config() -> dict:
         with open(CONFIG_FILE, encoding="utf-8") as f:
             d = json.load(f)
             return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
 
 

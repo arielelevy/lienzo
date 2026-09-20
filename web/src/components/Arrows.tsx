@@ -11,8 +11,8 @@ interface Props {
   /** nombres y estado para la descripcion de la flecha elegida y la vista de un envio */
   sessions: Record<string, Session>;
   boardRef: React.RefObject<HTMLDivElement | null>;
-  /** sube cuando cambian sesiones, filtro o seleccion: las tarjetas se movieron, hay que recalcular */
-  version: number;
+  /** Cambia de identidad si las tarjetas pudieron moverse; estable durante el arrastre. */
+  version: object;
   /** tarjeta seleccionada (antes: bajo el mouse): sus flechas se resaltan y el resto se atenua */
   hover: string | null;
   onDelete: (id: string) => void;
@@ -187,10 +187,8 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   const selSeg = sel ? (segs.find((s) => s.ids[0] === sel) ?? null) : null;
   const [edit, setEdit] = useState<Edit | null>(null);
   const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    // la regla que se estaba editando desaparecio (la borro otro, o disparo): cerrar
-    if (edit && !rules.some((r) => r.id === edit.id)) setEdit(null);
-  }, [rules, edit]);
+  // Ajustar la seleccion antes de pintar: no mostrar un editor para una regla que ya no existe.
+  if (edit && !rules.some((r) => r.id === edit.id)) setEdit(null);
   const openEdit = (s: Seg) => {
     const r = rules.find((x) => x.id === s.ids[0]);
     if (!r) return;
@@ -254,9 +252,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   // mandar el ultimo de nuevo por POST /sessions/<to>/send
   const [view, setView] = useState<View | null>(null);
   const [resending, setResending] = useState(false);
-  useEffect(() => {
-    if (view && !view.ids.some((id) => links.some((l) => l.id === id))) setView(null); // se quito la flecha
-  }, [links, view]);
+  if (view && !view.ids.some((id) => links.some((l) => l.id === id))) setView(null);
   useEffect(() => {
     // la vista no tiene inputs con foco, asi que Esc se escucha en el documento mientras esta abierta
     if (!view) return;
@@ -307,7 +303,9 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   // removeSeg se rearma en cada render (cierra sobre los props): el efecto de abajo lo llama por
   // ref, y asi sus dependencias son de verdad las que mira
   const removeRef = useRef(removeSeg);
-  removeRef.current = removeSeg;
+  useLayoutEffect(() => {
+    removeRef.current = removeSeg;
+  });
 
   // con una flecha seleccionada: Esc la suelta, Supr ofrece quitarla, un click en el vacio la suelta
   useEffect(() => {
@@ -373,7 +371,9 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   // el observer y el listener de resize se enganchan una sola vez; llaman siempre al compute mas
   // reciente (con los links/rules de este render) a traves del ref
   const computeRef = useRef(compute);
-  computeRef.current = compute;
+  useLayoutEffect(() => {
+    computeRef.current = compute;
+  });
 
   useLayoutEffect(() => {
     computeRef.current();

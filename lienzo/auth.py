@@ -48,7 +48,7 @@ def _load(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
 
 
@@ -219,7 +219,7 @@ def _prune(sessions: dict) -> None:
         try:
             if dt.datetime.fromisoformat(sessions[k]["expires"]) < t:
                 del sessions[k]
-        except (KeyError, ValueError):
+        except KeyError, ValueError:
             del sessions[k]
 
 
@@ -249,7 +249,7 @@ def check(token: str | None) -> bool:
             return False
         try:
             return dt.datetime.fromisoformat(entry["expires"]) > now()
-        except (KeyError, ValueError):
+        except KeyError, ValueError:
             return False
 
 

@@ -32,20 +32,35 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
   const buildRef = useRef<string | null>(null);
   const pendienteRef = useRef(false);
   const onRemovedRef = useRef(onRemoved);
-  onRemovedRef.current = onRemoved;
+  useEffect(() => { onRemovedRef.current = onRemoved; }, [onRemoved]);
 
   useEffect(() => {
     const byId = <T,>(xs: T[], key: (x: T) => string) => Object.fromEntries(xs.map((x) => [key(x), x]));
-    const load = () =>
-      Promise.all([api.get<Session[]>("/sessions"), api.get<Pending[]>("/pending"), api.get<Link[]>("/links"), api.get<Rule[]>("/rules")])
-        .then(([ss, ps, ls, rs]) => {
-          setSessions(byId(ss, (s) => s.session_id));
-          setPending(byId(ps, (p) => p.request_id));
-          setLinks(boardLinks(ls));
-          setRules(rs);
-          if (selectedRef.current) setTranscriptTick((t) => t + 1);
-        })
-        .catch(() => null);
+    let disposed = false;
+    let loading = false;
+    let revision = 0;
+    const load = async () => {
+      if (loading) return;
+      loading = true;
+      const startedAt = revision;
+      try {
+        const [ss, ps, ls, rs] = await Promise.all([
+          api.get<Session[]>("/sessions"), api.get<Pending[]>("/pending"),
+          api.get<Link[]>("/links"), api.get<Rule[]>("/rules"),
+        ]);
+        // Un snapshot HTTP lento no puede pisar eventos SSE mas nuevos ni otra suscripcion.
+        if (disposed || startedAt !== revision) return;
+        setSessions(byId(ss, (s) => s.session_id));
+        setPending(byId(ps, (p) => p.request_id));
+        setLinks(boardLinks(ls));
+        setRules(rs);
+        if (selectedRef.current) setTranscriptTick((t) => t + 1);
+      } catch (e) {
+        if (!disposed) console.warn("tablero: no se pudo actualizar", e);
+      } finally {
+        loading = false;
+      }
+    };
     load();
     const poll = setInterval(() => {
       const stale = Date.now() - lastMsgRef.current > 20000;
@@ -93,8 +108,15 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
       refreshAuth();
     };
     es.onmessage = (ev) => {
+      let m: ServerEvent;
+      try {
+        m = JSON.parse(ev.data) as ServerEvent;
+      } catch (e) {
+        console.warn("tablero: evento SSE invalido", e);
+        return;
+      }
       lastMsgRef.current = Date.now();
-      const m = JSON.parse(ev.data) as ServerEvent;
+      if (m.type !== "ping" && m.type !== "transcript") revision++;
       switch (m.type) {
         case "snapshot":
           setSessions(byId(m.sessions, (s) => s.session_id));
@@ -129,6 +151,7 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
       }
     };
     return () => {
+      disposed = true;
       es.close();
       clearInterval(poll);
       clearInterval(buildPoll);

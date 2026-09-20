@@ -50,11 +50,9 @@ export function useNotifications({ sessions, pending, onOpen, toast }: Options) 
     toast("Notificaciones activadas");
   }, [notify, toast]);
 
-  const notifyRef = useRef(notify);
-  notifyRef.current = notify;
   const fire = useCallback(
     (sid: string, title: string, body: string) => {
-      if (!notifyRef.current || !granted()) return;
+      if (!notify || !granted()) return;
       try {
         const n = new Notification(title, { body, tag: `lienzo-${sid}` });
         n.onclick = () => {
@@ -66,7 +64,7 @@ export function useNotifications({ sessions, pending, onOpen, toast }: Options) 
         /* sin notificaciones (contexto inseguro, etc.) */
       }
     },
-    [onOpen],
+    [notify, onOpen],
   );
 
   // recien despues del primer render con datos se empieza a comparar
