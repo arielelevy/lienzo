@@ -960,7 +960,12 @@ def apply_event(ev: dict) -> None:
         s["source"] = "hook"
         if s.get("state") not in STATES:
             s["state"], s["state_since"] = "termino", now()
-        if ev.get("pid") and procs.agent_alive(ev["pid"]):
+        # el evento trae el pid de un proceso que ya termino: quedo en la cola mientras el server
+        # estaba apagado, o el agente lo escribio justo antes de cerrarse. Prueba que la sesion
+        # existio, no que siga viva: sin esto la tarjeta nacia viva y sin pid, y refresh_alive no
+        # toca las tarjetas sin pid, asi que no se moria nunca
+        ev_pid_dead = bool(ev.get("pid")) and not procs.agent_alive(ev["pid"])
+        if ev.get("pid") and not ev_pid_dead:
             claim_pid(s, ev)
         if ev.get("cwd") and (not s.get("cwd") or name == "SessionStart"):
             # el cwd de los hooks sigue al shell del agente (cambia con un cd de una tool);
@@ -979,6 +984,10 @@ def apply_event(ev: dict) -> None:
         s["alive"] = True
         s["dead_since"] = None
         apply_hook(s, ev, name, created)
+        if ev_pid_dead and not (s.get("pid") and procs.agent_alive(s["pid"])):
+            set_state(s, "muerta")
+            s["alive"] = False
+            s["dead_since"] = s.get("dead_since") or now()
         if created or name in ("SessionStart", "PiTree", "PiMetadata") or (s["agent"] == "pi" and name == "Stop"):
             r = read_transcript(s)
             if r is not None:

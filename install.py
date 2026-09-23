@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Instala (o desinstala) los hooks del lienzo en Claude Code, Codex y Pi.
 
-    python install.py            # registra hooks en ~/.claude/settings.json y ~/.codex/hooks.json
+    python install.py            # registra hooks en ~/.claude/settings.json y ~/.codex/hooks.json, y la extension de Pi
     python install.py --uninstall
 
 Hace merge, nunca pisa: guarda ~/.claude/settings.json.bak-<fecha> antes de tocar.

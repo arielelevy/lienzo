@@ -229,3 +229,31 @@ def test_pi_missing_log_is_not_reported_as_empty_conversation(hooked, expected):
     h._session_view("pi", "digest")
     assert results[0][0] == 200
     assert expected in results[0][1]["note"]
+
+
+@pytest.mark.parametrize("name", ["PiMetadata", "Stop", "SessionStart"])
+def test_event_from_dead_process_does_not_make_an_immortal_card(monkeypatch, name):
+    # El evento llega con el pid de un Pi que ya se cerro: quedo en la cola al reiniciar el server,
+    # o lo escribio justo antes de morir. Antes la tarjeta nacia viva y sin pid, y refresh_alive no
+    # toca las tarjetas sin pid: no se moria nunca y habia que borrarla a mano
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: False)
+    sid = "pi-muerto"
+    ses.apply_event({"agent": "pi", "session_id": sid, "hook_event_name": name, "pid": 4242, "cwd": "D:/Apps/chess"})
+    s = st.sessions[sid]
+    assert s["alive"] is False
+    assert s["state"] == "muerta"
+    assert s["dead_since"]
+    ses.refresh_alive(s)
+    assert s["state"] == "muerta"
+
+
+def test_event_from_dead_pid_does_not_kill_a_card_whose_own_process_lives(monkeypatch):
+    # la tarjeta ya tiene su proceso vivo: un evento viejo con otro pid muerto no la mata
+    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: pid == 7)
+    sid = "pi-vivo"
+    s = ses.new_session(sid, "pi", "hook")
+    s.update(pid=7, alive=True)
+    st.sessions[sid] = s
+    ses.apply_event({"agent": "pi", "session_id": sid, "hook_event_name": "PiMetadata", "pid": 4242})
+    assert s["alive"] is True
+    assert s["state"] != "muerta"

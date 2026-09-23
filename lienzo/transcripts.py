@@ -1,4 +1,4 @@
-"""Lectura por la cola de las transcripciones de Claude Code y Codex, y digest por turno.
+"""Lectura por la cola de las transcripciones de Claude Code, Codex y Pi, y digest por turno.
 
 Estructura comun de un turno (los dos agentes):
 

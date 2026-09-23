@@ -19,7 +19,7 @@ Las apps de escritorio de Claude y de Codex no tienen consola: sus sesiones se p
 ## Cómo funciona
 
 Al arrancar, y después cada 30 segundos, el server **recorre los procesos de la PC** y
-encuentra todas las terminales de Claude Code (`claude.exe`) y Codex CLI (`codex.exe`) que
+encuentra todas las terminales de Claude Code (`claude.exe`), Codex CLI (`codex.exe`) y Pi CLI que
 estén corriendo, aunque se hayan abierto antes de instalar nada: lee el directorio de
 trabajo de cada proceso, ubica su transcripción y arma la tarjeta. Descarta las apps de
 escritorio y las extensiones de VS Code, que usan los mismos nombres de ejecutable.

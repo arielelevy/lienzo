@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""lienzo-send: inyecta texto + Enter en la consola de un agente (claude.exe / codex.exe)
+"""lienzo-send: inyecta texto + Enter en la consola de un agente (Claude Code, Codex o Pi)
 por PID, con AttachConsole + WriteConsoleInputW. Generaliza codex-inject.py (§6.2).
 
     python send.py --pid N --text "decime hola" [--no-enter] [--enter-presses 1]
