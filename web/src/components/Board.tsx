@@ -874,9 +874,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         {sinTarjetas && (
           <div className="empty primeravez">
             <b>Todavía no hay ninguna sesión.</b>
-            <span>Abrí Claude Code o Codex en un repo y la tarjeta aparece sola.</span>
+            <span>Abrí Claude Code, Codex o Pi en un repo y la tarjeta aparece sola.</span>
             <span>
-              Si no aparece, corré <code>python install.py</code> en la carpeta del lienzo: registra los hooks.
+              Si no aparece, corré <code>python install.py</code> en la carpeta del lienzo: registra los hooks y la extensión de Pi.
             </span>
           </div>
         )}
