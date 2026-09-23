@@ -315,6 +315,7 @@ túnel, además la cookie de sesión.
 | GET | `/config` | `{auto_continue, auto_retry}` |
 | PUT | `/config` | `{auto_continue: true\|false, auto_retry: true\|false}`; sólo esas claves, el resto de `config.json` no se toca |
 | GET | `/events` | SSE con cada cambio de sesiones, pendientes, links, reglas |
+| GET | `/docs`, `/docs/README.md`, `/docs/DISENO.es.md`, `/docs/img/<x>.png` | la referencia buscable (menú ⋯ → Referencia) y los archivos que lee, tal como están en el repo |
 | POST | `/rescan` | barrido de procesos ahora |
 | GET | `/auth`, POST `/setup`, `/login`, `/logout`, GET `/enroll` | acceso remoto |
 

@@ -25,6 +25,10 @@ SESSIONS = os.path.join(LIENZO, "sessions")
 LOG = os.path.join(LIENZO, "lienzo.log")
 ROOT = os.path.dirname(HERE)
 DIST = os.path.join(ROOT, "web", "dist")  # salida de `npm run build` (Vite + React)
+# los documentos que muestra /docs, por nombre: solo estos, leidos del repo en cada pedido para
+# que la referencia nunca quede atras del archivo. Sus imagenes viven en docs/img
+DOCS = {n: os.path.join(ROOT, n) for n in ("README.md", "DISENO.es.md")}
+DOCS_IMG = os.path.join(ROOT, "docs", "img")
 MIME = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
