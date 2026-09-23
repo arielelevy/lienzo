@@ -355,6 +355,18 @@ test("topRoute prefiere el hueco entre filas al margen si es mas corto, y marca 
   assert.equal(s.dim, true);
 });
 
+test("topRoute no revienta si una tarjeta llena su columna y no queda ningun carril", () => {
+  // el origen va de techo a piso: sin margen arriba ni abajo, y el hueco entre rc y c2 le cae por
+  // el medio. Antes devolvia null y tiraba el tablero entero (Cannot read properties of null)
+  const ra = R(0, 40, 300, 600);
+  const rc = R(328, 40, 628, 200);
+  const c2 = R(328, 300, 628, 600);
+  const bands: Band[] = [{ l: 0, r: 300, t: 40, b: 600 }, { l: 328, r: 628, t: 40, b: 600 }];
+  const o = topRoute(ra, rc, 150, 478, [ra, rc, c2], { bands, strips: [] });
+  assert.ok(!o.clean);
+  assert.ok(o.d.startsWith("M 150"), o.d);
+});
+
 test("un envio de mas de 10 minutos se va del tablero; el canal nativo y las reglas se quedan", () => {
   const anchors = new Map([["a", A1], ["b", B1]]);
   const viejo = new Date(AHORA - 11 * 60_000).toISOString();
