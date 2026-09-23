@@ -56,6 +56,8 @@ from state import (
     ADJUNTOS,
     ANSWERS,
     DIST,
+    DOCS,
+    DOCS_IMG,
     EVENTS,
     MIME,
     PENDING,
@@ -533,7 +535,8 @@ class Handler(BaseHTTPRequestHandler):
         if parts is None:
             return
         try:
-            if not parts:
+            if not parts or parts == ["docs"]:
+                # /docs es la misma pagina: el front mira la ruta y muestra la referencia
                 index = os.path.join(DIST, "index.html")
                 if not os.path.exists(index):
                     return self._json(503, {"error": "falta el build de la UI: cd web && npm install && npm run build"})
@@ -574,6 +577,10 @@ class Handler(BaseHTTPRequestHandler):
                         sorted(sessions.values(), key=lambda s: (s["repo"], s["started"])), ensure_ascii=False
                     ).encode("utf-8")
                 return self._send_json(200, tablero)
+            if len(parts) == 2 and parts[0] == "docs" and parts[1] in DOCS:
+                return self._file(DOCS[parts[1]], "text/markdown; charset=utf-8")
+            if len(parts) == 3 and parts[:2] == ["docs", "img"]:
+                return self._doc_img(parts[2])
             if parts == ["pending"]:
                 return self._json(200, public_pending())
             if parts == ["links"]:
@@ -605,6 +612,14 @@ class Handler(BaseHTTPRequestHandler):
             MIME.get(os.path.splitext(name)[1].lower(), "application/octet-stream"),
             cache="public, max-age=31536000, immutable",
         )
+
+    def _doc_img(self, name: str) -> None:
+        """Una imagen de docs/img, las que el README enlaza como `docs/img/x.png`. Mismo resguardo
+        que `_asset`, y solo tipos de imagen: esa carpeta no sirve otra cosa"""
+        ext = os.path.splitext(name)[1].lower()
+        if "\\" in name or name.startswith(".") or ext not in (".png", ".svg"):
+            return self._json(404, {"error": "ruta invalida"})
+        return self._file(os.path.join(DOCS_IMG, name), MIME[ext], cache="public, max-age=3600")
 
     def _enroll(self) -> None:
         """GET /enroll?token=...: entrega passphrase y otpauth una sola vez, para el alta desde el

@@ -141,6 +141,10 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
               <span className="row">↻ Barrer procesos</span>
               <span className="desc">barrer ahora los procesos de la PC en busca de sesiones (solo se hace cada 30 s)</span>
             </button>
+            <button role="menuitem" onClick={closeAnd(() => window.open("/docs", "_blank", "noopener"))}>
+              <span className="row">📖 Referencia</span>
+              <span className="desc">el README y el diseño por secciones, con buscador (se abre en otra pestaña)</span>
+            </button>
             <button role="menuitem" onClick={closeAnd(onHelp)}>
               <span className="row">? Atajos de teclado</span>
               <span className="desc">qué hace cada tecla y cada gesto del tablero</span>
