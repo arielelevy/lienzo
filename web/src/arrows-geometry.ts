@@ -675,7 +675,18 @@ export function topRoute(ra: Rect, rc: Rect, xa: number, xc: number, cards: Rect
       }
     }
   }
-  const b = best!; // siempre hay al menos los dos margenes
+  // Sin ningun carril: pasa cuando una de las dos tarjetas llena su columna de techo a piso (no
+  // queda margen ni arriba ni abajo) y los huecos entre filas le caen por el medio. Se rutea por
+  // afuera de las dos, pisando el encabezado si hace falta: sale apagada, pero no tira el tablero
+  if (!best) {
+    const top = Math.min(ra.t, rc.t) - LANE_H / 2;
+    const bot = Math.max(ra.b, rc.b) + LANE_H / 2;
+    for (const lane of [{ y: top, room: 0, t: top, b: top }, { y: bot, room: 0, t: bot, b: bot, under: true as const }]) {
+      const cand = derecho(ra, rc, xa, xc, lane, others, zone);
+      if (cand && mejorDerecho(cand, best)) best = cand;
+    }
+  }
+  const b = best!; // por afuera de las dos siempre sale por un borde
   const [gx, gy] = placeGlyph(zone, cards, b.x, b.y);
   return { d: b.d, x: gx, y: gy, clean: b.clean, exit: b.exit, enter: b.enter, lane: b.lane, path: b.path, glyphRun: b.glyphRun };
 }
