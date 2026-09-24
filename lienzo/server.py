@@ -31,6 +31,7 @@ import transcripts
 from rules import at_near, connections_of, local_dt, purge_stale_at_rules, rules_loop
 from sessions import (
     add_link,
+    answer_coda_ask,
     answer_dialog,
     answer_pending,
     clean_attachments,
@@ -670,9 +671,9 @@ class Handler(BaseHTTPRequestHandler):
         if view == "turns":
             before = self.query.get("before", [None])[0]
             return self._json(
-                200, transcripts.turns(s["agent"], s["transcript_path"], n, before, leaf_id=s.get("pi_leaf_id"))
+                200, transcripts.turns(s["agent"], s["transcript_path"], n, before, leaf_id=transcripts.leaf_of(s))
             )
-        return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n, leaf_id=s.get("pi_leaf_id")))
+        return self._json(200, transcripts.digest(s["agent"], s["transcript_path"], n, leaf_id=transcripts.leaf_of(s)))
 
     def do_POST(self):
         parts = self._prepare(write=True)
@@ -708,6 +709,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(s)
                 if parts[2] == "interrupt":
                     code, res = interrupt_session(s)
+                    return self._json(code, res)
+                if parts[2] == "approve":
+                    d = self._json_body()
+                    if d.get("decision") not in ("allow", "deny"):
+                        return self._json(400, {"error": "decision debe ser allow o deny"})
+                    code, res = answer_coda_ask(s, d["decision"])
                     return self._json(code, res)
                 if parts[2] == "dialog":
                     d = self._json_body()

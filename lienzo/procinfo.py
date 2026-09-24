@@ -28,7 +28,7 @@ _k32.ReadProcessMemory.argtypes = [wt.HANDLE, wt.LPCVOID, wt.LPVOID, ctypes.c_si
 _k32.ReadProcessMemory.restype = wt.BOOL
 _nt.NtQueryInformationProcess.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.ULONG, ctypes.POINTER(wt.ULONG)]
 
-AGENTS = {"claude.exe": "claude", "codex.exe": "codex", "pi.exe": "pi"}
+AGENTS = {"claude.exe": "claude", "codex.exe": "codex", "pi.exe": "pi", "coda.exe": "coda"}
 
 _shell32 = ctypes.WinDLL("shell32", use_last_error=True)
 _shell32.CommandLineToArgvW.argtypes = [wt.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
@@ -57,6 +57,21 @@ def pi_interactive(args: list[str]) -> bool:
         a in ("-p", "--print", "--mode", "--export", "--help", "-h", "--version", "-v", "--list-models")
         or a.startswith(("--mode=", "--export=", "--list-models="))
         for a in options
+    )
+
+
+# subcomandos de CODA que no abren la TUI
+CODA_SUBCOMMANDS = ("configure", "install", "upgrade", "logs", "plugin", "marketplace", "checkpoints-demo", "logs-demo")
+
+
+def coda_interactive(args: list[str]) -> bool:
+    """La TUI de CODA; no una corrida headless (-p/--prompt/--prompt-file) ni un subcomando."""
+    if args and args[0] in CODA_SUBCOMMANDS:
+        return False
+    return not any(
+        a in ("-p", "--prompt", "-pf", "--prompt-file", "--help", "-h", "--version", "-v")
+        or a.startswith(("--prompt=", "--prompt-file="))
+        for a in args
     )
 
 
@@ -203,7 +218,7 @@ def pi_session_environment(pid: int, parent_pid: int) -> dict[str, str]:
 
 
 def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
-    """Claude / Codex / Pi. Node solo cuenta si ejecuta la CLI interactiva de Pi.
+    """Claude / Codex / Pi / CODA. Node solo cuenta si ejecuta la CLI interactiva de Pi.
     Tolera el binario renombrado por el auto-update
     (claude.exe.old.<ts>), que sigue corriendo con ese nombre de imagen."""
     name = os.path.basename(exe or "").lower()
@@ -221,11 +236,13 @@ def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
         if name == k or name.startswith(k + "."):
             if v == "pi" and cmdline and not pi_interactive(command_args(cmdline)[1:]):
                 return None
+            if v == "coda" and cmdline and not coda_interactive(command_args(cmdline)[1:]):
+                return None
             return v
     return None
 
 
 def process_agent(pid: int) -> str | None:
     exe = image_path(pid)
-    cmdline = command_line(pid) if os.path.basename(exe or "").lower() in ("node.exe", "pi.exe") else None
+    cmdline = command_line(pid) if os.path.basename(exe or "").lower() in ("node.exe", "pi.exe", "coda.exe") else None
     return agent_of(exe, cmdline)

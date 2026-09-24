@@ -17,6 +17,7 @@ import threading
 import time
 import traceback
 
+import coda
 import procs
 import state
 import transcripts
@@ -644,6 +645,9 @@ def apply_turn_hooked(s: dict, t: dict) -> None:
         set_state(s, want)
     if s["state"] == "corriendo" and (not t.get("ended") or s.get("agent") == "pi"):
         s["last_reply"] = turn_say(t) or s["last_reply"]
+    elif s.get("agent") == "coda" and t.get("ended") and t.get("final"):
+        # el Stop de CODA no trae la respuesta: llega con el turno, que CODA guarda al cerrarlo
+        s["last_reply"] = turn_say(t)
 
 
 def apply_turn_unhooked(s: dict, t: dict) -> None:
@@ -661,8 +665,11 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
 def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     """Vuelca el ultimo turno de la transcripcion a la tarjeta: actividad de adentro, pedido y
     respuesta, estado (solo si la sesion no tiene hooks, o force_state) y el error del turno."""
-    # lo que pasa adentro, para la tarjeta: cuanto lleva hecho y sobre que archivos
-    s.update(turn_activity(t))
+    # lo que pasa adentro, para la tarjeta: cuanto lleva hecho y sobre que archivos. Un turno abierto
+    # de CODA en la base es solo el pedido (el resto se guarda al cerrar): la actividad la llevan
+    # coda_tool y coda_log_activity, y releerlo la pondria en cero
+    if not (s.get("agent") == "coda" and not t.get("ended")):
+        s.update(turn_activity(t))
     if s.get("hooked") and not force_state:
         apply_turn_hooked(s, t)
     else:
@@ -698,7 +705,7 @@ def read_transcript(s: dict) -> dict | None:
     if not path or not os.path.exists(path):
         return None
     try:
-        r = transcripts.turns(s["agent"], path, 1, leaf_id=s.get("pi_leaf_id"))
+        r = transcripts.turns(s["agent"], path, 1, leaf_id=transcripts.leaf_of(s))
     except Exception as e:
         state.log(f"transcripcion {path}: {e}")
         return None
@@ -787,7 +794,7 @@ def recalc_title(s: dict) -> bool:
     path = s.get("transcript_path")
     if path and os.path.exists(path):
         try:
-            tt = transcripts.turns(s["agent"], path, 1, leaf_id=s.get("pi_leaf_id"))["meta"].get("title")
+            tt = transcripts.turns(s["agent"], path, 1, leaf_id=transcripts.leaf_of(s))["meta"].get("title")
         except Exception as e:
             state.log(f"transcripcion {path}: {e}")
     if not tt and s.get("agent") == "codex":
@@ -853,6 +860,9 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
         title_from_prompt(s)
     s["pending_id"] = None
     s["typing"] = False  # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
+    if s["agent"] == "coda":
+        # turno nuevo: sin esto quedan los contadores del anterior (ver apply_turn)
+        s.update({"tool_count": 0, "last_files": [], "last_cmd": None, "tool_errors": 0})
 
 
 def hook_stop(s: dict, ev: dict) -> None:
@@ -886,6 +896,61 @@ def hook_notification(s: dict, ev: dict) -> None:
             "where": "terminal",
         },
     )
+
+
+def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
+    """PreToolUse de CODA: la herramienta que va a correr, a la tarjeta. Es la unica señal de
+    avance durante el turno, porque CODA escribe el turno en su base recien al cerrarlo; al
+    cerrarse, la transcripcion rehace estos contadores con el turno entero (turn_activity)."""
+    tool = str(ev.get("tool_name") or "?")
+    name = tool.lower()
+    inp = ev.get("tool_input") if isinstance(ev.get("tool_input"), dict) else {}
+    s["tool_count"] = (s.get("tool_count") or 0) + 1
+    if name in CMD_TOOLS:
+        raw = str(inp.get("command") or inp.get("cmd") or "").strip().replace("\n", " ")
+        raw = CD_PREFIX_RE.sub("", raw).strip()
+        if raw:
+            s["last_cmd"] = short(raw, 120)
+    if name in FILE_TOOLS:
+        for ruta in tool_paths(inp):
+            base = os.path.basename(ruta.replace("\\", "/").rstrip("/"))
+            if base:
+                s["last_files"] = [base, *[f for f in s.get("last_files") or [] if f != base]][:3]
+    if s["state"] == "corriendo":
+        s["last_reply"] = f"usando {tool}" + (" (subagente)" if sub else "")
+
+
+CODA_ASK_CAUSES = {
+    "command-policy": "comando que pide confirmación",
+    "unresolved-command": "comando que no pudo verificar",
+}
+
+
+def coda_log_activity(s: dict) -> bool:
+    """Lo que dice el log de CODA (coda.activity), con el lock tomado; devuelve si cambio algo.
+
+    Para toda tarjeta de CODA viva: el pedido de permiso abierto la pone en te_necesita, y al
+    contestarse la devuelve a corriendo. Sin hooks, ademas, cuantas herramientas lleva el turno y
+    cual corre (el comando y los archivos los da coda_tool, con hooks)."""
+    act = coda.activity(s["pid"])
+    if not act:
+        return False
+    before = (s["state"], s.get("needs"), s.get("tool_count"), s.get("last_reply"))
+    ask = act.get("asking") if act["running"] else None
+    needs = s.get("needs") or {}
+    if ask and s["state"] in ("corriendo", "te_necesita"):
+        detail = CODA_ASK_CAUSES.get(ask["cause"] or "", ask["cause"] or "")
+        detail = " · ".join(x for x in (detail, "de un subagente" if ask["sub"] else "") if x)
+        if needs.get("kind") != "permission" or needs.get("coda_at") != ask["at"]:
+            set_needs(s, {"kind": "permission", "tool": ask["tool"], "detail": detail, "where": "terminal"})
+            s["needs"]["coda_at"] = ask["at"]
+    elif s["state"] == "te_necesita" and needs.get("coda_at"):
+        set_state(s, "corriendo" if act["running"] else "termino")
+    if not s.get("hooked") and act["running"] and act["last_tool"]:
+        s["tool_count"] = act["tools"]
+        if s["state"] == "corriendo":
+            s["last_reply"] = f"usando {act['last_tool']}" + (" (subagente)" if act["sub"] else "")
+    return before != (s["state"], s.get("needs"), s.get("tool_count"), s.get("last_reply"))
 
 
 def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
@@ -937,6 +1002,8 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
         tuid = (s.get("needs") or {}).get("tool_use_id")
         if s["state"] == "te_necesita" and tuid and tuid == ev.get("tool_use_id"):
             set_state(s, "corriendo")
+    elif name == "PreToolUse" and s["agent"] == "coda":
+        coda_tool(s, ev)
     elif name == "Interrupt":
         set_state(s, "termino")
     elif name == "SessionEnd":
@@ -950,6 +1017,17 @@ def apply_event(ev: dict) -> None:
     sid = ev.get("session_id")
     if not sid or ev.get("agent_id"):
         return  # sin sesion, o subagente
+    if ev.get("agent") == "coda" and coda.is_root(sid, ev.get("transcript_path") or None) is False:
+        # subagente de CODA: corre en el mismo proceso con sesion propia en la base. No es una
+        # tarjeta, pero lo que hace es trabajo de la madre y se ve en la de ella
+        madre = coda.parent_of(sid, ev.get("transcript_path") or None)
+        if name == "PreToolUse" and madre:
+            with lock:
+                s = sessions.get(madre)
+                if s is not None and s["state"] != "muerta":
+                    coda_tool(s, ev, sub=True)
+                    touch(s)
+        return
     with lock:
         s = sessions.get(sid)
         created = s is None
@@ -1212,6 +1290,8 @@ def guess_transcript(agent: str, cwd: str | None, created: str | None) -> tuple[
     born = parse_ts(created)
     if agent == "pi":
         return guess_pi(cwd, born.timestamp()) if born else (None, None)
+    if agent == "coda":
+        return None, None  # la identidad de CODA viene exacta del log (coda.identity), no se adivina
     t0 = born.timestamp() - BIRTH_MARGIN_S if born else 0
     return guess_claude(cwd, t0) if agent == "claude" else guess_codex(cwd, t0)
 
@@ -1221,11 +1301,13 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
     primer turno, no al abrir): buscarla y, si aparece, tomar tambien el session_id real que trae,
     con lo que la tarjeta deja de llamarse `pid-N`. La busqueda va sin el lock; lo que escribe, con
     el lock y revalidando que la tarjeta siga siendo la misma."""
-    if s["agent"] == "pi" and not pi_session and not pi_guess:
+    if s["agent"] in ("pi", "coda") and not pi_session and not pi_guess:
         return
     cwd = s.get("cwd") or procs.cwd_of(s["pid"])
     sid, tpath = (
-        pi_session if s["agent"] == "pi" and pi_session else guess_transcript(s["agent"], cwd, s.get("started"))
+        pi_session
+        if s["agent"] in ("pi", "coda") and pi_session
+        else guess_transcript(s["agent"], cwd, s.get("started"))
     )
     if not tpath:
         return
@@ -1259,7 +1341,7 @@ def adopt_process(p: dict) -> None:
     if p["agent"] == "pi" and not p.get("pi_guess_allowed"):
         sid, tpath = p.get("pi_session") or (None, None)
     else:
-        sid, tpath = p.get("pi_session") or guess_transcript(p["agent"], cwd, p.get("created"))
+        sid, tpath = p.get("pi_session") or p.get("coda_session") or guess_transcript(p["agent"], cwd, p.get("created"))
     with lock:
         s = sessions.get(sid) if sid else None
         if s is not None:
@@ -1304,7 +1386,9 @@ def sweep_once() -> None:
         sin_transcripcion = [
             s
             for s in sessions.values()
-            if s.get("source") == "sweep" and s.get("pid") and (not s.get("transcript_path") or s["agent"] == "pi")
+            if s.get("source") == "sweep"
+            and s.get("pid")
+            and (not s.get("transcript_path") or s["agent"] in ("pi", "coda"))
         ]
     found_by_pid = {p["pid"]: p for p in found}
     for s in sin_transcripcion:
@@ -1316,6 +1400,11 @@ def sweep_once() -> None:
                     attach_transcript(s, identity)
             elif not s.get("transcript_path") and observed.get("pi_guess_allowed"):
                 attach_transcript(s, pi_guess=True)
+        elif s["agent"] == "coda":
+            # un /new o un resume en la TUI cambian la sesion del mismo proceso
+            identity = observed.get("coda_session")
+            if identity and identity != (s["session_id"], s.get("transcript_path")):
+                attach_transcript(s, identity)
         else:
             attach_transcript(s)
     for p in found:
@@ -1351,6 +1440,8 @@ def check_liveness(sid: str) -> None:
         if s is None:
             return
         changed = refresh_alive(s)
+        if s["agent"] == "coda" and s.get("alive") and s.get("pid") and s["state"] in ("corriendo", "te_necesita"):
+            changed = coda_log_activity(s) or changed
         dead_since = parse_ts(s["dead_since"]) if s["state"] == "muerta" else None
         if dead_since and (dt.datetime.now().astimezone() - dead_since).total_seconds() > DEAD_GRACE_S:
             drop_session(sid, "muerta hace mas de 60 s")
@@ -1359,6 +1450,13 @@ def check_liveness(sid: str) -> None:
         tp = s.get("transcript_path")
         st = os.stat(tp) if tp and os.path.exists(tp) else None
         sig = (st.st_size, int(st.st_mtime)) if st else None
+        if st and s["agent"] == "coda":
+            # base en WAL: lo nuevo va al -wal y la base cambia recien en el checkpoint
+            try:
+                wal = os.stat(tp + "-wal")
+                sig += (wal.st_size, wal.st_mtime_ns)
+            except OSError:
+                pass  # sin -wal (CODA cerrado y base checkpointeada): alcanza con la base
         crecio = sig is not None and transcript_stat.get(sid) != sig
         if crecio:
             transcript_stat[sid] = sig
@@ -1531,6 +1629,32 @@ def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
         touch(s)
     out["choice"] = choice
     out["text"] = elegida
+    return 200, out
+
+
+def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
+    """Contestar desde la tarjeta el permiso que CODA pide en su terminal, con teclas: Enter para
+    permitir, Esc para denegar. Antes de teclear se confirma en la pantalla que el dialogo sigue
+    abierto: si ya se contesto en la terminal, un Enter caeria en la caja."""
+    if frenado := send_blocked(s):
+        return frenado
+    if s.get("agent") != "coda" or not (s.get("needs") or {}).get("coda_at"):
+        return 409, {"ok": False, "error": "esa sesion no tiene un permiso de CODA abierto"}
+    pantalla = "\n".join(read_screen(s["pid"]).get("lines") or [])
+    if "Approval Required" not in pantalla:
+        return 409, {"ok": False, "error": "el dialogo de permiso ya no esta en la terminal"}
+    if decision == "allow":
+        code, out = run_send(s["session_id"], s["pid"], "", enter=True)
+    else:
+        code, out = run_send(s["session_id"], s["pid"], "", enter=False, key="escape")
+    if code != 200:
+        return code, out
+    needs = s.get("needs") or {}
+    state.log(f"permiso CODA {s['session_id'][:8]} -> {decision} ({needs.get('tool')}) desde el lienzo")
+    with lock:
+        # coda_log_activity la devuelve a corriendo en cuanto la sesion vuelva a escribir en el log
+        s["needs"] = {**needs, "where": "enviado"}
+        touch(s)
     return 200, out
 
 

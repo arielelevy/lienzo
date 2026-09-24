@@ -1,6 +1,6 @@
 """Procesos: liveness por PID (ctypes) y barrido de respaldo de agentes en VS Code (CIM).
 
-Regla de identificacion (DISENO.es.md §2.1): claude.exe / codex.exe cuyo padre es un shell
+Regla de identificacion (DISENO.es.md §2.1): claude.exe / codex.exe / pi.exe / coda.exe cuyo padre es un shell
 y cuyo abuelo es Code.exe. Se excluyen por ruta la app de escritorio de Claude
 (WindowsApps\\Claude_...), el codex.exe de la extension de VS Code y el de la app de
 escritorio de Codex (ambos `app-server`), y el claude.exe de la extension de VS Code
@@ -14,8 +14,9 @@ import os
 import subprocess
 
 try:
-    from . import procinfo
+    from . import coda, procinfo
 except ImportError:  # corriendo como script (python lienzo/hook.py) o con lienzo/ en sys.path
+    import coda
     import procinfo
 
 # re-export: el resto del codigo (server, send, screen, tests) sigue usando procs.alive, etc.
@@ -94,7 +95,7 @@ $ErrorActionPreference='SilentlyContinue'
 $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate
 $byId = @{}; foreach ($p in $all) { $byId[$p.ProcessId] = $p }
 $out = @()
-foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' -or $_.Name -eq 'node.exe' -or $_.Name -eq 'pi.exe' })) {
+foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' -or $_.Name -eq 'node.exe' -or $_.Name -eq 'pi.exe' -or $_.Name -eq 'coda.exe' })) {
   $par = $byId[$a.ParentProcessId]; $gp = if ($par) { $byId[$par.ParentProcessId] } else { $null }
   $out += [pscustomobject]@{
     pid = $a.ProcessId; exe = $a.ExecutablePath; cmd = $a.CommandLine
@@ -166,6 +167,7 @@ def sweep() -> list[dict]:
                 "in_vscode": in_vscode,
                 "orphan": p.get("parent") is None,
                 "pi_session": pi_session_from_children(p["pid"], p.get("children") or []) if agent == "pi" else None,
+                "coda_session": coda.identity(p["pid"]) if agent == "coda" else None,
             }
         )
     return found

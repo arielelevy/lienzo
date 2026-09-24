@@ -7,9 +7,12 @@ export interface Needs {
   tool?: string | null;
   detail?: string;
   tool_use_id?: string | null;
-  where?: "lienzo" | "terminal";
+  /** "enviado": la respuesta a un permiso de CODA ya se tecleo en su terminal */
+  where?: "lienzo" | "terminal" | "enviado";
   /** hora del aviso (ISO): el server mide contra esto si la transcripcion siguio despues */
   since?: string;
+  /** permiso de CODA leido de su log: la hora de esa linea, que lo identifica */
+  coda_at?: string;
 }
 
 export interface Session {

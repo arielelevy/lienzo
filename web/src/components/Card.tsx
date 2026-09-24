@@ -420,6 +420,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       await api.post(`/sessions/${s.session_id}/dialog`, { choice: n });
       return `Elegido: ${text}`;
     }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo elegir: ${m}`));
+  /** el permiso que CODA pide en su terminal: Enter (Yes) o Esc, tecleado por el server */
+  const codaDecide = (decision: "allow" | "deny") =>
+    act(async () => {
+      await api.post(`/sessions/${s.session_id}/approve`, { decision });
+      return decision === "allow" ? "Permitido en su terminal" : "Denegado en su terminal";
+    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo contestar: ${m}`));
   const quickSend = (text: string) =>
     act(async () => {
       const r = await api.post<{ chars: number }>(`/sessions/${s.session_id}/send`, { text, attachments: [] });
@@ -757,9 +763,19 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         <div className="needs terminal">
           <b>{needsLabel(s.needs)}</b>
           {s.needs.detail && <code>{s.needs.detail}</code>}
-          <div className="dim small">
-            {s.needs.kind === "idle" ? "podés escribirle desde acá" : s.needs.where === "terminal" ? "contestar en la terminal" : "esperando al lienzo"}
-          </div>
+          {s.agent === "coda" && s.needs.coda_at && s.needs.where === "terminal" && writable ? (
+            // CODA no tiene un hook que espere la respuesta: los botones teclean Enter o Esc en su
+            // diálogo, y el server confirma antes en la pantalla que el diálogo siga abierto
+            <div className="btns">
+              <button className="allow" data-always-tab="" onClick={(e) => { e.stopPropagation(); void codaDecide("allow"); }}>Permitir</button>
+              <button className="deny" data-always-tab="" onClick={(e) => { e.stopPropagation(); void codaDecide("deny"); }}>Denegar</button>
+              <span className="dim small">se teclea en su terminal</span>
+            </div>
+          ) : (
+            <div className="dim small">
+              {s.needs.kind === "idle" ? "podés escribirle desde acá" : s.needs.where === "enviado" ? "respuesta enviada a la terminal" : s.needs.where === "terminal" ? "contestar en la terminal" : "esperando al lienzo"}
+            </div>
+          )}
         </div>
       ) : null}
       {/* diálogo de la TUI ("Switch model?"): no es un permiso, no dispara hooks y nadie lo ve

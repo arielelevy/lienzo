@@ -1,4 +1,4 @@
-"""Lectura por la cola de las transcripciones de Claude Code, Codex y Pi, y digest por turno.
+"""Lectura por la cola de las transcripciones de Claude Code, Codex, Pi y CODA, y digest por turno.
 
 Estructura comun de un turno (los dos agentes):
 
@@ -34,7 +34,7 @@ import re
 TAIL_BYTES = 2 * 1024 * 1024
 FILE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "edit", "write"}
 SHELL_TOOLS = {"Bash", "PowerShell", "shell", "exec", "exec_command", "bash", "powershell"}
-READ_TOOLS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch", "read", "grep", "find", "ls"}
+READ_TOOLS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch", "read", "grep", "glob", "find", "ls"}
 
 
 # --- utilidades --------------------------------------------------------------
@@ -678,12 +678,124 @@ def parse_pi(path: str, max_bytes: int = TAIL_BYTES, leaf_id: str | None = None)
     return {"meta": meta, "turns": turns}
 
 
+# --- CODA: base local, una fila por mensaje ----------------------------------------
+#
+# Los avisos del propio CODA entran como mensajes de usuario y no abren turno. El turno en curso
+# puede no estar completo en la base: el avance lo dan los hooks.
+
+CODA_ROWS = 4000  # cola de filas por sesion, el equivalente de TAIL_BYTES
+_CODA_EXIT_RE = re.compile(r"\[exit code: (-?\d+)\]\s*$")
+
+
+def _coda_ts(ms) -> str | None:
+    try:
+        return dt.datetime.fromtimestamp(ms / 1000).astimezone().isoformat(timespec="milliseconds")
+    except TypeError, ValueError, OverflowError, OSError:
+        return None
+
+
+def parse_coda(path: str, session_id: str | None, max_rows: int = CODA_ROWS) -> dict:
+    import sqlite3  # solo CODA lo necesita
+
+    meta = {"agent": "coda", "title": None, "branch": None, "cwd": None, "version": None, "truncated": False}
+    if not session_id:
+        return {"meta": meta, "turns": []}
+    uri = "file:" + path.replace("\\", "/") + "?mode=ro"
+    with sqlite3.connect(uri, uri=True, timeout=2) as c:
+        row = c.execute("select title, project_dir from sessions where id = ?", (session_id,)).fetchone()
+        if row:
+            meta["title"], meta["cwd"] = row
+        rows = c.execute(
+            "select role, content, parent_id, created_at from messages where session_id = ?"
+            " order by created_at desc, rowid desc limit ?",
+            (session_id, max_rows + 1),
+        ).fetchall()
+    meta["truncated"] = len(rows) > max_rows
+    rows = rows[:max_rows][::-1]
+    turns: list[dict] = []
+    tools: dict[str, dict] = {}
+    cur: dict | None = None
+    for role, content, parent, created in rows:
+        ts = _coda_ts(created)
+        if role == "user":
+            text = content or ""
+            if text.startswith(("[CODA SYSTEM MESSAGE]", "[Request interrupted")) or is_system_prompt(text):
+                if cur is None:
+                    cur = _new_turn("coda", "parcial", ts, "(turno anterior al corte)")
+                    turns.append(cur)
+                cur["blocks"].append({"kind": "user_text", "text": _short(text, 300)})
+                if text.startswith("[Request interrupted"):
+                    cur["ended"] = True
+                continue
+            if cur is not None:
+                cur["ended"] = True
+            cur = _new_turn("coda", f"{session_id[:8]}-{created}", ts, text or "(imagen)")
+            turns.append(cur)
+            continue
+        if cur is None:
+            cur = _new_turn("coda", "parcial", ts, "(turno anterior al corte)")
+            turns.append(cur)
+        cur["ts_end"] = ts or cur["ts_end"]
+        if role == "tool":
+            text = content or ""
+            m = _CODA_EXIT_RE.search(text)
+            res = {"text": _short(text, 4000), "is_error": bool(m and m.group(1) != "0")}
+            blk = tools.get(parent)
+            if blk is None:
+                blk = {"kind": "tool", "id": parent, "name": "?", "input": {}}
+                cur["blocks"].append(blk)
+            blk["result"] = res
+            continue
+        if role != "assistant":
+            continue
+        try:
+            parts = json.loads(content)
+        except TypeError, ValueError:
+            parts = content
+        if isinstance(parts, str):
+            parts = [{"type": "text", "text": parts}]
+        calls = False
+        for b in parts if isinstance(parts, list) else []:
+            if not isinstance(b, dict):
+                continue
+            k = b.get("type")
+            if k == "text":
+                add_text(cur, (b.get("text") or "").strip())
+            elif k in ("reasoning", "thinking"):
+                cur["blocks"].append({"kind": "thinking", "text": b.get("text") or b.get("thinking") or ""})
+            elif k == "tool-call":
+                calls = True
+                blk = {
+                    "kind": "tool",
+                    "id": b.get("toolCallId"),
+                    "name": b.get("toolName", "?"),
+                    "input": b.get("args") if isinstance(b.get("args"), dict) else {},
+                    "result": None,
+                }
+                tools[b.get("toolCallId")] = blk
+                cur["blocks"].append(blk)
+        # un mensaje sin herramientas cierra el turno (la base solo tiene turnos ya cerrados); si
+        # despues viene otro mensaje del mismo turno, vuelve a abrirse
+        cur["ended"] = not calls
+    return {"meta": meta, "turns": turns}
+
+
 # --- API comun -----------------------------------------------------------------
+
+
+def leaf_of(s: dict) -> str | None:
+    """Lo que elige, dentro de la transcripcion de una tarjeta, que parte es suya: la rama activa
+    en Pi y la sesion en CODA, que guarda todas en la misma base. El resto, nada."""
+    if s.get("agent") == "coda":
+        return s.get("session_id")
+    return s.get("pi_leaf_id")
 
 
 def parse(agent: str, path: str, max_bytes: int = TAIL_BYTES, leaf_id: str | None = None) -> dict:
     if agent == "pi":
         return parse_pi(path, max_bytes, leaf_id)
+    if agent == "coda":
+        return parse_coda(path, leaf_id)
     return parse_codex(path, max_bytes) if agent == "codex" else parse_claude(path, max_bytes)
 
 
