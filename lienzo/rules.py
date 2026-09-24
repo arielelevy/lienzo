@@ -74,7 +74,7 @@ def full_reply(s: dict, cap: int = 6000) -> str:
     path = s.get("transcript_path")
     if path and os.path.exists(path):
         try:
-            ts = transcripts.turns(s["agent"], path, 1, leaf_id=s.get("pi_leaf_id"))["turns"]
+            ts = transcripts.turns(s["agent"], path, 1, leaf_id=transcripts.leaf_of(s))["turns"]
             if ts and ts[-1].get("final"):
                 return short(ts[-1]["final"], cap)
         except Exception as e:

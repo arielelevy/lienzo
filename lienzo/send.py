@@ -151,7 +151,7 @@ def inject(
     if not procs.alive(pid):
         return {"ok": False, "pid": pid, "error": "el proceso no existe"}
     if not procs.is_tui(pid):
-        return {"ok": False, "pid": pid, "error": "el PID no es una TUI de Claude Code, Codex o Pi"}
+        return {"ok": False, "pid": pid, "error": "el PID no es una TUI de Claude Code, Codex, Pi o CODA"}
 
     k32.FreeConsole()
     if not k32.AttachConsole(pid):

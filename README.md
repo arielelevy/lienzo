@@ -1,6 +1,6 @@
 # Lienzo
 
-Tablero para las sesiones de **Claude Code**, **Codex CLI** y **Pi CLI** que corren en terminales de
+Tablero para las sesiones de **Claude Code**, **Codex CLI**, **Pi CLI** y **CODA** que corren en terminales de
 Windows: la integrada de VS Code, Windows Terminal, una PowerShell o un cmd sueltos. Una
 tarjeta por sesión, agrupadas por columna (trabajo, te necesita, muerta), con la
 conversación a un click, una caja para contestarles, **aprobación de permisos sin ir a la
@@ -19,7 +19,7 @@ Las apps de escritorio de Claude y de Codex no tienen consola: sus sesiones se p
 ## Cómo funciona
 
 Al arrancar, y después cada 30 segundos, el server **recorre los procesos de la PC** y
-encuentra todas las terminales de Claude Code (`claude.exe`), Codex CLI (`codex.exe`) y Pi CLI que
+encuentra todas las terminales de Claude Code (`claude.exe`), Codex CLI (`codex.exe`), Pi CLI y CODA (`coda.exe`) que
 estén corriendo, aunque se hayan abierto antes de instalar nada: lee el directorio de
 trabajo de cada proceso, ubica su transcripción y arma la tarjeta. Descarta las apps de
 escritorio y las extensiones de VS Code, que usan los mismos nombres de ejecutable.
@@ -32,14 +32,18 @@ busca el JSONL con actividad más reciente posterior al arranque del proceso y v
 `cwd` e ID: también contempla sesiones reanudadas. Ese respaldo es heurístico; con varias
 Pi en el mismo proyecto exige identidad exacta. La vinculación queda guardada en la tarjeta.
 
+En CODA la sesión de cada proceso se identifica sin adivinar por carpeta ni por fecha. Quedan
+afuera las corridas headless y los subcomandos.
+
 Después, estos canales, cada uno por su lado:
 
 | Qué | Cómo |
 |---|---|
 | Estado de cada sesión | Hooks de los propios agentes (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`…) que escriben un archivo en `~/.lienzo/events`. Nunca se raspa la pantalla para esto. |
-| Contenido | Las transcripciones `.jsonl` que Claude Code, Codex y Pi ya escriben en disco; en Pi se sigue la rama activa. Se leen por la cola, nunca enteras. |
+| Contenido | Las transcripciones `.jsonl` que Claude Code, Codex y Pi ya escriben en disco; en Pi se sigue la rama activa. Se leen por la cola, nunca enteras. En CODA, su base local de sesiones, en solo lectura. |
 | Mandar un mensaje | Inyección de teclas en la consola del proceso por PID (`AttachConsole` + `WriteConsoleInputW`). Funciona sin foco y aunque la pestaña esté oculta. Los adjuntos viajan como ruta en el texto. |
 | Contestar un permiso | El hook `PermissionRequest` es sincrónico: deja el pedido en una carpeta y espera hasta 60 s la respuesta que el tablero escribe. Si nadie contesta, el prompt aparece en la terminal como siempre. |
+| Contestar un permiso de CODA | Permitir y Denegar se teclean en su diálogo, después de confirmar en la pantalla que sigue abierto. |
 | Contestar una pregunta | El mismo hook: `AskUserQuestion` pide permiso como cualquier herramienta. La opción elegida vuelve adentro del `updatedInput` de la decisión, que es donde la deja el menú de la consola. |
 
 Además: conexiones entre sesiones (reenvío ahora, cuando termine, programado a una hora o
@@ -59,7 +63,7 @@ de una sesión viva no la reemplaza.
 - Windows 10/11: es donde está probado. Hoy no corre en Mac ni en Linux.
 - Python 3.14 o más nuevo, sólo biblioteca estándar. Sin `psutil`, sin frameworks.
 - Node 24 LTS para compilar la interfaz (Vite + React + TypeScript).
-- Claude Code 2.1+, Codex CLI 0.153+ o Pi CLI (integración desarrollada contra 0.86.0).
+- Claude Code 2.1+, Codex CLI 0.153+, Pi CLI (integración desarrollada contra 0.86.0) o CODA.
 - Sólo para el acceso desde el celular, y sólo si lo querés: `cloudflared`
   (`winget install Cloudflare.cloudflared`). Para usarlo local no hace falta.
 
@@ -86,7 +90,7 @@ cd lienzo\web
 npm install
 npm run build
 cd ..
-py -3.14 install.py        # registra hooks de Claude/Codex y la extensión Pi
+py -3.14 install.py        # registra hooks de Claude/Codex/CODA y la extensión Pi
 .\lienzo-server.cmd        # http://127.0.0.1:7321
 ```
 
@@ -115,6 +119,19 @@ ni reintentos automáticos: para eso hay que cargar la extensión con `/reload`.
 La validación automatizada cubre parsers, eventos y transporte simulado. La recepción real
 por `WriteConsoleInputW` entre las tres TUIs requiere una prueba con terminales de prueba;
 no se debe usar una sesión de trabajo activa para ese ensayo.
+
+### CODA
+
+`py -3.14 install.py --coda-only` registra los hooks del lienzo en `~/.coda/config.json`, con
+backup y sin tocar el resto de la configuración. Respeta `CODA_HOME`. En las sesiones ya
+abiertas, `/reload-hooks`.
+
+La tarjeta muestra la conversación, lo que la sesión va haciendo (herramienta, comando y
+archivos) y el trabajo de sus subagentes. Sin hooks aparece igual, por el barrido, con menos
+detalle: cuántas herramientas lleva y cuál corre.
+
+Cuando CODA pide permiso, la tarjeta pasa a «te necesita» y ofrece Permitir y Denegar, que se
+teclean en su terminal después de confirmar en la pantalla que el diálogo sigue abierto.
 
 ## Uso
 

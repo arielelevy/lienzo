@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-"""lienzo-hook: recibe el JSON de un hook (Claude Code o Codex) por stdin y deja un
+"""lienzo-hook: recibe el JSON de un hook (Claude Code, Codex o CODA) por stdin y deja un
 evento en ~/.lienzo/events. Sin dependencias fuera de stdlib. Nunca sale con codigo 2.
 
-Uso (lo registra settings.json / hooks.json):
+Uso (lo registra settings.json / hooks.json / ~/.coda/config.json):
     python hook.py claude
     python hook.py codex
+    python hook.py coda
 
 Para PermissionRequest ademas escribe ~/.lienzo/pending/<request_id>.json y espera
 ~/.lienzo/answers/<request_id>.json hasta LIENZO_WAIT segundos (60). Si llega con el
@@ -247,6 +248,9 @@ def main() -> int:
             "hook_ms": round((time.perf_counter() - T0) * 1000, 1),
         }
     )
+    if agent == "coda" and not data.get("transcript_path"):
+        # CODA manda transcript_path vacio: su transcripcion es la base compartida (ver coda.py)
+        data["transcript_path"] = os.path.join(os.environ.get("CODA_HOME") or os.path.join(HOME, ".coda"), "coda.db")
     atomic_write(event_path(sid, event), json.dumps(data, ensure_ascii=False))
     if event == "PermissionRequest":
         answer_permission(agent, data, cfg, sid)

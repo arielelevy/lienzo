@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Instala (o desinstala) los hooks del lienzo en Claude Code, Codex y Pi.
+"""Instala (o desinstala) los hooks del lienzo en Claude Code, Codex, Pi y CODA.
 
-    python install.py            # registra hooks en ~/.claude/settings.json y ~/.codex/hooks.json, y la extension de Pi
+    python install.py            # hooks en ~/.claude/settings.json, ~/.codex/hooks.json y ~/.coda/config.json; extension de Pi
     python install.py --uninstall
 
 Hace merge, nunca pisa: guarda ~/.claude/settings.json.bak-<fecha> antes de tocar.
@@ -38,6 +38,17 @@ CODEX_EVENTS = {
     "SessionEnd": (False, 2),
     "Interrupt": (False, 2),
 }
+# CODA no tiene PermissionRequest ni Notification: su PreToolUse corre antes de toda herramienta,
+# sin saber si el motor de permisos va a preguntar, asi que no sirve para pedir permiso desde aca.
+# Va igual, async, porque es lo unico que dice que hace durante el turno: CODA escribe el turno en
+# su base recien al cerrarlo.
+CODA_EVENTS = {
+    "SessionStart": (True, 5),
+    "UserPromptSubmit": (True, 5),
+    "PreToolUse": (True, 5),
+    "Stop": (True, 5),
+    "SessionEnd": (False, 2),
+}
 
 
 def cmd(agent: str) -> str:
@@ -48,11 +59,18 @@ def cmd(agent: str) -> str:
 
 
 def is_ours(group: dict) -> bool:
-    return any("lienzo" in (h.get("command") or "") for h in group.get("hooks", []))
+    return any(
+        "lienzo" in " ".join([h.get("command") or "", *map(str, h.get("args") or [])]) for h in group.get("hooks", [])
+    )
 
 
 def entry(agent: str, asyn: bool, timeout: int) -> dict:
-    e = {"type": "command", "command": cmd(agent), "timeout": timeout}
+    if agent == "coda":
+        # forma exec: CODA lanza el interprete con estos argumentos, sin shell de por medio (el
+        # default de la forma shell es `sh -c`, que en Windows no esta garantizado)
+        e = {"type": "command", "command": PY, "args": [HOOK, agent], "timeout": timeout}
+    else:
+        e = {"type": "command", "command": cmd(agent), "timeout": timeout}
     if asyn:
         e["async"] = True
     return {"hooks": [e]}
@@ -142,7 +160,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--uninstall", action="store_true")
     only = parser.add_mutually_exclusive_group()
-    for agent in ("claude", "codex", "pi"):
+    for agent in ("claude", "codex", "pi", "coda"):
         only.add_argument(f"--{agent}-only", dest="only", action="store_const", const=agent)
     args = parser.parse_args()
     un = args.uninstall
@@ -156,4 +174,8 @@ if __name__ == "__main__":
     if args.only in (None, "pi"):
         pi_dir = os.path.expanduser(os.environ.get("PI_CODING_AGENT_DIR") or os.path.join(HOME, ".pi", "agent"))
         merge_pi(os.path.join(pi_dir, "settings.json"), un)
-    print("listo. Pi: abrir una sesion nueva o ejecutar /reload en las abiertas.")
+    if args.only in (None, "coda"):
+        coda_home = os.environ.get("CODA_HOME") or os.path.join(HOME, ".coda")
+        if os.path.isdir(coda_home):
+            merge_hooks(os.path.join(coda_home, "config.json"), "coda", CODA_EVENTS, un, backup=True, prune=True)
+    print("listo. Pi: abrir una sesion nueva o ejecutar /reload en las abiertas. CODA: /reload-hooks en las abiertas.")
