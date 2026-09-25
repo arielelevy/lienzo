@@ -105,7 +105,7 @@ def activity(pid: int) -> dict | None:
         msg, cli, sid = d.get("msg"), d.get("clientName") == "cli", d.get("sessionId")
         asks.pop(sid, None)  # la sesion siguio: lo que tenia abierto ya se contesto
         if msg == "prompt started" and cli:
-            act = {"running": True, "tools": 0, "last_tool": None, "sub": False}
+            act = {"running": True, "tools": 0, "last_tool": None, "sub": False, "last_at": None}
             asks.clear()
         elif msg == "prompt complete" and cli and act:
             act["running"] = False
@@ -114,6 +114,7 @@ def activity(pid: int) -> dict | None:
             act["tools"] += 1
             act["last_tool"] = d["toolName"]
             act["sub"] = not cli
+            act["last_at"] = d.get("time")
             if d.get("decision") == "ask" and sid:
                 asks[sid] = {"tool": d["toolName"], "cause": d.get("askCause"), "sub": not cli, "at": d.get("time")}
     if act:
