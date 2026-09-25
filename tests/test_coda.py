@@ -168,6 +168,21 @@ def test_pretooluse_muestra_el_avance_en_la_tarjeta():
     assert s["last_reply"] == "usando grep (subagente)"
 
 
+def test_pretooluse_despues_del_cierre_reabre_el_turno():
+    from lienzo import server  # noqa: F401, I001
+    import sessions as ses
+
+    s = ses.new_session(SID, "coda", "hook")
+    s["state"], s["state_since"] = "termino", "2026-09-25T00:27:37.000-03:00"
+    # PreToolUse del turno anterior que llega tarde: no reabre nada
+    ses.coda_tool(s, {"tool_name": "bash", "host_ts": "2026-09-25T00:27:30.000-03:00", "tool_input": {}})
+    assert s["state"] == "termino"
+    # sin UserPromptSubmit, una herramienta posterior es un turno en curso
+    ses.coda_tool(s, {"tool_name": "read", "host_ts": "2026-09-25T00:28:00.000-03:00", "tool_input": {}})
+    assert s["state"] == "corriendo"
+    assert s["last_reply"] == "usando read"
+
+
 def test_actividad_del_log_sin_hooks(tmp_path, monkeypatch):
     (tmp_path / "logs").mkdir()
     lineas = [

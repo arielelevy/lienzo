@@ -17,6 +17,7 @@ import queue
 import re
 import secrets
 import subprocess
+import socket
 import sys
 import threading
 import time
@@ -334,7 +335,18 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
 class QuietServer(ThreadingHTTPServer):
     """socketserver imprime un traceback entero en stderr cada vez que el navegador cierra una
     conexion keep-alive mientras se lee la proxima peticion (WinError 10053). Eso no es un error
-    nuestro: se calla. Cualquier otra excepcion va al log propio, en una linea en consola."""
+    nuestro: se calla. Cualquier otra excepcion va al log propio, en una linea en consola.
+
+    En Windows SO_REUSEADDR deja que un segundo server escuche el mismo puerto sin error: los dos
+    quedan vivos y se reparten los eventos (visto el 2026-09-25, uno de la vispera sin soporte de
+    CODA se comia los UserPromptSubmit). Se pide el puerto en exclusiva."""
+
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
     def handle_error(self, request, client_address):
         e = sys.exc_info()[1]
@@ -1026,6 +1038,12 @@ def main() -> int:
     a = ap.parse_args()
     for d in (EVENTS, PENDING, ANSWERS, ADJUNTOS, SESSIONS):
         os.makedirs(d, exist_ok=True)
+    # el puerto antes que los hilos: un segundo server no llega a consumir eventos
+    try:
+        srv = QuietServer((a.host, a.port), Handler)
+    except OSError as e:
+        log(f"no se pudo tomar {a.host}:{a.port} ({e}): ya hay un lienzo-server corriendo?")
+        return 1
     purged, retitled = load_sessions()
     links.load(lambda l: l.get("to") in sessions and (not l.get("from") or l["from"] in sessions))
     rules.load(lambda r: r.get("to") in sessions and (not r.get("from") or r["from"] in sessions))
@@ -1040,7 +1058,6 @@ def main() -> int:
     threading.Thread(target=rules_loop, daemon=True).start()
     if a.remote:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()
-    srv = QuietServer((a.host, a.port), Handler)
     srv.daemon_threads = True
     with lock:
         n_alive = sum(1 for s in sessions.values() if s.get("alive"))
