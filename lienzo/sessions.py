@@ -635,6 +635,8 @@ def apply_turn_hooked(s: dict, t: dict) -> None:
     # Pi's stopReason ends a model response, not necessarily the agent run (retry/follow-up).
     # Only agent_settled may close a hooked Pi turn and trigger forwarding rules.
     want = None if s.get("agent") == "pi" else transcript_state(s, t)
+    if s.get("agent") == "coda" and s["state"] == "corriendo" and not s.get("last_prompt") and (p := turn_prompt(t)):
+        set_last_prompt(s, p)  # el UserPromptSubmit no llego: el pedido esta en la base desde que arranco
     if want:
         if want == "corriendo" and (p := turn_prompt(t)):
             set_last_prompt(s, p)
@@ -916,6 +918,12 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
             base = os.path.basename(ruta.replace("\\", "/").rstrip("/"))
             if base:
                 s["last_files"] = [base, *[f for f in s.get("last_files") or [] if f != base]][:3]
+    at, since = parse_ts(ev.get("host_ts")), parse_ts(s.get("state_since"))
+    if s["state"] == "termino" and at and since and at > since:
+        # una herramienta despues del cierre es un turno en curso: pasa cuando el UserPromptSubmit
+        # no llego, y la base no lo corrige porque CODA no la toca hasta cerrar el turno. La
+        # comparacion deja afuera un PreToolUse del turno anterior que llega despues del Stop
+        set_state(s, "corriendo")
     if s["state"] == "corriendo":
         s["last_reply"] = f"usando {tool}" + (" (subagente)" if sub else "")
 
