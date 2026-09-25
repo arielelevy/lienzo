@@ -944,6 +944,12 @@ def coda_log_activity(s: dict) -> bool:
     if not act:
         return False
     before = (s["state"], s.get("needs"), s.get("tool_count"), s.get("last_reply"))
+    if act["running"] and s["state"] == "termino":
+        # el log muestra herramientas del turno abierto despues del cierre: se perdio el
+        # UserPromptSubmit y la sesion quedo esperando (un permiso, por ejemplo) sin otro evento
+        last, since = parse_ts(act.get("last_at")), parse_ts(s.get("state_since"))
+        if last and since and last > since:
+            set_state(s, "corriendo")
     ask = act.get("asking") if act["running"] else None
     needs = s.get("needs") or {}
     if ask and s["state"] in ("corriendo", "te_necesita"):
