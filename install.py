@@ -22,6 +22,11 @@ HOOK = f"{HERE}/lienzo/hook.py"
 # El mismo interprete con el que se instala; ejecutar con py -3.14.
 PY = sys.executable.replace("\\", "/")
 
+# LIENZO_HOME (plan multi-PC §F0): si estaba definida al instalar, el hook la necesita explicita
+# en su propio comando, porque el proceso que despues lo dispara (Claude Code, Codex, CODA) no
+# hereda el entorno de esta instalacion.
+LIENZO_HOME = os.environ.get("LIENZO_HOME")
+
 CLAUDE_EVENTS = {
     "SessionStart": (True, 5),
     "UserPromptSubmit": (True, 5),
@@ -55,7 +60,8 @@ def cmd(agent: str) -> str:
     # Sin comillas si la ruta no tiene espacios: Codex puede correr el hook por PowerShell,
     # y en PowerShell una linea que empieza con un string entre comillas no se ejecuta.
     py = f'"{PY}"' if " " in PY else PY
-    return f"{py} {HOOK} {agent}"
+    extra = f' --lienzo-home "{LIENZO_HOME}"' if LIENZO_HOME else ""
+    return f"{py} {HOOK} {agent}{extra}"
 
 
 def is_ours(group: dict) -> bool:
@@ -68,7 +74,10 @@ def entry(agent: str, asyn: bool, timeout: int) -> dict:
     if agent == "coda":
         # forma exec: CODA lanza el interprete con estos argumentos, sin shell de por medio (el
         # default de la forma shell es `sh -c`, que en Windows no esta garantizado)
-        e = {"type": "command", "command": PY, "args": [HOOK, agent], "timeout": timeout}
+        args = [HOOK, agent]
+        if LIENZO_HOME:
+            args += ["--lienzo-home", LIENZO_HOME]
+        e = {"type": "command", "command": PY, "args": args, "timeout": timeout}
     else:
         e = {"type": "command", "command": cmd(agent), "timeout": timeout}
     if asyn:

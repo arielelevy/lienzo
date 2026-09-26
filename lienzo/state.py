@@ -16,7 +16,9 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
-LIENZO = os.path.join(HOME, ".lienzo")
+# LIENZO_HOME (plan multi-PC §F0): dos instancias en la misma PC, con puertos y carpeta de estado
+# distintos, simulan dos PCs. Sin la variable, la carpeta de siempre.
+LIENZO = os.environ.get("LIENZO_HOME") or os.path.join(HOME, ".lienzo")
 EVENTS = os.path.join(LIENZO, "events")
 PENDING = os.path.join(LIENZO, "pending")
 ANSWERS = os.path.join(LIENZO, "answers")

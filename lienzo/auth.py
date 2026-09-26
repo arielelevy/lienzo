@@ -20,8 +20,12 @@ import struct
 import threading
 import time
 
-HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
-LIENZO = os.path.join(HOME, ".lienzo")
+import state
+
+# Fuente unica de la carpeta de estado (LIENZO_HOME, plan multi-PC §F0): auth.py no tiene el
+# motivo de hook.py para evitar state.py (no corre como subproceso por evento ni imprime nada
+# que un agente tenga que parsear), asi que importarlo alcanza.
+LIENZO = state.LIENZO
 AUTH_FILE = os.path.join(LIENZO, "auth.json")
 WEB_SESSIONS = os.path.join(LIENZO, "sessions-web.json")
 WORDLIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eff_large_wordlist.txt")

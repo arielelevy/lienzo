@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export default function (pi: ExtensionAPI) {
-  const events = join(process.env.USERPROFILE || homedir(), ".lienzo", "events");
+  // LIENZO_HOME (plan multi-PC §F0): dos instancias en la misma PC, cada una con su propia
+  // carpeta de estado, simulan dos PCs. Sin la variable, la carpeta de siempre.
+  const lienzoHome = process.env.LIENZO_HOME || join(process.env.USERPROFILE || homedir(), ".lienzo");
+  const events = join(lienzoHome, "events");
   let sequence = 0;
   let warned = false;
 

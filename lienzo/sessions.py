@@ -18,6 +18,7 @@ import time
 import traceback
 
 import coda
+import identity
 import procs
 import state
 import transcripts
@@ -265,10 +266,27 @@ def add_link(src: str | None, dst: str, text: str, kind: str = "send", rule_id: 
     """kind: send (inyeccion manual entre sesiones) | native (canal Claude<->Claude por SendMessage) |
     rule (nacido de una regla 'cuando termine' / 'a las HH:MM'; trae rule_id) | user (lo que el
     usuario escribio desde el SendBox del lienzo: from None, solo se ve en la pestana Conexiones)."""
-    link = {"id": secrets.token_hex(6), "from": src, "to": dst, "ts": now(), "text": short(text, 160), "kind": kind}
+    link = {
+        "id": secrets.token_hex(6),
+        "from": src,
+        "to": dst,
+        "ts": now(),
+        "text": short(text, 160),
+        "kind": kind,
+        "pc": identity.pc_id(),
+    }
     if rule_id:
         link["rule_id"] = rule_id
     links.add(link)
+
+
+def apply_repo(s: dict, cwd: str) -> None:
+    """`repo` (para mostrar) y `repo_key` (identidad de la coordinadora: remote normalizado, o la
+    carpeta si no hay remote) de un mismo cwd, siempre juntos: si se pisaran por separado quedan
+    desincronizados y dos sesiones del mismo remote en carpetas distintas dejan de compartir
+    coordinadora (plan multi-PC, §3.6)."""
+    s["repo"] = repo_of(cwd)
+    s["repo_key"] = identity.repo_key(cwd)
 
 
 def limit_until_of(turn: dict) -> str | None:
@@ -345,11 +363,13 @@ def continue_session(old: dict, new: dict) -> None:
 
     with lock:
         n_rules, n_links = repoint(rules), repoint(links)
-        for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator"):
+        for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator", "pc"):
             if old.get(k) is not None:
                 new[k] = old[k]
         if not new.get("cwd") and old.get("cwd"):
-            new["cwd"], new["repo"] = old["cwd"], old.get("repo") or repo_of(old["cwd"])
+            new["cwd"] = old["cwd"]
+            new["repo"] = old.get("repo") or repo_of(old["cwd"])
+            new["repo_key"] = old.get("repo_key") or identity.repo_key(old["cwd"])
         drop_session(old_sid, "continuada")  # las reglas y links ya no la nombran: no borra nada
     state.log(
         f"sesion {old_sid[:8]} continua como {new_sid[:8]} (pid {new.get('pid')}; "
@@ -371,16 +391,20 @@ def new_session(sid: str, agent: str, source: str) -> dict:
     return {
         "session_id": sid,
         "agent": agent,
+        "pc": identity.pc_id(),
         "pid": None,
         "agent_exe": None,
         "cwd": None,
         "repo": "?",
+        "repo_key": None,
         "branch": None,
         "title": None,
         "title_source": None,
         "copycat_of": None,
         "stopped_by": None,
         "transcript_path": None,
+        "transcript_bytes": None,
+        "model": None,
         "state": "termino",
         "state_since": now(),
         "needs": None,
@@ -579,6 +603,8 @@ REFRESH_KEYS = (
     "last_files",
     "last_cmd",
     "tool_errors",
+    "model",
+    "transcript_bytes",
 )
 
 
@@ -699,6 +725,31 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
         on_api_error(s, f"{t.get('id')}:{s['last_error']}")
 
 
+def model_of(agent: str, path: str) -> str | None:
+    """Modelo de la ultima respuesta del asistente, leido de la cola de la transcripcion con las
+    utilidades ya publicas de transcripts.py (tail_lines, iter_json): no duplica su parser (que no
+    expone este campo, y unificar los dos formatos ya se probo y no vale la pena, ver el comentario
+    de transcripts.py sobre parse_claude/parse_codex). Claude y Pi lo traen en message.model de
+    cada linea de asistente; Codex lo trae en turn_context.payload.model, vigente hasta el proximo
+    turn_context. CODA no lo guarda en su base: None."""
+    if agent == "coda" or not path:
+        return None
+    try:
+        lines, _ = transcripts.tail_lines(path)
+    except OSError:
+        return None
+    model = None
+    for d in transcripts.iter_json(lines):
+        if agent == "codex":
+            if d.get("type") == "turn_context":
+                model = (d.get("payload") or {}).get("model") or model
+            continue
+        msg = d.get("message")
+        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("model"):
+            model = msg["model"]
+    return model
+
+
 def read_transcript(s: dict) -> dict | None:
     """Lee y parsea la transcripcion, y de paso resuelve el titulo que trae. Es lo caro del refresco
     (medido: 22 ms de mediana y 48 ms el peor caso sobre 2 MB de cola), asi que corre SIN el lock:
@@ -734,10 +785,16 @@ def apply_transcript(s: dict, r: dict, force_state: bool = False) -> bool:
         s["branch"] = meta["branch"]
     if meta.get("cwd") and not s.get("cwd"):
         s["cwd"] = meta["cwd"]
-        s["repo"] = repo_of(s["cwd"])
+        apply_repo(s, s["cwd"])
     if ts:
         apply_turn(s, ts[-1], force_state)
     choose_title(s, r["title"])
+    if path := s.get("transcript_path"):
+        s["model"] = model_of(s["agent"], path) or s.get("model")
+        try:
+            s["transcript_bytes"] = os.path.getsize(path)  # stat, no lee el contenido
+        except OSError:
+            pass
     return before != json.dumps({k: s.get(k) for k in REFRESH_KEYS})
 
 
@@ -768,14 +825,19 @@ def set_title(s: dict, title: str) -> None:
 
 
 def set_coordinator(s: dict, on: bool) -> list[dict]:
-    """Marca (o desmarca) la coordinadora del repo: a lo sumo una por repo, asi que al prender una
-    se apagan las demas del mismo repo. Devuelve las sesiones que cambiaron (ya guardadas y
+    """Marca (o desmarca) la coordinadora del repo: a lo sumo una por repo **en toda la
+    federacion** (plan multi-PC §3.6), asi que al prender una se apagan las demas del mismo repo
+    sin importar la PC. La identidad de repo es `repo_key` (remote normalizado, o la carpeta si no
+    hay remote), no `repo`: dos carpetas con el mismo nombre pero remotes distintos son repos
+    distintos, y el mismo remote clonado en carpetas distintas comparte coordinadora. El
+    `scope: "pc"` para separarla por maquina (§3.6) no va en esta ronda: queda para cuando exista
+    federacion, sin API nueva todavia. Devuelve las sesiones que cambiaron (ya guardadas y
     publicadas)."""
     changed = []
     with lock:
         if on:
             for other in sessions.values():
-                if other is not s and other.get("coordinator") and other.get("repo") == s.get("repo"):
+                if other is not s and other.get("coordinator") and other.get("repo_key") == s.get("repo_key"):
                     other["coordinator"] = False
                     changed.append(other)
         if bool(s.get("coordinator")) != on:
@@ -1063,7 +1125,7 @@ def apply_event(ev: dict) -> None:
             # el cwd de los hooks sigue al shell del agente (cambia con un cd de una tool);
             # el repo de la tarjeta se fija al arrancar y no baila
             s["cwd"] = ev["cwd"]
-            s["repo"] = repo_of(ev["cwd"])
+            apply_repo(s, ev["cwd"])
         if ev.get("transcript_path") or (s["agent"] == "pi" and "transcript_path" in ev):
             s["transcript_path"] = ev["transcript_path"]
         if s["agent"] == "pi":
@@ -1340,7 +1402,7 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
             sessions[sid] = s
         s["transcript_path"] = tpath
         s["cwd"] = s.get("cwd") or cwd
-        s["repo"] = repo_of(s["cwd"])
+        apply_repo(s, s["cwd"])
         if s.get("title_source") != "user":
             s["title"] = None
         refresh_from_transcript(s)
@@ -1371,13 +1433,13 @@ def adopt_process(p: dict) -> None:
                 "pid": p["pid"],
                 "agent_exe": p["exe"],
                 "cwd": cwd,
-                "repo": repo_of(cwd),
                 "transcript_path": tpath,
                 "started": p.get("created") or now(),
                 "in_vscode": p.get("in_vscode"),
                 "orphan": p.get("orphan"),
             }
         )
+        apply_repo(s, cwd)
         if not tpath:
             s["title"] = "sesion sin transcripcion identificada"
         sessions[s["session_id"]] = s
@@ -1749,7 +1811,7 @@ def stopped_recipients(s: dict) -> list[dict]:
     out: dict[str, dict] = {}
     with lock:
         for o in sessions.values():
-            if o.get("coordinator") and o.get("repo") == s.get("repo"):
+            if o.get("coordinator") and o.get("repo_key") == s.get("repo_key"):
                 out[o["session_id"]] = o
         for r in state.rules.items:
             if not r.get("enabled") or sid not in (r.get("from"), r.get("to")):
@@ -1915,6 +1977,10 @@ def load_sessions() -> tuple[int, int]:
             # /sessions no devuelva un campo presente en unas y ausente en otras
             for k, v in new_session(s["session_id"], s.get("agent") or "claude", s.get("source") or "hook").items():
                 s.setdefault(k, v)
+            if not s.get("repo_key") and s.get("cwd"):
+                # tarjeta vieja (plan multi-PC F0): repo_key no estaba, pero el cwd ya alcanza
+                # para calcularlo, a diferencia de pc (constante) que ya vino con el setdefault
+                s["repo_key"] = identity.repo_key(s["cwd"])
             if s.get("state") not in STATES:
                 s["state"], s["state_since"] = "termino", s.get("state_since") or now()
             if not procs.agent_alive(s.get("pid")):

@@ -839,6 +839,7 @@ def test_coordinadora_una_por_repo(aislado, con_pid):
     for sid, repo in ((A, "lienzo"), (B, "lienzo"), (C, "otro")):
         s = st.sessions.get(sid) or ses.new_session(sid, "claude", "hook")
         s["repo"] = repo
+        s["repo_key"] = repo
         st.sessions[sid] = s
     assert st.sessions[A]["coordinator"] is False
     ses.set_coordinator(st.sessions[B], True)

@@ -27,8 +27,23 @@ try:
 except ImportError:  # corriendo como script (python lienzo/hook.py) o con lienzo/ en sys.path
     import procinfo
 
+
+def _lienzo_home_arg() -> str | None:
+    """`--lienzo-home <ruta>` en el propio comando (install.py lo agrega si LIENZO_HOME estaba
+    definida al instalar): el proceso que dispara el hook (Claude Code, Codex, CODA) no hereda el
+    entorno de quien corrio install.py, asi que la variable no alcanza a llegar sola."""
+    for i, a in enumerate(sys.argv):
+        if a == "--lienzo-home" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
 HOME = os.environ.get("USERPROFILE") or os.path.expanduser("~")
-LIENZO = os.path.join(HOME, ".lienzo")
+# LIENZO_HOME (plan multi-PC §F0), leida sin importar state.py: hook.py corre como subproceso en
+# cada evento (tiene que arrancar rapido) y en PermissionRequest su stdout es el JSON que Claude
+# Code parsea como la decision del permiso, asi que no puede arrastrar el import mas pesado de
+# state.py (locks, colas, listas persistidas) ni el riesgo de que algo de eso imprima algo.
+LIENZO = _lienzo_home_arg() or os.environ.get("LIENZO_HOME") or os.path.join(HOME, ".lienzo")
 EVENTS = os.path.join(LIENZO, "events")
 PENDING = os.path.join(LIENZO, "pending")
 ANSWERS = os.path.join(LIENZO, "answers")

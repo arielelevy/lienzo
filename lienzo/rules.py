@@ -13,6 +13,7 @@ import secrets
 import time
 import traceback
 
+import identity
 import sessions as ses
 import state
 import transcripts
@@ -148,6 +149,7 @@ def schedule_continue(s: dict, at: dt.datetime, motivo: str) -> None:
             "enabled": True,
             "created": now(),
             "auto": True,
+            "pc": identity.pc_id(),
         }
         rules.add(rule, cap=500)
     state.log(
