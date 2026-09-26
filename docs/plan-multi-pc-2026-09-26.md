@@ -200,26 +200,26 @@ commiter por árbol**:
 
 ### F0 · Base, sin cambio visible
 
-- [ ] `LIENZO_HOME` configurable (hoy `~/.lienzo` fijo), leído por server, hook e `install.py`
-- [ ] `peer.json` con `pc_id`, nombre y color, creado al arrancar si no existe
-- [ ] Campo `pc` en cada sesión, link, regla y pendiente
-- [ ] Identidad de repo por remote `origin` normalizado, con fallback a la carpeta
-- [ ] `transcript_bytes` y `model` en `GET /sessions`
-- [ ] `lienzo/federation.py` con la interfaz de transporte (vacía)
+- [x] `LIENZO_HOME` configurable (hoy `~/.lienzo` fijo), leído por server, hook e `install.py`
+- [x] `peer.json` con `pc_id`, nombre y color, creado al arrancar si no existe
+- [ ] Campo `pc` en cada sesión, link, regla y pendiente  *(sesiones, links y reglas sí; el pendiente local todavía no lo trae: lo escribe `hook.py`)*
+- [x] Identidad de repo por remote `origin` normalizado, con fallback a la carpeta
+- [x] `transcript_bytes` y `model` en `GET /sessions`
+- [x] `lienzo/federation.py` con la interfaz de transporte (vacía)
 - [ ] Tests verdes; dos instancias en una PC arrancan sin pisarse
 
 ### F1 · Ver la otra PC
 
 - [ ] Listener `:7322` con bind a la IP de LAN, solo `/peer/*`
-- [ ] Emparejamiento por frase de seis palabras; `peers.json`; revocar
-- [ ] Firma HMAC con timestamp y nonce, y rechazo de replay
-- [ ] Beacon UDP en la LAN; actualización de IP por `pc_id`
-- [ ] `install.py --peer`: regla de firewall en perfil Privado
+- [x] Emparejamiento por frase de seis palabras; `peers.json`; revocar
+- [x] Firma HMAC con timestamp y nonce, y rechazo de replay
+- [x] Beacon UDP en la LAN; actualización de IP por `pc_id`
+- [ ] `install.py --peer`: regla de firewall en perfil Privado  *(código y `--dry-run` probados; la regla real no se corrió)*
 - [ ] `/peer/events` y cliente SSE saliente con reconexión y snapshot
 - [ ] Espejo en memoria; `/sessions` mezcla local y remoto con `pc_alive`
 - [ ] `digest`, `turns`, `screen`, `connections` remotos bajo demanda
 - [ ] `GET /peer/health` (memoria, CPU, temperatura, sesiones)
-- [ ] Tope de 4 peers
+- [x] Tope de 4 peers
 - [ ] **Cierre:** desde A se ven en vivo las tarjetas y la salud de B
 
 ### F2 · Operar la otra PC
@@ -234,25 +234,25 @@ commiter por árbol**:
 
 ### F3 · Coordinar entre PCs
 
-- [ ] Reglas `on_stop` y `at` con `to` en otra PC
-- [ ] Chequeo de bucle A↔B global, con lock en la PC de menor `pc_id`
+- [x] Reglas `on_stop` y `at` con `to` en otra PC
+- [ ] Chequeo de bucle A↔B global, con lock en la PC de menor `pc_id`  *(el chequeo contra las reglas remotas sí; el lock, no)*
 - [ ] Regla repetida y programadas a ±2 min chequeadas en la PC del destino
-- [ ] Coordinadora federada por repo
-- [ ] `scope: "pc"` para separarla, en API y en el menú ⋯
+- [x] Coordinadora federada por repo
+- [ ] `scope: "pc"` para separarla, en API y en el menú ⋯  *(en `sessions.py` sí; falta la API y el menú ⋯)*
 - [ ] Sin flecha doble (canal nativo) entre PCs distintas
-- [ ] `POST /sessions/launch` con `launch_roots` y ejecutable fijo por agente
+- [ ] `POST /sessions/launch` con `launch_roots` y ejecutable fijo por agente  *(`launch.py` hecho y probado; falta la ruta en el server)*
 - [ ] **Cierre:** desde la ★ en A se lanza un frente en B y su informe vuelve solo
 
 ### F4 · Front y documentación
 
-- [ ] Tira de PCs arriba del tablero, solo con peers emparejados
-- [ ] Chips con conteo, memoria y temperatura; filtro; colapso
-- [ ] Borde o badge de color por PC en cada tarjeta
-- [ ] Tarjetas grises y controles deshabilitados con el peer caído
+- [x] Tira de PCs arriba del tablero, solo con peers emparejados
+- [x] Chips con conteo, memoria y temperatura; filtro; colapso
+- [x] Borde o badge de color por PC en cada tarjeta
+- [x] Tarjetas grises y controles deshabilitados con el peer caído
 - [ ] Pantalla de emparejamiento (mostrar frase, pegar frase, lista de peers, revocar)
-- [ ] Filtro por proyecto arriba (pedido 2026-09-26): un chip por repo para ver u ocultar, y
+- [x] Filtro por proyecto arriba (pedido 2026-09-26): un chip por repo para ver u ocultar, y  *(al final: el click elige proyectos, afuera del buscador, y ★ respeta lo elegido)*
       «★ Coordinadoras»; se combina con PCs, buscador y agentes; persiste en el navegador
-- [ ] Pruebas Playwright de la tira y las flechas entre PCs
+- [x] Pruebas Playwright de la tira y las flechas entre PCs
 - [ ] README: sección "Varias PCs", API nueva, archivos de estado nuevos
 - [ ] `DISENO.es.md` §15 con las decisiones de este plan
 - [ ] **Cierre:** prueba real con la notebook, con terminales de prueba
