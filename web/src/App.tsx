@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type AuthInfo } from "./api";
 import { Board } from "./components/Board";
 import { allAgents } from "./agents";
@@ -8,6 +8,8 @@ import { Forward } from "./components/Forward";
 import { Header } from "./components/Header";
 import { Login } from "./components/Login";
 import { Panel } from "./components/Panel";
+import { PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
+import { ProjectStrip, repoGroups, useProjectFilter } from "./components/ProjectStrip";
 import { Setup, TotpQr } from "./components/Setup";
 import { Toasts, useToasts } from "./components/Toasts";
 import { UrlQr } from "./components/UrlQr";
@@ -89,6 +91,14 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const { sessions, pending, links, rules, connected, polling, transcriptTick } = useLienzoData({ refreshAuth, selectedRef, onRemoved });
   // notificaciones del navegador cuando una sesion pide permiso; el click abre su panel
   const { notify, toggleNotify } = useNotifications({ sessions, pending, onOpen: openPanel, toast });
+
+  // tira de PCs (ronda multi-PC, §3.9 del plan): [] hasta que exista GET /peers, y entonces la
+  // tira ni el filtro se dibujan (PcStrip lo decide solo con el arreglo vacío)
+  const peers = usePeers();
+  const [pcFilter, setPcFilter] = usePcFilter(peers);
+  // tira de proyectos (pedido de Ariel, parte 3): un chip por repo con sesiones vivas, y ★ Coordinadoras
+  const projectGroups = useMemo(() => repoGroups(Object.values(sessions)), [sessions]);
+  const { hidden: hiddenRepos, coordOnly, toggleRepo, showAll: showAllRepos, toggleCoord } = useProjectFilter(projectGroups);
 
   // auto_continue y auto_retry viven en ~/.lienzo/config.json (lo lee el server): GET/PUT /config.
   // null mientras carga o si el server que corre no tiene la ruta todavia
@@ -308,6 +318,16 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         }}
         onHelp={() => setShowHelp(true)}
         onRescan={rescan}
+        projects={
+          <ProjectStrip
+            groups={projectGroups}
+            hidden={hiddenRepos}
+            coordOnly={coordOnly}
+            onToggleRepo={toggleRepo}
+            onShowAll={showAllRepos}
+            onToggleCoord={toggleCoord}
+          />
+        }
         onLogout={() => api.post("/logout", {}).then(refreshAuth).catch((e) => toast((e as Error).message, true))}
         // abrir el menu es cambiar de contexto: cierra todo lo que haya detras, no un nivel
         onMenuOpen={() => closeOverlays(true)}
@@ -351,6 +371,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       )}
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
+      <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onFilter={setPcFilter} />
       <Board
         sessions={sessions}
         pending={pending}
@@ -370,6 +391,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         showArrows={showArrows}
         query={query}
         agents={agents}
+        peers={peers}
+        pcFilter={pcFilter}
+        hiddenRepos={hiddenRepos}
+        coordOnly={coordOnly}
       />
       {connect && sessions[connect.from] && (
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setConnect(null)}>

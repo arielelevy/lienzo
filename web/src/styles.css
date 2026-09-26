@@ -180,6 +180,20 @@ details.fold > summary,
 .filters button .pin { display: inline-block; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--need); vertical-align: middle; animation: st-pulse 1.6s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) { .filters button .pin { animation: none; } }
 
+/* tira de PCs y tira de proyectos (§3.9 del plan, y el filtro por repo pedido por Ariel): dos
+   barras de chips arriba del tablero, cada una con "Todas"/"Todos" mas un chip por elemento.
+   display:flex a proposito (a diferencia de .filters, que solo se ve en movil): estas dos son
+   filtros de escritorio y celular por igual. */
+.pcstrip { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 0; }
+.pcstrip button { font-size: 11.5px; padding: 4px 10px; border-radius: 12px; display: inline-flex; align-items: center; gap: 5px; }
+.pcstrip button.on { border-color: var(--acc); color: var(--acc); }
+/* punto del color de la PC (frente A, peer.json): un cuadradito de 8px, no un dato que se lee solo */
+.pcstrip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pc-color, var(--dim)); flex: 0 0 auto; }
+.pcstrip button.down { opacity: .55; border-style: dashed; }
+.pcstrip button.down .dot { background: none; border: 1.5px solid var(--dim); box-sizing: border-box; }
+.pcstrip .health { color: var(--dim); }
+@media (max-width: 390px) { .pcstrip button { padding: 4px 7px; font-size: 11px; } }
+
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; position: relative; }
 .card:hover { border-color: var(--acc); }
 .card.sel { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
@@ -456,7 +470,7 @@ body:has(.panel-open) { overflow: hidden; }
 @media (max-width: 700px) { .gate-box .two { grid-template-columns: 1fr; } }
 a.btn { display: block; text-align: center; text-decoration: none; background: var(--acc); color: var(--ink); border-radius: 6px; padding: 10px; font-weight: 600; }
 /* busqueda + chips de agente en el header: filtran las tarjetas visibles, nada mas */
-header .search { display: flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid transparent; border-radius: 8px; padding: 2px 4px 2px 6px; }
+header .search { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; gap: 4px; background: var(--card); border: 1px solid transparent; border-radius: 8px; padding: 2px 4px 2px 6px; }
 header .search:focus-within { border-color: var(--line); }
 header .search input { background: transparent; color: var(--fg); border: 0; padding: 4px 6px; font: inherit; font-size: 12px; width: 170px; }
 header .search input:focus { outline: none; }
@@ -467,6 +481,14 @@ header .search .chip.codex.on { background: var(--codex); }
 header .search .chip.pi.on { background: var(--pi); }
 header .search .chip.coda.on { background: var(--coda-bg); color: var(--coda); border-color: #43a2ca66; }
 header .search .chip:not(.on) { text-decoration: line-through; }
+/* chips de proyecto, en el mismo buscador y despues de una raya: filtran igual que los de agente */
+header .search .pjstrip { display: contents; }
+header .search .sep { width: 1px; align-self: stretch; margin: 3px 4px; background: var(--line); }
+header .search .chip.pjchip.on { background: var(--line); color: var(--fg); }
+/* Todos y ★ no se tachan: apagados son una opcion, no un proyecto oculto, y se leen enteros */
+header .search .chip.pjchip.all, header .search .chip.pjchip.star { text-decoration: none; opacity: 1; color: var(--dim); }
+header .search .chip.pjchip.all.on { color: var(--fg); }
+header .search .chip.pjchip.star.on { background: transparent; color: var(--need); border-color: var(--need); }
 /* overlay de atajos */
 .gate-box.help dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin: 0; font-size: 12px; }
 .gate-box.help dt { color: var(--dim); text-align: right; white-space: nowrap; }

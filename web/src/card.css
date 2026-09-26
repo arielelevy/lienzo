@@ -197,6 +197,16 @@
    pointer: none, y con la condicion doble no lo toma como pantalla tactil */
 @media (hover: none) and (pointer: coarse) { .card .quickact button { opacity: 1; pointer-events: auto; } }
 
+/* tira de PCs con mas de una emparejada: cada tarjeta lleva el color de su PC, un borde a la
+   izquierda (no toda la tarjeta: es una marca, no un fondo que compita con el estado). */
+.card.haspc { border-left-width: 3px; border-left-color: var(--pc-color, var(--line)); }
+
+/* la PC dueña de la sesion esta caida (tira de PCs, peer con alive:false): gris y sin ningún boton
+   de accion, "sin conexión hace X" en vez del pedido, la respuesta o los botones rapidos. */
+.card.peerdown { opacity: .6; cursor: default; background: #191b21; }
+.card.peerdown:hover { border-color: var(--line); }
+.card.peerdown .down { margin-top: 6px; }
+
 /* sesion libre (viva, con consola, sin ningun pedido): se lee como disponible, no como muerta.
    Borde punteado suave y texto algo apagado; el boton "Darle trabajo" siempre visible (no espera el
    hover como los rapidos, porque es la unica accion de la tarjeta) */

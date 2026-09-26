@@ -70,6 +70,32 @@ export interface Session {
   /** la llave stopped: session_id de la copia que se llevo su trabajo, o "user" si la detuvieron desde
    *  el tablero. Prendida no recibe mensajes ni reglas; se apaga desde la etiqueta o con su proximo pedido */
   stopped_by?: string | null;
+  /** pc_id de la PC dueña de esta sesion (frente B, ronda multi-PC). Ausente: PC local de siempre,
+   *  o un server que todavia no lo publica. */
+  pc?: string | null;
+  /** remote origin normalizado (identidad de repo entre PCs, frente A). Ausente: usar `repo`. */
+  repo_key?: string | null;
+}
+
+/** Salud de una PC, tal como la mide `lienzo/health.py` (memoria, CPU y temperatura de Windows). */
+export interface PeerHealth {
+  mem_free_gb: number | null;
+  mem_total_gb?: number | null;
+  cpu_pct: number | null;
+  temp_c: number | null;
+}
+
+/** `GET /peers` (ronda 2): una fila por PC de la federacion, la propia incluida (`local: true`).
+ *  Sin peers emparejados la ruta no existe (404) o devuelve un array de un solo elemento: en los
+ *  dos casos la tira de PCs no aparece. */
+export interface Peer {
+  pc_id: string;
+  name: string;
+  color: string;
+  alive: boolean;
+  last_seen: string;
+  local: boolean;
+  health: PeerHealth | null;
 }
 
 export interface Pending {

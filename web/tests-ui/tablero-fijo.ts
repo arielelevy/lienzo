@@ -12,7 +12,7 @@
  *  Los tipos salen de `src/types.ts` a proposito: si el server cambia la forma de una sesion, esto
  *  deja de compilar en vez de mentir. */
 import type { Page } from "@playwright/test";
-import type { Link, Pending, Rule, Session } from "../src/types";
+import type { Link, Peer, Pending, Rule, Session } from "../src/types";
 
 /** El server real corre en el 7321 y estas pruebas no lo levantan ni lo reinician. */
 export const BASE = process.env.LIENZO_URL ?? "http://127.0.0.1:7321";
@@ -351,8 +351,12 @@ export async function bloquearEscrituras(page: Page) {
 }
 
 /** Interceptar las rutas de datos y sembrar el SSE. Devuelve el tablero servido, por si la prueba
- *  necesita contar contra el (cuántas tarjetas van en cada columna, por ejemplo). */
-export async function instalarTablero(page: Page, sessionList: Session[] = sesiones()) {
+ *  necesita contar contra el (cuántas tarjetas van en cada columna, por ejemplo).
+ *
+ *  `peers` es GET /peers (ronda 2): sin pasarlo, la ruta cae al `route.fallback()` de mas abajo, que
+ *  golpea el server de verdad (no la tiene todavia) y da 404 — el mismo comportamiento que "sin
+ *  peers emparejados": la tira de PCs no tiene que aparecer en ninguno de los dos casos. */
+export async function instalarTablero(page: Page, sessionList: Session[] = sesiones(), peers?: Peer[]) {
   const board = { sessions: sessionList, pending: pendientes(), links: vinculos(), rules: reglas() };
   const snapshot = { type: "snapshot", sessions: board.sessions, pending: board.pending, links: board.links, rules: board.rules };
 
@@ -383,6 +387,7 @@ export async function instalarTablero(page: Page, sessionList: Session[] = sesio
     const p = url.pathname;
     if (p === "/auth") return route.fulfill(json(AUTH));
     if (p === "/config") return route.fulfill(json({ auto_continue: false }));
+    if (p === "/peers") return peers ? route.fulfill(json(peers)) : route.fallback();
     if (p === "/sessions") return route.fulfill(json(board.sessions));
     if (p === "/pending") return route.fulfill(json(board.pending));
     if (p === "/links") return route.fulfill(json(board.links));
@@ -395,10 +400,12 @@ export async function instalarTablero(page: Page, sessionList: Session[] = sesio
   return board;
 }
 
-/** Abre el tablero fijo y espera a que las diez tarjetas estén pintadas. */
-export async function abrirTablero(page: Page) {
+/** Abre el tablero fijo y espera a que las tarjetas estén pintadas. Sin argumentos, las diez de
+ *  siempre; `sessionList`/`peers` arman un escenario propio (pcs.spec.ts, con `pc` en las sesiones
+ *  y GET /peers con mas de una PC). */
+export async function abrirTablero(page: Page, sessionList?: Session[], peers?: Peer[]) {
   await bloquearEscrituras(page);
-  const board = await instalarTablero(page);
+  const board = await instalarTablero(page, sessionList, peers);
   await page.goto(BASE);
   await page.waitForSelector(".card", { state: "visible" });
   // el reparto en subcolumnas y las flechas se calculan despues del primer layout

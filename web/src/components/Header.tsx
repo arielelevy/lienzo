@@ -22,6 +22,8 @@ interface Props {
    *  cierra lo que haya abierto detras (panel, dialogo de conectar, ayuda) */
   onMenuOpen?: () => void;
   flags: { label: string; icon: string; on: boolean; toggle: () => void; title: string }[];
+  /** los chips de proyecto (ProjectStrip), que van despues de los de agente */
+  projects?: React.ReactNode;
 }
 
 const Shield = () => (
@@ -40,7 +42,7 @@ const Phone = () => (
 
 /** Header minimalista: marca y estado, buscador con chips por agente, acceso desde el celular
  *  (URL del tunel y QR de Authenticator, juntos) y un menu "⋯" con el resto. */
-export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onHelp, onRescan, onLogout, onMenuOpen, flags }: Props) {
+export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onHelp, onRescan, onLogout, onMenuOpen, flags, projects }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -99,6 +101,7 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
             {a}
           </button>
         ))}
+        {projects}
       </div>
       <span className="sp" />
       {authInfo.remote_url && authInfo.local && (

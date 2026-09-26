@@ -286,6 +286,12 @@ interface Props {
   /** agrupada con las otras libres de su repo: la encabeza (`lead`) o se pliega adentro. Lo calcula
    *  el tablero con `freeGroups`; sin esto la tarjeta se dibuja como siempre */
   freeGroup?: FreeGroup;
+  /** la PC dueña de esta sesion esta caida (ronda multi-PC, §3.9 del plan): la tarjeta se pinta
+   *  gris, con "sin conexión hace X" y sin ningún botón de acción. Lo calcula el tablero. */
+  peerDown?: { since: string } | null;
+  /** color de la PC dueña (tira de PCs, mas de una emparejada): un borde a la izquierda del color
+   *  de esa PC, para distinguir de un vistazo de que maquina es cada tarjeta. */
+  pcColor?: string;
   /** un click: elegir la tarjeta, sin abrir nada */
   onPick?: () => void;
   /** doble click (o Enter): abrir el panel */
@@ -299,7 +305,7 @@ interface Props {
   toast?: ToastFn;
 }
 
-export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, peerDown, pcColor, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const workClipboard = useWorkClipboard(s, !!p || !!s.pending_id, toast);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -459,6 +465,45 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   if (freeGroup && !freeGroup.lead && !group.open) return null;
   if (freeGroup?.lead && !group.open) return <FreeGroupCard mates={freeGroup.mates} onOpen={onSelect} onExpand={group.toggle} />;
 
+  // la PC dueña se cayó: se pinta gris y sin ningún botón de acción, no hay a quién escribirle
+  if (peerDown) {
+    return (
+      <div
+        className={`card peerdown ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${pcColor ? "haspc" : ""}`}
+        style={pcColor ? ({ "--pc-color": pcColor } as React.CSSProperties) : undefined}
+        role="button"
+        tabIndex={0}
+        aria-label={`${s.repo}: ${s.title || s.last_prompt || "sin título"} · sin conexión`}
+        aria-pressed={picked || selected}
+        data-sid={s.session_id}
+        onClick={(e) => {
+          if (e.detail > 1) return;
+          onPick?.();
+        }}
+        onDoubleClick={onSelect}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
+      >
+        <div className="top">
+          <span className={`badge ${s.agent}`}>{s.agent}</span>
+          <span className="repo" title={s.repo}>
+            {s.repo}
+          </span>
+          <span className="right">{ago(s.state_since)}</span>
+        </div>
+        <div className="title">{s.title || s.last_prompt || "(sin título)"}</div>
+        <div className="down small dim">sin conexión hace {ago(peerDown.since)}</div>
+        <div className="meta">
+          <span>{s.session_id.slice(0, 8)}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       {/* desplegado: una tira arriba de la primera dice de que grupo son y permite volver a plegarlo */}
@@ -474,7 +519,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       )}
     <div
       ref={rootRef}
-      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${menuOpen ? "menuopen" : ""} ${words ? "haswords" : ""}`}
+      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${menuOpen ? "menuopen" : ""} ${words ? "haswords" : ""} ${pcColor ? "haspc" : ""}`}
+      style={pcColor ? ({ "--pc-color": pcColor } as React.CSSProperties) : undefined}
       role="button"
       tabIndex={0}
       aria-label={`${s.repo}: ${s.title || s.last_prompt || (free ? "libre, sin pedidos todavía" : "sin título")}`}

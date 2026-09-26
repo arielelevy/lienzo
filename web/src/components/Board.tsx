@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Arrows } from "./Arrows";
 import { Card, freeGroups } from "./Card";
-import type { Link, Pending, Rule, Session, State } from "../types";
+import { pcOf } from "./PcStrip";
+import type { Link, Peer, Pending, Rule, Session, State } from "../types";
 import { searchText, shortName, stalledReason } from "../names";
 
 /** Columnas del tablero. "Trabajo" junta corriendo y termino (el estado se ve como icono en la
@@ -43,6 +44,15 @@ interface Props {
   agents: Record<Session["agent"], boolean>;
   /** toast global para las acciones de la tarjeta (copiar, botones rapidos, renombrar) */
   toast?: (msg: string, err?: boolean) => void;
+  /** PCs de la federacion (ronda 2), la propia incluida: [] hasta que exista GET /peers. Sirve para
+   *  la tira de PCs (filtro) y para pintar de gris las tarjetas de una PC caida. */
+  peers?: Peer[];
+  /** tira de PCs: pc_id elegido, o null ("Todas") */
+  pcFilter?: string | null;
+  /** tira de proyectos: repos ocultos (por repo_key o repo) */
+  hiddenRepos?: Set<string>;
+  /** tira de proyectos: solo coordinadoras de los repos visibles */
+  coordOnly?: boolean;
 }
 
 /** Columnas que el usuario colapso a mano teniendo tarjetas: por columna, los ids que tenia en ese
@@ -241,8 +251,19 @@ interface Move {
   antes: Pos | null;
 }
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = null, hiddenRepos, coordOnly = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
+  // tira de PCs: quien es cada peer y cual es la PC local, para saber que sesiones son suyas y si
+  // esta caido (ronda 2; peers viene vacio hasta que exista GET /peers)
+  const peersById = useMemo(() => new Map(peers.map((p) => [p.pc_id, p])), [peers]);
+  const localPcId = useMemo(() => peers.find((p) => p.local)?.pc_id ?? null, [peers]);
+  const peerDownOf = (s: Session): { since: string } | null => {
+    const peer = peersById.get(pcOf(s, localPcId) ?? "");
+    return peer && peer.alive === false ? { since: peer.last_seen } : null;
+  };
+  // el color de su PC, solo con mas de una emparejada: con una sola (o ninguna) pintar de "su color"
+  // no dice nada que la tarjeta no dijera ya
+  const pcColorOf = (s: Session): string | undefined => (peers.length > 1 ? peersById.get(pcOf(s, localPcId) ?? "")?.color : undefined);
   // el arrastre vive en el ref (los listeners de document lo leen al instante, sin esperar el
   // render) y se copia al estado para dibujar la linea
   const dragRef = useRef<Drag | null>(null);
@@ -300,8 +321,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     const sid = t.closest<HTMLElement>("[data-sid]")?.dataset.sid;
     if (!sid) return;
     // conectar pide una sesion viva y con consola (a una muerta, huerfana o sin terminal no habria
-    // a donde escribirle ni que programarle); moverla de lugar, no: eso es solo mirar el tablero
-    const conecta = canReceive(sessions[sid]);
+    // a donde escribirle ni que programarle); moverla de lugar, no: eso es solo mirar el tablero.
+    // una sesion de una PC caida tampoco: no hay a quien escribirle del otro lado
+    const conecta = canReceive(sessions[sid]) && !peerDownOf(sessions[sid]);
     if (t.closest(".grip")) {
       if (!conecta) return;
       draggedRef.current = true;
@@ -366,6 +388,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     for (const s of Object.values(sessions)) {
       if (!agents[s.agent]) continue;
       if (q && !norm(searchText(s)).includes(q)) continue;
+      if (pcFilter && pcOf(s, localPcId) !== pcFilter) continue;
+      // ★ Coordinadoras muestra todas, este oculto o no su proyecto: es la vista de "quien reparte"
+      if (coordOnly ? !s.coordinator : hiddenRepos?.has(s.repo_key || s.repo)) continue;
       g[colOf(s)].push(s);
     }
     // lo que esta trabajando de verdad va primero; lo que termino, despues; lo que figura corriendo
@@ -381,7 +406,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       });
     }
     return g;
-  }, [sessions, pending, query, agents]);
+  }, [sessions, pending, query, agents, pcFilter, hiddenRepos, coordOnly, localPcId]);
 
   // Una tarjeta con permiso pendiente va antes que las demas en el recorrido de Tab: el orden del
   // Tab es el del DOM, asi que su columna se dibuja primero y el orden visual se repone con `order`
@@ -586,7 +611,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // es un bucle, "programale un mensaje a esta misma sesion")
     const cardAt = (e: PointerEvent) => {
       const sid = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]")?.dataset.sid;
-      return sid && canReceive(sessions[sid]) ? sid : null;
+      return sid && canReceive(sessions[sid]) && !peerDownOf(sessions[sid]) ? sid : null;
     };
     const move = (e: PointerEvent) => {
       const board = boardRef.current;
@@ -825,6 +850,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         picked={picked === s.session_id}
                         related={related.get(s.session_id)}
                         freeGroup={grupos.get(s.session_id)}
+                        peerDown={peerDownOf(s)}
+                        pcColor={pcColorOf(s)}
                         onPick={() => {
                           // el click que cierra un arrastre tampoco elige la tarjeta
                           if (draggedRef.current) return;
