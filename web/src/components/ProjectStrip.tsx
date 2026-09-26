@@ -78,10 +78,10 @@ export function useProjectFilter(groups: { key: string }[]): {
   return { selected, coordOnly, toggleRepo, showAll, toggleCoord };
 }
 
-/** ¿Pasa el filtro de proyectos? ★ Coordinadoras muestra todas, elegido o no su proyecto: es la
- *  vista de "quien reparte". Si no, sin nada elegido pasa todo, y con algo elegido solo lo elegido. */
+/** ¿Pasa el filtro de proyectos? Sin nada elegido pasa todo, y con algo elegido solo lo elegido.
+ *  ★ Coordinadoras se suma a eso: de lo que queda, solo las coordinadoras. */
 export function passesProjects(s: Session, selected: Set<string>, coordOnly: boolean): boolean {
-  if (coordOnly) return !!s.coordinator;
+  if (coordOnly && !s.coordinator) return false;
   return selected.size === 0 || selected.has(s.repo_key || s.repo);
 }
 
@@ -140,7 +140,7 @@ export function ProjectStrip({ groups, selected, coordOnly, onToggleRepo, onShow
         type="button"
         className={`chip pjchip star ${coordOnly ? "on" : ""}`}
         aria-pressed={coordOnly}
-        title="ver solo las coordinadoras, de todos los proyectos"
+        title="ver solo las coordinadoras de los proyectos elegidos (de todos, sin ninguno elegido)"
         onClick={onToggleCoord}
       >
         ★ Coordinadoras

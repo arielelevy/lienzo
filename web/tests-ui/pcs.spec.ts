@@ -205,20 +205,24 @@ test.describe("chips de proyecto: repo y ★ Coordinadoras (pedido de Ariel)", (
     await expect(page.locator(".pjchip.on")).toHaveText(["Todos"]);
   });
 
-  test("★ Coordinadoras muestra todas las coordinadoras, elegido o no su proyecto", async ({ page }) => {
+  test("★ Coordinadoras muestra las coordinadoras de los proyectos elegidos", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
-    await page.locator(".pjchip", { hasText: "demo" }).click();
+    // sin proyecto elegido: todas las coordinadoras (en el tablero fijo, solo la de lienzo)
     await page.locator(".pjchip.star").click();
     await esperarQuietud(page);
-    // la única coordinadora del tablero fijo es la de lienzo, que no está elegido: igual se ve
     await expect(page.locator(".card")).toHaveCount(1);
     await expect(card(page, SID.coordinadora)).toBeVisible();
 
-    // al apagarlo vuelve la elección de proyectos
-    await page.locator(".pjchip.star").click();
+    // eligiendo demo, que no tiene coordinadora: no queda ninguna
+    await page.locator(".pjchip", { hasText: "demo" }).click();
     await esperarQuietud(page);
-    await expect(card(page, SID.coordinadora)).toHaveCount(0);
-    await expect(card(page, SID.mapas)).toBeVisible();
+    await expect(page.locator(".card")).toHaveCount(0);
+
+    // sumando lienzo vuelve la suya
+    await page.locator(".pjchip", { hasText: "lienzo" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(1);
+    await expect(card(page, SID.coordinadora)).toBeVisible();
   });
 
   test("la elección persiste al refrescar", async ({ page }) => {
