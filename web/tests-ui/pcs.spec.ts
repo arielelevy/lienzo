@@ -1,0 +1,251 @@
+import { expect, test } from "@playwright/test";
+import { abrirTablero, esperarQuietud, sesiones, SID } from "./tablero-fijo";
+import { desborde } from "./medidas";
+import type { Page } from "@playwright/test";
+import type { Peer, Session } from "../src/types";
+
+const iso = (minAgo: number) => new Date(Date.now() - minAgo * 60_000).toISOString();
+
+/** Las diez sesiones de siempre, repartidas en dos PCs: lienzo y demo en "oficina" (la PC local,
+ *  sin `pc`: asi se prueba tambien el caso sin ese campo, que es lo que hay hasta que el frente B
+ *  lo agregue), teorema y viejo en "notebook". 6 y 4, para que "Todas 10" y los dos chips midan
+ *  contra numeros distintos entre si. */
+function sesionesConDosPc(): Session[] {
+  return sesiones().map((s) => (s.repo === "teorema" || s.repo === "viejo" ? { ...s, pc: "note-1" } : s));
+}
+
+/** Se abre a lo ancho (abrirTablero espera las tres columnas, que a 390 px son una sola) y despues
+ *  se achica, como las pruebas de ancho de tablero.spec.ts. */
+async function angosta(page: Page) {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await esperarQuietud(page);
+  const d = await desborde(page);
+  expect(d.scroll).toBe(0);
+  expect(d.culpables).toEqual([]);
+}
+
+/** Con pedido, ninguna es "libre": las libres del mismo repo y agente se pliegan en una sola
+ *  tarjeta, y estas pruebas cuentan tarjetas como si fueran sesiones. */
+function sinLibres(list: Session[]): Session[] {
+  return list.map((s) => (s.last_prompt || s.last_reply ? s : { ...s, last_prompt: "pedido de prueba" }));
+}
+
+const PEER_LOCAL: Peer = {
+  pc_id: "local-1",
+  name: "oficina",
+  color: "#5b9cff",
+  alive: true,
+  last_seen: iso(0),
+  local: true,
+  health: { mem_free_gb: 3.4, mem_total_gb: 16, cpu_pct: 22, temp_c: 68 },
+};
+
+/** La de al lado, caida: cubre a la vez "con dos PCs, la tira muestra..." y "un peer caido deja sus
+ *  tarjetas grises", que son casos independientes (nada impide que ademas este caida). */
+const PEER_NOTEBOOK_CAIDA: Peer = {
+  pc_id: "note-1",
+  name: "notebook",
+  color: "#f0b429",
+  alive: false,
+  last_seen: iso(42),
+  local: false,
+  health: { mem_free_gb: 2.1, mem_total_gb: 16, cpu_pct: 40, temp_c: 71 },
+};
+
+const PEER_NOTEBOOK_VIVA: Peer = { ...PEER_NOTEBOOK_CAIDA, alive: true, last_seen: iso(0) };
+
+test.describe("tira de PCs (§3.9 del plan)", () => {
+  test("sin peers emparejados no hay tira, aunque haya varias PCs en las sesiones", async ({ page }) => {
+    // GET /peers todavia no existe (404) o no viene: en los dos casos, nada cambia a la vista
+    await abrirTablero(page, sinLibres(sesionesConDosPc()));
+    await expect(page.locator(".pcstrip")).toHaveCount(0);
+  });
+
+  test("con un solo peer (la propia PC) tampoco aparece", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()), [PEER_LOCAL]);
+    await expect(page.locator(".pcstrip")).toHaveCount(0);
+  });
+
+  test("con dos, muestra Todas N y un chip por PC con conteo, memoria y temperatura", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
+    const strip = page.locator(".pcstrip");
+    await expect(strip.locator(".pcchip.all")).toHaveText("Todas 10");
+    const oficina = strip.locator(".pcchip", { hasText: "oficina" });
+    await expect(oficina).toContainText("6");
+    await expect(oficina).toContainText("3.4 GB");
+    await expect(oficina).toContainText("68 °C");
+    const notebook = strip.locator(".pcchip", { hasText: "notebook" });
+    await expect(notebook).toContainText("4");
+    await expect(notebook).toContainText("2.1 GB");
+    await expect(notebook).toContainText("71 °C");
+  });
+
+  test("click en un chip filtra a esa PC; click en el activo vuelve a Todas", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
+    await expect(page.locator(".card")).toHaveCount(8);
+
+    await page.locator(".pcchip", { hasText: "notebook" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(2);
+    await expect(page.locator(`.card[data-sid="${SID.reglas}"]`)).toBeVisible();
+    await expect(page.locator(`.card[data-sid="${SID.coordinadora}"]`)).toHaveCount(0);
+    await expect(page.locator(".pcchip", { hasText: "notebook" })).toHaveClass(/\bon\b/);
+
+    await page.locator(".pcchip", { hasText: "notebook" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(8);
+    await expect(page.locator(".pcchip.all")).toHaveClass(/\bon\b/);
+  });
+
+  test("el filtro de PC persiste al refrescar", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
+    await page.locator(".pcchip", { hasText: "oficina" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(6);
+
+    await page.reload();
+    await page.waitForSelector(".card");
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(6);
+    await expect(page.locator(".pcchip", { hasText: "oficina" })).toHaveClass(/\bon\b/);
+  });
+
+  test("con un filtro guardado y /peers caido, el tablero no queda vacio", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
+    await page.locator(".pcchip", { hasText: "notebook" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(2);
+
+    // la ruta registrada despues gana: ahora /peers no responde, y sin tira no hay filtro posible
+    await page.route("**/peers", (route) => route.fulfill({ status: 404, body: "{}" }));
+    await page.reload();
+    await page.waitForSelector(".card");
+    await esperarQuietud(page);
+    await expect(page.locator(".pcstrip")).toHaveCount(0);
+    await expect(page.locator(".card")).toHaveCount(8);
+  });
+
+  test("un peer caido deja sus tarjetas grises, con 'sin conexión hace X' y sin botones de acción", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_CAIDA]);
+    // una tarjeta de "notebook" (caida): gris, sin conexión, sin ningún botón
+    const migracion = page.locator(`.card[data-sid="${SID.migracion}"]`);
+    await expect(migracion).toHaveClass(/\bpeerdown\b/);
+    await expect(migracion).toContainText("sin conexión hace");
+    await expect(migracion.locator("button")).toHaveCount(0);
+    // el chip de esa PC se distingue de una viva
+    await expect(page.locator(".pcchip", { hasText: "notebook" })).toHaveClass(/\bdown\b/);
+    // la de "oficina" (viva) sigue con sus botones de siempre
+    const coordinadora = page.locator(`.card[data-sid="${SID.coordinadora}"]`);
+    await expect(coordinadora).not.toHaveClass(/\bpeerdown\b/);
+    await expect(coordinadora.locator("button").first()).toBeVisible();
+  });
+
+  test("cada tarjeta lleva el color de su PC", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
+    const oficina = page.locator(`.card[data-sid="${SID.coordinadora}"]`);
+    const notebook = page.locator(`.card[data-sid="${SID.reglas}"]`);
+    await expect(oficina).toHaveClass(/\bhaspc\b/);
+    await expect(notebook).toHaveClass(/\bhaspc\b/);
+    const colorDe = (loc: typeof oficina) => loc.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--pc-color"));
+    expect(await colorDe(oficina)).toBe(PEER_LOCAL.color);
+    expect(await colorDe(notebook)).toBe(PEER_NOTEBOOK_VIVA.color);
+  });
+
+  test("nada se sale de la pantalla a 390 px de ancho", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
+    await angosta(page);
+  });
+});
+
+/** El tablero fijo de siempre junta cuatro repos (lienzo 3, demo 3, teorema 2, viejo 2) y una sola
+ *  coordinadora (en lienzo). De las diez se ven ocho: las dos de "viejo" las esconde el tablero por
+ *  su cuenta (una muerta en la columna colapsada, otra vieja), asi que los conteos parten de 8. */
+test.describe("tira de proyectos: repo y ★ Coordinadoras (pedido de Ariel, parte 3)", () => {
+  test("con un solo repo en el tablero no aparece", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()).map((s) => ({ ...s, repo: "lienzo" })));
+    await expect(page.locator(".pjstrip")).toHaveCount(0);
+  });
+
+  test("un chip por repo con sesiones vivas, con su conteo", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()));
+    const strip = page.locator(".pjstrip");
+    await expect(strip.locator(".pjchip", { hasText: "lienzo" })).toContainText("3");
+    await expect(strip.locator(".pjchip", { hasText: "demo" })).toContainText("3");
+    await expect(strip.locator(".pjchip", { hasText: "teorema" })).toContainText("2");
+    await expect(strip.locator(".pjchip", { hasText: "viejo" })).toContainText("2");
+    await expect(strip.locator(".pjchip.star")).toHaveText("★ Coordinadoras");
+  });
+
+  test("click en un chip lo oculta (selección múltiple); Todos lo vuelve a mostrar", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()));
+    await expect(page.locator(".card")).toHaveCount(8);
+
+    await page.locator(".pjchip", { hasText: "demo" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(5);
+    await expect(page.locator(`.card[data-sid="${SID.mapas}"]`)).toHaveCount(0);
+    await expect(page.locator(".pjchip", { hasText: "demo" })).not.toHaveClass(/\bon\b/);
+
+    // selección múltiple: ocultar otro más no vuelve a mostrar el primero
+    await page.locator(".pjchip", { hasText: "teorema" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(3);
+
+    await page.locator(".pjchip.all").click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(8);
+  });
+
+  test("★ Coordinadoras muestra todas las coordinadoras, aunque su proyecto este oculto", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()));
+    // por defecto todos los proyectos estan seleccionados
+    await expect(page.locator(".pjchip", { hasText: "lienzo" })).toHaveClass(/\bon\b/);
+    await expect(page.locator(".pjchip", { hasText: "demo" })).toHaveClass(/\bon\b/);
+    await page.locator(".pjchip", { hasText: "lienzo" }).click();
+    await page.locator(".pjchip.star").click();
+    await esperarQuietud(page);
+    // la única coordinadora del tablero fijo es la de lienzo, que está oculto: igual se ve
+    await expect(page.locator(".card")).toHaveCount(1);
+    await expect(page.locator(`.card[data-sid="${SID.coordinadora}"]`)).toBeVisible();
+
+    // al apagarlo vuelve la selección de proyectos, con lienzo todavía oculto
+    await page.locator(".pjchip.star").click();
+    await esperarQuietud(page);
+    await expect(page.locator(`.card[data-sid="${SID.coordinadora}"]`)).toHaveCount(0);
+  });
+
+  test("la selección de proyectos persiste al refrescar", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()));
+    await page.locator(".pjchip", { hasText: "viejo" }).click();
+    await page.locator(".pjchip.star").click();
+    await esperarQuietud(page);
+    // solo coordinadoras: la única del tablero fijo, en lienzo
+    await expect(page.locator(".card")).toHaveCount(1);
+
+    await page.reload();
+    await page.waitForSelector(".card");
+    await esperarQuietud(page);
+    await expect(page.locator(".pjchip", { hasText: "viejo" })).not.toHaveClass(/\bon\b/);
+    await expect(page.locator(".pjchip.star")).toHaveClass(/\bon\b/);
+  });
+
+  test("se combina con el buscador y los chips de agente (Y lógico)", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()));
+    // ocultar lienzo (3 sesiones) deja 7; apagar el chip de agente codex de esas 7 dentro deja 3
+    await page.locator(".pjchip", { hasText: "lienzo" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(5);
+
+    await page.locator("header .chip.codex").click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(3);
+    await expect(page.locator(`.card[data-sid="${SID.mapas}"]`)).toBeVisible();
+    await expect(page.locator(`.card[data-sid="${SID.reglas}"]`)).toBeVisible();
+    await expect(page.locator(`.card[data-sid="${SID.muerta}"]`)).toBeVisible();
+  });
+
+  test("nada se sale de la pantalla a 390 px de ancho", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()));
+    await angosta(page);
+  });
+});
