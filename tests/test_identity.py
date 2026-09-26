@@ -103,6 +103,20 @@ def test_pc_info_trae_pc_id_nombre_y_color_de_la_paleta(hogar):
     assert info["color"] in idn.PALETTE
 
 
+def test_set_name_cambia_el_nombre_sin_tocar_el_pc_id(hogar):
+    antes = idn.pc_id()
+    info = idn.set_name("notebook")
+    assert info["name"] == "notebook"
+    assert info["pc_id"] == antes
+    assert idn.pc_info()["name"] == "notebook"
+    assert idn.pc_id() == antes
+
+
+def test_set_name_vacio_rechaza(hogar):
+    with pytest.raises(ValueError):
+        idn.set_name("   ")
+
+
 def test_pc_id_estable_entre_procesos(hogar):
     primero = _pc_id_en_otro_proceso(st.LIENZO)
     assert primero == _pc_id_en_otro_proceso(st.LIENZO) == idn.pc_id()

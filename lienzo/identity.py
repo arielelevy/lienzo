@@ -88,6 +88,18 @@ def pc_info() -> dict:
     return {"pc_id": d["pc_id"], "name": d["name"], "color": d["color"]}
 
 
+def set_name(name: str) -> dict:
+    """Cambia el nombre de esta PC (pantalla de emparejamiento, plan §3.1). El pc_id no se toca."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("el nombre no puede quedar vacio")
+    with _lock:
+        d = _ensure_peer()
+        d["name"] = name
+        _save_peer(d)
+        return {"pc_id": d["pc_id"], "name": d["name"], "color": d["color"]}
+
+
 # --- identidad de repo (plan §3.6) -------------------------------------------------------------
 
 

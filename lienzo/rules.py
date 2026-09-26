@@ -17,7 +17,7 @@ import identity
 import sessions as ses
 import state
 import transcripts
-from sessions import add_link, send_to_session
+from sessions import add_link, find_session, send_to_session
 from state import links, load_config, lock, now, rules, sessions, short
 
 
@@ -190,10 +190,30 @@ def advance_at(rule: dict, ref: dt.datetime | None = None) -> None:
     rule["at"] = at.isoformat(timespec="seconds")
 
 
+def loop_conflict(rule: dict, local_rules: list[dict], remote_rules: list[dict]) -> dict | None:
+    """La regla on_stop en sentido inverso (`to` -> `from`), ya habilitada en esta PC o en
+    cualquier otra de la federacion, si existe: crearia un bucle A<->B que se contesta solo hasta
+    agotar el cupo (plan multi-PC §3.5). Pura -- quien llama (server.create_on_stop, frente C) le
+    pasa lo local y lo espejado (mirror.rules()) sin que este modulo dependa de mirror.py. El
+    lock de la PC de menor pc_id para la carrera de crear las dos a la vez en PCs distintas queda
+    para la proxima ronda."""
+    return next(
+        (
+            r
+            for r in local_rules + remote_rules
+            if r.get("enabled")
+            and r.get("kind") == "on_stop"
+            and r.get("from") == rule.get("to")
+            and r.get("to") == rule.get("from")
+        ),
+        None,
+    )
+
+
 def fire_rule(rule: dict) -> None:
     with lock:
         src = sessions.get(rule.get("from") or "")
-        dst = sessions.get(rule["to"])
+    dst = find_session(rule["to"])
     if dst is None:
         rules.remove(lambda r: r["id"] == rule["id"])
         return

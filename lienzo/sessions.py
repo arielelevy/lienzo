@@ -60,6 +60,88 @@ on_limit_notice = lambda s: None
 on_api_error = lambda s, sig: None
 
 
+# --- mirror (frente C, plan multi-PC §3.3-3.6): sesiones y reglas de otra PC -------------------
+#
+# mirror.py todavia no existe en este arbol (o esta ronda se corre sin el, o un test lo reemplaza
+# por sys.modules): sin el, toda sesion es local, exactamente el comportamiento de antes de la
+# federacion. `mirror.MIRROR` es el singleton que define (owner_of, forward, rules, sessions); los
+# tests de este frente lo stubean con monkeypatch.setattr(ses, "mirror", ...), no inventando mas
+# metodos de los que ya pacto el encargo comun.
+try:
+    import mirror
+except ImportError:
+    mirror = None
+
+
+def _mirror_owner(sid: str) -> str | None:
+    """pc_id de la PC dueña de `sid` si es remota; None si es local, desconocida o sin mirror."""
+    return mirror.MIRROR.owner_of(sid) if mirror else None
+
+
+def _mirror_forward(pc_id: str, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    """Request firmado a `pc_id` por /peer/<path>. Sin mirror enchufado: 503, igual que un peer
+    caido (nadie deberia llamar esto sin haber visto antes un owner_of que no sea None)."""
+    if not mirror:
+        return 503, {"ok": False, "error": "mirror no disponible"}
+    return mirror.MIRROR.forward(pc_id, method, path, body)
+
+
+def _mirror_sessions() -> list[dict]:
+    return mirror.MIRROR.sessions() if mirror else []
+
+
+def _mirror_rules() -> list[dict]:
+    return mirror.MIRROR.rules() if mirror else []
+
+
+def _mirror_session(sid: str) -> dict | None:
+    return next((o for o in _mirror_sessions() if o.get("session_id") == sid), None)
+
+
+def find_session(sid: str) -> dict | None:
+    """La tarjeta de `sid`: local si esta en memoria, si no la espejada de otra PC (mirror.py). La
+    usa rules.py para decidir (destino ocupado, detenido) sin pedirsela por red a su dueña."""
+    return sessions.get(sid) or _mirror_session(sid)
+
+
+def _repo_identity(s: dict) -> str | None:
+    """Identidad de repo para agrupar coordinadoras: `repo_key` (remote normalizado) y, mientras
+    no se resuelva, su respaldo `repo` (nombre de carpeta). None solo si ninguno de los dos esta
+    resuelto, y None nunca hace match con otro None: antes, dos sesiones con repo_key sin resolver
+    (None) contaban por accidente como el mismo repo."""
+    return s.get("repo_key") or s.get("repo") or None
+
+
+def repo_coordinator(repo: str | None, pc: str | None, local: list[dict], remote: list[dict]) -> dict | None:
+    """La coordinadora de `repo` tal como la ve una sesion de la PC `pc` (plan multi-PC §3.6):
+    primero la separada (`coordinator_scope` "pc") de esa misma PC si existe, si no la federada
+    (cualquier otro scope), este en `local` o en `remote` (mirror.py, frente C). None si `repo` no
+    se pudo resolver, o si no hay ninguna coordinadora de ese repo en ningun lado."""
+    if repo is None:
+        return None
+    scoped = next(
+        (
+            o
+            for o in local
+            if o.get("coordinator")
+            and o.get("coordinator_scope") == "pc"
+            and o.get("pc") == pc
+            and _repo_identity(o) == repo
+        ),
+        None,
+    )
+    if scoped:
+        return scoped
+    return next(
+        (
+            o
+            for o in (*local, *remote)
+            if o.get("coordinator") and o.get("coordinator_scope") != "pc" and _repo_identity(o) == repo
+        ),
+        None,
+    )
+
+
 ATTACH_WRAPPER = "Leé el archivo adjunto y respondé:"
 
 
@@ -363,7 +445,7 @@ def continue_session(old: dict, new: dict) -> None:
 
     with lock:
         n_rules, n_links = repoint(rules), repoint(links)
-        for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator", "pc"):
+        for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator", "coordinator_scope", "pc"):
             if old.get(k) is not None:
                 new[k] = old[k]
         if not new.get("cwd") and old.get("cwd"):
@@ -423,6 +505,7 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "pending_id": None,
         "typing": False,
         "coordinator": False,
+        "coordinator_scope": None,
         "orphan": False,
         "in_vscode": False,
         "no_console": False,
@@ -824,27 +907,48 @@ def set_title(s: dict, title: str) -> None:
             choose_title(s, None)
 
 
-def set_coordinator(s: dict, on: bool) -> list[dict]:
-    """Marca (o desmarca) la coordinadora del repo: a lo sumo una por repo **en toda la
-    federacion** (plan multi-PC §3.6), asi que al prender una se apagan las demas del mismo repo
-    sin importar la PC. La identidad de repo es `repo_key` (remote normalizado, o la carpeta si no
-    hay remote), no `repo`: dos carpetas con el mismo nombre pero remotes distintos son repos
-    distintos, y el mismo remote clonado en carpetas distintas comparte coordinadora. El
-    `scope: "pc"` para separarla por maquina (§3.6) no va en esta ronda: queda para cuando exista
-    federacion, sin API nueva todavia. Devuelve las sesiones que cambiaron (ya guardadas y
-    publicadas)."""
+def set_coordinator(s: dict, on: bool, scope: str | None = None) -> list[dict]:
+    """Marca (o desmarca) la coordinadora del repo (plan multi-PC §3.6). Por defecto (`scope`
+    None: federada), a lo sumo una **en toda la federacion**: prender una apaga las demas del
+    mismo repo, sean de esta PC o de otra (via mirror.forward a su `/sessions/<sid>/coordinator
+    {on: false}`, frente C). Con `scope: "pc"` la ★ vale solo para esta PC: apaga solo a otra
+    "pc" del mismo repo en esta PC, y convive con la federada (ninguna de las dos apaga a la
+    otra). La identidad de repo es `_repo_identity` (repo_key con respaldo en `repo`, sin
+    matchear dos sin resolver): dos carpetas con el mismo nombre pero remotes distintos son repos
+    distintos, y el mismo remote clonado en carpetas o PCs distintas comparte coordinadora.
+    Devuelve las sesiones LOCALES que cambiaron (ya guardadas y publicadas); lo apagado por
+    forward en otra PC lo publica su propio server, no esta."""
     changed = []
+    my_repo = _repo_identity(s)
     with lock:
-        if on:
+        if on and my_repo is not None:
             for other in sessions.values():
-                if other is not s and other.get("coordinator") and other.get("repo_key") == s.get("repo_key"):
-                    other["coordinator"] = False
-                    changed.append(other)
-        if bool(s.get("coordinator")) != on:
-            s["coordinator"] = on
+                if other is s or not other.get("coordinator") or _repo_identity(other) != my_repo:
+                    continue
+                if scope == "pc":
+                    if other.get("coordinator_scope") != "pc":
+                        continue  # la federada convive con la nueva separada de esta PC
+                elif other.get("coordinator_scope") == "pc":
+                    continue  # la separada de otra PC convive con la nueva federada
+                other["coordinator"], other["coordinator_scope"] = False, None
+                changed.append(other)
+        want_scope = scope if on else None
+        if bool(s.get("coordinator")) != on or s.get("coordinator_scope") != want_scope:
+            s["coordinator"], s["coordinator_scope"] = on, want_scope
             changed.append(s)
         for x in changed:
             touch(x)
+    if on and scope != "pc" and my_repo is not None:
+        for other in _mirror_sessions():
+            if other.get("coordinator") and other.get("coordinator_scope") != "pc" and _repo_identity(other) == my_repo:
+                code, res = _mirror_forward(
+                    other["pc"], "PUT", f"/sessions/{other['session_id']}/coordinator", {"on": False}
+                )
+                if code != 200:
+                    state.log(
+                        f"apagar coordinadora remota {other['session_id'][:8]} en {other.get('pc')}: "
+                        f"{res.get('error')}"
+                    )
     return changed
 
 
@@ -1753,11 +1857,17 @@ def interrupt_session(s: dict) -> tuple[int, dict]:
 
 
 def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
-    """Inyecta texto en la consola de la sesion y deja la tarjeta corriendo. El subproceso (hasta
-    60 s) y la lectura del adjunto van fuera del lock; solo la tarjeta se toca con el lock."""
+    """Inyecta texto en la consola de la sesion y deja la tarjeta corriendo. Si `s` es de otra PC
+    (mirror.owner_of, frente C, plan multi-PC §3.4), en cambio se reenvia con mirror.forward: la
+    consola es de la PC dueña, no de esta, y send_blocked (que mira pid local) no aplica aca --lo
+    hace el send_to_session del otro lado, con su propia tarjeta--. El subproceso (hasta 60 s) y
+    la lectura del adjunto van fuera del lock; solo la tarjeta se toca con el lock."""
+    sid = s["session_id"]
+    owner = _mirror_owner(sid)
+    if owner is not None:
+        return _mirror_forward(owner, "POST", f"/sessions/{sid}/send", {"text": text, "attachments": attachments})
     if frenado := send_blocked(s):
         return frenado
-    sid = s["session_id"]
     final, orig, attachments = compose_send(sid, text, attachments)
     if not final:
         return 400, {"ok": False, "error": "texto vacio"}
@@ -1803,22 +1913,29 @@ def _notify_async(fn) -> None:
 
 
 def stopped_recipients(s: dict) -> list[dict]:
-    """A quien avisar que `s` quedo detenida: la coordinadora de su repo y toda sesion que tenga
-    una regla vigente con ella (la que le iba a mandar algo y la que esperaba su informe). Sin la
-    propia, sin la copia que se llevo su trabajo, sin repetir."""
+    """A quien avisar que `s` quedo detenida: la coordinadora de su repo (repo_coordinator: la
+    separada de esta PC si hay, si no la federada, este donde este) y toda sesion, local o
+    remota (mirror.py, frente C), que tenga una regla vigente con ella (la que le iba a mandar
+    algo y la que esperaba su informe: una regla on_stop con `to` en otra PC vive alla, no aca).
+    Sin la propia, sin la copia que se llevo su trabajo, sin repetir."""
     sid = s["session_id"]
     skip = {sid, s.get("stopped_by")}
-    out: dict[str, dict] = {}
+    my_repo = _repo_identity(s)
     with lock:
-        for o in sessions.values():
-            if o.get("coordinator") and o.get("repo_key") == s.get("repo_key"):
-                out[o["session_id"]] = o
-        for r in state.rules.items:
-            if not r.get("enabled") or sid not in (r.get("from"), r.get("to")):
-                continue
-            other = r.get("to") if r.get("from") == sid else r.get("from")
-            if other and other in sessions:
-                out[other] = sessions[other]
+        locales = list(sessions.values())
+        reglas = list(state.rules.items)
+    remotas = _mirror_sessions()
+    local_by_id = {o["session_id"]: o for o in locales}
+    remote_by_id = {o["session_id"]: o for o in remotas}
+    out: dict[str, dict] = {}
+    if coord := repo_coordinator(my_repo, s.get("pc"), locales, remotas):
+        out[coord["session_id"]] = coord
+    for r in reglas + _mirror_rules():
+        if not r.get("enabled") or sid not in (r.get("from"), r.get("to")):
+            continue
+        other = r.get("to") if r.get("from") == sid else r.get("from")
+        if other and (found := local_by_id.get(other) or remote_by_id.get(other)):
+            out[other] = found
     return [o for k, o in out.items() if k not in skip]
 
 
