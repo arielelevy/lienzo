@@ -481,14 +481,13 @@ header .search .chip.codex.on { background: var(--codex); }
 header .search .chip.pi.on { background: var(--pi); }
 header .search .chip.coda.on { background: var(--coda-bg); color: var(--coda); border-color: #43a2ca66; }
 header .search .chip:not(.on) { text-decoration: line-through; }
-/* chips de proyecto, en el mismo buscador y despues de una raya: filtran igual que los de agente */
-header .search .pjstrip { display: contents; }
-header .search .sep { width: 1px; align-self: stretch; margin: 3px 4px; background: var(--line); }
-header .search .chip.pjchip.on { background: var(--line); color: var(--fg); }
-/* Todos y ★ no se tachan: apagados son una opcion, no un proyecto oculto, y se leen enteros */
-header .search .chip.pjchip.all, header .search .chip.pjchip.star { text-decoration: none; opacity: 1; color: var(--dim); }
-header .search .chip.pjchip.all.on { color: var(--fg); }
-header .search .chip.pjchip.star.on { background: transparent; color: var(--need); border-color: var(--need); }
+/* chips de proyecto: al lado del buscador y afuera de su fondo, como un grupo propio. Un solo
+   estado a la vista, el elegido; sin elegir se leen enteros, sin tachar */
+header .pjstrip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+header .pjstrip .chip { padding: 2px 8px; font-size: 11px; font-weight: 600; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--dim); }
+header .pjstrip .chip:hover { color: var(--fg); }
+header .pjstrip .chip.on { background: var(--acc); border-color: var(--acc); color: var(--bg); }
+header .pjstrip .chip.star.on { background: var(--need); border-color: var(--need); color: var(--bg); }
 /* overlay de atajos */
 .gate-box.help dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin: 0; font-size: 12px; }
 .gate-box.help dt { color: var(--dim); text-align: right; white-space: nowrap; }
@@ -525,7 +524,7 @@ header .search .chip.pjchip.star.on { background: transparent; color: var(--need
   header h1 { font-size: 14px; }
   header .search { flex: 1; min-width: 0; }
   header .search input { width: 100%; min-width: 0; }
-  header .search .chip { display: none; }
+  header .search .chip, header .pjstrip { display: none; }
   header .dropdown { min-width: 190px; }
   .filters { padding: 8px 10px 0; gap: 6px; }
   .filters button { flex: 1 1 auto; padding: 8px 6px; font-size: 12px; }

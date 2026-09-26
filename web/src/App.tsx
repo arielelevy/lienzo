@@ -98,7 +98,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [pcFilter, setPcFilter] = usePcFilter(peers);
   // tira de proyectos (pedido de Ariel, parte 3): un chip por repo con sesiones vivas, y ★ Coordinadoras
   const projectGroups = useMemo(() => repoGroups(Object.values(sessions)), [sessions]);
-  const { hidden: hiddenRepos, coordOnly, toggleRepo, showAll: showAllRepos, toggleCoord } = useProjectFilter(projectGroups);
+  const { selected: selectedRepos, coordOnly, toggleRepo, showAll: showAllRepos, toggleCoord } = useProjectFilter(projectGroups);
 
   // auto_continue y auto_retry viven en ~/.lienzo/config.json (lo lee el server): GET/PUT /config.
   // null mientras carga o si el server que corre no tiene la ruta todavia
@@ -321,7 +321,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         projects={
           <ProjectStrip
             groups={projectGroups}
-            hidden={hiddenRepos}
+            selected={selectedRepos}
             coordOnly={coordOnly}
             onToggleRepo={toggleRepo}
             onShowAll={showAllRepos}
@@ -393,7 +393,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         agents={agents}
         peers={peers}
         pcFilter={pcFilter}
-        hiddenRepos={hiddenRepos}
+        selectedRepos={selectedRepos}
         coordOnly={coordOnly}
       />
       {connect && sessions[connect.from] && (

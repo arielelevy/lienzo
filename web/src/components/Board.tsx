@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Arrows } from "./Arrows";
 import { Card, freeGroups } from "./Card";
 import { pcOf } from "./PcStrip";
+import { passesProjects } from "./ProjectStrip";
 import type { Link, Peer, Pending, Rule, Session, State } from "../types";
 import { searchText, shortName, stalledReason } from "../names";
 
@@ -49,8 +50,8 @@ interface Props {
   peers?: Peer[];
   /** tira de PCs: pc_id elegido, o null ("Todas") */
   pcFilter?: string | null;
-  /** tira de proyectos: repos ocultos (por repo_key o repo) */
-  hiddenRepos?: Set<string>;
+  /** chips de proyecto: repos elegidos (por repo_key o repo); vacio es todos */
+  selectedRepos?: Set<string>;
   /** tira de proyectos: solo coordinadoras de los repos visibles */
   coordOnly?: boolean;
 }
@@ -251,7 +252,10 @@ interface Move {
   antes: Pos | null;
 }
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = null, hiddenRepos, coordOnly = false }: Props) {
+/** sin proyectos elegidos: un Set estable, para no romper el useMemo del tablero en cada render */
+const NINGUNO: Set<string> = new Set();
+
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = null, selectedRepos = NINGUNO, coordOnly = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   // tira de PCs: quien es cada peer y cual es la PC local, para saber que sesiones son suyas y si
   // esta caido (ronda 2; peers viene vacio hasta que exista GET /peers)
@@ -389,8 +393,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       if (!agents[s.agent]) continue;
       if (q && !norm(searchText(s)).includes(q)) continue;
       if (pcFilter && pcOf(s, localPcId) !== pcFilter) continue;
-      // ★ Coordinadoras muestra todas, este oculto o no su proyecto: es la vista de "quien reparte"
-      if (coordOnly ? !s.coordinator : hiddenRepos?.has(s.repo_key || s.repo)) continue;
+      if (!passesProjects(s, selectedRepos, coordOnly)) continue;
       g[colOf(s)].push(s);
     }
     // lo que esta trabajando de verdad va primero; lo que termino, despues; lo que figura corriendo
@@ -406,7 +409,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       });
     }
     return g;
-  }, [sessions, pending, query, agents, pcFilter, hiddenRepos, coordOnly, localPcId]);
+  }, [sessions, pending, query, agents, pcFilter, selectedRepos, coordOnly, localPcId]);
 
   // Una tarjeta con permiso pendiente va antes que las demas en el recorrido de Tab: el orden del
   // Tab es el del DOM, asi que su columna se dibuja primero y el orden visual se repone con `order`

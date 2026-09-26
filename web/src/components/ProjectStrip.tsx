@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import type { Session } from "../types";
 
-const HIDDEN_KEY = "lienzo.hiddenRepos";
+const SELECTED_KEY = "lienzo.selectedRepos";
 const COORD_KEY = "lienzo.coordOnly";
 
-function loadHidden(): Set<string> {
+function loadSelected(): Set<string> {
   try {
-    const raw = localStorage.getItem(HIDDEN_KEY);
+    const raw = localStorage.getItem(SELECTED_KEY);
     const arr = raw ? (JSON.parse(raw) as unknown) : [];
     return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
   } catch {
@@ -14,25 +14,25 @@ function loadHidden(): Set<string> {
   }
 }
 
-function saveHidden(h: Set<string>) {
+function saveSelected(s: Set<string>) {
   try {
-    localStorage.setItem(HIDDEN_KEY, JSON.stringify([...h]));
+    localStorage.setItem(SELECTED_KEY, JSON.stringify([...s]));
   } catch {
     /* sin storage, no importa */
   }
 }
 
-/** Repos ocultos (por su `repo_key`, o `repo` sin ese campo) y el chip ★ Coordinadoras, recordados
- *  en el navegador. Un repo que ya no tiene ninguna sesion se saca solo de la selección: si vuelve
- *  a aparecer despues (otra sesion del mismo repo), no sigue oculto por una eleccion vieja. */
+/** Proyectos elegidos (por su `repo_key`, o `repo` sin ese campo) y el chip ★ Coordinadoras,
+ *  recordados en el navegador. Ninguno elegido es "todos": el click elige, nunca oculta. Un repo que
+ *  ya no tiene sesiones se saca solo de la eleccion, para que no quede un filtro invisible. */
 export function useProjectFilter(groups: { key: string }[]): {
-  hidden: Set<string>;
+  selected: Set<string>;
   coordOnly: boolean;
   toggleRepo: (key: string) => void;
   showAll: () => void;
   toggleCoord: () => void;
 } {
-  const [hidden, setHidden] = useState<Set<string>>(loadHidden);
+  const [selected, setSelected] = useState<Set<string>>(loadSelected);
   const [coordOnly, setCoordOnly] = useState<boolean>(() => {
     try {
       return localStorage.getItem(COORD_KEY) === "1";
@@ -42,7 +42,7 @@ export function useProjectFilter(groups: { key: string }[]): {
   });
   // la poda se hace durante el render cuando cambia el conjunto de repos (el patron de React para
   // ajustar estado a una prop, sin effect). Con cero grupos no se poda: es el tablero cargando, y
-  // podar ahi borraria toda la eleccion guardada antes de que lleguen las sesiones
+  // podar ahi borraria la eleccion guardada antes de que lleguen las sesiones
   const firma = groups
     .map((g) => g.key)
     .sort()
@@ -52,19 +52,19 @@ export function useProjectFilter(groups: { key: string }[]): {
     setFirmaVista(firma);
     if (groups.length > 0) {
       const keys = new Set(groups.map((g) => g.key));
-      const next = new Set([...hidden].filter((k) => keys.has(k)));
-      if (next.size !== hidden.size) setHidden(next);
+      const next = new Set([...selected].filter((k) => keys.has(k)));
+      if (next.size !== selected.size) setSelected(next);
     }
   }
-  useEffect(() => saveHidden(hidden), [hidden]);
+  useEffect(() => saveSelected(selected), [selected]);
   const toggleRepo = (key: string) =>
-    setHidden((h) => {
-      const next = new Set(h);
+    setSelected((cur) => {
+      const next = new Set(cur);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  const showAll = () => setHidden(new Set());
+  const showAll = () => setSelected(new Set());
   const toggleCoord = () =>
     setCoordOnly((v) => {
       const next = !v;
@@ -75,7 +75,14 @@ export function useProjectFilter(groups: { key: string }[]): {
       }
       return next;
     });
-  return { hidden, coordOnly, toggleRepo, showAll, toggleCoord };
+  return { selected, coordOnly, toggleRepo, showAll, toggleCoord };
+}
+
+/** ¿Pasa el filtro de proyectos? ★ Coordinadoras muestra todas, elegido o no su proyecto: es la
+ *  vista de "quien reparte". Si no, sin nada elegido pasa todo, y con algo elegido solo lo elegido. */
+export function passesProjects(s: Session, selected: Set<string>, coordOnly: boolean): boolean {
+  if (coordOnly) return !!s.coordinator;
+  return selected.size === 0 || selected.has(s.repo_key || s.repo);
 }
 
 interface RepoGroup {
@@ -84,8 +91,8 @@ interface RepoGroup {
   count: number;
 }
 
-/** Un grupo por repo (frente B agrega `repo_key`: agrupa por eso si viene, y si no por `repo`), la
- *  etiqueta siempre es `repo`. Orden: el que mas sesiones tiene primero. */
+/** Un grupo por repo (agrupa por `repo_key` si viene, y si no por `repo`); la etiqueta siempre es
+ *  `repo`. Orden: el que mas sesiones tiene primero. */
 export function repoGroups(sessions: Session[]): RepoGroup[] {
   const by = new Map<string, RepoGroup>();
   for (const s of sessions) {
@@ -99,32 +106,31 @@ export function repoGroups(sessions: Session[]): RepoGroup[] {
 
 interface Props {
   groups: RepoGroup[];
-  hidden: Set<string>;
+  selected: Set<string>;
   coordOnly: boolean;
   onToggleRepo: (key: string) => void;
   onShowAll: () => void;
   onToggleCoord: () => void;
 }
 
-/** Chips de proyecto en el menu de arriba, despues de los de agente y separados por una raya
- *  (pedido de Ariel): uno por repo con sesiones vivas y su conteo, mas ★ Coordinadoras. Seleccion
- *  multiple (ocultar/mostrar, no exclusiva), todos prendidos por defecto; con un solo repo en el
- *  tablero no aparece: no hay nada que elegir. */
-export function ProjectStrip({ groups, hidden, coordOnly, onToggleRepo, onShowAll, onToggleCoord }: Props) {
+/** Chips de proyecto en el menu de arriba, al lado del buscador y fuera de su fondo (pedido de
+ *  Ariel): uno por repo con sesiones vivas y su conteo, mas ★ Coordinadoras. Un solo estado, el
+ *  elegido: click elige (se pueden elegir varios), otro click lo suelta, y Todos suelta todo. Con
+ *  un solo repo en el tablero no aparece: no hay nada que elegir. */
+export function ProjectStrip({ groups, selected, coordOnly, onToggleRepo, onShowAll, onToggleCoord }: Props) {
   if (groups.length < 2) return null;
   return (
-    <span className="pjstrip" role="group" aria-label="filtrar por proyecto">
-      <span className="sep" aria-hidden="true" />
-      <button type="button" className={`chip pjchip all ${hidden.size === 0 ? "on" : ""}`} onClick={onShowAll}>
+    <div className="pjstrip" role="group" aria-label="filtrar por proyecto">
+      <button type="button" className={`chip pjchip all ${selected.size === 0 && !coordOnly ? "on" : ""}`} onClick={onShowAll}>
         Todos
       </button>
       {groups.map((g) => (
         <button
           key={g.key}
           type="button"
-          className={`chip pjchip ${hidden.has(g.key) ? "" : "on"}`}
-          aria-pressed={!hidden.has(g.key)}
-          title={hidden.has(g.key) ? `mostrar sesiones de ${g.label}` : `ocultar sesiones de ${g.label}`}
+          className={`chip pjchip ${selected.has(g.key) ? "on" : ""}`}
+          aria-pressed={selected.has(g.key)}
+          title={selected.has(g.key) ? `dejar de filtrar por ${g.label}` : `ver las sesiones de ${g.label}`}
           onClick={() => onToggleRepo(g.key)}
         >
           {g.label} {g.count}
@@ -134,11 +140,11 @@ export function ProjectStrip({ groups, hidden, coordOnly, onToggleRepo, onShowAl
         type="button"
         className={`chip pjchip star ${coordOnly ? "on" : ""}`}
         aria-pressed={coordOnly}
-        title="mostrar solo las coordinadoras, de todos los proyectos"
+        title="ver solo las coordinadoras, de todos los proyectos"
         onClick={onToggleCoord}
       >
         ★ Coordinadoras
       </button>
-    </span>
+    </div>
   );
 }

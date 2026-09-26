@@ -101,8 +101,8 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
             {a}
           </button>
         ))}
-        {projects}
       </div>
+      {projects}
       <span className="sp" />
       {authInfo.remote_url && authInfo.local && (
         <button className="icon lbl" title={`abrir en el celular: ${authInfo.remote_url.replace("https://", "")}`} aria-label="QR con la URL para el celular" onClick={onShowQr}>

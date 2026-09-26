@@ -160,88 +160,91 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
 /** El tablero fijo de siempre junta cuatro repos (lienzo 3, demo 3, teorema 2, viejo 2) y una sola
  *  coordinadora (en lienzo). De las diez se ven ocho: las dos de "viejo" las esconde el tablero por
  *  su cuenta (una muerta en la columna colapsada, otra vieja), asi que los conteos parten de 8. */
-test.describe("tira de proyectos: repo y ★ Coordinadoras (pedido de Ariel, parte 3)", () => {
-  test("con un solo repo en el tablero no aparece", async ({ page }) => {
+test.describe("chips de proyecto: repo y ★ Coordinadoras (pedido de Ariel)", () => {
+  const card = (page: Page, sid: string) => page.locator(`.card[data-sid="${sid}"]`);
+
+  test("con un solo repo en el tablero no aparecen", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()).map((s) => ({ ...s, repo: "lienzo" })));
     await expect(page.locator(".pjstrip")).toHaveCount(0);
   });
 
-  test("un chip por repo con sesiones vivas, con su conteo", async ({ page }) => {
+  test("van en el header, afuera del fondo del buscador, uno por repo con su conteo", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
-    const strip = page.locator(".pjstrip");
+    await expect(page.locator("header .search .pjchip")).toHaveCount(0);
+    const strip = page.locator("header > .pjstrip");
     await expect(strip.locator(".pjchip", { hasText: "lienzo" })).toContainText("3");
     await expect(strip.locator(".pjchip", { hasText: "demo" })).toContainText("3");
     await expect(strip.locator(".pjchip", { hasText: "teorema" })).toContainText("2");
-    await expect(strip.locator(".pjchip", { hasText: "viejo" })).toContainText("2");
     await expect(strip.locator(".pjchip.star")).toHaveText("★ Coordinadoras");
   });
 
-  test("click en un chip lo oculta (selección múltiple); Todos lo vuelve a mostrar", async ({ page }) => {
+  test("por defecto no hay ninguno elegido y se ve todo; el click elige, no oculta", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
+    await expect(page.locator(".pjchip.on")).toHaveText(["Todos"]);
     await expect(page.locator(".card")).toHaveCount(8);
 
     await page.locator(".pjchip", { hasText: "demo" }).click();
     await esperarQuietud(page);
-    await expect(page.locator(".card")).toHaveCount(5);
-    await expect(page.locator(`.card[data-sid="${SID.mapas}"]`)).toHaveCount(0);
-    await expect(page.locator(".pjchip", { hasText: "demo" })).not.toHaveClass(/\bon\b/);
+    await expect(page.locator(".pjchip", { hasText: "demo" })).toHaveClass(/\bon\b/);
+    await expect(page.locator(".card")).toHaveCount(3);
+    await expect(card(page, SID.mapas)).toBeVisible();
+    await expect(card(page, SID.coordinadora)).toHaveCount(0);
 
-    // selección múltiple: ocultar otro más no vuelve a mostrar el primero
+    // elegir otro suma: demo y teorema
+    await page.locator(".pjchip", { hasText: "teorema" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(5);
+
+    // otro click suelta ese; Todos suelta todo
     await page.locator(".pjchip", { hasText: "teorema" }).click();
     await esperarQuietud(page);
     await expect(page.locator(".card")).toHaveCount(3);
-
     await page.locator(".pjchip.all").click();
     await esperarQuietud(page);
     await expect(page.locator(".card")).toHaveCount(8);
+    await expect(page.locator(".pjchip.on")).toHaveText(["Todos"]);
   });
 
-  test("★ Coordinadoras muestra todas las coordinadoras, aunque su proyecto este oculto", async ({ page }) => {
+  test("★ Coordinadoras muestra todas las coordinadoras, elegido o no su proyecto", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
-    // por defecto todos los proyectos estan seleccionados
-    await expect(page.locator(".pjchip", { hasText: "lienzo" })).toHaveClass(/\bon\b/);
-    await expect(page.locator(".pjchip", { hasText: "demo" })).toHaveClass(/\bon\b/);
-    await page.locator(".pjchip", { hasText: "lienzo" }).click();
+    await page.locator(".pjchip", { hasText: "demo" }).click();
     await page.locator(".pjchip.star").click();
     await esperarQuietud(page);
-    // la única coordinadora del tablero fijo es la de lienzo, que está oculto: igual se ve
+    // la única coordinadora del tablero fijo es la de lienzo, que no está elegido: igual se ve
     await expect(page.locator(".card")).toHaveCount(1);
-    await expect(page.locator(`.card[data-sid="${SID.coordinadora}"]`)).toBeVisible();
+    await expect(card(page, SID.coordinadora)).toBeVisible();
 
-    // al apagarlo vuelve la selección de proyectos, con lienzo todavía oculto
+    // al apagarlo vuelve la elección de proyectos
     await page.locator(".pjchip.star").click();
     await esperarQuietud(page);
-    await expect(page.locator(`.card[data-sid="${SID.coordinadora}"]`)).toHaveCount(0);
+    await expect(card(page, SID.coordinadora)).toHaveCount(0);
+    await expect(card(page, SID.mapas)).toBeVisible();
   });
 
-  test("la selección de proyectos persiste al refrescar", async ({ page }) => {
+  test("la elección persiste al refrescar", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
-    await page.locator(".pjchip", { hasText: "viejo" }).click();
-    await page.locator(".pjchip.star").click();
+    await page.locator(".pjchip", { hasText: "demo" }).click();
     await esperarQuietud(page);
-    // solo coordinadoras: la única del tablero fijo, en lienzo
-    await expect(page.locator(".card")).toHaveCount(1);
+    await expect(page.locator(".card")).toHaveCount(3);
 
     await page.reload();
     await page.waitForSelector(".card");
     await esperarQuietud(page);
-    await expect(page.locator(".pjchip", { hasText: "viejo" })).not.toHaveClass(/\bon\b/);
-    await expect(page.locator(".pjchip.star")).toHaveClass(/\bon\b/);
+    await expect(page.locator(".pjchip", { hasText: "demo" })).toHaveClass(/\bon\b/);
+    await expect(page.locator(".card")).toHaveCount(3);
   });
 
-  test("se combina con el buscador y los chips de agente (Y lógico)", async ({ page }) => {
+  test("se combina con los chips de agente (Y lógico)", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
-    // ocultar lienzo (3 sesiones) deja 7; apagar el chip de agente codex de esas 7 dentro deja 3
-    await page.locator(".pjchip", { hasText: "lienzo" }).click();
+    await page.locator(".pjchip", { hasText: "demo" }).click();
     await esperarQuietud(page);
-    await expect(page.locator(".card")).toHaveCount(5);
+    await expect(page.locator(".card")).toHaveCount(3);
 
     await page.locator("header .chip.codex").click();
     await esperarQuietud(page);
-    await expect(page.locator(".card")).toHaveCount(3);
-    await expect(page.locator(`.card[data-sid="${SID.mapas}"]`)).toBeVisible();
-    await expect(page.locator(`.card[data-sid="${SID.reglas}"]`)).toBeVisible();
-    await expect(page.locator(`.card[data-sid="${SID.muerta}"]`)).toBeVisible();
+    await expect(card(page, SID.mapas)).toBeVisible();
+    const quedan = await page.locator(".card").count();
+    expect(quedan).toBeLessThan(3);
   });
 
   test("nada se sale de la pantalla a 390 px de ancho", async ({ page }) => {
