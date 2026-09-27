@@ -7,8 +7,9 @@ import { Enroll } from "./components/Enroll";
 import { Forward } from "./components/Forward";
 import { Header } from "./components/Header";
 import { Login } from "./components/Login";
+import { Pairing } from "./components/Pairing";
 import { Panel } from "./components/Panel";
-import { PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
+import { pcOf, PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
 import { ProjectStrip, repoGroups, useProjectFilter } from "./components/ProjectStrip";
 import { Setup, TotpQr } from "./components/Setup";
 import { Toasts, useToasts } from "./components/Toasts";
@@ -16,7 +17,7 @@ import { UrlQr } from "./components/UrlQr";
 import { useLienzoData } from "./hooks/useLienzoData";
 import { useLocalFlag } from "./hooks/useLocalFlag";
 import { useNotifications } from "./hooks/useNotifications";
-import type { Config, State } from "./types";
+import type { Config, Session, State } from "./types";
 
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
@@ -64,6 +65,7 @@ export default function App() {
 function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; refreshAuth: () => void; onSetup: () => void }) {
   const [showQr, setShowQr] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
+  const [showPairing, setShowPairing] = useState(false);
   // dialogo de conectar (se abre arrastrando una tarjeta sobre otra): flotante, sin abrir nada mas
   const [connect, setConnect] = useState<{ from: string; to: string } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -96,6 +98,12 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // tira ni el filtro se dibujan (PcStrip lo decide solo con el arreglo vacío)
   const peers = usePeers();
   const [pcFilter, setPcFilter] = usePcFilter(peers);
+  // sesion de una PC caida: ni el tablero (Board.tsx tiene su propio peerDownOf) ni el selector de
+  // destino de Conectar/Pegar trabajo tienen a quien escribirle, aunque la sesion siga "viva" en el
+  // espejo (mismo criterio que Board: peer.alive === false)
+  const peersById = useMemo(() => new Map(peers.map((p) => [p.pc_id, p])), [peers]);
+  const localPcId = useMemo(() => peers.find((p) => p.local)?.pc_id ?? null, [peers]);
+  const peerDown = useCallback((s: Session) => peersById.get(pcOf(s, localPcId) ?? "")?.alive === false, [peersById, localPcId]);
   // tira de proyectos (pedido de Ariel, parte 3): un chip por repo con sesiones vivas, y ★ Coordinadoras
   const projectGroups = useMemo(() => repoGroups(Object.values(sessions)), [sessions]);
   const { selected: selectedRepos, coordOnly, toggleRepo, showAll: showAllRepos, toggleCoord } = useProjectFilter(projectGroups);
@@ -267,8 +275,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const connectCards = useCallback((from: string, to: string) => setConnect({ from, to }), []);
 
   const sel = selected ? sessions[selected] : null;
-  // sesiones a las que se les puede escribir: destinos de Conectar y coordinadora del SendBox
-  const writable = Object.values(sessions).filter(canWrite);
+  // sesiones a las que se les puede escribir: destinos de Conectar y coordinadora del SendBox. Sin
+  // consola sigue descartando `canWrite`; sumamos la PC caida, que no es "sin consola" pero tampoco
+  // tiene a quien escribirle (notas-D.md, ronda 3)
+  const writable = Object.values(sessions).filter((s) => canWrite(s) && !peerDown(s));
 
   const flags = [
     { label: "Avisos", icon: "🔔", on: notify, toggle: toggleNotify, title: "aviso del navegador (aunque la pestaña esté atrás) cuando una sesión pide permiso o te hace una pregunta" },
@@ -315,6 +325,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onShowTotp={() => {
           closeOverlays(true);
           setShowTotp(true);
+        }}
+        onShowPairing={() => {
+          closeOverlays(true);
+          setShowPairing(true);
         }}
         onHelp={() => setShowHelp(true)}
         onRescan={rescan}
@@ -371,6 +385,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       )}
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
+      {showPairing && <Pairing peers={peers} toast={toast} onClose={() => setShowPairing(false)} />}
       <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onFilter={setPcFilter} />
       <Board
         sessions={sessions}

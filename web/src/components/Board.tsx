@@ -855,6 +855,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         freeGroup={grupos.get(s.session_id)}
                         peerDown={peerDownOf(s)}
                         pcColor={pcColorOf(s)}
+                        multiPc={peers.length > 1}
                         onPick={() => {
                           // el click que cierra un arrastre tampoco elige la tarjeta
                           if (draggedRef.current) return;

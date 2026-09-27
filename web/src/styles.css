@@ -468,6 +468,12 @@ body:has(.panel-open) { overflow: hidden; }
 .gate-box .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .gate-box .two p { margin: 4px 0 8px; }
 @media (max-width: 700px) { .gate-box .two { grid-template-columns: 1fr; } }
+/* pantalla "Varias PCs" (menu ⋯ del header, plan §3.9): lista de peers, mostrar/pegar frase */
+.pairing .pcdot { width: 9px; height: 9px; border-radius: 50%; background: var(--pc-color, var(--dim)); flex: 0 0 auto; display: inline-block; }
+.pairing .pcdot.down { background: none; border: 1.5px solid var(--dim); box-sizing: border-box; }
+.pairing-list { display: flex; flex-direction: column; gap: 6px; }
+.pairing-join { display: flex; flex-direction: column; gap: 8px; }
+.pairing-phrase { font-size: 22px; text-align: center; }
 a.btn { display: block; text-align: center; text-decoration: none; background: var(--acc); color: var(--ink); border-radius: 6px; padding: 10px; font-weight: 600; }
 /* busqueda + chips de agente en el header: filtran las tarjetas visibles, nada mas */
 header .search { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; gap: 4px; background: var(--card); border: 1px solid transparent; border-radius: 8px; padding: 2px 4px 2px 6px; }

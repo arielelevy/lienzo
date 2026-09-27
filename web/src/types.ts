@@ -65,6 +65,9 @@ export interface Session {
   title_source?: "transcript" | "prompt" | "user" | null;
   /** coordinadora del repo (estrella en la tarjeta): recibe los avisos "cuando termine" y "avisame". A lo sumo una por repo */
   coordinator?: boolean;
+  /** "pc": esta coordinadora vale solo para esta PC (menu ⋯ → "Coordinadora solo de esta PC", plan
+   *  §3.6) y no apaga ni la reemplaza la coordinadora federada de otra PC. null/ausente: federada. */
+  coordinator_scope?: "pc" | null;
   /** le pegaron el trabajo de esa sesion (Ctrl+V): heredo su titulo con la marca copycat */
   copycat_of?: string | null;
   /** la llave stopped: session_id de la copia que se llevo su trabajo, o "user" si la detuvieron desde

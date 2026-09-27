@@ -15,6 +15,7 @@ interface Props {
   onSetup: () => void;
   onShowQr: () => void;
   onShowTotp: () => void;
+  onShowPairing: () => void;
   onHelp: () => void;
   onRescan: () => void;
   onLogout: () => void;
@@ -42,7 +43,7 @@ const Phone = () => (
 
 /** Header minimalista: marca y estado, buscador con chips por agente, acceso desde el celular
  *  (URL del tunel y QR de Authenticator, juntos) y un menu "⋯" con el resto. */
-export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onHelp, onRescan, onLogout, onMenuOpen, flags, projects }: Props) {
+export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onShowPairing, onHelp, onRescan, onLogout, onMenuOpen, flags, projects }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -151,6 +152,10 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
             <button role="menuitem" onClick={closeAnd(onHelp)}>
               <span className="row">? Atajos de teclado</span>
               <span className="desc">qué hace cada tecla y cada gesto del tablero</span>
+            </button>
+            <button role="menuitem" onClick={closeAnd(onShowPairing)}>
+              <span className="row">🖥 Varias PCs</span>
+              <span className="desc">emparejar esta PC con otra de la misma red local y ver el tablero conjunto</span>
             </button>
             {authInfo.configured && !authInfo.local && (
               <>

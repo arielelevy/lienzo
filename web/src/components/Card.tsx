@@ -292,6 +292,9 @@ interface Props {
   /** color de la PC dueña (tira de PCs, mas de una emparejada): un borde a la izquierda del color
    *  de esa PC, para distinguir de un vistazo de que maquina es cada tarjeta. */
   pcColor?: string;
+  /** hay mas de una PC emparejada (peers.length > 1): habilita "Coordinadora solo de esta PC" en
+   *  el menu ⋯, al lado de la coordinadora federada (plan §3.6). */
+  multiPc?: boolean;
   /** un click: elegir la tarjeta, sin abrir nada */
   onPick?: () => void;
   /** doble click (o Enter): abrir el panel */
@@ -305,7 +308,7 @@ interface Props {
   toast?: ToastFn;
 }
 
-export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, peerDown, pcColor, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, peerDown, pcColor, multiPc = false, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const workClipboard = useWorkClipboard(s, !!p || !!s.pending_id, toast);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -444,6 +447,16 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     return act(async () => {
       await api.put(`/sessions/${s.session_id}/coordinator`, { on });
       return on ? `${shortName(s)} es la coordinadora de ${s.repo}` : `${shortName(s)} ya no es la coordinadora`;
+    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`));
+  };
+  // coordinadora separada solo para esta PC (plan §3.6): no apaga ni la reemplaza la federada de
+  // otra PC del mismo repo. Apagarla no necesita mandar el scope, `set_coordinator` lo limpia solo
+  const pcCoordinator = s.coordinator && s.coordinator_scope === "pc";
+  const togglePcCoordinator = () => {
+    const on = !pcCoordinator;
+    return act(async () => {
+      await api.put(`/sessions/${s.session_id}/coordinator`, on ? { on: true, scope: "pc" } : { on: false });
+      return on ? `${shortName(s)} es la coordinadora de ${s.repo} en esta PC` : `${shortName(s)} ya no es la coordinadora de esta PC`;
     }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`));
   };
 
@@ -724,6 +737,21 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               }}
             >
               {s.coordinator ? "★ Quitarle el rol de coordinadora" : "☆ Coordinadora del repo"}
+            </button>
+          )}
+          {multiPc && s.agent === "claude" && writable && (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={busy}
+              aria-pressed={pcCoordinator}
+              title="la coordinadora vale solo para esta PC: no apaga ni la reemplaza la de otra PC del mismo repo"
+              onClick={() => {
+                closeMenu();
+                togglePcCoordinator();
+              }}
+            >
+              {pcCoordinator ? "★ Quitarle el rol (solo esta PC)" : "☆ Coordinadora solo de esta PC"}
             </button>
           )}
           <button

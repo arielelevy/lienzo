@@ -118,6 +118,9 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const nativeWhy = useMemo(() => {
     if (!targetSession) return "elegí primero una sesión destino";
     if (targetSession.session_id === from.session_id) return "es un canal entre dos sesiones: elegí otra como destino";
+    // ListAgents solo ve la propia maquina (plan multi-PC §3.5): sin esto, dos sesiones de PCs
+    // distintas ofrecerian un canal que la propia sesion origen no puede abrir
+    if ((from.pc ?? null) !== (targetSession.pc ?? null)) return "ListAgents solo ve su propia PC: el canal nativo no cruza PCs distintas";
     const bad = [from, targetSession].filter((s) => s.agent !== "claude");
     if (!bad.length) return null;
     const who = bad.map((s) => (s.session_id === from.session_id ? "esta sesión" : shortName(s))).join(" y ");
