@@ -229,7 +229,7 @@ Arrastrá una tarjeta **desde el agarre ⇢**, o con **Alt** apretado desde su f
 título, y soltala sobre otra. (Sin Alt, ese mismo arrastre **mueve** la tarjeta: ver *Correr las
 tarjetas*.) Se escribe en una frase, que se interpreta mientras tipeás: "continuá a
 las 16:00", "en 30 min seguí", "cada 30 min continuá hasta 6 veces", "cuando termine mandale a
-Demo", "cuando termine avisame". Enter confirma. Soltarla **sobre sí misma** es el bucle.
+demo", "cuando termine avisame". Enter confirma. Soltarla **sobre sí misma** es el bucle.
 
 Cuatro modos: *Ahora* (le manda la última respuesta de la otra, con plantilla editable), *Cuando
 termine* (su respuesta viaja al cerrar cada turno, una vez o hasta un tope), *Programar* (un texto

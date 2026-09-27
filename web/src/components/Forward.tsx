@@ -273,7 +273,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           placeholder={
             onItself
               ? 'Escribilo: "continuá a las 9", "cada 30 min continuá", "en 2 h seguí hasta 3 veces"'
-              : `Escribilo: "continuá a las 16:00", "cada 30 min seguí", "cuando termine mandale a ${others[0]?.repo ?? "Demo"}"`
+              : `Escribilo: "continuá a las 16:00", "cada 30 min seguí", "cuando termine mandale a ${others[0]?.repo ?? "demo"}"`
           }
           style={{ flex: 1 }}
         />

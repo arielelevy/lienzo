@@ -26,7 +26,7 @@
   sin correr git, la causa se supo después), y un §15.6 de estado de implementación con lo que está
   en el árbol y lo que sigue abierto (el lock de la PC de menor `pc_id`, la prueba real con dos
   notebooks).
-- **Skill `lienzo`** (`C:\Users\<usuario>\.agents\skills\lienzo\SKILL.md`):
+- **Skill `lienzo`** (`~\.agents\skills\lienzo\SKILL.md`):
   sección nueva "Varias PCs" arriba de todo (qué es de cada PC, qué cambia para coordinar);
   "Cómo se lanzan" sumó el título con `@<pc>` y una subsección "Lanzar en otra PC"
   (`POST /sessions/launch`); la tabla de API sumó `pc`/`repo_key`/`transcript_bytes`/`model` en
@@ -49,16 +49,16 @@
   `modelo_de()`, `tamano_contexto_mb()`, `tablero()` con un prefijo inexistente para no imprimir
   nada real): las cuatro funciones devolvieron lo esperado (9 sesiones reales detectadas, `salud()`
   vacía porque esta PC no tiene peers emparejados).
-- **`C:\Users\<usuario>\.claude\CLAUDE.md`**: la sección "Trabajar en equipo: el lienzo" (antes
+- **`~\.claude\CLAUDE.md`**: la sección "Trabajar en equipo: el lienzo" (antes
   ~85 líneas con el detalle entero de emparejamiento, canales y patrón) quedó en 2 líneas más un
   puntero al skill. Verifiqué antes de cortar que las cuatro piezas que tenía (intro, cómo se
   lanzan, los dos canales, el patrón que funciona) ya están en el skill, incluso más completas con
   lo de esta ronda.
-- **`C:\Users\<usuario>\.codex\AGENTS.md`**: no es un link (archivo regular, `Links: 1`, contenido
+- **`~\.codex\AGENTS.md`**: no es un link (archivo regular, `Links: 1`, contenido
   casi idéntico a `CLAUDE.md` salvo el auto-referencia `AGENTS.md`/`CLAUDE.md` invertida) y **nunca
   había tenido** la sección "Trabajar en equipo: el lienzo" — quedó desactualizado desde antes de
   que esa sección existiera en `CLAUDE.md`. Le agregué el mismo texto compacto, en el mismo lugar
-  (entre "Cómo trabajar" y "Trampa que reaparece siempre"), para que las dos puntas dejen de
+  (el mismo que en `CLAUDE.md`), para que las dos puntas dejen de
   divergir en esto.
 
 ## Que medí

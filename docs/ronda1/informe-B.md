@@ -52,7 +52,7 @@
 - **`tests/test_pc_fields.py`** (nuevo): las 13 pruebas de arriba, contra el `lienzo/identity.py`
   real del frente A (ya estaba escrito cuando arranque: uso `pc_id()`/`repo_key()` de verdad, no un
   stub), con `peer.json` y el cache de remotes aislados en `tmp_path` via `state.LIENZO`
-  monkeypatcheado — nunca tocan el `~/.lienzo` real, que la otra ronda (otroproyecto) esta usando.
+  monkeypatcheado — nunca tocan el `~/.lienzo` real, que otra ronda de otro proyecto esta usando.
 
 ## Que medi
 
