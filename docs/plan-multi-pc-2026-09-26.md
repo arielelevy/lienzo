@@ -202,45 +202,45 @@ commiter por árbol**:
 
 - [x] `LIENZO_HOME` configurable (hoy `~/.lienzo` fijo), leído por server, hook e `install.py`
 - [x] `peer.json` con `pc_id`, nombre y color, creado al arrancar si no existe
-- [ ] Campo `pc` en cada sesión, link, regla y pendiente  *(sesiones, links y reglas sí; el pendiente local todavía no lo trae: lo escribe `hook.py`)*
+- [x] Campo `pc` en cada sesión, link, regla y pendiente
 - [x] Identidad de repo por remote `origin` normalizado, con fallback a la carpeta
 - [x] `transcript_bytes` y `model` en `GET /sessions`
 - [x] `lienzo/federation.py` con la interfaz de transporte (vacía)
-- [ ] Tests verdes; dos instancias en una PC arrancan sin pisarse
+- [x] Tests verdes; dos instancias en una PC arrancan sin pisarse  *(`test_peer_server.py`: dos procesos reales en esta PC, con firma, espejo y enrutado)*
 
 ### F1 · Ver la otra PC
 
-- [ ] Listener `:7322` con bind a la IP de LAN, solo `/peer/*`
+- [x] Listener `:7322` con bind a la IP de LAN, solo `/peer/*`
 - [x] Emparejamiento por frase de seis palabras; `peers.json`; revocar
 - [x] Firma HMAC con timestamp y nonce, y rechazo de replay
 - [x] Beacon UDP en la LAN; actualización de IP por `pc_id`
 - [ ] `install.py --peer`: regla de firewall en perfil Privado  *(código y `--dry-run` probados; la regla real no se corrió)*
-- [ ] `/peer/events` y cliente SSE saliente con reconexión y snapshot
-- [ ] Espejo en memoria; `/sessions` mezcla local y remoto con `pc_alive`
-- [ ] `digest`, `turns`, `screen`, `connections` remotos bajo demanda
-- [ ] `GET /peer/health` (memoria, CPU, temperatura, sesiones)
+- [x] `/peer/events` y cliente SSE saliente con reconexión y snapshot
+- [x] Espejo en memoria; `/sessions` mezcla local y remoto con `pc_alive`  *(sin campo `pc_alive`: la PC caída sale del `alive` de `GET /peers`)*
+- [x] `digest`, `turns`, `screen`, `connections` remotos bajo demanda
+- [x] `GET /peer/health` (memoria, CPU, temperatura, sesiones)
 - [x] Tope de 4 peers
-- [ ] **Cierre:** desde A se ven en vivo las tarjetas y la salud de B
+- [ ] **Cierre:** desde A se ven en vivo las tarjetas y la salud de B  *(probado entre dos procesos en esta PC; falta con la notebook)*
 
 ### F2 · Operar la otra PC
 
-- [ ] Mapa `sid → pc` y enrutado transparente
-- [ ] `send`, `interrupt`, `dialog`, `title`, `stopped`, `DELETE`
-- [ ] `POST /pending/<id>` remoto
-- [ ] `attach` con bytes proxeados y ruta de destino
-- [ ] Errores del peer (409, 404, caído) devueltos tal cual al front
-- [ ] Log `peer` de cada request recibida
-- [ ] **Cierre:** se aprueba un permiso de B desde el tablero de A
+- [x] Mapa `sid → pc` y enrutado transparente
+- [x] `send`, `interrupt`, `dialog`, `title`, `stopped`, `DELETE`
+- [x] `POST /pending/<id>` remoto
+- [x] `attach` con bytes proxeados y ruta de destino
+- [x] Errores del peer (409, 404, caído) devueltos tal cual al front
+- [x] Log `peer` de cada request recibida
+- [ ] **Cierre:** se aprueba un permiso de B desde el tablero de A  *(probado entre dos procesos en esta PC; falta con la notebook)*
 
 ### F3 · Coordinar entre PCs
 
 - [x] Reglas `on_stop` y `at` con `to` en otra PC
-- [ ] Chequeo de bucle A↔B global, con lock en la PC de menor `pc_id`  *(el chequeo contra las reglas remotas sí; el lock, no)*
-- [ ] Regla repetida y programadas a ±2 min chequeadas en la PC del destino
+- [x] Chequeo de bucle A↔B global, con lock en la PC de menor `pc_id`
+- [x] Regla repetida y programadas a ±2 min chequeadas en la PC del destino
 - [x] Coordinadora federada por repo
-- [ ] `scope: "pc"` para separarla, en API y en el menú ⋯  *(en `sessions.py` sí; falta la API y el menú ⋯)*
-- [ ] Sin flecha doble (canal nativo) entre PCs distintas
-- [ ] `POST /sessions/launch` con `launch_roots` y ejecutable fijo por agente  *(`launch.py` hecho y probado; falta la ruta en el server)*
+- [x] `scope: "pc"` para separarla, en API y en el menú ⋯
+- [x] Sin flecha doble (canal nativo) entre PCs distintas
+- [x] `POST /sessions/launch` con `launch_roots` y ejecutable fijo por agente
 - [ ] **Cierre:** desde la ★ en A se lanza un frente en B y su informe vuelve solo
 
 ### F4 · Front y documentación
@@ -249,36 +249,36 @@ commiter por árbol**:
 - [x] Chips con conteo, memoria y temperatura; filtro; colapso
 - [x] Borde o badge de color por PC en cada tarjeta
 - [x] Tarjetas grises y controles deshabilitados con el peer caído
-- [ ] Pantalla de emparejamiento (mostrar frase, pegar frase, lista de peers, revocar)
+- [x] Pantalla de emparejamiento (mostrar frase, pegar frase, lista de peers, revocar)
 - [x] Filtro por proyecto arriba (pedido 2026-09-26): un chip por repo para ver u ocultar, y  *(al final: el click elige proyectos, afuera del buscador, y ★ respeta lo elegido)*
       «★ Coordinadoras»; se combina con PCs, buscador y agentes; persiste en el navegador
 - [x] Pruebas Playwright de la tira y las flechas entre PCs
-- [ ] README: sección "Varias PCs", API nueva, archivos de estado nuevos
-- [ ] `DISENO.es.md` §15 con las decisiones de este plan
+- [x] README: sección "Varias PCs", API nueva, archivos de estado nuevos
+- [x] `DISENO.es.md` §15 con las decisiones de este plan  *(el archivo está en `.gitignore`: queda en disco, no en el repo)*
 - [ ] **Cierre:** prueba real con la notebook, con terminales de prueba
 
 ### F5 · Skill `lienzo`
 
 `SKILL.md`:
 
-- [ ] Sección "Varias PCs": qué es de cada PC y qué es de la federación
-- [ ] "Cómo se lanzan": `POST /sessions/launch` para una PC remota; `explorer.exe` solo local
-- [ ] Título de tarjeta con la PC cuando hay más de una: `<proyecto> - encargo A @notebook - <descripción>`
-- [ ] Tabla de API: `pc`, `/peers`, `/peer/health`, `scope` de la coordinadora, `launch`
-- [ ] "Los dos canales": el nativo no cruza PCs
-- [ ] Working tree: "un commiter por árbol", la delegada por PC y el merge desde `ronda-<N>/<pc>`
-- [ ] CPU y memoria: pisos y semáforo por PC, lectura por `/peer/health`
-- [ ] Trampas nuevas: peer caído, `/clear` en PC remota (buscar por `pid` y `pc`)
+- [x] Sección "Varias PCs": qué es de cada PC y qué es de la federación
+- [x] "Cómo se lanzan": `POST /sessions/launch` para una PC remota; `explorer.exe` solo local
+- [x] Título de tarjeta con la PC cuando hay más de una: `<proyecto> - encargo A @notebook - <descripción>`
+- [x] Tabla de API: `pc`, `/peers`, `/peer/health`, `scope` de la coordinadora, `launch`
+- [x] "Los dos canales": el nativo no cruza PCs
+- [x] Working tree: "un commiter por árbol", la delegada por PC y el merge desde `ronda-<N>/<pc>`
+- [x] CPU y memoria: pisos y semáforo por PC, lectura por `/peer/health`
+- [x] Trampas nuevas: peer caído, `/clear` en PC remota (buscar por `pid` y `pc`)
 
 `coordinar.py`:
 
-- [ ] Filtro y columna `pc` en `frentes()` y `tablero()`
-- [ ] `tamano_contexto_mb()` y `modelo_de()` leen `transcript_bytes` y `model` de la API, no del disco
-- [ ] `lanzar(pc, cwd, titulo)` y `salud()`
+- [x] Filtro y columna `pc` en `frentes()` y `tablero()`
+- [x] `tamano_contexto_mb()` y `modelo_de()` leen `transcript_bytes` y `model` de la API, no del disco
+- [x] `lanzar(pc, cwd, titulo)` y `salud()`
 
 `CLAUDE.md` global:
 
-- [ ] La sección del lienzo queda en dos líneas y un puntero al skill, para no duplicarlo
+- [x] La sección del lienzo queda en dos líneas y un puntero al skill, para no duplicarlo
 
 - [ ] **Cierre:** una ronda real repartida entre dos PCs usando solo el skill, y el skill
       corregido contra lo medido
