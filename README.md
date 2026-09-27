@@ -324,9 +324,13 @@ del acceso remoto), la otra la pega. De ahí sale una clave compartida por par, 
 revoca; revocar corta el espejo y lo saca de `peers.json`, y del otro lado se entera cuando deja
 de contestarle.
 
-Un **beacon UDP** (puerto 7323) anuncia cada PC a sus peers ya emparejados cada 10 s, firmado con
-la clave de cada par: si el DHCP le cambió la IP a una PC, el beacon la actualiza sola sin tocar
-nada a mano.
+**Todas las PCs de la LAN con el lienzo andando se ven solas**, emparejadas o no: un **beacon UDP**
+(puerto 7323) anuncia cada 10 s el nombre, el `pc_id` y el puerto de cada PC, sin firma. La pantalla
+lista las que ve en **En esta red** al abrirse (sin sondeo; para buscar de nuevo, `GET /peers/lan`),
+y **Emparejar** deja puestos la IP y el puerto: falta sólo la frase. Ese anuncio no da ningún
+permiso; hablarle a una PC sigue pidiendo la clave del par. A los ya emparejados, además, el beacon
+les manda un anuncio firmado con la clave de cada par: si el DHCP le cambió la IP a una PC, se
+actualiza sola sin tocar nada a mano.
 
 ### Red y firewall
 
@@ -335,9 +339,9 @@ El tablero sigue en `127.0.0.1:7321`, sin cambios. Un **listener aparte** (7322 
 `0.0.0.0`— y firma cada request con HMAC (`X-Lienzo-Peer`, `X-Lienzo-Ts`, `X-Lienzo-Nonce`,
 `X-Lienzo-Sig`, ventana de ±30 s, sin nonces repetidos): un peer emparejado puede teclear en la otra
 PC y lanzar sesiones nuevas, así que la firma y la ventana de tiempo son las que evitan que
-cualquiera en la LAN se haga pasar por un peer. Ese listener sólo arranca si hay algún peer
-emparejado o si el server corre con `--peers`; en una red pública el puerto no escucha porque nadie
-lo abrió.
+cualquiera en la LAN se haga pasar por un peer. `lienzo-server.cmd` lo arranca siempre (pasa
+`--peers`); corriendo `server.py` a mano, sólo con `--peers` o con algún peer ya emparejado. En una
+red pública no llega nadie: el firewall lo abre sólo en el perfil Privado.
 
 ```powershell
 py -3.14 install.py --peer          # regla de firewall de Windows, 7322 TCP y 7323 UDP, perfil Privado
@@ -362,14 +366,16 @@ recién abierta.
 
 Con dos o más PCs emparejadas aparece, arriba del tablero, un chip **Todas** con el total y uno por
 PC con su nombre, cuántas tarjetas tiene ahí y —si está viva— memoria libre y temperatura
-(`GET /peers`). Click filtra a esa PC; click de nuevo vuelve a Todas. Una PC caída se ve en ○, sin
+(`GET /peers`); el conteo va en subíndice chico, para que no se lea como parte del nombre. Click
+filtra a esa PC y nada más: se vuelve con Todas. Una PC caída se ve en ○, sin
 memoria ni temperatura (sería un dato viejo), y sus tarjetas quedan grises con controles
 deshabilitados y "sin conexión hace X".
 
 Al lado, con dos o más proyectos en el tablero, un chip por repo (con sesiones vivas) más
-**★ Coordinadoras**: a diferencia del filtro de PC, acá **el click elige** (se pueden elegir varios
-a la vez) en vez de ocultar; sin ninguno elegido se ve todo. ★ Coordinadoras se combina con lo
-elegido: muestra las coordinadoras de esos proyectos, o de todos si no hay ninguno elegido. Los dos
+**★ Coordinadoras**, en el header al lado del buscador. **El click elige y nada más**: un proyecto
+por vez, otro click sobre el elegido no lo suelta, y **Todos** vuelve a todo. ★ Coordinadoras es la
+excepción, se prende y se apaga, y se combina con lo elegido: muestra las coordinadoras de ese
+proyecto, o de todos si no hay ninguno elegido. Los dos
 filtros, el de PC y el de proyecto, viven en el navegador (como las posiciones corridas): no viajan
 al server ni a otra máquina.
 
@@ -418,6 +424,7 @@ túnel, además la cookie de sesión.
 | GET | `/peers` | la propia PC primero (`local: true`) y después cada peer emparejado, con `alive`, `last_seen` y `health` (memoria, CPU, temperatura); sin peers, un array de un solo elemento |
 | POST | `/peers/offer` | `{ttl_s?}`; genera la frase de seis palabras para emparejar, `{phrase, expires}` |
 | POST | `/peers/join` | `{phrase, host, port}`; pega la frase del otro lado. 400 si no vale, 409 con tope de 4 ya emparejados |
+| GET | `/peers/lan` | las PCs de la LAN con el lienzo andando que todavía no están emparejadas, por el anuncio del beacon: `[{pc_id, name, ip, port, last_seen}]` |
 | DELETE | `/peers/<pc_id>` | revoca el peer y corta el espejo |
 | POST | `/sessions/launch` | `{pc?, cwd, agent, title?}`; lanza una sesión nueva, local o en la PC `pc` (reenviado); `cwd` tiene que caer en `launch_roots` de esa PC |
 | GET | `/links` | envíos hechos; `kind` es `send`, `rule`, `native` o `user` |

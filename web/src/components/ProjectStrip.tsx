@@ -28,7 +28,7 @@ function saveSelected(s: Set<string>) {
 export function useProjectFilter(groups: { key: string }[]): {
   selected: Set<string>;
   coordOnly: boolean;
-  toggleRepo: (key: string) => void;
+  selectRepo: (key: string) => void;
   showAll: () => void;
   toggleCoord: () => void;
 } {
@@ -57,13 +57,8 @@ export function useProjectFilter(groups: { key: string }[]): {
     }
   }
   useEffect(() => saveSelected(selected), [selected]);
-  const toggleRepo = (key: string) =>
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  // el click elige ese proyecto y nada mas: otro click sobre el elegido no lo suelta (eso es Todos)
+  const selectRepo = (key: string) => setSelected(new Set([key]));
   const showAll = () => setSelected(new Set());
   const toggleCoord = () =>
     setCoordOnly((v) => {
@@ -75,7 +70,7 @@ export function useProjectFilter(groups: { key: string }[]): {
       }
       return next;
     });
-  return { selected, coordOnly, toggleRepo, showAll, toggleCoord };
+  return { selected, coordOnly, selectRepo, showAll, toggleCoord };
 }
 
 /** ¿Pasa el filtro de proyectos? Sin nada elegido pasa todo, y con algo elegido solo lo elegido.
@@ -108,16 +103,17 @@ interface Props {
   groups: RepoGroup[];
   selected: Set<string>;
   coordOnly: boolean;
-  onToggleRepo: (key: string) => void;
+  onSelectRepo: (key: string) => void;
   onShowAll: () => void;
   onToggleCoord: () => void;
 }
 
 /** Chips de proyecto en el menu de arriba, al lado del buscador y fuera de su fondo (pedido de
- *  Ariel): uno por repo con sesiones vivas y su conteo, mas ★ Coordinadoras. Un solo estado, el
- *  elegido: click elige (se pueden elegir varios), otro click lo suelta, y Todos suelta todo. Con
+ *  Ariel): uno por repo con sesiones vivas y su conteo, mas ★ Coordinadoras. El click elige y nada
+ *  mas: un proyecto por vez, otro click sobre el elegido no lo suelta, y Todos vuelve a todo. ★ es
+ *  la excepcion, se prende y se apaga. Con
  *  un solo repo en el tablero no aparece: no hay nada que elegir. */
-export function ProjectStrip({ groups, selected, coordOnly, onToggleRepo, onShowAll, onToggleCoord }: Props) {
+export function ProjectStrip({ groups, selected, coordOnly, onSelectRepo, onShowAll, onToggleCoord }: Props) {
   if (groups.length < 2) return null;
   return (
     <div className="pjstrip" role="group" aria-label="filtrar por proyecto">
@@ -130,10 +126,11 @@ export function ProjectStrip({ groups, selected, coordOnly, onToggleRepo, onShow
           type="button"
           className={`chip pjchip ${selected.has(g.key) ? "on" : ""}`}
           aria-pressed={selected.has(g.key)}
-          title={selected.has(g.key) ? `dejar de filtrar por ${g.label}` : `ver las sesiones de ${g.label}`}
-          onClick={() => onToggleRepo(g.key)}
+          title={`ver solo las sesiones de ${g.label}`}
+          onClick={() => onSelectRepo(g.key)}
         >
-          {g.label} {g.count}
+          {g.label}
+          <sub className="n">{g.count}</sub>
         </button>
       ))}
       <button

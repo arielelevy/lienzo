@@ -91,6 +91,16 @@ export interface PeerHealth {
 /** `GET /peers` (ronda 2): una fila por PC de la federacion, la propia incluida (`local: true`).
  *  Sin peers emparejados la ruta no existe (404) o devuelve un array de un solo elemento: en los
  *  dos casos la tira de PCs no aparece. */
+/** `GET /peers/lan`: una PC de la LAN con el lienzo corriendo, todavia sin emparejar (anuncio sin
+ *  firma del beacon). Solo para mostrarla y precargar la IP al emparejar. */
+export interface LanPc {
+  pc_id: string;
+  name: string;
+  ip: string;
+  port: number;
+  last_seen: string;
+}
+
 export interface Peer {
   pc_id: string;
   name: string;

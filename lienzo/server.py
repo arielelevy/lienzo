@@ -867,6 +867,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._doc_img(parts[2])
             if parts == ["peers"]:
                 return self._get_peers()
+            if parts == ["peers", "lan"]:
+                return self._get_peers_lan()
             if parts == ["pending"]:
                 return self._json(200, public_pending() + mirror.MIRROR.pending())
             if parts == ["links"]:
@@ -1213,6 +1215,16 @@ class Handler(BaseHTTPRequestHandler):
         info = identity.pc_info()
         local_row = {**info, "alive": True, "last_seen": now(), "local": True, "health": health.snapshot()}
         return self._json(200, [local_row] + mirror.MIRROR.peers_status())
+
+    def _get_peers_lan(self) -> None:
+        """GET /peers/lan: las PCs de la LAN con el lienzo corriendo que todavia no estan
+        emparejadas, por su anuncio sin firma del beacon (`{pc_id, name, ip, port, last_seen}`).
+        Sirven para mostrarlas y precargar la IP al emparejar; hablarles sigue pidiendo la frase."""
+        emparejadas = {p.get("pc_id") for p in federation.list_peers(PEERS_FILE)}
+        lan = [
+            {**d, "last_seen": mirror.iso(d["last_seen"])} for d in beacon.discovered() if d["pc_id"] not in emparejadas
+        ]
+        return self._json(200, lan)
 
     def _peers_offer(self) -> None:
         d = self._json_body()

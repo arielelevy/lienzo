@@ -214,6 +214,7 @@ commiter por árbol**:
 - [x] Emparejamiento por frase de seis palabras; `peers.json`; revocar
 - [x] Firma HMAC con timestamp y nonce, y rechazo de replay
 - [x] Beacon UDP en la LAN; actualización de IP por `pc_id`
+- [x] Todas las PCs de la LAN se ven solas, emparejadas o no (anuncio sin firma, `GET /peers/lan`, «En esta red» en la pantalla, `coordinar.lan()` en el skill); `lienzo-server.cmd` arranca con `--peers`
 - [ ] `install.py --peer`: regla de firewall en perfil Privado  *(código y `--dry-run` probados; la regla real no se corrió)*
 - [x] `/peer/events` y cliente SSE saliente con reconexión y snapshot
 - [x] Espejo en memoria; `/sessions` mezcla local y remoto con `pc_alive`  *(sin campo `pc_alive`: la PC caída sale del `alive` de `GET /peers`)*

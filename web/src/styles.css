@@ -492,6 +492,8 @@ header .search .chip:not(.on) { text-decoration: line-through; }
 header .pjstrip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 header .pjstrip .chip { padding: 2px 8px; font-size: 11px; font-weight: 600; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--dim); }
 header .pjstrip .chip:hover { color: var(--fg); }
+/* el conteo va chiquito y abajo: "lienzo 2" parecia el nombre de un proyecto */
+header .pjstrip .chip .n, .pcstrip .n { font-size: 8.5px; font-weight: 600; margin-left: 2px; vertical-align: sub; line-height: 0; }
 header .pjstrip .chip.on { background: var(--acc); border-color: var(--acc); color: var(--bg); }
 header .pjstrip .chip.star.on { background: var(--need); border-color: var(--need); color: var(--bg); }
 /* overlay de atajos */

@@ -63,6 +63,24 @@ async function conectar(page: Page, from: string, to: string) {
 }
 
 test.describe('pantalla "Varias PCs" (menú ⋯ del header, plan §3.1 y §3.9)', () => {
+  test("En esta red lista las PCs de la LAN y Emparejar precarga su IP y puerto", async ({ page }) => {
+    await abrirTablero(page, sesiones(), [PEER_LOCAL]);
+    // registrada despues de abrirTablero: gana sobre el [] del tablero fijo
+    await page.route("**/peers/lan", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify([{ pc_id: "0123456789ab", name: "notebook", ip: "192.168.1.20", port: 7322, last_seen: iso(0) }]),
+      }),
+    );
+    await abrirVariasPcs(page);
+    const d = dialogo(page);
+    await expect(d.getByText("En esta red")).toBeVisible();
+    await expect(d.locator(".pairing-lan")).toContainText("192.168.1.20:7322");
+    await d.locator(".pairing-lan").getByRole("button", { name: "Emparejar" }).click();
+    await expect(d.getByLabel("Host o IP")).toHaveValue("192.168.1.20");
+    await expect(d.getByLabel("Puerto")).toHaveValue("7322");
+  });
+
   test("sin nada emparejado, muestra el nombre propio y explica en dos líneas qué hace falta", async ({ page }) => {
     await abrirTablero(page, sesiones(), [PEER_LOCAL]);
     await abrirVariasPcs(page);

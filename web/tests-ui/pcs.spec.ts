@@ -69,7 +69,7 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
   test("con dos, muestra Todas N y un chip por PC con conteo, memoria y temperatura", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
     const strip = page.locator(".pcstrip");
-    await expect(strip.locator(".pcchip.all")).toHaveText("Todas 10");
+    await expect(strip.locator(".pcchip.all")).toHaveText("Todas10");
     const oficina = strip.locator(".pcchip", { hasText: "oficina" });
     await expect(oficina).toContainText("6");
     await expect(oficina).toContainText("3.4 GB");
@@ -80,7 +80,7 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     await expect(notebook).toContainText("71 °C");
   });
 
-  test("click en un chip filtra a esa PC; click en el activo vuelve a Todas", async ({ page }) => {
+  test("click en un chip filtra a esa PC y nada mas; se vuelve con Todas", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
     await expect(page.locator(".card")).toHaveCount(8);
 
@@ -92,6 +92,9 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     await expect(page.locator(".pcchip", { hasText: "notebook" })).toHaveClass(/\bon\b/);
 
     await page.locator(".pcchip", { hasText: "notebook" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(2);
+    await page.locator(".pcchip.all").click();
     await esperarQuietud(page);
     await expect(page.locator(".card")).toHaveCount(8);
     await expect(page.locator(".pcchip.all")).toHaveClass(/\bon\b/);
@@ -178,7 +181,7 @@ test.describe("chips de proyecto: repo y ★ Coordinadoras (pedido de Ariel)", (
     await expect(strip.locator(".pjchip.star")).toHaveText("★ Coordinadoras");
   });
 
-  test("por defecto no hay ninguno elegido y se ve todo; el click elige, no oculta", async ({ page }) => {
+  test("por defecto no hay ninguno elegido y se ve todo; el click elige y nada mas", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
     await expect(page.locator(".pjchip.on")).toHaveText(["Todos"]);
     await expect(page.locator(".card")).toHaveCount(8);
@@ -190,15 +193,18 @@ test.describe("chips de proyecto: repo y ★ Coordinadoras (pedido de Ariel)", (
     await expect(card(page, SID.mapas)).toBeVisible();
     await expect(card(page, SID.coordinadora)).toHaveCount(0);
 
-    // elegir otro suma: demo y teorema
-    await page.locator(".pjchip", { hasText: "teorema" }).click();
-    await esperarQuietud(page);
-    await expect(page.locator(".card")).toHaveCount(5);
-
-    // otro click suelta ese; Todos suelta todo
-    await page.locator(".pjchip", { hasText: "teorema" }).click();
+    // otro click sobre el elegido no lo suelta
+    await page.locator(".pjchip", { hasText: "demo" }).click();
     await esperarQuietud(page);
     await expect(page.locator(".card")).toHaveCount(3);
+
+    // elegir otro lo reemplaza: un proyecto por vez
+    await page.locator(".pjchip", { hasText: "teorema" }).click();
+    await esperarQuietud(page);
+    await expect(page.locator(".pjchip.on")).toHaveText([/teorema/]);
+    await expect(page.locator(".card")).toHaveCount(2);
+
+    // se vuelve con Todos
     await page.locator(".pjchip.all").click();
     await esperarQuietud(page);
     await expect(page.locator(".card")).toHaveCount(8);
@@ -218,7 +224,7 @@ test.describe("chips de proyecto: repo y ★ Coordinadoras (pedido de Ariel)", (
     await esperarQuietud(page);
     await expect(page.locator(".card")).toHaveCount(0);
 
-    // sumando lienzo vuelve la suya
+    // eligiendo lienzo vuelve la suya
     await page.locator(".pjchip", { hasText: "lienzo" }).click();
     await esperarQuietud(page);
     await expect(page.locator(".card")).toHaveCount(1);

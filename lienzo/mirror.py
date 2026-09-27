@@ -21,7 +21,7 @@ HEALTH_EVERY_S = 15.0
 PEER_TIMEOUT_S = 45.0
 
 
-def _iso(ts: float) -> str:
+def iso(ts: float) -> str:
     import datetime as dt
 
     return dt.datetime.fromtimestamp(ts).astimezone().isoformat(timespec="milliseconds")
@@ -215,7 +215,7 @@ class Mirror:
                         "name": pm.info.get("name") or pc_id,
                         "color": pm.info.get("color") or "#888888",
                         "alive": vivo,
-                        "last_seen": _iso(pm.last_seen) if pm.last_seen else None,
+                        "last_seen": iso(pm.last_seen) if pm.last_seen else None,
                         "local": False,
                         "health": pm.health if vivo else None,
                     }

@@ -73,7 +73,7 @@ interface Props {
 /** Tira de PCs arriba del tablero (§3.9 del plan): solo con al menos un peer emparejado (el
  *  arreglo trae la propia PC mas la de al lado). "Todas N" y un chip por PC con conteo, memoria y
  *  temperatura; un peer caido se ve en ○ y su chip ya no dice memoria ni temperatura, que son datos
- *  viejos. Click filtra el tablero a esa PC; click en el activo vuelve a Todas. */
+ *  viejos. Click filtra el tablero a esa PC y nada mas; se vuelve con Todas. */
 export function PcStrip({ peers, sessions, filter, onFilter }: Props) {
   if (peers.length < 2) return null;
   const localPcId = peers.find((p) => p.local)?.pc_id ?? null;
@@ -83,7 +83,7 @@ export function PcStrip({ peers, sessions, filter, onFilter }: Props) {
   return (
     <div className="pcstrip" role="toolbar" aria-label="filtrar por PC">
       <button type="button" className={`pcchip all ${filter === null ? "on" : ""}`} onClick={() => onFilter(null)}>
-        Todas {total}
+        Todas<sub className="n">{total}</sub>
       </button>
       {peers.map((p) => {
         const down = p.alive === false;
@@ -95,10 +95,11 @@ export function PcStrip({ peers, sessions, filter, onFilter }: Props) {
             style={{ "--pc-color": p.color } as React.CSSProperties}
             title={down ? `${p.name}: sin conexión hace ${ago(p.last_seen)}` : p.name}
             aria-pressed={filter === p.pc_id}
-            onClick={() => onFilter(filter === p.pc_id ? null : p.pc_id)}
+            onClick={() => onFilter(p.pc_id)}
           >
             <span className="dot" aria-hidden="true" />
-            {p.name} {countOf(p.pc_id)}
+            {p.name}
+            <sub className="n">{countOf(p.pc_id)}</sub>
             {!down && p.health && (
               <span className="health">
                 {p.health.mem_free_gb != null && ` · ${p.health.mem_free_gb.toFixed(1)} GB`}

@@ -127,7 +127,8 @@ def test_enviar_manda_un_paquete_firmado_por_cada_peer(hogar):
     emisor.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     try:
         beacon._enviar(emisor, puerto_receptor, 7322, "127.0.0.1")
-        recibidos = [receptor.recvfrom(4096)[0] for _ in range(2)]
+        # el anuncio sin firma (descubrimiento) y uno firmado por cada peer
+        recibidos = [receptor.recvfrom(4096)[0] for _ in range(3)]
     finally:
         emisor.close()
         receptor.close()
@@ -138,13 +139,24 @@ def test_enviar_manda_un_paquete_firmado_por_cada_peer(hogar):
     assert any(d is not None for d in decodificados_con_key2)
 
 
-def test_enviar_sin_peers_no_manda_nada_ni_revienta(hogar):
+def test_enviar_sin_peers_manda_solo_el_anuncio_sin_firma(hogar):
+    # sin nadie emparejado igual se anuncia: es lo que hace que la otra PC la vea en la LAN
+    receptor = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    receptor.bind(("127.0.0.1", 0))
+    receptor.settimeout(2.0)
     emisor = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     emisor.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     try:
-        beacon._enviar(emisor, _puerto_libre(), 7322, "127.0.0.1")
+        beacon._enviar(emisor, receptor.getsockname()[1], 7322, "127.0.0.1")
+        data, _addr = receptor.recvfrom(4096)
+        receptor.settimeout(0.3)
+        with pytest.raises(TimeoutError):
+            receptor.recvfrom(4096)
     finally:
         emisor.close()
+        receptor.close()
+    anuncio = fed.decode_beacon(data)
+    assert anuncio["pc_id"] == idn.pc_id() and anuncio["port"] == 7322
 
 
 def test_enviar_con_key_corrupta_sigue_con_el_resto(hogar):
@@ -158,11 +170,11 @@ def test_enviar_con_key_corrupta_sigue_con_el_resto(hogar):
     emisor.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     try:
         beacon._enviar(emisor, puerto_receptor, 7322, "127.0.0.1")  # el corrupto no debe frenar al bueno
-        data, _addr = receptor.recvfrom(4096)
+        recibidos = [receptor.recvfrom(4096)[0] for _ in range(2)]  # sin firma + el del peer bueno
     finally:
         emisor.close()
         receptor.close()
-    assert fed.decode_signed_beacon(bytes.fromhex("a" * 64), data) is not None
+    assert any(fed.decode_signed_beacon(bytes.fromhex("a" * 64), d) is not None for d in recibidos)
 
 
 # --- el hilo: start()/stop_event, nunca levanta excepcion ----------------------------------------
@@ -216,3 +228,36 @@ def test_start_con_un_peer_se_escucha_a_si_mismo_y_actualiza_seen(hogar):
         stop.set()
         hilo.join(timeout=5)
     assert beacon.seen().get(mi_pc_id, {}).get("ip") == "127.0.0.1"
+
+
+# --- descubrimiento: todas las PCs de la LAN con el lienzo, emparejadas o no --------------------
+
+
+class _SocketDeUnPaquete:
+    def __init__(self, data: bytes, ip: str):
+        self.data, self.ip = data, ip
+
+    def recvfrom(self, _n):
+        return self.data, (self.ip, 7323)
+
+
+def test_un_anuncio_sin_firma_de_otra_pc_queda_descubierto(hogar, monkeypatch):
+    monkeypatch.setattr(beacon, "_descubiertas", {})
+    beacon._recibir(_SocketDeUnPaquete(fed.encode_beacon("0123456789ab", "notebook", 7322), "192.168.1.20"))
+    (pc,) = beacon.discovered()
+    assert (pc["pc_id"], pc["name"], pc["ip"], pc["port"]) == ("0123456789ab", "notebook", "192.168.1.20", 7322)
+    assert fed.list_peers(beacon._peers_path()) == [], "descubrir no empareja"
+
+
+def test_el_anuncio_propio_no_se_descubre(hogar, monkeypatch):
+    monkeypatch.setattr(beacon, "_descubiertas", {})
+    beacon._recibir(_SocketDeUnPaquete(fed.encode_beacon(idn.pc_id(), "yo", 7322), "192.168.1.10"))
+    assert beacon.discovered() == []
+
+
+def test_una_pc_que_dejo_de_anunciar_se_va_de_la_lista(hogar, monkeypatch):
+    monkeypatch.setattr(beacon, "_descubiertas", {})
+    beacon._recibir(_SocketDeUnPaquete(fed.encode_beacon("0123456789ab", "notebook", 7322), "192.168.1.20"))
+    assert beacon.discovered(max_age_s=60) != []
+    beacon._descubiertas["0123456789ab"]["last_seen"] -= 120
+    assert beacon.discovered(max_age_s=60) == []

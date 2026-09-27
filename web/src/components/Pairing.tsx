@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ago, api } from "../api";
-import type { Peer } from "../types";
+import type { LanPc, Peer } from "../types";
 
 interface Offer {
   phrase: string;
@@ -107,6 +107,22 @@ export function Pairing({ peers, toast, onClose }: Props) {
     }
   };
 
+  // las PCs de la LAN que anuncian el lienzo y todavia no estan emparejadas: se piden una vez, al
+  // abrir la pantalla; buscar de nuevo es cosa de la API (GET /peers/lan), sin sondeo ni boton
+  const [lan, setLan] = useState<LanPc[]>([]);
+  useEffect(() => {
+    api
+      .get<LanPc[]>("/peers/lan")
+      .then((l) => setLan(Array.isArray(l) ? l : []))
+      .catch(() => setLan([]));
+  }, []);
+  const emparejarCon = (pc: LanPc) => {
+    setHost(pc.ip);
+    setPort(String(pc.port));
+    setJoinErr(null);
+    setShowJoin(true);
+  };
+
   const quitar = async (peer: Peer) => {
     if (!confirm(`Quitar a ${peer.name}? Deja de verse su tablero desde acá (y el de acá, desde la de ella).`)) return;
     try {
@@ -181,6 +197,29 @@ export function Pairing({ peers, toast, onClose }: Props) {
                     <span className="sp" />
                     <button type="button" onClick={() => quitar(p)}>
                       Quitar
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <h3 className="pairing-lan-title">En esta red</h3>
+            {lan.length === 0 ? (
+              <p className="small dim">
+                Ninguna otra PC con el lienzo a la vista. Tiene que estar en la misma red, con el server andando y{" "}
+                <code>install.py --peer</code> corrido una vez (abre el firewall en redes privadas).
+              </p>
+            ) : (
+              <div className="pairing-list">
+                {lan.map((pc) => (
+                  <div key={pc.pc_id} className="row pairing-lan">
+                    <b>{pc.name}</b>
+                    <span className="small dim">
+                      {pc.ip}:{pc.port}
+                    </span>
+                    <span className="sp" />
+                    <button type="button" onClick={() => emparejarCon(pc)}>
+                      Emparejar
                     </button>
                   </div>
                 ))}
