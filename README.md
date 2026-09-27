@@ -276,6 +276,10 @@ encontrado a tres sesiones en paralelo.
 Es manual a propósito: dos agentes vinculados en los dos sentidos se contestan hasta agotar
 los créditos, por eso el server rechaza el bucle y cada regla tiene tope.
 
+El método completo, escrito para que lo siga la propia coordinadora, está en el skill
+[`skills/lienzo`](skills/lienzo/SKILL.md). Para que Claude Code o Codex lo carguen, copiar o
+enlazar esa carpeta en `~/.claude/skills/` o `~/.agents/skills/`.
+
 ![Arrastrar una tarjeta sobre otra](docs/img/arrastre.png)
 
 ![Conectar escribiendo una frase](docs/img/conectar.png)
@@ -475,6 +479,7 @@ web/               interfaz (Vite + React + TypeScript); `npm run build` deja we
   src/hooks/               datos por SSE, avisos del navegador y flags guardados en el navegador
   src/components/PcStrip.tsx       tira de PCs arriba del tablero, filtro por PC
   src/components/ProjectStrip.tsx  chips de proyecto (elige, no oculta) y ★ Coordinadoras
+skills/lienzo/     skill para agentes: cómo lanzar terminales, repartir frentes y coordinarlos; `coordinar.py` es el cliente de la API
 tests/             pytest: transcripciones reales, procesos vivos, la máquina de estados del server y la federación entre PCs
 install.py         alta y baja de los hooks; `--peer` para la regla de firewall del emparejamiento
 lienzo-server.cmd  arranque
