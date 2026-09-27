@@ -15,6 +15,7 @@ nonce correcto imprime la decision en stdout; si no, sale 0 sin stdout (abstener
 import datetime as dt
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -79,7 +80,8 @@ def read_pc_id() -> str | None:
     except OSError, ValueError:
         return None
     pc_id = d.get("pc_id") if isinstance(d, dict) else None
-    return pc_id if isinstance(pc_id, str) and pc_id else None
+    # el mismo formato que exige identity._PC_ID_RE: uno que identity descartaria no viaja
+    return pc_id if isinstance(pc_id, str) and re.fullmatch(r"[0-9a-f]{12}", pc_id) else None
 
 
 # --- cadena de procesos (procinfo, ctypes sin psutil) -----------------------

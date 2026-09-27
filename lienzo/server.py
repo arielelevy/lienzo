@@ -30,10 +30,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import auth
+import beacon
 import federation
 import health
 import identity
+import launch
 import mirror
+import pairing
 import rules as rl
 import transcripts
 from rules import at_near, connections_of, local_dt, purge_stale_at_rules, rules_loop
@@ -96,42 +99,6 @@ _peer_nonces = federation.NonceCache()
 # Un peer que se conecta a /peer/events NO se registra aca: solo ve la verdad local de esta PC, ni
 # siquiera lo que esta PC espeja de un tercero (evita amplificar en una malla de 3 o 4 PCs).
 ui_clients: list = []
-
-
-def _pairing_module():
-    """Import perezoso: pairing.py lo escribe el frente A en paralelo a esta misma ronda. Si
-    todavia no existe (o quedo momentaneamente roto a mitad de una edicion, en un working tree
-    compartido por varias sesiones) el emparejamiento contesta 501 en vez de tirar abajo el server
-    entero."""
-    try:
-        import pairing
-
-        return pairing
-    except Exception as e:
-        log(f"pairing no disponible: {e}")
-        return None
-
-
-def _launch_module():
-    """Import perezoso de launch.py (frente B, en paralelo)."""
-    try:
-        import launch
-
-        return launch
-    except Exception as e:
-        log(f"launch no disponible: {e}")
-        return None
-
-
-def _beacon_module():
-    """Import perezoso de beacon.py (frente A, en paralelo)."""
-    try:
-        import beacon
-
-        return beacon
-    except Exception as e:
-        log(f"beacon no disponible: {e}")
-        return None
 
 
 CLOUDFLARED = os.path.join(
@@ -258,26 +225,15 @@ def check_rule(d: dict) -> tuple[int, dict] | None:
 
 def check_remote_destination(d: dict, text: str) -> dict | None:
     """Si el destino ('to') vive en otra PC (plan §3.5): valida contra ella antes de guardar nada
-    aca. `rules.check_at_destination` (duplicado/clash del lado del destino) y `rules.loop_lock`
-    (el lock liviano de la carrera A<->B, en la PC de menor pc_id) son del frente B, en paralelo;
-    con getattr, como check_global_loop, para no romper si todavia no existen. Devuelve el
-    conflicto (dict para el 409) o None si no hay que frenar nada."""
+    aca: `rules.check_at_destination` (duplicado o programada cercana, del lado del destino) y
+    `rules.loop_lock` (la carrera A<->B, en la PC de menor pc_id). Devuelve el conflicto (dict para el 409) o None si no hay que frenar nada.
+    """
     to_pc = _rule_target_pc(d.get("to"))
     if to_pc is None:
         return None
     from_pc = _rule_target_pc(d.get("from")) or identity.pc_id()
     rule_preview = {**d, "text": text, "pc": identity.pc_id()}
-    check_fn = getattr(rl, "check_at_destination", None)
-    if check_fn is not None:
-        conflicto = check_fn(rule_preview)
-        if conflicto:
-            return conflicto
-    lock_fn = getattr(rl, "loop_lock", None)
-    if lock_fn is not None:
-        conflicto = lock_fn(from_pc, to_pc, rule_preview)
-        if conflicto:
-            return conflicto
-    return None
+    return rl.check_at_destination(rule_preview) or rl.loop_lock(from_pc, to_pc, rule_preview)
 
 
 def new_rule(d: dict, text: str, **extra) -> dict:
@@ -295,19 +251,13 @@ def new_rule(d: dict, text: str, **extra) -> dict:
 
 
 def check_global_loop(d: dict) -> dict | None:
-    """El bucle A<->B pasa a ser global (plan §3.5): si `rules.loop_conflict` ya existe (frente B,
-    en paralelo, mismo round), se le pasa la regla candidata, las reglas locales y las del espejo,
-    y manda mas que el chequeo local de siempre (que solo ve `rules.items`). Sin esa funcion
-    todavia, se devuelve None y create_on_stop sigue con su chequeo local (find_enabled), que seguia
-    siendo correcto para dos sesiones de la misma PC. Provisorio: el contrato exacto de
-    `loop_conflict` (que recibe y que devuelve) lo fija el frente B; esto llama a la firma que
-    describe el encargo y se ajusta si no coincide."""
-    fn = getattr(rl, "loop_conflict", None)
-    if fn is None or d.get("kind") != "on_stop":
+    """El bucle A<->B es global (plan §3.5): `rules.loop_conflict` mira la regla candidata contra
+    las reglas locales y las del espejo, no solo contra `rules.items`."""
+    if d.get("kind") != "on_stop":
         return None
     with lock:
         local_items = list(rules.items)
-    return fn(d, local_items, mirror.MIRROR.rules())
+    return rl.loop_conflict(d, local_items, mirror.MIRROR.rules())
 
 
 def create_on_stop(d: dict, text: str) -> tuple[int, dict]:
@@ -467,16 +417,13 @@ def _local_state() -> dict:
 
 
 def _peer_key(pc_id: str) -> bytes | None:
-    for p in federation.list_peers(PEERS_FILE):
-        if p.get("pc_id") == pc_id:
-            k = p.get("key")
-            if not isinstance(k, str):
-                return None
-            try:
-                return bytes.fromhex(k)
-            except ValueError:
-                return None
-    return None
+    k = (federation.get_peer(PEERS_FILE, pc_id) or {}).get("key")
+    if not isinstance(k, str):
+        return None
+    try:
+        return bytes.fromhex(k)
+    except ValueError:
+        return None
 
 
 def verify_peer_request(headers, method: str, path: str, body: bytes) -> str | None:
@@ -523,7 +470,7 @@ def _connect_stored_peer(pc_id: str) -> None:
     """Como _connect_peer_from_record, pero busca el registro ya guardado en peers.json: es lo que
     usa PeerHandler._pair, porque pairing.accept() no devuelve el peer entero (le contesta a quien
     se emparejo con su propio pc_info, no con el ajeno)."""
-    peer = next((p for p in federation.list_peers(PEERS_FILE) if p.get("pc_id") == pc_id), None)
+    peer = federation.get_peer(PEERS_FILE, pc_id)
     if peer is not None:
         _connect_peer_from_record(peer)
 
@@ -583,6 +530,17 @@ def _push_to_ui_clients(payload: str) -> None:
             ui_clients.remove(q)
 
 
+def _with_mirror(local: dict) -> dict:
+    """Lo local (de `_local_state`) con lo espejado de las otras PCs agregado en las cuatro listas:
+    es lo que ve el tablero. El espejo no necesita el lock: mirror.py tiene el suyo."""
+    return {
+        "sessions": local["sessions"] + mirror.MIRROR.sessions(),
+        "pending": local["pending"] + mirror.MIRROR.pending(),
+        "links": local["links"] + mirror.MIRROR.links(),
+        "rules": local["rules"] + mirror.MIRROR.rules(),
+    }
+
+
 def broadcast_mirror_snapshot() -> None:
     """El espejo cambio (un peer mando un evento, se cayo o volvio): se reemite un snapshot
     completo (local + espejo) solo a los clientes del tablero, para que una tarjeta remota se vea
@@ -593,10 +551,7 @@ def broadcast_mirror_snapshot() -> None:
         json.dumps(
             {
                 "type": "snapshot",
-                "sessions": local["sessions"] + mirror.MIRROR.sessions(),
-                "pending": local["pending"] + mirror.MIRROR.pending(),
-                "links": local["links"] + mirror.MIRROR.links(),
-                "rules": local["rules"] + mirror.MIRROR.rules(),
+                **_with_mirror(local),
                 "build": build_id(),
             },
             ensure_ascii=False,
@@ -1233,9 +1188,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _put_coordinator(self, sid: str) -> None:
         """PUT /sessions/<id>/coordinator: marca la coordinadora del repo (a lo sumo una en toda la
-        federacion). `scope: "pc"` la separa solo para esta PC (plan §3.6); provisorio hasta que
-        sessions.set_coordinator (frente B, en paralelo) tenga ese parametro: mientras tanto cae al
-        comportamiento de siempre."""
+        federacion). `scope: "pc"` la separa solo para esta PC (plan §3.6)."""
         d = self._json_body()
         on = d.get("on")
         if not isinstance(on, bool):
@@ -1247,10 +1200,7 @@ class Handler(BaseHTTPRequestHandler):
         if owner is not None:
             code, res = mirror.MIRROR.forward(owner, "PUT", f"/sessions/{sid}/coordinator", d)
             return self._json(code, res)
-        try:
-            changed = set_coordinator(s, on, scope=scope) if scope is not None else set_coordinator(s, on)
-        except TypeError:
-            changed = set_coordinator(s, on)
+        changed = set_coordinator(s, on, scope=scope)
         log(
             f"coordinadora de {s.get('repo')}: {sid[:8]} -> {on} "
             f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"
@@ -1265,9 +1215,6 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, [local_row] + mirror.MIRROR.peers_status())
 
     def _peers_offer(self) -> None:
-        pairing = _pairing_module()
-        if pairing is None:
-            return self._json(501, {"error": "emparejamiento no disponible todavia"})
         d = self._json_body()
         ttl = d.get("ttl_s")
         try:
@@ -1277,9 +1224,6 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, pairing.offer(ttl_s=ttl))
 
     def _peers_join(self) -> None:
-        pairing = _pairing_module()
-        if pairing is None:
-            return self._json(501, {"error": "emparejamiento no disponible todavia"})
         d = self._json_body()
         phrase, host, port = d.get("phrase"), d.get("host"), d.get("port")
         if not isinstance(phrase, str) or not phrase.strip() or not isinstance(host, str) or not host.strip():
@@ -1308,9 +1252,6 @@ class Handler(BaseHTTPRequestHandler):
         if pc and pc != identity.pc_id():
             code, res = mirror.MIRROR.forward(pc, "POST", "/launch", {"cwd": cwd, "title": title, "agent": agent})
             return self._json(code, res)
-        launch = _launch_module()
-        if launch is None:
-            return self._json(501, {"error": "lanzar sesiones no disponible todavia"})
         res = launch.launch(cwd, title, agent)
         return self._json(200 if res.get("ok") else 400, res)
 
@@ -1372,10 +1313,7 @@ class Handler(BaseHTTPRequestHandler):
         snapshot = json.dumps(
             {
                 "type": "snapshot",
-                "sessions": local["sessions"] + mirror.MIRROR.sessions(),
-                "pending": local["pending"] + mirror.MIRROR.pending(),
-                "links": local["links"] + mirror.MIRROR.links(),
-                "rules": local["rules"] + mirror.MIRROR.rules(),
+                **_with_mirror(local),
                 "build": build_id(),
             },
             ensure_ascii=False,
@@ -1522,9 +1460,6 @@ class PeerHandler(BaseHTTPRequestHandler):
         return self._json(404, {"error": "ruta desconocida"})
 
     def _pair(self, raw: bytes) -> None:
-        pairing = _pairing_module()
-        if pairing is None:
-            return self._json(501, {"error": "emparejamiento no disponible todavia"})
         body = self._body_json(raw)
         try:
             res = pairing.accept(body)
@@ -1538,28 +1473,19 @@ class PeerHandler(BaseHTTPRequestHandler):
         cwd, agent, title = d.get("cwd"), d.get("agent"), d.get("title") or ""
         if not isinstance(cwd, str) or not cwd.strip() or not isinstance(agent, str):
             return self._json(400, {"error": "cwd y agent son obligatorios"})
-        launch = _launch_module()
-        if launch is None:
-            return self._json(501, {"error": "lanzar sesiones no disponible todavia"})
         res = launch.launch(cwd, title, agent)
         return self._json(200 if res.get("ok") else 400, res)
 
     def _rules_lock(self, raw: bytes) -> None:
         """POST /peer/rules/lock: el lock liviano de la carrera A<->B (plan §3.5), del lado de la
-        PC de menor pc_id. `rules.handle_peer_lock` es del frente B, en paralelo."""
-        fn = getattr(rl, "handle_peer_lock", None)
-        if fn is None:
-            return self._json(501, {"error": "loop_lock no disponible todavia"})
-        code, res = fn(self._body_json(raw))
+        PC de menor pc_id."""
+        code, res = rl.handle_peer_lock(self._body_json(raw))
         return self._json(code, res)
 
     def _rules_check(self, raw: bytes) -> None:
         """POST /peer/rules/check: duplicado/clash del lado del destino de una regla remota (plan
-        §3.5). `rules.handle_peer_check` es del frente B, en paralelo."""
-        fn = getattr(rl, "handle_peer_check", None)
-        if fn is None:
-            return self._json(501, {"error": "check_at_destination no disponible todavia"})
-        code, res = fn(self._body_json(raw))
+        §3.5)."""
+        code, res = rl.handle_peer_check(self._body_json(raw))
         return self._json(code, res)
 
     def _session_view(self, sid: str, view: str) -> None:
@@ -1640,10 +1566,7 @@ class PeerHandler(BaseHTTPRequestHandler):
             if not isinstance(on, bool):
                 return self._json(400, {"error": "on debe ser true o false"})
             scope = d.get("scope")
-            try:
-                set_coordinator(s, on, scope=scope) if scope is not None else set_coordinator(s, on)
-            except TypeError:
-                set_coordinator(s, on)
+            set_coordinator(s, on, scope=scope)
             return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
         return self._json(404, {"error": "ruta desconocida"})
 
@@ -1734,7 +1657,7 @@ def _beacon_sync_loop(stop_event: threading.Event, beacon) -> None:
             ip = info.get("ip") if isinstance(info, dict) else None
             if not ip:
                 continue
-            peer = next((p for p in federation.list_peers(PEERS_FILE) if p.get("pc_id") == pc_id), None)
+            peer = federation.get_peer(PEERS_FILE, pc_id)
             if peer is None or peer.get("ip") == ip:
                 continue
             federation.update_peer_ip(PEERS_FILE, pc_id, ip)
@@ -1798,11 +1721,9 @@ def main() -> int:
     for peer in peers_guardados:
         _connect_peer_from_record(peer)
     if peer_srv is not None:
-        beacon = _beacon_module()
-        if beacon is not None:
-            stop_beacon = threading.Event()
-            beacon.start(a.peer_port, stop_beacon)
-            threading.Thread(target=_beacon_sync_loop, args=(stop_beacon, beacon), daemon=True).start()
+        stop_beacon = threading.Event()
+        beacon.start(a.peer_port, stop_beacon)
+        threading.Thread(target=_beacon_sync_loop, args=(stop_beacon, beacon), daemon=True).start()
 
     srv.daemon_threads = True
     with lock:

@@ -44,11 +44,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+# como hook.py con procinfo: importado como lienzo.federation (los tests) o suelto (el server)
+try:
+    from . import state
+except ImportError:
+    import state
+
 MAX_PEERS = 4
 SIGN_WINDOW_S = 30
 NONCE_TTL_S = 90  # bastante mas que la ventana de firma: cubre el reloj corrido de los dos lados
 BEACON_VERSION = 1
-SCRYPT_PARAMS = {"n": 2**14, "r": 8, "p": 1, "dklen": 32}  # mismos parametros que auth.py
+
+# los de auth.SCRYPT; copiados porque auth.py no se puede importar suelto (hace `import state`)
+SCRYPT_PARAMS = {"n": 2**14, "r": 8, "p": 1, "dklen": 32}
 
 
 class PeerLimitError(RuntimeError):
@@ -151,25 +159,45 @@ def derive_pair_key(passphrase: str, pc_id_a: str, pc_id_b: str) -> bytes:
 
 
 def _atomic_write(path: str, obj) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=1, ensure_ascii=False)
-    os.replace(tmp, path)
+    state.atomic_write(path, json.dumps(obj, indent=1, ensure_ascii=False))
+
+
+# peers.json se lee en cada request firmado, en cada tick del beacon y en cada vuelta del espejo:
+# se cachea por ruta, mtime y tamano, y cada escritura lo invalida sola al cambiar el mtime
+_peers_cache: dict[str, tuple[tuple[int, int], dict]] = {}
+_peers_cache_lock = threading.Lock()
 
 
 def _cargar_peers(path: str) -> dict:
     """Un peers.json corrupto no rompe: se trata como si no hubiera peers, y la proxima escritura
-    lo reemplaza por uno valido."""
+    lo reemplaza por uno valido. Devuelve una copia: quien la recibe la puede modificar."""
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except OSError, ValueError:
+        st = os.stat(path)
+    except OSError:
         return {}
-    return data if isinstance(data, dict) else {}
+    firma = (st.st_mtime_ns, st.st_size)
+    with _peers_cache_lock:
+        hit = _peers_cache.get(path)
+    if hit is None or hit[0] != firma:
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except OSError, ValueError:
+            data = {}
+        data = data if isinstance(data, dict) else {}
+        with _peers_cache_lock:
+            _peers_cache[path] = (firma, data)
+    else:
+        data = hit[1]
+    return {k: dict(v) if isinstance(v, dict) else v for k, v in data.items()}
 
 
 def list_peers(path: str) -> list[dict]:
     return list(_cargar_peers(path).values())
+
+
+def get_peer(path: str, pc_id: str) -> dict | None:
+    return _cargar_peers(path).get(pc_id)
 
 
 def add_peer(path: str, peer: dict) -> dict:
@@ -398,6 +426,18 @@ class Transport(Protocol):
     ) -> SSEClient: ...
 
 
+def signed_headers(peer: PeerConn, method: str, path: str, body: bytes) -> dict:
+    """Los cuatro headers X-Lienzo-* de un request firmado, con ts y nonce nuevos."""
+    ts = time.time()
+    nonce = secrets.token_hex(16)
+    return {
+        "X-Lienzo-Peer": peer.self_pc_id,
+        "X-Lienzo-Ts": repr(ts),
+        "X-Lienzo-Nonce": nonce,
+        "X-Lienzo-Sig": sign(peer.key, method, path, body, ts, nonce),
+    }
+
+
 class HTTPTransport:
     """Implementacion HTTP del Transport: cada request va firmada con timestamp y nonce nuevos
     (tambien las de `subscribe`, en cada intento de conexion)."""
@@ -406,16 +446,7 @@ class HTTPTransport:
         self.timeout = timeout
 
     def _headers_firmados(self, peer: PeerConn, method: str, path: str, body: bytes) -> dict:
-        ts = time.time()
-        nonce = secrets.token_hex(16)
-        firma = sign(peer.key, method, path, body, ts, nonce)
-        return {
-            "X-Lienzo-Peer": peer.self_pc_id,
-            "X-Lienzo-Ts": repr(ts),
-            "X-Lienzo-Nonce": nonce,
-            "X-Lienzo-Sig": firma,
-            "Content-Type": "application/json",
-        }
+        return {**signed_headers(peer, method, path, body), "Content-Type": "application/json"}
 
     def _pedir(self, peer: PeerConn, method: str, path: str, body: bytes = b"") -> tuple[int, dict]:
         """(status, cuerpo). Los metodos publicos de siempre (get/post/put/delete) devuelven solo
@@ -458,22 +489,12 @@ class HTTPTransport:
         on_reconnect: Callable[[], None] | None = None,
         backoff: Callable[[int], float] | None = None,
     ) -> SSEClient:
-        def headers_fn() -> dict:
-            ts = time.time()
-            nonce = secrets.token_hex(16)
-            firma = sign(peer.key, "GET", path, b"", ts, nonce)
-            return {
-                "X-Lienzo-Peer": peer.self_pc_id,
-                "X-Lienzo-Ts": repr(ts),
-                "X-Lienzo-Nonce": nonce,
-                "X-Lienzo-Sig": firma,
-            }
-
         cliente = SSEClient(
             peer.host,
             peer.port,
             path,
-            headers_fn=headers_fn,
+            # headers nuevos en cada intento de conexion: ts y nonce no se pueden reusar
+            headers_fn=lambda: signed_headers(peer, "GET", path, b""),
             on_event=on_event,
             on_reconnect=on_reconnect,
             backoff=backoff,

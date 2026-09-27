@@ -14,6 +14,7 @@ import ctypes
 import ctypes.wintypes as wt
 import datetime as dt
 import subprocess
+import threading
 import time
 
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -40,10 +41,6 @@ _k32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(_MEMORYSTATUSEX)]
 _k32.GlobalMemoryStatusEx.restype = wt.BOOL
 _k32.GetSystemTimes.argtypes = [ctypes.POINTER(wt.FILETIME), ctypes.POINTER(wt.FILETIME), ctypes.POINTER(wt.FILETIME)]
 _k32.GetSystemTimes.restype = wt.BOOL
-
-
-def _now() -> str:
-    return dt.datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
 def _memoria() -> tuple[float | None, float | None]:
@@ -83,6 +80,11 @@ def _cpu_pct() -> float | None:
     return max(0.0, min(100.0, round(100 * (1 - idle_d / total_d), 1)))
 
 
+def _now() -> str:
+    # la misma forma que state.now(); aparte porque health.py se importa suelto, sin lienzo/ en el path
+    return dt.datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
 # El sensor bueno es \_TZ.THRM (\_TZ.TZ01 da 20 °C fijo, medido el 2026-09-26 en el skill lienzo).
 _TEMP_PS = r"""
 $ErrorActionPreference = 'SilentlyContinue'
@@ -93,14 +95,10 @@ Get-CimInstance Win32_PerfFormattedData_Counters_ThermalZoneInformation |
 
 # (valor o None, momento de la medicion en time.monotonic()); cara (~1s de powershell), cacheada
 _temp_cache: tuple[float | None, float] | None = None
+_temp_refrescando = threading.Lock()
 
 
-def _temp_c() -> float | None:
-    global _temp_cache
-    ahora = time.monotonic()
-    if _temp_cache is not None and ahora - _temp_cache[1] < TEMP_TTL_S:
-        return _temp_cache[0]
-    valor = None
+def _medir_temp() -> float | None:
     try:
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", _TEMP_PS],
@@ -115,13 +113,31 @@ def _temp_c() -> float | None:
             errors="replace",
         )
         salida = (r.stdout or "").strip()
-        if salida:
-            # HighPrecisionTemperature esta en deciKelvin
-            valor = round(float(salida.splitlines()[0]) / 10 - 273.15, 1)
+        # HighPrecisionTemperature esta en deciKelvin
+        return round(float(salida.splitlines()[0]) / 10 - 273.15, 1) if salida else None
     except OSError, ValueError, subprocess.TimeoutExpired:
-        valor = None
-    _temp_cache = (valor, ahora)
-    return valor
+        return None
+
+
+def _refrescar_temp() -> None:
+    global _temp_cache
+    try:
+        _temp_cache = (_medir_temp(), time.monotonic())
+    finally:
+        _temp_refrescando.release()
+
+
+def _temp_c() -> float | None:
+    """La primera medicion espera al powershell; despues, con la cache vencida, se devuelve el
+    ultimo valor y se mide de nuevo en un hilo aparte: /peers y /peer/health (que cada PC le pide a
+    las otras cada 15 s) no quedan colgados un segundo esperando a WMI."""
+    global _temp_cache
+    ahora = time.monotonic()
+    if _temp_cache is None:
+        _temp_cache = (_medir_temp(), ahora)
+    elif ahora - _temp_cache[1] >= TEMP_TTL_S and _temp_refrescando.acquire(blocking=False):
+        threading.Thread(target=_refrescar_temp, daemon=True).start()
+    return _temp_cache[0]
 
 
 def snapshot() -> dict:

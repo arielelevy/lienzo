@@ -42,15 +42,30 @@ def _color_for(pc_id_: str) -> str:
     return PALETTE[int(pc_id_, 16) % len(PALETTE)]
 
 
+# pc_id() se pide en cada sesion nueva, link, regla y tick del beacon, y peer.json casi nunca
+# cambia: se cachea por ruta, mtime y tamano; una escritura (set_name, _ensure_peer) lo invalida
+_peer_cache: tuple[str, tuple[int, int], dict] | None = None
+
+
 def _load_peer() -> dict | None:
+    global _peer_cache
+    path = _peer_path()
     try:
-        with open(_peer_path(), encoding="utf-8") as f:
+        st = os.stat(path)
+    except OSError:
+        return None
+    firma = (st.st_mtime_ns, st.st_size)
+    if _peer_cache is not None and _peer_cache[0] == path and _peer_cache[1] == firma:
+        return dict(_peer_cache[2])
+    try:
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
     except OSError, ValueError:
         return None
     if not isinstance(d, dict) or not _PC_ID_RE.fullmatch(str(d.get("pc_id") or "")):
         return None
-    return d
+    _peer_cache = (path, firma, d)
+    return dict(d)
 
 
 def _save_peer(d: dict) -> None:
