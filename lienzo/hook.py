@@ -68,6 +68,20 @@ def load_config() -> dict:
         return {}
 
 
+def read_pc_id() -> str | None:
+    """pc_id de esta PC (identity.pc_id, plan multi-PC), leido directo de peer.json sin pasar por
+    identity.py (que importa state.py: pesado para un hook que arranca por evento, ver arriba).
+    Si el archivo no existe o esta corrupto: None, sin crearlo -- eso lo hace el server en su
+    primer arranque, no un hook que puede correr antes de que el server este levantado."""
+    try:
+        with open(os.path.join(LIENZO, "peer.json"), encoding="utf-8") as f:
+            d = json.load(f)
+    except OSError, ValueError:
+        return None
+    pc_id = d.get("pc_id") if isinstance(d, dict) else None
+    return pc_id if isinstance(pc_id, str) and pc_id else None
+
+
 # --- cadena de procesos (procinfo, ctypes sin psutil) -----------------------
 
 
@@ -131,6 +145,7 @@ def wait_for_answer(agent: str, data: dict, wait_s: float) -> dict | None:
         "request_id": request_id,
         "nonce": nonce,
         "session_id": data.get("session_id"),
+        "pc": read_pc_id(),
         "agent": agent,
         "tool_name": data.get("tool_name"),
         "tool_input": data.get("tool_input"),

@@ -5,8 +5,10 @@ scope "pc". mirror.py (frente C) todavia no existe en este arbol: se stubea con 
 inyectado en sessions.mirror via monkeypatch, con la forma exacta que pacta el encargo comun
 (owner_of, forward, rules, sessions). Ver docs/ronda2/encargo-B.md."""
 
+import datetime as dt
 import os
 import sys
+import threading
 
 import pytest
 
@@ -400,3 +402,189 @@ def test_loop_conflict_ignora_otro_kind():
 def test_loop_conflict_no_confunde_el_mismo_sentido():
     misma = {"id": "r1", "kind": "on_stop", "from": "A", "to": "B", "enabled": True}
     assert rl.loop_conflict({"from": "A", "to": "B"}, [misma], []) is None
+
+
+# --- 8. loop_lock / handle_peer_lock: el lock de la PC de menor pc_id (ronda 3) -----------------
+
+
+def test_loop_lock_local_sin_conflicto_reserva(aislado, monkeypatch):
+    rl._reservations.clear()
+    monkeypatch.setattr(st.rules, "items", [])
+    rule = {"from": "A", "to": "B", "kind": "on_stop", "enabled": True}
+    assert rl.loop_lock("pc-a", "pc-b", rule) is None
+    assert ("A", "B") in rl._reservations
+    rl._reservations.clear()
+
+
+def test_loop_lock_local_con_conflicto_no_reserva(aislado, monkeypatch):
+    rl._reservations.clear()
+    inversa = {"id": "r1", "kind": "on_stop", "from": "B", "to": "A", "enabled": True}
+    monkeypatch.setattr(st.rules, "items", [inversa])
+    rule = {"from": "A", "to": "B", "kind": "on_stop", "enabled": True}
+    assert rl.loop_lock("pc-a", "pc-b", rule) == inversa
+    assert ("A", "B") not in rl._reservations
+
+
+def test_loop_lock_sin_pc_conocida_es_local(aislado, monkeypatch):
+    rl._reservations.clear()
+    monkeypatch.setattr(st.rules, "items", [])
+    rule = {"from": "A", "to": "B", "kind": "on_stop", "enabled": True}
+    assert rl.loop_lock(None, "pc-b", rule) is None
+    rl._reservations.clear()
+
+
+def test_loop_lock_delega_a_la_pc_menor(aislado, mirror_fake, monkeypatch):
+    monkeypatch.setattr(st.rules, "items", [])
+    mirror_fake.forward_result = (200, {"conflict": None})
+    rule = {"from": "A", "to": "B", "kind": "on_stop", "enabled": True}
+    assert rl.loop_lock("pc-z", "pc-a", rule) is None  # "pc-a" < "pc-z": delega en pc-a
+    assert mirror_fake.forward_calls == [("pc-a", "POST", "/rules/lock", {"rule": rule})]
+
+
+def test_loop_lock_delegado_devuelve_el_conflicto(aislado, mirror_fake, monkeypatch):
+    monkeypatch.setattr(st.rules, "items", [])
+    conflicto = {"id": "r1", "kind": "on_stop", "from": "B", "to": "A"}
+    mirror_fake.forward_result = (200, {"conflict": conflicto})
+    rule = {"from": "A", "to": "B", "kind": "on_stop", "enabled": True}
+    assert rl.loop_lock("pc-z", "pc-a", rule) == conflicto
+
+
+def test_loop_lock_delegado_peer_caido(aislado, mirror_fake, monkeypatch):
+    monkeypatch.setattr(st.rules, "items", [])
+    mirror_fake.forward_result = (503, {"error": "peer caído"})
+    rule = {"from": "A", "to": "B", "kind": "on_stop", "enabled": True}
+    assert rl.loop_lock("pc-z", "pc-a", rule) == {"error": "peer caído"}
+
+
+def test_handle_peer_lock_arbitra_igual_que_local(aislado, monkeypatch):
+    rl._reservations.clear()
+    monkeypatch.setattr(st.rules, "items", [])
+    rule = {"from": "A", "to": "B", "kind": "on_stop", "enabled": True}
+    assert rl.handle_peer_lock({"rule": rule}) == (200, {"conflict": None})
+    assert ("A", "B") in rl._reservations
+    rl._reservations.clear()
+
+
+def test_handle_peer_lock_rechaza_rule_invalida():
+    assert rl.handle_peer_lock({"rule": None}) == (400, {"error": "rule debe ser un objeto"})
+
+
+def test_reserva_vencida_no_bloquea_para_siempre(aislado, monkeypatch):
+    rl._reservations.clear()
+    monkeypatch.setattr(st.rules, "items", [])
+    reloj = [1000.0]
+    monkeypatch.setattr(rl.time, "monotonic", lambda: reloj[0])
+    assert rl._reserve_local({"from": "A", "to": "B", "kind": "on_stop", "enabled": True}) is None
+    # la inversa, mientras la reserva de A->B sigue viva: choca
+    assert rl._reserve_local({"from": "B", "to": "A", "kind": "on_stop", "enabled": True}) is not None
+    reloj[0] += rl._LOOP_LOCK_TTL_S + 1
+    # vencida: ya no bloquea (quien la pidio nunca la confirmo, o se cayo)
+    assert rl._reserve_local({"from": "B", "to": "A", "kind": "on_stop", "enabled": True}) is None
+    rl._reservations.clear()
+
+
+def test_loop_lock_carrera_entre_dos_pcs_con_hilos(aislado, monkeypatch):
+    """Dos PCs (pc-a, la menor, y pc-b) crean a la vez las dos puntas de un bucle (A->B en una,
+    B->A en la otra). El forward de pc-b hacia pc-a se simula llamando handle_peer_lock en el
+    mismo proceso: en produccion el arbitro es exactamente eso, el server de la PC menor."""
+    rl._reservations.clear()
+    monkeypatch.setattr(st.rules, "items", [])
+
+    def fake_forward(pc_id, method, path, body=None):
+        assert (pc_id, method, path) == ("pc-a", "POST", "/rules/lock")
+        return rl.handle_peer_lock(body)
+
+    monkeypatch.setattr(ses, "_mirror_forward", fake_forward)
+
+    rule_ab = {"from": "A", "to": "B", "kind": "on_stop", "enabled": True}
+    rule_ba = {"from": "B", "to": "A", "kind": "on_stop", "enabled": True}
+    resultados = {}
+
+    def crear(nombre, from_pc, to_pc, rule):
+        resultados[nombre] = rl.loop_lock(from_pc, to_pc, rule)
+
+    t1 = threading.Thread(target=crear, args=("ab", "pc-a", "pc-b", rule_ab))
+    t2 = threading.Thread(target=crear, args=("ba", "pc-b", "pc-a", rule_ba))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    ganadoras = [k for k, v in resultados.items() if v is None]
+    perdedoras = [k for k, v in resultados.items() if v is not None]
+    assert len(ganadoras) == 1 and len(perdedoras) == 1, resultados
+    rl._reservations.clear()
+
+
+# --- 9. check_at_destination / handle_peer_check: la decide la PC dueña del destino (ronda 3) ---
+
+
+def test_check_at_destination_local_on_stop_repetida(aislado, monkeypatch):
+    monkeypatch.setattr(
+        st.rules, "items", [{"id": "r1", "kind": "on_stop", "from": "A", "to": "B", "text": "listo", "enabled": True}]
+    )
+    nueva = {"kind": "on_stop", "from": "A", "to": "B", "text": "listo"}
+    assert rl.check_at_destination(nueva) == {"error": "ya existe esa conexión", "rule_id": "r1"}
+
+
+def test_check_at_destination_local_on_stop_sin_choque(aislado, monkeypatch):
+    monkeypatch.setattr(
+        st.rules,
+        "items",
+        [{"id": "r1", "kind": "on_stop", "from": "A", "to": "B", "text": "otro texto", "enabled": True}],
+    )
+    nueva = {"kind": "on_stop", "from": "A", "to": "B", "text": "listo"}
+    assert rl.check_at_destination(nueva) is None
+
+
+def test_check_at_destination_local_at_cerca_de_otra(aislado, monkeypatch):
+    at1 = dt.datetime.now().astimezone().replace(microsecond=0)
+    monkeypatch.setattr(
+        st.rules,
+        "items",
+        [{"id": "r1", "kind": "at", "to": "B", "at": at1.isoformat(timespec="seconds"), "text": "x", "enabled": True}],
+    )
+    nueva = {"kind": "at", "to": "B", "at": (at1 + dt.timedelta(seconds=30)).isoformat(timespec="seconds")}
+    conflicto = rl.check_at_destination(nueva)
+    assert conflicto["rule_id"] == "r1" and conflicto["replace"] is True
+
+
+def test_check_at_destination_local_at_lejos_no_choca(aislado, monkeypatch):
+    at1 = dt.datetime.now().astimezone().replace(microsecond=0)
+    monkeypatch.setattr(
+        st.rules,
+        "items",
+        [{"id": "r1", "kind": "at", "to": "B", "at": at1.isoformat(timespec="seconds"), "text": "x", "enabled": True}],
+    )
+    nueva = {"kind": "at", "to": "B", "at": (at1 + dt.timedelta(minutes=10)).isoformat(timespec="seconds")}
+    assert rl.check_at_destination(nueva) is None
+
+
+def test_check_at_destination_remoto_enruta_por_mirror(aislado, mirror_fake):
+    mirror_fake.owners[OTHER] = "pc-b"
+    mirror_fake.forward_result = (200, {"conflict": {"error": "ya existe esa conexión", "rule_id": "rX"}})
+    nueva = {"kind": "on_stop", "from": SID, "to": OTHER, "text": "listo"}
+    conflicto = rl.check_at_destination(nueva)
+    assert conflicto == {"error": "ya existe esa conexión", "rule_id": "rX"}
+    assert mirror_fake.forward_calls == [("pc-b", "POST", "/rules/check", {"rule": nueva})]
+
+
+def test_check_at_destination_peer_caido(aislado, mirror_fake):
+    mirror_fake.owners[OTHER] = "pc-b"
+    mirror_fake.forward_result = (503, {"error": "peer caído"})
+    nueva = {"kind": "on_stop", "from": SID, "to": OTHER, "text": "x"}
+    assert rl.check_at_destination(nueva) == {"error": "peer caído"}
+
+
+def test_handle_peer_check_mira_lo_local_y_lo_espejado(aislado, mirror_fake, monkeypatch):
+    monkeypatch.setattr(st.rules, "items", [])
+    mirror_fake.rule_list = [
+        {"id": "r9", "kind": "on_stop", "from": "A", "to": "B", "text": "listo", "enabled": True, "pc": "otra"}
+    ]
+    req = {"rule": {"kind": "on_stop", "from": "A", "to": "B", "text": "listo"}}
+    code, res = rl.handle_peer_check(req)
+    assert (code, res["conflict"]["rule_id"]) == (200, "r9")
+
+
+def test_handle_peer_check_rechaza_rule_invalida():
+    assert rl.handle_peer_check({"rule": "no es un dict"}) == (400, {"error": "rule debe ser un objeto"})

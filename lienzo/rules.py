@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import secrets
+import threading
 import time
 import traceback
 
@@ -193,10 +194,9 @@ def advance_at(rule: dict, ref: dt.datetime | None = None) -> None:
 def loop_conflict(rule: dict, local_rules: list[dict], remote_rules: list[dict]) -> dict | None:
     """La regla on_stop en sentido inverso (`to` -> `from`), ya habilitada en esta PC o en
     cualquier otra de la federacion, si existe: crearia un bucle A<->B que se contesta solo hasta
-    agotar el cupo (plan multi-PC §3.5). Pura -- quien llama (server.create_on_stop, frente C) le
-    pasa lo local y lo espejado (mirror.rules()) sin que este modulo dependa de mirror.py. El
-    lock de la PC de menor pc_id para la carrera de crear las dos a la vez en PCs distintas queda
-    para la proxima ronda."""
+    agotar el cupo (plan multi-PC §3.5). Pura -- quien llama (server.create_on_stop, frente C, o
+    _reserve_local de aca abajo) le pasa lo local y lo espejado (mirror.rules()) sin que este
+    modulo dependa de mirror.py."""
     return next(
         (
             r
@@ -208,6 +208,137 @@ def loop_conflict(rule: dict, local_rules: list[dict], remote_rules: list[dict])
         ),
         None,
     )
+
+
+# --- lock de la PC de menor pc_id: la carrera de crear la regla inversa a la vez (plan §3.5) ----
+
+_LOOP_LOCK_TTL_S = 10  # tiempo que dura una reserva sin confirmar: alcanza de sobra para que quien
+# la pidio guarde la regla (rules.add tarda microsegundos); mas que eso y ya no vale la pena seguir
+# bloqueando por una reserva que quiza nunca se confirma (la sesion desistio, o se cayo)
+_loop_lock_guard = threading.Lock()
+_reservations: dict[tuple[str | None, str | None], float] = {}
+
+
+def _reserve_local(rule: dict) -> dict | None:
+    """Con el lock de esta PC tomado (ella es la de menor pc_id para el par, o no hay para donde
+    coordinar): `loop_conflict` contra lo local y lo espejado y, si no hay bucle, reserva el par
+    (from, to) unos segundos para que la creacion concurrente de la inversa -- que todavia no esta
+    guardada en ningun `rules.items` ni espejo, es la carrera que este lock existe para resolver --
+    tambien la vea. Las reservas vencidas (`_LOOP_LOCK_TTL_S`) no cuentan, para no quedar
+    bloqueado para siempre si quien la pidio nunca la confirma."""
+    ahora = time.monotonic()
+    clave, inverso = (rule.get("from"), rule.get("to")), (rule.get("to"), rule.get("from"))
+    with _loop_lock_guard:
+        for k, ts in list(_reservations.items()):
+            if ahora - ts > _LOOP_LOCK_TTL_S:
+                del _reservations[k]
+        if inverso in _reservations:
+            de, a = str(rule.get("from"))[:8], str(rule.get("to"))[:8]
+            return {"error": f"crearía un bucle {de}↔{a}: otra PC está creando la inversa ahora mismo"}
+        conflict = loop_conflict(rule, list(rules.items), ses._mirror_rules())
+        if conflict is None:
+            _reservations[clave] = ahora
+        return conflict
+
+
+def loop_lock(from_pc: str | None, to_pc: str | None, rule: dict) -> dict | None:
+    """Chequea (y reserva) que crear `rule` (on_stop `from` -> `to`) no cierre un bucle A<->B,
+    resolviendo la carrera de crearla a la vez en las dos PCs (plan multi-PC §3.5): siempre arbitra
+    la PC de menor `pc_id` entre `from_pc` y `to_pc`. Si esta PC lo es (o no hay con quien
+    coordinar: alguna de las dos puntas sin PC conocida, o la misma PC en las dos), chequea y
+    reserva local (`_reserve_local`); si no, le pide lo mismo a la que sí lo es por
+    `mirror.forward(menor, "POST", "/rules/lock", ...)` (frente C la engancha en
+    `POST /peer/rules/lock` -> `handle_peer_lock`, abajo)."""
+    if from_pc and to_pc and from_pc != to_pc:
+        menor = min(from_pc, to_pc)
+        if menor != from_pc:
+            code, res = ses._mirror_forward(menor, "POST", "/rules/lock", {"rule": rule})
+            if code != 200:
+                return {"error": (res or {}).get("error") or f"no pude coordinar el chequeo con {menor}"}
+            return res.get("conflict")
+    return _reserve_local(rule)
+
+
+def handle_peer_lock(req: dict) -> tuple[int, dict]:
+    """Lado receptor de `POST /peer/rules/lock`: esta PC es la de menor `pc_id` para el par y
+    arbitra con el mismo lock y la misma reserva que usa `loop_lock` cuando lo resuelve local."""
+    rule = req.get("rule")
+    if not isinstance(rule, dict):
+        return 400, {"error": "rule debe ser un objeto"}
+    return 200, {"conflict": _reserve_local(rule)}
+
+
+# --- regla repetida y "a la misma hora": las decide la PC dueña del destino (plan §3.5) ---------
+
+
+def _rule_clash(rule: dict, existing: list[dict]) -> dict | None:
+    """`rule` (todavia sin crear) choca con alguna de `existing`: mismo destino y, segun el kind,
+    mismo origen y texto (on_stop: "ya existe esa conexión") o a menos de AT_NEAR_S segundos (at:
+    "ya hay una programada"). None si no choca con ninguna. Mismo dict de rechazo (con `rule_id`,
+    y en el caso `at` tambien `replace`) que ya devolvia server.py antes de esta ronda."""
+    to = rule.get("to")
+    if rule.get("kind") == "on_stop":
+        texto = (rule.get("text") or "").strip()
+        dup = next(
+            (
+                r
+                for r in existing
+                if r.get("enabled")
+                and r.get("kind") == "on_stop"
+                and r.get("to") == to
+                and (r.get("from") or None) == (rule.get("from") or None)
+                and (r.get("text") or "").strip() == texto
+            ),
+            None,
+        )
+        return {"error": "ya existe esa conexión", "rule_id": dup["id"]} if dup else None
+    if rule.get("kind") == "at":
+        at = local_dt(rule.get("at"))
+        if at is None:
+            return None
+        clash = next(
+            (
+                r
+                for r in existing
+                if r.get("enabled") and r.get("kind") == "at" and r.get("to") == to and at_near(r, at)
+            ),
+            None,
+        )
+        if clash is None:
+            return None
+        hhmm = local_dt(clash["at"]).strftime("%H:%M")
+        return {
+            "error": f"ya hay una programada a las {hhmm} para esa sesión",
+            "rule_id": clash["id"],
+            "at": clash["at"],
+            "text": clash.get("text") or "",
+            "replace": True,
+        }
+    return None
+
+
+def check_at_destination(rule: dict) -> dict | None:
+    """La regla repetida (on_stop) y la programada a menos de 2 min (at) las decide la PC dueña
+    del destino (plan multi-PC §3.5): si `to` es de otra PC (`mirror.owner_of`), se le pide por
+    `mirror.forward(..., "POST", "/rules/check", ...)` (frente C la engancha en
+    `POST /peer/rules/check` -> `handle_peer_check`, abajo); si es local, se resuelve aca mismo
+    contra lo local y lo espejado (una regla que apunta a esta sesion puede vivir en cualquier PC,
+    la que sea dueña de su `from`)."""
+    owner = ses._mirror_owner(rule.get("to") or "")
+    if owner is not None:
+        code, res = ses._mirror_forward(owner, "POST", "/rules/check", {"rule": rule})
+        if code != 200:
+            return {"error": (res or {}).get("error") or f"no pude consultar a {owner}"}
+        return res.get("conflict")
+    return _rule_clash(rule, list(rules.items) + ses._mirror_rules())
+
+
+def handle_peer_check(req: dict) -> tuple[int, dict]:
+    """Lado receptor de `POST /peer/rules/check`: esta PC es la dueña del destino."""
+    rule = req.get("rule")
+    if not isinstance(rule, dict):
+        return 400, {"error": "rule debe ser un objeto"}
+    return 200, {"conflict": _rule_clash(rule, list(rules.items) + ses._mirror_rules())}
 
 
 def fire_rule(rule: dict) -> None:
