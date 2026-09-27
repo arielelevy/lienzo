@@ -122,7 +122,13 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     // distintas ofrecerian un canal que la propia sesion origen no puede abrir
     if ((from.pc ?? null) !== (targetSession.pc ?? null)) return "ListAgents solo ve su propia PC: el canal nativo no cruza PCs distintas";
     const bad = [from, targetSession].filter((s) => s.agent !== "claude");
-    if (!bad.length) return null;
+    if (!bad.length) {
+      // el canal nativo se apoya en ListAgents, que es por entorno: un claude de Windows no ve a
+      // uno de WSL/Unix (registros separados). Si una esta en tmux y la otra no, no se hablan.
+      if ((from.backend === "tmux") !== (targetSession.backend === "tmux"))
+        return "el canal nativo es entre sesiones del mismo entorno; una corre en Windows y la otra en WSL/Unix, y no se ven entre sí con ListAgents";
+      return null;
+    }
     const who = bad.map((s) => (s.session_id === from.session_id ? "esta sesión" : shortName(s))).join(" y ");
     return `las dos tienen que ser Claude Code; ${who} ${bad.length > 1 ? "son" : "es"} ${bad.map((s) => AGENTS[s.agent].label).join(" y ")}`;
   }, [from, targetSession]);

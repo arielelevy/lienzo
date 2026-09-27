@@ -81,8 +81,8 @@ def test_evento_de_hook_trae_pc_y_repo_key(aislado):
 
 def test_barrido_trae_pc_y_repo_key(aislado, monkeypatch):
     cwd = make_repo(aislado, "proj2", "git@github.com:foo/baz.git")
-    monkeypatch.setattr(ses, "guess_transcript", lambda agent, cwd_, started: (None, None))
-    monkeypatch.setattr(ses.procs, "cwd_of", lambda pid: cwd)
+    monkeypatch.setattr(ses, "guess_transcript", lambda agent, cwd_, started, home=None: (None, None))
+    monkeypatch.setattr(ses.backend._win, "cwd_of", lambda pid: cwd)
     p = {"pid": PID, "agent": "claude", "exe": "claude.exe", "created": st.now(), "in_vscode": False, "orphan": False}
     ses.adopt_process(p)
     s = st.sessions[f"pid-{PID}"]

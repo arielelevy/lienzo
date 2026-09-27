@@ -65,7 +65,7 @@ def test_send_failure_is_not_reported_as_success(monkeypatch, returncode, stdout
     monkeypatch.setattr(
         ses.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
     )
-    code, out = ses.run_send("test", 42, "hola")
+    code, out = ses.run_send({"session_id": "test", "pid": 42, "backend": "win32"}, "hola")
     assert code == 500 and out["ok"] is False
 
 
@@ -79,7 +79,7 @@ def test_send_failure_is_not_reported_as_success(monkeypatch, returncode, stdout
     ],
 )
 def test_cross_agent_text_transport(monkeypatch, origin, target):
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend._win, "agent_alive", lambda pid: True)
     typed = []
 
     def run(cmd, **kw):
@@ -98,7 +98,7 @@ def test_cross_agent_text_transport(monkeypatch, origin, target):
 
 
 def test_pi_dialog_blocks_injection(monkeypatch):
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend._win, "agent_alive", lambda pid: True)
     s = ses.new_session("pi-dialog", "pi", "hook")
     s.update(pid=42, needs={"kind": "pi_dialog"})
     assert ses.send_blocked(s)[0] == 409
@@ -131,8 +131,8 @@ def test_pi_only_settled_event_closes_turn(monkeypatch):
 def test_pi_reload_binds_exact_log_and_replaces_sweep_card(tmp_path, monkeypatch):
     from test_pi import message, text, transcript
 
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
-    monkeypatch.setattr(ses.procs, "is_tui", lambda pid: True)
+    monkeypatch.setattr(ses.backend._win, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend._win, "is_tui", lambda pid: True)
     placeholder = ses.new_session("pid-42", "pi", "sweep")
     placeholder["pid"] = 42
     st.sessions["pid-42"] = placeholder
@@ -166,7 +166,7 @@ def test_pi_sweep_binds_child_log_without_claiming_hook_or_firing_rules(tmp_path
 
     completed = []
     monkeypatch.setattr(ses, "on_turn_end", completed.append)
-    monkeypatch.setattr(ses.procs, "cwd_of", lambda pid: str(tmp_path))
+    monkeypatch.setattr(ses.backend._win, "cwd_of", lambda pid: str(tmp_path))
     path = transcript(
         tmp_path,
         [
@@ -208,9 +208,9 @@ def test_pi_activity_discovery_finds_resumed_log_without_shell(tmp_path, monkeyp
 
 
 def test_pi_shared_project_never_guesses_by_activity(monkeypatch):
-    monkeypatch.setattr(ses.procs, "cwd_of", lambda pid: "D:/shared")
+    monkeypatch.setattr(ses.backend._win, "cwd_of", lambda pid: "D:/shared")
     monkeypatch.setattr(
-        ses.procs,
+        ses.backend._win,
         "sweep",
         lambda: [{"pid": pid, "agent": "pi", "exe": "node.exe", "created": st.now()} for pid in (42, 43)],
     )
@@ -240,7 +240,7 @@ def test_event_from_dead_process_does_not_make_an_immortal_card(monkeypatch, nam
     # El evento llega con el pid de un Pi que ya se cerro: quedo en la cola al reiniciar el server,
     # o lo escribio justo antes de morir. Antes la tarjeta nacia viva y sin pid, y refresh_alive no
     # toca las tarjetas sin pid: no se moria nunca y habia que borrarla a mano
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: False)
+    monkeypatch.setattr(ses.backend._win, "agent_alive", lambda pid: False)
     sid = "pi-muerto"
     ses.apply_event({"agent": "pi", "session_id": sid, "hook_event_name": name, "pid": 4242, "cwd": "D:/Apps/chess"})
     s = st.sessions[sid]
@@ -253,7 +253,7 @@ def test_event_from_dead_process_does_not_make_an_immortal_card(monkeypatch, nam
 
 def test_event_from_dead_pid_does_not_kill_a_card_whose_own_process_lives(monkeypatch):
     # la tarjeta ya tiene su proceso vivo: un evento viejo con otro pid muerto no la mata
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: pid == 7)
+    monkeypatch.setattr(ses.backend._win, "agent_alive", lambda pid: pid == 7)
     sid = "pi-vivo"
     s = ses.new_session(sid, "pi", "hook")
     s.update(pid=7, alive=True)

@@ -191,7 +191,13 @@ def test_actividad_del_log_sin_hooks(tmp_path, monkeypatch):
         {"pid": 4242, "clientName": "cli", "msg": "prompt complete"},
         {"pid": 4242, "clientName": "cli", "msg": "prompt started"},
         {"pid": 4242, "clientName": "cli", "msg": "authorization.decision", "toolName": "skills"},
-        {"pid": 4242, "clientName": "agent", "msg": "authorization.decision", "toolName": "read", "time": "2026-09-25T03:36:28.816Z"},
+        {
+            "pid": 4242,
+            "clientName": "agent",
+            "msg": "authorization.decision",
+            "toolName": "read",
+            "time": "2026-09-25T03:36:28.816Z",
+        },
         {"pid": 999, "clientName": "cli", "msg": "authorization.decision", "toolName": "grep"},
     ]
     (tmp_path / "logs" / "coda.log").write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")

@@ -1,0 +1,2 @@
+# los scripts de bash corren en WSL/Linux/Mac: con CRLF (el checkout de Windows) bash no los lee
+*.sh text eol=lf

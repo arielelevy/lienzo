@@ -12,53 +12,53 @@ son un pedido de permiso y por eso no los ve nadie desde afuera.
 from __future__ import annotations
 
 import argparse
-import ctypes
-import ctypes.wintypes as wt
 import json
 import os
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import procs
+# la lectura de la consola es Win32; los parsers de abajo (input_area, dialog) son texto puro y
+# los usa tambien la pantalla de tmux en Mac/Linux/WSL, asi que el modulo tiene que importar ahi
+if sys.platform == "win32":
+    import ctypes
+    import ctypes.wintypes as wt
 
-k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-GENERIC_READ = 0x80000000
-GENERIC_WRITE = 0x40000000
-FILE_SHARE_READ = 0x1
-FILE_SHARE_WRITE = 0x2
-OPEN_EXISTING = 3
-INVALID_HANDLE_VALUE = wt.HANDLE(-1).value
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import procs
 
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    GENERIC_READ = 0x80000000
+    GENERIC_WRITE = 0x40000000
+    FILE_SHARE_READ = 0x1
+    FILE_SHARE_WRITE = 0x2
+    OPEN_EXISTING = 3
+    INVALID_HANDLE_VALUE = wt.HANDLE(-1).value
 
-class COORD(ctypes.Structure):
-    _fields_ = [("X", wt.SHORT), ("Y", wt.SHORT)]
+    class COORD(ctypes.Structure):
+        _fields_ = [("X", wt.SHORT), ("Y", wt.SHORT)]
 
+    class SMALL_RECT(ctypes.Structure):
+        _fields_ = [("Left", wt.SHORT), ("Top", wt.SHORT), ("Right", wt.SHORT), ("Bottom", wt.SHORT)]
 
-class SMALL_RECT(ctypes.Structure):
-    _fields_ = [("Left", wt.SHORT), ("Top", wt.SHORT), ("Right", wt.SHORT), ("Bottom", wt.SHORT)]
+    class CSBI(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", COORD),
+            ("dwCursorPosition", COORD),
+            ("wAttributes", wt.WORD),
+            ("srWindow", SMALL_RECT),
+            ("dwMaximumWindowSize", COORD),
+        ]
 
-
-class CSBI(ctypes.Structure):
-    _fields_ = [
-        ("dwSize", COORD),
-        ("dwCursorPosition", COORD),
-        ("wAttributes", wt.WORD),
-        ("srWindow", SMALL_RECT),
-        ("dwMaximumWindowSize", COORD),
-    ]
-
-
-k32.AttachConsole.argtypes = [wt.DWORD]
-k32.AttachConsole.restype = wt.BOOL
-k32.FreeConsole.restype = wt.BOOL
-k32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, wt.LPVOID, wt.DWORD, wt.DWORD, wt.HANDLE]
-k32.CreateFileW.restype = wt.HANDLE
-k32.GetConsoleScreenBufferInfo.argtypes = [wt.HANDLE, ctypes.POINTER(CSBI)]
-k32.GetConsoleScreenBufferInfo.restype = wt.BOOL
-k32.ReadConsoleOutputCharacterW.argtypes = [wt.HANDLE, wt.LPWSTR, wt.DWORD, COORD, ctypes.POINTER(wt.DWORD)]
-k32.ReadConsoleOutputCharacterW.restype = wt.BOOL
-k32.CloseHandle.argtypes = [wt.HANDLE]
+    k32.AttachConsole.argtypes = [wt.DWORD]
+    k32.AttachConsole.restype = wt.BOOL
+    k32.FreeConsole.restype = wt.BOOL
+    k32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, wt.LPVOID, wt.DWORD, wt.DWORD, wt.HANDLE]
+    k32.CreateFileW.restype = wt.HANDLE
+    k32.GetConsoleScreenBufferInfo.argtypes = [wt.HANDLE, ctypes.POINTER(CSBI)]
+    k32.GetConsoleScreenBufferInfo.restype = wt.BOOL
+    k32.ReadConsoleOutputCharacterW.argtypes = [wt.HANDLE, wt.LPWSTR, wt.DWORD, COORD, ctypes.POINTER(wt.DWORD)]
+    k32.ReadConsoleOutputCharacterW.restype = wt.BOOL
+    k32.CloseHandle.argtypes = [wt.HANDLE]
 
 
 def read_screen(pid: int, whole_buffer: bool = False) -> dict:

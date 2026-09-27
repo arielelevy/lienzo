@@ -60,27 +60,68 @@ de una sesión viva no la reemplaza.
 
 ## Requisitos
 
-- Windows 10/11: es donde está probado. Hoy no corre en Mac ni en Linux.
+- Windows 10/11: es donde está probado de punta a punta. Mac, Linux y WSL van por tmux (ver abajo).
 - Python 3.14 o más nuevo, sólo biblioteca estándar. Sin `psutil`, sin frameworks.
 - Node 24 LTS para compilar la interfaz (Vite + React + TypeScript).
 - Claude Code 2.1+, Codex CLI 0.153+, Pi CLI (integración desarrollada contra 0.86.0) o CODA.
 - Sólo para el acceso desde el celular, y sólo si lo querés: `cloudflared`
   (`winget install Cloudflare.cloudflared`). Para usarlo local no hace falta.
 
-### Por qué Windows, y qué haría falta para Mac
+### Mac, Linux y WSL: con tmux
 
 El núcleo no depende del sistema operativo: el estado sale de los hooks de los propios agentes y
 el contenido, de las transcripciones `.jsonl`. Lo atado a Win32 son dos archivos: `send.py`
 (escribir en la consola de otro proceso, `AttachConsole` + `WriteConsoleInputW`) y `screen.py`
 (leer su buffer, `ReadConsoleOutputCharacterW`).
 
-En Mac o Linux esas dos piezas salen **más fáciles**, con tmux en el medio: `tmux send-keys -t
-<pane>` en vez de attachearse a la consola ajena, `tmux capture-pane -p` en vez de leer el
-buffer —y encima con scrollback y con la sesión sobreviviendo al cierre de la terminal, que en
-Windows no existe—. La condición es que los agentes arranquen adentro de tmux, y el
-direccionamiento pasa a ser por pane en vez de por PID. Sin tmux, en Mac queda peor que en
-Windows: un PTY es de quien lo creó y no hay forma de leer la pantalla de otra terminal ni de
-escribirle a un PID. **No está hecho: se podría.**
+Fuera de Windows esas dos piezas van por tmux: `tmux send-keys -t <pane>` en vez de attachearse a
+la consola ajena y `tmux capture-pane -p` en vez de leer el buffer, y el direccionamiento es por
+pane en vez de por PID (`lienzo/tmux.py`, descubrimiento por `ps`, no `/proc`). La fuente es
+**múltiple** (`lienzo/backend.py`): un tablero en Windows ve también los agentes de WSL, los maneja
+por `wsl.exe` y les lee la transcripción por `\\wsl.localhost`. El detalle, lo verificado y lo que
+falta están en `docs/porting-linux-2026-09-08.md`.
+
+**La limitación de fondo: para escribirle a un agente, tiene que haber arrancado adentro de tmux.**
+No es de lienzo sino de Unix:
+
+- **Leer** un agente (su conversación, su estado) **no necesita tmux**: sale del proceso (`ps`), su
+  cwd y su transcripción `.jsonl`. Un claude/codex que abrís normal en una terminal aparece en el
+  tablero **en solo lectura** ("sin consola").
+- **Escribirle** sí necesita tmux. En Unix un PTY es de quien lo creó: no hay forma soportada de que
+  otro proceso le teclee a una terminal ajena que ya corre (en Windows sí, con `AttachConsole`).
+  tmux es lo que da ese acceso, y por eso el agente tiene que **nacer** adentro.
+
+Por eso `POST /sessions/launch` (también el pedido desde otra PC) en Mac/Linux/WSL abre
+la sesión con `tmux new-session -d`, nunca en una terminal suelta. El server se arranca con
+`./lienzo-server.sh`, que exige Python 3.14 igual que en Windows. Probado: un tablero de Windows
+leyendo y escribiéndole a agentes en tmux de WSL. Sin probar todavía: el server corriendo nativo en
+Linux, el emparejamiento entre PCs desde Linux, `install.py` fuera de Windows (sin hooks, las
+tarjetas salen del barrido) y un Mac. Pi y CODA, por ahora, solo en Windows.
+
+Para que un agente sea escribible desde el board, arrancalo en tmux. El helper lo esconde en un
+comando:
+
+```bash
+./lienzo-new.sh claude          # (o codex, o: ./lienzo-new.sh claude mirepo)
+# Ctrl+b, d  para salir sin cerrarlo ; tmux attach -t <nombre>  para volver
+```
+
+#### TIOCSTI: escribirle a un agente suelto sin tmux (apagado por seguridad)
+
+El único mecanismo para inyectarle entrada a una terminal ajena sin tmux es el ioctl **`TIOCSTI`**.
+Lo **desactivaron por defecto** en los kernels modernos (CVE-2017-5226: cualquier proceso podía
+inyectar comandos en cualquier terminal del usuario). Si alguien lo quiere habilitar —su máquina,
+su decisión— es un `sysctl`:
+
+```bash
+cat /proc/sys/dev/tty/legacy_tiocsti          # 0 = apagado (lo normal)
+sudo sysctl -w dev.tty.legacy_tiocsti=1        # prenderlo (o en /etc/sysctl.d para que persista)
+```
+
+Prenderlo **baja una defensa** (vuelve a permitir que cualquier proceso local teclee en tus
+terminales). Con eso prendido se podría escribir a agentes sueltos como en Windows, pero el camino
+**seguro** es tmux: no inyecta desde afuera, sino que uno es dueño del PTY desde el arranque (que es
+justo lo que recomendaron los del kernel al sacar TIOCSTI). Lienzo, por ahora, **no** usa TIOCSTI.
 
 ## Instalación
 
@@ -457,7 +498,9 @@ lienzo/
   hook.py          hook único para los dos agentes; espera de permisos con nonce
   procinfo.py      ctypes mínimo compartido: padre, imagen, vivo, agente
   transcripts.py   lectura por la cola de las transcripciones, digest por turno, hora del límite de uso, error de API reintentable
-  procs.py         liveness, barrido de procesos, cwd por PEB
+  procs.py         liveness, barrido de procesos, cwd por PEB (Windows)
+  tmux.py          la fuente de Mac/Linux/WSL: send-keys, capture-pane, panes y agentes sueltos por `ps`
+  backend.py       suma las fuentes (Windows + tmux de WSL, o tmux solo) y rutea cada tarjeta por la suya
   send.py          inyección de teclas por PID; `--key escape` manda un Esc solo (interrumpir)
   screen.py        lectura del buffer de consola por PID: sugerencias y diálogos de la TUI
   auth.py          TOTP (RFC 6238), cookies, freno de intentos
@@ -471,7 +514,7 @@ lienzo/
   beacon.py        hilo que emite y escucha el beacon UDP (7323) y actualiza la IP de cada peer
   health.py        memoria, CPU y temperatura de esta PC, sin dependencias nuevas
   mirror.py        espejo en memoria de cada peer conectado (SSE saliente), enrutado (`owner_of`, `forward`) y salud
-  launch.py        escribe el `.cmd` y lanza una sesión nueva, local o pedida por otra PC, restringido a `launch_roots`
+  launch.py        lanza una sesión nueva, local o pedida por otra PC, restringido a `launch_roots`: `.cmd` en Windows, tmux en Mac/Linux/WSL
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
   src/arrows-geometry.ts   geometría de las flechas y etiquetas de período, funciones puras con tests propios
   src/nl.ts                parser de frases ("cada 30 min continuá hasta 6 veces"), con tests propios
@@ -482,7 +525,9 @@ web/               interfaz (Vite + React + TypeScript); `npm run build` deja we
 skills/lienzo/     skill para agentes: cómo lanzar terminales, repartir frentes y coordinarlos; `coordinar.py` es el cliente de la API
 tests/             pytest: transcripciones reales, procesos vivos, la máquina de estados del server y la federación entre PCs
 install.py         alta y baja de los hooks; `--peer` para la regla de firewall del emparejamiento
-lienzo-server.cmd  arranque
+lienzo-server.cmd  arranque (Windows)
+lienzo-server.sh   arranque (Mac/Linux/WSL)
+lienzo-new.sh      abre un agente adentro de tmux, para que el tablero le pueda escribir
 ```
 
 `LIENZO_HOME` cambia la carpeta de estado (`~/.lienzo` por defecto): la usan `server.py`, `hook.py`

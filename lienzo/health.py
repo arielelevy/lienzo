@@ -5,46 +5,70 @@ tiene con que comparar y da None: el modulo guarda la muestra anterior); tempera
 (\\_TZ.THRM, deciKelvin) via un powershell corto, cara y por eso cacheada 30 s. `snapshot()` nunca
 levanta: un fallo de cualquier pieza deja ese campo en None y no interrumpe a las demas.
 
+Fuera de Windows (Mac/Linux/WSL, backend tmux) el modulo tiene que importar igual: la memoria sale de
+/proc/meminfo donde existe, y CPU y temperatura quedan en None.
+
 No se conecta a server.py todavia (eso es la ronda 2, GET /peer/health).
 """
 
 from __future__ import annotations
 
 import ctypes
-import ctypes.wintypes as wt
 import datetime as dt
 import subprocess
+import sys
 import threading
 import time
 
-_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
+WINDOWS = sys.platform == "win32"
 GB = 1024**3
 TEMP_TTL_S = 30
 
 
-class _MEMORYSTATUSEX(ctypes.Structure):
-    _fields_ = [
-        ("dwLength", wt.DWORD),
-        ("dwMemoryLoad", wt.DWORD),
-        ("ullTotalPhys", ctypes.c_uint64),
-        ("ullAvailPhys", ctypes.c_uint64),
-        ("ullTotalPageFile", ctypes.c_uint64),
-        ("ullAvailPageFile", ctypes.c_uint64),
-        ("ullTotalVirtual", ctypes.c_uint64),
-        ("ullAvailVirtual", ctypes.c_uint64),
-        ("ullAvailExtendedVirtual", ctypes.c_uint64),
+if WINDOWS:
+    import ctypes.wintypes as wt
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class _MEMORYSTATUSEX(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", wt.DWORD),
+            ("dwMemoryLoad", wt.DWORD),
+            ("ullTotalPhys", ctypes.c_uint64),
+            ("ullAvailPhys", ctypes.c_uint64),
+            ("ullTotalPageFile", ctypes.c_uint64),
+            ("ullAvailPageFile", ctypes.c_uint64),
+            ("ullTotalVirtual", ctypes.c_uint64),
+            ("ullAvailVirtual", ctypes.c_uint64),
+            ("ullAvailExtendedVirtual", ctypes.c_uint64),
+        ]
+
+    _k32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(_MEMORYSTATUSEX)]
+    _k32.GlobalMemoryStatusEx.restype = wt.BOOL
+    _k32.GetSystemTimes.argtypes = [
+        ctypes.POINTER(wt.FILETIME),
+        ctypes.POINTER(wt.FILETIME),
+        ctypes.POINTER(wt.FILETIME),
     ]
+    _k32.GetSystemTimes.restype = wt.BOOL
 
 
-_k32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(_MEMORYSTATUSEX)]
-_k32.GlobalMemoryStatusEx.restype = wt.BOOL
-_k32.GetSystemTimes.argtypes = [ctypes.POINTER(wt.FILETIME), ctypes.POINTER(wt.FILETIME), ctypes.POINTER(wt.FILETIME)]
-_k32.GetSystemTimes.restype = wt.BOOL
+def _memoria_unix() -> tuple[float | None, float | None]:
+    """(libre, total) en GB desde /proc/meminfo (Linux, WSL). En Mac no existe: (None, None)."""
+    campos = {}
+    with open("/proc/meminfo", encoding="ascii") as f:
+        for linea in f:
+            k, _, v = linea.partition(":")
+            campos[k] = int(v.split()[0]) * 1024  # viene en kB
+    if "MemAvailable" not in campos or "MemTotal" not in campos:
+        return None, None
+    return campos["MemAvailable"] / GB, campos["MemTotal"] / GB
 
 
 def _memoria() -> tuple[float | None, float | None]:
     """(libre, total) en GB, o (None, None) si GlobalMemoryStatusEx falla."""
+    if not WINDOWS:
+        return _memoria_unix()
     m = _MEMORYSTATUSEX()
     m.dwLength = ctypes.sizeof(m)
     if not _k32.GlobalMemoryStatusEx(ctypes.byref(m)):
@@ -64,6 +88,8 @@ _ultima_muestra: tuple[int, int, int] | None = None
 def _cpu_pct() -> float | None:
     """% de CPU usado desde la ultima llamada. La primera no tiene con que comparar: None."""
     global _ultima_muestra
+    if not WINDOWS:
+        return None
     idle, kernel, user = wt.FILETIME(), wt.FILETIME(), wt.FILETIME()
     if not _k32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
         return None
@@ -132,6 +158,8 @@ def _temp_c() -> float | None:
     ultimo valor y se mide de nuevo en un hilo aparte: /peers y /peer/health (que cada PC le pide a
     las otras cada 15 s) no quedan colgados un segundo esperando a WMI."""
     global _temp_cache
+    if not WINDOWS:
+        return None
     ahora = time.monotonic()
     if _temp_cache is None:
         _temp_cache = (_medir_temp(), ahora)

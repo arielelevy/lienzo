@@ -371,8 +371,8 @@ PID = 26356
 @pytest.fixture
 def con_pid(aislado, monkeypatch):
     """El pid siempre esta vivo y es una TUI; reglas y links en tmp; el log se guarda para mirarlo."""
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: pid == PID)
-    monkeypatch.setattr(ses.procs, "is_tui", lambda pid: True)
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: s.get("pid") == PID)
+    monkeypatch.setattr(ses.backend, "is_tui", lambda pid: True)
     monkeypatch.setattr(st.rules, "path", str(aislado / "rules.json"))
     monkeypatch.setattr(st.rules, "items", [])
     monkeypatch.setattr(st.links, "path", str(aislado / "links.json"))
@@ -521,7 +521,7 @@ def test_state_nunca_queda_en_none(aislado, monkeypatch):
     )
     with open(os.path.join(st.SESSIONS, f"{bad['session_id']}.json"), "w", encoding="utf-8") as f:
         json.dump(bad, f)
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: False)
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda pid: False)
     st.sessions.clear()
     ses.load_sessions()
     assert st.sessions[bad["session_id"]]["state"] == "muerta"
@@ -538,7 +538,7 @@ class _Run:
 
 
 def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda pid: True)
     monkeypatch.setattr(st, "ADJUNTOS", str(aislado / "adjuntos"))
     monkeypatch.setattr(ses, "ADJUNTOS", str(aislado / "adjuntos"))
     typed = []
@@ -760,7 +760,7 @@ def test_el_encargo_que_manda_el_lienzo_si_renombra_la_tarjeta(aislado, monkeypa
     s = ses.new_session(SID, "claude", "hook")
     s.update({"pid": PID, "title": "arrancamos con el tablero", "title_source": "prompt", "prompt_via": "terminal"})
     st.sessions[SID] = s
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: pid == PID)
+    monkeypatch.setattr(ses.backend._win, "agent_alive", lambda pid: pid == PID)
     monkeypatch.setattr(ses, "run_send", lambda *a, **k: (200, {"ok": True, "chars": 30}))
     code, _ = ses.send_to_session(s, "Encargo R2: revisar el backend", [])
     assert code == 200 and s["prompt_via"] == "lienzo"
@@ -1029,7 +1029,7 @@ def test_el_lock_esta_libre_mientras_se_parsea_la_transcripcion(aislado, monkeyp
     tp.write_text("{}\n", encoding="utf-8")
     s = tarjeta_claude()
     s["transcript_path"] = str(tp)
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda pid: True)
     visto = []
     monkeypatch.setattr(ses, "read_transcript", lambda x: (visto.append(lock_libre()), None)[1])
     dentro = []
@@ -1044,7 +1044,7 @@ def test_la_transcripcion_no_revive_una_tarjeta_borrada_mientras_se_leia(aislado
     tp.write_text("{}\n", encoding="utf-8")
     s = tarjeta_claude()
     s["transcript_path"] = str(tp)
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda pid: True)
 
     def leyendo(x):
         ses.drop_session(SID, "borrada mientras se leia")
@@ -1060,7 +1060,7 @@ def test_el_lock_esta_libre_mientras_send_py_tipea(aislado, monkeypatch):
     """send.py puede tardar hasta 60 s: con el lock tomado congelaria el tablero entero."""
     s = tarjeta_claude()
     s["last_event"] = "Stop"
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda pid: True)
     visto = []
     monkeypatch.setattr(ses.subprocess, "run", lambda cmd, **k: (visto.append(lock_libre()), _Run(4))[1])
     code, _ = ses.send_to_session(s, "hola", [])
@@ -1130,7 +1130,7 @@ def test_dos_hilos_sobre_la_misma_tarjeta_no_la_dejan_en_un_estado_imposible(ais
     tarjeta_claude()
     monkeypatch.setattr(ses, "save_session", lambda s: None)  # sin tocar disco: esto corre miles de veces
     vivo = [True]
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: vivo[0])
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda pid: vivo[0])
     rondas, parar, rotos = 300, threading.Event(), []
 
     def hooks():
@@ -1353,7 +1353,7 @@ def test_la_tarjeta_tiene_la_misma_forma_venga_de_hook_o_de_barrido():
 def test_una_tarjeta_vieja_recupera_la_forma_al_cargarla(aislado, monkeypatch):
     """Las guardadas por versiones anteriores tienen la mitad de los campos: al cargarlas se
     completan, para que GET /sessions no devuelva un campo en unas tarjetas y no en otras."""
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda pid: True)
     vieja = {
         "session_id": SID,
         "agent": "claude",
@@ -1620,7 +1620,7 @@ def test_la_caja_vacia_no_es_texto_tipeado():
 
 def _traspaso(monkeypatch):
     """Origen corriendo y copia libre, las dos con PID vivo; send.py no tipea, se anota el comando."""
-    monkeypatch.setattr(ses.procs, "agent_alive", lambda pid: True)
+    monkeypatch.setattr(ses.backend._win, "agent_alive", lambda pid: True)
     typed: list[list[str]] = []
     monkeypatch.setattr(ses.subprocess, "run", lambda cmd, **k: (typed.append(cmd), _Run(0))[1])
     origen = ses.new_session(OLD, "claude", "hook")

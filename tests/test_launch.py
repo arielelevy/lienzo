@@ -177,3 +177,39 @@ def test_ejecutable_que_no_esta_se_informa(aislado, monkeypatch):
     monkeypatch.setattr(launch.shutil, "which", lambda name: None)
     res = launch.launch(str(aislado / "repos" / "x"), "titulo", "coda")
     assert res == {"ok": False, "error": "no encuentro coda.exe en esta PC"}
+
+
+# --- Mac/Linux/WSL: adentro de tmux, o el lienzo la ve pero no le puede escribir ------------------
+
+
+def test_fuera_de_windows_lanza_adentro_de_tmux_sin_el_entorno_de_claude(aislado, monkeypatch):
+    monkeypatch.setattr(launch, "WINDOWS", False)
+    root = aislado / "repos"
+    con_roots(monkeypatch, root)
+    (aislado / "home" / ".local" / "bin" / "claude").write_text("")
+    res = launch.launch(str(root / "proyecto"), "miapp - encargo A & rm -rf", "claude")
+    assert res["ok"] is True and res["tmux_session"].startswith("lienzo-")
+    assert not os.path.exists(os.path.join(st.LIENZO, "launch")), "sin .cmd fuera de Windows"
+    (argv,) = FakePopen.calls
+    assert argv[:9] == [
+        "tmux",
+        "new-session",
+        "-d",
+        "-s",
+        res["tmux_session"],
+        "-n",
+        "miapp - encargo A rm -rf",
+        "-c",
+        str(root / "proyecto"),
+    ]
+    assert argv[9] == "env" and argv[-1] == os.path.join(st.HOME, ".local", "bin", "claude")
+    assert ["-u", "CLAUDECODE"] == argv[10:12], "un claude hijo con CLAUDECODE se cree anidado y se apaga"
+
+
+def test_fuera_de_windows_busca_el_ejecutable_sin_exe(aislado, monkeypatch):
+    monkeypatch.setattr(launch, "WINDOWS", False)
+    con_roots(monkeypatch, aislado / "repos")
+    monkeypatch.setattr(launch.shutil, "which", lambda name: None)
+    res = launch.launch(str(aislado / "repos" / "x"), "titulo", "codex")
+    assert res == {"ok": False, "error": "no encuentro codex en esta PC"}
+    assert FakePopen.calls == []

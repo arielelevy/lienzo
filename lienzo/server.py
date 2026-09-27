@@ -500,7 +500,7 @@ def session_view_response(s: dict, view: str, query: dict) -> tuple[int, dict]:
     if view == "screen":
         if not s.get("pid") or s.get("orphan"):
             return 409, {"ok": False, "error": "sin consola que leer"}
-        return 200, read_screen(s["pid"])
+        return 200, read_screen(s)
     if not s.get("transcript_path") or not os.path.exists(s["transcript_path"]):
         note = "sin transcripcion"
         if s["agent"] == "pi" and not s.get("hooked"):
