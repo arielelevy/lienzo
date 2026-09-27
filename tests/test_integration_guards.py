@@ -222,8 +222,12 @@ def test_pi_shared_project_never_guesses_by_activity(monkeypatch):
 
 @pytest.mark.parametrize("hooked,expected", [(False, "/reload"), (True, "primer turno")])
 def test_pi_missing_log_is_not_reported_as_empty_conversation(hooked, expected):
+    # _session_view ahora busca la tarjeta en el registro real (para poder reenviarla si es de otra
+    # PC, ronda multi-PC §3.3): la sesion de prueba va en st.sessions, no en un monkeypatch de
+    # h._session.
     h = handler()
-    h._session = lambda sid: {"agent": "pi", "hooked": hooked, "transcript_path": None}
+    h.query = {}
+    st.sessions["pi"] = {"session_id": "pi", "agent": "pi", "hooked": hooked, "transcript_path": None}
     results = []
     h._json = lambda status, body: results.append((status, body))
     h._session_view("pi", "digest")

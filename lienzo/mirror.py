@@ -1,0 +1,239 @@
+"""Espejo en memoria de las sesiones, pendientes, links y reglas de cada peer (plan-multi-pc-
+2026-09-26.md, §3.3), y enrutado de comandos hacia la PC dueña de una sesion (§3.4). Un `Mirror`
+por proceso: un `SSEClient` por peer conectado contra `/peer/events`, snapshot completo al
+(re)conectar, y salud pedida cada `HEALTH_EVERY_S`. No persiste nada: si el server se reinicia, el
+espejo se arma de nuevo desde cero apenas se reconecta a cada peer.
+
+`MIRROR` es el singleton que usan server.py (rutas /peers, /sessions, /pending, enrutado) y, en la
+ronda 3, sessions.py/rules.py/launch.py (owner_of, forward, sessions(), rules())."""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Callable
+
+import federation
+
+HEALTH_EVERY_S = 15.0
+# sin snapshot, evento SSE (incluido el ping cada 15 s) ni salud en este tiempo: el peer se
+# considera caido. Bastante mas que HEALTH_EVERY_S para no marcarlo caido por un solo pedido lento.
+PEER_TIMEOUT_S = 45.0
+
+
+def _iso(ts: float) -> str:
+    import datetime as dt
+
+    return dt.datetime.fromtimestamp(ts).astimezone().isoformat(timespec="milliseconds")
+
+
+class _PeerMirror:
+    """Estado espejado de un solo peer, mas lo necesario para hablarle (conexion firmada)."""
+
+    def __init__(self, pc_id: str, info: dict, conn: federation.PeerConn):
+        self.pc_id = pc_id
+        self.info = info  # {name, color, host, port}
+        self.conn = conn
+        self.sessions: dict[str, dict] = {}
+        self.pending: dict[str, dict] = {}
+        self.links: list[dict] = []
+        self.rules: list[dict] = []
+        self.health: dict | None = None
+        self.last_seen: float = 0.0
+        self.client: federation.SSEClient | None = None
+
+
+def _tag(items, pc_id: str) -> list[dict]:
+    """Copia cada item con `pc` completado si no lo traia (compatibilidad con lo que se guardo
+    antes de que este campo existiera; lo normal es que ya venga puesto)."""
+    return [{**x, "pc": x.get("pc") or pc_id} for x in items]
+
+
+class Mirror:
+    """Un espejo por proceso. `transport` es inyectable (test doble sin red); `on_change` se llama
+    cada vez que cambia algo espejado, para que server.py pueda avisar por SSE si hace falta."""
+
+    def __init__(self, transport: federation.Transport | None = None, on_change: Callable[[], None] | None = None):
+        self.transport = transport or federation.HTTPTransport()
+        self.on_change = on_change or (lambda: None)
+        self._lock = threading.RLock()
+        self._peers: dict[str, _PeerMirror] = {}
+        self._health_thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    # --- alta y baja de peers -------------------------------------------------------------
+
+    def connect(self, pc_id: str, info: dict, host: str, port: int, key: bytes, self_pc_id: str) -> None:
+        """Arranca (o reemplaza) el espejo de un peer: cliente SSE contra `/peer/events`, que pide
+        el snapshot completo en cada (re)conexion (incluida la primera)."""
+        self.disconnect(pc_id)
+        conn = federation.PeerConn(host=host, port=port, key=key, self_pc_id=self_pc_id)
+        pm = _PeerMirror(pc_id, dict(info), conn)
+        with self._lock:
+            self._peers[pc_id] = pm
+
+        def on_event(ev: dict) -> None:
+            self._apply_event(pm, ev)
+
+        def on_reconnect() -> None:
+            with self._lock:
+                pm.last_seen = time.time()
+
+        pm.client = self.transport.subscribe(conn, "/peer/events", on_event, on_reconnect)
+        self._ensure_health_thread()
+
+    def disconnect(self, pc_id: str) -> None:
+        with self._lock:
+            pm = self._peers.pop(pc_id, None)
+        if pm is None:
+            return  # no habia nada conectado: no es un cambio (evita un on_change de mas al reconectar)
+        if pm.client is not None:
+            pm.client.stop()
+        self.on_change()
+
+    def peer_ids(self) -> list[str]:
+        with self._lock:
+            return list(self._peers.keys())
+
+    def stop(self) -> None:
+        """Corta todo: los clientes SSE y el hilo de salud. Para tests y para un apagado limpio."""
+        self._stop.set()
+        with self._lock:
+            pares = list(self._peers.values())
+            self._peers.clear()
+        for pm in pares:
+            if pm.client is not None:
+                pm.client.stop()
+
+    # --- eventos y snapshot ----------------------------------------------------------------
+
+    def _get(self, pc_id: str) -> _PeerMirror | None:
+        with self._lock:
+            return self._peers.get(pc_id)
+
+    def _apply_event(self, pm: _PeerMirror, ev: dict) -> None:
+        """Un evento del SSE del peer (el mismo formato que /events: snapshot, session, removed,
+        pending, links, rules, ping). pending/links/rules viajan como lista completa cada vez, no
+        como delta: se reemplazan enteros, igual que hace el propio front con /events local."""
+        t = ev.get("type")
+        if t == "ping":
+            with self._lock:
+                pm.last_seen = time.time()
+            return
+        with self._lock:
+            pm.last_seen = time.time()
+            if t == "snapshot":
+                pm.sessions = {s["session_id"]: s for s in ev.get("sessions", []) if s.get("session_id")}
+                pm.pending = {p["request_id"]: p for p in ev.get("pending", []) if p.get("request_id")}
+                pm.links = list(ev.get("links", []))
+                pm.rules = list(ev.get("rules", []))
+            elif t == "session":
+                s = ev.get("session") or {}
+                if s.get("session_id"):
+                    pm.sessions[s["session_id"]] = s
+            elif t == "removed":
+                pm.sessions.pop(ev.get("session_id"), None)
+            elif t == "pending":
+                pm.pending = {p["request_id"]: p for p in ev.get("pending", []) if p.get("request_id")}
+            elif t == "links":
+                pm.links = list(ev.get("links", []))
+            elif t == "rules":
+                pm.rules = list(ev.get("rules", []))
+            else:
+                return  # tipo desconocido: no hay nada que aplicar, pero last_seen ya se toco
+        self.on_change()
+
+    # --- salud, cada HEALTH_EVERY_S ---------------------------------------------------------
+
+    def _ensure_health_thread(self) -> None:
+        if self._health_thread is not None and self._health_thread.is_alive():
+            return
+        self._stop.clear()
+        self._health_thread = threading.Thread(target=self._health_loop, daemon=True)
+        self._health_thread.start()
+
+    def _health_loop(self) -> None:
+        # espera antes de pedir la primera vez: recien conectado no hay salud todavia (peers_status
+        # la muestra None hasta el primer HEALTH_EVERY_S), y asi un test que conecta un peer no
+        # corre en carrera contra este hilo pidiendo salud de entrada.
+        while not self._stop.wait(HEALTH_EVERY_S):
+            for pc_id in self.peer_ids():
+                self._poll_health(pc_id)
+
+    def _poll_health(self, pc_id: str) -> None:
+        pm = self._get(pc_id)
+        if pm is None:
+            return
+        try:
+            h = self.transport.get(pm.conn, "/peer/health")
+        except OSError:
+            return
+        with self._lock:
+            pm.health = h
+            pm.last_seen = time.time()
+        self.on_change()
+
+    # --- lo que consume server.py (y, ronda 3, sessions.py/rules.py) ------------------------
+
+    def owner_of(self, sid: str) -> str | None:
+        """`pc_id` de la PC dueña de `sid`, o `None` si es local (o si no se conoce: el llamador
+        la trata como local y su propia busqueda da 404, que es lo que corresponde)."""
+        with self._lock:
+            for pc_id, pm in self._peers.items():
+                if sid in pm.sessions:
+                    return pc_id
+        return None
+
+    def sessions(self) -> list[dict]:
+        with self._lock:
+            return [dict(s) for pm in self._peers.values() for s in pm.sessions.values()]
+
+    def pending(self) -> list[dict]:
+        with self._lock:
+            return [x for pm in self._peers.values() for x in _tag(pm.pending.values(), pm.pc_id)]
+
+    def links(self) -> list[dict]:
+        with self._lock:
+            return [x for pm in self._peers.values() for x in _tag(pm.links, pm.pc_id)]
+
+    def rules(self) -> list[dict]:
+        with self._lock:
+            return [x for pm in self._peers.values() for x in _tag(pm.rules, pm.pc_id)]
+
+    def peers_status(self) -> list[dict]:
+        """Una fila por peer conectado, sin la propia PC (server.py la antepone): `alive` sale de
+        cuanto hace que se supo algo de el (evento SSE, reconexion o salud), no de si el socket
+        SSE esta abierto en este instante."""
+        ahora = time.time()
+        out = []
+        with self._lock:
+            for pc_id, pm in self._peers.items():
+                vivo = bool(pm.last_seen) and (ahora - pm.last_seen) < PEER_TIMEOUT_S
+                out.append(
+                    {
+                        "pc_id": pc_id,
+                        "name": pm.info.get("name") or pc_id,
+                        "color": pm.info.get("color") or "#888888",
+                        "alive": vivo,
+                        "last_seen": _iso(pm.last_seen) if pm.last_seen else None,
+                        "local": False,
+                        "health": pm.health if vivo else None,
+                    }
+                )
+        return out
+
+    def forward(self, pc_id: str, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        """Reenvia un comando a la PC dueña (`path` sin el prefijo `/peer`, que se agrega aca) y
+        devuelve su respuesta tal cual: codigo y cuerpo. Peer caido, o desconocido: 503, para que
+        el front lo muestre igual que "no hay consola donde escribir"."""
+        pm = self._get(pc_id)
+        if pm is None:
+            return 503, {"error": f"sin conexión con {pc_id}"}
+        try:
+            return self.transport.request(pm.conn, method, f"/peer{path}", body)
+        except OSError:
+            nombre = pm.info.get("name") or pc_id
+            return 503, {"error": f"sin conexión con {nombre}"}
+
+
+MIRROR = Mirror()

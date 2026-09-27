@@ -1431,6 +1431,7 @@ def test_las_claves_de_una_regla_nueva_no_cambian_de_orden(aislado, con_pid):
         "from",
         "to",
         "text",
+        "pc",
         "at",
         "fired",
         "enabled",
@@ -1443,7 +1444,20 @@ def test_las_claves_de_una_regla_nueva_no_cambian_de_orden(aislado, con_pid):
 
     code, r = server.create_rule({"kind": "on_stop", "to": SID, "from": NEW, "text": "y"})
     assert code == 200
-    assert list(r) == ["id", "kind", "from", "to", "text", "at", "repeat", "max_fires", "fired", "enabled", "created"]
+    assert list(r) == [
+        "id",
+        "kind",
+        "from",
+        "to",
+        "text",
+        "pc",
+        "at",
+        "repeat",
+        "max_fires",
+        "fired",
+        "enabled",
+        "created",
+    ]
 
 
 def test_check_rule_rechaza_sin_tocar_la_lista_de_reglas(aislado, con_pid):

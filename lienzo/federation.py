@@ -365,11 +365,15 @@ class SSEClient:
 
 @dataclass(frozen=True)
 class PeerConn:
-    """Lo minimo para hablarle a un peer: donde esta y con que clave firmarle."""
+    """Lo minimo para hablarle a un peer: donde esta, con que clave firmarle, y con que pc_id
+    identificarse (header `X-Lienzo-Peer`: el que recibe lo necesita para saber contra que clave
+    verificar la firma). `self_pc_id` es opcional (default vacio) para no romper una construccion
+    vieja que no lo pasaba; una llamada real siempre lo completa."""
 
     host: str
     port: int
     key: bytes
+    self_pc_id: str = ""
 
 
 class Transport(Protocol):
@@ -406,34 +410,45 @@ class HTTPTransport:
         nonce = secrets.token_hex(16)
         firma = sign(peer.key, method, path, body, ts, nonce)
         return {
+            "X-Lienzo-Peer": peer.self_pc_id,
             "X-Lienzo-Ts": repr(ts),
             "X-Lienzo-Nonce": nonce,
             "X-Lienzo-Sig": firma,
             "Content-Type": "application/json",
         }
 
-    def _pedir(self, peer: PeerConn, method: str, path: str, body: bytes = b"") -> dict:
+    def _pedir(self, peer: PeerConn, method: str, path: str, body: bytes = b"") -> tuple[int, dict]:
+        """(status, cuerpo). Los metodos publicos de siempre (get/post/put/delete) devuelven solo
+        el cuerpo, como antes; `request` (para el enrutado de comandos, ronda 2) devuelve las dos
+        cosas, porque ahi hace falta reenviar el codigo tal cual lo dio el peer."""
         headers = self._headers_firmados(peer, method, path, body)
         conn = http.client.HTTPConnection(peer.host, peer.port, timeout=self.timeout)
         try:
             conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
             data = resp.read()
+            status = resp.status
         finally:
             conn.close()
-        return json.loads(data.decode("utf-8")) if data else {}
+        return status, (json.loads(data.decode("utf-8")) if data else {})
 
     def get(self, peer: PeerConn, path: str) -> dict:
-        return self._pedir(peer, "GET", path)
+        return self._pedir(peer, "GET", path)[1]
 
     def post(self, peer: PeerConn, path: str, body: dict) -> dict:
-        return self._pedir(peer, "POST", path, json.dumps(body).encode("utf-8"))
+        return self._pedir(peer, "POST", path, json.dumps(body).encode("utf-8"))[1]
 
     def put(self, peer: PeerConn, path: str, body: dict) -> dict:
-        return self._pedir(peer, "PUT", path, json.dumps(body).encode("utf-8"))
+        return self._pedir(peer, "PUT", path, json.dumps(body).encode("utf-8"))[1]
 
     def delete(self, peer: PeerConn, path: str) -> dict:
-        return self._pedir(peer, "DELETE", path)
+        return self._pedir(peer, "DELETE", path)[1]
+
+    def request(self, peer: PeerConn, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+        """Para el enrutado de comandos (plan §3.4): devuelve (status, cuerpo) tal como los dio el
+        peer, para que el server local se los pase al front sin tocarlos."""
+        raw = json.dumps(body).encode("utf-8") if body is not None else b""
+        return self._pedir(peer, method.upper(), path, raw)
 
     def subscribe(
         self,
@@ -447,7 +462,12 @@ class HTTPTransport:
             ts = time.time()
             nonce = secrets.token_hex(16)
             firma = sign(peer.key, "GET", path, b"", ts, nonce)
-            return {"X-Lienzo-Ts": repr(ts), "X-Lienzo-Nonce": nonce, "X-Lienzo-Sig": firma}
+            return {
+                "X-Lienzo-Peer": peer.self_pc_id,
+                "X-Lienzo-Ts": repr(ts),
+                "X-Lienzo-Nonce": nonce,
+                "X-Lienzo-Sig": firma,
+            }
 
         cliente = SSEClient(
             peer.host,
