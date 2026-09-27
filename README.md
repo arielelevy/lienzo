@@ -302,6 +302,99 @@ hace falta un túnel con nombre y un dominio en Cloudflare.
 
 ![En el celular](docs/img/celular.png)
 
+## Varias PCs
+
+**Opcional, hasta 4 PCs de la misma LAN.** Sin ningún peer emparejado no cambia nada: el listener
+de peers ni se abre y la tira de PCs no aparece. Emparejada una, cada tablero muestra las tarjetas
+de las dos (o las cuatro) y desde cualquiera se contesta, se aprueba, se conecta y se coordina.
+
+Regla de fondo: **cada PC es dueña de lo suyo**. La inyección de teclas, la lectura de pantalla,
+los hooks, los permisos y los recursos (memoria, CPU, temperatura) son siempre de la máquina donde
+corre el proceso — nunca se replican, se le piden a la PC dueña por la red. `GET /sessions` mezcla
+lo local con lo espejado de las demás PCs de forma transparente, y `/sessions/<sid>/send`,
+`/interrupt`, `/dialog`, `/pending/<id>`, `/attach` y `DELETE` funcionan igual sea la sesión local o
+remota: si la tarjeta es de otra PC, el server reenvía el pedido y devuelve la respuesta tal cual
+(**503** `{"error": "sin conexión con <pc>"}` si esa PC no contesta).
+
+### Emparejar
+
+**🖥 Varias PCs**, en el menú ⋯: una PC ofrece una frase de seis palabras (el mismo generador EFF
+del acceso remoto), la otra la pega. De ahí sale una clave compartida por par, guardada en
+`peers.json` de las dos puntas; **tope de 4 peers**. La misma pantalla lista los peers y los
+revoca; revocar corta el espejo y lo saca de `peers.json`, y del otro lado se entera cuando deja
+de contestarle.
+
+Un **beacon UDP** (puerto 7323) anuncia cada PC a sus peers ya emparejados cada 10 s, firmado con
+la clave de cada par: si el DHCP le cambió la IP a una PC, el beacon la actualiza sola sin tocar
+nada a mano.
+
+### Red y firewall
+
+El tablero sigue en `127.0.0.1:7321`, sin cambios. Un **listener aparte** (7322 por defecto,
+`--peer-port` para cambiarlo) atiende sólo `/peer/*`, bind a la IP de LAN de la PC —nunca
+`0.0.0.0`— y firma cada request con HMAC (`X-Lienzo-Peer`, `X-Lienzo-Ts`, `X-Lienzo-Nonce`,
+`X-Lienzo-Sig`, ventana de ±30 s, sin nonces repetidos): un peer emparejado puede teclear en la otra
+PC y lanzar sesiones nuevas, así que la firma y la ventana de tiempo son las que evitan que
+cualquiera en la LAN se haga pasar por un peer. Ese listener sólo arranca si hay algún peer
+emparejado o si el server corre con `--peers`; en una red pública el puerto no escucha porque nadie
+lo abrió.
+
+```powershell
+py -3.14 install.py --peer          # regla de firewall de Windows, 7322 TCP y 7323 UDP, perfil Privado
+py -3.14 install.py --peer --uninstall
+py -3.14 install.py --peer --dry-run   # imprime lo que haría, sin escribir nada (no pide admin)
+```
+
+Sin permisos de administrador, `--peer` avisa claro y no toca nada.
+
+### Lanzar una sesión en otra PC
+
+Desde la ★ (coordinadora): `POST /sessions/launch {pc, cwd, agent, title}`. Si `pc` es la propia (o
+no viene), lanza local; si es otra, el pedido viaja por `/peer/launch` y la PC dueña escribe el
+`.cmd` (cp1252, CRLF, `cd /d`, título saneado, ejecutable por ruta absoluta) y lo abre con
+`explorer.exe`, igual que hace el skill hoy en la propia máquina. Restringido a `launch_roots`
+(nuevo, en `config.json` de esa PC: una lista de carpetas; vacía o ausente es **ninguna**, no
+todas) y a los cuatro ejecutables conocidos (`claude`, `codex`, `pi`, `coda`); el título nunca se
+interpreta como comando. La tarjeta nueva aparece después de un barrido, como cualquier sesión
+recién abierta.
+
+### La tira de PCs y los chips de proyecto
+
+Con dos o más PCs emparejadas aparece, arriba del tablero, un chip **Todas** con el total y uno por
+PC con su nombre, cuántas tarjetas tiene ahí y —si está viva— memoria libre y temperatura
+(`GET /peers`). Click filtra a esa PC; click de nuevo vuelve a Todas. Una PC caída se ve en ○, sin
+memoria ni temperatura (sería un dato viejo), y sus tarjetas quedan grises con controles
+deshabilitados y "sin conexión hace X".
+
+Al lado, con dos o más proyectos en el tablero, un chip por repo (con sesiones vivas) más
+**★ Coordinadoras**: a diferencia del filtro de PC, acá **el click elige** (se pueden elegir varios
+a la vez) en vez de ocultar; sin ninguno elegido se ve todo. ★ Coordinadoras se combina con lo
+elegido: muestra las coordinadoras de esos proyectos, o de todos si no hay ninguno elegido. Los dos
+filtros, el de PC y el de proyecto, viven en el navegador (como las posiciones corridas): no viajan
+al server ni a otra máquina.
+
+### La coordinadora, entre PCs
+
+Por defecto hay **una ★ por repo en toda la federación**, esté la sesión en la PC que esté:
+`PUT /sessions/<sid>/coordinator {on: true}` prendida en una apaga cualquier otra del mismo repo,
+sea local o remota. `{on: true, scope: "pc"}` la separa **sólo para esa PC**: convive con la
+federada de otro lado, y las reglas de esa PC pasan a apuntarle a ella. Útil cuando cada PC prefiere
+manejar sus propios avisos "cuando termine" sin que crucen la red.
+
+### El canal nativo no cruza PCs
+
+`ListAgents`/`SendMessage` (Claude hablándole a Claude, sin pasar por el lienzo) siguen siendo de
+una sola máquina: no hay forma de mapear un nombre nativo (`app-1c`) a una sesión de otra PC. El
+tablero no ofrece la flecha doble entre tarjetas de PCs distintas.
+
+### Seguridad, en criollo
+
+Con esto, un peer emparejado puede teclear en los agentes de la otra PC y lanzar sesiones nuevas:
+mismo nivel de riesgo que el acceso remoto de arriba, mitigado igual —listener aparte que sólo
+atiende `/peer/*`, bind a la IP de LAN (nunca `0.0.0.0`), firewall sólo en perfil Privado, toda
+request firmada con ventana y nonce, `launch` restringido a `launch_roots` y a ejecutables fijos,
+peers revocables, tope de 4—. Cada request de un peer queda en `lienzo.log` con la etiqueta `peer`.
+
 ## API
 
 Todo en `http://127.0.0.1:7321`, JSON. Las escrituras exigen el header `X-Lienzo: 1`; por el
@@ -309,7 +402,7 @@ túnel, además la cookie de sesión.
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| GET | `/sessions` | todas las tarjetas, con `alive` recalculado |
+| GET | `/sessions` | todas las tarjetas, con `alive` recalculado; con algún peer emparejado, suma las espejadas de las demás PCs (`pc`, `repo_key`, `transcript_bytes`, `model`) |
 | GET | `/sessions/<sid>/turns?n=10` | turnos completos de la transcripción, con las herramientas (el tablero ya no los muestra: la pestaña Chat usa `digest`) |
 | GET | `/sessions/<sid>/digest?n=10` | destacados por turno |
 | GET | `/sessions/<sid>/screen` | texto visible de la terminal |
@@ -320,8 +413,13 @@ túnel, además la cookie de sesión.
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
 | PUT | `/sessions/<sid>/title` | `{title}`; el título pasa a ser del usuario y no se recalcula |
 | PUT | `/sessions/<sid>/stopped` | `{on: true\|false}`; la llave. Prender: Esc si corre, `stopped_by: "user"`, aviso a la coordinadora y a las conectadas por regla vigente (la respuesta trae `interrupted` y `notified`). Apagar: vuelve a recibir. Mientras está prendida, `/send`, `/dialog` e `/interrupt` devuelven 409 y las reglas hacia ella se saltean |
-| PUT | `/sessions/<sid>/coordinator` | `{on: true\|false}`; una coordinadora por repo, prender una apaga la anterior |
+| PUT | `/sessions/<sid>/coordinator` | `{on: true\|false, scope?: "pc"}`; una coordinadora por repo en toda la federación, prender una apaga la anterior; `scope: "pc"` la separa sólo para esta PC |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
+| GET | `/peers` | la propia PC primero (`local: true`) y después cada peer emparejado, con `alive`, `last_seen` y `health` (memoria, CPU, temperatura); sin peers, un array de un solo elemento |
+| POST | `/peers/offer` | `{ttl_s?}`; genera la frase de seis palabras para emparejar, `{phrase, expires}` |
+| POST | `/peers/join` | `{phrase, host, port}`; pega la frase del otro lado. 400 si no vale, 409 con tope de 4 ya emparejados |
+| DELETE | `/peers/<pc_id>` | revoca el peer y corta el espejo |
+| POST | `/sessions/launch` | `{pc?, cwd, agent, title?}`; lanza una sesión nueva, local o en la PC `pc` (reenviado); `cwd` tiene que caer en `launch_roots` de esa PC |
 | GET | `/links` | envíos hechos; `kind` es `send`, `rule`, `native` o `user` |
 | GET | `/rules` | conexiones pendientes y cumplidas |
 | POST | `/rules` | `{kind: on_stop\|at, from, to, text, at, repeat, max_fires}`; una `at` acepta además `every_s` (segundos, mínimo 60; periódica) y `skip_busy`; con `every_s`, `max_fires` vale 5 si no viene y `skip_busy` true; 409 si arma un bucle, si ya existe, o si una `at` cae a ±2 min de otra hacia la misma sesión (la respuesta trae `rule_id` y `replace: true`; repetir con `replace: true` en el body la reemplaza) |
@@ -335,6 +433,11 @@ túnel, además la cookie de sesión.
 | GET | `/docs`, `/docs/README.md`, `/docs/DISENO.es.md`, `/docs/img/<x>.png` | la referencia buscable (menú ⋯ → Referencia) y los archivos que lee, tal como están en el repo |
 | POST | `/rescan` | barrido de procesos ahora |
 | GET | `/auth`, POST `/setup`, `/login`, `/logout`, GET `/enroll` | acceso remoto |
+
+Todo lo de arriba es del puerto de siempre (7321, sólo `127.0.0.1`), para el tablero. Entre PCs hay
+otra API, en el listener de peers (7322 por defecto): `/peer/hello` y `/peer/pair` (el
+emparejamiento, sin firma) y `/peer/{snapshot,health,events}` más `/peer/sessions/<sid>/...` (firmados
+con HMAC, ver "Varias PCs"). Ninguna la llama el navegador: son PC a PC.
 
 ## Estructura
 
@@ -350,19 +453,32 @@ lienzo/
   state.py         estado compartido: listas JSON (links, reglas), config, broadcast SSE
   sessions.py      registro de sesiones, máquina de estados, eventos de hooks, barrido, envío
   rules.py         reglas "cuando termine" y "a las HH:MM" (una vez o cada every_s con tope), las dos reglas automáticas "Continuar" (límite de uso, error de API), disparo y purga
-  server.py        handler HTTP + SSE, túnel, arranque de los hilos
+  server.py        handler HTTP + SSE, túnel, arranque de los hilos, listener de peers (7322) y sus rutas `/peer/*`
+  identity.py      pc_id, nombre y color de esta PC (`peer.json`); identidad de un repo por su remote `origin`, sin `git` por subprocess
+  federation.py    firma HMAC con ventana y nonce, KDF del emparejamiento, `peers.json`, beacon (codificar/decodificar), cliente SSE con reconexión, transporte HTTP
+  pairing.py       frase de seis palabras: quién la ofrece, quién la valida, quién la pega (`offer`/`accept`/`join`)
+  beacon.py        hilo que emite y escucha el beacon UDP (7323) y actualiza la IP de cada peer
+  health.py        memoria, CPU y temperatura de esta PC, sin dependencias nuevas
+  mirror.py        espejo en memoria de cada peer conectado (SSE saliente), enrutado (`owner_of`, `forward`) y salud
+  launch.py        escribe el `.cmd` y lanza una sesión nueva, local o pedida por otra PC, restringido a `launch_roots`
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
   src/arrows-geometry.ts   geometría de las flechas y etiquetas de período, funciones puras con tests propios
   src/nl.ts                parser de frases ("cada 30 min continuá hasta 6 veces"), con tests propios
   src/names.ts             nombres cortos, etiquetas de reglas y texto plano, compartidos por tarjeta, panel y flechas
   src/hooks/               datos por SSE, avisos del navegador y flags guardados en el navegador
-tests/             pytest: transcripciones reales, procesos vivos y la máquina de estados del server
-install.py         alta y baja de los hooks
+  src/components/PcStrip.tsx       tira de PCs arriba del tablero, filtro por PC
+  src/components/ProjectStrip.tsx  chips de proyecto (elige, no oculta) y ★ Coordinadoras
+tests/             pytest: transcripciones reales, procesos vivos, la máquina de estados del server y la federación entre PCs
+install.py         alta y baja de los hooks; `--peer` para la regla de firewall del emparejamiento
 lienzo-server.cmd  arranque
 ```
 
+`LIENZO_HOME` cambia la carpeta de estado (`~/.lienzo` por defecto): la usan `server.py`, `hook.py`
+e `install.py`, y sirve para correr dos instancias en la misma PC (dos puertos, dos carpetas) como
+si fueran dos PCs.
+
 ```powershell
-python -m pytest tests -q                                   # 132 tests
+python -m pytest tests -q                                   # 380 tests
 python -m ruff check lienzo tests install.py                # lint
 python -m black lienzo tests install.py                     # formato
 cd web; npm run build                                       # tsc + vite
@@ -388,8 +504,11 @@ andando en el 7321 —no lo arrancan ni lo reinician—, la primera vez bajan Ch
   sessions/      una tarjeta por sesión
   links.json     envíos hechos (flechas y pestaña Conexiones)
   rules.json     conexiones (cuando termine, a una hora), vigentes y cumplidas
-  config.json    auto_continue, y lo que comparte con hook.py (espera de permisos, ejemplos)
+  config.json    auto_continue, launch_roots, y lo que comparte con hook.py (espera de permisos, ejemplos)
   auth.json      clave TOTP del acceso remoto
+  peer.json      identidad de esta PC: pc_id, nombre, color
+  peers.json     PCs emparejadas: pc_id, nombre, ip, puerto, clave del par
+  launch/        un .cmd por sesión lanzada desde el tablero (local o pedida por otra PC)
   lienzo.log     una línea por hecho: fecha, etiqueta (envio, regla, sesion, permiso, error…) y mensaje; en consola sólo la hora, y los tracebacks en una línea
 ```
 
@@ -410,6 +529,9 @@ andando en el 7321 —no lo arrancan ni lo reinician—, la primera vez bajan Ch
   no acepta mensajes: no hay consola donde escribir.
 - Las flechas no se dibujan en pantallas de menos de 900 px; ahí el tablero es una columna
   por vez con selector arriba.
+- Una PC caída no avisa activamente: se nota porque su tira pasa a ○ y sus tarjetas quedan grises
+  a los 45 s sin novedades. Revocar un peer tampoco le avisa al otro lado; se entera cuando deja de
+  contestarle.
 
 ## Licencia
 
