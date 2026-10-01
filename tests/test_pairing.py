@@ -47,9 +47,9 @@ def _req(pc_id, name="otra", color="#111111", port=7322, proof=""):
 # --- offer / accept: local, sin red -------------------------------------------------------------
 
 
-def test_offer_da_una_frase_de_seis_palabras_y_vencimiento_futuro():
+def test_offer_da_una_palabra_y_vencimiento_futuro():
     oferta = pairing.offer()
-    assert len(oferta["phrase"].split()) == 6
+    assert len(oferta["phrase"].split()) == pairing.PHRASE_WORDS == 1
     assert oferta["expires"] > time.time()
 
 

@@ -126,7 +126,7 @@ test.describe('pantalla "Varias PCs" (menú ⋯ del header, plan §3.1 y §3.9)'
     await expect.poll(() => borrados).toEqual(["/peers/note-1"]);
   });
 
-  test('"Mostrar frase" pide POST /peers/offer y muestra las seis palabras y la vigencia', async ({ page }) => {
+  test('"Mostrar frase" pide POST /peers/offer y muestra la palabra y la vigencia', async ({ page }) => {
     await abrirTablero(page, sesiones(), [PEER_LOCAL]);
     await page.route("**/peers/offer", (route) =>
       route.fulfill({
@@ -154,7 +154,7 @@ test.describe('pantalla "Varias PCs" (menú ⋯ del header, plan §3.1 y §3.9)'
     await d.getByRole("button", { name: "Unirme a otra PC" }).click();
     await expect(d.getByLabel("Puerto")).toHaveValue("7322");
     await d.getByLabel("Host o IP").fill("192.168.1.20");
-    await d.getByLabel("Frase (seis palabras)").fill("uno dos tres cuatro cinco seis");
+    await d.getByLabel("Palabra de emparejamiento").fill("abaco");
     await d.getByRole("button", { name: "Unirme", exact: true }).click();
     await expect(d).toContainText("proof invalido");
     expect(body).toMatchObject({ phrase: "uno dos tres cuatro cinco seis", host: "192.168.1.20", port: 7322 });

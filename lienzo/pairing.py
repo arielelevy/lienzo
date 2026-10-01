@@ -36,6 +36,7 @@ import state
 
 PEER_PORT = 7322
 OFFER_TTL_S = 300
+PHRASE_WORDS = 1  # una palabra: cómoda de tipear; con 6 sería mucho más difícil de adivinar
 MAX_FAILS = 5
 BLOCK_S = 15 * 60
 
@@ -89,10 +90,10 @@ def _register_fail() -> None:
 
 
 def offer(ttl_s: int = OFFER_TTL_S) -> dict:
-    """Genera una frase de seis palabras y la deja pendiente. Una nueva llamada reemplaza la
+    """Genera la frase (PHRASE_WORDS palabras) y la deja pendiente. Una nueva llamada reemplaza la
     anterior, vencida o no: solo hay una frase pendiente a la vez."""
     global _offer
-    phrase = auth.new_passphrase()
+    phrase = auth.new_passphrase(PHRASE_WORDS)
     expires = time.time() + ttl_s
     with _lock:
         _offer = {"phrase": phrase, "expires": expires}

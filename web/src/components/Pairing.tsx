@@ -257,7 +257,7 @@ export function Pairing({ peers, toast, onClose }: Props) {
                   <input value={port} onChange={(e) => setPort(e.target.value)} />
                 </label>
                 <label>
-                  Frase (seis palabras)
+                  Palabra de emparejamiento
                   <input value={phrase} onChange={(e) => setPhrase(e.target.value)} placeholder="palabra palabra palabra…" />
                 </label>
                 {joinErr && <div className="gate-err">{joinErr}</div>}
