@@ -628,7 +628,7 @@ def restorables_local() -> list[dict]:
     with lock:
         vivas = {sid for sid, s in sessions.items() if s.get("alive") and s.get("state") != "muerta"}
     pc = identity.pc_id()
-    return [{**e, "pc": pc} for e in restore.list(live=vivas)]
+    return [{**e, "pc": pc} for e in restore.restorables(live=vivas)]
 
 
 def restorables_all() -> list[dict]:
@@ -1404,8 +1404,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(code, res)
                 # sid local o de nadie: borrar una tarjeta que no existe es un no-op idempotente
                 # (200 igual), como siempre fue; no hay 404 que devolver aca
-                restore.forget(sid)  # borrada a mano: tampoco se restaura (aunque la tarjeta ya no este)
-                drop_session(sid, "borrada desde la UI")
+                # borrada a mano: tampoco se restaura. Si la tarjeta ya no estaba, drop_session no
+                # llega a restore_on_drop y hay que olvidarla aca
+                if not drop_session(sid, "borrada desde la UI"):
+                    restore.forget(sid)
                 return self._json(200, {"ok": True})
             if len(parts) == 2 and parts[0] == "peers":
                 return self._delete_peer(parts[1])

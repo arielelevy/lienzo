@@ -15,7 +15,6 @@ Este modulo no importa sessions.py (sessions.py lo importa a el)."""
 
 from __future__ import annotations
 
-import builtins
 import datetime as dt
 import json
 import os
@@ -95,13 +94,9 @@ def _read() -> list[dict]:
             d = json.load(f)
     except OSError, ValueError:
         return []
-    if not isinstance(d, builtins.list):
+    if not isinstance(d, list):
         return []
     return [e for e in d if isinstance(e, dict) and isinstance(e.get("session_id"), str) and e.get("agent")]
-
-
-def _stamp(e: dict) -> str:
-    return str(e.get("ended_at") or e.get("saved_at") or "")
 
 
 def _ts(e: dict) -> dt.datetime:
@@ -189,6 +184,11 @@ def remember(card: dict, ended: bool = True) -> bool:
     return _store([card], ended) > 0
 
 
+def live_due(session_id) -> bool:
+    """True si `remember_live` miraria hoy esta sesion (paso el debounce). No marca nada."""
+    return _clock() - _last_live.get(session_id, -1e9) >= LIVE_DEBOUNCE_S
+
+
 def remember_live(cards) -> int:
     """Las tarjetas VIVAS con hooks, de forma incremental: cada sesion se mira a lo sumo cada
     `LIVE_DEBOUNCE_S` segundos y una entrada sin cambios no se reescribe. Devuelve cuantas escribio."""
@@ -198,18 +198,20 @@ def remember_live(cards) -> int:
         sid = c.get("session_id")
         if not c.get("hooked") or not c.get("alive") or c.get("state") == "muerta":
             continue
-        if not eligible(c) or ended_on_purpose(c):
-            continue
+        # el debounce va antes de `eligible` (que toca el disco): una tarjeta que casi siempre se
+        # descarta no tiene que costar un isdir cada 2 s
         if ahora - _last_live.get(sid, -1e9) < LIVE_DEBOUNCE_S:
             continue
         _last_live[sid] = ahora
+        if not eligible(c) or ended_on_purpose(c):
+            continue
         listas.append(c)
     for sid in [k for k, t in _last_live.items() if ahora - t > 3600]:
         del _last_live[sid]
     return _store(listas, False) if listas else 0
 
 
-def listar(live=()) -> list[dict]:
+def restorables(live=()) -> list[dict]:
     """Las restaurables de esta PC, la mas nueva primero. `live`: ids de tarjetas que hoy estan
     vivas, que no hay nada que restaurar. Poda en memoria lo viejo."""
     excluir = set(live)
@@ -227,6 +229,3 @@ def forget(session_id: str) -> bool:
             return False
         _write(_prune(rest))
         return True
-
-
-list = listar  # la API pedida; despues de todo el modulo, para no tapar el `list` de adentro

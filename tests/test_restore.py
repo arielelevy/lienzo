@@ -67,7 +67,7 @@ def archivo(reg) -> list:
 
 def test_remember_guarda_los_campos(reg):
     assert restore.remember(card(reg)) is True
-    (e,) = restore.list()
+    (e,) = restore.restorables()
     assert {k: e[k] for k in ("session_id", "agent", "cwd", "title", "repo", "pc")} == {
         "session_id": UUID,
         "agent": "claude",
@@ -87,7 +87,7 @@ def test_remember_filtra_lo_que_no_corresponde(reg):
     assert not restore.remember(card(reg, sid="pid-123"))  # claude sin id de verdad
     assert not restore.remember(card(reg, sid="pid-123", agent="codex"))
     assert not restore.remember(card(reg, sid="no-es-uuid"))
-    assert restore.list() == []
+    assert restore.restorables() == []
     assert not os.path.exists(reg / "restaurar.json")
 
 
@@ -95,21 +95,21 @@ def test_remember_pi_y_coda_alcanzan_con_el_cwd_y_pid_no_se_duplica(reg):
     assert restore.remember(card(reg, sid="pid-100", agent="pi"))
     assert restore.remember(card(reg, sid="pid-200", agent="pi"))  # otro arranque, misma carpeta
     assert restore.remember(card(reg, sid="pid-300", agent="coda"))
-    ids = sorted(e["session_id"] for e in restore.list())
+    ids = sorted(e["session_id"] for e in restore.restorables())
     assert ids == ["pid-200", "pid-300"]
 
 
 def test_forget(reg):
     restore.remember(card(reg))
     assert restore.forget(UUID) is True and restore.forget(UUID) is False
-    assert restore.list() == []
+    assert restore.restorables() == []
 
 
 def test_list_mas_nuevas_primero_y_excluye_las_vivas(reg):
     restore.remember(card(reg, sid=UUID))
     restore.remember(card(reg, sid=UUID2))
-    assert [e["session_id"] for e in restore.list()] == [UUID2, UUID]
-    assert [e["session_id"] for e in restore.list(live={UUID2})] == [UUID]
+    assert [e["session_id"] for e in restore.restorables()] == [UUID2, UUID]
+    assert [e["session_id"] for e in restore.restorables(live={UUID2})] == [UUID]
 
 
 # --- poda --------------------------------------------------------------------------------------
@@ -128,7 +128,7 @@ def _e(i, dias=0.0):
 
 def test_poda_de_mas_de_7_dias(reg):
     _escribir(reg, [_e(1, dias=8), _e(2, dias=6.9), _e(3)])
-    assert sorted(e["session_id"] for e in restore.list()) == ["pid-2", "pid-3"]
+    assert sorted(e["session_id"] for e in restore.restorables()) == ["pid-2", "pid-3"]
     restore.remember(card(reg))  # al escribir, la poda queda en el archivo
     assert "pid-1" not in {e["session_id"] for e in archivo(reg)}
 
@@ -155,7 +155,7 @@ def test_drop_session_por_muerte_recuerda(reg):
     st.sessions[UUID] = s
     ses.drop_session(UUID, "muerta hace mas de 60 s")
     assert UUID not in st.sessions
-    (e,) = restore.list()
+    (e,) = restore.restorables()
     assert e["session_id"] == UUID and e["ended_at"]
 
 
@@ -164,13 +164,13 @@ def test_drop_session_por_otra_razon_olvida(reg, reason):
     restore.remember(card(reg), ended=False)
     st.sessions[UUID] = card(reg)
     ses.drop_session(UUID, reason)
-    assert restore.list() == []
+    assert restore.restorables() == []
 
 
 def test_drop_session_de_agente_desconocido_no_guarda(reg):
     st.sessions[UUID] = card(reg, agent="gemini")
     ses.drop_session(UUID, "muerta hace mas de 60 s")
-    assert restore.list() == []
+    assert restore.restorables() == []
 
 
 @pytest.mark.parametrize("reason", ["exit", "logout", "prompt_input_exit", "clear", "resume"])
@@ -182,7 +182,7 @@ def test_sessionend_a_proposito_no_queda_restaurable(reg, reason):
     s = st.sessions[UUID]
     assert s["state"] == "muerta" and s["end_reason"] == reason
     ses.drop_session(UUID, "muerta hace mas de 60 s")
-    assert restore.list() == []
+    assert restore.restorables() == []
 
 
 @pytest.mark.parametrize("reason", ["other", None])
@@ -192,7 +192,7 @@ def test_sessionend_other_o_sin_razon_si_queda_restaurable(reg, reason):
         ev["reason"] = reason
     ses.apply_event(ev)
     ses.drop_session(UUID, "muerta hace mas de 60 s")
-    assert [e["session_id"] for e in restore.list()] == [UUID]
+    assert [e["session_id"] for e in restore.restorables()] == [UUID]
 
 
 def test_sessionstart_limpia_la_razon_de_la_vida_anterior(reg):
@@ -348,7 +348,7 @@ def test_restaurar_una_la_relanza_y_la_olvida(reg, lanzador):
     assert code == 200 and res["failed"] == []
     assert [r["session_id"] for r in res["restored"]] == [ids[0]]
     assert lanzador.llamadas == [(str(reg / "cwd"), "mi sesion", "claude", ids[0])]
-    assert [e["session_id"] for e in restore.list()] == [ids[1]]
+    assert [e["session_id"] for e in restore.restorables()] == [ids[1]]
 
 
 def test_restaurar_todas_una_por_una_con_pausa_y_cuenta_los_fallos(reg, lanzador):
@@ -359,7 +359,7 @@ def test_restaurar_todas_una_por_una_con_pausa_y_cuenta_los_fallos(reg, lanzador
     assert sorted(r["session_id"] for r in res["restored"]) == sorted([ids[0], ids[2]])
     assert res["failed"] == [{"session_id": ids[1], "error": "cwd fuera de launch_roots"}]
     assert lanzador.pausas == [server.RESTORE_GAP_S, server.RESTORE_GAP_S] and server.RESTORE_GAP_S >= 2
-    assert [e["session_id"] for e in restore.list()] == [ids[1]]  # la fallida queda para reintentar
+    assert [e["session_id"] for e in restore.restorables()] == [ids[1]]  # la fallida queda para reintentar
 
 
 def test_restaurar_pide_session_id_o_all_y_desconocida_es_404(reg, lanzador):
@@ -384,7 +384,7 @@ def test_all_respeta_la_memoria_y_dice_cuantas_entran(reg, lanzador, monkeypatch
     code, res = server.restore_local({"all": True})
     assert code == 409 and res["fit"] == 2 and res["restorable"] == 5
     assert "entran 2" in res["error"] and lanzador.llamadas == []
-    assert len(restore.list()) == 5
+    assert len(restore.restorables()) == 5
 
 
 def test_all_con_limit_by_memory_relanza_solo_las_que_entran(reg, lanzador, monkeypatch):
@@ -392,7 +392,7 @@ def test_all_con_limit_by_memory_relanza_solo_las_que_entran(reg, lanzador, monk
     monkeypatch.setattr(server.health, "snapshot", lambda: {"mem_free_gb": 3.0})
     code, res = server.restore_local({"all": True, "limit_by_memory": True})
     assert code == 200 and len(res["restored"]) == 2 and len(res["skipped"]) == 3
-    assert len(lanzador.llamadas) == 2 and len(restore.list()) == 3
+    assert len(lanzador.llamadas) == 2 and len(restore.restorables()) == 3
     assert set(res["skipped"]) <= set(ids)
 
 

@@ -401,30 +401,42 @@ def forget_session(sid: str) -> bool:
     return True
 
 
+def restore_guard(fn) -> None:
+    """Corre `fn` (una operacion sobre el registro de restaurables) sin dejar que levante: el
+    registro es accesorio y no puede romper el borrado ni el liveness. Loguea el traceback."""
+    try:
+        fn()
+    except Exception:
+        state.log(f"restaurar: {traceback.format_exc()}")
+
+
 def restore_on_drop(card: dict, reason: str) -> None:
     """Registro de sesiones restaurables (restore.py) al borrar una tarjeta. Murio el proceso (la
     razon "muerta hace ...", que es lo que deja un reinicio de PC): se recuerda, salvo que haya
     terminado a proposito (/exit, logout). Cualquier otra razon (borrada a mano, continuada tras un
     /clear, duplicada por barrido) la olvida: ya no hay nada que restaurar. Nunca levanta."""
-    try:
+
+    def work() -> None:
         if reason.startswith("muerta") and not restore.ended_on_purpose(card):
             restore.remember(card, ended=True)
         else:
             restore.forget(card["session_id"])
-    except Exception:
-        state.log(f"restaurar: {traceback.format_exc()}")
+
+    restore_guard(work)
 
 
-def drop_session(sid: str, reason: str) -> None:
+def drop_session(sid: str, reason: str) -> bool:
+    """Borra la tarjeta. False si no existia (no se toco nada, ni el registro de restaurables)."""
     with lock:
         card = sessions.get(sid)
         if not forget_session(sid):
-            return
+            return False
     links.remove(lambda l: sid in (l["from"], l["to"]))
     rules.remove(lambda r: sid in (r.get("from"), r["to"]))
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
     restore_on_drop(card, reason)
     state.broadcast({"type": "removed", "session_id": sid})
+    return True
 
 
 def continues_session(old: dict, ev: dict) -> bool:
@@ -1714,12 +1726,18 @@ def check_liveness(sid: str) -> None:
 def remember_live_cards() -> None:
     """Las tarjetas vivas con hooks pasan al registro de restaurables (restore.py), con debounce
     adentro: un reinicio brusco no deja que el server vea la muerte. Nunca levanta."""
-    try:
+
+    def work() -> None:
         with lock:
-            vivas = [dict(s) for s in sessions.values() if s.get("hooked") and s.get("alive")]
-        restore.remember_live(vivas)
-    except Exception:
-        state.log(f"restaurar: {traceback.format_exc()}")
+            vivas = [
+                dict(s)
+                for s in sessions.values()
+                if s.get("hooked") and s.get("alive") and restore.live_due(s.get("session_id"))
+            ]
+        if vivas:
+            restore.remember_live(vivas)
+
+    restore_guard(work)
 
 
 def liveness_loop(sweep_every: float) -> None:
@@ -2177,17 +2195,23 @@ def screen_loop() -> None:
 # --- arranque ---------------------------------------------------------------------------
 
 
-def restore_on_start(card: dict) -> None:
-    """Al arrancar, una tarjeta guardada cuyo proceso ya no existe: el server estuvo apagado (o la PC
-    se reinicio) y no vio la muerte. Se deja en el registro de restaurables, que es lo que la
-    purga de abajo (o los 60 s de gracia) se iba a llevar, salvo que haya terminado a proposito."""
-    try:
-        if restore.ended_on_purpose(card):
-            restore.forget(card["session_id"])
-        else:
-            restore.remember(card, ended=True)
-    except Exception:
-        state.log(f"restaurar: {traceback.format_exc()}")
+def restore_on_start(cards: list[dict]) -> None:
+    """Al arrancar, las tarjetas guardadas cuyo proceso ya no existe: el server estuvo apagado (o la
+    PC se reinicio) y no vio la muerte. Se dejan en el registro de restaurables, que es lo que la
+    purga (o los 60 s de gracia) se iba a llevar, salvo las que terminaron a proposito (esas se
+    olvidan). Una sola lectura y escritura del registro para todas."""
+
+    def work() -> None:
+        nuevas = []
+        for card in cards:
+            if restore.ended_on_purpose(card):
+                restore.forget(card["session_id"])
+            elif restore.eligible(card):
+                nuevas.append(card)
+        if nuevas:
+            restore._store(nuevas, True)
+
+    restore_guard(work)
 
 
 def load_sessions() -> tuple[int, int]:
@@ -2196,6 +2220,7 @@ def load_sessions() -> tuple[int, int]:
     y se van solas a los 60 s), y recalcula el titulo de las que quedan con la regla actual."""
     limit = dt.datetime.now().astimezone() - dt.timedelta(hours=STALE_SESSION_H)
     purged = 0
+    sin_proceso: list[dict] = []
     for p in glob.glob(os.path.join(state.SESSIONS, "*.json")):
         try:
             with open(p, encoding="utf-8") as f:
@@ -2211,7 +2236,7 @@ def load_sessions() -> tuple[int, int]:
             if s.get("state") not in STATES:
                 s["state"], s["state_since"] = "termino", s.get("state_since") or now()
             if not backend.agent_alive(s):
-                restore_on_start(s)
+                sin_proceso.append(dict(s))
                 ref = parse_ts(s.get("last_event_ts") or s.get("started"))
                 if ref is None or ref < limit:
                     os.remove(p)
@@ -2224,6 +2249,7 @@ def load_sessions() -> tuple[int, int]:
             sessions[s["session_id"]] = s
         except OSError, ValueError, KeyError:
             continue
+    restore_on_start(sin_proceso)
     remember_live_cards()
     retitled = 0
     for s in list(sessions.values()):
