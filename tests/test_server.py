@@ -1900,3 +1900,26 @@ def test_purge_stale_xpc_solo_saca_las_que_no_existen_en_ningun_lado(tmp_path, m
     finally:
         with srv.lock:
             rl.rules.items[:] = antes
+
+
+def test_borrar_una_regla_de_otra_pc_se_reenvia_a_su_dueña(monkeypatch):
+    import http.client
+
+    import mirror
+    import server as srv
+
+    llamadas = []
+    monkeypatch.setattr(mirror.MIRROR, "rules", lambda: [{"id": "remota1", "pc": "pcB", "kind": "on_stop"}])
+    monkeypatch.setattr(mirror.MIRROR, "forward", lambda pc, m, path, body=None: (llamadas.append((pc, m, path)) or (200, {"ok": True})))
+    httpd = srv.QuietServer(("127.0.0.1", 0), srv.Handler)
+    import threading
+
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=5)
+        c.request("DELETE", "/rules/remota1", headers={"X-Lienzo": "1"})
+        r = c.getresponse()
+        r.read()
+        assert r.status == 200 and llamadas == [("pcB", "DELETE", "/rules/remota1")]
+    finally:
+        httpd.shutdown()

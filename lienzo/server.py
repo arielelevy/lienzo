@@ -886,7 +886,9 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["links"]:
                 return self._json(200, links.snapshot())
             if parts == ["rules"]:
-                return self._json(200, rules.snapshot())
+                # las locales y las que viven en otras PCs (espejo, con su `pc`): un cliente de la API
+                # que solo viera las locales creeria que el cableado entre PCs no existe
+                return self._json(200, rules.snapshot() + mirror.MIRROR.rules())
             if parts == ["config"]:
                 return self._json(200, public_config())
             # el sello del bundle servido: el tablero lo consulta cada 30 s y se recarga cuando
@@ -1296,6 +1298,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             if len(parts) == 2 and parts[0] == "peers":
                 return self._delete_peer(parts[1])
+            if len(parts) == 2 and parts[0] == "rules" and not any(r["id"] == parts[1] for r in rules.snapshot()):
+                dueña = next((r.get("pc") for r in mirror.MIRROR.rules() if r.get("id") == parts[1]), None)
+                if dueña:
+                    log(f"regla {parts[1]} borrada desde la UI, vive en otra PC ({self._client_ip()})")
+                    code, res = mirror.MIRROR.forward(dueña, "DELETE", f"/rules/{parts[1]}")
+                    return self._json(code, res)
             if len(parts) == 2 and parts[0] in ("links", "rules"):
                 log(f"{parts[0][:-1]} {parts[1]} borrada desde la UI ({self._client_ip()})")
                 (links if parts[0] == "links" else rules).remove(lambda x: x["id"] == parts[1])
@@ -1479,6 +1487,9 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._session_post(rest[1], rest[2], raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "PUT":
             return self._session_put(rest[1], rest[2], raw)
+        if len(rest) == 2 and rest[0] == "rules" and method == "DELETE":
+            rules.remove(lambda x: x["id"] == rest[1])
+            return self._json(200, {"ok": True})
         if len(rest) == 2 and rest[0] == "sessions" and method == "DELETE":
             drop_session(rest[1], "borrada desde otra PC")
             return self._json(200, {"ok": True})

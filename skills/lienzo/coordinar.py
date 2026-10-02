@@ -230,10 +230,11 @@ def regla_informe(s, texto, max_fires=30):
     )[0]
 
 
-def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30):
+def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
     """Cablea CADA frente vivo hacia la coordinadora (`YO`): una regla `on_stop` por tarjeta, para que
     el informe llegue solo cuando termine. No repite las que ya tienen regla hacia `YO`, no cablea a
-    la coordinadora consigo misma ni a una tarjeta sin consola de destino. Devuelve
+    la coordinadora consigo misma. `filtro(s)` (opcional) deja afuera lo que no es de este trabajo: sin
+    él se cablea TODO lo vivo, incluidas sesiones de otros proyectos. Devuelve
     {"creadas": [...], "ya_estaban": [...], "fallaron": [{"sid", "code", "error"}]}.
 
     Una tarjeta de OTRA PC crea su regla en esa PC (ahi ocurre el Stop): si esa PC tiene un lienzo
@@ -245,6 +246,8 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30):
     for s in sesiones():
         sid = s["session_id"]
         if sid == YO or s.get("coordinator") or (pc and s.get("pc") != pc) or (solo_vivas and not s.get("alive")):
+            continue
+        if filtro and not filtro(s):
             continue
         if sid in ya:
             out["ya_estaban"].append(sid)
