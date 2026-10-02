@@ -445,6 +445,21 @@ def rules_loop() -> None:
         time.sleep(5)
 
 
+def purge_stale_xpc(known_remote, known_local) -> int:
+    """Saca las reglas con destino en otra PC cuyo destino ya no existe en ningun lado. Solo se llama
+    con los peers sincronizados (mirror.all_synced): antes, una tarjeta ajena que no se ve es una que
+    todavia no llego. `known_local(sid)` y `known_remote(sid)` dicen si la tarjeta existe."""
+    with lock:
+        rotas = [r for r in rules.items if r.get("xpc") and not known_local(r["to"]) and not known_remote(r["to"])]
+        if rotas:
+            ids = {r["id"] for r in rotas}
+            rules.items[:] = [r for r in rules.items if r["id"] not in ids]
+            rules.save()
+    if rotas:
+        state.log(f"purgadas {len(rotas)} reglas con destino en otra PC que ya no existe")
+    return len(rotas)
+
+
 def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
     """Al arrancar: sacar las reglas 'a las HH:MM' que ya dispararon o quedaron deshabilitadas
     hace mas de max_age_h horas. Las on_stop se conservan (viven con la sesion)."""

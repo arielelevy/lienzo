@@ -230,6 +230,35 @@ def regla_informe(s, texto, max_fires=30):
     )[0]
 
 
+def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30):
+    """Cablea CADA frente vivo hacia la coordinadora (`YO`): una regla `on_stop` por tarjeta, para que
+    el informe llegue solo cuando termine. No repite las que ya tienen regla hacia `YO`, no cablea a
+    la coordinadora consigo misma ni a una tarjeta sin consola de destino. Devuelve
+    {"creadas": [...], "ya_estaban": [...], "fallaron": [{"sid", "code", "error"}]}.
+
+    Una tarjeta de OTRA PC crea su regla en esa PC (ahi ocurre el Stop): si esa PC tiene un lienzo
+    viejo, falla con un mensaje que lo dice (hace falta `git pull` y reiniciarlo)."""
+    r = pedir("GET", "/rules")[1]
+    r = r if isinstance(r, list) else (r or {}).get("rules", []) or []
+    ya = {x.get("from") for x in r if x.get("to") == YO and x.get("kind") == "on_stop"}
+    out = {"creadas": [], "ya_estaban": [], "fallaron": []}
+    for s in sesiones():
+        sid = s["session_id"]
+        if sid == YO or s.get("coordinator") or (pc and s.get("pc") != pc) or (solo_vivas and not s.get("alive")):
+            continue
+        if sid in ya:
+            out["ya_estaban"].append(sid)
+            continue
+        nombre = (s.get("title") or s.get("repo") or sid[:8])[:40]
+        msg = texto or f"[regla automática] Terminó «{nombre}» ({sid[:8]}). Leé su última respuesta con GET /sessions/{sid} y decidí el próximo paso."
+        code, res = pedir("POST", "/rules", {"kind": "on_stop", "from": sid, "to": YO, "text": msg, "repeat": True, "max_fires": max_fires})
+        if code == 200:
+            out["creadas"].append(sid)
+        else:
+            out["fallaron"].append({"sid": sid, "code": code, "error": (res if isinstance(res, str) else (res or {}).get("error", ""))[:140]})
+    return out
+
+
 def borrar_reglas_hacia_mi():
     """Apaga las reglas que apuntan a la coordinadora: entre rondas, y durante una pausa larga."""
     r = pedir("GET", "/rules")[1]

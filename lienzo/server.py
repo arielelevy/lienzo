@@ -246,6 +246,9 @@ def new_rule(d: dict, text: str, **extra) -> dict:
         "to": d["to"],
         "text": text,
         "pc": identity.pc_id(),
+        # destino en otra PC: al reiniciar, esa tarjeta todavia no esta en el espejo y la regla se
+        # descartaba por "destino desconocido"; esta marca la salva hasta que el espejo se asiente
+        **({"xpc": True} if _rule_target_pc(d.get("to")) else {}),
         **extra,
     }
 
@@ -345,6 +348,15 @@ def create_rule(d: dict) -> tuple[int, dict]:
     rechazo = check_rule(d)
     if rechazo is not None:
         return rechazo
+    if d["kind"] == "on_stop":
+        origen = _rule_target_pc(d.get("from"))
+        if origen is not None:
+            # el Stop ocurre en la PC del origen, y es esa PC la que dispara la regla (plan §3.5):
+            # guardarla aca no la dispararia nunca. Se crea alla, y aca se ve por el espejo.
+            code, res = mirror.MIRROR.forward(origen, "POST", "/rules", d)
+            if code == 404 and (res or {}).get("error") == "ruta desconocida":
+                return 502, {"error": "la otra PC tiene un lienzo viejo que no sabe crear reglas: git pull y reiniciarlo"}
+            return code, res
     text = str(d.get("text") or "")
     conflicto = check_remote_destination(d, text)
     if conflicto:
@@ -1450,6 +1462,13 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._events()
         if method == "POST" and rest == ["launch"]:
             return self._launch(raw)
+        if method == "POST" and rest == ["rules"]:
+            d = self._body_json(raw)
+            if d.get("kind") == "on_stop" and d.get("from") not in sessions:
+                # la regla de otra PC se crea donde ocurre el Stop: si el origen no es de esta PC, no va
+                return self._json(409, {"error": "el origen de esa regla no es una sesion de esta PC"})
+            code, res = create_rule(d)
+            return self._json(code, res)
         if method == "POST" and rest == ["rules", "lock"]:
             return self._rules_lock(raw)
         if method == "POST" and rest == ["rules", "check"]:
@@ -1673,6 +1692,23 @@ def reload_loop() -> None:
         os._exit(RELOAD_EXIT)
 
 
+def xpc_purge_loop(every_s: float = 60.0, arranque_s: float = 120.0) -> None:
+    """Limpia las reglas con destino en otra PC cuyo destino ya no existe, pero solo cuando todos los
+    peers ya mandaron su snapshot (y pasaron `arranque_s` desde el arranque): antes de eso, una
+    tarjeta ajena que no se ve es una que todavia no llego, y borrarla perderia la regla."""
+    t0 = time.time()
+    while True:
+        time.sleep(every_s)
+        try:
+            if time.time() - t0 > arranque_s and mirror.MIRROR.all_synced():
+                rl.purge_stale_xpc(
+                    known_remote=lambda sid: mirror.MIRROR.owner_of(sid) is not None,
+                    known_local=lambda sid: sid in sessions,
+                )
+        except Exception:
+            log(traceback.format_exc())
+
+
 def tunnel_loop(port: int) -> None:
     """Camino A (§7.6.2): cloudflared publica 127.0.0.1:<port> en una URL https de trycloudflare.
     Solo se levanta si hay login configurado; sin auth.json no se expone nada."""
@@ -1760,7 +1796,7 @@ def main() -> int:
         return 1
     purged, retitled = load_sessions()
     links.load(lambda l: l.get("to") in sessions and (not l.get("from") or l["from"] in sessions))
-    rules.load(lambda r: r.get("to") in sessions and (not r.get("from") or r["from"] in sessions))
+    rules.load(lambda r: (r.get("to") in sessions or r.get("xpc")) and (not r.get("from") or r["from"] in sessions))
     purge_stale_at_rules()
     clean_attachments()
     if not a.no_sweep:
@@ -1792,6 +1828,8 @@ def main() -> int:
             log(f"listener de peers en http://{peer_host}:{a.peer_port}")
     for peer in peers_guardados:
         _connect_peer_from_record(peer)
+    if peers_guardados:
+        threading.Thread(target=xpc_purge_loop, daemon=True).start()
     if peer_srv is not None:
         stop_beacon = threading.Event()
         beacon.start(a.peer_port, stop_beacon)

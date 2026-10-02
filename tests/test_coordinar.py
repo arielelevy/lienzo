@@ -65,3 +65,29 @@ def test_enviar_seguro_acepta_saltos_de_linea(monkeypatch):
     monkeypatch.setattr(c, "sesiones", lambda: [_tarjeta("u1", state="corriendo")])
     monkeypatch.setattr("time.sleep", lambda s: None)
     assert c.enviar_seguro(_tarjeta("u1"), "linea 1\nlinea 2\t con tab", enlazar=False, espera=2)["ok"] is True
+
+
+def test_cablear_crea_una_regla_por_frente_vivo_y_no_repite(monkeypatch):
+    c.YO = "coord"
+    creadas = []
+    ses = [_tarjeta("coord"), _tarjeta("a", alive=True), _tarjeta("b", alive=True), _tarjeta("muerta", alive=False),
+           _tarjeta("c", alive=True, coordinator=True)]
+
+    def pedir(m, r, cuerpo=None, timeout=20):
+        if m == "GET":
+            return 200, [{"kind": "on_stop", "from": "b", "to": "coord"}]
+        creadas.append(cuerpo["from"])
+        return 200, {"id": "x"}
+
+    monkeypatch.setattr(c, "pedir", pedir)
+    monkeypatch.setattr(c, "sesiones", lambda: ses)
+    r = c.cablear()
+    assert r["creadas"] == ["a"] and r["ya_estaban"] == ["b"] and r["fallaron"] == [] and creadas == ["a"]
+
+
+def test_cablear_cuenta_los_fallos_con_el_motivo(monkeypatch):
+    c.YO = "coord"
+    monkeypatch.setattr(c, "sesiones", lambda: [_tarjeta("a", alive=True)])
+    monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: (200, []) if m == "GET" else (502, {"error": "git pull"}))
+    r = c.cablear()
+    assert r["creadas"] == [] and r["fallaron"][0]["code"] == 502 and "git pull" in r["fallaron"][0]["error"]

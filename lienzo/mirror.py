@@ -41,6 +41,7 @@ class _PeerMirror:
         self.health: dict | None = None
         self.last_seen: float = 0.0
         self.client: federation.SSEClient | None = None
+        self.synced = False  # ya llego su snapshot completo en esta conexion
 
 
 def _tag(items, pc_id: str) -> list[dict]:
@@ -92,6 +93,12 @@ class Mirror:
             pm.client.stop()
         self.on_change()
 
+    def all_synced(self) -> bool:
+        """True si hay peers conectados y TODOS ya mandaron su snapshot: recien ahi se sabe que una
+        tarjeta ajena que no aparece es una tarjeta que ya no existe, y no una que todavia no llego."""
+        with self._lock:
+            return bool(self._peers) and all(pm.synced for pm in self._peers.values())
+
     def peer_ids(self) -> list[str]:
         with self._lock:
             return list(self._peers.keys())
@@ -124,6 +131,7 @@ class Mirror:
         with self._lock:
             pm.last_seen = time.time()
             if t == "snapshot":
+                pm.synced = True
                 pm.sessions = {s["session_id"]: s for s in ev.get("sessions", []) if s.get("session_id")}
                 pm.pending = {p["request_id"]: p for p in ev.get("pending", []) if p.get("request_id")}
                 pm.links = list(ev.get("links", []))

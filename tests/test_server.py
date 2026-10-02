@@ -1847,3 +1847,56 @@ def test_el_envio_a_otra_pc_espera_mas_que_un_pedido_comun():
     assert federation._timeout_para("POST", "/peer/sessions/x/send", 5.0) == federation.SLOW_TIMEOUT_S
     assert federation._timeout_para("GET", "/peer/sessions/x/send", 5.0) == 5.0
     assert federation._timeout_para("POST", "/peer/pending/x", 5.0) == 5.0
+
+
+def test_regla_con_origen_en_otra_pc_se_crea_alla(monkeypatch):
+    import mirror
+    import server as srv
+
+    llamadas = []
+    monkeypatch.setattr(srv, "_known_session", lambda sid: True)
+    monkeypatch.setattr(srv, "_rule_target_pc", lambda sid: "pcB" if sid == "remota" else None)
+    monkeypatch.setattr(mirror.MIRROR, "forward", lambda pc, m, path, body=None: (llamadas.append((pc, m, path)) or (200, {"id": "r1"})))
+    code, res = srv.create_rule({"kind": "on_stop", "from": "remota", "to": "local", "text": "x", "repeat": True})
+    assert (code, res) == (200, {"id": "r1"}) and llamadas == [("pcB", "POST", "/rules")]
+
+
+def test_regla_origen_remoto_contra_lienzo_viejo_da_un_error_que_explica(monkeypatch):
+    import mirror
+    import server as srv
+
+    monkeypatch.setattr(srv, "_known_session", lambda sid: True)
+    monkeypatch.setattr(srv, "_rule_target_pc", lambda sid: "pcB" if sid == "remota" else None)
+    monkeypatch.setattr(mirror.MIRROR, "forward", lambda *a, **k: (404, {"error": "ruta desconocida"}))
+    code, res = srv.create_rule({"kind": "on_stop", "from": "remota", "to": "local", "text": "x"})
+    assert code == 502 and "git pull" in res["error"]
+
+
+def test_regla_con_destino_remoto_queda_marcada_xpc_y_sobrevive_al_arranque(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, "_rule_target_pc", lambda sid: "pcB" if sid == "remota" else None)
+    r = srv.new_rule({"kind": "on_stop", "from": "local", "to": "remota"}, "t")
+    assert r["xpc"] is True
+    assert "xpc" not in srv.new_rule({"kind": "on_stop", "from": "local", "to": "local2"}, "t")
+
+
+def test_purge_stale_xpc_solo_saca_las_que_no_existen_en_ningun_lado(tmp_path, monkeypatch):
+    import rules as rl
+    import server as srv
+
+    # purge_stale_xpc guarda: sin esto escribiria en el rules.json real de quien corre las pruebas
+    monkeypatch.setattr(rl.rules, "path", str(tmp_path / "rules.json"))
+    with srv.lock:
+        antes = list(rl.rules.items)
+        rl.rules.items[:] = [
+            {"id": "a", "xpc": True, "to": "viva_remota", "kind": "on_stop"},
+            {"id": "b", "xpc": True, "to": "fantasma", "kind": "on_stop"},
+            {"id": "c", "to": "local_sin_xpc", "kind": "on_stop"},
+        ]
+    try:
+        n = rl.purge_stale_xpc(known_remote=lambda sid: sid == "viva_remota", known_local=lambda sid: False)
+        assert n == 1 and [r["id"] for r in rl.rules.items] == ["a", "c"]
+    finally:
+        with srv.lock:
+            rl.rules.items[:] = antes
