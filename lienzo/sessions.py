@@ -1934,6 +1934,13 @@ def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
     return 200, out
 
 
+def coda_ask_open(pantalla: str) -> bool:
+    """¿La pantalla de CODA muestra un permiso abierto? El titulo «Approval Required» se sale de la
+    pantalla cuando el comando es largo (un heredoc que escribe un archivo): por eso tambien vale el
+    pie del cartel, que siempre esta abajo («Enter confirm · Esc deny»)."""
+    return "Approval Required" in pantalla or ("Enter confirm" in pantalla and "Esc deny" in pantalla)
+
+
 def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
     """Contestar desde la tarjeta el permiso que CODA pide en su terminal, con teclas: Enter para
     permitir, Esc para denegar. Antes de teclear se confirma en la pantalla que el dialogo sigue
@@ -1943,7 +1950,7 @@ def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
     if s.get("agent") != "coda" or not (s.get("needs") or {}).get("coda_at"):
         return 409, {"ok": False, "error": "esa sesion no tiene un permiso de CODA abierto"}
     pantalla = "\n".join(read_screen(s).get("lines") or [])
-    if "Approval Required" not in pantalla:
+    if not coda_ask_open(pantalla):
         return 409, {"ok": False, "error": "el dialogo de permiso ya no esta en la terminal"}
     if decision == "allow":
         code, out = run_send(s, "", enter=True)

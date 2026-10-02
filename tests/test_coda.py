@@ -226,3 +226,14 @@ def test_pedido_de_permiso_abierto_y_contestado(tmp_path, monkeypatch):
     with log.open("a", encoding="utf-8") as f:
         f.write(json.dumps({**ask, "msg": "turn complete"}) + "\n")
     assert coda.activity(4242)["asking"] is None
+
+
+def test_el_permiso_de_coda_se_detecta_aunque_el_titulo_se_salga_de_la_pantalla():
+    import sessions as ses
+
+    titulo = "  Approval Required\n  bash\n  echo hola\n  ❯ Yes\n    No\n  ↑↓ move · Enter confirm · Esc deny"
+    largo = "\n".join(f"  linea {i} de un heredoc" for i in range(40)) + "\n  ❯ Yes\n    No\n  ↑↓ move · Enter confirm · Esc deny"
+    assert ses.coda_ask_open(titulo) is True
+    assert ses.coda_ask_open(largo) is True  # el titulo ya no se ve, el pie sí
+    assert ses.coda_ask_open("  Ask anything... (/ for commands ? for shortcuts)") is False
+    assert ses.coda_ask_open("Enter confirm  sin el otro texto") is False
