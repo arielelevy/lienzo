@@ -140,7 +140,12 @@ contempla).
   de a partes de 150 líneas». Un coda colgado que no responde al `/exit` se cierra pidiéndole a otro
   agente de esa PC un `taskkill /F /PID <pid>` de ese PID.
 - **El modelo se elige al lanzar**: `coordinar.lanzar(pc, cwd, titulo, "coda", model="globant_dgx/GLM-5.3-Flash")`
-  (también `lanzar_y_titular`). Con mensajes cortos GLM 5.3 Flash y Qwen contestan igual de rápido.
+  (también `lanzar_y_titular`). **Ojo: en coda el `--model` no vale solo para esa sesión: cambia el modelo
+  por defecto de esa PC** (lo escribe en su `config.json`; medido el 2026-10-02: al lanzar un coda con
+  GLM 5.3 Flash el default pasó de `Qwen3.8-27B` a GLM a las 00:52:18, y las sesiones lanzadas después
+  «sin modelo» ya corrían GLM). Por eso no hay comparación de velocidad entre modelos que valga: si se
+  quiere comparar, cada coda se lanza con su `model` explícito, y al terminar se vuelve a poner el
+  default que tenía el usuario. Avisarle antes de cambiarlo.
 - **El encargo largo a otra PC va por mensaje: el server lo vuelve adjunto solo.** Tecleado en una
   consola, un mensaje con saltos de línea o de más de 500 caracteres sería un Enter por línea; por eso
   el server lo guarda como `mensaje.md` en `~/.lienzo/adjuntos/<id>/` de la PC dueña y teclea una sola

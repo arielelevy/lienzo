@@ -358,7 +358,8 @@ def lanzar(pc, cwd, titulo, agent="claude", model=None):
 
     `model` elige el modelo de la sesión con `--model` (coda, claude y codex), por ejemplo
     `globant_dgx/GLM-5.3-Flash` para coda. La respuesta trae `model_applied`: falso si el agente no
-    lo soporta o el id no es válido (solo `[A-Za-z0-9._/:@-]`).
+    lo soporta o el id no es válido (solo `[A-Za-z0-9._/:@-]`). **En coda cambia el modelo por defecto
+    de esa PC** (lo escribe en su `config.json`): avisarle al usuario antes de usarlo.
     """
     cuerpo = {"cwd": cwd, "agent": agent, "title": titulo}
     if pc:

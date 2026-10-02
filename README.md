@@ -441,7 +441,10 @@ recién abierta.
 y `codex` (por ejemplo `globant_dgx/GLM-5.3-Flash`). El id va escrito en la línea del `.cmd`, así
 que solo pasa con `[A-Za-z0-9._/:@-]` y hasta 80 caracteres; la respuesta trae `model_applied`
 (falso si el agente no lo soporta o el id no es válido: ahí se lanza con el modelo por defecto).
-`pi` no lo recibe.
+`pi` no lo recibe. **Ojo con coda:** su `--model` no vale solo para esa sesión, cambia el modelo por
+defecto de esa PC (queda escrito en su `config.json`), así que las sesiones que se lancen después
+«sin modelo» usan el nuevo. Avisale a quien use esa PC, y si hace falta volver al anterior, lanzá con
+el `model` de antes.
 
 ### Cablear entre PCs
 

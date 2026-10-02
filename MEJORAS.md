@@ -26,12 +26,20 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-02 | **A un coda, el adjunto se lee con el shell**: el aviso del mensaje largo le pide leerlo con `type` y no con `read` (que se traba en coda) | 4 codas colgados más de una hora en «usando read»; con mensajes cortos y lectura por shell las mismas revisiones terminaron en 2 min |
 | 2026-10-02 | **Las reglas pasan de la tarjeta provisional `pid-N` a la real**: antes solo se trasladaban en `continue_session` | un agente recién lanzado y cableado perdía su regla al llegar su primer hook |
 | 2026-10-02 | **`lanzar_y_titular` cablea por defecto** la tarjeta nueva a la coordinadora | tres codas lanzados sin regla: no avisaban al terminar |
-| 2026-10-02 | Elegir el modelo al lanzar (`--model`, coda, claude y codex) | comparar GLM 5.3 Flash con Qwen: con mensajes cortos contestan igual de rápido |
+| 2026-10-02 | Elegir el modelo al lanzar (`--model`, coda, claude y codex) | usar GLM 5.3 Flash en la otra PC (ojo: en coda el `--model` cambia el modelo por defecto de esa PC, ver Pendiente) |
 
 ## Pendiente (con evidencia)
 
 - **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
   el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.
+- **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se
+  documenta como «para esta corrida», pero el `config.json` de esa PC pasó de `globant_dgx/Qwen3.8-27B` a
+  `globant_dgx/GLM-5.3-Flash` a las 00:52:18, justo al lanzar el primer coda con GLM, y las sesiones
+  lanzadas después sin modelo ya mostraban GLM. Efectos: se pisa el default del usuario sin que lo sepa
+  y las comparaciones entre modelos no valen (la medición «Qwen contra GLM» de esa noche fue GLM contra
+  GLM). Ideas: que `lanzar` con `model` avise si el agente es coda, que el lienzo lea el default antes
+  y lo restaure al terminar el lote, o lanzar con un `--coda-home` propio para aislar la configuración
+  (hay que ver cómo conserva el login).
 - **El lienzo no puede cerrar un agente colgado de otra PC**: `/exit` queda en cola y `interrupt` no
   alcanza si el proceso está clavado. Hoy hubo que pedirle a otro coda un `taskkill` por PID. Idea:
   `POST /sessions/<sid>/kill` que la PC dueña ejecute sobre su propio PID (con la misma
