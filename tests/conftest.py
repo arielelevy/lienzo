@@ -15,3 +15,13 @@ import backend
 @pytest.fixture(autouse=True)
 def _sin_tmux_real(monkeypatch):
     monkeypatch.setattr(backend, "HAS_TMUX", False)
+
+
+@pytest.fixture(autouse=True)
+def _restaurar_en_tmp(tmp_path, monkeypatch):
+    """Ningun test toca el ~/.lienzo/restaurar.json de verdad: sessions.drop_session y el barrido lo
+    escriben solos. test_restore.py usa este mismo archivo temporal."""
+    import restore
+
+    monkeypatch.setattr(restore, "path", lambda: str(tmp_path / "restaurar.json"))
+    restore._last_live.clear()

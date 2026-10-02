@@ -247,6 +247,28 @@ la tarjeta vieja desaparece:
 efecto en el transcript, no el envío. `/exit` se verifica con que el proceso ya no exista y la
 tarjeta quede `muerta`.
 
+## Restaurar sesiones tras un reinicio
+
+Al reiniciar la PC mueren todos los agentes y las tarjetas se borran a los 60 s. Cada PC guarda en
+`~/.lienzo/restaurar.json` dónde estaba cada sesión (agente, carpeta, título, id) y las relanza
+con el retomar de cada agente (`claude --resume <id>`, `codex resume <id>`, `pi --resume`,
+`coda --lastsession`). Una sesión cerrada a propósito (`/exit`, logout) o borrada a mano no se
+guarda; la que se cierra con la ventana o el apagado, sí.
+
+```python
+c.restaurables()                     # de esta PC y de los peers vivos, cada una con su `pc`
+c.restaurar(session_id, pc=None)     # una; con `pc` se manda a esa PC
+c.restaurar(todas=True, pc=None)     # todas las de esa PC, una por una (~2 s entre cada una)
+```
+
+- `todas` respeta la memoria de la PC dueña: hace falta 1,5 GB libres + 0,7 GB por sesión. Si no
+  entran, rechaza (409) y dice cuántas sí; con `limit_by_memory=True` relanza solo esas.
+- La respuesta es `{restored: [...], failed: [{session_id, error}]}`. Una relanzada sale del
+  registro; una que falló queda para reintentar. La `cwd` tiene que seguir dentro de
+  `launch_roots`.
+- Antes de relanzar todas, mirar `restaurables()`: tras un `/clear` o un cierre raro puede haber
+  entradas que ya no interesan; se descartan con `DELETE /sessions/<id>`.
+
 ## CPU, memoria y temperatura: la coordinadora los vigila
 
 Con seis sesiones en una máquina de 15 GB la memoria se termina antes que la CPU. Medido el

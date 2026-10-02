@@ -35,6 +35,24 @@ _CLAUDE_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSIO
 # la comilla del titulo antes de tiempo; fuera, el titulo nunca se interpreta como comando
 _UNSAFE_TITLE_RE = re.compile(r'[&|<>^%"\r\n]')
 
+# retomar una sesion (restore.py): claude y codex por id, pi y coda "la ultima de esta carpeta" (sin
+# id). El id se interpola en la linea del .cmd, asi que solo entra si es [0-9a-fA-F-]{8,40}
+_RESUME_ID_RE = re.compile(r"[0-9a-fA-F-]{8,40}")
+_RESUME_BY_ID = {"claude": ["--resume"], "codex": ["resume"]}
+_RESUME_LAST = {"pi": ["--resume"], "coda": ["--lastsession"]}
+
+
+def _resume_args(agent: str, resume: str | None) -> list[str]:
+    """Argumentos para retomar, o [] si no se puede (sin pedido, o un id que no es de verdad para
+    un agente que retoma por id). Cada elemento es seguro de escribir tal cual en el .cmd."""
+    if not resume:
+        return []
+    if agent in _RESUME_LAST:
+        return list(_RESUME_LAST[agent])
+    if agent in _RESUME_BY_ID and isinstance(resume, str) and _RESUME_ID_RE.fullmatch(resume):
+        return [*_RESUME_BY_ID[agent], resume]
+    return []
+
 
 def _sanitize_title(title: str) -> str:
     limpio = _UNSAFE_TITLE_RE.sub(" ", (title or "").strip())
@@ -69,10 +87,12 @@ def _exe_path(exe_name: str) -> str | None:
     return propio if os.path.isfile(propio) else shutil.which(exe_name)
 
 
-def launch(cwd: str, title: str, agent: str) -> dict:
+def launch(cwd: str, title: str, agent: str, resume: str | None = None) -> dict:
     """Escribe el .cmd en `<LIENZO_HOME>/launch/` y lo lanza con explorer.exe. Rechaza (sin tocar
     disco ni proceso) un `cwd` fuera de `launch_roots` y un `agent` desconocido. Devuelve
-    `{ok, cmd_path}`; buscar la tarjeta nueva lo hace despues el server (rescan de por medio)."""
+    `{ok, cmd_path}`; buscar la tarjeta nueva lo hace despues el server (rescan de por medio).
+    Con `resume` (el session_id a retomar) agrega el retomar del agente; si el id no es valido para
+    un agente que retoma por id (p. ej. `pid-123`) lanza sin retomar y lo dice: `resumed: false`."""
     exe_name = AGENT_EXES.get(agent)
     if exe_name is None:
         return {"ok": False, "error": f"agente desconocido: {agent!r}"}
@@ -83,8 +103,10 @@ def launch(cwd: str, title: str, agent: str) -> dict:
     exe_path = _exe_path(exe_name)
     if exe_path is None:
         return {"ok": False, "error": f"no encuentro {exe_name} en esta PC"}
+    extra = _resume_args(agent, resume)
+    marca = {"resumed": bool(extra)} if resume is not None else {}
     if not WINDOWS:
-        return _launch_tmux(cwd, title, exe_path)
+        return {**_launch_tmux(cwd, title, exe_path, extra), **marca}
     launch_dir = os.path.join(state.LIENZO, "launch")
     os.makedirs(launch_dir, exist_ok=True)
     cmd_path = os.path.join(launch_dir, f"{secrets.token_hex(6)}.cmd")
@@ -93,22 +115,22 @@ def launch(cwd: str, title: str, agent: str) -> dict:
         "chcp 1252 >nul\r\n"
         f"title {_sanitize_title(title)}\r\n"
         f'cd /d "{cwd}"\r\n'
-        f'"{exe_path}"\r\n'
+        f'"{exe_path}"{"".join(" " + a for a in extra)}\r\n'
     )
     with open(cmd_path, "w", encoding="cp1252", errors="replace", newline="") as f:
         f.write(cuerpo)
     subprocess.Popen(["explorer.exe", cmd_path])
-    return {"ok": True, "cmd_path": cmd_path}
+    return {"ok": True, "cmd_path": cmd_path, **marca}
 
 
-def _launch_tmux(cwd: str, title: str, exe_path: str) -> dict:
+def _launch_tmux(cwd: str, title: str, exe_path: str, extra: list[str] | None = None) -> dict:
     """Mac/Linux/WSL: una sesion de tmux nueva y suelta (-d) con el agente adentro, en `cwd`, con el
     titulo como nombre de ventana. Va como lista de argumentos, sin shell: ni el titulo ni el cwd se
     interpretan. El barrido la encuentra despues por el pane, como a cualquier agente en tmux."""
     nombre = f"lienzo-{secrets.token_hex(3)}"
     unset = [a for v in _CLAUDE_ENV for a in ("-u", v)]
     argv = ["tmux", "new-session", "-d", "-s", nombre, "-n", _sanitize_title(title), "-c", cwd]
-    argv += ["env", *unset, exe_path]
+    argv += ["env", *unset, exe_path, *(extra or [])]
     try:
         subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as e:

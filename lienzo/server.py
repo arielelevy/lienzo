@@ -37,6 +37,7 @@ import identity
 import launch
 import mirror
 import pairing
+import restore
 import rules as rl
 import transcripts
 from rules import at_near, connections_of, local_dt, purge_stale_at_rules, rules_loop
@@ -614,6 +615,97 @@ def _stream_sse(handler: BaseHTTPRequestHandler, initial_json: str, extra_client
                     lst.remove(q)
 
 
+# --- restaurar sesiones tras un reinicio (restore.py) --------------------------------------
+
+RESTORE_GAP_S = 2.0  # entre un relanzado y el siguiente: no hundir la memoria con N agentes de golpe
+RESTORE_BASE_GB = 1.5  # memoria libre que tiene que sobrar...
+RESTORE_PER_AGENT_GB = 0.7  # ...mas esto por cada agente que se relanza
+_restore_busy = threading.Lock()
+
+
+def restorables_local() -> list[dict]:
+    """Las restaurables de esta PC: sin las que hoy tienen una tarjeta viva con ese id."""
+    with lock:
+        vivas = {sid for sid, s in sessions.items() if s.get("alive") and s.get("state") != "muerta"}
+    pc = identity.pc_id()
+    return [{**e, "pc": pc} for e in restore.list(live=vivas)]
+
+
+def restorables_all() -> list[dict]:
+    """De esta PC y de cada peer vivo (GET /peer/restaurables), cada una con su `pc`."""
+    out = restorables_local()
+    for peer in mirror.MIRROR.peers_status():
+        if not peer.get("alive"):
+            continue
+        code, res = mirror.MIRROR.forward(peer["pc_id"], "GET", "/restaurables")
+        if code == 200 and isinstance(res, dict):
+            out += [{**e, "pc": peer["pc_id"]} for e in res.get("restaurables") or [] if isinstance(e, dict)]
+    return sorted(out, key=lambda e: str(e.get("ended_at") or e.get("saved_at") or ""), reverse=True)
+
+
+def restore_capacity(n: int) -> tuple[int, dict]:
+    """(cuantos entran, snapshot) con la memoria libre de ahora: hace falta RESTORE_BASE_GB +
+    RESTORE_PER_AGENT_GB * N. Sin dato de memoria entran todos (no se bloquea a ciegas)."""
+    snap = health.snapshot()
+    free = snap.get("mem_free_gb")
+    if free is None:
+        return n, snap
+    fit = int((free - RESTORE_BASE_GB) // RESTORE_PER_AGENT_GB) if free > RESTORE_BASE_GB else 0
+    return max(0, min(n, fit)), snap
+
+
+def restore_local(d: dict) -> tuple[int, dict]:
+    """Relanza en ESTA PC una sesion (`session_id`) o todas (`all: true`), una por una con
+    RESTORE_GAP_S entre cada una. Las relanzadas se olvidan del registro. `all` respeta la memoria:
+    si no entran todas se rechaza diciendo cuantas si, o, con `limit_by_memory: true`, se relanzan
+    solo esas."""
+    sid, todas = d.get("session_id"), d.get("all") is True
+    if todas == (sid is not None) or (sid is not None and (not isinstance(sid, str) or not sid)):
+        return 400, {"error": "hace falta session_id, o all: true"}
+    if not _restore_busy.acquire(blocking=False):
+        return 409, {"error": "ya hay una restauracion en curso en esta PC"}
+    try:
+        items = restorables_local()
+        extra = {}
+        if todas:
+            n = len(items)
+            fit, snap = restore_capacity(n)
+            if fit < n:
+                msg = (
+                    f"memoria libre {snap.get('mem_free_gb')} GB: de {n} sesiones entran {fit} "
+                    f"(hacen falta {RESTORE_BASE_GB} GB + {RESTORE_PER_AGENT_GB} GB por cada una)"
+                )
+                if d.get("limit_by_memory") is not True or fit == 0:
+                    return 409, {"error": msg, "restorable": n, "fit": fit, "mem_free_gb": snap.get("mem_free_gb")}
+                extra = {"skipped": [e["session_id"] for e in items[fit:]], "note": msg}
+                items = items[:fit]
+        else:
+            items = [e for e in items if e["session_id"] == sid]
+            if not items:
+                return 404, {"error": "no hay una sesion restaurable con ese id"}
+        restored, failed = [], []
+        for i, e in enumerate(items):
+            if i:
+                time.sleep(RESTORE_GAP_S)
+            try:
+                res = launch.launch(
+                    e["cwd"], e.get("title") or e.get("repo") or "", e["agent"], resume=e["session_id"]
+                )
+            except Exception as ex:
+                res = {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+            if res.get("ok"):
+                restore.forget(e["session_id"])
+                restored.append(
+                    {"session_id": e["session_id"], "agent": e["agent"], "cwd": e["cwd"], "resumed": res.get("resumed")}
+                )
+                log(f"restaurar: {e['agent']} {e['session_id'][:8]} en {e['cwd']}")
+            else:
+                failed.append({"session_id": e["session_id"], "error": res.get("error") or "no se pudo lanzar"})
+        return (400 if failed and not restored else 200), {"restored": restored, "failed": failed, **extra}
+    finally:
+        _restore_busy.release()
+
+
 class QuietServer(ThreadingHTTPServer):
     """socketserver imprime un traceback entero en stderr cada vez que el navegador cierra una
     conexion keep-alive mientras se lee la proxima peticion (WinError 10053). Eso no es un error
@@ -865,6 +957,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._enroll()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
+            if parts == ["restaurables"]:
+                return self._json(200, restorables_all())
             if parts == ["sessions"]:
                 # serializar con el lock (es CPU pura) y escribir afuera: es el cuerpo mas grande
                 # que manda el server, y antes se escribia al socket con el lock tomado. El espejo
@@ -986,6 +1080,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._peers_join()
             if parts == ["sessions", "launch"]:
                 return self._launch()
+            if parts == ["restaurar"]:
+                return self._restaurar()
             if len(parts) == 2 and parts[0] == "pending":
                 d = self._json_body()
                 if d.get("decision") not in ("allow", "deny"):
@@ -1281,6 +1377,20 @@ class Handler(BaseHTTPRequestHandler):
         res = launch.launch(cwd, title, agent)
         return self._json(200 if res.get("ok") else 400, res)
 
+    def _restaurar(self) -> None:
+        """POST /restaurar {session_id | all: true, pc?, limit_by_memory?}: local con restore_local, o
+        reenviada a la PC `pc` por /peer/restaurar."""
+        d = self._json_body()
+        pc = d.get("pc")
+        if pc is not None and not isinstance(pc, str):
+            return self._json(400, {"error": "pc debe ser un pc_id"})
+        if pc and pc != identity.pc_id():
+            cuerpo = {k: d[k] for k in ("session_id", "all", "limit_by_memory") if k in d}
+            code, res = mirror.MIRROR.forward(pc, "POST", "/restaurar", cuerpo)
+            return self._json(code, res)
+        code, res = restore_local(d)
+        return self._json(code, res)
+
     def do_DELETE(self):
         parts = self._prepare(write=True, authenticated=True)
         if parts is None:
@@ -1294,6 +1404,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(code, res)
                 # sid local o de nadie: borrar una tarjeta que no existe es un no-op idempotente
                 # (200 igual), como siempre fue; no hay 404 que devolver aca
+                restore.forget(sid)  # borrada a mano: tampoco se restaura (aunque la tarjeta ya no este)
                 drop_session(sid, "borrada desde la UI")
                 return self._json(200, {"ok": True})
             if len(parts) == 2 and parts[0] == "peers":
@@ -1476,6 +1587,11 @@ class PeerHandler(BaseHTTPRequestHandler):
                 # la regla de otra PC se crea donde ocurre el Stop: si el origen no es de esta PC, no va
                 return self._json(409, {"error": "el origen de esa regla no es una sesion de esta PC"})
             code, res = create_rule(d)
+            return self._json(code, res)
+        if method == "GET" and rest == ["restaurables"]:
+            return self._json(200, {"restaurables": restorables_local()})
+        if method == "POST" and rest == ["restaurar"]:
+            code, res = restore_local(self._body_json(raw))
             return self._json(code, res)
         if method == "POST" and rest == ["rules", "lock"]:
             return self._rules_lock(raw)

@@ -345,6 +345,32 @@ def lanzar(pc, cwd, titulo, agent="claude"):
     return pedir("POST", "/sessions/launch", cuerpo)
 
 
+def restaurables(pc=None):
+    """GET /restaurables: las sesiones que se pueden relanzar tras un reinicio, de esta PC y de cada
+    peer vivo, la más nueva primero, cada una `{session_id, agent, cwd, title, repo, pc, saved_at,
+    ended_at}`. Con `pc` (`pc_id` de `GET /peers`) solo las de esa PC.
+    """
+    r = pedir("GET", "/restaurables")[1]
+    r = r if isinstance(r, list) else []
+    return [e for e in r if e.get("pc") == pc] if pc else r
+
+
+def restaurar(session_id=None, pc=None, todas=False, limit_by_memory=False):
+    """POST /restaurar: relanza UNA sesión (`session_id`) o `todas` las de la PC `pc` (None = esta),
+    de a una con ~2 s entre cada una. Devuelve (código, cuerpo) con `{restored, failed}`. `todas` se
+    rechaza (409, con cuántas entran) si falta memoria en esa PC, salvo `limit_by_memory=True`, que
+    relanza solo las que entran. Mismo timeout largo que un lanzamiento: son varios en fila.
+    """
+    if bool(session_id) == bool(todas):
+        raise ValueError("pasá session_id, o todas=True (una de las dos)")
+    cuerpo = {"all": True} if todas else {"session_id": session_id}
+    if pc:
+        cuerpo["pc"] = pc
+    if limit_by_memory:
+        cuerpo["limit_by_memory"] = True
+    return pedir("POST", "/restaurar", cuerpo, timeout=120)
+
+
 def lan():
     """GET /peers/lan: las PCs de la LAN con el lienzo andando que todavía no están emparejadas
     (`{pc_id, name, ip, port, last_seen}`), por el anuncio sin firma del beacon cada 10 s. Es la

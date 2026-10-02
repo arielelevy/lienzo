@@ -449,7 +449,7 @@ def signed_headers(peer: PeerConn, method: str, path: str, body: bytes) -> dict:
     }
 
 
-SLOW_ACTIONS = ("/send", "/launch", "/attach")
+SLOW_ACTIONS = ("/send", "/launch", "/attach", "/restaurar")
 SLOW_TIMEOUT_S = 70.0  # un send tipea en la consola con un subproceso de hasta 60 s en la PC dueña
 
 

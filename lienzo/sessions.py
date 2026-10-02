@@ -20,6 +20,7 @@ import traceback
 import backend
 import coda
 import identity
+import restore
 import screen
 import state
 import tmux
@@ -400,13 +401,29 @@ def forget_session(sid: str) -> bool:
     return True
 
 
+def restore_on_drop(card: dict, reason: str) -> None:
+    """Registro de sesiones restaurables (restore.py) al borrar una tarjeta. Murio el proceso (la
+    razon "muerta hace ...", que es lo que deja un reinicio de PC): se recuerda, salvo que haya
+    terminado a proposito (/exit, logout). Cualquier otra razon (borrada a mano, continuada tras un
+    /clear, duplicada por barrido) la olvida: ya no hay nada que restaurar. Nunca levanta."""
+    try:
+        if reason.startswith("muerta") and not restore.ended_on_purpose(card):
+            restore.remember(card, ended=True)
+        else:
+            restore.forget(card["session_id"])
+    except Exception:
+        state.log(f"restaurar: {traceback.format_exc()}")
+
+
 def drop_session(sid: str, reason: str) -> None:
     with lock:
+        card = sessions.get(sid)
         if not forget_session(sid):
             return
     links.remove(lambda l: sid in (l["from"], l["to"]))
     rules.remove(lambda r: sid in (r.get("from"), r["to"]))
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
+    restore_on_drop(card, reason)
     state.broadcast({"type": "removed", "session_id": sid})
 
 
@@ -504,6 +521,7 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "last_event_ts": None,
         "alive": True,
         "dead_since": None,
+        "end_reason": None,  # razon del SessionEnd (exit, logout, clear, other...); la usa restore.py
         "source": source,
         "hooked": source == "hook",
         "pending_id": None,
@@ -1243,6 +1261,10 @@ def apply_event(ev: dict) -> None:
                 choose_title(s, ev["pi_title"])
         s["last_event"] = name
         s["last_event_ts"] = ev.get("host_ts") or now()
+        if name == "SessionEnd":
+            s["end_reason"] = ev.get("reason") if isinstance(ev.get("reason"), str) else None
+        elif name == "SessionStart":
+            s["end_reason"] = None
         s["alive"] = True
         s["dead_since"] = None
         apply_hook(s, ev, name, created)
@@ -1689,6 +1711,17 @@ def check_liveness(sid: str) -> None:
     state.broadcast({"type": "transcript", "session_id": sid, "size": st.st_size})
 
 
+def remember_live_cards() -> None:
+    """Las tarjetas vivas con hooks pasan al registro de restaurables (restore.py), con debounce
+    adentro: un reinicio brusco no deja que el server vea la muerte. Nunca levanta."""
+    try:
+        with lock:
+            vivas = [dict(s) for s in sessions.values() if s.get("hooked") and s.get("alive")]
+        restore.remember_live(vivas)
+    except Exception:
+        state.log(f"restaurar: {traceback.format_exc()}")
+
+
 def liveness_loop(sweep_every: float) -> None:
     while True:
         try:
@@ -1696,6 +1729,7 @@ def liveness_loop(sweep_every: float) -> None:
                 sids = list(sessions)
             for sid in sids:
                 check_liveness(sid)
+            remember_live_cards()
             if sweep_every and time.time() - last_sweep > sweep_every:
                 sweep_once()
         except Exception:
@@ -2143,6 +2177,19 @@ def screen_loop() -> None:
 # --- arranque ---------------------------------------------------------------------------
 
 
+def restore_on_start(card: dict) -> None:
+    """Al arrancar, una tarjeta guardada cuyo proceso ya no existe: el server estuvo apagado (o la PC
+    se reinicio) y no vio la muerte. Se deja en el registro de restaurables, que es lo que la
+    purga de abajo (o los 60 s de gracia) se iba a llevar, salvo que haya terminado a proposito."""
+    try:
+        if restore.ended_on_purpose(card):
+            restore.forget(card["session_id"])
+        else:
+            restore.remember(card, ended=True)
+    except Exception:
+        state.log(f"restaurar: {traceback.format_exc()}")
+
+
 def load_sessions() -> tuple[int, int]:
     """Carga sessions/*.json. Devuelve (purgadas, retituladas): purga las sin proceso vivo y sin
     eventos (o arranque) hace mas de STALE_SESSION_H horas (las demas sin proceso quedan 'muerta'
@@ -2164,6 +2211,7 @@ def load_sessions() -> tuple[int, int]:
             if s.get("state") not in STATES:
                 s["state"], s["state_since"] = "termino", s.get("state_since") or now()
             if not backend.agent_alive(s):
+                restore_on_start(s)
                 ref = parse_ts(s.get("last_event_ts") or s.get("started"))
                 if ref is None or ref < limit:
                     os.remove(p)
@@ -2176,6 +2224,7 @@ def load_sessions() -> tuple[int, int]:
             sessions[s["session_id"]] = s
         except OSError, ValueError, KeyError:
             continue
+    remember_live_cards()
     retitled = 0
     for s in list(sessions.values()):
         if recalc_title(s):
