@@ -37,10 +37,14 @@ CLAUDE_EVENTS = {
     "PermissionRequest": (False, 90),
     "SessionEnd": (False, 2),
 }
+# Codex sin async: en Windows envuelve el hook en `pwsh -Command`, y el async lo lanza sin consola,
+# asi que Windows Terminal le abre una ventana por turno (BUG-ventanas-pwsh-hooks-codex.md). El
+# hook solo escribe un archivo en ~/.lienzo/events y no habla con el server: correrlo sincronico
+# cuesta el arranque de python, no el timeout.
 CODEX_EVENTS = {
-    "SessionStart": (True, 5),
-    "UserPromptSubmit": (True, 5),
-    "Stop": (True, 5),
+    "SessionStart": (False, 5),
+    "UserPromptSubmit": (False, 5),
+    "Stop": (False, 5),
     "PermissionRequest": (False, 90),
     "SessionEnd": (False, 2),
     "Interrupt": (False, 2),

@@ -154,6 +154,16 @@ def test_merge_hooks_sin_dry_run_si_escribe(tmp_path):
     assert "hooks" in data
 
 
+def test_hooks_de_codex_sin_async(tmp_path):
+    # async en Codex abre una ventana de pwsh por turno (BUG-ventanas-pwsh-hooks-codex.md)
+    destino = tmp_path / "hooks.json"
+    install.merge_hooks(str(destino), "codex", install.CODEX_EVENTS, uninstall=False)
+    with open(destino, encoding="utf-8") as f:
+        hooks = json.load(f)["hooks"]
+    assert set(hooks) == set(install.CODEX_EVENTS)
+    assert not any("async" in h for groups in hooks.values() for g in groups for h in g["hooks"])
+
+
 def test_ensure_state_dry_run_no_crea_carpetas(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(install, "HOME", str(tmp_path))
     install.ensure_state(dry_run=True)
