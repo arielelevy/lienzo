@@ -213,3 +213,49 @@ def test_fuera_de_windows_busca_el_ejecutable_sin_exe(aislado, monkeypatch):
     res = launch.launch(str(aislado / "repos" / "x"), "titulo", "codex")
     assert res == {"ok": False, "error": "no encuentro codex en esta PC"}
     assert FakePopen.calls == []
+
+
+def _cuerpo_del_cmd(res):
+    with open(res["cmd_path"], encoding="cp1252", newline="") as f:
+        return f.read()
+
+
+def test_modelo_va_como_dash_dash_model_en_coda(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_roots(monkeypatch, root)
+    res = launch.launch(str(root / "p"), "t", "coda", model="globant_dgx/GLM-5.3-Flash")
+    assert res["ok"] is True and res["model_applied"] is True
+    assert " --model globant_dgx/GLM-5.3-Flash\r\n" in _cuerpo_del_cmd(res)
+
+
+def test_sin_modelo_la_respuesta_no_trae_model_applied(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_roots(monkeypatch, root)
+    res = launch.launch(str(root / "p"), "t", "coda")
+    assert "model_applied" not in res and "--model" not in _cuerpo_del_cmd(res)
+
+
+@pytest.mark.parametrize("malo", ["x & calc", "a b", 'x"y', "x|y", "%PATH%", "x^y", "", "a" * 81, "x\r\ncalc"])
+def test_modelo_con_metacaracteres_no_entra_al_cmd(aislado, monkeypatch, malo):
+    root = aislado / "repos"
+    con_roots(monkeypatch, root)
+    res = launch.launch(str(root / "p"), "t", "coda", model=malo)
+    assert res["ok"] is True and res["model_applied"] is False
+    cuerpo = _cuerpo_del_cmd(res)
+    assert "--model" not in cuerpo and "calc" not in cuerpo.lower().replace("coda", "")
+
+
+def test_pi_no_recibe_modelo(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_roots(monkeypatch, root)
+    res = launch.launch(str(root / "p"), "t", "pi", model="algo")
+    assert res["model_applied"] is False and "--model" not in _cuerpo_del_cmd(res)
+
+
+def test_modelo_y_resume_se_combinan(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_roots(monkeypatch, root)
+    res = launch.launch(str(root / "p"), "t", "claude", resume="0a1de326-0f51-41f4-8ca7-4807e11950f3", model="opus")
+    cuerpo = _cuerpo_del_cmd(res)
+    assert res["resumed"] is True and res["model_applied"] is True
+    assert " --resume 0a1de326-0f51-41f4-8ca7-4807e11950f3 --model opus\r\n" in cuerpo

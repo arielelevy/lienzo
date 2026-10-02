@@ -54,6 +54,19 @@ def _resume_args(agent: str, resume: str | None) -> list[str]:
     return []
 
 
+# elegir el modelo al lanzar: coda, claude y codex lo reciben con --model. El id entra en la linea del
+# .cmd, asi que solo pasa [A-Za-z0-9._/:@-] (sin espacios ni nada que reinterprete el .cmd)
+_MODEL_RE = re.compile(r"[A-Za-z0-9._/:@-]{1,80}")
+_MODEL_AGENTS = ("coda", "claude", "codex")
+
+
+def _model_args(agent: str, model: str | None) -> list[str]:
+    """`--model <id>` si el agente lo soporta y el id es valido; [] si no."""
+    if isinstance(model, str) and agent in _MODEL_AGENTS and _MODEL_RE.fullmatch(model):
+        return ["--model", model]
+    return []
+
+
 def _sanitize_title(title: str) -> str:
     limpio = _UNSAFE_TITLE_RE.sub(" ", (title or "").strip())
     return state.short(" ".join(limpio.split()), 120) or "lienzo"
@@ -87,7 +100,7 @@ def _exe_path(exe_name: str) -> str | None:
     return propio if os.path.isfile(propio) else shutil.which(exe_name)
 
 
-def launch(cwd: str, title: str, agent: str, resume: str | None = None) -> dict:
+def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: str | None = None) -> dict:
     """Escribe el .cmd en `<LIENZO_HOME>/launch/` y lo lanza con explorer.exe. Rechaza (sin tocar
     disco ni proceso) un `cwd` fuera de `launch_roots` y un `agent` desconocido. Devuelve
     `{ok, cmd_path}`; buscar la tarjeta nueva lo hace despues el server (rescan de por medio).
@@ -103,10 +116,14 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None) -> dict:
     exe_path = _exe_path(exe_name)
     if exe_path is None:
         return {"ok": False, "error": f"no encuentro {exe_name} en esta PC"}
-    extra = _resume_args(agent, resume)
+    resume_args = _resume_args(agent, resume)
+    model_args = _model_args(agent, model)
+    extra = [*resume_args, *model_args]
     res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
     if resume is not None:
-        res["resumed"] = bool(extra)
+        res["resumed"] = bool(resume_args)
+    if model is not None:
+        res["model_applied"] = bool(model_args)
     return res
 
 

@@ -193,7 +193,7 @@ def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5):
     return {"ok": False, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1)}
 
 
-def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60):
+def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None):
     """Lanza y devuelve LA tarjeta nueva (ya titulada), no solo el 200 de `lanzar`. Distingue la
     nueva de las que ya había en esa carpeta comparando ids antes y después. None si no apareció."""
     def en_carpeta():
@@ -204,7 +204,7 @@ def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60):
         }
 
     antes = set(en_carpeta())
-    code, res = lanzar(pc, cwd, titulo, agent)
+    code, res = lanzar(pc, cwd, titulo, agent, model)
     if code != 200:
         return None
     fin = time.time() + espera
@@ -258,7 +258,7 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
             out["ya_estaban"].append(sid)
             continue
         nombre = (s.get("title") or s.get("repo") or sid[:8])[:40]
-        msg = texto or f"[regla automática] Terminó «{nombre}» ({sid[:8]}). Leé su última respuesta con GET /sessions/{sid} y decidí el próximo paso."
+        msg = texto or f"[regla automática] Terminó «{nombre}» ({sid[:8]}). Leé su `last_reply` en GET /sessions (la tarjeta {sid}) y decidí el próximo paso."
         code, res = pedir("POST", "/rules", {"kind": "on_stop", "from": sid, "to": YO, "text": msg, "repeat": True, "max_fires": max_fires})
         if code == 200:
             out["creadas"].append(sid)
@@ -338,15 +338,21 @@ def tablero(proyecto, pc=None):
         )
 
 
-def lanzar(pc, cwd, titulo, agent="claude"):
+def lanzar(pc, cwd, titulo, agent="claude", model=None):
     """POST /sessions/launch: lanza una sesión nueva, local si `pc` es None (o la propia), o en la
     PC `pc` (`pc_id` de `GET /peers`) si se da. `cwd` tiene que caer dentro de `launch_roots` de esa
     PC (`config.json`; vacía o ausente ahí es NINGUNA carpeta, no todas). La tarjeta nueva aparece
     después de un barrido: buscarla por `title` (o por `pc` + orden de aparición).
+
+    `model` elige el modelo de la sesión con `--model` (coda, claude y codex), por ejemplo
+    `globant_dgx/GLM-5.3-Flash` para coda. La respuesta trae `model_applied`: falso si el agente no
+    lo soporta o el id no es válido (solo `[A-Za-z0-9._/:@-]`).
     """
     cuerpo = {"cwd": cwd, "agent": agent, "title": titulo}
     if pc:
         cuerpo["pc"] = pc
+    if model:
+        cuerpo["model"] = model
     return pedir("POST", "/sessions/launch", cuerpo)
 
 

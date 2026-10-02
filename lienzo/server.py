@@ -1397,10 +1397,13 @@ class Handler(BaseHTTPRequestHandler):
         if valid is None:
             return self._json(400, {"error": "cwd y agent son obligatorios"})
         cwd, agent, title = valid
+        model = d.get("model") if isinstance(d.get("model"), str) else None
         if pc and pc != identity.pc_id():
-            code, res = mirror.MIRROR.forward(pc, "POST", "/launch", {"cwd": cwd, "title": title, "agent": agent})
+            code, res = mirror.MIRROR.forward(
+                pc, "POST", "/launch", {"cwd": cwd, "title": title, "agent": agent, **({"model": model} if model else {})}
+            )
             return self._json(code, res)
-        res = launch.launch(cwd, title, agent)
+        res = launch.launch(cwd, title, agent, model=model)
         return self._json(200 if res.get("ok") else 400, res)
 
     def _restaurar(self) -> None:
@@ -1653,7 +1656,8 @@ class PeerHandler(BaseHTTPRequestHandler):
         if valid is None:
             return self._json(400, {"error": "cwd y agent son obligatorios"})
         cwd, agent, title = valid
-        res = launch.launch(cwd, title, agent)
+        model = d.get("model") if isinstance(d.get("model"), str) else None
+        res = launch.launch(cwd, title, agent, model=model)
         return self._json(200 if res.get("ok") else 400, res)
 
     def _rules_lock(self, raw: bytes) -> None:
