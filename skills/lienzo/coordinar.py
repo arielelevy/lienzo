@@ -99,6 +99,13 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
     """
     import time
 
+    permitidos = chr(10) + chr(9) + chr(13)  # salto de línea, tab y retorno
+    raros = sorted({hex(ord(ch)) for ch in texto if ord(ch) < 32 and ch not in permitidos})
+    if raros:
+        # el server borra los caracteres de control sin avisar (strip_control): una ruta de Windows
+        # con una barra invertida sin escapar (la «a» de D:\apps pasa a ser BEL) llega rota y el
+        # agente busca archivos que no existen. Se corta acá.
+        return {"ok": False, "code": 400, "motivo": f"el texto trae caracteres de control {raros} (¿una ruta de Windows sin escapar?)", "sid": s["session_id"]}
     sid = s["session_id"]
     for intento in range(reintentos + 1):
         if s.get("stopped_by"):
@@ -112,9 +119,9 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
             fin = time.time() + espera
             while time.time() < fin:
                 time.sleep(1)
-                n = next((x for x in sesiones() if x["session_id"] == sid), None)
+                n = reubicar(s, sesiones())
                 if n and (n.get("state") == "corriendo" or (n.get("last_prompt"), n.get("prompt_id")) != antes):
-                    return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": sid}
+                    return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": n["session_id"]}
             return {"ok": False, "code": 200, "motivo": f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)", "sid": sid}
         if code == 404 and isinstance(res, str) and "gone" in res and proyecto and letra:
             nuevo = frentes(proyecto).get(letra)
@@ -126,6 +133,84 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
             continue
         return {"ok": False, "code": code, "motivo": str(res)[:200], "sid": sid}
     return {"ok": False, "code": 0, "motivo": "sin respuesta", "sid": sid}
+
+
+def reubicar(s, todas):
+    """La tarjeta `s` tal como está ahora. Una sesión sin hooks (barrido, coda) nace con id
+    `pid-NNNN` y, al engancharse los hooks, pasa a tener su UUID real: el id viejo desaparece pero
+    es el mismo proceso. Se busca por id y, si no está, por (pc, pid, cwd)."""
+    por_id = next((x for x in todas if x["session_id"] == s["session_id"]), None)
+    if por_id:
+        return por_id
+    return next(
+        (
+            x
+            for x in todas
+            if s.get("pid") and x.get("pid") == s.get("pid") and x.get("pc") == s.get("pc") and x.get("cwd") == s.get("cwd")
+        ),
+        None,
+    )
+
+
+_PANTALLAS = {}  # session_id -> (hash de la pantalla, desde cuándo no cambia)
+
+
+def estancada(s, minutos=5):
+    """True si la tarjeta figura `corriendo` pero su pantalla no cambió en `minutos`: el agente (o el
+    modelo detrás, p. ej. el DGX de coda) quedó colgado. Hay que llamarla de a ratos: guarda la
+    última pantalla vista. Sirve para decidir interrumpir y reintentar en vez de esperar de más."""
+    import hashlib
+    import time
+
+    code, x = pedir("GET", f"/sessions/{s['session_id']}/screen")
+    if code != 200 or not isinstance(x, dict):
+        return False
+    h = hashlib.md5(chr(10).join(x.get("lines") or []).encode("utf-8")).hexdigest()
+    ahora = time.time()
+    previo = _PANTALLAS.get(s["session_id"])
+    if previo is None or previo[0] != h:
+        _PANTALLAS[s["session_id"]] = (h, ahora)
+        return False
+    return s.get("state") == "corriendo" and ahora - previo[1] >= minutos * 60
+
+
+def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5):
+    """¿Aguanta esa PC `n` sesiones más? Devuelve {ok, libre_gb, necesita_gb}. Una sesión ocupa unos
+    0,7 GB; con menos de `reserva_gb` libres Windows empieza a paginar y arrastra al resto."""
+    for p in salud():
+        if p.get("pc_id") == pc or (pc is None and p.get("local")):
+            libre = (p.get("health") or {}).get("mem_free_gb")
+            if libre is None:
+                return {"ok": True, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1)}
+            return {"ok": libre - n * gb_por_sesion >= reserva_gb, "libre_gb": libre, "necesita_gb": round(n * gb_por_sesion, 1)}
+    return {"ok": False, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1)}
+
+
+def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60):
+    """Lanza y devuelve LA tarjeta nueva (ya titulada), no solo el 200 de `lanzar`. Distingue la
+    nueva de las que ya había en esa carpeta comparando ids antes y después. None si no apareció."""
+    import time
+
+    def en_carpeta():
+        return {
+            x["session_id"]: x
+            for x in sesiones()
+            if x.get("agent") == agent and (x.get("cwd") or "").lower() == cwd.lower() and (pc is None or x.get("pc") == pc)
+        }
+
+    antes = set(en_carpeta())
+    code, res = lanzar(pc, cwd, titulo, agent)
+    if code != 200:
+        return None
+    fin = time.time() + espera
+    while time.time() < fin:
+        time.sleep(3)
+        nuevas = [x for sid, x in en_carpeta().items() if sid not in antes]
+        if nuevas:
+            nueva = nuevas[0]
+            titular(nueva, titulo)
+            return nueva
+    return None
 
 
 def titular(s, titulo):
