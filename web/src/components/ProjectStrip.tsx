@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { toggled } from "../names";
 import type { Session } from "../types";
 
 const SELECTED_KEY = "lienzo.selectedRepos";
@@ -61,12 +62,7 @@ export function useProjectFilter(groups: { key: string }[]): {
   // el click elige ese proyecto y nada mas: otro click sobre el elegido no lo suelta (eso es Todos)
   const selectRepo = (key: string) => setSelected(new Set([key]));
   // Ctrl/Cmd + click: suma o saca ese proyecto de los elegidos; si saca el ultimo, vuelve a "todos"
-  const toggleRepo = (key: string) =>
-    setSelected((cur) => {
-      const next = new Set(cur);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
+  const toggleRepo = (key: string) => setSelected((cur) => toggled(cur, key));
   const showAll = () => setSelected(new Set());
   const toggleCoord = () =>
     setCoordOnly((v) => {

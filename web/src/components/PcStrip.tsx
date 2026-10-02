@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ago, api } from "../api";
+import { toggled } from "../names";
 import type { Peer, Session } from "../types";
 
 const POLL_MS = 15000;
@@ -81,11 +82,7 @@ export function usePcFilter(peers: Peer[]): {
   return {
     pcFilter,
     selectPc: (id) => guardar(new Set([id])),
-    togglePc: (id) => {
-      const next = new Set(pcFilter);
-      if (!next.delete(id)) next.add(id);
-      guardar(next);
-    },
+    togglePc: (id) => guardar(toggled(pcFilter, id)),
     showAllPcs: () => guardar(new Set()),
   };
 }

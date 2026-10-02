@@ -278,6 +278,17 @@ test.describe("«Enviar a todas», «Interrumpir» y «Marcar las visibles»", (
     await expect(card(page, SID.migracion)).toHaveClass(/\bmarked\b/);
     await expect(card(page, SID.reglas)).toHaveClass(/\bmarked\b/);
   });
+
+  test("Marcar las visibles deja afuera las tarjetas a las que no se puede escribir", async ({ page }) => {
+    const lista = sinLibres(sesiones()).map((s) => (s.session_id === SID.mapas ? { ...s, no_console: true } : s));
+    await abrirTablero(page, lista);
+    await expect(card(page, SID.mapas)).toHaveCount(1); // se ve...
+    await titulo(page, SID.coordinadora).click(Ctrl);
+    await barra(page).getByRole("button", { name: "Marcar las visibles" }).click();
+    await expect(card(page, SID.mapas)).not.toHaveClass(/\bmarked\b/); // ...pero no se marca
+    await expect(card(page, SID.capas)).toHaveClass(/\bmarked\b/);
+    await expect(barra(page).getByRole("button", { name: "Marcar las visibles" })).toBeDisabled();
+  });
 });
 
 test.describe("Ctrl + click en los chips de proyecto y de PC: filtro de varios a la vez", () => {

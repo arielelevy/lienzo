@@ -203,7 +203,7 @@ export function splitLanes(open: { key: ColKey; n: number }[], budget: number): 
   return out;
 }
 
-const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+export const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 /** Filtros visuales del tablero: los del header (texto, agentes), la tira de PCs y los chips de
  *  proyecto. Los usa Board para armar las columnas y App para saber que tarjetas marca el chip. */
@@ -222,7 +222,7 @@ export function passesFilters(s: Session, f: VisibleFilters, q = norm(f.query.tr
   return passesProjects(s, f.selectedRepos, f.coordOnly);
 }
 
-const canReceive =(s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
+export const canReceive = (s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
 /** Card dibuja el agarre ⇢ si recibe onGrip; el arrastre en si lo maneja el tablero por Pointer Events */
 const noGrip = () => undefined;
 

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type AuthInfo } from "./api";
-import { Board, colOf, passesFilters } from "./components/Board";
+import { Board, canReceive, colOf, norm, passesFilters } from "./components/Board";
 import { allAgents } from "./agents";
-import { canWrite, shortName } from "./names";
+import { canWrite, shortName, toggled } from "./names";
 import { Enroll } from "./components/Enroll";
 import { Forward } from "./components/Forward";
 import { Header } from "./components/Header";
@@ -113,11 +113,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // marcaron. Se calcula sobre lo que existe: una sesion que desaparece sale sola de la seleccion
   const [marked, setMarked] = useState<Set<string>>(() => new Set());
   const markedLive = useMemo(() => new Set([...marked].filter((sid) => sessions[sid])), [marked, sessions]);
-  const toggleMark = useCallback((sid: string) => setMarked((cur) => {
-    const next = new Set(cur);
-    if (!next.delete(sid)) next.add(sid);
-    return next;
-  }), []);
+  const toggleMark = useCallback((sid: string) => setMarked((cur) => toggled(cur, sid)), []);
   const clearMarked = useCallback(() => setMarked((cur) => (cur.size ? new Set() : cur)), []);
 
   // auto_continue y auto_retry viven en ~/.lienzo/config.json (lo lee el server): GET/PUT /config.
@@ -159,9 +155,11 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // lo que se ve ahora: pasa los filtros (header, PCs, proyectos) y se le puede escribir. Una de la
   // columna Muerta o de una PC caida no entra: no hay a quien mandarle nada
   const visibleToMark = useMemo(() => {
+    if (markedLive.size === 0) return []; // la barra de seleccion solo existe con algo marcado
     const filtros = { query, agents, pcFilter, localPcId, selectedRepos, coordOnly };
+    const q = norm(query.trim());
     return Object.values(sessions)
-      .filter((s) => passesFilters(s, filtros) && colOf(s) !== "muerta" && !peerDown(s) && !markedLive.has(s.session_id))
+      .filter((s) => canReceive(s) && passesFilters(s, filtros, q) && colOf(s) !== "muerta" && !peerDown(s) && !markedLive.has(s.session_id))
       .map((s) => s.session_id);
   }, [sessions, query, agents, pcFilter, localPcId, selectedRepos, coordOnly, peerDown, markedLive]);
   const markVisible = useCallback(() => setMarked((cur) => new Set([...cur, ...visibleToMark])), [visibleToMark]);

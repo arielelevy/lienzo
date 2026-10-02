@@ -297,3 +297,11 @@ export function useCopyState(): { state: "idle" | "ok" | "err"; copy: (text: str
 /** El texto del botón según el estado, para que los dos digan lo mismo. */
 export const copyLabel = (state: "idle" | "ok" | "err", idle = "Copiar") =>
   state === "ok" ? "Copiado ✓" : state === "err" ? "No se pudo" : idle;
+
+/** Copia de `set` con `key` sacada si estaba o sumada si no: el Ctrl + click de tarjetas, chips de
+ *  proyecto y de PC. No toca el original (es el estado de React). */
+export function toggled<T>(set: ReadonlySet<T>, key: T): Set<T> {
+  const next = new Set(set);
+  if (!next.delete(key)) next.add(key);
+  return next;
+}
