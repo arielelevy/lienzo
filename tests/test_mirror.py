@@ -22,6 +22,10 @@ import mirror as mi
 class FakeClient:
     def __init__(self):
         self.stopped = False
+        self.reconnects = 0
+
+    def reconnect(self):
+        self.reconnects += 1
 
     def stop(self, timeout=5.0):
         self.stopped = True

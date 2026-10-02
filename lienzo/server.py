@@ -741,6 +741,40 @@ class RequestError(ValueError):
         self.status = status
 
 
+class NotAnObject(ValueError):
+    """El cuerpo es JSON valido pero no un objeto."""
+
+
+def no_session() -> dict:
+    """Cuerpo del 404 de una tarjeta que no existe. `code` es el contrato (mirror.forward lo usa
+    para detectar tarjetas fantasma); `error` es el texto para la persona."""
+    return {"error": "sesion desconocida", "code": "unknown_session"}
+
+
+def validate_launch(d: dict) -> tuple[str, str, str] | None:
+    """(cwd, agent, title) de un pedido de lanzamiento, o None si no es valido: cwd str no vacio,
+    agent str, title str (o ausente)."""
+    cwd, agent, title = d.get("cwd"), d.get("agent"), d.get("title") or ""
+    if not isinstance(cwd, str) or not cwd.strip() or not isinstance(agent, str) or not isinstance(title, str):
+        return None
+    return cwd, agent, title
+
+
+def decode_json_body(raw: bytes) -> dict:
+    """JSON del cuerpo tolerante a clientes que mandan latin-1 (un curl desde Git Bash). Cuerpo vacio:
+    {}. Levanta ValueError si no es JSON o no es un objeto; cada llamador decide que hacer."""
+    if not raw:
+        return {}
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252", errors="replace")
+    d = json.loads(text)
+    if not isinstance(d, dict):
+        raise NotAnObject("el cuerpo debe ser un objeto JSON")
+    return d
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "lienzo/0.1"
     protocol_version = "HTTP/1.1"
@@ -852,25 +886,17 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             s = sessions.get(sid)
         if s is None:
-            self._json(404, {"error": "sesion desconocida"})
+            self._json(404, no_session())
         return s
 
     def _json_body(self) -> dict:
         """JSON del cuerpo tolerante a clientes que mandan latin-1 (un curl desde Git Bash)."""
-        raw = self.raw
-        if not raw:
-            return {}
         try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = raw.decode("cp1252", errors="replace")
-        try:
-            d = json.loads(text)
+            return decode_json_body(self.raw)
+        except NotAnObject as e:
+            raise RequestError("el cuerpo debe ser un objeto JSON") from e
         except ValueError as e:
             raise RequestError("JSON invalido") from e
-        if not isinstance(d, dict):
-            raise RequestError("el cuerpo debe ser un objeto JSON")
-        return d
 
     # --- identidad del cliente ------------------------------------------------------
     def _client_ip(self) -> str:
@@ -1046,7 +1072,7 @@ class Handler(BaseHTTPRequestHandler):
         tal cual."""
         s, owner = _route_session(sid)
         if s is None and owner is None:
-            return self._json(404, {"error": "sesion desconocida"})
+            return self._json(404, no_session())
         if owner is not None:
             path = f"/sessions/{sid}/{view}" + (f"?{self.query_string}" if self.query_string else "")
             code, res = mirror.MIRROR.forward(owner, "GET", path)
@@ -1098,7 +1124,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(404, {"error": "ruta desconocida"})
                 s, owner = _route_session(sid)
                 if s is None and owner is None:
-                    return self._json(404, {"error": "sesion desconocida"})
+                    return self._json(404, no_session())
                 if owner is not None:
                     return self._forward_session_post(owner, sid, action)
                 if action == "send":
@@ -1273,7 +1299,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "title debe ser un texto"})
         s, owner = _route_session(sid)
         if s is None and owner is None:
-            return self._json(404, {"error": "sesion desconocida"})
+            return self._json(404, no_session())
         if owner is not None:
             code, res = mirror.MIRROR.forward(owner, "PUT", f"/sessions/{sid}/title", {"title": title})
             return self._json(code, res)
@@ -1291,7 +1317,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "on debe ser true o false"})
         s, owner = _route_session(sid)
         if s is None and owner is None:
-            return self._json(404, {"error": "sesion desconocida"})
+            return self._json(404, no_session())
         if owner is not None:
             code, res = mirror.MIRROR.forward(owner, "PUT", f"/sessions/{sid}/stopped", {"on": on})
             return self._json(code, res)
@@ -1308,7 +1334,7 @@ class Handler(BaseHTTPRequestHandler):
         scope = d.get("scope")
         s, owner = _route_session(sid)
         if s is None and owner is None:
-            return self._json(404, {"error": "sesion desconocida"})
+            return self._json(404, no_session())
         if owner is not None:
             code, res = mirror.MIRROR.forward(owner, "PUT", f"/sessions/{sid}/coordinator", d)
             return self._json(code, res)
@@ -1366,11 +1392,11 @@ class Handler(BaseHTTPRequestHandler):
         """POST /sessions/launch {pc, cwd, title, agent}: local con launch.launch (frente B), o
         reenviada a la PC `pc` por /peer/launch."""
         d = self._json_body()
-        cwd, agent = d.get("cwd"), d.get("agent")
-        title = d.get("title") or ""
         pc = d.get("pc")
-        if not isinstance(cwd, str) or not cwd.strip() or not isinstance(agent, str) or not isinstance(title, str):
+        valid = validate_launch(d)
+        if valid is None:
             return self._json(400, {"error": "cwd y agent son obligatorios"})
+        cwd, agent, title = valid
         if pc and pc != identity.pc_id():
             code, res = mirror.MIRROR.forward(pc, "POST", "/launch", {"cwd": cwd, "title": title, "agent": agent})
             return self._json(code, res)
@@ -1412,7 +1438,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 2 and parts[0] == "peers":
                 return self._delete_peer(parts[1])
             if len(parts) == 2 and parts[0] == "rules" and not any(r["id"] == parts[1] for r in rules.snapshot()):
-                dueña = next((r.get("pc") for r in mirror.MIRROR.rules() if r.get("id") == parts[1]), None)
+                dueña = mirror.MIRROR.rule_owner(parts[1])
                 if dueña:
                     log(f"regla {parts[1]} borrada desde la UI, vive en otra PC ({self._client_ip()})")
                     code, res = mirror.MIRROR.forward(dueña, "DELETE", f"/rules/{parts[1]}")
@@ -1522,17 +1548,10 @@ class PeerHandler(BaseHTTPRequestHandler):
         return parts, raw
 
     def _body_json(self, raw: bytes) -> dict:
-        if not raw:
-            return {}
         try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = raw.decode("cp1252", errors="replace")
-        try:
-            d = json.loads(text)
+            return decode_json_body(raw)
         except ValueError:
             return {}
-        return d if isinstance(d, dict) else {}
 
     def _dispatch(self, method: str) -> None:
         got = self._parts_and_body()
@@ -1630,9 +1649,10 @@ class PeerHandler(BaseHTTPRequestHandler):
 
     def _launch(self, raw: bytes) -> None:
         d = self._body_json(raw)
-        cwd, agent, title = d.get("cwd"), d.get("agent"), d.get("title") or ""
-        if not isinstance(cwd, str) or not cwd.strip() or not isinstance(agent, str):
+        valid = validate_launch(d)
+        if valid is None:
             return self._json(400, {"error": "cwd y agent son obligatorios"})
+        cwd, agent, title = valid
         res = launch.launch(cwd, title, agent)
         return self._json(200 if res.get("ok") else 400, res)
 
@@ -1652,7 +1672,7 @@ class PeerHandler(BaseHTTPRequestHandler):
         with lock:
             s = sessions.get(sid)
         if s is None:
-            return self._json(404, {"error": "sesion desconocida"})
+            return self._json(404, no_session())
         code, res = session_view_response(s, view, self.query)
         return self._json(code, res)
 
@@ -1660,7 +1680,7 @@ class PeerHandler(BaseHTTPRequestHandler):
         with lock:
             s = sessions.get(sid)
         if s is None:
-            return self._json(404, {"error": "sesion desconocida"})
+            return self._json(404, no_session())
         if action == "send":
             d = self._body_json(raw)
             text, attachments = d.get("text", ""), d.get("attachments") or []
@@ -1705,7 +1725,7 @@ class PeerHandler(BaseHTTPRequestHandler):
         with lock:
             s = sessions.get(sid)
         if s is None:
-            return self._json(404, {"error": "sesion desconocida"})
+            return self._json(404, no_session())
         d = self._body_json(raw)
         if action == "title":
             title = d.get("title")

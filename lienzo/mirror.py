@@ -193,6 +193,14 @@ class Mirror:
                     return pc_id
         return None
 
+    def rule_owner(self, rule_id: str) -> str | None:
+        """`pc_id` de la PC que tiene la regla `rule_id` (la que viene en el espejo), o `None`."""
+        with self._lock:
+            for pc_id, pm in self._peers.items():
+                if any(r.get("id") == rule_id for r in pm.rules):
+                    return pc_id
+        return None
+
     def sessions(self) -> list[dict]:
         with self._lock:
             return [dict(s) for pm in self._peers.values() for s in pm.sessions.values()]
@@ -254,7 +262,7 @@ class Mirror:
                 # timeout o corte a mitad: puede haberse ejecutado, asi que NO se reintenta
                 self.log(f"→ {nombre} {method} {path}: {type(e).__name__}: {e}")
                 return 503, {"error": f"sin conexión con {nombre}"}
-        if code == 404 and (res or {}).get("error") == "sesion desconocida":
+        if code == 404 and (res or {}).get("code") == "unknown_session":
             return self._tarjeta_fantasma(pm, path, nombre)
         if code >= 400:
             self.log(f"→ {nombre} {method} {path}: {code} {(res or {}).get('error')}")
@@ -271,7 +279,7 @@ class Mirror:
                 pm.sessions.pop(sid, None)
             self.log(f"tarjeta {sid[:8]} ya no existe en {nombre}: la saco del tablero y pido el estado de nuevo")
             self.on_change()
-        if pm.client is not None and hasattr(pm.client, "reconnect"):
+        if pm.client is not None:
             pm.client.reconnect()
         return 404, {"error": f"esa tarjeta ya no existe en {nombre} (se quitó del tablero)", "gone": True}
 

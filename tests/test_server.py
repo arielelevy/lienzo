@@ -1825,11 +1825,45 @@ def _espejo_con(transporte, sid="fantasma"):
 
 
 def test_forward_saca_la_tarjeta_fantasma_del_tablero():
-    t = _TransporteFalso([(404, {"error": "sesion desconocida"})])
+    t = _TransporteFalso([(404, {"error": "sesion desconocida", "code": "unknown_session"})])
     m, pm = _espejo_con(t)
     code, res = m.forward("pcB", "POST", "/sessions/fantasma/send", {"text": "hola"})
     assert code == 404 and res["gone"] is True and "notebook" in res["error"]
     assert "fantasma" not in pm.sessions and m.owner_of("fantasma") is None
+
+
+def test_forward_no_toma_por_fantasma_un_404_sin_el_codigo():
+    t = _TransporteFalso([(404, {"error": "sesion desconocida"})])
+    m, pm = _espejo_con(t)
+    code, res = m.forward("pcB", "POST", "/sessions/fantasma/send", {"text": "hola"})
+    assert code == 404 and "gone" not in res and "fantasma" in pm.sessions
+
+
+def test_no_session_lleva_codigo():
+    assert server.no_session() == {"error": "sesion desconocida", "code": "unknown_session"}
+
+
+def test_validate_launch_exige_cwd_agent_y_title_str():
+    assert server.validate_launch({"cwd": "D:/x", "agent": "claude"}) == ("D:/x", "claude", "")
+    assert server.validate_launch({"cwd": "D:/x", "agent": "claude", "title": "t"}) == ("D:/x", "claude", "t")
+    assert server.validate_launch({"cwd": "  ", "agent": "claude"}) is None
+    assert server.validate_launch({"cwd": "D:/x", "agent": 3}) is None
+    assert server.validate_launch({"cwd": "D:/x", "agent": "claude", "title": 7}) is None
+
+
+def test_decode_json_body_cae_a_cp1252_y_exige_objeto():
+    assert server.decode_json_body(b"") == {}
+    assert server.decode_json_body('{"a": "ñ"}'.encode("cp1252")) == {"a": "ñ"}
+    with pytest.raises(server.NotAnObject):
+        server.decode_json_body(b"[1]")
+    with pytest.raises(ValueError):
+        server.decode_json_body(b"{no")
+
+
+def test_rule_owner_dice_de_que_peer_es_la_regla():
+    m, pm = _espejo_con(_TransporteFalso([]))
+    pm.rules = [{"id": "r1"}]
+    assert m.rule_owner("r1") == "pcB" and m.rule_owner("r2") is None
 
 
 def test_forward_reintenta_solo_si_el_pedido_no_llego():
@@ -1909,7 +1943,7 @@ def test_borrar_una_regla_de_otra_pc_se_reenvia_a_su_dueña(monkeypatch):
     import server as srv
 
     llamadas = []
-    monkeypatch.setattr(mirror.MIRROR, "rules", lambda: [{"id": "remota1", "pc": "pcB", "kind": "on_stop"}])
+    monkeypatch.setattr(mirror.MIRROR, "rule_owner", lambda rid: "pcB" if rid == "remota1" else None)
     monkeypatch.setattr(mirror.MIRROR, "forward", lambda pc, m, path, body=None: (llamadas.append((pc, m, path)) or (200, {"ok": True})))
     httpd = srv.QuietServer(("127.0.0.1", 0), srv.Handler)
     import threading
