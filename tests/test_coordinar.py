@@ -91,3 +91,47 @@ def test_cablear_cuenta_los_fallos_con_el_motivo(monkeypatch):
     monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: (200, []) if m == "GET" else (502, {"error": "git pull"}))
     r = c.cablear()
     assert r["creadas"] == [] and r["fallaron"][0]["code"] == 502 and "git pull" in r["fallaron"][0]["error"]
+
+
+def test_pedir_devuelve_el_dict_del_error_http_o_el_texto_recortado(monkeypatch):
+    import io
+    import urllib.error
+
+    def falla(cuerpo):
+        def _urlopen(req, timeout=20):
+            raise urllib.error.HTTPError("u", 404, "x", {}, io.BytesIO(cuerpo))
+
+        return _urlopen
+
+    monkeypatch.setattr("urllib.request.urlopen", falla('{"error": "ñ", "gone": true}'.encode("utf-8")))
+    assert c.pedir("GET", "/x") == (404, {"error": "ñ", "gone": True})
+    monkeypatch.setattr("urllib.request.urlopen", falla(b"<html>" + b"x" * 300))
+    code, texto = c.pedir("GET", "/x")
+    assert code == 404 and isinstance(texto, str) and len(texto) == 200
+
+
+def test_enviar_seguro_reubica_el_frente_cuando_la_tarjeta_ya_no_existe(monkeypatch):
+    c.YO = ""
+    llamadas = []
+
+    def pedir(m, r, cuerpo=None, timeout=20):
+        llamadas.append(r)
+        if "viejo" in r:
+            return 404, {"error": "esa tarjeta ya no existe", "gone": True}
+        return 200, {"ok": True}
+
+    nuevo = _tarjeta("nuevo", title="app - encargo A - x", alive=True, state="corriendo")
+    monkeypatch.setattr(c, "pedir", pedir)
+    monkeypatch.setattr(c, "sesiones", lambda: [nuevo])
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    r = c.enviar_seguro(_tarjeta("viejo"), "hola", proyecto="app", letra="A", enlazar=False, espera=2)
+    assert r["ok"] is True and r["sid"] == "nuevo" and llamadas == ["/sessions/viejo/send", "/sessions/nuevo/send"]
+
+
+def test_cuerpo_envio_enlaza_solo_con_yo():
+    c.YO = ""
+    assert c._cuerpo_envio("s", "t", True) == {"text": "t"}
+    c.YO = "coord"
+    assert c._cuerpo_envio("s", "t", True) == {"text": "t", "from": "coord", "link_to": "s"}
+    assert c._cuerpo_envio("s", "t", False) == {"text": "t"}
+    c.YO = ""

@@ -13,8 +13,10 @@ ambigüedad de títulos repetidos: la que trabaja es la que no está detenida. E
 apenas se mueve un encargo de una tarjeta a otra.
 """
 
+import hashlib
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -24,6 +26,9 @@ YO = ""  # session_id de la coordinadora; lo fija quien importa este módulo
 
 def pedir(metodo, ruta, cuerpo=None, timeout=20):
     """Un pedido al lienzo. Devuelve (código, cuerpo), y 0 con el motivo si no hubo respuesta.
+
+    En un error HTTP el cuerpo es el dict del JSON de error (`{"error", "code", "gone"…}`); si no
+    es JSON, el texto recortado a 200 caracteres.
 
     El header `X-Lienzo` es obligatorio en las escrituras, y el JSON va en UTF-8 explícito o los
     acentos se rompen del otro lado.
@@ -37,7 +42,11 @@ def pedir(metodo, ruta, cuerpo=None, timeout=20):
             c = r.read().decode("utf-8")
             return r.status, (json.loads(c) if c.strip() else None)
     except urllib.error.HTTPError as e:
-        return e.code, e.read().decode()[:200]
+        texto = e.read().decode("utf-8", errors="replace")
+        try:
+            return e.code, json.loads(texto)
+        except ValueError:
+            return e.code, texto[:200]
     except Exception as e:
         return 0, f"{type(e).__name__}: {e}"
 
@@ -79,12 +88,17 @@ def frentes(proyecto, todas=False, pc=None):
     return out
 
 
-def enviar(s, texto, enlazar=True):
-    """Escribe en la terminal de esa sesión. Con `enlazar`, el tablero dibuja la flecha."""
+def _cuerpo_envio(sid, texto, enlazar):
+    """El JSON de `POST /sessions/<sid>/send`; con `enlazar` (y `YO`) el tablero dibuja la flecha."""
     cuerpo = {"text": texto}
     if enlazar and YO:
-        cuerpo.update({"from": YO, "link_to": s["session_id"]})
-    return pedir("POST", f"/sessions/{s['session_id']}/send", cuerpo)[0]
+        cuerpo.update({"from": YO, "link_to": sid})
+    return cuerpo
+
+
+def enviar(s, texto, enlazar=True):
+    """Escribe en la terminal de esa sesión. Con `enlazar`, el tablero dibuja la flecha."""
+    return pedir("POST", f"/sessions/{s['session_id']}/send", _cuerpo_envio(s["session_id"], texto, enlazar))[0]
 
 
 def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, reintentos=2):
@@ -97,9 +111,7 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
     - 503 (sin conexión con esa PC): se espera y se reintenta, hasta `reintentos` veces.
     - Detenida (`stopped_by`) o muerta: no se manda, se dice por qué.
     """
-    import time
-
-    permitidos = chr(10) + chr(9) + chr(13)  # salto de línea, tab y retorno
+    permitidos = "\n\t\r"  # salto de línea, tab y retorno
     raros = sorted({hex(ord(ch)) for ch in texto if ord(ch) < 32 and ch not in permitidos})
     if raros:
         # el server borra los caracteres de control sin avisar (strip_control): una ruta de Windows
@@ -111,10 +123,7 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
         if s.get("stopped_by"):
             return {"ok": False, "code": 409, "motivo": f"detenida por {s['stopped_by']}", "sid": sid}
         antes = (s.get("last_prompt"), s.get("prompt_id"))
-        cuerpo = {"text": texto}
-        if enlazar and YO:
-            cuerpo.update({"from": YO, "link_to": sid})
-        code, res = pedir("POST", f"/sessions/{sid}/send", cuerpo, timeout=80)
+        code, res = pedir("POST", f"/sessions/{sid}/send", _cuerpo_envio(sid, texto, enlazar), timeout=80)
         if code == 200:
             fin = time.time() + espera
             while time.time() < fin:
@@ -123,7 +132,7 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
                 if n and (n.get("state") == "corriendo" or (n.get("last_prompt"), n.get("prompt_id")) != antes):
                     return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": n["session_id"]}
             return {"ok": False, "code": 200, "motivo": f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)", "sid": sid}
-        if code == 404 and isinstance(res, str) and "gone" in res and proyecto and letra:
+        if code == 404 and isinstance(res, dict) and res.get("gone") and proyecto and letra:
             nuevo = frentes(proyecto).get(letra)
             if nuevo and nuevo["session_id"] != sid:
                 s, sid = nuevo, nuevo["session_id"]
@@ -131,7 +140,8 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
         if code in (0, 503) and intento < reintentos:
             time.sleep(3 * (intento + 1))
             continue
-        return {"ok": False, "code": code, "motivo": str(res)[:200], "sid": sid}
+        motivo = res.get("error") if isinstance(res, dict) and res.get("error") else res
+        return {"ok": False, "code": code, "motivo": str(motivo)[:200], "sid": sid}
     return {"ok": False, "code": 0, "motivo": "sin respuesta", "sid": sid}
 
 
@@ -159,13 +169,10 @@ def estancada(s, minutos=5):
     """True si la tarjeta figura `corriendo` pero su pantalla no cambió en `minutos`: el agente (o el
     modelo detrás, p. ej. el DGX de coda) quedó colgado. Hay que llamarla de a ratos: guarda la
     última pantalla vista. Sirve para decidir interrumpir y reintentar en vez de esperar de más."""
-    import hashlib
-    import time
-
     code, x = pedir("GET", f"/sessions/{s['session_id']}/screen")
     if code != 200 or not isinstance(x, dict):
         return False
-    h = hashlib.md5(chr(10).join(x.get("lines") or []).encode("utf-8")).hexdigest()
+    h = hashlib.md5("\n".join(x.get("lines") or []).encode("utf-8")).hexdigest()
     ahora = time.time()
     previo = _PANTALLAS.get(s["session_id"])
     if previo is None or previo[0] != h:
@@ -189,8 +196,6 @@ def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5):
 def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60):
     """Lanza y devuelve LA tarjeta nueva (ya titulada), no solo el 200 de `lanzar`. Distingue la
     nueva de las que ya había en esa carpeta comparando ids antes y después. None si no apareció."""
-    import time
-
     def en_carpeta():
         return {
             x["session_id"]: x
