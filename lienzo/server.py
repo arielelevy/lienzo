@@ -1616,6 +1616,63 @@ def build_id() -> str:
         return ""
 
 
+RELOAD_EXIT = 75  # codigo de salida que lienzo-server.cmd interpreta como "relanzame"
+RELOAD_EVERY_S = 2.0
+RELOAD_SETTLE_S = 1.5
+
+
+def _source_stamp() -> dict[str, tuple[int, int]]:
+    """{archivo: (mtime_ns, tamano)} de todo el codigo Python que corre este server."""
+    out = {}
+    for name in os.listdir(HERE):
+        if name.endswith(".py"):
+            p = os.path.join(HERE, name)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            out[p] = (st.st_mtime_ns, st.st_size)
+    return out
+
+
+def _syntax_error(changed: list[str]) -> str | None:
+    """Primer error de sintaxis entre los archivos cambiados, o None. Un `git pull` a medias o
+    una edicion rota no tiene que tirar el server: se espera al proximo cambio."""
+    for p in changed:
+        try:
+            with open(p, "rb") as f:
+                compile(f.read(), p, "exec")
+        except OSError:
+            continue
+        except SyntaxError as e:
+            return f"{os.path.basename(p)}:{e.lineno}: {e.msg}"
+    return None
+
+
+def reload_loop() -> None:
+    """Si cambia algun .py del server, sale con RELOAD_EXIT para que lienzo-server.cmd lo relance
+    en la misma ventana. Solo corre bajo ese .cmd (LIENZO_RELOAD=1): sin el, salir apagaria el
+    server y nadie lo levantaria. Espera a que los archivos dejen de cambiar (un pull escribe
+    varios) y no relanza sobre codigo que no compila."""
+    base = _source_stamp()
+    while True:
+        time.sleep(RELOAD_EVERY_S)
+        now = _source_stamp()
+        if now == base:
+            continue
+        time.sleep(RELOAD_SETTLE_S)
+        if _source_stamp() != now:
+            continue  # sigue escribiendose: la proxima vuelta lo ve estable
+        changed = [p for p in now if now[p] != base.get(p)] + [p for p in base if p not in now]
+        err = _syntax_error(changed)
+        if err:
+            log(f"recarga: cambio en {', '.join(os.path.basename(p) for p in changed)} con error de sintaxis ({err}); sigo con el codigo viejo")
+            base = now
+            continue
+        log(f"recarga: cambio en {', '.join(sorted(os.path.basename(p) for p in changed))}; reinicio")
+        os._exit(RELOAD_EXIT)
+
+
 def tunnel_loop(port: int) -> None:
     """Camino A (§7.6.2): cloudflared publica 127.0.0.1:<port> en una URL https de trycloudflare.
     Solo se levanta si hay login configurado; sin auth.json no se expone nada."""
@@ -1715,9 +1772,12 @@ def main() -> int:
     threading.Thread(target=rules_loop, daemon=True).start()
     if a.remote:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()
+    if os.environ.get("LIENZO_RELOAD") == "1":
+        threading.Thread(target=reload_loop, daemon=True).start()
 
     # --- federacion (plan multi-PC, ronda 2): listener de peers, espejo y beacon ----------------
     mirror.MIRROR.on_change = broadcast_mirror_snapshot
+    mirror.MIRROR.log = log
     peers_guardados = federation.list_peers(PEERS_FILE)
     peer_srv = None
     if a.peers or peers_guardados:

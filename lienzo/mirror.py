@@ -56,6 +56,7 @@ class Mirror:
     def __init__(self, transport: federation.Transport | None = None, on_change: Callable[[], None] | None = None):
         self.transport = transport or federation.HTTPTransport()
         self.on_change = on_change or (lambda: None)
+        self.log: Callable[[str], None] = lambda msg: None  # server.py lo cambia por su log
         self._lock = threading.RLock()
         self._peers: dict[str, _PeerMirror] = {}
         self._health_thread: threading.Thread | None = None
@@ -229,11 +230,42 @@ class Mirror:
         pm = self._get(pc_id)
         if pm is None:
             return 503, {"error": f"sin conexión con {pc_id}"}
-        try:
-            return self.transport.request(pm.conn, method, f"/peer{path}", body)
-        except OSError:
-            nombre = pm.info.get("name") or pc_id
-            return 503, {"error": f"sin conexión con {nombre}"}
+        nombre = pm.info.get("name") or pc_id
+        code, res = 0, {}
+        for intento in (1, 2):
+            try:
+                code, res = self.transport.request(pm.conn, method, f"/peer{path}", body)
+                break
+            except ConnectionRefusedError:
+                # el pedido no llego a ningun lado: reintentar una vez no puede duplicar nada
+                if intento == 2:
+                    self.log(f"→ {nombre} {method} {path}: conexion rechazada")
+                    return 503, {"error": f"sin conexión con {nombre}"}
+                time.sleep(0.5)
+            except OSError as e:
+                # timeout o corte a mitad: puede haberse ejecutado, asi que NO se reintenta
+                self.log(f"→ {nombre} {method} {path}: {type(e).__name__}: {e}")
+                return 503, {"error": f"sin conexión con {nombre}"}
+        if code == 404 and (res or {}).get("error") == "sesion desconocida":
+            return self._tarjeta_fantasma(pm, path, nombre)
+        if code >= 400:
+            self.log(f"→ {nombre} {method} {path}: {code} {(res or {}).get('error')}")
+        return code, res
+
+    def _tarjeta_fantasma(self, pm: _PeerMirror, path: str, nombre: str) -> tuple[int, dict]:
+        """El peer dice que esa tarjeta no existe y aca seguia en el espejo: se la saca del tablero
+        y se pide un snapshot nuevo (cortando el stream, que reconecta y lo manda entero). Sin
+        esto, cada envio a la tarjeta fantasma rebotaba para siempre."""
+        partes = path.strip("/").split("/")
+        sid = partes[1] if len(partes) >= 2 and partes[0] == "sessions" else None
+        if sid:
+            with self._lock:
+                pm.sessions.pop(sid, None)
+            self.log(f"tarjeta {sid[:8]} ya no existe en {nombre}: la saco del tablero y pido el estado de nuevo")
+            self.on_change()
+        if pm.client is not None and hasattr(pm.client, "reconnect"):
+            pm.client.reconnect()
+        return 404, {"error": f"esa tarjeta ya no existe en {nombre} (se quitó del tablero)", "gone": True}
 
 
 MIRROR = Mirror()

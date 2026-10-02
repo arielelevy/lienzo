@@ -11,6 +11,11 @@ sesión, con su conversación, una caja para contestarle, y aprobación de permi
 terminal. **El README del repo es la referencia completa y está actualizado**: leerlo cuando algo de
 acá no alcance.
 
+**`coda` no es Claude Code.** Es un agente aparte (`coda.exe`, con su propia base en `~/.coda`), uno de
+los cuatro que el lienzo conoce: `claude`, `codex`, `pi` y `coda`. Si el usuario pide "sesiones coda" o
+"N CLI coda", se lanza con `agent: coda`; nunca se lo reemplaza por `claude` ni se lo interpreta como
+"Claude Code". Si el pedido es ambiguo, se pregunta el agente antes de lanzar.
+
 Cuando el usuario pide **"lanzá N sub CLI"** pide **terminales reales**, que son las que el tablero ve.
 Los subagentes de la herramienta Agent no aparecen en el tablero: sirven para una consulta acotada,
 no para repartir trabajo.
@@ -87,6 +92,28 @@ de `launch_roots` de esa PC (`config.json`; vacía o ausente es *ninguna* carpet
 `agent` es uno de los cuatro conocidos (`claude`, `codex`, `pi`, `coda`). La tarjeta nueva aparece
 después de un barrido: pedir `GET /peers` para saber qué `pc_id` usar, y buscar la tarjeta nueva
 por `title` (o por `pc` + orden de aparición) una vez que el barrido corrió.
+
+### Mandar un encargo a otra PC y saber si llegó
+
+Un `200` de `send` sólo dice que el server aceptó el pedido; para una tarjeta de otra PC no prueba
+que se haya tecleado. Usar **`coordinar.enviar_seguro(s, texto, proyecto=…, letra=…)`**, que
+devuelve `{ok, code, motivo, sid}` y hace lo que a mano se olvida:
+
+- verifica que la tarjeta lo tomó (pasa a `corriendo` o cambia su `last_prompt`) y, si no, lo dice;
+- **404 con `gone`**: la otra PC ya no tiene esa tarjeta (la reinició, cerró la consola). El server
+  la saca del tablero solo; con `proyecto` y `letra` se busca el frente por nombre y se manda al id
+  nuevo. Sin esos dos no adivina;
+- **503** (sin conexión con esa PC): espera y reintenta, hasta dos veces;
+- una tarjeta detenida (`stopped_by`) no se manda: devuelve por qué.
+
+Si `ok` es falso, **no seguir como si el frente trabajara**: mirar `motivo`. El server deja el
+rastro en `~/.lienzo/lienzo.log` (líneas `→ <pc> POST /sessions/…`); si no hay nada, el pedido no
+salió de esta PC. Un envío a otra PC puede tardar hasta ~60 s (el timeout del reenvío ya lo
+contempla).
+
+**Los dos lienzos tienen que correr el mismo código.** Con `lienzo-server.cmd` el server se
+reinicia solo cuando cambia un `.py` (un `git pull`), pero hay que haberlo levantado así una vez
+en cada PC; un server viejo de la otra PC responde distinto y los envíos fallan sin explicación.
 
 ## Los dos canales, que son distintos
 

@@ -87,6 +87,47 @@ def enviar(s, texto, enlazar=True):
     return pedir("POST", f"/sessions/{s['session_id']}/send", cuerpo)[0]
 
 
+def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, reintentos=2):
+    """Como `enviar`, pero no da por hecho que llegó: devuelve {"ok", "code", "motivo", "sid"}.
+
+    Un 200 sólo dice que el server aceptó el pedido. Acá además se verifica que la tarjeta lo tomó
+    (pasa a `corriendo`, o `last_prompt` cambia) y se cubren las fallas de otra PC:
+    - 404 con `gone` (la tarjeta ya no existe allá): se vuelve a buscar el frente por nombre
+      (`proyecto` + `letra`) y se manda al id nuevo, una vez. Sin `proyecto`/`letra` no se adivina.
+    - 503 (sin conexión con esa PC): se espera y se reintenta, hasta `reintentos` veces.
+    - Detenida (`stopped_by`) o muerta: no se manda, se dice por qué.
+    """
+    import time
+
+    sid = s["session_id"]
+    for intento in range(reintentos + 1):
+        if s.get("stopped_by"):
+            return {"ok": False, "code": 409, "motivo": f"detenida por {s['stopped_by']}", "sid": sid}
+        antes = (s.get("last_prompt"), s.get("prompt_id"))
+        cuerpo = {"text": texto}
+        if enlazar and YO:
+            cuerpo.update({"from": YO, "link_to": sid})
+        code, res = pedir("POST", f"/sessions/{sid}/send", cuerpo, timeout=80)
+        if code == 200:
+            fin = time.time() + espera
+            while time.time() < fin:
+                time.sleep(1)
+                n = next((x for x in sesiones() if x["session_id"] == sid), None)
+                if n and (n.get("state") == "corriendo" or (n.get("last_prompt"), n.get("prompt_id")) != antes):
+                    return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": sid}
+            return {"ok": False, "code": 200, "motivo": f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)", "sid": sid}
+        if code == 404 and isinstance(res, str) and "gone" in res and proyecto and letra:
+            nuevo = frentes(proyecto).get(letra)
+            if nuevo and nuevo["session_id"] != sid:
+                s, sid = nuevo, nuevo["session_id"]
+                continue
+        if code in (0, 503) and intento < reintentos:
+            time.sleep(3 * (intento + 1))
+            continue
+        return {"ok": False, "code": code, "motivo": str(res)[:200], "sid": sid}
+    return {"ok": False, "code": 0, "motivo": "sin respuesta", "sid": sid}
+
+
 def titular(s, titulo):
     return pedir("PUT", f"/sessions/{s['session_id']}/title", {"title": titulo})[0]
 

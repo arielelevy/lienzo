@@ -348,6 +348,7 @@ class SSEClient:
         self.connect_timeout = connect_timeout
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._conn: http.client.HTTPConnection | None = None
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -357,6 +358,15 @@ class SSEClient:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+
+    def reconnect(self) -> None:
+        """Corta el stream actual: `_run` reconecta y el server manda el snapshot entero."""
+        conn = self._conn
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
 
     def _run(self) -> None:
         intento = 0
@@ -372,6 +382,7 @@ class SSEClient:
         para resetear el backoff, la idea es no escalar la espera cuando el peer esta vivo pero
         el stream se corta seguido."""
         conn = http.client.HTTPConnection(self.host, self.port, timeout=self.connect_timeout)
+        self._conn = conn
         try:
             conn.request("GET", self.path, headers=self.headers_fn())
             resp = conn.getresponse()
@@ -438,6 +449,16 @@ def signed_headers(peer: PeerConn, method: str, path: str, body: bytes) -> dict:
     }
 
 
+SLOW_ACTIONS = ("/send", "/launch", "/attach")
+SLOW_TIMEOUT_S = 70.0  # un send tipea en la consola con un subproceso de hasta 60 s en la PC dueña
+
+
+def _timeout_para(method: str, path: str, normal: float) -> float:
+    """Escribir en una consola o lanzar una sesion tarda mas que pedir un dato: con el timeout
+    normal (5 s) un envio lento aparecia como "sin conexion" aunque se hubiera tecleado."""
+    return SLOW_TIMEOUT_S if method.upper() != "GET" and path.endswith(SLOW_ACTIONS) else normal
+
+
 class HTTPTransport:
     """Implementacion HTTP del Transport: cada request va firmada con timestamp y nonce nuevos
     (tambien las de `subscribe`, en cada intento de conexion)."""
@@ -448,12 +469,14 @@ class HTTPTransport:
     def _headers_firmados(self, peer: PeerConn, method: str, path: str, body: bytes) -> dict:
         return {**signed_headers(peer, method, path, body), "Content-Type": "application/json"}
 
-    def _pedir(self, peer: PeerConn, method: str, path: str, body: bytes = b"") -> tuple[int, dict]:
+    def _pedir(
+        self, peer: PeerConn, method: str, path: str, body: bytes = b"", timeout: float | None = None
+    ) -> tuple[int, dict]:
         """(status, cuerpo). Los metodos publicos de siempre (get/post/put/delete) devuelven solo
         el cuerpo, como antes; `request` (para el enrutado de comandos, ronda 2) devuelve las dos
         cosas, porque ahi hace falta reenviar el codigo tal cual lo dio el peer."""
         headers = self._headers_firmados(peer, method, path, body)
-        conn = http.client.HTTPConnection(peer.host, peer.port, timeout=self.timeout)
+        conn = http.client.HTTPConnection(peer.host, peer.port, timeout=timeout or self.timeout)
         try:
             conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
@@ -479,7 +502,7 @@ class HTTPTransport:
         """Para el enrutado de comandos (plan §3.4): devuelve (status, cuerpo) tal como los dio el
         peer, para que el server local se los pase al front sin tocarlos."""
         raw = json.dumps(body).encode("utf-8") if body is not None else b""
-        return self._pedir(peer, method.upper(), path, raw)
+        return self._pedir(peer, method.upper(), path, raw, timeout=_timeout_para(method, path, self.timeout))
 
     def subscribe(
         self,

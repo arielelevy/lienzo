@@ -1775,3 +1775,75 @@ def test_interrupt_solo_a_una_sesion_que_corre(aislado, monkeypatch):
     assert code == 409 and "no esta corriendo" in out["error"]
     code, out = ses.interrupt_session(origen)
     assert code == 200 and typed[-1][-2:] == ["--key", "escape"]
+
+
+def test_recarga_detecta_cambios_y_no_relanza_sobre_codigo_roto(tmp_path):
+    import server as srv
+
+    ok, roto = tmp_path / "ok.py", tmp_path / "roto.py"
+    ok.write_text("x = 1\n")
+    roto.write_text("def (:\n")
+    assert srv._syntax_error([str(ok)]) is None
+    assert "roto.py:1" in srv._syntax_error([str(ok), str(roto)])
+    assert srv._syntax_error([str(tmp_path / "no_existe.py")]) is None
+    stamp = srv._source_stamp()
+    assert stamp and all(p.endswith(".py") for p in stamp)
+
+
+def test_snapshot_del_peer_descarta_tarjetas_viejas():
+    import mirror
+
+    m = mirror.Mirror()
+    pm = mirror._PeerMirror("pcB", {}, None)
+    m._peers["pcB"] = pm
+    m._apply_event(pm, {"type": "snapshot", "sessions": [{"session_id": "viejo"}]})
+    assert m.owner_of("viejo") == "pcB"
+    m._apply_event(pm, {"type": "snapshot", "sessions": [{"session_id": "nuevo"}]})
+    assert m.owner_of("viejo") is None and m.owner_of("nuevo") == "pcB"
+
+
+class _TransporteFalso:
+    def __init__(self, respuestas):
+        self.respuestas, self.llamadas = list(respuestas), []
+
+    def request(self, conn, method, path, body=None):
+        self.llamadas.append((method, path))
+        r = self.respuestas.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+def _espejo_con(transporte, sid="fantasma"):
+    import mirror
+
+    m = mirror.Mirror(transport=transporte)
+    pm = mirror._PeerMirror("pcB", {"name": "notebook"}, None)
+    pm.sessions[sid] = {"session_id": sid}
+    m._peers["pcB"] = pm
+    return m, pm
+
+
+def test_forward_saca_la_tarjeta_fantasma_del_tablero():
+    t = _TransporteFalso([(404, {"error": "sesion desconocida"})])
+    m, pm = _espejo_con(t)
+    code, res = m.forward("pcB", "POST", "/sessions/fantasma/send", {"text": "hola"})
+    assert code == 404 and res["gone"] is True and "notebook" in res["error"]
+    assert "fantasma" not in pm.sessions and m.owner_of("fantasma") is None
+
+
+def test_forward_reintenta_solo_si_el_pedido_no_llego():
+    t = _TransporteFalso([ConnectionRefusedError(), (200, {"ok": True})])
+    m, _ = _espejo_con(t)
+    assert m.forward("pcB", "POST", "/sessions/fantasma/send", {})[0] == 200 and len(t.llamadas) == 2
+    t = _TransporteFalso([TimeoutError(), (200, {"ok": True})])
+    m, _ = _espejo_con(t)
+    assert m.forward("pcB", "POST", "/sessions/fantasma/send", {})[0] == 503 and len(t.llamadas) == 1
+
+
+def test_el_envio_a_otra_pc_espera_mas_que_un_pedido_comun():
+    import federation
+
+    assert federation._timeout_para("POST", "/peer/sessions/x/send", 5.0) == federation.SLOW_TIMEOUT_S
+    assert federation._timeout_para("GET", "/peer/sessions/x/send", 5.0) == 5.0
+    assert federation._timeout_para("POST", "/peer/pending/x", 5.0) == 5.0
