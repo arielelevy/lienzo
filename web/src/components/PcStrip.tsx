@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ago, api } from "../api";
 import type { Peer, Session } from "../types";
 
@@ -30,32 +30,64 @@ export function usePeers(): Peer[] {
   return peers;
 }
 
-const PC_FILTER_KEY = "lienzo.pcFilter";
+const PC_FILTER_KEY = "lienzo.pcFilters";
+/** clave de antes, cuando se elegia una sola PC: un pc_id suelto. Se lee una vez y se migra. */
+const PC_FILTER_OLD_KEY = "lienzo.pcFilter";
 
-/** El pc_id elegido en la tira ("Todas" es null), recordado en el navegador. Si el peer elegido
- *  ya no esta emparejado (lo revocaron), vuelve solo a "Todas": no tiene sentido seguir filtrando
- *  por una PC que dejo de existir. */
-export function usePcFilter(peers: Peer[]): [string | null, (v: string | null) => void] {
-  const [pcFilter, setPcFilterState] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(PC_FILTER_KEY);
-    } catch {
-      return null;
+function loadPcFilter(): Set<string> {
+  try {
+    const raw = localStorage.getItem(PC_FILTER_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw) as unknown;
+      return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
     }
-  });
-  const setPcFilter = (v: string | null) => {
-    setPcFilterState(v);
+    const viejo = localStorage.getItem(PC_FILTER_OLD_KEY);
+    return new Set(viejo ? [viejo] : []);
+  } catch {
+    return new Set();
+  }
+}
+
+const NINGUNA: Set<string> = new Set();
+
+/** Las PCs elegidas en la tira (vacio es "Todas"), recordadas en el navegador. Click simple deja
+ *  solo esa PC; `togglePc` (Ctrl/Cmd + click) la suma o la saca, asi se miran varias a la vez.
+ *  Las que ya no estan emparejadas (las revocaron) se ignoran: no tiene sentido filtrar por una PC
+ *  que dejo de existir, y si no queda ninguna vigente vuelve solo a "Todas". */
+export function usePcFilter(peers: Peer[]): {
+  pcFilter: Set<string>;
+  selectPc: (id: string) => void;
+  togglePc: (id: string) => void;
+  showAllPcs: () => void;
+} {
+  const [elegidas, setElegidas] = useState<Set<string>>(loadPcFilter);
+  const guardar = (next: Set<string>) => {
+    setElegidas(next);
     try {
-      if (v) localStorage.setItem(PC_FILTER_KEY, v);
+      if (next.size) localStorage.setItem(PC_FILTER_KEY, JSON.stringify([...next]));
       else localStorage.removeItem(PC_FILTER_KEY);
+      localStorage.removeItem(PC_FILTER_OLD_KEY);
     } catch {
       /* sin storage, no importa */
     }
   };
   // derivado y no corregido en un effect: sin tira (menos de dos PCs, o /peers caido) no hay filtro
   // posible, y si quedara el guardado el tablero se vaciaria sin ningun chip que lo explique
-  const vigente = pcFilter && peers.length >= 2 && peers.some((p) => p.pc_id === pcFilter) ? pcFilter : null;
-  return [vigente, setPcFilter];
+  const pcFilter = useMemo(() => {
+    if (peers.length < 2) return NINGUNA;
+    const vigentes = [...elegidas].filter((id) => peers.some((p) => p.pc_id === id));
+    return vigentes.length ? new Set(vigentes) : NINGUNA;
+  }, [elegidas, peers]);
+  return {
+    pcFilter,
+    selectPc: (id) => guardar(new Set([id])),
+    togglePc: (id) => {
+      const next = new Set(pcFilter);
+      if (!next.delete(id)) next.add(id);
+      guardar(next);
+    },
+    showAllPcs: () => guardar(new Set()),
+  };
 }
 
 /** El pc_id dueño de una sesion: el que trae (frente B, ronda 2) o, sin ese campo, la PC local. */
@@ -66,15 +98,20 @@ export function pcOf(s: Session, localPcId: string | null): string | null {
 interface Props {
   peers: Peer[];
   sessions: Record<string, Session>;
-  filter: string | null;
-  onFilter: (pc: string | null) => void;
+  filter: Set<string>;
+  /** click simple: solo esa PC */
+  onSelect: (pc: string) => void;
+  /** Ctrl/Cmd + click: suma o saca la PC de las elegidas */
+  onToggle: (pc: string) => void;
+  onAll: () => void;
 }
 
 /** Tira de PCs arriba del tablero (§3.9 del plan): solo con al menos un peer emparejado (el
  *  arreglo trae la propia PC mas la de al lado). "Todas N" y un chip por PC con conteo, memoria y
  *  temperatura; un peer caido se ve en ○ y su chip ya no dice memoria ni temperatura, que son datos
- *  viejos. Click filtra el tablero a esa PC y nada mas; se vuelve con Todas. */
-export function PcStrip({ peers, sessions, filter, onFilter }: Props) {
+ *  viejos. Click filtra el tablero a esa PC y nada mas; Ctrl/Cmd + click suma o saca PCs (varias a la vez);
+ *  se vuelve con Todas. */
+export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: Props) {
   if (peers.length < 2) return null;
   const localPcId = peers.find((p) => p.local)?.pc_id ?? null;
   const total = Object.keys(sessions).length;
@@ -82,7 +119,7 @@ export function PcStrip({ peers, sessions, filter, onFilter }: Props) {
 
   return (
     <div className="pcstrip" role="toolbar" aria-label="filtrar por PC">
-      <button type="button" className={`pcchip all ${filter === null ? "on" : ""}`} onClick={() => onFilter(null)}>
+      <button type="button" className={`pcchip all ${filter.size === 0 ? "on" : ""}`} onClick={onAll}>
         Todas<sub className="n">{total}</sub>
       </button>
       {peers.map((p) => {
@@ -91,11 +128,11 @@ export function PcStrip({ peers, sessions, filter, onFilter }: Props) {
           <button
             key={p.pc_id}
             type="button"
-            className={`pcchip ${filter === p.pc_id ? "on" : ""} ${down ? "down" : ""}`}
+            className={`pcchip ${filter.has(p.pc_id) ? "on" : ""} ${down ? "down" : ""}`}
             style={{ "--pc-color": p.color } as React.CSSProperties}
-            title={down ? `${p.name}: sin conexión hace ${ago(p.last_seen)}` : p.name}
-            aria-pressed={filter === p.pc_id}
-            onClick={() => onFilter(p.pc_id)}
+            title={down ? `${p.name}: sin conexión hace ${ago(p.last_seen)}` : `${p.name} (Ctrl + click suma o saca PCs)`}
+            aria-pressed={filter.has(p.pc_id)}
+            onClick={(e) => (e.ctrlKey || e.metaKey ? onToggle(p.pc_id) : onSelect(p.pc_id))}
           >
             <span className="dot" aria-hidden="true" />
             {p.name}

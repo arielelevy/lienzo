@@ -296,3 +296,18 @@
 .workpreview textarea { width: 100%; box-sizing: border-box; min-height: 240px; max-height: 50vh; resize: vertical; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; }
 .workpreview .row { justify-content: flex-end; margin-top: 16px; }
 .workpreview .dup { display: block; margin-top: 12px; font-size: 13px; color: var(--fg); }
+
+/* Marcada en la seleccion multiple (Ctrl + click): contorno de trazos y una tilde en la esquina.
+   Es distinta de .sel (borde completo) y de .picked (barra al costado), y se suma a las dos. */
+.card.marked { outline: 2px dashed var(--fg); outline-offset: 1px; }
+.card.marked::after { content: "✓"; position: absolute; top: -9px; left: -9px; width: 18px; height: 18px; border-radius: 50%; background: var(--fg); color: var(--ink); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; pointer-events: none; }
+
+/* Barra de la seleccion multiple: flotante al pie, centrada. Por debajo del panel (z 10) y de los
+   toasts (z 20). */
+.selbar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 8; width: min(560px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; box-shadow: 0 8px 24px rgba(0,0,0,.45); display: flex; flex-direction: column; gap: 8px; }
+.selbar .selrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.selbar .selcount { font-weight: 600; margin-right: auto; }
+.selbar textarea { width: 100%; min-height: 56px; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; resize: vertical; }
+.selbar .selsend { display: flex; flex-direction: column; gap: 6px; }
+.selbar .selresult:empty { display: none; }
+.selbar .selresult ul { margin: 4px 0 0; padding-left: 18px; color: var(--err); font-size: 12px; }

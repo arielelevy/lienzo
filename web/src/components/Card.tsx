@@ -244,7 +244,7 @@ const RECENT_MS = 30 * 60 * 1000;
  *  cancela y el doble click abre el panel sin elegir nada: elegir agrega las conexiones en palabras
  *  y **cambia el alto de la tarjeta**, asi que el segundo click del doble caia en otro elemento (se
  *  medio en la tarjeta de Codex, la mas baja del tablero: el doble click no abria el panel). */
-const PICK_MS = 240;
+export const PICK_MS = 240;
 
 /** Tab recorre las tarjetas, no sus botones. Todo lo que la tarjeta contiene sale del orden de
  *  tabulacion (tabIndex -1) mientras el foco no este ya en uno de sus controles: asi Tab va de
@@ -295,6 +295,10 @@ interface Props {
   /** hay mas de una PC emparejada (peers.length > 1): habilita "Coordinadora solo de esta PC" en
    *  el menu ⋯, al lado de la coordinadora federada (plan §3.6). */
   multiPc?: boolean;
+  /** esta en la seleccion multiple (Ctrl + click) */
+  marked?: boolean;
+  /** Ctrl/Cmd + click (o Ctrl + Espacio): sumarla a la seleccion multiple o sacarla */
+  onMark?: () => void;
   /** un click: elegir la tarjeta, sin abrir nada */
   onPick?: () => void;
   /** doble click (o Enter): abrir el panel */
@@ -308,7 +312,7 @@ interface Props {
   toast?: ToastFn;
 }
 
-export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, peerDown, pcColor, multiPc = false, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
+export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, peerDown, pcColor, multiPc = false, marked = false, onMark, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
   const workClipboard = useWorkClipboard(s, !!p || !!s.pending_id, toast);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -532,21 +536,29 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       )}
     <div
       ref={rootRef}
-      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${free ? "free" : ""} ${menuOpen ? "menuopen" : ""} ${words ? "haswords" : ""} ${pcColor ? "haspc" : ""}`}
+      className={`card ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${marked ? "marked" : ""} ${free ? "free" : ""} ${menuOpen ? "menuopen" : ""} ${words ? "haswords" : ""} ${pcColor ? "haspc" : ""}`}
       style={pcColor ? ({ "--pc-color": pcColor } as React.CSSProperties) : undefined}
       role="button"
       tabIndex={0}
       aria-label={`${s.repo}: ${s.title || s.last_prompt || (free ? "libre, sin pedidos todavía" : "sin título")}`}
-      aria-pressed={picked || selected}
+      aria-pressed={picked || selected || marked}
       /* un click elige la tarjeta, pero recién a los PICK_MS: si llega el segundo click no se elige
-         nada y el doble click abre el panel, sin el parpadeo ni el cambio de alto del medio */
+         nada y el doble click abre el panel, sin el parpadeo ni el cambio de alto del medio.
+         Ctrl/Cmd + click la suma o la saca de la selección múltiple, al instante y cada click
+         cuenta (también el segundo de dos seguidos), sin pasar por el temporizador */
       onClick={(e) => {
+        if ((e.ctrlKey || e.metaKey) && onMark) {
+          window.clearTimeout(pickTimer.current);
+          onMark();
+          return;
+        }
         if (e.detail > 1) return; // el segundo click de un doble: lo atiende onDoubleClick
         window.clearTimeout(pickTimer.current);
         pickTimer.current = window.setTimeout(() => onPick?.(), PICK_MS);
       }}
       onDoubleClick={(e) => {
         window.clearTimeout(pickTimer.current); // el click simple ya no elige
+        if ((e.ctrlKey || e.metaKey) && onMark) return; // Ctrl + click rápido: dos marcas, no abre el panel
         /* doble click sobre un control (✕, estrella, lápiz, chips) no abre el panel */
         if ((e.target as HTMLElement).closest("button, a, input, textarea, code")) return;
         onSelect();
@@ -561,6 +573,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           if (key === "v" && workClipboard.canPaste) {
             e.preventDefault(); e.stopPropagation(); workClipboard.paste(); return;
           }
+        }
+        // Ctrl + Espacio sobre la tarjeta enfocada: lo mismo que Ctrl + click, para el teclado
+        if (onCard && onMark && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === " ") {
+          e.preventDefault();
+          onMark();
+          return;
         }
         // con el menú abierto, Escape lo cierra y vuelve al ⋯ (y no le llega al tablero)
         if (e.key === "Escape" && menuOpen) {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Arrows } from "./Arrows";
-import { Card, freeGroups } from "./Card";
+import { Card, freeGroups, PICK_MS } from "./Card";
 import { pcOf } from "./PcStrip";
 import { passesProjects } from "./ProjectStrip";
 import type { Link, Peer, Pending, Rule, Session, State } from "../types";
@@ -48,12 +48,21 @@ interface Props {
   /** PCs de la federacion (ronda 2), la propia incluida: [] hasta que exista GET /peers. Sirve para
    *  la tira de PCs (filtro) y para pintar de gris las tarjetas de una PC caida. */
   peers?: Peer[];
-  /** tira de PCs: pc_id elegido, o null ("Todas") */
-  pcFilter?: string | null;
+  /** tira de PCs: pc_ids elegidos (vacio es "Todas") */
+  pcFilter?: Set<string>;
   /** chips de proyecto: repos elegidos (por repo_key o repo); vacio es todos */
   selectedRepos?: Set<string>;
   /** tira de proyectos: solo coordinadoras de los repos visibles */
   coordOnly?: boolean;
+  /** seleccion multiple (Ctrl + click): session_ids marcados. Vive en App porque la barra de
+   *  seleccion y los chips de proyecto tambien la tocan */
+  marked?: Set<string>;
+  /** suma o saca una tarjeta de la seleccion multiple */
+  onMark?: (sid: string) => void;
+  /** un click simple (sin Ctrl) vacia la seleccion multiple */
+  onClearMarked?: () => void;
+  /** hay algo abierto adelante del tablero (la ayuda, el dialogo de conectar): ese Esc es de ellos */
+  escBlocked?: boolean;
 }
 
 /** Columnas que el usuario colapso a mano teniendo tarjetas: por columna, los ids que tenia en ese
@@ -196,7 +205,24 @@ export function splitLanes(open: { key: ColKey; n: number }[], budget: number): 
 
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-const canReceive = (s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
+/** Filtros visuales del tablero: los del header (texto, agentes), la tira de PCs y los chips de
+ *  proyecto. Los usa Board para armar las columnas y App para saber que tarjetas marca el chip. */
+export interface VisibleFilters {
+  query: string;
+  agents: Record<Session["agent"], boolean>;
+  pcFilter: Set<string>;
+  localPcId: string | null;
+  selectedRepos: Set<string>;
+  coordOnly: boolean;
+}
+export function passesFilters(s: Session, f: VisibleFilters, q = norm(f.query.trim())): boolean {
+  if (!f.agents[s.agent]) return false;
+  if (q && !norm(searchText(s)).includes(q)) return false;
+  if (f.pcFilter.size > 0 && !f.pcFilter.has(pcOf(s, f.localPcId) ?? "")) return false;
+  return passesProjects(s, f.selectedRepos, f.coordOnly);
+}
+
+const canReceive =(s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
 /** Card dibuja el agarre ⇢ si recibe onGrip; el arrastre en si lo maneja el tablero por Pointer Events */
 const noGrip = () => undefined;
 
@@ -255,7 +281,7 @@ interface Move {
 /** sin proyectos elegidos: un Set estable, para no romper el useMemo del tablero en cada render */
 const NINGUNO: Set<string> = new Set();
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = null, selectedRepos = NINGUNO, coordOnly = false }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   // tira de PCs: quien es cada peer y cual es la PC local, para saber que sesiones son suyas y si
   // esta caido (ronda 2; peers viene vacio hasta que exista GET /peers)
@@ -318,6 +344,16 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   const pressRef = useRef<{ sid: string; x: number; y: number; alt: boolean } | null>(null);
   const draggedRef = useRef(false);
   const draggedTimer = useRef<number | undefined>(undefined);
+  // cuando fue la ultima marca con Ctrl: un click simple anterior (su PICK_MS todavia corre) no
+  // tiene que vaciar la seleccion que el usuario recien empezo
+  const markedAt = useRef(0);
+  // espejo para el listener de Esc, que no se resuscribe cuando cambia la seleccion
+  const markedSize = useRef(marked.size);
+  const escBlockedRef = useRef(escBlocked);
+  useEffect(() => {
+    markedSize.current = marked.size;
+    escBlockedRef.current = escBlocked;
+  }, [marked, escBlocked]);
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -389,11 +425,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   const byState = useMemo(() => {
     const q = norm(query.trim());
     const g: Record<ColKey, Session[]> = { trabajo: [], te_necesita: [], muerta: [] };
+    const filtros: VisibleFilters = { query, agents, pcFilter, localPcId, selectedRepos, coordOnly };
     for (const s of Object.values(sessions)) {
-      if (!agents[s.agent]) continue;
-      if (q && !norm(searchText(s)).includes(q)) continue;
-      if (pcFilter && pcOf(s, localPcId) !== pcFilter) continue;
-      if (!passesProjects(s, selectedRepos, coordOnly)) continue;
+      if (!passesFilters(s, filtros, q)) continue;
       g[colOf(s)].push(s);
     }
     // lo que esta trabajando de verdad va primero; lo que termino, despues; lo que figura corriendo
@@ -692,8 +726,12 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       if (moveRef.current) cancelMove();
       else if (dragRef.current) setDrag(null);
       // Esc pela una capa por vez: con el panel abierto lo cierra App y la eleccion queda; el
-      // siguiente Esc la suelta. Sin este guard, un solo Esc hacia las dos cosas.
-      else if (!selected) setPicked(null);
+      // siguiente Esc la suelta. Sin este guard, un solo Esc hacia las dos cosas. Detras del panel
+      // viene la seleccion multiple (Esc la vacia y la elegida se queda) y detras de esa, la elegida.
+      else if (!selected && !escBlockedRef.current) {
+        if (markedSize.current > 0) onClearMarked?.();
+        else setPicked(null);
+      }
     };
     const cancel = () => {
       pressRef.current = null;
@@ -775,7 +813,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           // las libres de un mismo repo y agente se leen como un dato solo ("4 sesiones libres
           // en lienzo"), no como cuatro tarjetas que dicen exactamente lo mismo. La elegida y la
           // que tiene el panel abierto quedan afuera del grupo, asi siguen enteras
-          const grupos = freeGroups(list, [selected, picked]);
+          const grupos = freeGroups(list, [selected, picked, ...marked]);
           const col = collapsedOf[k];
           // canal a la izquierda, mirando al vecino *visual*: 8 px si alguno de los dos es una tira
           // colapsada, 30 si no (es lo mismo que dice styles.css, pero ahi sale de la adyacencia del
@@ -856,9 +894,24 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         peerDown={peerDownOf(s)}
                         pcColor={pcColorOf(s)}
                         multiPc={peers.length > 1}
+                        marked={marked.has(s.session_id)}
+                        onMark={
+                          onMark && !peerDownOf(s)
+                            ? () => {
+                                // el click que cierra un arrastre tampoco marca la tarjeta
+                                if (draggedRef.current) return;
+                                markedAt.current = Date.now();
+                                onMark(s.session_id);
+                              }
+                            : undefined
+                        }
                         onPick={() => {
                           // el click que cierra un arrastre tampoco elige la tarjeta
                           if (draggedRef.current) return;
+                          // un click simple vacia la seleccion multiple (salvo que haya sido
+                          // anterior a una marca con Ctrl que llego dentro de su espera)
+                          if (Date.now() - markedAt.current > PICK_MS) onClearMarked?.();
+                          else return;
                           // el segundo click sobre la misma la deselecciona: es el mismo gesto de
                           // ida y vuelta, sin tener que buscar el vacio ni acordarse de Escape
                           setPicked((prev) => (prev === s.session_id ? null : s.session_id));

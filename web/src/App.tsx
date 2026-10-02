@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type AuthInfo } from "./api";
-import { Board } from "./components/Board";
+import { Board, colOf, passesFilters } from "./components/Board";
 import { allAgents } from "./agents";
 import { canWrite, shortName } from "./names";
 import { Enroll } from "./components/Enroll";
@@ -11,6 +11,7 @@ import { Pairing } from "./components/Pairing";
 import { Panel } from "./components/Panel";
 import { pcOf, PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
 import { ProjectStrip, repoGroups, useProjectFilter } from "./components/ProjectStrip";
+import { SelectionBar } from "./components/SelectionBar";
 import { Setup, TotpQr } from "./components/Setup";
 import { Toasts, useToasts } from "./components/Toasts";
 import { UrlQr } from "./components/UrlQr";
@@ -97,7 +98,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // tira de PCs (ronda multi-PC, §3.9 del plan): [] hasta que exista GET /peers, y entonces la
   // tira ni el filtro se dibujan (PcStrip lo decide solo con el arreglo vacío)
   const peers = usePeers();
-  const [pcFilter, setPcFilter] = usePcFilter(peers);
+  const { pcFilter, selectPc, togglePc, showAllPcs } = usePcFilter(peers);
   // sesion de una PC caida: ni el tablero (Board.tsx tiene su propio peerDownOf) ni el selector de
   // destino de Conectar/Pegar trabajo tienen a quien escribirle, aunque la sesion siga "viva" en el
   // espejo (mismo criterio que Board: peer.alive === false)
@@ -106,7 +107,18 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const peerDown = useCallback((s: Session) => peersById.get(pcOf(s, localPcId) ?? "")?.alive === false, [peersById, localPcId]);
   // tira de proyectos (pedido de Ariel, parte 3): un chip por repo con sesiones vivas, y ★ Coordinadoras
   const projectGroups = useMemo(() => repoGroups(Object.values(sessions)), [sessions]);
-  const { selected: selectedRepos, coordOnly, selectRepo, showAll: showAllRepos, toggleCoord } = useProjectFilter(projectGroups);
+  const { selected: selectedRepos, coordOnly, selectRepo, toggleRepo, showAll: showAllRepos, toggleCoord } = useProjectFilter(projectGroups);
+
+  // seleccion multiple de tarjetas (Ctrl + click): los session_id marcados, en el orden en que se
+  // marcaron. Se calcula sobre lo que existe: una sesion que desaparece sale sola de la seleccion
+  const [marked, setMarked] = useState<Set<string>>(() => new Set());
+  const markedLive = useMemo(() => new Set([...marked].filter((sid) => sessions[sid])), [marked, sessions]);
+  const toggleMark = useCallback((sid: string) => setMarked((cur) => {
+    const next = new Set(cur);
+    if (!next.delete(sid)) next.add(sid);
+    return next;
+  }), []);
+  const clearMarked = useCallback(() => setMarked((cur) => (cur.size ? new Set() : cur)), []);
 
   // auto_continue y auto_retry viven en ~/.lienzo/config.json (lo lee el server): GET/PUT /config.
   // null mientras carga o si el server que corre no tiene la ruta todavia
@@ -144,6 +156,15 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const [query, setQuery] = useState("");
   const [agents, setAgents] = useState(allAgents);
   const searchRef = useRef<HTMLInputElement>(null);
+  // lo que se ve ahora: pasa los filtros (header, PCs, proyectos) y se le puede escribir. Una de la
+  // columna Muerta o de una PC caida no entra: no hay a quien mandarle nada
+  const visibleToMark = useMemo(() => {
+    const filtros = { query, agents, pcFilter, localPcId, selectedRepos, coordOnly };
+    return Object.values(sessions)
+      .filter((s) => passesFilters(s, filtros) && colOf(s) !== "muerta" && !peerDown(s) && !markedLive.has(s.session_id))
+      .map((s) => s.session_id);
+  }, [sessions, query, agents, pcFilter, localPcId, selectedRepos, coordOnly, peerDown, markedLive]);
+  const markVisible = useCallback(() => setMarked((cur) => new Set([...cur, ...visibleToMark])), [visibleToMark]);
   const [showHelp, setShowHelp] = useState(false);
   // el panel va pegado a la derecha, debajo del header: su alto sale de aca (--hh)
   useEffect(() => {
@@ -338,6 +359,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
             selected={selectedRepos}
             coordOnly={coordOnly}
             onSelectRepo={selectRepo}
+            onToggleRepo={toggleRepo}
             onShowAll={showAllRepos}
             onToggleCoord={toggleCoord}
           />
@@ -355,6 +377,8 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
             <dl>
               <dt>click</dt>
               <dd>elige la tarjeta: la resalta con sus flechas y muestra sus conexiones en palabras</dd>
+              <dt><kbd>Ctrl</kbd> + click</dt>
+              <dd>suma o saca la tarjeta de una selección múltiple (también <kbd>Ctrl</kbd> + <kbd>Espacio</kbd> con la tarjeta enfocada); abajo aparece la barra para enviarles a todas, interrumpirlas o limpiar. En un chip de proyecto o de PC, suma o saca ese chip del filtro</dd>
               <dt>doble click</dt>
               <dd>abre el panel de la tarjeta</dd>
               <dt>arrastrar</dt>
@@ -366,7 +390,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
               <dt>columna</dt>
               <dd>click en su título la colapsa a una tira; en la tira, la expande</dd>
               <dt><kbd>Esc</kbd></dt>
-              <dd>pela una capa por vez: el arrastre, esta ayuda, el diálogo de conectar, el panel, y al final la tarjeta elegida; en la búsqueda, la limpia</dd>
+              <dd>pela una capa por vez: el arrastre, esta ayuda, el diálogo de conectar, el panel, la selección múltiple, y al final la tarjeta elegida; en la búsqueda, la limpia</dd>
               <dt><kbd>Enter</kbd></dt>
               <dd>sobre una tarjeta enfocada, abre su panel</dd>
               <dt><kbd>Tab</kbd></dt>
@@ -386,7 +410,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
       {showPairing && <Pairing peers={peers} toast={toast} onClose={() => setShowPairing(false)} />}
-      <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onFilter={setPcFilter} />
+      <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onSelect={selectPc} onToggle={togglePc} onAll={showAllPcs} />
       <Board
         sessions={sessions}
         pending={pending}
@@ -410,7 +434,12 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         pcFilter={pcFilter}
         selectedRepos={selectedRepos}
         coordOnly={coordOnly}
+        marked={markedLive}
+        onMark={toggleMark}
+        onClearMarked={clearMarked}
+        escBlocked={showHelp || !!connect}
       />
+      <SelectionBar sids={[...markedLive]} sessions={sessions} onClear={clearMarked} visibleToMark={visibleToMark} onMarkVisible={markVisible} />
       {connect && sessions[connect.from] && (
         <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && setConnect(null)}>
           <div className="gate-box wide connect">
