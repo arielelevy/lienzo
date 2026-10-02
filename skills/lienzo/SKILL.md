@@ -111,6 +111,31 @@ rastro en `~/.lienzo/lienzo.log` (líneas `→ <pc> POST /sessions/…`); si no 
 salió de esta PC. Un envío a otra PC puede tardar hasta ~60 s (el timeout del reenvío ya lo
 contempla).
 
+### Repartir en otra PC: lo que ya salió mal una vez
+
+- **Antes de abrir N sesiones, `coordinar.capacidad(pc, N)`**: mira la memoria libre de esa PC (cada
+  sesión ocupa ~0,7 GB, y con menos de 1,5 GB de reserva Windows se arrastra). Si da `ok: False`,
+  abrir menos y decírselo al usuario; no lanzar «a ver qué pasa».
+- **Lanzar con `coordinar.lanzar_y_titular(pc, cwd, titulo, agent)`**: devuelve *la* tarjeta nueva y
+  ya titulada. `lanzar` solo da el 200 y después hay que adivinar cuál de las tarjetas de esa carpeta
+  es. **No lanzar una sesión de prueba**: queda abierta en la PC del usuario ocupando memoria.
+- **Una sesión sin hooks (coda, o recién barrida) cambia de id**: nace `pid-NNNN` y al engancharse los
+  hooks pasa a su UUID. Se la sigue con `coordinar.reubicar(s, sesiones())` (por pc + pid + cwd);
+  `enviar_seguro` ya lo hace, y devuelve el `sid` vigente.
+- **Un agente puede colgarse sin decir nada** (coda con el modelo del DGX quedó 5 min en «Waiting for
+  model»). Mientras espera un encargo, `coordinar.estancada(s, minutos=5)` avisa si dice `corriendo`
+  pero la pantalla no cambió. Entonces: interrumpir (`POST …/interrupt`) y reintentar, o pasar el
+  trabajo a otro agente; no esperar indefinido.
+- **El encargo largo a otra PC va por mensaje: el server lo vuelve adjunto solo.** Tecleado en una
+  consola, un mensaje con saltos de línea o de más de 500 caracteres sería un Enter por línea; por eso
+  el server lo guarda como `mensaje.md` en `~/.lienzo/adjuntos/<id>/` de la PC dueña y teclea una sola
+  línea que apunta a él. Viaja por el lienzo, **sin git ni `pull`**. No hay límite de POST que lo
+  impida (el cuerpo admite hasta 8 MB). Un archivo en el repo solo para lo que el agente de esa PC
+  produce él mismo en su carpeta (p. ej. el `tasks.md` que escribió ahí): los demás lo leen sin pull.
+  Un agente lento (coda) puede tardar en leer el adjunto: eso es el modelo, no la entrega.
+- **Metodología SDD** (spec → clarificar → plan → tareas → análisis → código): un commit local por
+  paso, y los módulos se reparten recién con `tasks.md` commiteado, cada uno en su carpeta.
+
 **Los dos lienzos tienen que correr el mismo código.** Con `lienzo-server.cmd` el server se
 reinicia solo cuando cambia un `.py` (un `git pull`), pero hay que haberlo levantado así una vez
 en cada PC; un server viejo de la otra PC responde distinto y los envíos fallan sin explicación.

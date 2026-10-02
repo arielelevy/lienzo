@@ -21,14 +21,11 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-01 | `coordinar.lanzar_y_titular`: devuelve la tarjeta nueva, ya titulada | `lanzar` solo da el 200; hay que adivinar cuál tarjeta es la nueva |
 | 2026-10-02 | **Cableado entre PCs**: reglas `on_stop` de los frentes de la otra PC hacia la coordinadora (5 reglas, cruzan PC) | no había nada cableado: la coordinadora tenía que consultar cada frente a mano |
 | 2026-10-01 | `SKILL.md`: secciones «Mandar un encargo a otra PC…» y «Repartir en otra PC: lo que ya salió mal una vez» | todo lo anterior, para que la próxima ronda no repita los tropiezos |
+| 2026-10-02 | **Selección múltiple con Ctrl** en el tablero: Ctrl+click suma o saca tarjetas; en los chips de proyecto y de PC suma o saca del filtro (varios a la vez); barra con «Marcar las visibles», «Enviar a todas», «Interrumpir» y «Limpiar»; Esc pela una capa por vez | pedido del usuario; 20 pruebas Playwright nuevas |
+| 2026-10-02 | Las pruebas de interfaz **ya no dependen del server real**: sin `peers` simulados, `/peers` devuelve lista vacía (antes caía al server, que ahora tiene un peer emparejado) | `pcs.spec.ts:58` fallaba solo porque la PC tiene un peer; la de emparejamiento esperaba la frase vieja de 6 palabras |
 
 ## Pendiente (con evidencia)
 
-- **Selección múltiple con Ctrl en el tablero** (pedido del usuario, 2026-10-02): hoy un click elige
-  una sola tarjeta (`picked` en `Board.tsx`) y Ctrl+C/V copia trabajo de la elegida. Falta: Ctrl+click
-  suma o saca tarjetas de una selección, y poder seleccionar de una vez **todas las de un proyecto**.
-  Acciones sobre la selección: enviar un mismo texto a todas, cablear todas a la coordinadora,
-  interrumpir, cerrar. Esc la limpia.
 - **Latencia entre PCs**: un pedido mínimo a la otra PC tarda ~86 ms (mediana, p95 136 ms) contra 2,5 ms
   local; la pantalla de una tarjeta remota, ~470 ms. Cada pedido abre una conexión TCP nueva y firma
   con HMAC. Idea: conexión persistente (keep-alive) por peer y cachear `screen` unos 500 ms.

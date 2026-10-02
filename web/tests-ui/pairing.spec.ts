@@ -157,7 +157,7 @@ test.describe('pantalla "Varias PCs" (menú ⋯ del header, plan §3.1 y §3.9)'
     await d.getByLabel("Palabra de emparejamiento").fill("abaco");
     await d.getByRole("button", { name: "Unirme", exact: true }).click();
     await expect(d).toContainText("proof invalido");
-    expect(body).toMatchObject({ phrase: "uno dos tres cuatro cinco seis", host: "192.168.1.20", port: 7322 });
+    expect(body).toMatchObject({ phrase: "abaco", host: "192.168.1.20", port: 7322 });
   });
 
   test("el nombre de esta PC se edita con ✎ y PUT /peers/self", async ({ page }) => {
