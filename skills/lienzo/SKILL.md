@@ -126,6 +126,15 @@ contempla).
   model»). Mientras espera un encargo, `coordinar.estancada(s, minutos=5)` avisa si dice `corriendo`
   pero la pantalla no cambió. Entonces: interrumpir (`POST …/interrupt`) y reintentar, o pasar el
   trabajo a otro agente; no esperar indefinido.
+- **A un coda no se le manda un mensaje largo.** Más de 500 caracteres o con saltos de línea el lienzo
+  lo vuelve adjunto y el coda tiene que leerlo con su herramienta `read`, que se traba (medido: 4 codas,
+  Qwen y GLM, más de una hora en «usando read»; uno ni respondía al `/exit`). Con un mensaje corto
+  responde en 5 a 10 s y su herramienta de shell anda. Entonces: mensajes de menos de 500 caracteres y
+  sin saltos de línea, y en el mismo mensaje «NO uses la herramienta read; leé con el shell (`type`),
+  de a partes de 150 líneas». Un coda colgado que no responde al `/exit` se cierra pidiéndole a otro
+  agente de esa PC un `taskkill /F /PID <pid>` de ese PID.
+- **El modelo se elige al lanzar**: `coordinar.lanzar(pc, cwd, titulo, "coda", model="globant_dgx/GLM-5.3-Flash")`
+  (también `lanzar_y_titular`). Con mensajes cortos GLM 5.3 Flash y Qwen contestan igual de rápido.
 - **El encargo largo a otra PC va por mensaje: el server lo vuelve adjunto solo.** Tecleado en una
   consola, un mensaje con saltos de línea o de más de 500 caracteres sería un Enter por línea; por eso
   el server lo guarda como `mensaje.md` en `~/.lienzo/adjuntos/<id>/` de la PC dueña y teclea una sola

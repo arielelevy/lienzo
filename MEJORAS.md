@@ -26,6 +26,18 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 
 ## Pendiente (con evidencia)
 
+- **Los mensajes largos a un coda lo cuelgan** (2026-10-02, medido): un mensaje de más de 500 caracteres o con
+  saltos de línea el lienzo lo vuelve adjunto, y el agente tiene que leerlo con su herramienta `read`.
+  En coda esa herramienta se traba: 4 codas (3 Qwen y 1 GLM 5.3 Flash) quedaron más de una hora en
+  «usando read» con una sola herramienta usada, y uno ni respondía al `/exit`. En cambio un mensaje
+  corto (5 a 10 s por respuesta, igual en Qwen y GLM) y la herramienta de shell (7 s) andan bien.
+  Mientras no se arregle: a un coda, mensajes de menos de 500 caracteres y sin saltos de línea, y pedirle
+  que lea los archivos con el shell. Idea de fondo: que el lienzo no vuelva adjunto el mensaje cuando el
+  destino es coda, o que lo mande en varias líneas cortas por el shell.
+- **El lienzo no puede cerrar un agente colgado de otra PC**: `/exit` queda en cola y `interrupt` no
+  alcanza si el proceso está clavado. Hoy hubo que pedirle a otro coda un `taskkill` por PID. Idea:
+  `POST /sessions/<sid>/kill` que la PC dueña ejecute sobre su propio PID (con la misma
+  confirmación que las demás acciones destructivas).
 - **Latencia entre PCs**: un pedido mínimo a la otra PC tarda ~86 ms (mediana, p95 136 ms) contra 2,5 ms
   local; la pantalla de una tarjeta remota, ~470 ms. Cada pedido abre una conexión TCP nueva y firma
   con HMAC. Idea: conexión persistente (keep-alive) por peer y cachear `screen` unos 500 ms.
