@@ -104,9 +104,14 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None) -> dict:
     if exe_path is None:
         return {"ok": False, "error": f"no encuentro {exe_name} en esta PC"}
     extra = _resume_args(agent, resume)
-    marca = {"resumed": bool(extra)} if resume is not None else {}
-    if not WINDOWS:
-        return {**_launch_tmux(cwd, title, exe_path, extra), **marca}
+    res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
+    if resume is not None:
+        res["resumed"] = bool(extra)
+    return res
+
+
+def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str]) -> dict:
+    """Windows: un .cmd en `<LIENZO_HOME>/launch/` que explorer.exe abre en una consola nueva."""
     launch_dir = os.path.join(state.LIENZO, "launch")
     os.makedirs(launch_dir, exist_ok=True)
     cmd_path = os.path.join(launch_dir, f"{secrets.token_hex(6)}.cmd")
@@ -120,7 +125,7 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None) -> dict:
     with open(cmd_path, "w", encoding="cp1252", errors="replace", newline="") as f:
         f.write(cuerpo)
     subprocess.Popen(["explorer.exe", cmd_path])
-    return {"ok": True, "cmd_path": cmd_path, **marca}
+    return {"ok": True, "cmd_path": cmd_path}
 
 
 def _launch_tmux(cwd: str, title: str, exe_path: str, extra: list[str] | None = None) -> dict:

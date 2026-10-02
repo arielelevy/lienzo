@@ -449,14 +449,21 @@ def signed_headers(peer: PeerConn, method: str, path: str, body: bytes) -> dict:
     }
 
 
-SLOW_ACTIONS = ("/send", "/launch", "/attach", "/restaurar")
+SLOW_ACTIONS = ("/send", "/launch", "/attach")
 SLOW_TIMEOUT_S = 70.0  # un send tipea en la consola con un subproceso de hasta 60 s en la PC dueña
+# /restaurar con `all` relanza N sesiones con 2 s de pausa entre cada una: necesita mucho mas
+RESTORE_ACTION = "/restaurar"
+RESTORE_TIMEOUT_S = 300.0
 
 
 def _timeout_para(method: str, path: str, normal: float) -> float:
     """Escribir en una consola o lanzar una sesion tarda mas que pedir un dato: con el timeout
     normal (5 s) un envio lento aparecia como "sin conexion" aunque se hubiera tecleado."""
-    return SLOW_TIMEOUT_S if method.upper() != "GET" and path.endswith(SLOW_ACTIONS) else normal
+    if method.upper() == "GET":
+        return normal
+    if path.endswith(RESTORE_ACTION):
+        return RESTORE_TIMEOUT_S
+    return SLOW_TIMEOUT_S if path.endswith(SLOW_ACTIONS) else normal
 
 
 class HTTPTransport:

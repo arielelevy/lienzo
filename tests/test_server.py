@@ -1883,6 +1883,14 @@ def test_el_envio_a_otra_pc_espera_mas_que_un_pedido_comun():
     assert federation._timeout_para("POST", "/peer/pending/x", 5.0) == 5.0
 
 
+def test_restaurar_en_otra_pc_tiene_su_propio_timeout_largo():
+    import federation
+
+    assert federation._timeout_para("POST", "/peer/restaurar", 5.0) == federation.RESTORE_TIMEOUT_S == 300.0
+    assert federation._timeout_para("GET", "/peer/restaurar", 5.0) == 5.0
+    assert federation._timeout_para("POST", "/peer/launch", 5.0) == federation.SLOW_TIMEOUT_S
+
+
 def test_regla_con_origen_en_otra_pc_se_crea_alla(monkeypatch):
     import mirror
     import server as srv
