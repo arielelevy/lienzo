@@ -23,17 +23,15 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-01 | `SKILL.md`: secciones «Mandar un encargo a otra PC…» y «Repartir en otra PC: lo que ya salió mal una vez» | todo lo anterior, para que la próxima ronda no repita los tropiezos |
 | 2026-10-02 | **Selección múltiple con Ctrl** en el tablero: Ctrl+click suma o saca tarjetas; en los chips de proyecto y de PC suma o saca del filtro (varios a la vez); barra con «Marcar las visibles», «Enviar a todas», «Interrumpir» y «Limpiar»; Esc pela una capa por vez | pedido del usuario; 20 pruebas Playwright nuevas |
 | 2026-10-02 | Las pruebas de interfaz **ya no dependen del server real**: sin `peers` simulados, `/peers` devuelve lista vacía (antes caía al server, que ahora tiene un peer emparejado) | `pcs.spec.ts:58` fallaba solo porque la PC tiene un peer; la de emparejamiento esperaba la frase vieja de 6 palabras |
+| 2026-10-02 | **A un coda, el adjunto se lee con el shell**: el aviso del mensaje largo le pide leerlo con `type` y no con `read` (que se traba en coda) | 4 codas colgados más de una hora en «usando read»; con mensajes cortos y lectura por shell las mismas revisiones terminaron en 2 min |
+| 2026-10-02 | **Las reglas pasan de la tarjeta provisional `pid-N` a la real**: antes solo se trasladaban en `continue_session` | un agente recién lanzado y cableado perdía su regla al llegar su primer hook |
+| 2026-10-02 | **`lanzar_y_titular` cablea por defecto** la tarjeta nueva a la coordinadora | tres codas lanzados sin regla: no avisaban al terminar |
+| 2026-10-02 | Elegir el modelo al lanzar (`--model`, coda, claude y codex) | comparar GLM 5.3 Flash con Qwen: con mensajes cortos contestan igual de rápido |
 
 ## Pendiente (con evidencia)
 
-- **Los mensajes largos a un coda lo cuelgan** (2026-10-02, medido): un mensaje de más de 500 caracteres o con
-  saltos de línea el lienzo lo vuelve adjunto, y el agente tiene que leerlo con su herramienta `read`.
-  En coda esa herramienta se traba: 4 codas (3 Qwen y 1 GLM 5.3 Flash) quedaron más de una hora en
-  «usando read» con una sola herramienta usada, y uno ni respondía al `/exit`. En cambio un mensaje
-  corto (5 a 10 s por respuesta, igual en Qwen y GLM) y la herramienta de shell (7 s) andan bien.
-  Mientras no se arregle: a un coda, mensajes de menos de 500 caracteres y sin saltos de línea, y pedirle
-  que lea los archivos con el shell. Idea de fondo: que el lienzo no vuelva adjunto el mensaje cuando el
-  destino es coda, o que lo mande en varias líneas cortas por el shell.
+- **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
+  el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.
 - **El lienzo no puede cerrar un agente colgado de otra PC**: `/exit` queda en cola y `interrupt` no
   alcanza si el proceso está clavado. Hoy hubo que pedirle a otro coda un `taskkill` por PID. Idea:
   `POST /sessions/<sid>/kill` que la PC dueña ejecute sobre su propio PID (con la misma

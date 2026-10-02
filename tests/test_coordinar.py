@@ -135,3 +135,34 @@ def test_cuerpo_envio_enlaza_solo_con_yo():
     assert c._cuerpo_envio("s", "t", True) == {"text": "t", "from": "coord", "link_to": "s"}
     assert c._cuerpo_envio("s", "t", False) == {"text": "t"}
     c.YO = ""
+
+
+def test_lanzar_y_titular_cablea_la_tarjeta_nueva_a_la_coordinadora(monkeypatch):
+    c.YO = "coord"
+    nueva = _tarjeta("pid-9", pid=9, cwd=r"D:\apps\x")
+    vistas = [[], [nueva]]  # antes de lanzar no hay nada; despues aparece la provisoria
+    monkeypatch.setattr(c, "sesiones", lambda: vistas.pop(0) if len(vistas) > 1 else vistas[0])
+    pedidos = []
+
+    def pedir(m, r, cuerpo=None, timeout=20):
+        pedidos.append((m, r, cuerpo))
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(c, "pedir", pedir)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    r = c.lanzar_y_titular("pcB", r"D:\apps\x", "t", "coda", espera=5)
+    assert r["session_id"] == "pid-9"
+    regla = next(b for m, ruta, b in pedidos if ruta == "/rules")
+    assert regla["kind"] == "on_stop" and regla["from"] == "pid-9" and regla["to"] == "coord" and regla["repeat"] is True
+
+
+def test_lanzar_y_titular_sin_cablear_no_crea_regla(monkeypatch):
+    c.YO = "coord"
+    nueva = _tarjeta("pid-9", pid=9, cwd=r"D:\apps\x")
+    vistas = [[], [nueva]]
+    monkeypatch.setattr(c, "sesiones", lambda: vistas.pop(0) if len(vistas) > 1 else vistas[0])
+    pedidos = []
+    monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: pedidos.append(r) or (200, {"ok": True}))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    c.lanzar_y_titular("pcB", r"D:\apps\x", "t", "coda", espera=5, cablear_al_lanzar=False)
+    assert "/rules" not in pedidos

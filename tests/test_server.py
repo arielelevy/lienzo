@@ -1965,3 +1965,22 @@ def test_borrar_una_regla_de_otra_pc_se_reenvia_a_su_dueña(monkeypatch):
         assert r.status == 200 and llamadas == [("pcB", "DELETE", "/rules/remota1")]
     finally:
         httpd.shutdown()
+
+
+def test_repoint_refs_pasa_reglas_y_links_de_la_provisoria_a_la_real(tmp_path, monkeypatch):
+    import sessions as ses_mod
+
+    monkeypatch.setattr(ses_mod.rules, "path", str(tmp_path / "rules.json"))
+    monkeypatch.setattr(ses_mod.links, "path", str(tmp_path / "links.json"))
+    monkeypatch.setattr(ses_mod.rules, "items", [
+        {"id": "r1", "from": "pid-123", "to": "coord"},
+        {"id": "r2", "from": "otra", "to": "pid-123"},
+        {"id": "r3", "from": "otra", "to": "coord"},
+    ])
+    monkeypatch.setattr(ses_mod.links, "items", [{"id": "l1", "from": "coord", "to": "pid-123"}])
+    with ses_mod.lock:
+        assert ses_mod.repoint_refs("pid-123", "uuid-real") == (2, 1)
+    assert [(r["from"], r["to"]) for r in ses_mod.rules.items] == [("uuid-real", "coord"), ("otra", "uuid-real"), ("otra", "coord")]
+    assert ses_mod.links.items[0]["to"] == "uuid-real"
+    with ses_mod.lock:
+        assert ses_mod.repoint_refs("pid-123", "uuid-real") == (0, 0)  # idempotente

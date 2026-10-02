@@ -193,9 +193,14 @@ def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5):
     return {"ok": False, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1)}
 
 
-def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None):
+def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None, cablear_al_lanzar=True):
     """Lanza y devuelve LA tarjeta nueva (ya titulada), no solo el 200 de `lanzar`. Distingue la
-    nueva de las que ya había en esa carpeta comparando ids antes y después. None si no apareció."""
+    nueva de las que ya había en esa carpeta comparando ids antes y después. None si no apareció.
+
+    **Nunca queda sin cablear**: con `YO` fijado, la tarjeta nueva sale con una regla `on_stop` hacia
+    la coordinadora, para que el aviso de que terminó (o de que se colgó) llegue solo. La tarjeta nace
+    como `pid-N` y al llegar su primer hook pasa a su id real: el lienzo le traslada la regla. Con
+    `cablear_al_lanzar=False` se la deja sin regla (solo para una sesión de prueba descartable)."""
     def en_carpeta():
         return {
             x["session_id"]: x
@@ -214,6 +219,13 @@ def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None):
         if nuevas:
             nueva = nuevas[0]
             titular(nueva, titulo)
+            if cablear_al_lanzar and YO:
+                sid = nueva["session_id"]
+                regla_informe(
+                    nueva,
+                    f"[regla automática] Terminó «{titulo}» ({sid[:8]}). Leé su `last_reply` en GET /sessions "
+                    f"(la tarjeta {sid}) y decidí el próximo paso.",
+                )
             return nueva
     return None
 

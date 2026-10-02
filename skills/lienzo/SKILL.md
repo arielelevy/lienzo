@@ -119,6 +119,12 @@ contempla).
 - **Lanzar con `coordinar.lanzar_y_titular(pc, cwd, titulo, agent)`**: devuelve *la* tarjeta nueva y
   ya titulada. `lanzar` solo da el 200 y después hay que adivinar cuál de las tarjetas de esa carpeta
   es. **No lanzar una sesión de prueba**: queda abierta en la PC del usuario ocupando memoria.
+- **Todo frente sale cableado, siempre.** Sin una regla `on_stop` hacia la coordinadora, el aviso de que
+  un frente terminó (o se colgó) no llega solo y hay que consultarlo a mano. `lanzar_y_titular` ya crea
+  esa regla por defecto (con `YO` fijado); para lo que ya estaba abierto, `coordinar.cablear(filtro=…)`.
+  Al terminar la ronda, `borrar_reglas_hacia_mi()`. Antes de dar por andando un frente, comprobar que
+  tiene su regla (`GET /rules` incluye las de otras PCs). Una tarjeta nace como `pid-N` y cambia a su id
+  real al llegar el primer hook: el lienzo le traslada la regla solo.
 - **Una sesión sin hooks (coda, o recién barrida) cambia de id**: nace `pid-NNNN` y al engancharse los
   hooks pasa a su UUID. Se la sigue con `coordinar.reubicar(s, sesiones())` (por pc + pid + cwd);
   `enviar_seguro` ya lo hace, y devuelve el `sid` vigente.

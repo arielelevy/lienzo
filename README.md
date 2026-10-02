@@ -139,6 +139,13 @@ py -3.14 install.py        # registra hooks de Claude/Codex/CODA y la extensión
 saca los hooks. El estado vive en `%USERPROFILE%\.lienzo\` (eventos, permisos pendientes,
 adjuntos, tarjetas); no toca AppData.
 
+**Recarga automática.** `lienzo-server.cmd` arranca el server con `LIENZO_RELOAD=1`: si cambia
+cualquier `.py` de `lienzo/` (un `git pull`, una edición), el server espera a que terminen de
+escribirse los archivos, comprueba que compilen y sale con el código 75, y el `.cmd` lo relanza en la
+misma ventana. Si un archivo cambiado tiene un error de sintaxis, no se relanza: sigue con el
+código viejo y lo avisa en el log. Cualquier otra salida (Ctrl+C, un error, matar el PID) corta el
+bucle. Sin el `.cmd`, el server no se recarga solo. Con dos PCs, un `git pull` en cada una alcanza.
+
 Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json` nuevo.
 
 ### Pi CLI
@@ -204,6 +211,29 @@ todas al orden automático. Las posiciones viven en el navegador —sobreviven a
 al server ni a otra máquina— y la de una sesión que se fue se descarta sola.
 
 Con **Alt** apretado, ese mismo arrastre conecta en vez de mover (ver *Conectar sesiones*).
+
+### Elegir varias a la vez
+
+**Ctrl** (o **Cmd**) más click sobre una tarjeta la suma a una *selección múltiple* o la saca; también
+Ctrl+Espacio con la tarjeta enfocada. Un click simple, sin Ctrl, hace lo de siempre (elige una) y
+suelta la selección. Las marcadas llevan un contorno de trazos y una tilde, distintos de la elegida.
+Una tarjeta de una PC caída no se puede marcar.
+
+Aparece entonces una **barra de selección** abajo con «N tarjetas» y cuatro botones:
+
+- **Marcar las visibles**: marca todas las que pasan los filtros de ese momento (texto, agente, PC,
+  proyecto, coordinadoras), de cualquier PC. Deja afuera las muertas y las que no reciben mensajes
+  (sin consola, huérfanas, PC caída).
+- **Enviar a todas**: abre una caja; manda el mismo texto a cada una, de a una, y dice «N ok / M
+  fallaron» con el motivo de cada falla. Si falló alguna, la caja queda abierta para reintentar.
+  Ctrl+Enter envía.
+- **Interrumpir**: un Esc en la terminal de cada una (`POST /sessions/<sid>/interrupt`).
+- **Limpiar**.
+
+El mismo gesto vale en los chips de **PC** y de **proyecto**: Ctrl+click suma o saca ese chip del
+filtro, así que se pueden ver varios a la vez; el click simple deja uno solo. Si se saca el último,
+vuelve a *Todas* o *Todos*. Esc pela una capa por vez: la caja de envío, lo que ya había (arrastre,
+ayuda, diálogo de conectar, panel), la selección múltiple y por último la tarjeta elegida.
 
 ### La tarjeta
 
@@ -407,18 +437,67 @@ todas) y a los cuatro ejecutables conocidos (`claude`, `codex`, `pi`, `coda`); e
 interpreta como comando. La tarjeta nueva aparece después de un barrido, como cualquier sesión
 recién abierta.
 
+**Elegir el modelo.** `model` en el mismo pedido agrega `--model <id>` al comando de `coda`, `claude`
+y `codex` (por ejemplo `globant_dgx/GLM-5.3-Flash`). El id va escrito en la línea del `.cmd`, así
+que solo pasa con `[A-Za-z0-9._/:@-]` y hasta 80 caracteres; la respuesta trae `model_applied`
+(falso si el agente no lo soporta o el id no es válido: ahí se lanza con el modelo por defecto).
+`pi` no lo recibe.
+
+### Cablear entre PCs
+
+Una regla «cuando termine» (`POST /rules {kind: "on_stop", from, to, text}`) puede unir tarjetas
+de PCs distintas, y es la forma de que una coordinadora se entere sola de lo que hacen los frentes
+de otra máquina, sin consultarlos de a uno.
+
+- **La regla vive en la PC del origen**, que es donde ocurre el Stop. Si `from` es de otra PC, el
+  pedido se reenvía a su `/peer/rules` y se crea allá; si esa PC tiene un lienzo viejo que no sabe
+  hacerlo, la respuesta es 502 y dice que hace falta `git pull`. Cuando termina el origen, esa PC le
+  escribe el aviso a la tarjeta de destino, que está en la otra (el envío ya se enruta solo).
+- **`GET /rules` incluye las de las demás PCs** (con su `pc`), y `DELETE /rules/<id>` de una regla
+  que vive en otra PC se reenvía a su dueña.
+- **Sobreviven al reinicio.** Las que tienen el destino en otra PC se marcan `xpc`; al arrancar, el
+  espejo todavía está vacío y antes se descartaban por «destino desconocido». Ahora se conservan, y
+  un lazo las limpia solo cuando todos los peers ya mandaron su estado y el destino de verdad no
+  existe más.
+- **Una tarjeta que cambia de id no pierde sus reglas.** Un agente recién lanzado nace como
+  `pid-NNN`; cuando sus hooks se enganchan, pasa a su `session_id` real y las reglas y los links que
+  nombraban a la provisoria pasan a la real.
+
+El skill lo resume en `coordinar.cablear()`: una regla por cada frente vivo hacia la coordinadora.
+
+### Restaurar sesiones tras un reinicio
+
+Si una PC se reinicia, mueren todos sus agentes y antes la tarjeta se borraba a los 60 s sin dejar
+registro. Ahora cada PC guarda en `~/.lienzo/restaurar.json` lo que hace falta para relanzarlos:
+agente, carpeta, título y `session_id`. Se escribe al borrar una tarjeta muerta, al arrancar el server
+y en el barrido de liveness (con un debounce de 30 s por sesión), de modo que un reinicio brusco
+también deja registro. **Lo que se cerró a propósito no se guarda**: `/exit`, `logout`, `clear`,
+`resume`. Se poda a los 7 días y el tope es de 200 entradas.
+
+- `GET /restaurables`: las de esta PC y las de cada peer vivo, con su `pc`.
+- `POST /restaurar {session_id | all: true, pc?, limit_by_memory?}`: relanza desde su carpeta
+  retomando la conversación (`claude --resume <id>`, `codex resume <id>`, `pi --resume`,
+  `coda --lastsession`). Es la PC dueña la que lanza, de a una y con 2 s entre cada una. Con `all`
+  se mira la memoria libre: entran `(libre − 1.5 GB) ÷ 0.7 GB` sesiones; si no entran todas, 409 con
+  cuántas sí, y con `limit_by_memory: true` relanza solo esas. Una segunda restauración al mismo
+  tiempo da 409.
+
+Por ahora se usa por la API y por el skill (`coordinar.restaurables()` y `coordinar.restaurar()`);
+todavía no tiene botón en el tablero.
+
 ### La tira de PCs y los chips de proyecto
 
 Con dos o más PCs emparejadas aparece, arriba del tablero, un chip **Todas** con el total y uno por
 PC con su nombre, cuántas tarjetas tiene ahí y —si está viva— memoria libre y temperatura
 (`GET /peers`); el conteo va en subíndice chico, para que no se lea como parte del nombre. Click
-filtra a esa PC y nada más: se vuelve con Todas. Una PC caída se ve en ○, sin
+filtra a esa PC y nada más (Ctrl+click suma otra al filtro, ver *Elegir varias a la vez*): se
+vuelve con Todas. Una PC caída se ve en ○, sin
 memoria ni temperatura (sería un dato viejo), y sus tarjetas quedan grises con controles
 deshabilitados y "sin conexión hace X".
 
 Al lado, con dos o más proyectos en el tablero, un chip por repo (con sesiones vivas) más
 **★ Coordinadoras**, en el header al lado del buscador. **El click elige y nada más**: un proyecto
-por vez, otro click sobre el elegido no lo suelta, y **Todos** vuelve a todo. ★ Coordinadoras es la
+por vez (con Ctrl+click se suman más), otro click sobre el elegido no lo suelta, y **Todos** vuelve a todo. ★ Coordinadoras es la
 excepción, se prende y se apaga, y se combina con lo elegido: muestra las coordinadoras de ese
 proyecto, o de todos si no hay ninguno elegido. Los dos
 filtros, el de PC y el de proyecto, viven en el navegador (como las posiciones corridas): no viajan
@@ -471,12 +550,14 @@ túnel, además la cookie de sesión.
 | POST | `/peers/join` | `{phrase, host, port}`; pega la frase del otro lado. 400 si no vale, 409 con tope de 4 ya emparejados |
 | GET | `/peers/lan` | las PCs de la LAN con el lienzo andando que todavía no están emparejadas, por el anuncio del beacon: `[{pc_id, name, ip, port, last_seen}]` |
 | DELETE | `/peers/<pc_id>` | revoca el peer y corta el espejo |
-| POST | `/sessions/launch` | `{pc?, cwd, agent, title?}`; lanza una sesión nueva, local o en la PC `pc` (reenviado); `cwd` tiene que caer en `launch_roots` de esa PC |
+| POST | `/sessions/launch` | `{pc?, cwd, agent, title?, model?}`; lanza una sesión nueva, local o en la PC `pc` (reenviado); `cwd` tiene que caer en `launch_roots` de esa PC; `model` agrega `--model` (coda, claude, codex) y la respuesta trae `model_applied` |
+| GET | `/restaurables` | las sesiones que se pueden relanzar tras un reinicio, de esta PC y de cada peer vivo (`pc`) |
+| POST | `/restaurar` | `{session_id \| all: true, pc?, limit_by_memory?}`; relanza desde su carpeta retomando la conversación, de a una; 409 si `all` no entra en la memoria libre o si ya hay otra restauración en curso |
 | GET | `/links` | envíos hechos; `kind` es `send`, `rule`, `native` o `user` |
-| GET | `/rules` | conexiones pendientes y cumplidas |
+| GET | `/rules` | conexiones pendientes y cumplidas, las de esta PC y las que viven en otras (con su `pc`) |
 | POST | `/rules` | `{kind: on_stop\|at, from, to, text, at, repeat, max_fires}`; una `at` acepta además `every_s` (segundos, mínimo 60; periódica) y `skip_busy`; con `every_s`, `max_fires` vale 5 si no viene y `skip_busy` true; 409 si arma un bucle, si ya existe, o si una `at` cae a ±2 min de otra hacia la misma sesión (la respuesta trae `rule_id` y `replace: true`; repetir con `replace: true` en el body la reemplaza) |
 | PUT | `/rules/<id>` | edita texto, hora (`at`), `repeat`, `max_fires`, y en una `at` también `every_s` (null la vuelve de un disparo) y `skip_busy`; reprogramar una `at` cumplida la reactiva |
-| DELETE | `/links/<id>`, `/rules/<id>` | quita la flecha o la conexión |
+| DELETE | `/links/<id>`, `/rules/<id>` | quita la flecha o la conexión; una regla que vive en otra PC se reenvía a su dueña |
 | GET | `/pending` | permisos esperando respuesta |
 | POST | `/pending/<id>` | `{decision: allow\|deny}` |
 | GET | `/config` | `{auto_continue, auto_retry}` |
@@ -488,8 +569,11 @@ túnel, además la cookie de sesión.
 
 Todo lo de arriba es del puerto de siempre (7321, sólo `127.0.0.1`), para el tablero. Entre PCs hay
 otra API, en el listener de peers (7322 por defecto): `/peer/hello` y `/peer/pair` (el
-emparejamiento, sin firma) y `/peer/{snapshot,health,events}` más `/peer/sessions/<sid>/...` (firmados
-con HMAC, ver "Varias PCs"). Ninguna la llama el navegador: son PC a PC.
+emparejamiento, sin firma) y `/peer/{snapshot,health,events}` más `/peer/sessions/<sid>/...`,
+`/peer/launch`, `/peer/rules` (crear y `DELETE`), `/peer/rules/{lock,check}`, `/peer/restaurables` y
+`/peer/restaurar` (firmados con HMAC, ver "Varias PCs"). Ninguna la llama el navegador: son PC a PC.
+Un envío, un lanzamiento o un `attach` entre PCs espera hasta 70 s (teclear en una consola tarda), y
+una restauración con `all`, hasta 300 s.
 
 ## Estructura
 
@@ -566,6 +650,7 @@ andando en el 7321 —no lo arrancan ni lo reinician—, la primera vez bajan Ch
   peer.json      identidad de esta PC: pc_id, nombre, color
   peers.json     PCs emparejadas: pc_id, nombre, ip, puerto, clave del par
   launch/        un .cmd por sesión lanzada desde el tablero (local o pedida por otra PC)
+  restaurar.json sesiones que se pueden relanzar tras un reinicio (agente, carpeta, título, session_id)
   lienzo.log     una línea por hecho: fecha, etiqueta (envio, regla, sesion, permiso, error…) y mensaje; en consola sólo la hora, y los tracebacks en una línea
 ```
 
@@ -589,6 +674,14 @@ andando en el 7321 —no lo arrancan ni lo reinician—, la primera vez bajan Ch
 - Una PC caída no avisa activamente: se nota porque su tira pasa a ○ y sus tarjetas quedan grises
   a los 45 s sin novedades. Revocar un peer tampoco le avisa al otro lado; se entera cuando deja de
   contestarle.
+- **A un coda no se le manda un mensaje largo.** Un texto de más de 500 caracteres o con saltos de
+  línea el lienzo lo vuelve adjunto y el agente tiene que leerlo con su herramienta `read`; en coda
+  esa herramienta se traba (medido: 4 sesiones, con Qwen y con GLM, más de una hora en «usando
+  read»). Con mensajes cortos (menos de 500 caracteres, sin saltos de línea) que además le piden
+  leer con el shell, las mismas revisiones terminaron en 2 minutos.
+- El lienzo no puede cerrar un agente colgado de otra PC: `/exit` queda en cola y `interrupt` no
+  alcanza si el proceso está clavado; hay que pedirle a otro agente de esa PC un `taskkill` por PID.
+- Lo que falta, con su evidencia, está en [`MEJORAS.md`](MEJORAS.md).
 
 ## Licencia
 

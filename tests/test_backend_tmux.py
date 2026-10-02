@@ -121,3 +121,20 @@ def test_la_pantalla_de_tmux_tiene_la_forma_de_screen_py(aislado, monkeypatch):
     assert r["lines"] == ["Switch model?", "❯ 1. Yes", "  2. No"]
     assert r["dialog"]["options"] == [{"n": 1, "text": "Yes"}, {"n": 2, "text": "No"}]
     assert "input" in r["area"]
+
+
+def test_la_provisoria_del_barrido_cede_sus_reglas_a_la_sesion_con_hooks(aislado, monkeypatch):
+    """Un agente recien lanzado nace como `pid-N`; cuando llega su primer hook, la regla de cableado
+    hecha contra la provisoria tiene que pasar al sid real, y no quedar colgando de un id que se va."""
+    monkeypatch.setattr(backend._win, "is_tui", lambda pid: True)
+    monkeypatch.setattr(ses.rules, "path", str(aislado / "rules.json"))
+    monkeypatch.setattr(ses.links, "path", str(aislado / "links.json"))
+    monkeypatch.setattr(ses.rules, "items", [{"id": "r1", "kind": "on_stop", "from": f"pid-{PID}", "to": "coord"}])
+    monkeypatch.setattr(ses.links, "items", [])
+    tarjeta(f"pid-{PID}", backend="win32")
+    real = ses.new_session("10000000-0000-4000-8000-000000000002", "claude", "hook")
+    st.sessions[real["session_id"]] = real
+    with st.lock:
+        ses.claim_pid(real, {"pid": PID, "hook_event_name": "SessionStart"})
+    assert f"pid-{PID}" not in st.sessions
+    assert ses.rules.items[0]["from"] == "10000000-0000-4000-8000-000000000002"

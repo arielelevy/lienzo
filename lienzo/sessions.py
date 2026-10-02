@@ -146,6 +146,11 @@ def repo_coordinator(repo: str | None, pc: str | None, local: list[dict], remote
 
 
 ATTACH_WRAPPER = "Leé el archivo adjunto y respondé:"
+# la herramienta `read` de coda se traba (medido el 2026-10-02: 4 sesiones, Qwen y GLM, mas de una hora
+# en «usando read»), y su shell anda: a coda se le pide leer el adjunto con el shell. Empieza igual que
+# ATTACH_WRAPPER, asi que lo que detecta el mensaje envuelto (prefijo) lo sigue reconociendo.
+ATTACH_WRAPPER_SHELL = ATTACH_WRAPPER + " (NO uses la herramienta read: leelo con el shell, con type)"
+SHELL_READERS = ("coda",)
 
 
 def attachment_path(prompt: str) -> str | None:
@@ -457,13 +462,11 @@ def continues_session(old: dict, ev: dict) -> bool:
     return t_old is None or (t_new is not None and t_new > t_old)
 
 
-def continue_session(old: dict, new: dict) -> None:
-    """La sesion nueva hereda el pid de la vieja y todo lo que la apuntaba: reglas y links donde la
-    vieja era origen o destino pasan al sid nuevo, y la vieja se da de baja."""
-    old_sid, new_sid = old["session_id"], new["session_id"]
+def repoint_refs(old_sid: str, new_sid: str) -> tuple[int, int]:
+    """Las dos puntas de cada regla y de cada link que nombraban a `old_sid` pasan a `new_sid`.
+    Devuelve (reglas, links) re-apuntados. Se llama con el lock tomado."""
 
     def repoint(coll) -> int:
-        """Las dos puntas de cada regla / link que nombraban a la vieja pasan al sid nuevo."""
         n = 0
         for x in coll.items:
             for k in ("from", "to"):
@@ -474,8 +477,16 @@ def continue_session(old: dict, new: dict) -> None:
             coll.save()
         return n
 
+    return repoint(rules), repoint(links)
+
+
+def continue_session(old: dict, new: dict) -> None:
+    """La sesion nueva hereda el pid de la vieja y todo lo que la apuntaba: reglas y links donde la
+    vieja era origen o destino pasan al sid nuevo, y la vieja se da de baja."""
+    old_sid, new_sid = old["session_id"], new["session_id"]
+
     with lock:
-        n_rules, n_links = repoint(rules), repoint(links)
+        n_rules, n_links = repoint_refs(old_sid, new_sid)
         for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator", "coordinator_scope", "pc"):
             if old.get(k) is not None:
                 new[k] = old[k]
@@ -1022,6 +1033,10 @@ def claim_pid(s: dict, ev: dict) -> None:
         for other_sid, other in list(sessions.items()):
             if other_sid != sid and backend.proc_key(other) == backend.proc_key(ev):
                 if other.get("source") == "sweep" or other_sid.startswith("pid-"):
+                    # el placeholder del barrido es la misma sesion: lo que lo nombraba (una regla de
+                    # cableado hecha al lanzarla, un link) pasa al sid real antes de darlo de baja
+                    if any(repoint_refs(other_sid, sid)):
+                        rules.publish()
                     drop_session(other_sid, "duplicada por barrido")
                 elif continues_session(other, ev):
                     continue_session(other, s)
@@ -1821,15 +1836,18 @@ def _under_adjuntos(path: str) -> bool:
         return False
 
 
-def compose_send(sid: str, text: str, attachments: list[str]) -> tuple[str, str, list[str]]:
+def compose_send(
+    sid: str, text: str, attachments: list[str], agent: str | None = None
+) -> tuple[str, str, list[str]]:
     """(lo que se tipea, lo que escribio el usuario, los adjuntos). Un mensaje largo o de varias
-    lineas no se tipea: se guarda como .md y viaja como 'Leé el archivo adjunto...' (§6.5)."""
+    lineas no se tipea: se guarda como .md y viaja como 'Leé el archivo adjunto...' (§6.5). Para un
+    agente de SHELL_READERS el aviso le pide leerlo con el shell y no con su herramienta `read`."""
     attachments = [a for a in (attachments or []) if _under_adjuntos(a)]  # M5: confinar al buzon
     text = (text or "").replace("\r", "")
     orig = text.strip()  # lo que escribio el usuario: es lo que se cuenta y lo que muestra la tarjeta
     if len(text) > LONG_TEXT or "\n" in orig:
         attachments = [save_attachment(sid, "mensaje.md", text.encode("utf-8"))] + list(attachments)
-        text = ATTACH_WRAPPER
+        text = ATTACH_WRAPPER_SHELL if agent in SHELL_READERS else ATTACH_WRAPPER
     parts = [strip_control(text).strip()] if text.strip() else []  # A4: sin teclas de control
     parts += [f"Adjunto: {a}" for a in attachments]
     return " ".join(parts), orig, attachments
@@ -1972,7 +1990,7 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
         return _mirror_forward(owner, "POST", f"/sessions/{sid}/send", {"text": text, "attachments": attachments})
     if frenado := send_blocked(s):
         return frenado
-    final, orig, attachments = compose_send(sid, text, attachments)
+    final, orig, attachments = compose_send(sid, text, attachments, agent=s.get("agent"))
     if not final:
         return 400, {"ok": False, "error": "texto vacio"}
     with lock:
