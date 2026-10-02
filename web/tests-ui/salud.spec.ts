@@ -70,16 +70,10 @@ test("cero errores de consola en un recorrido completo", async ({ page }) => {
   expect(errores).toEqual([]);
 });
 
-/** Deuda de contraste que ya tenía la app cuando se escribió esta batería, con el número medido.
- *  No es una excusa: es un trinquete. Un texto nuevo que no llegue al mínimo hace fallar la prueba,
- *  y uno de estos que empeore, también. Si alguno se arregla, la prueba avisa para sacarlo de acá.
- *
- *  Las dos son de `opacity` encima de un color que solo, sin transparencia, sí llegaría:
- *  `--acc` (#5b9cff) sobre `--card` (#1d212b) da 5.15:1, y `--dim` (#8b93a7) da 4.79:1. */
-const DEUDA = [
-  { sel: "span.f", ratio: 3.91, donde: "card.css · .card .activity .f: var(--acc) con opacity .75" },
-  { sel: "button.copy", ratio: 2.55, donde: "card.css · .card .copy y .dg .copy: var(--dim) con opacity .55" },
-];
+/** Deuda de contraste conocida, con el número medido. No es una excusa: es un trinquete. Un texto
+ *  nuevo que no llegue al mínimo hace fallar la prueba, y uno de estos que empeore, también. Si
+ *  alguno se arregla, la prueba avisa para sacarlo de acá. Hoy está saldada. */
+const DEUDA: { sel: string; ratio: number; donde: string }[] = [];
 
 test("todo el texto llega al mínimo de contraste de WCAG AA", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

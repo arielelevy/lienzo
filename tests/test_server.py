@@ -896,6 +896,42 @@ def test_keep_alive_tras_un_404_sigue_contestando(aislado):
         srv.shutdown()
 
 
+def test_el_enlace_de_alta_se_canjea_una_sola_vez_aunque_lleguen_juntos(aislado, monkeypatch):
+    """Ocho GET /enroll con el mismo token a la vez: uno se lleva la passphrase, los demas 410."""
+    import http.client
+    import threading
+    import time as _time
+
+    monkeypatch.setattr(
+        server, "enroll", {"token": "tok-unico", "passphrase": "p", "otpauth": "o", "expires": _time.time() + 60}
+    )
+    srv = server.QuietServer(("127.0.0.1", 0), server.Handler)
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    largada = threading.Barrier(8)
+    codigos: list[int] = []
+
+    def canjear():
+        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+        largada.wait()
+        c.request("GET", "/enroll?token=tok-unico")
+        r = c.getresponse()
+        r.read()
+        codigos.append(r.status)
+        c.close()
+
+    try:
+        hilos = [threading.Thread(target=canjear) for _ in range(8)]
+        for h in hilos:
+            h.start()
+        for h in hilos:
+            h.join(10)
+    finally:
+        srv.shutdown()
+    assert sorted(codigos) == [200] + [410] * 7
+    assert server.enroll is None
+
+
 def test_la_cabecera_de_un_informe_recibido_no_es_titulo():
     assert ses.bad_title("Mensaje de lienzo (claude) sobre 'Encargo R1: revisión':")
     assert ses.bad_title("Mensaje 20260906")
