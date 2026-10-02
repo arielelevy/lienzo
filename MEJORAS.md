@@ -49,6 +49,30 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   con un reinicio real).
 - **Pruebas reales pendientes** (solo se probaron con transportes simulados): recuperación cuando una
   tarjeta remota ya no existe, y el reintento ante conexión rechazada.
+- **Capacidad de memoria duplicada**: `restore_capacity` en `lienzo/server.py` (1,5 GB de reserva, 0,7
+  por sesión) y `coordinar.capacidad` en `skills/lienzo/coordinar.py` (`reserva_gb=1.5`,
+  `gb_por_sesion=0.7`) repiten las mismas constantes. Que el skill se las pida al server.
+- **Detectar el lienzo viejo de la otra PC por capacidades**: hoy se reconoce por el texto «ruta
+  desconocida» de la respuesta (`cablear` y el reenvío). Un campo de capacidades en el handshake
+  (`/peer/health` o el emparejado) sería un contrato; el texto cambia sin avisar.
+- **`xpc` + `purge_stale_xpc` con hilo y reloj fijo**: la purga corre en un hilo con un reloj fijo y
+  una regla hacia otra PC solo guarda el flag `xpc`. Guardar `to_pc` en la regla y conciliar por peer
+  al aplicar su snapshot: hoy un peer apagado frena la purga de las reglas hacia los demás.
+- **El espejo se reconcilia por rebote**: una tarjeta fantasma se detecta cuando un envío vuelve con
+  `unknown_session` (`mirror.forward` → `_tarjeta_fantasma`). Debería reconciliarse con un snapshot
+  periódico o una secuencia en el SSE, no esperar a que alguien escriba.
+- **`drop_session(sid, reason)` usa el texto como protocolo**: `restore_on_drop` hace
+  `reason.startswith("muerta")` (`lienzo/sessions.py`). Pasar a un parámetro o un enum.
+- **`ended_on_purpose` es una lista negra de razones** (`lienzo/restore.py`, `_NOT_ON_PURPOSE`): una
+  razón nueva de SessionEnd de Claude Code se tomaría como salida voluntaria y la sesión no se
+  restauraría. Invertir a lista blanca de las razones conocidas de salida voluntaria.
+- **El enrutado owner→forward está repetido en ~10 handlers de `lienzo/server.py`** (`_route_session`
+  + `mirror.MIRROR.forward` en cada ruta de `/sessions/<id>/...`): una sola función `route_or_local`.
+- **`restorables_all` y `cablear` consultan en serie**: una PC lenta o caída suma su timeout al de las
+  demás. Paralelizar las consultas por peer.
+- **Timeout de acciones lentas por sufijo de ruta** (`SLOW_ACTIONS`, `RESTORE_ACTION` y
+  `_timeout_para` en `lienzo/federation.py`): una ruta nueva lenta se olvida y cae en los 5 s.
+  Pasar el timeout como parámetro de `forward`.
 
 ## Ideas
 
