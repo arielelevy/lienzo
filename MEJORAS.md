@@ -50,6 +50,14 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   `install.py` en las dos PCs para que coda los mande (toca `~/.coda/config.json`).
 - **`--coda-home DIR` aísla la configuración de coda** (está en `coda --help`): sirve para lanzar con `--model` sin pisar el
   modelo por defecto de la PC (ver el punto de `--model`). Falta ver cómo conserva el login.
+- **Reiniciar lienzo en la otra PC cierra las codas que corren** (medido el 2026-10-03): la coda de la sesión 3 quedó
+  `ended_at` en el mismo segundo del reinicio y hubo que restaurarla (`restaurar`, con contexto). Además, con la causa sin
+  resolver, todo lo que sale hacia esa PC dio `401 firma invalida` de repente (sin cambios de reloj ni de claves) y solo se
+  arregló reiniciando su lienzo. Ideas: que las codas no cuelguen del proceso del server, y que ante un 401 el lienzo
+  intente el reinicio del peer o avise con el motivo («su server no valida mi firma»), en vez de dejar el tablero mudo.
+- **Una coda lanzada con un encargo largo lo resume y se queda esperando** (medido con las sesiones 3 y 4): hay que mandar
+  un segundo mensaje «arrancá». Probar que `lanzar_y_titular(..., encargo=...)` mande el encargo y, si la tarjeta queda en
+  `termino` con un resumen, el «arrancá» solo; o pedirlo en la primera frase del encargo.
 - **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
   el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.
 - **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se
