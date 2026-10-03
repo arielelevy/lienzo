@@ -31,6 +31,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-02 | **El aviso `on_stop` de coda espera 15 s y se cancela si la tarjeta volvió a trabajar** (la coda sí manda hooks: el Stop llega en medio de un turno) (`ON_STOP_SETTLE_S` en `lienzo/rules.py`) | la regla avisó «terminó» de B y de E cuando seguían trabajando (Stop intermedio: compactación o hueco entre herramientas; causa exacta sin confirmar) y la coordinadora leyó un `last_reply` viejo |
 | 2026-10-02 | **Compactación de coda**: `install.py` registra `PreCompact` y `PostCompact`; la tarjeta queda marcada «compactando» (vence a los 10 min) y ni el `Stop` ni `on_stop` cuentan como fin de turno | B y E mostraron «terminó» mientras compactaban; el doc de coda (`hooks.md`) lista esos dos eventos |
 | 2026-10-03 | **Los botones Permitir/Denegar de coda vuelven** si el permiso sigue abierto 20 s después de contestar (`CODA_SENT_RETRY_S`): la marca `where: "enviado"` los escondía para siempre | la tarjeta de D tuvo un permiso real abierto horas sin botones; el usuario: «no me aparecen los yes en lienzo» |
+| 2026-10-03 | `coordinar.cablear` y `regla_informe` **fallan claro si `YO` está vacío** | con `YO` vacío el server contestaba 404 «sesion destino desconocida» y parecía que la tarjeta nueva no existía |
 
 ## Pendiente (con evidencia)
 

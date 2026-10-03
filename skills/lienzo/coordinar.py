@@ -240,6 +240,8 @@ def regla_informe(s, texto, max_fires=30):
     `repeat` es obligatorio: sin él dispara una vez y queda apagada, y un frente que cierra dos
     turnos avisa solo el primero.
     """
+    if not YO:
+        raise ValueError("c.YO esta vacio: fija c.YO = <session_id de la coordinadora> antes de cablear (sin eso el server contesta 404 'sesion destino desconocida')")
     return pedir(
         "POST",
         "/rules",
@@ -256,6 +258,8 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
 
     Una tarjeta de OTRA PC crea su regla en esa PC (ahi ocurre el Stop): si esa PC tiene un lienzo
     viejo, falla con un mensaje que lo dice (hace falta `git pull` y reiniciarlo)."""
+    if not YO:
+        raise ValueError("c.YO esta vacio: fija c.YO = <session_id de la coordinadora> antes de cablear (sin eso el server contesta 404 'sesion destino desconocida')")
     r = pedir("GET", "/rules")[1]
     r = r if isinstance(r, list) else (r or {}).get("rules", []) or []
     ya = {x.get("from") for x in r if x.get("to") == YO and x.get("kind") == "on_stop"}
