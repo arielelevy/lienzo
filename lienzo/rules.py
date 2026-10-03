@@ -421,6 +421,9 @@ def fire_on_stop(sid: str) -> None:
     with lock:
         s = sessions.get(sid)
         if s and any(suya(r) for r in rules.items):
+            if ses.compacting(s):
+                state.log(f"on_stop de {sid[:8]} no disparado: la sesion esta compactando")
+                return
             if s.get("last_error"):
                 state.log(
                     f"on_stop de {sid[:8]} no disparado: el turno termino con error ({short(s['last_error'], 80)})"

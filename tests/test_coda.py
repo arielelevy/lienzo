@@ -237,3 +237,20 @@ def test_el_permiso_de_coda_se_detecta_aunque_el_titulo_se_salga_de_la_pantalla(
     assert ses.coda_ask_open(largo) is True  # el titulo ya no se ve, el pie sí
     assert ses.coda_ask_open("  Ask anything... (/ for commands ? for shortcuts)") is False
     assert ses.coda_ask_open("Enter confirm  sin el otro texto") is False
+
+
+def test_compactacion_de_coda_no_cuenta_como_fin_de_turno(monkeypatch):
+    """PreCompact marca la sesion; un Stop en medio no la deja en `termino`, y la marca vence."""
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(ses, "on_turn_end", lambda sid: None)
+    s = {"session_id": "a" * 36, "agent": "coda", "state": "corriendo", "state_since": "x", "needs": None}
+    s["compacting"] = ses.time.time()
+    ses.hook_stop(s, {"last_assistant_message": "resumen"})
+    assert s["state"] == "corriendo" and not s.get("last_reply")
+    s["compacting"] = ses.time.time() - ses.COMPACTING_MAX_S - 1  # PostCompact nunca llego
+    ses.hook_stop(s, {"last_assistant_message": "listo"})
+    assert s["state"] == "termino" and s["last_reply"] == "listo"
+    assert "PreCompact" in __import__("install").CODA_EVENTS and "PostCompact" in __import__("install").CODA_EVENTS

@@ -1082,12 +1082,23 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
         s.update({"tool_count": 0, "last_files": [], "last_cmd": None, "tool_errors": 0})
 
 
+COMPACTING_MAX_S = 600  # si PostCompact no llega (coda se cae), la marca vence sola
+
+
+def compacting(s: dict) -> bool:
+    """La sesion esta compactando contexto (PreCompact sin PostCompact todavia)."""
+    t = s.get("compacting")
+    return bool(t) and time.time() - t < COMPACTING_MAX_S
+
+
 def hook_stop(s: dict, ev: dict) -> None:
     if stale_stop(s, ev):
         state.log(
             f"Stop tardio de {s['session_id'][:8]} (pedido {str(ev.get('prompt_id'))[:8]}, ya corre "
             f"{str(s.get('prompt_id'))[:8]}): la tarjeta sigue corriendo"
         )
+    elif compacting(s):
+        state.log(f"Stop de {s['session_id'][:8]} durante una compactacion: la tarjeta sigue corriendo")
     else:
         set_state(s, "termino")
         if ev.get("last_assistant_message"):
@@ -1233,6 +1244,8 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
             set_state(s, "corriendo")
     elif name == "PreToolUse" and s["agent"] == "coda":
         coda_tool(s, ev)
+    elif name in ("PreCompact", "PostCompact") and s["agent"] == "coda":
+        s["compacting"] = time.time() if name == "PreCompact" else None
     elif name == "Interrupt":
         set_state(s, "termino")
     elif name == "SessionEnd":

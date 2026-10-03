@@ -57,6 +57,10 @@ CODA_EVENTS = {
     "SessionStart": (True, 5),
     "UserPromptSubmit": (True, 5),
     "PreToolUse": (True, 5),
+    # coda compacta el contexto en medio de un turno y el Stop llega igual: PreCompact/PostCompact
+    # dejan marcada la compactacion para que no cuente como fin de turno (doc de coda, hooks.md)
+    "PreCompact": (True, 5),
+    "PostCompact": (True, 5),
     "Stop": (True, 5),
     "SessionEnd": (False, 2),
 }

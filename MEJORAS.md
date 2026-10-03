@@ -29,6 +29,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-02 | Elegir el modelo al lanzar (`--model`, coda, claude y codex) | usar GLM 5.3 Flash en la otra PC (ojo: en coda el `--model` cambia el modelo por defecto de esa PC, ver Pendiente) |
 | 2026-10-02 | **Firma sin query**: `signed_headers` firma la ruta sin `?…`, como la verifica el receptor | `/turns` y `/digest` de una tarjeta de otra PC daban 401 «firma invalida» porque el emisor firmaba `?n=…` |
 | 2026-10-02 | **El aviso `on_stop` de coda espera 15 s y se cancela si la tarjeta volvió a trabajar** (la coda sí manda hooks: el Stop llega en medio de un turno) (`ON_STOP_SETTLE_S` en `lienzo/rules.py`) | la regla avisó «terminó» de B y de E cuando seguían trabajando (Stop intermedio: compactación o hueco entre herramientas; causa exacta sin confirmar) y la coordinadora leyó un `last_reply` viejo |
+| 2026-10-02 | **Compactación de coda**: `install.py` registra `PreCompact` y `PostCompact`; la tarjeta queda marcada «compactando» (vence a los 10 min) y ni el `Stop` ni `on_stop` cuentan como fin de turno | B y E mostraron «terminó» mientras compactaban; el doc de coda (`hooks.md`) lista esos dos eventos |
 
 ## Pendiente (con evidencia)
 
@@ -41,11 +42,10 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 - **`last_reply` de una coda que trabaja dice «usando bash» / «usando read»** (medido el 2026-10-02): es el último estado
   de herramienta, no una respuesta; la coordinadora lo confunde con el informe. Idea: que `last_reply` quede vacío mientras la
   tarjeta está `corriendo` y solo se llene con el texto final del turno.
-- **Aprovechar los hooks de coda que lienzo todavía no usa** (según `~/.coda/assets/docs/hooks.md`, medido el 2026-10-02):
-  `install.py` registra para coda solo `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Stop` y `SessionEnd`. Coda
-  también manda `PreCompact` y `PostCompact` (la tarjeta de B y de E mostró «Stop» mientras compactaban) y el `Stop` trae
-  `stop_reason` (el doc solo muestra `turn_complete`: ver qué otros valores existen). Con `PreCompact` la tarjeta se
-  marcaría «compactando» y no dispararía `on_stop`, y el parche de los 15 s de espera ya no haría falta.
+- **Coda: `stop_reason` del Stop sin mirar** (medido el 2026-10-02): el `Stop` trae `stop_reason` y el doc solo muestra
+  `turn_complete`; ver qué otros valores existen (respuesta cortada que continúa, error) y usarlos en vez de adivinar.
+- **Probar `PreCompact`/`PostCompact` con una coda real**: solo hay prueba con eventos simulados, y falta correr
+  `install.py` en las dos PCs para que coda los mande (toca `~/.coda/config.json`).
 - **`--coda-home DIR` aísla la configuración de coda** (está en `coda --help`): sirve para lanzar con `--model` sin pisar el
   modelo por defecto de la PC (ver el punto de `--model`). Falta ver cómo conserva el login.
 - **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
