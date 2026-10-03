@@ -591,7 +591,7 @@ def test_handle_peer_check_rechaza_rule_invalida():
 
 
 def test_fire_on_stop_de_coda_espera_y_no_dispara_si_la_tarjeta_volvio_a_trabajar(aislado, monkeypatch):
-    """Coda no tiene hooks fiables: un hueco entre herramientas se lee como `termino`. El aviso
+    """El Stop de una coda a veces llega en un hueco (compactacion, entre herramientas) y sigue trabajando. El aviso
     espera ON_STOP_SETTLE_S y se cancela si la tarjeta ya volvio a `corriendo` (medido con B y E)."""
     monkeypatch.setattr(rl, "ON_STOP_SETTLE_S", 0.05)
     disparadas = []

@@ -28,7 +28,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-02 | **`lanzar_y_titular` cablea por defecto** la tarjeta nueva a la coordinadora | tres codas lanzados sin regla: no avisaban al terminar |
 | 2026-10-02 | Elegir el modelo al lanzar (`--model`, coda, claude y codex) | usar GLM 5.3 Flash en la otra PC (ojo: en coda el `--model` cambia el modelo por defecto de esa PC, ver Pendiente) |
 | 2026-10-02 | **Firma sin query**: `signed_headers` firma la ruta sin `?…`, como la verifica el receptor | `/turns` y `/digest` de una tarjeta de otra PC daban 401 «firma invalida» porque el emisor firmaba `?n=…` |
-| 2026-10-02 | **El aviso `on_stop` de coda espera 15 s y se cancela si la tarjeta volvió a trabajar** (`ON_STOP_SETTLE_S` en `lienzo/rules.py`) | la regla avisó «terminó» de B y de E cuando seguían trabajando (compactación, hueco entre herramientas) y la coordinadora leyó un `last_reply` viejo |
+| 2026-10-02 | **El aviso `on_stop` de coda espera 15 s y se cancela si la tarjeta volvió a trabajar** (la coda sí manda hooks: el Stop llega en medio de un turno) (`ON_STOP_SETTLE_S` en `lienzo/rules.py`) | la regla avisó «terminó» de B y de E cuando seguían trabajando (Stop intermedio: compactación o hueco entre herramientas; causa exacta sin confirmar) y la coordinadora leyó un `last_reply` viejo |
 
 ## Pendiente (con evidencia)
 
@@ -65,7 +65,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   carpetas permite un peer sin intentar lanzar. Mostrarlo en `GET /peers`.
 - **Log de los reenvíos que andan bien**: hoy solo se loguean los que fallan. Sumar la latencia
   (ms) de cada reenvío ayudaría a ver una PC que se vuelve lenta.
-- **Coda no tiene hooks en el lienzo**: nace como tarjeta de barrido (`pid-NNNN`, sin título ni
+- **(Revisar: desactualizado) «Coda no tiene hooks»**: el 2026-10-02 las codas figuran `hooked=True`; antes nacía como tarjeta de barrido (`pid-NNNN`, sin título ni
   transcripción), cambia de id, y su estado no refleja que está trabajando. Un hook de coda daría
   título, estado y `last_reply` confiables.
 - **Un solo modelo para todos los codas**: Qwen en el DGX atiende de a poco; con 5 codas a la vez
