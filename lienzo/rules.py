@@ -96,6 +96,7 @@ def render_template(tpl: str, s: dict | None) -> str:
     )
 
 
+ON_STOP_SETTLE_S = 15  # coda no tiene hooks: su "termino" sale de leer la pantalla y a veces es un hueco entre dos herramientas
 ON_STOP_COOLDOWN_S = 30  # dos sesiones conectadas en ambos sentidos no se contestan en bucle
 CONTINUE_TEXT = "Continuar"
 CONTINUE_DELAY_S = 60
@@ -398,6 +399,16 @@ def fire_rule(rule: dict) -> None:
 def fire_on_stop(sid: str) -> None:
     """La sesion `sid` cerro un turno: disparar sus reglas 'cuando termine' (las que no esten
     enfriando, ver ON_STOP_COOLDOWN_S)."""
+    with lock:
+        s0 = sessions.get(sid)
+        desde = s0.get("state_since") if s0 and s0.get("agent") == "coda" else None
+    if desde is not None and ON_STOP_SETTLE_S:
+        time.sleep(ON_STOP_SETTLE_S)
+        with lock:
+            s1 = sessions.get(sid)
+            if not s1 or s1.get("state") != "termino" or s1.get("state_since") != desde:
+                state.log(f"on_stop de {sid[:8]} no disparado: la tarjeta volvio a trabajar (cierre falso de coda)")
+                return
     ahora = dt.datetime.now().astimezone()
 
     def suya(r: dict) -> bool:

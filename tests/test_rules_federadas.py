@@ -588,3 +588,28 @@ def test_handle_peer_check_mira_lo_local_y_lo_espejado(aislado, mirror_fake, mon
 
 def test_handle_peer_check_rechaza_rule_invalida():
     assert rl.handle_peer_check({"rule": "no es un dict"}) == (400, {"error": "rule debe ser un objeto"})
+
+
+def test_fire_on_stop_de_coda_espera_y_no_dispara_si_la_tarjeta_volvio_a_trabajar(aislado, monkeypatch):
+    """Coda no tiene hooks fiables: un hueco entre herramientas se lee como `termino`. El aviso
+    espera ON_STOP_SETTLE_S y se cancela si la tarjeta ya volvio a `corriendo` (medido con B y E)."""
+    monkeypatch.setattr(rl, "ON_STOP_SETTLE_S", 0.05)
+    disparadas = []
+    monkeypatch.setattr(rl, "fire_rule", lambda r: disparadas.append(r["id"]))
+    regla = {"id": "r1", "enabled": True, "kind": "on_stop", "from": SID, "to": OTHER}
+    monkeypatch.setattr(rl.rules, "items", [regla])
+    s = {"session_id": SID, "agent": "coda", "state": "termino", "state_since": "t1", "last_reply": "ok"}
+    monkeypatch.setitem(rl.sessions, SID, s)
+
+    def volver_a_trabajar(_):
+        s["state"] = "corriendo"
+        s["state_since"] = "t2"
+
+    monkeypatch.setattr(rl.time, "sleep", volver_a_trabajar)
+    rl.fire_on_stop(SID)
+    assert disparadas == []
+
+    s["state"], s["state_since"] = "termino", "t3"
+    monkeypatch.setattr(rl.time, "sleep", lambda _: None)  # sigue en `termino`: es un cierre real
+    rl.fire_on_stop(SID)
+    assert disparadas == ["r1"]

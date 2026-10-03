@@ -28,6 +28,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-02 | **`lanzar_y_titular` cablea por defecto** la tarjeta nueva a la coordinadora | tres codas lanzados sin regla: no avisaban al terminar |
 | 2026-10-02 | Elegir el modelo al lanzar (`--model`, coda, claude y codex) | usar GLM 5.3 Flash en la otra PC (ojo: en coda el `--model` cambia el modelo por defecto de esa PC, ver Pendiente) |
 | 2026-10-02 | **Firma sin query**: `signed_headers` firma la ruta sin `?…`, como la verifica el receptor | `/turns` y `/digest` de una tarjeta de otra PC daban 401 «firma invalida» porque el emisor firmaba `?n=…` |
+| 2026-10-02 | **El aviso `on_stop` de coda espera 15 s y se cancela si la tarjeta volvió a trabajar** (`ON_STOP_SETTLE_S` en `lienzo/rules.py`) | la regla avisó «terminó» de B y de E cuando seguían trabajando (compactación, hueco entre herramientas) y la coordinadora leyó un `last_reply` viejo |
 
 ## Pendiente (con evidencia)
 
@@ -37,6 +38,9 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   quien mira el tablero y a la coordinadora, que gasta consultas en revisar. Los permisos de los subagentes (forks) de Claude Code
   salen en la terminal del Claude principal y el tablero no los distingue. Idea: cuando el estado dice permiso en la terminal
   y la pantalla ya no muestra el cartel («Do you want to proceed?» o «Enter confirm»), limpiar `needs` y volver al estado real.
+- **`last_reply` de una coda que trabaja dice «usando bash» / «usando read»** (medido el 2026-10-02): es el último estado
+  de herramienta, no una respuesta; la coordinadora lo confunde con el informe. Idea: que `last_reply` quede vacío mientras la
+  tarjeta está `corriendo` y solo se llene con el texto final del turno.
 - **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
   el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.
 - **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se
