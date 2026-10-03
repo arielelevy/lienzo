@@ -30,6 +30,12 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 
 ## Pendiente (con evidencia)
 
+- **La tarjeta se queda en «Te necesita» con un permiso que ya no existe** (medido el 2026-10-02): la tarjeta del Claude del gestor
+  mostró durante unas 16 horas «Pide permiso» con el comando de un ruff de un subagente, desde un aviso (Notification) de las 05:06,
+  aunque en su terminal no había ningún cartel. Ese permiso lo había aprobado yo hacía horas y la marca no se limpió. Confunde a
+  quien mira el tablero y a la coordinadora, que gasta consultas en revisar. Los permisos de los subagentes (forks) de Claude Code
+  salen en la terminal del Claude principal y el tablero no los distingue. Idea: cuando el estado dice permiso en la terminal
+  y la pantalla ya no muestra el cartel («Do you want to proceed?» o «Enter confirm»), limpiar `needs` y volver al estado real.
 - **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
   el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.
 - **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se
