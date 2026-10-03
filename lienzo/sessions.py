@@ -1154,6 +1154,7 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
         s["last_reply"] = f"usando {tool}" + (" (subagente)" if sub else "")
 
 
+CODA_SENT_RETRY_S = 20  # tras contestar, si el permiso sigue abierto pasado este tiempo, la tarjeta vuelve a mostrar los botones
 CODA_ASK_CAUSES = {
     "command-policy": "comando que pide confirmación",
     "unresolved-command": "comando que no pudo verificar",
@@ -1184,6 +1185,9 @@ def coda_log_activity(s: dict) -> bool:
         if needs.get("kind") != "permission" or needs.get("coda_at") != ask["at"]:
             set_needs(s, {"kind": "permission", "tool": ask["tool"], "detail": detail, "where": "terminal"})
             s["needs"]["coda_at"] = ask["at"]
+        elif needs.get("where") == "enviado" and time.time() - (needs.get("sent_ts") or 0) > CODA_SENT_RETRY_S:
+            # el Enter/Esc no resolvio el permiso (sigue abierto en el log): se devuelven los botones
+            s["needs"] = {**needs, "where": "terminal"}
     elif s["state"] == "te_necesita" and needs.get("coda_at"):
         set_state(s, "corriendo" if act["running"] else "termino")
     if not s.get("hooked") and act["running"] and act["last_tool"]:
@@ -1975,7 +1979,7 @@ def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
     state.log(f"permiso CODA {s['session_id'][:8]} -> {decision} ({needs.get('tool')}) desde el lienzo")
     with lock:
         # coda_log_activity la devuelve a corriendo en cuanto la sesion vuelva a escribir en el log
-        s["needs"] = {**needs, "where": "enviado"}
+        s["needs"] = {**needs, "where": "enviado", "sent_ts": time.time()}
         touch(s)
     return 200, out
 

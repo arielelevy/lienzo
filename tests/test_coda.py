@@ -254,3 +254,22 @@ def test_compactacion_de_coda_no_cuenta_como_fin_de_turno(monkeypatch):
     ses.hook_stop(s, {"last_assistant_message": "listo"})
     assert s["state"] == "termino" and s["last_reply"] == "listo"
     assert "PreCompact" in __import__("install").CODA_EVENTS and "PostCompact" in __import__("install").CODA_EVENTS
+
+
+def test_permiso_enviado_que_sigue_abierto_devuelve_los_botones(monkeypatch):
+    """Tras Permitir/Denegar la tarjeta queda `enviado`; si el log sigue mostrando el permiso abierto
+    pasado CODA_SENT_RETRY_S (el Enter no hizo efecto), vuelve a `terminal` y muestra los botones."""
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    ask = {"cause": "command-policy", "tool": "bash", "sub": False, "at": "2026-10-03T01:03:27.675Z"}
+    act = {"running": True, "asking": ask, "last_at": None, "last_tool": "bash", "tools": 3, "sub": False}
+    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    s = {"session_id": "b" * 36, "agent": "coda", "pid": 1, "state": "te_necesita", "state_since": "x", "hooked": True,
+         "needs": {"kind": "permission", "tool": "bash", "where": "enviado", "coda_at": ask["at"], "sent_ts": ses.time.time()}}
+    ses.coda_log_activity(s)
+    assert s["needs"]["where"] == "enviado"  # recien enviado: se espera
+    s["needs"]["sent_ts"] = ses.time.time() - ses.CODA_SENT_RETRY_S - 1
+    ses.coda_log_activity(s)
+    assert s["needs"]["where"] == "terminal"
