@@ -27,6 +27,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-02 | **Las reglas pasan de la tarjeta provisional `pid-N` a la real**: antes solo se trasladaban en `continue_session` | un agente recién lanzado y cableado perdía su regla al llegar su primer hook |
 | 2026-10-02 | **`lanzar_y_titular` cablea por defecto** la tarjeta nueva a la coordinadora | tres codas lanzados sin regla: no avisaban al terminar |
 | 2026-10-02 | Elegir el modelo al lanzar (`--model`, coda, claude y codex) | usar GLM 5.3 Flash en la otra PC (ojo: en coda el `--model` cambia el modelo por defecto de esa PC, ver Pendiente) |
+| 2026-10-02 | **Firma sin query**: `signed_headers` firma la ruta sin `?…`, como la verifica el receptor | `/turns` y `/digest` de una tarjeta de otra PC daban 401 «firma invalida» porque el emisor firmaba `?n=…` |
 
 ## Pendiente (con evidencia)
 

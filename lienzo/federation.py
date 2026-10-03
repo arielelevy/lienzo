@@ -441,6 +441,7 @@ def signed_headers(peer: PeerConn, method: str, path: str, body: bytes) -> dict:
     """Los cuatro headers X-Lienzo-* de un request firmado, con ts y nonce nuevos."""
     ts = time.time()
     nonce = secrets.token_hex(16)
+    path = path.split("?", 1)[0]  # el receptor verifica sobre la ruta sin query (_dispatch)
     return {
         "X-Lienzo-Peer": peer.self_pc_id,
         "X-Lienzo-Ts": repr(ts),

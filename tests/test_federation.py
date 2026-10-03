@@ -412,3 +412,12 @@ def test_transporte_http_get_y_post_firmados():
         server.shutdown()
         server.server_close()
         hilo_server.join(timeout=5)
+
+
+def test_signed_headers_firma_la_ruta_sin_query():
+    """El receptor verifica sobre la ruta sin query: si el emisor firmara '?n=5' el GET de
+    /turns y /digest a otra PC daria 401 'firma invalida'."""
+    peer = fed.PeerConn("h", 1, b"k" * 32, "yo")
+    h = fed.signed_headers(peer, "GET", "/peer/sessions/x/turns?n=5&before=2", b"")
+    ts, nonce = float(h["X-Lienzo-Ts"]), h["X-Lienzo-Nonce"]
+    assert h["X-Lienzo-Sig"] == fed.sign(peer.key, "GET", "/peer/sessions/x/turns", b"", ts, nonce)
