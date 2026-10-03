@@ -41,6 +41,13 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 - **`last_reply` de una coda que trabaja dice «usando bash» / «usando read»** (medido el 2026-10-02): es el último estado
   de herramienta, no una respuesta; la coordinadora lo confunde con el informe. Idea: que `last_reply` quede vacío mientras la
   tarjeta está `corriendo` y solo se llene con el texto final del turno.
+- **Aprovechar los hooks de coda que lienzo todavía no usa** (según `~/.coda/assets/docs/hooks.md`, medido el 2026-10-02):
+  `install.py` registra para coda solo `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Stop` y `SessionEnd`. Coda
+  también manda `PreCompact` y `PostCompact` (la tarjeta de B y de E mostró «Stop» mientras compactaban) y el `Stop` trae
+  `stop_reason` (el doc solo muestra `turn_complete`: ver qué otros valores existen). Con `PreCompact` la tarjeta se
+  marcaría «compactando» y no dispararía `on_stop`, y el parche de los 15 s de espera ya no haría falta.
+- **`--coda-home DIR` aísla la configuración de coda** (está en `coda --help`): sirve para lanzar con `--model` sin pisar el
+  modelo por defecto de la PC (ver el punto de `--model`). Falta ver cómo conserva el login.
 - **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
   el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.
 - **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se
