@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { SID, abrirTablero } from "./tablero-fijo";
+import type { Peer } from "../src/types";
+import { BASE, SID, abrirTablero, bloquearEscrituras, instalarTablero } from "./tablero-fijo";
 
 /** Acciones contra el server y como se cuentan sus fallas (plan de refactor 2026-10-04, puntos F). */
 
@@ -67,4 +68,52 @@ test("F7: un doble click en Permitir manda un solo POST, en la tarjeta y en el p
   await panel.getByRole("button", { name: "Denegar" }).click({ force: true });
   await expect(page.getByText("Denegado", { exact: true })).toBeVisible();
   expect(posts).toEqual([{ decision: "deny" }]);
+});
+
+/** /config servido por la prueba: `valores` se consume de a uno por GET (el ultimo se repite); un
+ *  numero es un status de error */
+async function configServida(page: Page, valores: (Record<string, boolean> | number)[]) {
+  let i = 0;
+  await page.route("**/config", (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    const v = valores[Math.min(i++, valores.length - 1)];
+    return route.fulfill(typeof v === "number" ? json(v, { error: "reiniciando" }) : json(200, v));
+  });
+}
+
+test("F1: la config se refresca sola y un error pasajero no apaga la barra de auto-aprobar", async ({ page }) => {
+  await page.clock.install();
+  await bloquearEscrituras(page);
+  await instalarTablero(page);
+  await configServida(page, [{ auto_continue: false, auto_retry: false, auto_aprobar: false }, { auto_continue: false, auto_retry: false, auto_aprobar: true }, 502]);
+  await page.goto(BASE);
+  await expect(page.locator(".card").first()).toBeVisible();
+  await expect(page.locator(".auto-aprobar-aviso")).toHaveCount(0);
+  // otra PC lo prendio: al siguiente refresco aparece la barra, sin recargar
+  await page.clock.fastForward(20_000);
+  await expect(page.locator(".auto-aprobar-aviso")).toBeVisible();
+  // el server se esta reiniciando: la barra se queda (antes volvia a null y desaparecia)
+  await page.clock.fastForward(20_000);
+  await page.clock.fastForward(20_000);
+  await expect(page.locator(".auto-aprobar-aviso")).toBeVisible();
+});
+
+test("F1: si otra PC no tomó auto-aprobar, el toast dice cuál", async ({ page }) => {
+  const peers = [
+    { pc_id: "pcA", name: "escritorio", local: true, alive: true, color: "#c00", last_seen: new Date().toISOString() },
+    { pc_id: "pcB", name: "notebook", local: false, alive: true, color: "#0c0", last_seen: new Date().toISOString() },
+  ] as Peer[];
+  await abrirTablero(page, undefined, peers);
+  let puesto: unknown = null;
+  await page.route("**/config", (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    puesto = route.request().postDataJSON();
+    return route.fulfill(json(200, { auto_continue: false, auto_retry: false, auto_aprobar: true, peers: { pcB: "timed out" } }));
+  });
+  page.on("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: "más opciones" }).click();
+  await page.getByRole("menuitemcheckbox", { name: /Auto-aprobar TODO/ }).click();
+  expect(puesto).toEqual({ auto_aprobar: true });
+  await expect(page.getByText(/notebook no lo tomó \(timed out\)/)).toBeVisible();
+  await expect(page.locator(".auto-aprobar-aviso")).toBeVisible();
 });

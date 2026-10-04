@@ -200,6 +200,12 @@ export interface Config {
   auto_aprobar?: boolean;
 }
 
+/** Respuesta de PUT /config. Con auto_aprobar el server lo reenvia a cada PC emparejada y dice
+ *  como le fue a cada una: "ok" o el error. Un server anterior no manda `peers`. */
+export interface ConfigPut extends Config {
+  peers?: Record<string, string>;
+}
+
 export interface Rule {
   id: string;
   kind: "on_stop" | "at";

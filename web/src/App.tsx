@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type AuthInfo } from "./api";
+import { api, isMissingRoute, type AuthInfo } from "./api";
 import { Board, canReceive, colOf, norm, passesFilters } from "./components/Board";
 import { allAgents } from "./agents";
 import { canWrite, shortName, toggled } from "./names";
@@ -18,7 +18,7 @@ import { UrlQr } from "./components/UrlQr";
 import { useLienzoData } from "./hooks/useLienzoData";
 import { useLocalFlag } from "./hooks/useLocalFlag";
 import { useNotifications } from "./hooks/useNotifications";
-import type { Config, Session, State } from "./types";
+import type { Config, ConfigPut, Session, State } from "./types";
 
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
@@ -117,9 +117,23 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const clearMarked = useCallback(() => setMarked((cur) => (cur.size ? new Set() : cur)), []);
 
   // auto_continue y auto_retry viven en ~/.lienzo/config.json (lo lee el server): GET/PUT /config.
-  // null mientras carga o si el server que corre no tiene la ruta todavia
+  // null mientras carga o si el server que corre no tiene la ruta todavia.
+  // Se refresca con el reloj de 20 s de abajo y no solo al abrir: auto_aprobar se propaga a todas
+  // las PCs, asi que lo puede prender o apagar otra pestaña u otra PC, y la barra negra de peligro
+  // tiene que seguir a lo que el server tiene de verdad (plan 0.3). Un error pasajero (server
+  // reiniciandose, red) conserva el ultimo valor: volver a null escondia la barra con auto-aprobar
+  // prendido. Solo el 404 de la ruta lo deja en null.
   const [config, setConfig] = useState<Config | null>(null);
-  const loadConfig = useCallback(() => api.get<Config>("/config").then(setConfig).catch(() => setConfig(null)), []);
+  // cada PUT suma uno: un GET que salio antes de un PUT y vuelve despues trae el valor viejo y no
+  // tiene que pisar lo que el PUT devolvio
+  const configSeq = useRef(0);
+  const loadConfig = useCallback(() => {
+    const seq = configSeq.current;
+    return api
+      .get<Config>("/config")
+      .then((c) => seq === configSeq.current && setConfig(c))
+      .catch((e) => isMissingRoute(e) && setConfig(null));
+  }, []);
   useEffect(() => {
     loadConfig();
   }, [loadConfig]);
@@ -129,15 +143,25 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         toast("El server que corre no tiene /config todavía: reiniciá el server", true);
         return;
       }
+      // el PUT manda el valor deseado y la pantalla muestra lo que el server devuelve, no lo deseado
+      const deseado = !config[key];
+      configSeq.current++;
       try {
-        const c = await api.put<Config>("/config", { [key]: !config[key] });
+        const { peers: porPc, ...c } = await api.put<ConfigPut>("/config", { [key]: deseado });
         setConfig(c);
         toast(c[key] ? on : off);
+        // auto_aprobar se reenvia a cada PC emparejada; el server dice cual no lo tomo. Un server
+        // anterior no manda `peers`: sin el campo no hay nada que avisar
+        const fallaron = Object.entries(porPc ?? {}).filter(([, r]) => r !== "ok");
+        if (fallaron.length) {
+          const nombre = (id: string) => peers.find((p) => p.pc_id === id)?.name ?? id;
+          toast(`${fallaron.map(([id, r]) => `${nombre(id)} no lo tomó (${r})`).join("; ")}: sigue como estaba ahí`, true);
+        }
       } catch (e) {
         toast(`No se pudo cambiar: ${(e as Error).message}`, true);
       }
     },
-    [config, toast],
+    [config, toast, peers],
   );
   const toggleAutoContinue = useCallback(
     () => toggleConfig("auto_continue", 'Ante un límite de uso con hora, se programa "Continuar" solo', "Continuar automático apagado"),
@@ -235,15 +259,17 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
-  // re-render periodico para los "hace X min" y refresco del estado de acceso (URL del tunel)
+  // re-render periodico para los "hace X min", refresco del estado de acceso (URL del tunel) y de
+  // la config (auto_aprobar puede cambiar desde otra PC)
   const [, setClock] = useState(0);
   useEffect(() => {
     const id = setInterval(() => {
       setClock((c) => c + 1);
       refreshAuth();
+      loadConfig();
     }, 20000);
     return () => clearInterval(id);
-  }, [refreshAuth]);
+  }, [refreshAuth, loadConfig]);
 
   const decide = useCallback(
     async (requestId: string, decision: "allow" | "deny") => {
