@@ -14,7 +14,7 @@ def _reset():
     """snapshot() guarda estado de modulo (muestra de CPU, cache de temperatura): cada test
     arranca limpio para no depender del orden en que corren."""
     health._ultima_muestra = None
-    health._temp_cache = None
+    health._temp.limpiar()
 
 
 def test_snapshot_trae_las_cinco_claves():
@@ -71,14 +71,11 @@ def test_temperatura_cacheada_30_segundos_no_repite_el_powershell(monkeypatch):
     _reset()
     llamadas = []
 
-    class FakeResult:
-        stdout = "\\_TZ.THRM|2991\n"  # deciKelvin: 26.0 C, con la forma «zona|valor»
-
-    def fake_run(*a, **k):
+    def fake_correr(*a, **k):
         llamadas.append(1)
-        return FakeResult()
+        return 0, "\\_TZ.THRM|2991\n", ""  # deciKelvin: 26.0 C, con la forma «zona|valor»
 
-    monkeypatch.setattr(health.subprocess, "run", fake_run)
+    monkeypatch.setattr(health.subproc, "correr", fake_correr)
     # solo WMI: con LibreHardwareMonitor corriendo en esta PC, la medicion no llegaria al powershell
     monkeypatch.setattr(health, "FUENTES", [health.ZonasTermicasWMI()])
 
@@ -287,7 +284,7 @@ def test_git_auth_toma_enseguida_un_cambio_de_urls(monkeypatch):
     monkeypatch.setattr(
         health.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: target(*args)})()
     )
-    monkeypatch.setattr(health, "_git_cache", None)
+    monkeypatch.setattr(health, "_git", health.CacheEnSegundoPlano("git", health.GIT_TTL_S, health._git.medir))
     assert health._git_auth() is None
     urls[0] = ["https://h/r.git"]
     health._git_auth()  # dispara la medicion nueva al ver otras urls

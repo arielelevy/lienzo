@@ -18,7 +18,6 @@ import ctypes
 import datetime as dt
 import json
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -131,12 +130,66 @@ def _now() -> str:
 # import suelto (tests, scripts) tampoco falla en silencio.
 log: Callable[[str], None] = lambda msg: print(f"health: {msg}", file=sys.stderr)
 
+
+class CacheEnSegundoPlano:
+    """El ultimo valor de una medicion cara (temperatura, credenciales de git), que se renueva en
+    un hilo aparte cuando vence: quien pregunta nunca espera a la medicion, salvo la primera si lo
+    pide (`esperar_primera`). Un solo hilo de refresco a la vez (el lock); los demas pedidos
+    devuelven lo que hay.
+
+    `clave` son los argumentos de `medir`: si cambian (otras urls de git), se mide enseguida sin
+    esperar el TTL, y mientras tanto no se devuelve el valor de la clave vieja (es de otra cosa).
+    Si `medir` levanta, el hilo no muere en silencio: va al log (una vez por cambio de motivo, no
+    en cada vuelta) y se queda con el ultimo valor hasta el proximo intento, pasado el TTL."""
+
+    def __init__(self, nombre: str, ttl_s: float, medir: Callable[..., object]) -> None:
+        self.nombre = nombre
+        self.ttl_s = ttl_s
+        self.medir = medir
+        self._refrescando = threading.Lock()
+        self.limpiar()
+
+    def limpiar(self) -> None:
+        """Olvida lo medido: el proximo pedido arranca como el primero."""
+        self._valor: object = None
+        self._momento: float | None = None  # time.monotonic() de la ultima medicion (o intento)
+        self._clave: tuple = ()
+        self._error: str | None = None
+
+    def valor(self, *clave, esperar_primera: bool = False) -> object:
+        ahora = time.monotonic()
+        if self._momento is None and esperar_primera:
+            self._medir(clave, ahora)
+        elif (
+            self._momento is None or ahora - self._momento >= self.ttl_s or self._clave != clave
+        ) and self._refrescando.acquire(blocking=False):
+            threading.Thread(target=self._refrescar, args=(clave,), daemon=True).start()
+        return self._valor if self._clave == clave else None
+
+    def _refrescar(self, clave: tuple) -> None:
+        try:
+            self._medir(clave, time.monotonic())
+        finally:
+            self._refrescando.release()
+
+    def _medir(self, clave: tuple, momento: float) -> None:
+        try:
+            valor = self.medir(*clave)
+        except Exception as e:  # un hilo que muere sin decir nada deja el valor viejo para siempre
+            self._momento = momento  # se reintenta pasado el TTL, no en cada pedido
+            self._avisar(f"falla ({type(e).__name__}: {e}); queda el ultimo valor")
+            return
+        self._valor, self._momento, self._clave = valor, momento, clave
+        self._avisar(None)
+
+    def _avisar(self, error: str | None) -> None:
+        if error != self._error:
+            self._error = error
+            log(f"{self.nombre}: {error or 'se recupero'}")
+
+
 TEMP_MIN_C = 25.0  # por debajo es un sensor fijo o de ambiente (TZ01 da 20 °C siempre)
 TEMP_MAX_C = 120.0  # por encima es una lectura rota
-
-# (valor o None, momento de la medicion en time.monotonic()); cara (~1s de powershell), cacheada
-_temp_cache: tuple[float | None, float] | None = None
-_temp_refrescando = threading.Lock()
 
 
 def _plausible(c: float) -> bool:
@@ -247,19 +300,12 @@ Get-CimInstance -Namespace root/wmi MSAcpi_ThermalZoneTemperature |
 """
 
     def leer(self) -> object:
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", self.PS],
-            capture_output=True,
-            # sin stdin propio, un proceso sin consola heredable (el server lanzado desde otro
-            # lado) hace fallar el DuplicateHandle con WinError 50 y la temperatura queda en None
-            stdin=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            text=True,
-            timeout=5,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return r.stdout or ""
+        # por subproc.correr: sin stdin heredado (WinError 50 en un server sin consola), sin
+        # ventana, y al vencer se mata el arbol en vez de quedar leyendo una tuberia
+        rc, out, err = subproc.correr(["powershell", "-NoProfile", "-NonInteractive", "-Command", self.PS], timeout=5)
+        if rc in (subproc.VENCIDO, subproc.NO_ARRANCO):
+            raise OSError(err)  # medir() lo absorbe y lo deja en el log
+        return out
 
     def elegir(self, crudo: object) -> float | None:
         r"""De las lineas «nombre|deciKelvin»: \_TZ.THRM si esta y es plausible; si no, la zona
@@ -293,27 +339,18 @@ def _medir_temp() -> float | None:
     return None
 
 
-def _refrescar_temp() -> None:
-    global _temp_cache
-    try:
-        _temp_cache = (_medir_temp(), time.monotonic())
-    finally:
-        _temp_refrescando.release()
+# cara (~1 s de powershell): cacheada TEMP_TTL_S. Por lambda y no _medir_temp directo, para que se
+# busque al medir (las pruebas lo cambian)
+_temp = CacheEnSegundoPlano("temperatura", TEMP_TTL_S, lambda: _medir_temp())
 
 
 def _temp_c() -> float | None:
     """La primera medicion espera al powershell; despues, con la cache vencida, se devuelve el
     ultimo valor y se mide de nuevo en un hilo aparte: /peers y /peer/health (que cada PC le pide a
     las otras cada 15 s) no quedan colgados un segundo esperando a WMI."""
-    global _temp_cache
     if not WINDOWS:
         return None
-    ahora = time.monotonic()
-    if _temp_cache is None:
-        _temp_cache = (_medir_temp(), ahora)
-    elif ahora - _temp_cache[1] >= TEMP_TTL_S and _temp_refrescando.acquire(blocking=False):
-        threading.Thread(target=_refrescar_temp, daemon=True).start()
-    return _temp_cache[0]
+    return _temp.valor(esperar_primera=True)
 
 
 # --- credenciales de git -------------------------------------------------------------------
@@ -322,8 +359,6 @@ def _temp_c() -> float | None:
 # en /peers ANTES de que una coda llegue al push (medido el 2026-10-03: la otra PC perdio el login y
 # el push de la sesion 4 no salio).
 GIT_TTL_S = 300
-_git_cache: tuple[dict | None, float, tuple] | None = None  # (resultado, momento, urls)
-_git_refrescando = threading.Lock()
 
 
 def _git_urls() -> list[str]:
@@ -373,22 +408,14 @@ def _ls_remote(url: str, timeout_s: float = 20) -> str:
     return clasificar_git(rc, err)
 
 
-def _refrescar_git(urls: list[str]) -> None:
-    global _git_cache
-    try:
-        _git_cache = (_medir_git(urls), time.monotonic(), tuple(urls))
-    finally:
-        _git_refrescando.release()
+# la clave son las urls: si cambian, CacheEnSegundoPlano mide enseguida sin esperar GIT_TTL_S
+_git = CacheEnSegundoPlano("credenciales de git", GIT_TTL_S, lambda urls: _medir_git(list(urls)))
 
 
 def _git_auth() -> dict | None:
     """El ultimo resultado (None sin urls configuradas); se renueva en un hilo: nunca bloquea."""
     urls = _git_urls()  # leer el config es barato: un cambio de urls se toma enseguida, sin esperar GIT_TTL_S
-    ahora = time.monotonic()
-    vencido = _git_cache is None or ahora - _git_cache[1] >= GIT_TTL_S or _git_cache[2] != tuple(urls)
-    if vencido and _git_refrescando.acquire(blocking=False):
-        threading.Thread(target=_refrescar_git, args=(urls,), daemon=True).start()
-    return _git_cache[0] if _git_cache and _git_cache[2] == tuple(urls) else None
+    return _git.valor(tuple(urls))
 
 
 def agentes_que_entran(mem_free_gb: float | None) -> int | None:

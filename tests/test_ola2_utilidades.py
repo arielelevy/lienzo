@@ -7,6 +7,7 @@ import os
 
 import atomico
 import auth
+import health
 import hook
 import pytest
 import state
@@ -63,3 +64,84 @@ def test_atomico_es_una_hoja_liviana():
         codigo = f.read()
     imports = {ln.split()[1] for ln in codigo.splitlines() if ln.startswith(("import ", "from "))}
     assert imports <= {"__future__", "os", "time", "_thread"}
+
+
+# --- health.CacheEnSegundoPlano -------------------------------------------------------------
+
+
+@pytest.fixture
+def reloj_e_hilo_en_linea(monkeypatch):
+    """Reloj a mano y el hilo de refresco corriendo en linea, para probar sin esperas."""
+    reloj = [1000.0]
+    monkeypatch.setattr(health.time, "monotonic", lambda: reloj[0])
+    monkeypatch.setattr(
+        health.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: target(*args)})()
+    )
+    return reloj
+
+
+def test_cache_mide_al_vencer_y_si_medir_levanta_lo_loguea_y_queda_el_ultimo(reloj_e_hilo_en_linea, monkeypatch):
+    avisos: list[str] = []
+    monkeypatch.setattr(health, "log", avisos.append)
+    medidas = [41.0, RuntimeError("wmi roto"), RuntimeError("wmi roto"), 43.0]
+    llamadas = []
+
+    def medir():
+        llamadas.append(1)
+        m = medidas.pop(0)
+        if isinstance(m, Exception):
+            raise m
+        return m
+
+    c = health.CacheEnSegundoPlano("temperatura", 30, medir)
+    assert c.valor(esperar_primera=True) == 41.0
+    assert c.valor() == 41.0 and len(llamadas) == 1, "adentro del TTL no se mide"
+    reloj_e_hilo_en_linea[0] += 31
+    assert c.valor() == 41.0, "medir levanto: queda el ultimo valor"
+    assert avisos == ["temperatura: falla (RuntimeError: wmi roto); queda el ultimo valor"]
+    assert c.valor() == 41.0 and len(llamadas) == 2, "no reintenta en cada pedido, espera el TTL"
+    reloj_e_hilo_en_linea[0] += 31
+    c.valor()
+    assert len(avisos) == 1, "el mismo motivo no se repite en el log"
+    reloj_e_hilo_en_linea[0] += 31
+    assert c.valor() == 43.0, "el refresco sigue vivo despues de una falla"
+    assert avisos[-1] == "temperatura: se recupero"
+
+
+def test_cache_con_hilo_de_verdad_que_levanta_no_deja_el_lock_tomado(monkeypatch):
+    avisos: list[str] = []
+    monkeypatch.setattr(health, "log", avisos.append)
+
+    def medir():
+        raise ValueError("formato nuevo")
+
+    c = health.CacheEnSegundoPlano("git", 0, medir)
+    assert c.valor() is None
+    for _ in range(100):  # el hilo es de verdad: se espera a que suelte el lock
+        if c._refrescando.acquire(timeout=0.05):
+            c._refrescando.release()
+            break
+    else:
+        raise AssertionError("el hilo murio con el lock tomado")
+    assert avisos == ["git: falla (ValueError: formato nuevo); queda el ultimo valor"]
+
+
+def test_cache_con_otra_clave_mide_enseguida_y_no_devuelve_la_vieja(reloj_e_hilo_en_linea):
+    c = health.CacheEnSegundoPlano("git", 300, lambda urls: {u: "ok" for u in urls} or None)
+    assert c.valor(("https://a",)) == {"https://a": "ok"}  # con el hilo en linea, ya midio
+    assert c.valor(("https://b",)) == {"https://b": "ok"}, "sin esperar los 300 s"
+
+
+def test_wmi_va_por_subproc_y_un_powershell_colgado_es_una_falla_logueada(monkeypatch):
+    avisos: list[str] = []
+    monkeypatch.setattr(health, "log", avisos.append)
+    vistos = {}
+
+    def correr(argv, **k):
+        vistos.update(argv=argv, **k)
+        return health.subproc.VENCIDO, "", "powershell no termino en 5 s"
+
+    monkeypatch.setattr(health.subproc, "correr", correr)
+    assert health.ZonasTermicasWMI().medir() is None
+    assert vistos["argv"][0] == "powershell" and vistos["timeout"] == 5
+    assert avisos == ["temperatura, fuente wmi: falla (OSError: powershell no termino en 5 s)"]
