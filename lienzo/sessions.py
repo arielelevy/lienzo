@@ -55,13 +55,47 @@ from state import (
 
 last_sweep = 0.0
 
+
+def en_hilo(fn, *args) -> threading.Thread:
+    """Corre `fn(*args)` en un hilo daemon y, si levanta, manda el traceback a lienzo.log. Es la
+    UNICA forma en que este modulo lanza hilos de trabajo (cierre de turno, sucesion, aviso de
+    muerta, aviso de detenida): un Thread suelto que levantaba moria con el traceback en stderr,
+    que con el server corriendo de fondo no lee nadie (plan de refactor 1.1, E6). Devuelve el hilo
+    para que una prueba pueda esperarlo. (Los argumentos de Thread van como target/args/daemon y
+    nada mas: test_rules_federadas reemplaza threading.Thread por uno sincrono con esa firma.)"""
+    t = threading.Thread(target=_correr_logueando, args=(fn, args), daemon=True)
+    t.start()
+    return t
+
+
+def _correr_logueando(fn, args: tuple) -> None:
+    try:
+        fn(*args)
+    except Exception:
+        state.log(f"hilo {getattr(fn, '__name__', '?')} fallo:\n{traceback.format_exc()}")
+
+
+def _gancho_sin_cablear(nombre: str):
+    """Valor por defecto de un gancho que rellena rules.py: no hace nada, pero lo dice una vez en el
+    log. Antes era una lambda muda, y si rules.py no se importaba (un arranque roto a medias, una
+    prueba) las reglas «cuando termine» dejaban de disparar sin ningun rastro."""
+    avisado = [False]
+
+    def gancho(*_args) -> None:
+        if not avisado[0]:
+            avisado[0] = True
+            state.log(f"gancho {nombre} sin cablear (rules.py no se cargo): el evento se descarta")
+
+    return gancho
+
+
 # ganchos que rellena rules.py: cierre de turno (reglas "cuando termine"), aviso de limite de uso
 # con hora y turno muerto por un error de API (las dos reglas automaticas "Continuar"). Sin
-# rules.py cargado no pasa nada.
-on_turn_end = lambda sid: None
-on_limit_notice = lambda s: None
-on_died_working = lambda sid, prev: None  # rules.py: avisar que murio con un encargo a medias
-on_api_error = lambda s, sig: None
+# rules.py cargado no pasa nada (salvo el aviso en el log, una vez por gancho).
+on_turn_end = _gancho_sin_cablear("on_turn_end")
+on_limit_notice = _gancho_sin_cablear("on_limit_notice")
+on_died_working = _gancho_sin_cablear("on_died_working")  # rules.py: avisar que murio con un encargo a medias
+on_api_error = _gancho_sin_cablear("on_api_error")
 
 
 # --- mirror (frente C, plan multi-PC §3.3-3.6): sesiones y reglas de otra PC -------------------
@@ -664,7 +698,7 @@ def set_state(s: dict, new: str) -> None:
         s["state_since"] = now()
         if new == "termino" and prev in ("corriendo", "te_necesita") and (s.get("agent") != "pi" or s.get("hooked")):
             # cierre de turno: reglas "cuando termine" (en otro hilo, el envio tarda)
-            threading.Thread(target=on_turn_end, args=(s["session_id"],), daemon=True).start()
+            en_hilo(on_turn_end, s["session_id"])
     if new != "te_necesita":
         s["needs"] = None
 
@@ -1461,7 +1495,7 @@ def apply_event(ev: dict) -> None:
         s["dead_since"] = None
         apply_hook(s, ev, name, created)
         if created and DEAD_TARGETS:
-            threading.Thread(target=adopt_dead_target, args=(dict(s),), daemon=True).start()
+            en_hilo(adopt_dead_target, dict(s))
         if ev_pid_dead and not (s.get("pid") and backend.agent_alive(s)):
             set_state(s, "muerta")
             s["alive"] = False
@@ -1861,7 +1895,7 @@ def refresh_alive(s: dict) -> bool:
     set_state(s, "muerta")
     if prev in ("corriendo", "te_necesita"):
         # murio con un encargo a medias: la coordinadora no recibe un Stop, asi que se le avisa aparte
-        threading.Thread(target=on_died_working, args=(s["session_id"], prev), daemon=True).start()
+        en_hilo(on_died_working, s["session_id"], prev)
     return True
 
 
@@ -2207,7 +2241,7 @@ def _name(s: dict) -> str:
 def _notify_async(fn) -> None:
     """El aviso a las conectadas teclea en varias consolas (hasta 60 s cada una): fuera del pedido
     HTTP. Los tests lo reemplazan por una llamada directa."""
-    threading.Thread(target=fn, daemon=True).start()
+    en_hilo(fn)
 
 
 def stopped_recipients(s: dict) -> list[dict]:
