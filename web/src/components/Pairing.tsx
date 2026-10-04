@@ -110,11 +110,15 @@ export function Pairing({ peers, toast, onClose }: Props) {
   // las PCs de la LAN que anuncian el lienzo y todavia no estan emparejadas: se piden una vez, al
   // abrir la pantalla; buscar de nuevo es cosa de la API (GET /peers/lan), sin sondeo ni boton
   const [lan, setLan] = useState<LanPc[]>([]);
+  // si la busqueda falla no es lo mismo que "no hay ninguna": antes el catch dejaba la lista vacia
+  // y la pantalla decia que no habia PCs a la vista, mandando a revisar la red de la otra PC
+  // cuando lo que fallo fue el pedido a esta
+  const [lanErr, setLanErr] = useState<string | null>(null);
   useEffect(() => {
     api
       .get<LanPc[]>("/peers/lan")
       .then((l) => setLan(Array.isArray(l) ? l : []))
-      .catch(() => setLan([]));
+      .catch((e) => setLanErr((e as Error).message));
   }, []);
   const emparejarCon = (pc: LanPc) => {
     setHost(pc.ip);
@@ -204,7 +208,9 @@ export function Pairing({ peers, toast, onClose }: Props) {
             )}
 
             <h3 className="pairing-lan-title">En esta red</h3>
-            {lan.length === 0 ? (
+            {lanErr ? (
+              <p className="small dim">No se pudo buscar en la red: {lanErr}. Cerrá y volvé a abrir esta pantalla para reintentar.</p>
+            ) : lan.length === 0 ? (
               <p className="small dim">
                 Ninguna otra PC con el lienzo a la vista. Tiene que estar en la misma red, con el server andando y{" "}
                 <code>install.py --peer</code> corrido una vez (abre el firewall en redes privadas).

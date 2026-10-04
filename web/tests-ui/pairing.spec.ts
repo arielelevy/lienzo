@@ -256,3 +256,12 @@ test.describe("canal nativo entre PCs distintas (plan §3.5)", () => {
     await expect(nativo.locator("input")).toBeEnabled();
   });
 });
+
+test("si /peers/lan falla, «En esta red» dice que no se pudo buscar y no que no hay PCs", async ({ page }) => {
+  await abrirTablero(page, sesiones(), [PEER_LOCAL]);
+  await page.route("**/peers/lan", (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "el beacon no arrancó" }) }));
+  await abrirVariasPcs(page);
+  const d = dialogo(page);
+  await expect(d.getByText(/No se pudo buscar en la red: el beacon no arrancó/)).toBeVisible();
+  await expect(d.getByText(/Ninguna otra PC con el lienzo a la vista/)).toHaveCount(0);
+});
