@@ -30,7 +30,7 @@ interface Props {
   filter: State;
   onFilter: (s: State) => void;
   onSelect: (sid: string) => void;
-  onDecide: (requestId: string, decision: "allow" | "deny") => void;
+  onDecide: (requestId: string, decision: "allow" | "deny") => Promise<void>;
   onAnswer: (requestId: string, answers: Record<string, string>) => Promise<void>;
   onDrop: (sid: string) => void;
   links: Link[];

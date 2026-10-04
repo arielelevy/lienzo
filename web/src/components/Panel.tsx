@@ -3,6 +3,7 @@ import { ago, api, detail, isMissingRoute } from "../api";
 import { hhmm } from "../nl";
 import { isFree, needsPiReload, periodLabel, schedLabel, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
+import { PermissionPrompt } from "./PermissionPrompt";
 import { Digest } from "./Digest";
 import { SendBox } from "./SendBox";
 import type { ConnectionRule, ConnectionsResponse, DigestResponse, OtherSession, Pending, Session } from "../types";
@@ -53,7 +54,7 @@ interface Props {
   anchor?: { left: number; top: number; width: number; height: number } | null;
   /** permiso pendiente de esta sesion, si lo hay: se contesta desde aca tambien */
   pending?: Pending;
-  onDecide: (requestId: string, decision: "allow" | "deny") => void;
+  onDecide: (requestId: string, decision: "allow" | "deny") => Promise<void>;
   onAnswer: (requestId: string, answers: Record<string, string>) => Promise<void>;
 }
 
@@ -417,15 +418,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
           maqueta. La hora va con hhmm, en 24 h como el resto de la app. */}
       {pending && preguntas.length > 0 && <Ask pending={pending} questions={preguntas} onAnswer={onAnswer} onDecide={onDecide} />}
       {pending && preguntas.length === 0 && (
-        <div className="needs">
-          <b>Pide permiso: {pending.tool_name}</b>
-          <code>{detail(pending.tool_input)}</code>
-          <div className="btns">
-            <button className="allow" onClick={() => onDecide(pending.request_id, "allow")}>Permitir</button>
-            <button className="deny" onClick={() => onDecide(pending.request_id, "deny")}>Denegar</button>
-            <span className="dim small">vence {hhmm(new Date(pending.expires_at))}</span>
-          </div>
-        </div>
+        <PermissionPrompt tool={pending.tool_name} detail={detail(pending.tool_input)} note={`vence ${hhmm(new Date(pending.expires_at))}`} onDecide={(d) => onDecide(pending.request_id, d)} />
       )}
       {sched.length > 0 && (
         <div className="sched" title="mensajes programados hacia esta sesión">

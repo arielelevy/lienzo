@@ -3,6 +3,7 @@ import { ago, api, detail, failMsg } from "../api";
 import { hhmm } from "../nl";
 import { canWrite, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
+import { PermissionButtons, PermissionPrompt } from "./PermissionPrompt";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
@@ -299,7 +300,7 @@ interface Props {
   onPick?: () => void;
   /** doble click (o Enter): abrir el panel */
   onSelect: () => void;
-  onDecide: (requestId: string, decision: "allow" | "deny") => void;
+  onDecide: (requestId: string, decision: "allow" | "deny") => Promise<void>;
   onAnswer: (requestId: string, answers: Record<string, string>) => Promise<void>;
   onDrop: () => void;
   onGrip?: (e: React.MouseEvent) => void;
@@ -842,18 +843,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       {p && preguntas.length > 0 ? (
         <Ask pending={p} questions={preguntas} onAnswer={onAnswer} onDecide={onDecide} />
       ) : p ? (
-        // no se frena la propagacion del bloque entero: es la mitad de la tarjeta y frenarlo dejaba
-        // el doble click sin abrir el panel. Los dos botones la frenan por su cuenta
-        <div className="needs">
-          <b>Pide permiso: {p.tool_name}</b>
-          <code>{detail(p.tool_input)}</code>
-          <div className="btns">
-            {/* los unicos dos botones que quedan siempre en el orden de tabulacion: el permiso vence */}
-            <button className="allow" data-always-tab="" onClick={(e) => { e.stopPropagation(); onDecide(p.request_id, "allow"); }}>Permitir</button>
-            <button className="deny" data-always-tab="" onClick={(e) => { e.stopPropagation(); onDecide(p.request_id, "deny"); }}>Denegar</button>
-            <span className="dim small">vence {hhmm(new Date(p.expires_at))}</span>
-          </div>
-        </div>
+        <PermissionPrompt tool={p.tool_name} detail={detail(p.tool_input)} note={`vence ${hhmm(new Date(p.expires_at))}`} onDecide={(d) => onDecide(p.request_id, d)} />
       ) : s.state === "te_necesita" && s.needs && !(quick && s.needs.kind === "idle") ? (
         /* ociosa con botones rapidos: el aviso va en una linea con los botones, mas abajo */
         <div className="needs terminal">
@@ -862,11 +852,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           {s.agent === "coda" && s.needs.coda_at && s.needs.where === "terminal" && writable ? (
             // CODA no tiene un hook que espere la respuesta: los botones teclean Enter o Esc en su
             // diálogo, y el server confirma antes en la pantalla que el diálogo siga abierto
-            <div className="btns">
-              <button className="allow" data-always-tab="" onClick={(e) => { e.stopPropagation(); void codaDecide("allow"); }}>Permitir</button>
-              <button className="deny" data-always-tab="" onClick={(e) => { e.stopPropagation(); void codaDecide("deny"); }}>Denegar</button>
-              <span className="dim small">se teclea en su terminal</span>
-            </div>
+            <PermissionButtons onDecide={codaDecide} note="se teclea en su terminal" />
           ) : (
             <div className="dim small">
               {s.needs.kind === "idle" ? "podés escribirle desde acá" : s.needs.where === "enviado" ? "respuesta enviada a la terminal" : s.needs.where === "terminal" ? "contestar en la terminal" : "esperando al lienzo"}

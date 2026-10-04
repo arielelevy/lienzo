@@ -24,15 +24,18 @@ export function Ask({ pending, questions, onAnswer, onDecide }: Props) {
   const armado = Object.fromEntries(questions.map((q) => [q.question, valor(q)]).filter(([, v]) => v));
   const faltan = questions.length - Object.keys(armado).length;
 
-  const mandar = async (answers: Record<string, string>) => {
-    if (busy || !Object.keys(answers).length) return;
+  /** un pedido por vez: un doble click no manda dos respuestas al mismo pendiente */
+  const ocupado = async (fn: () => Promise<void>) => {
+    if (busy) return;
     setBusy(true);
     try {
-      await onAnswer(pending.request_id, answers);
+      await fn();
     } finally {
       setBusy(false);
     }
   };
+  const mandar = (answers: Record<string, string>) =>
+    Object.keys(answers).length ? ocupado(() => onAnswer(pending.request_id, answers)) : undefined;
 
   const tocar = (q: AskQuestion, label: string) => {
     // una sola pregunta de una sola opción y nada escrito: el toque ES la respuesta
@@ -107,7 +110,7 @@ export function Ask({ pending, questions, onAnswer, onDecide }: Props) {
           title="deja la pregunta en la terminal y libera al agente de la espera"
           onClick={(e) => {
             e.stopPropagation();
-            onDecide(pending.request_id, "allow");
+            void ocupado(() => onDecide(pending.request_id, "allow"));
           }}
         >
           Contestar en la terminal
@@ -123,7 +126,7 @@ interface Props {
   /** las preguntas ya validadas (`askQuestions`): el componente no se dibuja sin al menos una */
   questions: AskQuestion[];
   onAnswer: (requestId: string, answers: Record<string, string>) => Promise<void>;
-  onDecide: (requestId: string, decision: "allow" | "deny") => void;
+  onDecide: (requestId: string, decision: "allow" | "deny") => Promise<void>;
 }
 
 /** Las preguntas de un pendiente, o [] si no es un AskUserQuestion. El tool_input viene del hook

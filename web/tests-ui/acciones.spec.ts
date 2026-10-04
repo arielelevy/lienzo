@@ -44,3 +44,27 @@ test("F4: el panel reconoce la ruta que falta aunque el server conteste JSON", a
   await page.waitForTimeout(300);
   expect(warns.filter((w) => w.startsWith("connections:"))).toEqual([]);
 });
+
+test("F7: un doble click en Permitir manda un solo POST, en la tarjeta y en el panel", async ({ page }) => {
+  await abrirTablero(page);
+  const posts: unknown[] = [];
+  await page.route("**/pending/p1", async (route) => {
+    posts.push(route.request().postDataJSON());
+    // lento a proposito: el segundo click llega con el primero en vuelo
+    await new Promise((r) => setTimeout(r, 400));
+    await route.fulfill(json(200, { ok: true }));
+  });
+  const card = page.locator(`.card[data-sid="${SID.permiso}"]`);
+  await card.getByRole("button", { name: "Permitir" }).dblclick();
+  await expect(page.getByText("Permitido")).toBeVisible();
+  expect(posts).toEqual([{ decision: "allow" }]);
+
+  // el panel tiene su propio bloque (la tarjeta queda atras): el mismo freno
+  posts.length = 0;
+  await card.locator(".title").dblclick();
+  const panel = page.locator(".panel");
+  await panel.getByRole("button", { name: "Denegar" }).click();
+  await panel.getByRole("button", { name: "Denegar" }).click({ force: true });
+  await expect(page.getByText("Denegado", { exact: true })).toBeVisible();
+  expect(posts).toEqual([{ decision: "deny" }]);
+});
