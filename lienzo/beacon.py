@@ -37,6 +37,7 @@ RECV_BUFSIZE = 4096
 _lock = threading.RLock()
 _seen: dict[str, dict] = {}  # pc_id -> {"ip", "last_seen"}, solo peers emparejados (anuncio firmado)
 _descubiertas: dict[str, dict] = {}  # pc_id -> {"name", "ip", "port", "last_seen"}, cualquier PC de la LAN
+_ultimo_ts: dict[str, float] = {}  # pc_id -> ts firmado del ultimo beacon aceptado (ver _recibir)
 DISCOVERED_TTL_S = 3 * INTERVAL_S + 5  # tres anuncios perdidos seguidos: se da por apagada
 
 
@@ -105,11 +106,19 @@ def _recibir(sock: socket.socket) -> None:
         if not key_hex:
             continue
         try:
-            anuncio = fed.decode_signed_beacon(bytes.fromhex(key_hex), data)
+            decodificado = fed.decode_signed_beacon_ts(bytes.fromhex(key_hex), data)
         except ValueError:
             continue
+        anuncio, ts = decodificado if decodificado else (None, 0.0)
         if anuncio is None or anuncio.get("pc_id") != peer.get("pc_id"):
             continue  # decodifica pero dice ser otro pc_id: firmado con esta clave no corresponde
+        with _lock:
+            # solo un ts estrictamente mayor al ultimo aceptado de este peer: la ventana de firma
+            # sola dejaba reenviar desde otra IP, durante 30 s, un beacon capturado (B9). Un
+            # duplicado legitimo (el mismo broadcast por dos interfaces) se descarta sin dano
+            if ts <= _ultimo_ts.get(peer["pc_id"], 0.0):
+                return
+            _ultimo_ts[peer["pc_id"]] = ts
         ip = addr[0]
         fed.update_peer_ip(_peers_path(), peer["pc_id"], ip)
         with _lock:

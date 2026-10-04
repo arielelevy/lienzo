@@ -731,3 +731,39 @@ def test_procinfo_importa_y_responde_nada_fuera_de_windows(monkeypatch):
     ]
     assert pi.command_args("") == []
     assert pi.agent_of("/usr/bin/claude") is None  # sin .exe: no es un agente de Windows
+
+
+# --- B9: un beacon firmado y capturado se podia reenviar dentro de la ventana desde otra IP --------
+
+
+class _SocketFalso:
+    def __init__(self):
+        self.paquetes = []
+
+    def recvfrom(self, n):
+        return self.paquetes.pop(0)
+
+
+def test_beacon_acepta_por_peer_solo_un_ts_estrictamente_mayor(tmp_path, monkeypatch, log_capturado):
+    import beacon
+    import state
+
+    monkeypatch.setattr(state, "LIENZO", str(tmp_path))
+    monkeypatch.setattr(beacon, "_seen", {})
+    monkeypatch.setattr(beacon, "_ultimo_ts", {})
+    key = b"k" * 32
+    path = str(tmp_path / "peers.json")
+    fed.add_peer(path, {"pc_id": "p1", "key": key.hex(), "ip": "10.0.0.1"})
+    t = time.time()
+    sock = _SocketFalso()
+
+    def recibir(ts, ip):
+        sock.paquetes.append((fed.encode_signed_beacon(key, "p1", "notebook", 7322, ts=ts), (ip, 7323)))
+        beacon._recibir(sock)
+        return fed.get_peer(path, "p1")["ip"]
+
+    assert recibir(t, "10.0.0.5") == "10.0.0.5"
+    assert recibir(t - 5, "10.0.0.66") == "10.0.0.5"  # uno viejo capturado: no desvia la IP
+    assert recibir(t, "10.0.0.66") == "10.0.0.5"  # el mismo reenviado: tampoco
+    assert recibir(t + 10, "10.0.0.7") == "10.0.0.7"
+    assert beacon.seen()["p1"]["ip"] == "10.0.0.7"

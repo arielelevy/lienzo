@@ -361,6 +361,17 @@ def encode_signed_beacon(
 def decode_signed_beacon(
     key: bytes, data: bytes, *, window_s: float = SIGN_WINDOW_S, now: float | None = None
 ) -> dict | None:
+    r = decode_signed_beacon_ts(key, data, window_s=window_s, now=now)
+    return r[0] if r else None
+
+
+def decode_signed_beacon_ts(
+    key: bytes, data: bytes, *, window_s: float = SIGN_WINDOW_S, now: float | None = None
+) -> tuple[dict, float] | None:
+    """Como `decode_signed_beacon`, con el ts firmado: el que recibe lo usa para aceptar de cada
+    peer solo un ts estrictamente mayor al ultimo (beacon.py). La ventana sola deja reenviar un
+    beacon capturado desde otra IP durante 30 s (revision 2026-10-04, B9). Mismo formato en el
+    cable: el ts ya viajaba firmado."""
     try:
         externo = json.loads(data.decode("utf-8"))
         payload = externo["payload"].encode("utf-8")
@@ -376,7 +387,8 @@ def decode_signed_beacon(
     esperada = hmac.new(key, _mensaje_de_beacon(payload, ts), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(esperada, sig):
         return None
-    return decode_beacon(payload)
+    anuncio = decode_beacon(payload)
+    return (anuncio, ts) if anuncio is not None else None
 
 
 # --- cliente SSE con reconexion --------------------------------------------------------------
