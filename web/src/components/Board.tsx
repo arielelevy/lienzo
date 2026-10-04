@@ -222,6 +222,13 @@ export function passesFilters(s: Session, f: VisibleFilters, q = norm(f.query.tr
   return passesProjects(s, f.selectedRepos, f.coordOnly);
 }
 
+/** la PC duena de la sesion se cayo: desde cuando. Recibe las PCs por parametro para que la usen
+ *  igual el render y los listeners de document (que leen las del ultimo render por un ref) */
+function peerDownIn(s: Session, peersById: Map<string, Peer>, localPcId: string | null): { since: string } | null {
+  const peer = peersById.get(pcOf(s, localPcId) ?? "");
+  return peer && peer.alive === false ? { since: peer.last_seen } : null;
+}
+
 export const canReceive = (s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
 /** Card dibuja el agarre ⇢ si recibe onGrip; el arrastre en si lo maneja el tablero por Pointer Events */
 const noGrip = () => undefined;
@@ -287,10 +294,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // esta caido (ronda 2; peers viene vacio hasta que exista GET /peers)
   const peersById = useMemo(() => new Map(peers.map((p) => [p.pc_id, p])), [peers]);
   const localPcId = useMemo(() => peers.find((p) => p.local)?.pc_id ?? null, [peers]);
-  const peerDownOf = (s: Session): { since: string } | null => {
-    const peer = peersById.get(pcOf(s, localPcId) ?? "");
-    return peer && peer.alive === false ? { since: peer.last_seen } : null;
-  };
+  const peerDownOf = (s: Session) => peerDownIn(s, peersById, localPcId);
   // el color de su PC, solo con mas de una emparejada: con una sola (o ninguna) pintar de "su color"
   // no dice nada que la tarjeta no dijera ya
   const pcColorOf = (s: Session): string | undefined => (peers.length > 1 ? peersById.get(pcOf(s, localPcId) ?? "")?.color : undefined);
@@ -354,6 +358,15 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     markedSize.current = marked.size;
     escBlockedRef.current = escBlocked;
   }, [marked, escBlocked]);
+  // Lo que leen los listeners de document, que se suscriben una sola vez (mas abajo). Antes el
+  // efecto se resuscribia solo con [sessions, onConnect, selected]: si cambiaban las PCs (una se
+  // caia) y las sesiones no, soltar sobre una tarjeta de la PC caida seguia abriendo Conectar, y
+  // onClearMarked quedaba el del primer render. Un espejo para todo, en vez de una lista de deps
+  // que hay que acordarse de mantener.
+  const vivo = useRef({ sessions, peersById, localPcId, onConnect, selected, onClearMarked });
+  useEffect(() => {
+    vivo.current = { sessions, peersById, localPcId, onConnect, selected, onClearMarked };
+  });
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
@@ -393,11 +406,13 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       sid,
       ox: cx - r.left,
       oy: cy - r.top,
-      w: libres[sid]?.w ?? r.width,
+      // libresRef y no `libres`: esto corre desde el listener de document, cuyo cierre puede ser de
+      // un render anterior a la ultima tarjeta soltada (y entonces `antes` y el ancho eran viejos)
+      w: libresRef.current[sid]?.w ?? r.width,
       h: r.height,
       x: r.left - b.left,
       y: r.top - b.top,
-      antes: libres[sid] ?? null,
+      antes: libresRef.current[sid] ?? null,
     });
   };
 
@@ -642,13 +657,16 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     setDrag({ from: sid, x1, y1, x2: cx - b.left, y2: cy - b.top, over: null });
   };
   // un solo juego de listeners en document, suscrito una vez: sin arrastre siguen la presion
-  // (arranca a los 8 px); con arrastre mueven la linea y resuelven el destino al soltar
+  // (arranca a los 8 px); con arrastre mueven la linea y resuelven el destino al soltar. Todo lo que
+  // cambia lo leen de `vivo` y de los refs; las funciones que llaman (startDragAt, startMoveAt,
+  // cancelMove, guardarLibres) solo tocan refs y setters estables, asi que la del primer render sirve
   useEffect(() => {
     // tarjeta con consola bajo el puntero (la propia tambien: la flecha que vuelve al mismo bloque
     // es un bucle, "programale un mensaje a esta misma sesion")
     const cardAt = (e: PointerEvent) => {
       const sid = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]")?.dataset.sid;
-      return sid && canReceive(sessions[sid]) && !peerDownOf(sessions[sid]) ? sid : null;
+      const { sessions: ss, peersById: pcs, localPcId: local } = vivo.current;
+      return sid && canReceive(ss[sid]) && !peerDownIn(ss[sid], pcs, local) ? sid : null;
     };
     const move = (e: PointerEvent) => {
       const board = boardRef.current;
@@ -695,7 +713,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         setMoving(null);
         // de paso se van las posiciones de sesiones que ya no existen: sin esto la lista crece
         // sola y para siempre
-        const vivas = Object.entries(libresRef.current).filter(([sid]) => sessions[sid]);
+        const vivas = Object.entries(libresRef.current).filter(([sid]) => vivo.current.sessions[sid]);
         guardarLibres({ ...Object.fromEntries(vivas), [m.sid]: { x: m.x, y: m.y, w: m.w, h: m.h } });
         // el click que cierra el movimiento tampoco elige la tarjeta ni le abre el panel
         window.clearTimeout(draggedTimer.current);
@@ -718,7 +736,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       // dialogo con from === to, que Forward toma como "programar para esta sesion"
       const to = cardAt(e);
       setDrag(null);
-      if (to) onConnect(d.from, to);
+      if (to) vivo.current.onConnect(d.from, to);
     };
     const key = (e: KeyboardEvent) => {
       // Esc durante un arrastre lo cancela (soltar en cualquier lado, tambien); si no, deselecciona
@@ -728,8 +746,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       // Esc pela una capa por vez: con el panel abierto lo cierra App y la eleccion queda; el
       // siguiente Esc la suelta. Sin este guard, un solo Esc hacia las dos cosas. Detras del panel
       // viene la seleccion multiple (Esc la vacia y la elegida se queda) y detras de esa, la elegida.
-      else if (!selected && !escBlockedRef.current) {
-        if (markedSize.current > 0) onClearMarked?.();
+      else if (!vivo.current.selected && !escBlockedRef.current) {
+        if (markedSize.current > 0) vivo.current.onClearMarked?.();
         else setPicked(null);
       }
     };
@@ -748,7 +766,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       document.removeEventListener("pointercancel", cancel);
       document.removeEventListener("keydown", key);
     };
-  }, [sessions, onConnect, selected]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>

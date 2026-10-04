@@ -155,3 +155,27 @@ test("la ayuda al pie nombra los dos gestos", async ({ page }) => {
   await expect(page.locator(".ayuda")).toContainText("Arrastrá una tarjeta desde su título para moverla");
   await expect(page.locator(".ayuda b")).toHaveText("Alt");
 });
+
+test("Esc en el segundo arrastre la devuelve a donde la dejó el primero, no al orden automático", async ({ page }) => {
+  // El listener de document se suscribia de nuevo solo cuando cambiaban las sesiones: con el
+  // tablero quieto, el segundo arrastre leia las posiciones de antes del primero y Esc la mandaba
+  // de vuelta a la grilla (F3 del plan de refactor 2026-10-04)
+  await abrirTablero(page);
+  const antes = await caja(page, SID.mapas);
+  await arrastrar(page, SID.mapas, 150, 100);
+  await esperarQuietud(page);
+  const primera = await caja(page, SID.mapas);
+  expect(Math.abs(primera.x - (antes.x + 150))).toBeLessThan(2);
+
+  const p = await agarre(page, SID.mapas);
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  await page.mouse.move(p.x + 120, p.y + 80, { steps: 8 });
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await esperarQuietud(page);
+
+  const despues = await caja(page, SID.mapas);
+  expect(Math.abs(despues.x - primera.x)).toBeLessThan(2);
+  expect(Math.abs(despues.y - primera.y)).toBeLessThan(2);
+});
