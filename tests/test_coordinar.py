@@ -127,9 +127,12 @@ def test_enviar_seguro_reubica_el_frente_cuando_la_tarjeta_ya_no_existe(monkeypa
             return 404, {"error": "esa tarjeta ya no existe", "gone": True}
         return 200, {"ok": True}
 
-    nuevo = _tarjeta("nuevo", title="app - encargo A - x", alive=True, state="corriendo")
+    nuevo = _tarjeta("nuevo", title="app - encargo A - x", alive=True, state="termino")
     monkeypatch.setattr(c, "pedir", pedir)
-    monkeypatch.setattr(c, "sesiones", lambda: [nuevo])
+    # la nueva pasa a corriendo recien cuando le llega el envio (si ya corria, eso no probaria nada)
+    monkeypatch.setattr(
+        c, "sesiones", lambda: [{**nuevo, "state": "corriendo"} if "/sessions/nuevo/send" in llamadas else nuevo]
+    )
     monkeypatch.setattr("time.sleep", lambda s: None)
     r = c.enviar_seguro(_tarjeta("viejo"), "hola", proyecto="app", letra="A", enlazar=False, espera=2)
     assert r["ok"] is True and r["sid"] == "nuevo" and llamadas == ["/sessions/viejo/send", "/sessions/nuevo/send"]

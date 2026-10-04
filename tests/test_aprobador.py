@@ -11,6 +11,7 @@ POL = a.Politica(
     raices=("d:/apps/gestor_finanzas", "d:/apps/ai-development-students"),
     rm_solo=("students/ariel.levy/",),
     pushes=("gitpush-uoriginstudent/ariel.levy--follow-tags",),
+    git_ok=a.GIT_LECTURA + a.GIT_ESCRITURA,  # la del traslado al curso: commitea y crea ramas
 )
 CLON = 'cd"D:/apps/ai-development-students"'
 
@@ -158,3 +159,13 @@ def test_comando_visible_lee_el_cartel_y_corta_en_las_opciones():
     ]
     assert a.comando_visible(lineas) == 'cd "D:/apps/ai-development-students" && git status'
     assert a.comando_visible(["nada"]) is None
+
+
+def test_por_defecto_git_es_solo_lectura():
+    """Revision del 2026-10-04: el default aprobaba add, commit y pull, y en el reparto solo la
+    coordinadora commitea. Escribir hay que pedirlo con git_ok."""
+    pol = a.Politica(raices=POL.raices)
+    for cmd in ("git add .", "git commit -m x", "git pull", "git checkout -b x"):
+        assert not a.permitido(cmd, pol)[0], cmd
+    for cmd in ("git status", "git log --oneline -3", "git diff"):
+        assert a.permitido(cmd, pol)[0], cmd

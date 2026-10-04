@@ -63,29 +63,13 @@ VERBOS = (
     "type",
     "dir",
 )
-GIT_OK = (
-    "status",
-    "log",
-    "diff",
-    "add",
-    "commit",
-    "tag",
-    "switch",
-    "checkout",
-    "clone",
-    "am",
-    "format-patch",
-    "show",
-    "rev-list",
-    "branch",
-    "config",
-    "ls-files",
-    "ls-remote",
-    "remote",
-    "fetch",
-    "pull",
-    "push",
-)
+# Por defecto solo LECTURA de git: en el reparto la coordinadora es la unica que hace add y commit
+# (SKILL.md), asi que una coda frente no commitea sola salvo que la politica lo pida con git_ok=
+# (GIT_LECTURA + GIT_ESCRITURA). Medido en la revision del 2026-10-04: el default aprobaba add,
+# commit y pull.
+GIT_LECTURA = ("status", "log", "diff", "show", "rev-list", "branch", "config", "ls-files", "ls-remote", "remote")
+GIT_ESCRITURA = ("add", "commit", "tag", "switch", "checkout", "clone", "am", "format-patch", "fetch", "pull", "push")
+GIT_OK = GIT_LECTURA
 PELIGRO = re.compile(
     r"reset|stash|rebase|amend|force|curl|wget|pip|npm|taskkill|shutdown|sudo|powershell|cmd/c|mkfs|chmod|chown|`"
     # Lo que hace que git o tar ejecuten un programa ajeno (una clave de config, un transporte o una
@@ -339,7 +323,10 @@ def vigilar(elegir, pol, hasta=None, max_s=7000, cada_s=6, log=print):
                         f"/sessions/{s['session_id']}/approve",
                         {"decision": "allow", "expect": huella(lineas)},
                     )
-                    aprobados.append((time.strftime("%H:%M:%S"), cmd[:120], code))
+                    if code == 200:
+                        aprobados.append((time.strftime("%H:%M:%S"), cmd[:120], code))
+                    else:  # 409 expect_mismatch, 404: no se aprobo; se vuelve a mirar en la proxima vuelta
+                        log(f"no se aprobo ({code}): {cmd[:160]}")
                     time.sleep(3)
                 elif clave not in vistos:
                     vistos.add(clave)

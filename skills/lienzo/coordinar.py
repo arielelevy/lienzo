@@ -16,6 +16,7 @@ apenas se mueve un encargo de una tarjeta a otra.
 import hashlib
 import json
 import re
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -83,6 +84,15 @@ def frentes(proyecto, todas=False, pc=None):
             continue
         letra = m.group(1)
         previa = out.get(letra)
+        if previa is not None and not pc and previa.get("pc") != s.get("pc"):
+            # dos «encargo A» en PCs distintas (medido en la revision del 2026-10-04: una pisaba a la
+            # otra y enviar_seguro podia mandar a la PC equivocada): las dos quedan, con la PC en la clave
+            out.pop(letra)
+            out[f"{letra}@{previa.get('pc')}"] = previa
+            out[f"{letra}@{s.get('pc')}"] = s
+            continue
+        if f"{letra}@{s.get('pc')}" in out:
+            continue
         if previa is None or (s.get("copycat_of") and not previa.get("copycat_of")):
             out[letra] = s
     return out
@@ -128,13 +138,17 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
         if s.get("stopped_by"):
             return {"ok": False, "code": 409, "motivo": f"detenida por {s['stopped_by']}", "sid": sid}
         antes = (s.get("last_prompt"), s.get("prompt_id"))
+        ya_corria = s.get("state") == "corriendo"
         code, res = pedir("POST", f"/sessions/{sid}/send", _cuerpo_envio(sid, texto, enlazar), timeout=80)
         if code == 200:
             fin = time.time() + espera
             while time.time() < fin:
                 time.sleep(1)
                 n = reubicar(s, sesiones())
-                if n and (n.get("state") == "corriendo" or (n.get("last_prompt"), n.get("prompt_id")) != antes):
+                # «corriendo» solo prueba algo si antes no corria: a una sesion ocupada (o pegada en
+                # corriendo despues de un /compact) se le mira que cambie el pedido
+                tomo = (n.get("last_prompt"), n.get("prompt_id")) != antes if n else False
+                if n and (tomo or (not ya_corria and n.get("state") == "corriendo")):
                     return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": n["session_id"]}
             return {
                 "ok": False,
@@ -143,11 +157,13 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
                 "sid": sid,
             }
         if code == 404 and isinstance(res, dict) and res.get("gone") and proyecto and letra:
-            nuevo = frentes(proyecto).get(letra)
+            nuevo = frentes(proyecto, pc=s.get("pc")).get(letra)
             if nuevo and nuevo["session_id"] != sid:
                 s, sid = nuevo, nuevo["session_id"]
                 continue
-        if code in (0, 503) and intento < reintentos:
+        # solo un 503 (no llego a la otra PC) se reintenta: un timeout (0) pudo haberse tecleado
+        # del otro lado y reintentarlo lo duplicaria
+        if code == 503 and intento < reintentos:
             time.sleep(3 * (intento + 1))
             continue
         motivo = res.get("error") if isinstance(res, dict) and res.get("error") else res
@@ -241,7 +257,9 @@ def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5):
             h = p.get("health") or {}
             libre, entran = h.get("mem_free_gb"), h.get("agentes_libres")
             if libre is None:
-                return {"ok": True, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1), "entran": None}
+                # sin dato (peer recien caido, server viejo) no se dice que hay lugar: es cuando conviene frenar
+                sin = {"libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1), "entran": None}
+                return {"ok": False, **sin, "motivo": "sin dato de memoria"}
             if entran is None:  # peer viejo: la cuenta de antes
                 entran = max(0, int((libre - reserva_gb) // gb_por_sesion)) if libre > reserva_gb else 0
             return {"ok": n <= entran, "libre_gb": libre, "necesita_gb": round(n * gb_por_sesion, 1), "entran": entran}
@@ -257,18 +275,24 @@ def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None, cab
     como `pid-N` y al llegar su primer hook pasa a su id real: el lienzo le traslada la regla. Con
     `cablear_al_lanzar=False` se la deja sin regla (solo para una sesión de prueba descartable)."""
 
+    def norm(c):
+        # con barra o contrabarra, y con o sin barra final, es la misma carpeta (antes no coincidian y
+        # la tarjeta nueva no se encontraba: devolvia None con la sesion abierta y sin regla)
+        return (c or "").replace(chr(92), "/").rstrip("/").lower()
+
     def en_carpeta():
         return {
             x["session_id"]: x
             for x in sesiones()
-            if x.get("agent") == agent
-            and (x.get("cwd") or "").lower() == cwd.lower()
-            and (pc is None or x.get("pc") == pc)
+            if x.get("agent") == agent and norm(x.get("cwd")) == norm(cwd) and (pc is None or x.get("pc") == pc)
         }
 
+    if cablear_al_lanzar and not YO:
+        print("lanzar_y_titular: c.YO esta vacio, la tarjeta nueva queda SIN regla de aviso", file=sys.stderr)
     antes = set(en_carpeta())
     code, res = lanzar(pc, cwd, titulo, agent, model)
     if code != 200:
+        print(f"lanzar_y_titular: no se lanzo ({code}): {res}", file=sys.stderr)
         return None
     fin = time.time() + espera
     while time.time() < fin:
@@ -285,6 +309,10 @@ def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None, cab
                     f"(la tarjeta {sid}) y decidí el próximo paso.",
                 )
             return nueva
+    print(
+        f"lanzar_y_titular: se lanzo pero la tarjeta no aparecio en {espera} s (queda abierta, sin titulo ni regla)",
+        file=sys.stderr,
+    )
     return None
 
 
