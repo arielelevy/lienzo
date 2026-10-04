@@ -482,3 +482,28 @@ def test_dos_altas_iguales_a_la_vez_dejan_una_sola_regla(tmp_path, monkeypatch):
     finally:
         st.rules.items.clear()
         st.sessions.clear()
+
+
+# --- JsonHandler y el snapshot ----------------------------------------------------------------
+
+
+def test_el_500_entre_pcs_trae_error_id_y_no_el_texto_de_la_excepcion(entorno, monkeypatch):
+    """La base comun: antes el 500 de PeerHandler no traia `error_id` (el del tablero si)."""
+    secreto = r"C:\Users\alguien\.lienzo\x.json"
+    monkeypatch.setattr(server.health, "snapshot", lambda: (_ for _ in ()).throw(RuntimeError(secreto)))
+    for code, res in (
+        al_peer(entorno["peer"], "GET", "/peer/health", b""),
+        al_tablero(entorno["tablero"], "GET", "/peers", b""),
+    ):
+        assert code == 500 and secreto not in json.dumps(res)
+        assert len(res["error_id"]) == 8 and res["error_id"] in res["error"]
+
+
+def test_snapshot_del_tablero_lleva_el_espejo_y_el_de_otra_pc_no(entorno, monkeypatch):
+    monkeypatch.setattr(entorno["espejo"], "sessions", lambda: [{"session_id": REMOTA, "pc": "pcB"}])
+    tablero = json.loads(server.snapshot_json(con_espejo=True))
+    peer = json.loads(server.snapshot_json(con_espejo=False))
+    assert tablero["type"] == peer["type"] == "snapshot" and "build" in tablero and "build" in peer
+    assert [x["session_id"] for x in tablero["sessions"]] == [SID, REMOTA]
+    assert [x["session_id"] for x in peer["sessions"]] == [SID]
+    assert set(tablero) == set(peer) == {"type", "sessions", "pending", "links", "rules", "build"}

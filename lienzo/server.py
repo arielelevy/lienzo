@@ -512,22 +512,25 @@ def _with_mirror(local: dict) -> dict:
     }
 
 
+def snapshot_json(*, con_espejo: bool) -> str:
+    """El primer mensaje de un SSE y el que se reemite cuando cambia el espejo: `{"type":
+    "snapshot", sessions, pending, links, rules, build}`. Con `con_espejo` (el tablero) lleva
+    ademas lo de las otras PCs; sin el (lo que lee otra PC por /peer/events) solo lo de esta, para
+    no reenviar en circulo en una malla de 3+ PCs.
+
+    `_local_state` serializa con el lock tomado: `sessions.values()` son los dicts vivos, y armar
+    el JSON afuera podia leer una tarjeta a medio escribir (o reventar si el dict cambia de
+    tamaño). El espejo no necesita el lock: mirror.py tiene el suyo."""
+    local = _local_state()
+    estado = _with_mirror(local) if con_espejo else local
+    return json.dumps({"type": "snapshot", **estado, "build": build_id()}, ensure_ascii=False)
+
+
 def broadcast_mirror_snapshot() -> None:
     """El espejo cambio (un peer mando un evento, se cayo o volvio): se reemite un snapshot
     completo (local + espejo) solo a los clientes del tablero, para que una tarjeta remota se vea
     en vivo sin esperar el proximo `/sessions`. Es `mirror.MIRROR.on_change`."""
-    with lock:
-        local = _local_state()
-    _push_to_ui_clients(
-        json.dumps(
-            {
-                "type": "snapshot",
-                **_with_mirror(local),
-                "build": build_id(),
-            },
-            ensure_ascii=False,
-        )
-    )
+    _push_to_ui_clients(snapshot_json(con_espejo=True))
 
 
 def _stream_sse(handler: BaseHTTPRequestHandler, initial_json: str, extra_client_lists: list[list]) -> None:
@@ -1013,28 +1016,33 @@ def accion_restaurar(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     return restore_local(d)
 
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "lienzo/0.1"
+class JsonHandler(BaseHTTPRequestHandler):
+    """Lo que comparten el tablero (Handler) y el listener de peers (PeerHandler): contestar JSON,
+    leer el cuerpo con techo y el 500 con un id. Antes estaba dos veces, y las copias se habian
+    separado: el 500 de PeerHandler no traia `error_id` ni se callaba ante una desconexion."""
+
     protocol_version = "HTTP/1.1"
     # cierra un socket que no manda nada en 30 s (slow-loris, hallazgo A3 del pentest): un cuerpo
     # declarado y no enviado retenia el hilo para siempre. El SSE escribe un latido cada 15 s, asi
     # que las conexiones /events largas no lo alcanzan.
     timeout = 30
+    LOG_PREFIJO = ""  # "peer " en PeerHandler: de cual de los dos listeners salio el error
 
     def log_message(self, fmt, *args):  # silencio; el log propio alcanza
         pass
 
     def _server_error(self, e: BaseException) -> None:
-        """Final de todos los do_*: si el navegador cerro la conexion a mitad de la respuesta no hay
-        a quien contestar. Cualquier otra excepcion va entera al log con un id corto, y al cliente le
-        llega ese id y nada mas: str(e) podia llevar rutas y nombres de la maquina, y por el tunel
-        eso sale hacia afuera. El id esta en las dos puntas para poder cruzarlas."""
+        """Final de todos los pedidos: si el cliente cerro la conexion a mitad de la respuesta no
+        hay a quien contestar. Un RequestError es la respuesta al cliente. Cualquier otra excepcion
+        va entera al log con un id corto, y al cliente le llega ese id y nada mas: str(e) podia
+        llevar rutas y nombres de la maquina, y por el tunel eso sale hacia afuera. El id esta en
+        las dos puntas para poder cruzarlas."""
         if is_disconnect(e):
             return
         if isinstance(e, RequestError):
             return self._json(e.status, {"error": str(e)})
         eid = secrets.token_hex(4)
-        log(f"error {eid} en {self.command} {self.path}:\n{traceback.format_exc()}")
+        log(f"error {eid} en {self.LOG_PREFIJO}{self.command} {self.path}:\n{traceback.format_exc()}")
         # el id va tambien dentro de `error`: la UI muestra ese campo tal cual, asi se ve sin tocar web/
         return self._json(500, {"error": f"error interno del lienzo ({eid})", "error_id": eid})
 
@@ -1056,6 +1064,48 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _largo_declarado(self) -> int:
+        """El Content-Length del pedido, validado ANTES de leer nada: uno solo, solo digitos, y sin
+        Transfer-Encoding (no se lee chunked). Si no, RequestError y la conexion se cierra: el
+        cuerpo queda sin leer en el socket."""
+        lengths = self.headers.get_all("Content-Length", [])
+        length = lengths[0].strip() if len(lengths) == 1 else "0"
+        if self.headers.get("Transfer-Encoding") or len(lengths) > 1 or not re.fullmatch(r"[0-9]{1,20}", length):
+            self.close_connection = True
+            raise RequestError("Content-Length invalido o Transfer-Encoding no soportado")
+        return int(length)
+
+    def _exigir_techo(self, n: int, techo: int) -> None:
+        """413 sin leer un byte si el cuerpo declarado pasa el techo (hallazgo A3 del pentest)."""
+        if n > techo:
+            self.close_connection = True
+            raise RequestError("cuerpo demasiado grande", 413)
+
+    def _leer_cuerpo(self, n: int) -> bytes:
+        """Lee exactamente `n` bytes. Si un rechazo temprano deja el cuerpo sin leer en el socket,
+        el siguiente pedido de la misma conexion keep-alive lo tomaria como linea de pedido y
+        contestaria 501: por eso todo rechazo antes de leer cierra la conexion."""
+        raw = self.rfile.read(n) if n else b""
+        if len(raw) != n:
+            self.close_connection = True
+            raise RequestError("cuerpo incompleto")
+        return raw
+
+    def _decodificar_json(self, raw: bytes) -> dict:
+        """El cuerpo como objeto JSON, tolerante a latin-1 (un curl desde Git Bash), o RequestError
+        400: un JSON roto no se toma como `{}` (revision 2026-10-04, S8: un envio con el cuerpo
+        cortado tecleaba un Enter vacio en la consola)."""
+        try:
+            return decode_json_body(raw)
+        except NotAnObject as e:
+            raise RequestError("el cuerpo debe ser un objeto JSON") from e
+        except ValueError as e:
+            raise RequestError("JSON invalido") from e
+
+
+class Handler(JsonHandler):
+    server_version = "lienzo/0.1"
+
     def _route(self, read: bool = True) -> list[str]:
         """Primera linea de cada do_*, antes de decidir nada. Parte la ruta (devuelve los tramos de
         la URL, que es con lo que cada handler elige, y deja la query en `self.query`) y valida el
@@ -1065,28 +1115,15 @@ class Handler(BaseHTTPRequestHandler):
         self.query = urllib.parse.parse_qs(u.query)
         self.query_string = u.query  # para reenviar una vista remota (§3.3) con los mismos n/before
         parts = [p for p in u.path.split("/") if p]
-        lengths = self.headers.get_all("Content-Length", [])
-        length = lengths[0].strip() if len(lengths) == 1 else "0"
-        if self.headers.get("Transfer-Encoding") or len(lengths) > 1 or not re.fullmatch(r"[0-9]{1,20}", length):
-            self.close_connection = True
-            raise RequestError("Content-Length invalido o Transfer-Encoding no soportado")
-        self._length = int(length)
-        if self._length > max_body(getattr(self, "command", ""), parts):
-            self.close_connection = True
-            raise RequestError("cuerpo demasiado grande", 413)
+        self._length = self._largo_declarado()
+        self._exigir_techo(self._length, max_body(getattr(self, "command", ""), parts))
         if read:
             self._read_body()
         return parts
 
     def _read_body(self) -> None:
-        """Lee el cuerpo ya validado por `_route`. Si un rechazo temprano lo deja sin leer en el
-        socket, el siguiente request de la misma conexion keep-alive lo tomaria como linea de pedido
-        y contestaria 501: por eso todo rechazo antes de leer cierra la conexion (`_prepare`)."""
-        n = self._length
-        self.raw = self.rfile.read(n) if n else b""
-        if len(self.raw) != n:
-            self.close_connection = True
-            raise RequestError("cuerpo incompleto")
+        """Lee el cuerpo ya validado por `_route`; lo deja en `self.raw`."""
+        self.raw = self._leer_cuerpo(self._length)
 
     def _prepare(self, *, write: bool = False, authenticated: bool = False) -> list[str] | None:
         """Mismos limites, Host, login y CSRF para todos los metodos; None si ya se rechazo.
@@ -1139,13 +1176,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _json_body(self) -> dict:
-        """JSON del cuerpo tolerante a clientes que mandan latin-1 (un curl desde Git Bash)."""
-        try:
-            return decode_json_body(self.raw)
-        except NotAnObject as e:
-            raise RequestError("el cuerpo debe ser un objeto JSON") from e
-        except ValueError as e:
-            raise RequestError("JSON invalido") from e
+        return self._decodificar_json(self.raw)
 
     # --- identidad del cliente ------------------------------------------------------
     def _client_ip(self) -> str:
@@ -1665,29 +1696,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _sse(self) -> None:
-        # serializar con el lock tomado: `sessions.values()` son los dicts vivos, y armar el JSON
-        # afuera podia leer una tarjeta a medio escribir (o reventar si el dict cambia de tamaño).
-        # El espejo (sesiones de otras PCs) no necesita el lock: mirror.py tiene el suyo.
-        with lock:
-            local = _local_state()
-        snapshot = json.dumps(
-            {
-                "type": "snapshot",
-                **_with_mirror(local),
-                "build": build_id(),
-            },
-            ensure_ascii=False,
-        )
         # `ui_clients`: ademas de la verdad local (`clients`, como siempre) este stream recibe el
         # snapshot repetido cada vez que el espejo cambia (broadcast_mirror_snapshot); un peer que
-        # se conecta a /peer/events NO se registra ahi (ver PeerHandler._peer_events).
-        _stream_sse(self, snapshot, [ui_clients])
+        # se conecta a /peer/events NO se registra ahi (ver PeerHandler._events).
+        _stream_sse(self, snapshot_json(con_espejo=True), [ui_clients])
 
 
 # --- listener de peers: --peer-port, solo /peer/* (plan §3.2, §3.3, §3.4) -----------------------
 
 
-class PeerHandler(BaseHTTPRequestHandler):
+class PeerHandler(JsonHandler):
     """El segundo listener, bind a la IP de LAN: solo atiende /peer/*, todo firmado salvo
     GET /peer/hello y POST /peer/pair (que son, justamente, como se consigue la clave para firmar
     lo demas). Ejecuta los mismos comandos que Handler pero siempre sobre la sesion LOCAL de esta
@@ -1695,31 +1713,7 @@ class PeerHandler(BaseHTTPRequestHandler):
     armar el espejo."""
 
     server_version = "lienzo-peer/0.1"
-    protocol_version = "HTTP/1.1"
-    timeout = 30
-
-    def log_message(self, fmt, *args):
-        pass
-
-    def _json(self, code: int, obj) -> None:
-        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _cerrar(self, code: int, error: str) -> None:
-        """Contesta y cierra: el cuerpo quedo sin leer (o a medias) en el socket."""
-        self.close_connection = True
-        body = json.dumps({"error": error}, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.wfile.write(body)
+    LOG_PREFIJO = "peer "
 
     def _parts_and_body(self, method: str) -> tuple[list[str], bytes] | None:
         """Ruta partida y cuerpo leido, con los mismos limites que Handler._route (Content-Length
@@ -1734,41 +1728,28 @@ class PeerHandler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         self.query = urllib.parse.parse_qs(u.query)
         parts = [p for p in u.path.split("/") if p]
-        lengths = self.headers.get_all("Content-Length", [])
-        length = lengths[0].strip() if len(lengths) == 1 else "0"
-        if self.headers.get("Transfer-Encoding") or len(lengths) > 1 or not re.fullmatch(r"[0-9]{1,20}", length):
-            self._cerrar(400, "Content-Length invalido o Transfer-Encoding no soportado")
+        try:
+            n = self._largo_declarado()
+            rest = parts[1:] if parts[:1] == ["peer"] else None
+            sin_firma = rest is not None and _sin_firma(method, rest)
+            if rest is not None and not sin_firma:
+                claimed = self.headers.get("X-Lienzo-Peer") or ""
+                completos = all(self.headers.get(h) for h in ("X-Lienzo-Ts", "X-Lienzo-Nonce", "X-Lienzo-Sig"))
+                if not claimed or not completos or _peer_key(claimed) is None:
+                    _avisar_401(claimed or self.client_address[0], "sin headers de firma o PC no emparejada")
+                    self.close_connection = True
+                    raise RequestError("firma invalida", 401)
+            self._exigir_techo(
+                n, MAX_ATTACH if parts[-1:] == ["attach"] and rest is not None and not sin_firma else MAX_BODY
+            )
+            return parts, self._leer_cuerpo(n)
+        except RequestError as e:
+            self.close_connection = True  # el cuerpo quedo sin leer (o a medias) en el socket
+            self._json(e.status, {"error": str(e)})
             return None
-        n = int(length)
-        rest = parts[1:] if parts[:1] == ["peer"] else None
-        sin_firma = rest is not None and _sin_firma(method, rest)
-        if rest is not None and not sin_firma:
-            claimed = self.headers.get("X-Lienzo-Peer") or ""
-            completos = all(self.headers.get(h) for h in ("X-Lienzo-Ts", "X-Lienzo-Nonce", "X-Lienzo-Sig"))
-            if not claimed or not completos or _peer_key(claimed) is None:
-                _avisar_401(claimed or self.client_address[0], "sin headers de firma o PC no emparejada")
-                self._cerrar(401, "firma invalida")
-                return None
-        cap = MAX_ATTACH if parts[-1:] == ["attach"] and rest is not None and not sin_firma else MAX_BODY
-        if n > cap:
-            self._cerrar(413, "cuerpo demasiado grande")
-            return None
-        raw = self.rfile.read(n) if n else b""
-        if len(raw) != n:
-            self._cerrar(400, "cuerpo incompleto")
-            return None
-        return parts, raw
 
     def _body_json(self, raw: bytes) -> dict:
-        """El cuerpo como objeto JSON, o RequestError 400 como en Handler (revision 2026-10-04, S8):
-        antes un JSON roto se tomaba como `{}` y, por ejemplo, un envio con el cuerpo cortado
-        tecleaba un Enter vacio en la consola."""
-        try:
-            return decode_json_body(raw)
-        except NotAnObject as e:
-            raise RequestError("el cuerpo debe ser un objeto JSON") from e
-        except ValueError as e:
-            raise RequestError("JSON invalido") from e
+        return self._decodificar_json(raw)
 
     def _dispatch(self, method: str) -> None:
         got = self._parts_and_body(method)
@@ -1787,12 +1768,8 @@ class PeerHandler(BaseHTTPRequestHandler):
                 return self._json(401, {"error": "firma invalida"})
         try:
             self._route(method, rest, raw, pc_id)
-        except RequestError as e:
-            self._json(e.status, {"error": str(e)})
-        except Exception:
-            eid = secrets.token_hex(4)
-            log(f"error {eid} en peer {method} {self.path}:\n{traceback.format_exc()}")
-            self._json(500, {"error": f"error interno del lienzo ({eid})"})
+        except Exception as e:
+            self._server_error(e)
 
     def do_GET(self):
         self._dispatch("GET")
@@ -1955,8 +1932,7 @@ class PeerHandler(BaseHTTPRequestHandler):
         return self._json(code, res)
 
     def _events(self) -> None:
-        snapshot = json.dumps({"type": "snapshot", "build": build_id(), **_local_state()}, ensure_ascii=False)
-        _stream_sse(self, snapshot, [])
+        _stream_sse(self, snapshot_json(con_espejo=False), [])
 
 
 def _lan_ip() -> str:
