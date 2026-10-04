@@ -298,7 +298,21 @@ def accept(req: dict) -> dict:
 # --- join: el lado que pega la frase -------------------------------------------------------------
 
 
-def _pedir(host: str, port: int, method: str, path: str, body: dict | None = None, timeout: float = 5.0) -> dict:
+PEDIR_TIMEOUT_S = 30.0  # el otro lado corre scrypt y potencias de 2048 bits: en una PC cargada 5 s no alcanzaron
+
+
+def _pedir(
+    host: str, port: int, method: str, path: str, body: dict | None = None, timeout: float = PEDIR_TIMEOUT_S
+) -> dict:
+    try:
+        return _pedir_crudo(host, port, method, path, body, timeout)
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        # un timeout o un corte no es un error interno del server: que diga que paso (medido el
+        # 2026-10-04: un emparejamiento contra una PC cargada salio como 500 por un TimeoutError)
+        raise PairingError(f"la otra PC ({host}:{port}) no contestó bien: {type(e).__name__}: {e}") from e
+
+
+def _pedir_crudo(host: str, port: int, method: str, path: str, body: dict | None, timeout: float) -> dict:
     conn = http.client.HTTPConnection(host, port, timeout=timeout)
     try:
         data = json.dumps(body).encode("utf-8") if body is not None else None
