@@ -421,6 +421,9 @@ def fire_rule(rule: dict) -> None:
     rules.publish()
 
 
+_on_stop_en_vuelo: set[str] = set()  # ids de reglas on_stop con un envio en curso; bajo `lock`
+
+
 def fire_on_stop(sid: str) -> None:
     """La sesion `sid` cerro un turno: disparar sus reglas 'cuando termine' (las que no esten
     enfriando, ver ON_STOP_COOLDOWN_S)."""
@@ -457,9 +460,21 @@ def fire_on_stop(sid: str) -> None:
             if (s.get("last_reply") or "").rstrip().endswith("?"):
                 state.log(f"on_stop de {sid[:8]} no disparado: la respuesta termina en pregunta al usuario")
                 return
-        due = [r for r in rules.items if suya(r) and not enfriando(r)]
+        en_vuelo = [r["id"] for r in rules.items if suya(r) and r["id"] in _on_stop_en_vuelo]
+        due = [r for r in rules.items if suya(r) and not enfriando(r) and r["id"] not in _on_stop_en_vuelo]
+        # reservar bajo el lock ANTES de enviar: el enfriamiento sale de `last_fired`, que
+        # fire_rule escribe recien despues de un envio de hasta 60 s; en ese hueco un segundo Stop
+        # veia la regla fria y la disparaba otra vez (revision 2026-10-04, B11)
+        for r in due:
+            _on_stop_en_vuelo.add(r["id"])
+    if en_vuelo:
+        state.log(f"on_stop de {sid[:8]}: {', '.join(en_vuelo)} ya se esta enviando; no la disparo dos veces")
     for r in due:
-        fire_rule(r)
+        try:
+            fire_rule(r)
+        finally:
+            with lock:
+                _on_stop_en_vuelo.discard(r["id"])
 
 
 def aviso_muerta(sid: str, prev: str) -> None:

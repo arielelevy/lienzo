@@ -570,3 +570,54 @@ def test_fire_rule_sin_federacion_borra_con_log(reglas, log_capturado, monkeypat
     rl.fire_rule(r)
     assert r not in st.rules.items
     assert any("r1" in m and "borrada" in m for m in log_capturado)
+
+
+# --- B11: dos Stop seguidos disparaban dos veces mientras el primer envio tardaba ----------------
+
+ORIGEN = "10000000-0000-4000-8000-000000000001"
+
+
+def test_on_stop_reserva_antes_de_enviar(reglas, monkeypatch):
+    import sessions as ses
+
+    rl, st, _ = reglas
+    monkeypatch.setattr(ses, "mirror", None)
+    st.sessions[ORIGEN] = ses.new_session(ORIGEN, "claude", "hook")
+    r = {"id": "r1", "kind": "on_stop", "from": ORIGEN, "to": OTRA, "text": "x", "enabled": True, "repeat": True}
+    st.rules.items.append(r)
+    disparos = []
+
+    def envio_lento(regla):
+        disparos.append(regla["id"])
+        time.sleep(0.3)  # send_to_session puede tardar hasta 60 s
+        regla["last_fired"] = st.now()  # lo que hace fire_rule recien despues de enviar
+
+    monkeypatch.setattr(rl, "fire_rule", envio_lento)
+    hilos = [threading.Thread(target=rl.fire_on_stop, args=(ORIGEN,)) for _ in range(2)]
+    for h in hilos:
+        h.start()
+        time.sleep(0.05)  # el segundo Stop llega con el primer envio en vuelo
+    for h in hilos:
+        h.join()
+    assert disparos == ["r1"]
+
+
+def test_on_stop_libera_la_reserva_si_el_envio_revienta(reglas, monkeypatch):
+    import sessions as ses
+
+    rl, st, _ = reglas
+    monkeypatch.setattr(ses, "mirror", None)
+    st.sessions[ORIGEN] = ses.new_session(ORIGEN, "claude", "hook")
+    r = {"id": "r1", "kind": "on_stop", "from": ORIGEN, "to": OTRA, "text": "x", "enabled": True, "repeat": True}
+    st.rules.items.append(r)
+    disparos = []
+
+    def envio_roto(regla):
+        disparos.append(regla["id"])
+        raise RuntimeError("se cayo")
+
+    monkeypatch.setattr(rl, "fire_rule", envio_roto)
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            rl.fire_on_stop(ORIGEN)
+    assert disparos == ["r1", "r1"]  # sin last_fired no hay enfriamiento: la reserva no queda colgada
