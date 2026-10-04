@@ -708,11 +708,41 @@ def set_state(s: dict, new: str) -> None:
     if prev != new:
         s["state"] = new
         s["state_since"] = now()
-        if new == "termino" and prev in ("corriendo", "te_necesita") and (s.get("agent") != "pi" or s.get("hooked")):
-            # cierre de turno: reglas "cuando termine" (en otro hilo, el envio tarda)
+        if cierra_turno(s, prev, new):
+            # reglas "cuando termine" (en otro hilo, el envio tarda)
             en_hilo(on_turn_end, s["session_id"])
     if new != "te_necesita":
         s["needs"] = None
+
+
+def cierra_turno(s: dict, prev: str | None, new: str) -> bool:
+    """¿Esta transicion cierra un turno de trabajo (y dispara las reglas «cuando termine»)? Solo de
+    corriendo o te_necesita a termino. Pi sin hooks no: su stopReason cierra una respuesta del
+    modelo, no la corrida del agente (reintento, seguimiento), y sin la extension no hay
+    agent_settled que diga que de verdad termino."""
+    return new == "termino" and prev in ("corriendo", "te_necesita") and (s.get("agent") != "pi" or s.get("hooked"))
+
+
+def marcar_muerta(s: dict, avisar: bool) -> None:
+    """La tarjeta pasa a muerta: estado, `alive` y `dead_since` juntos, siempre por aca. Con el lock
+    tomado. `avisar` (explicito en cada llamada) dice si, muriendo con un encargo a medias
+    (corriendo / te_necesita), se le avisa a la coordinadora (on_died_working, rules.py). Las formas
+    de morir (plan de refactor 1.7, E9):
+
+    - el proceso desaparecio (refresh_alive): avisar=True, es la unica muerte inesperada;
+    - SessionEnd (apply_hook): avisar=False, es /exit, logout o /clear, a proposito;
+    - evento con el pid ya muerto (apply_event): avisar=False. El evento quedo en la cola con el
+      server apagado, o el agente lo escribio justo antes de cerrarse: prueba que la sesion
+      existio, no que muriera trabajando ahora, y avisar al arrancar el server repetiria avisos
+      viejos;
+    - al cargar del disco (load_sessions) escribe el estado directo, a proposito: una tarjeta de la
+      corrida anterior no cierra ningun turno ni avisa nada."""
+    prev = s.get("state")
+    s["alive"] = False
+    s["dead_since"] = s.get("dead_since") or now()
+    set_state(s, "muerta")
+    if avisar and prev in ("corriendo", "te_necesita"):
+        en_hilo(on_died_working, s["session_id"], prev)
 
 
 def set_needs(s: dict, needs: dict) -> None:
@@ -1458,9 +1488,7 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
     elif name == "Interrupt":
         set_state(s, "termino")
     elif name == "SessionEnd":
-        set_state(s, "muerta")
-        s["alive"] = False
-        s["dead_since"] = now()
+        marcar_muerta(s, avisar=False)  # /exit, logout o /clear: a proposito, no se avisa
 
 
 def apply_event(ev: dict) -> None:
@@ -1520,9 +1548,7 @@ def apply_event(ev: dict) -> None:
         if created and DEAD_TARGETS:
             en_hilo(adopt_dead_target, dict(s))
         if ev_pid_dead and not (s.get("pid") and backend.agent_alive(s)):
-            set_state(s, "muerta")
-            s["alive"] = False
-            s["dead_since"] = s.get("dead_since") or now()
+            marcar_muerta(s, avisar=False)  # un evento viejo no dice que muriera trabajando ahora
         if created or name in ("SessionStart", "PiTree", "PiMetadata") or (s["agent"] == "pi" and name == "Stop"):
             r = read_transcript(s)
             if r is not None:
@@ -1950,13 +1976,9 @@ def refresh_alive(s: dict) -> bool:
         return True
     if not s["alive"]:
         return False
-    s["alive"] = False
-    s["dead_since"] = now()
-    prev = s.get("state")
-    set_state(s, "muerta")
-    if prev in ("corriendo", "te_necesita"):
-        # murio con un encargo a medias: la coordinadora no recibe un Stop, asi que se le avisa aparte
-        en_hilo(on_died_working, s["session_id"], prev)
+    s["dead_since"] = None  # la muerte es de ahora (marcar_muerta conserva una hora ya puesta)
+    # si murio con un encargo a medias, la coordinadora no recibe un Stop: se le avisa aparte
+    marcar_muerta(s, avisar=True)
     return True
 
 
@@ -2572,7 +2594,8 @@ def load_sessions() -> tuple[int, int]:
                     os.remove(p)
                     purged += 1
                     continue
-                # sesion de una corrida anterior sin proceso: se muestra muerta y se va sola
+                # sesion de una corrida anterior sin proceso: se muestra muerta y se va sola. Va
+                # directo y no por marcar_muerta/set_state, a proposito: no cierra turno ni avisa
                 s["alive"] = False
                 s["dead_since"] = s.get("dead_since") or now()
                 s["state"] = "muerta"

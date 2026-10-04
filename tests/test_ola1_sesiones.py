@@ -309,3 +309,72 @@ def test_un_evento_que_no_se_puede_borrar_se_aplica_una_sola_vez(aislado, tmp_pa
     monkeypatch.setattr(ses.os, "remove", real_remove)
     ses.consume_once()
     assert not (eventos / "0001-ev.json").exists() and ses._aplicados == {}
+
+
+# 1.7 transiciones: cierre de turno y muerte -----------------------------------------------------
+
+
+@pytest.fixture
+def hilos(monkeypatch):
+    """en_hilo sincronico que anota que se lanzo: (nombre del gancho, args)."""
+    lanzados = []
+    monkeypatch.setattr(ses, "on_turn_end", lambda sid: lanzados.append(("on_turn_end", sid)))
+    monkeypatch.setattr(ses, "on_died_working", lambda sid, prev: lanzados.append(("on_died_working", sid, prev)))
+    monkeypatch.setattr(ses, "en_hilo", lambda fn, *a: fn(*a))
+    return lanzados
+
+
+@pytest.mark.parametrize("agente,hooked", [("claude", True), ("claude", False), ("pi", True), ("pi", False)])
+def test_el_cierre_de_turno_sale_solo_de_corriendo_o_te_necesita_a_termino(aislado, hilos, agente, hooked):
+    for prev in (*st.STATES, None, "roto"):
+        for nuevo in st.STATES:
+            hilos.clear()
+            s = ses.new_session("e" * 8, agente, "hook")
+            s.update(state=prev, hooked=hooked)
+            ses.set_state(s, nuevo)
+            espera = nuevo == "termino" and prev in ("corriendo", "te_necesita") and (agente != "pi" or hooked)
+            assert hilos == ([("on_turn_end", "e" * 8)] if espera else []), (prev, nuevo)
+
+
+def test_session_end_no_avisa_que_murio_trabajando(aislado, hilos, monkeypatch):
+    """SessionEnd es /exit o /clear: avisar a la coordinadora que «murio con un encargo» seria falso."""
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    ses.apply_event({"hook_event_name": "UserPromptSubmit", "session_id": "f" * 8, "prompt": "x"})
+    assert st.sessions["f" * 8]["state"] == "corriendo"
+    ses.apply_event({"hook_event_name": "SessionEnd", "session_id": "f" * 8, "reason": "clear"})
+    s = st.sessions["f" * 8]
+    assert s["state"] == "muerta" and s["alive"] is False and s["dead_since"]
+    assert [h for h in hilos if h[0] == "on_died_working"] == []
+
+
+def test_evento_con_pid_muerto_nace_muerta_sin_avisar(aislado, hilos, monkeypatch):
+    """El evento quedo en la cola con el server apagado (o el agente lo escribio al cerrarse): prueba
+    que la sesion existio, no que murio trabajando AHORA; no se avisa."""
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: False)
+    ses.apply_event({"hook_event_name": "UserPromptSubmit", "session_id": "9" * 8, "prompt": "x", "pid": 4242})
+    s = st.sessions["9" * 8]
+    assert s["state"] == "muerta" and s["alive"] is False and s["dead_since"]
+    assert [h for h in hilos if h[0] == "on_died_working"] == []
+
+
+def test_el_proceso_que_desaparece_avisa_solo_si_trabajaba(aislado, hilos, monkeypatch):
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: False)
+    for prev, avisa in (("corriendo", True), ("te_necesita", True), ("termino", False)):
+        hilos.clear()
+        s = ses.new_session("7" * 8, "claude", "hook")
+        s.update(pid=1, alive=True, state=prev)
+        assert ses.refresh_alive(s) is True
+        assert s["state"] == "muerta" and s["alive"] is False and s["dead_since"]
+        assert [h for h in hilos if h[0] == "on_died_working"] == (
+            [("on_died_working", "7" * 8, prev)] if avisa else []
+        )
+
+
+def test_marcar_muerta_es_la_unica_forma(aislado, hilos):
+    s = ses.new_session("6" * 8, "claude", "hook")
+    s.update(state="corriendo", alive=True)
+    ses.marcar_muerta(s, avisar=False)
+    assert s["state"] == "muerta" and s["alive"] is False and s["dead_since"] and hilos == []
+    s.update(state="te_necesita", alive=True, dead_since=None)
+    ses.marcar_muerta(s, avisar=True)
+    assert hilos == [("on_died_working", "6" * 8, "te_necesita")]
