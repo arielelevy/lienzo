@@ -498,3 +498,18 @@ def test_lan_ip_avisa_cuando_cae_a_localhost(aislado, monkeypatch):
     monkeypatch.setattr(server.socket, "socket", sin_red)
     assert server._lan_ip() == "127.0.0.1"
     assert any("127.0.0.1" in x and "red inalcanzable" in x for x in aislado["logs"])
+
+
+def test_excepcion_en_cualquier_hilo_llega_al_log(aislado, monkeypatch):
+    """1.1 (la parte simple): una excepción en un hilo iba a stderr (la consola del server, que
+    nadie mira) y no al log propio."""
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    server.instalar_excepthook()
+
+    def revienta():
+        raise ValueError("se rompio el hilo")
+
+    h = threading.Thread(target=revienta, name="hilo-de-prueba")
+    h.start()
+    h.join()
+    assert any("hilo-de-prueba" in x and "ValueError: se rompio el hilo" in x for x in aislado["logs"])

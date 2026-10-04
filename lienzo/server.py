@@ -2364,7 +2364,24 @@ def _beacon_sync_loop(stop_event: threading.Event, beacon) -> None:
             log(f"peer {peer.get('name') or pc_id}: IP actualizada por beacon a {ip}")
 
 
+def instalar_excepthook() -> None:
+    """Cualquier excepcion que mate un hilo va al log propio con su traceback. Sin esto iba a
+    stderr, la consola del server que nadie mira, y un hilo de fondo (barrido, reglas, espejo)
+    moria en silencio (revision 2026-10-04, 1.1; los hilos que deben seguir vivos atrapan lo
+    suyo, esto es la red de abajo)."""
+
+    def hook(args: threading.ExceptHookArgs) -> None:
+        if args.exc_type is SystemExit:
+            return
+        nombre = args.thread.name if args.thread is not None else "?"
+        tb = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+        log(f"excepcion sin atrapar en el hilo {nombre}:\n{tb}")
+
+    threading.excepthook = hook
+
+
 def main() -> int:
+    instalar_excepthook()
     ap = argparse.ArgumentParser(prog="lienzo-server")
     ap.add_argument("--port", type=int, default=7321)
     ap.add_argument(
