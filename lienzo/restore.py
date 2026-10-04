@@ -38,7 +38,10 @@ _BY_ID = ("claude", "codex")
 
 # razones de SessionEnd que NO son una salida a proposito: "other" es lo que deja cerrar la
 # ventana o apagar la PC; sin razon (hook viejo o evento perdido) tampoco hay prueba de salida
-_NOT_ON_PURPOSE = (None, "", "other")
+# Razones de SessionEnd que son salida voluntaria (lista blanca): una razon nueva que Claude Code
+# agregue cuenta como muerte a restaurar, que es el error barato (antes era lista negra y una razon
+# nueva hacia perder la sesion sin avisar).
+ON_PURPOSE = frozenset({"exit", "logout", "prompt_input_exit", "clear", "resume", "bypass_permissions_disabled"})
 
 _lock = threading.RLock()
 _last_live: dict[str, float] = {}
@@ -73,7 +76,7 @@ def ended_on_purpose(card: dict) -> bool:
     consideran muerte a restaurar. Sin SessionEnd (el proceso desaparecio, un reinicio) tampoco."""
     if card.get("last_event") != "SessionEnd":
         return False
-    return card.get("end_reason") not in _NOT_ON_PURPOSE
+    return card.get("end_reason") in ON_PURPOSE
 
 
 def eligible(card: dict) -> bool:

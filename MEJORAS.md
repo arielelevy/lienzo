@@ -39,6 +39,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-03 | **Temperatura en cualquier PC**: `health` lee todas las zonas térmicas (y `MSAcpi` si hay permisos) y elige `\_TZ.THRM` o, si no está, la zona plausible más caliente (25–120 °C) | la otra PC no tiene `\_TZ.THRM` y su `temp_c` quedaba siempre en None; esta PC marcó 95 °C |
 | 2026-10-03 | **Temperatura desde LibreHardwareMonitor**: `health` lee primero `http://127.0.0.1:8085/data.json` (paquete del CPU, o el sensor real más caliente sin contar límites ni umbrales) y si no contesta sigue con WMI; URL en `LIENZO_LHM_URL`. Cada fuente es una `FuenteTemperatura` (clase abstracta: `leer` + `elegir`) en la cadena `FUENTES`; una fuente rota da None sin cortar la cadena y su motivo va al log al cambiar de estado, igual que el pedido de salud a otra PC (`mirror._poll_health`), que antes fallaba en silencio | el Dell Pro 14 no tiene zonas térmicas y MSAcpi da «no soportado» (0x8004100c); LHM 0.9.6 no lee el CPU de esa PC y por ahora da la RAM (~47 °C) |
 | 2026-10-03 | **Una sola regla de capacidad**: `health.agentes_que_entran` (reserva 1,5 GB + 0,7 GB por agente); el server la usa en `/restaurar` y la publica como `agentes_libres` en la salud de cada PC, y `coordinar.capacidad` la lee de ahí | las constantes estaban repetidas en `server.py` y `coordinar.py` (punto pendiente «Capacidad de memoria duplicada») |
+| 2026-10-03 | **`drop_session(..., muerta=True)`** en vez de leer el texto de la razón, y **`ended_on_purpose` por lista blanca** (`restore.ON_PURPOSE`): una razón nueva de SessionEnd cuenta como muerte a restaurar | dos puntos pendientes: el texto usado como protocolo y la lista negra que perdía sesiones con razones nuevas |
 
 ## Pendiente (con evidencia)
 
@@ -105,11 +106,6 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 - **El espejo se reconcilia por rebote**: una tarjeta fantasma se detecta cuando un envío vuelve con
   `unknown_session` (`mirror.forward` → `_tarjeta_fantasma`). Debería reconciliarse con un snapshot
   periódico o una secuencia en el SSE, no esperar a que alguien escriba.
-- **`drop_session(sid, reason)` usa el texto como protocolo**: `restore_on_drop` hace
-  `reason.startswith("muerta")` (`lienzo/sessions.py`). Pasar a un parámetro o un enum.
-- **`ended_on_purpose` es una lista negra de razones** (`lienzo/restore.py`, `_NOT_ON_PURPOSE`): una
-  razón nueva de SessionEnd de Claude Code se tomaría como salida voluntaria y la sesión no se
-  restauraría. Invertir a lista blanca de las razones conocidas de salida voluntaria.
 - **El enrutado owner→forward está repetido en ~10 handlers de `lienzo/server.py`** (`_route_session`
   + `mirror.MIRROR.forward` en cada ruta de `/sessions/<id>/...`): una sola función `route_or_local`.
 - **`restorables_all` y `cablear` consultan en serie**: una PC lenta o caída suma su timeout al de las

@@ -421,14 +421,14 @@ def restore_guard(fn) -> None:
         state.log(f"restaurar: {traceback.format_exc()}")
 
 
-def restore_on_drop(card: dict, reason: str) -> None:
-    """Registro de sesiones restaurables (restore.py) al borrar una tarjeta. Murio el proceso (la
-    razon "muerta hace ...", que es lo que deja un reinicio de PC): se recuerda, salvo que haya
-    terminado a proposito (/exit, logout). Cualquier otra razon (borrada a mano, continuada tras un
-    /clear, duplicada por barrido) la olvida: ya no hay nada que restaurar. Nunca levanta."""
+def restore_on_drop(card: dict, muerta: bool) -> None:
+    """Registro de sesiones restaurables (restore.py) al borrar una tarjeta. Murio el proceso
+    (`muerta`, que es lo que deja un reinicio de PC): se recuerda, salvo que haya terminado a
+    proposito (/exit, logout). Cualquier otro borrado (a mano, continuada tras un /clear, duplicada
+    por barrido) la olvida: ya no hay nada que restaurar. Nunca levanta."""
 
     def work() -> None:
-        if reason.startswith("muerta") and not restore.ended_on_purpose(card):
+        if muerta and not restore.ended_on_purpose(card):
             restore.remember(card, ended=True)
         else:
             restore.forget(card["session_id"])
@@ -436,8 +436,9 @@ def restore_on_drop(card: dict, reason: str) -> None:
     restore_guard(work)
 
 
-def drop_session(sid: str, reason: str) -> bool:
-    """Borra la tarjeta. False si no existia (no se toco nada, ni el registro de restaurables)."""
+def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
+    """Borra la tarjeta. `reason` es solo para el log; `muerta` (el proceso desaparecio) es lo que
+    decide si se recuerda para restaurar. False si no existia (no se toco nada, ni el registro)."""
     with lock:
         card = sessions.get(sid)
         if not forget_session(sid):
@@ -445,7 +446,7 @@ def drop_session(sid: str, reason: str) -> bool:
     links.remove(lambda l: sid in (l["from"], l["to"]))
     rules.remove(lambda r: sid in (r.get("from"), r["to"]))
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
-    restore_on_drop(card, reason)
+    restore_on_drop(card, muerta)
     state.broadcast({"type": "removed", "session_id": sid})
     return True
 
@@ -1730,7 +1731,7 @@ def check_liveness(sid: str) -> None:
             changed = coda_log_activity(s) or changed
         dead_since = parse_ts(s["dead_since"]) if s["state"] == "muerta" else None
         if dead_since and (dt.datetime.now().astimezone() - dead_since).total_seconds() > DEAD_GRACE_S:
-            drop_session(sid, "muerta hace mas de 60 s")
+            drop_session(sid, "muerta hace mas de 60 s", muerta=True)
             return
         # transcripcion: el stat es barato (14 us) y va aca; leerla, no
         tp = s.get("transcript_path")

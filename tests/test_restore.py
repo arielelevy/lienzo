@@ -122,8 +122,16 @@ def _escribir(reg, entradas):
 
 def _e(i, dias=0.0):
     t = (dt.datetime.now().astimezone() - dt.timedelta(days=dias)).isoformat()
-    return {"session_id": f"pid-{i}", "agent": "pi", "cwd": "x", "title": None, "repo": "x", "pc": "pcA",
-            "saved_at": t, "ended_at": t}
+    return {
+        "session_id": f"pid-{i}",
+        "agent": "pi",
+        "cwd": "x",
+        "title": None,
+        "repo": "x",
+        "pc": "pcA",
+        "saved_at": t,
+        "ended_at": t,
+    }
 
 
 def test_poda_de_mas_de_7_dias(reg):
@@ -153,13 +161,15 @@ def test_escritura_atomica_no_deja_tmp(reg):
 def test_drop_session_por_muerte_recuerda(reg):
     s = card(reg, state="muerta", alive=False, last_event="Stop")
     st.sessions[UUID] = s
-    ses.drop_session(UUID, "muerta hace mas de 60 s")
+    ses.drop_session(UUID, "muerta hace mas de 60 s", muerta=True)
     assert UUID not in st.sessions
     (e,) = restore.restorables()
     assert e["session_id"] == UUID and e["ended_at"]
 
 
-@pytest.mark.parametrize("reason", ["borrada desde la UI", "borrada desde otra PC", "continuada", "duplicada por barrido"])
+@pytest.mark.parametrize(
+    "reason", ["borrada desde la UI", "borrada desde otra PC", "continuada", "duplicada por barrido"]
+)
 def test_drop_session_por_otra_razon_olvida(reg, reason):
     restore.remember(card(reg), ended=False)
     st.sessions[UUID] = card(reg)
@@ -169,7 +179,7 @@ def test_drop_session_por_otra_razon_olvida(reg, reason):
 
 def test_drop_session_de_agente_desconocido_no_guarda(reg):
     st.sessions[UUID] = card(reg, agent="gemini")
-    ses.drop_session(UUID, "muerta hace mas de 60 s")
+    ses.drop_session(UUID, "muerta hace mas de 60 s", muerta=True)
     assert restore.restorables() == []
 
 
@@ -177,11 +187,18 @@ def test_drop_session_de_agente_desconocido_no_guarda(reg):
 def test_sessionend_a_proposito_no_queda_restaurable(reg, reason):
     # estaba guardada de forma incremental, viva; el usuario escribe /exit: el SessionEnd la borra
     restore.remember(card(reg), ended=False)
-    ses.apply_event({"hook_event_name": "SessionEnd", "session_id": UUID, "agent": "claude", "reason": reason,
-                     "cwd": str(reg / "cwd")})
+    ses.apply_event(
+        {
+            "hook_event_name": "SessionEnd",
+            "session_id": UUID,
+            "agent": "claude",
+            "reason": reason,
+            "cwd": str(reg / "cwd"),
+        }
+    )
     s = st.sessions[UUID]
     assert s["state"] == "muerta" and s["end_reason"] == reason
-    ses.drop_session(UUID, "muerta hace mas de 60 s")
+    ses.drop_session(UUID, "muerta hace mas de 60 s", muerta=True)
     assert restore.restorables() == []
 
 
@@ -191,7 +208,7 @@ def test_sessionend_other_o_sin_razon_si_queda_restaurable(reg, reason):
     if reason:
         ev["reason"] = reason
     ses.apply_event(ev)
-    ses.drop_session(UUID, "muerta hace mas de 60 s")
+    ses.drop_session(UUID, "muerta hace mas de 60 s", muerta=True)
     assert [e["session_id"] for e in restore.restorables()] == [UUID]
 
 
@@ -231,8 +248,15 @@ def test_load_sessions_deja_registro_de_las_muertas_y_de_las_vivas(reg, monkeypa
     monkeypatch.setattr(ses.backend, "agent_alive", lambda d: d["session_id"] in vivas)
     muerta = card(reg, alive=True, state="termino", last_event="Stop", last_event_ts=st.now(), pid=5)
     viva = card(reg, sid=UUID2, alive=True, state="termino", last_event="Stop", last_event_ts=st.now(), pid=6)
-    salio = card(reg, sid="2b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", alive=True, last_event="SessionEnd",
-                 end_reason="exit", last_event_ts=st.now(), pid=7)
+    salio = card(
+        reg,
+        sid="2b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+        alive=True,
+        last_event="SessionEnd",
+        end_reason="exit",
+        last_event_ts=st.now(),
+        pid=7,
+    )
     for s in (muerta, viva, salio):
         with open(os.path.join(st.SESSIONS, f"{s['session_id']}.json"), "w", encoding="utf-8") as f:
             json.dump(s, f)
@@ -273,8 +297,17 @@ def test_sin_resume_no_cambia_nada_ni_agrega_la_marca(aislado_launch, monkeypatc
 
 
 MALOS = [
-    "x & calc", f"{UUID} & calc", f"{UUID}\r\ncalc", f"{UUID}%PATH%", 'a"b-c-d-e-f-0123', f"{UUID}|calc",
-    "pid-123", "abc", "g" * 12, "a" * 41, "",
+    "x & calc",
+    f"{UUID} & calc",
+    f"{UUID}\r\ncalc",
+    f"{UUID}%PATH%",
+    'a"b-c-d-e-f-0123',
+    f"{UUID}|calc",
+    "pid-123",
+    "abc",
+    "g" * 12,
+    "a" * 41,
+    "",
 ]
 
 
@@ -491,3 +524,12 @@ def test_peer_handler_expone_las_rutas_espejo(reg, lanzador):
     assert h.out[0] == 200 and [e["session_id"] for e in h.out[1]["restaurables"]] == [sid]
     server.PeerHandler._route(h, "POST", ["restaurar"], json.dumps({"session_id": sid}).encode(), "pcB")
     assert h.out[0] == 200 and h.out[1]["restored"][0]["session_id"] == sid
+
+
+@pytest.mark.parametrize(
+    "razon,voluntaria",
+    [("exit", True), ("clear", True), ("other", False), (None, False), ("razon-nueva-de-claude", False)],
+)
+def test_ended_on_purpose_es_lista_blanca(razon, voluntaria):
+    """Una razon de SessionEnd que no conocemos cuenta como muerte a restaurar, no como salida."""
+    assert restore.ended_on_purpose({"last_event": "SessionEnd", "end_reason": razon}) is voluntaria
