@@ -71,6 +71,8 @@ def test_temperatura_cacheada_30_segundos_no_repite_el_powershell(monkeypatch):
         return FakeResult()
 
     monkeypatch.setattr(health.subprocess, "run", fake_run)
+    # solo WMI: con LibreHardwareMonitor corriendo en esta PC, la medicion no llegaria al powershell
+    monkeypatch.setattr(health, "FUENTES", [health.ZonasTermicasWMI()])
 
     reloj = [1000.0]
     monkeypatch.setattr(health.time, "monotonic", lambda: reloj[0])
@@ -116,9 +118,132 @@ def test_snapshot_en_frio_y_con_cache(capsys):
 
 def test_elegir_temp_prefiere_thrm_y_si_no_la_zona_plausible_mas_caliente():
     r"""Esta PC tiene \_TZ.THRM; la otra no y quedaba en None (medido el 2026-10-03)."""
-    assert health._elegir_temp("\\_TZ.TZ01|2932\n\\_TZ.THRM|3682\n") == 95.1
-    assert health._elegir_temp("\\_TZ.TZ01|2932\n\\_TZ.CPUZ|3332\n\\_TZ.TZ02|3182\n") == 60.1
-    assert health._elegir_temp("acpi:ACPI\\ThermalZone\\TZ00_0|3232\n") == 50.1
-    assert health._elegir_temp("\\_TZ.TZ01|2932\n") is None  # 20 °C fijo: no es la PC
-    assert health._elegir_temp("") is None
-    assert health._elegir_temp("basura\n|\nx|abc\n") is None
+    assert health.ZonasTermicasWMI().elegir("\\_TZ.TZ01|2932\n\\_TZ.THRM|3682\n") == 95.1
+    assert health.ZonasTermicasWMI().elegir("\\_TZ.TZ01|2932\n\\_TZ.CPUZ|3332\n\\_TZ.TZ02|3182\n") == 60.1
+    assert health.ZonasTermicasWMI().elegir("acpi:ACPI\\ThermalZone\\TZ00_0|3232\n") == 50.1
+    assert health.ZonasTermicasWMI().elegir("\\_TZ.TZ01|2932\n") is None  # 20 °C fijo: no es la PC
+    assert health.ZonasTermicasWMI().elegir("") is None
+    assert health.ZonasTermicasWMI().elegir("basura\n|\nx|abc\n") is None
+
+
+def _lhm(*sensores):
+    """Un data.json de LibreHardwareMonitor con los sensores dados como (SensorId, Text, Value)."""
+    return {
+        "Text": "Sensor",
+        "Children": [
+            {
+                "Text": "PC",
+                "Children": [
+                    {"Text": t, "SensorId": sid, "Type": "Temperature", "Value": v, "Children": []}
+                    for sid, t, v in sensores
+                ],
+            }
+        ],
+    }
+
+
+def test_elegir_temp_lhm_prefiere_el_paquete_del_cpu():
+    datos = _lhm(
+        ("/intelcpu/0/temperature/0", "CPU Core #1", "71,0 °C"),
+        ("/intelcpu/0/temperature/9", "CPU Package", "68,5 °C"),
+        ("/nvme/0/temperature/0", "Composite Temperature", "38,0 °C"),
+    )
+    assert health.LibreHardwareMonitor().elegir(datos) == 68.5
+
+
+def test_elegir_temp_lhm_sin_cpu_usa_el_sensor_real_mas_caliente_y_no_los_limites():
+    """El Dell Pro 14 con LHM 0.9.6 (medido el 2026-10-03): sin temperatura de CPU, solo RAM y NVMe,
+    con limites y umbrales que LHM informa como si fueran temperaturas."""
+    datos = _lhm(
+        ("/memory/dimm/0/temperature/0", "DIMM #0", "47,8 °C"),
+        ("/memory/dimm/0/temperature/1", "Temperature Sensor Resolution", "0,3 °C"),
+        ("/memory/dimm/0/temperature/3", "Thermal Sensor High Limit", "55,0 °C"),
+        ("/memory/dimm/0/temperature/5", "Thermal Sensor Critical High Limit", "85,0 °C"),
+        ("/nvme/0/temperature/0", "Composite Temperature", "38,0 °C"),
+        ("/nvme/0/temperature/10", "Warning Temperature", "69,0 °C"),
+        ("/nvme/0/temperature/11", "Critical Temperature", "74,0 °C"),
+    )
+    assert health.LibreHardwareMonitor().elegir(datos) == 47.8
+    assert health.LibreHardwareMonitor().elegir(_lhm(("/nvme/0/temperature/0", "Composite", "basura"))) is None
+    assert health.LibreHardwareMonitor().elegir({}) is None
+
+
+class _Fija(health.FuenteTemperatura):
+    """Una fuente de prueba: devuelve siempre lo mismo, o levanta si se le pasa una excepcion."""
+
+    nombre = "fija"
+
+    def __init__(self, crudo):
+        self.crudo = crudo
+        self.lecturas = 0
+
+    def leer(self):
+        self.lecturas += 1
+        if isinstance(self.crudo, Exception):
+            raise self.crudo
+        return self.crudo
+
+    def elegir(self, crudo):
+        return crudo
+
+
+def test_la_cadena_usa_la_primera_fuente_que_mide_y_no_consulta_las_siguientes(monkeypatch):
+    primera, segunda = _Fija(52.0), _Fija(45.1)
+    monkeypatch.setattr(health, "FUENTES", [primera, segunda])
+    assert health._medir_temp() == 52.0
+    assert segunda.lecturas == 0, "con la primera midiendo no hace falta la segunda (el powershell)"
+
+
+def test_una_fuente_rota_o_sin_lectura_no_corta_la_cadena(monkeypatch):
+    rota, vacia, buena = _Fija(RuntimeError("formato nuevo")), _Fija(None), _Fija(45.1)
+    monkeypatch.setattr(health, "FUENTES", [rota, vacia, buena])
+    assert health._medir_temp() == 45.1
+    monkeypatch.setattr(health, "FUENTES", [rota, vacia])
+    assert health._medir_temp() is None
+
+
+def test_lhm_sin_nadie_escuchando_da_none_al_instante():
+    t0 = time.perf_counter()
+    assert health.LibreHardwareMonitor("http://127.0.0.1:1/data.json").medir() is None
+    assert time.perf_counter() - t0 < 1.5
+
+
+def test_lhm_url_por_variable_de_entorno(monkeypatch):
+    monkeypatch.setenv("LIENZO_LHM_URL", "http://127.0.0.1:9999/data.json")
+    assert health.LibreHardwareMonitor().url == "http://127.0.0.1:9999/data.json"
+    assert health.LibreHardwareMonitor("http://otra/data.json").url == "http://otra/data.json"
+
+
+def test_no_se_puede_instanciar_una_fuente_sin_leer_y_elegir():
+    class Incompleta(health.FuenteTemperatura):
+        nombre = "incompleta"
+
+        def leer(self):
+            return ""
+
+    try:
+        Incompleta()
+    except TypeError:
+        return
+    raise AssertionError("FuenteTemperatura tiene que obligar a implementar elegir()")
+
+
+def test_una_fuente_que_falla_lo_avisa_al_cambiar_de_estado_y_no_cada_vez(monkeypatch):
+    """Ningun error silencioso: el motivo va al log. Pero una vez por cambio, no cada 30 s."""
+    avisos: list[str] = []
+    monkeypatch.setattr(health, "log", avisos.append)
+    f = _Fija(45.1)
+    f.medir()
+    assert avisos == [], "arrancar midiendo bien no es noticia"
+    f.crudo = ConnectionRefusedError("nadie escucha")
+    f.medir()
+    f.medir()
+    f.crudo = None
+    f.medir()
+    f.crudo = 45.1
+    f.medir()
+    assert avisos == [
+        "temperatura, fuente fija: falla (ConnectionRefusedError: nadie escucha)",
+        "temperatura, fuente fija: sin lectura plausible",
+        "temperatura, fuente fija: ok",
+    ]

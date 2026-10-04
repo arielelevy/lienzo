@@ -39,6 +39,7 @@ class _PeerMirror:
         self.links: list[dict] = []
         self.rules: list[dict] = []
         self.health: dict | None = None
+        self.health_error: str | None = None  # el ultimo fallo avisado al pedir su salud
         self.last_seen: float = 0.0
         self.client: federation.SSEClient | None = None
         self.synced = False  # ya llego su snapshot completo en esta conexion
@@ -173,10 +174,19 @@ class Mirror:
         pm = self._get(pc_id)
         if pm is None:
             return
+        nombre = pm.info.get("name") or pc_id
         try:
             h = self.transport.get(pm.conn, "/peer/health")
-        except OSError:
+        except OSError as e:
+            # se avisa al empezar a fallar o al cambiar el motivo, no cada 15 s mientras siga igual
+            error = f"{type(e).__name__}: {e}"
+            if error != pm.health_error:
+                pm.health_error = error
+                self.log(f"→ {nombre} GET /health: {error}")
             return
+        if pm.health_error is not None:
+            pm.health_error = None
+            self.log(f"→ {nombre} GET /health: responde de nuevo")
         with self._lock:
             pm.health = h
             pm.last_seen = time.time()

@@ -1967,6 +1967,7 @@ def main() -> int:
     # --- federacion (plan multi-PC, ronda 2): listener de peers, espejo y beacon ----------------
     mirror.MIRROR.on_change = broadcast_mirror_snapshot
     mirror.MIRROR.log = log
+    health.log = log
     peers_guardados = federation.list_peers(PEERS_FILE)
     peer_srv = None
     if a.peers or peers_guardados:

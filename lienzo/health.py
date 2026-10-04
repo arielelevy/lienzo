@@ -1,8 +1,9 @@
 """Salud de la PC: memoria, CPU y temperatura de Windows, sin dependencias nuevas.
 
 Memoria por GlobalMemoryStatusEx; CPU por dos muestras de GetSystemTimes (la primera llamada no
-tiene con que comparar y da None: el modulo guarda la muestra anterior); temperatura por WMI
-(\\_TZ.THRM, deciKelvin) via un powershell corto, cara y por eso cacheada 30 s. `snapshot()` nunca
+tiene con que comparar y da None: el modulo guarda la muestra anterior); temperatura de
+LibreHardwareMonitor (su servidor web en :8085) si esta corriendo, y si no por WMI (\\_TZ.THRM,
+deciKelvin) via un powershell corto, cara y por eso cacheada 30 s. `snapshot()` nunca
 levanta: un fallo de cualquier pieza deja ese campo en None y no interrumpe a las demas.
 
 Fuera de Windows (Mac/Linux/WSL, backend tmux) el modulo tiene que importar igual: la memoria sale de
@@ -15,10 +16,15 @@ from __future__ import annotations
 
 import ctypes
 import datetime as dt
+import json
+import os
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
+from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 WINDOWS = sys.platform == "win32"
 GB = 1024**3
@@ -111,16 +117,9 @@ def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
-# Cada PC nombra distinto su sensor: en esta el bueno es \_TZ.THRM (\_TZ.TZ01 da 20 °C fijo, medido el
-# 2026-09-26), y la otra PC no tiene THRM y quedaba siempre en None (medido el 2026-10-03). Se leen
-# todas las zonas (y, si hay permisos, MSAcpi_ThermalZoneTemperature) y _elegir_temp decide.
-_TEMP_PS = r"""
-$ErrorActionPreference = 'SilentlyContinue'
-Get-CimInstance Win32_PerfFormattedData_Counters_ThermalZoneInformation |
-  ForEach-Object { "$($_.Name)|$($_.HighPrecisionTemperature)" }
-Get-CimInstance -Namespace root/wmi MSAcpi_ThermalZoneTemperature |
-  ForEach-Object { "acpi:$($_.InstanceName)|$($_.CurrentTemperature)" }
-"""
+# A donde van los avisos de las fuentes; server.py lo cambia por su log. Por defecto a stderr: un
+# import suelto (tests, scripts) tampoco falla en silencio.
+log: Callable[[str], None] = lambda msg: print(f"health: {msg}", file=sys.stderr)
 
 TEMP_MIN_C = 25.0  # por debajo es un sensor fijo o de ambiente (TZ01 da 20 °C siempre)
 TEMP_MAX_C = 120.0  # por encima es una lectura rota
@@ -130,28 +129,116 @@ _temp_cache: tuple[float | None, float] | None = None
 _temp_refrescando = threading.Lock()
 
 
-def _elegir_temp(salida: str) -> float | None:
-    r"""De las lineas «nombre|deciKelvin», la temperatura de la PC: \_TZ.THRM si esta y es plausible;
-    si no, la zona plausible mas caliente (la que importa para saber si la PC se cocina)."""
-    plausibles: dict[str, float] = {}
-    for linea in salida.splitlines():
-        nombre, _, valor = linea.strip().rpartition("|")
+def _plausible(c: float) -> bool:
+    return TEMP_MIN_C <= c <= TEMP_MAX_C
+
+
+class FuenteTemperatura(ABC):
+    """Un proveedor de la temperatura de la PC. `medir()` es fija (template method): `leer()` hace la
+    entrada/salida y `elegir()` interpreta lo leido sin tocar nada, asi cada fuente se prueba con
+    datos de verdad sin hardware. Cualquier falla de una fuente da None y la cadena sigue con la
+    proxima: un sensor roto o un formato nuevo nunca deja a las demas sin medir."""
+
+    nombre: str
+    # el ultimo estado avisado («ok», «sin lectura» o el error): se loguea solo cuando cambia, para
+    # que una fuente rota quede en el log sin repetir la misma linea cada 30 s
+    _estado: str | None = None
+
+    @abstractmethod
+    def leer(self) -> object:
+        """Lo crudo de la fuente (texto, JSON). Puede levantar: medir() lo absorbe."""
+
+    @abstractmethod
+    def elegir(self, crudo: object) -> float | None:
+        """De lo crudo, la temperatura de la PC en °C, o None si no hay una lectura plausible."""
+
+    def medir(self) -> float | None:
+        """La lectura, o None. Nunca levanta (una fuente rota no corta la cadena), pero tampoco
+        calla: cada cambio de estado (empieza a fallar, cambia el motivo, se recupera) va al log."""
         try:
-            c = round(float(valor) / 10 - 273.15, 1)
-        except ValueError:
-            continue
-        if nombre and TEMP_MIN_C <= c <= TEMP_MAX_C:
-            plausibles[nombre] = c
-    thrm = [v for k, v in plausibles.items() if k.upper().endswith("THRM")]
-    if thrm:
-        return thrm[0]
-    return max(plausibles.values()) if plausibles else None
+            t = self.elegir(self.leer())
+        except Exception as e:
+            self._avisar(f"falla ({type(e).__name__}: {e})")
+            return None
+        self._avisar("ok" if t is not None else "sin lectura plausible")
+        return t
+
+    def _avisar(self, estado: str) -> None:
+        if estado == self._estado:
+            return
+        primera = self._estado is None
+        self._estado = estado
+        if not (primera and estado == "ok"):  # arrancar bien no es noticia
+            log(f"temperatura, fuente {self.nombre}: {estado}")
 
 
-def _medir_temp() -> float | None:
-    try:
+class LibreHardwareMonitor(FuenteTemperatura):
+    """El servidor web de LibreHardwareMonitor (corriendo como admin, Options > Remote Web Server).
+    Hay PCs sin ninguna zona termica y con MSAcpi «no soportado» (Dell Pro 14, medido el 2026-10-03):
+    ahi es la unica fuente. Si no esta corriendo, la conexion se rechaza al instante."""
+
+    nombre = "lhm"
+    # Sensores que LHM informa como temperatura pero son limites o umbrales fijos, no una lectura
+    NO_LECTURA = ("limit", "resolution", "warning", "critical", "tjmax", "distance")
+
+    def __init__(self, url: str | None = None, timeout_s: float = 1.0) -> None:
+        self.url = url or os.environ.get("LIENZO_LHM_URL", "http://127.0.0.1:8085/data.json")
+        self.timeout_s = timeout_s
+
+    def leer(self) -> object:
+        # sin proxy: el de la empresa no tiene que ver a 127.0.0.1
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(self.url, timeout=self.timeout_s) as r:
+            return json.loads(r.read().decode("utf-8", errors="replace"))
+
+    def elegir(self, crudo: object) -> float | None:
+        """El paquete del CPU si LHM lo lee; si no (CPUs nuevos que la version de LHM todavia no
+        conoce), el sensor plausible mas caliente."""
+        plausibles: list[tuple[str, str, float]] = []  # (SensorId, nombre, °C)
+        pendientes = [crudo]
+        while pendientes:  # iterativo: un arbol muy hondo no llega al limite de recursion
+            nodo = pendientes.pop()
+            if not isinstance(nodo, dict):
+                continue
+            pendientes.extend(nodo.get("Children") or [])
+            nombre = str(nodo.get("Text") or "")
+            valor = str(nodo.get("Value") or "")
+            es_lectura = not any(p in nombre.lower() for p in self.NO_LECTURA)
+            if nodo.get("Type") != "Temperature" or "°C" not in valor or not es_lectura:
+                continue
+            try:
+                # Value viene con el formato regional: «47,8 °C»
+                c = round(float(valor.replace("°C", "").strip().replace(",", ".")), 1)
+            except ValueError:
+                continue
+            if _plausible(c):
+                plausibles.append((str(nodo.get("SensorId") or ""), nombre, c))
+        cpu = [(n, c) for sid, n, c in plausibles if "cpu/" in sid]
+        paquete = [c for n, c in cpu if "package" in n.lower()]
+        if paquete:
+            return paquete[0]
+        if cpu:
+            return max(c for _, c in cpu)
+        return max(c for _, _, c in plausibles) if plausibles else None
+
+
+class ZonasTermicasWMI(FuenteTemperatura):
+    r"""Las zonas termicas de Windows por un powershell corto (~1 s). Cada PC nombra distinto su
+    sensor: en una el bueno es \_TZ.THRM (\_TZ.TZ01 da 20 °C fijo, medido el 2026-09-26), y otra no
+    tiene THRM (medido el 2026-10-03). Se leen todas las zonas (y, si hay permisos,
+    MSAcpi_ThermalZoneTemperature) y elegir() decide."""
+
+    nombre = "wmi"
+    PS = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+Get-CimInstance Win32_PerfFormattedData_Counters_ThermalZoneInformation |
+  ForEach-Object { "$($_.Name)|$($_.HighPrecisionTemperature)" }
+Get-CimInstance -Namespace root/wmi MSAcpi_ThermalZoneTemperature |
+  ForEach-Object { "acpi:$($_.InstanceName)|$($_.CurrentTemperature)" }
+"""
+
+    def leer(self) -> object:
         r = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _TEMP_PS],
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", self.PS],
             capture_output=True,
             # sin stdin propio, un proceso sin consola heredable (el server lanzado desde otro
             # lado) hace fallar el DuplicateHandle con WinError 50 y la temperatura queda en None
@@ -162,9 +249,38 @@ def _medir_temp() -> float | None:
             encoding="utf-8",
             errors="replace",
         )
-        return _elegir_temp(r.stdout or "")
-    except OSError, ValueError, subprocess.TimeoutExpired:
-        return None
+        return r.stdout or ""
+
+    def elegir(self, crudo: object) -> float | None:
+        r"""De las lineas «nombre|deciKelvin»: \_TZ.THRM si esta y es plausible; si no, la zona
+        plausible mas caliente (la que importa para saber si la PC se cocina)."""
+        plausibles: dict[str, float] = {}
+        for linea in str(crudo).splitlines():
+            nombre, _, valor = linea.strip().rpartition("|")
+            try:
+                c = round(float(valor) / 10 - 273.15, 1)
+            except ValueError:
+                continue
+            if nombre and _plausible(c):
+                plausibles[nombre] = c
+        thrm = [v for k, v in plausibles.items() if k.upper().endswith("THRM")]
+        if thrm:
+            return thrm[0]
+        return max(plausibles.values()) if plausibles else None
+
+
+# La cadena, en orden de preferencia: LHM primero porque es la mas precisa y contesta en
+# milisegundos (o rechaza al instante); WMI despues. Una fuente nueva se agrega aca.
+FUENTES: list[FuenteTemperatura] = [LibreHardwareMonitor(), ZonasTermicasWMI()]
+
+
+def _medir_temp() -> float | None:
+    """La primera fuente de FUENTES que da una lectura plausible."""
+    for fuente in FUENTES:
+        t = fuente.medir()
+        if t is not None:
+            return t
+    return None
 
 
 def _refrescar_temp() -> None:

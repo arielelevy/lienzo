@@ -242,6 +242,23 @@ def test_poll_health_con_peer_caido_no_revienta_y_no_actualiza_nada():
     assert m._peers["p1"].health is None
 
 
+def test_poll_health_que_falla_lo_avisa_una_vez_y_avisa_cuando_vuelve():
+    """Un peer que no contesta la salud no puede fallar en silencio, pero tampoco llenar el log
+    con la misma linea cada 15 s."""
+    t = FakeTransport(raise_on_health=True)
+    m = _mirror(t)
+    avisos: list[str] = []
+    m.log = avisos.append
+    _connect(m, t, pc_id="p1", name="oficina")
+    m._poll_health("p1")
+    m._poll_health("p1")
+    assert avisos == ["→ oficina GET /health: OSError: peer caido"]
+    t.raise_on_health = False
+    m._poll_health("p1")
+    m._poll_health("p1")
+    assert avisos[1:] == ["→ oficina GET /health: responde de nuevo"]
+
+
 def test_peers_status_recien_conectado_sin_salud_previa_no_esta_vivo():
     t = FakeTransport()
     m = _mirror(t)
