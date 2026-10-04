@@ -86,13 +86,20 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     const caliente: Peer = {
       ...PEER_NOTEBOOK_VIVA,
       latencia_ms: 120,
-      health: { mem_free_gb: 1.2, mem_total_gb: 16, cpu_pct: 90, temp_c: 95, agentes_libres: 0 },
+      health: {
+        mem_free_gb: 1.2,
+        mem_total_gb: 16,
+        cpu_pct: 90,
+        temp_c: 95,
+        agentes_libres: 0,
+        git_auth: { "https://git.ejemplo.com/a.git": "vencida" },
+      },
     };
     await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, caliente]);
     const notebook = page.locator(".pcstrip .pcchip", { hasText: "notebook" });
     await expect(notebook).toHaveClass(/alerta/);
     await expect(notebook).toContainText("120 ms");
-    await expect(notebook).toHaveAttribute("title", /a 95 °C y sin memoria para otro agente/);
+    await expect(notebook).toHaveAttribute("title", /credencial de git vencida \(git\.ejemplo\.com\) y a 95 °C y sin memoria para otro agente/);
   });
 
   test("click en un chip filtra a esa PC y nada mas; se vuelve con Todas", async ({ page }) => {

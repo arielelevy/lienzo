@@ -311,11 +311,97 @@ def _temp_c() -> float | None:
     return _temp_cache[0]
 
 
+# --- credenciales de git -------------------------------------------------------------------
+# Las urls a probar salen de ~/.lienzo/config.json (clave "git_check": ["https://..."]). Cada
+# GIT_TTL_S se corre `git ls-remote` en un hilo, sin ventana de login: si la credencial vencio, se ve
+# en /peers ANTES de que una coda llegue al push (medido el 2026-10-03: la otra PC perdio el login y
+# el push de la sesion 4 no salio).
+GIT_TTL_S = 300
+_git_cache: tuple[dict | None, float] | None = None
+_git_refrescando = threading.Lock()
+
+
+def _git_urls() -> list[str]:
+    home = os.environ.get("LIENZO_HOME") or os.path.join(os.path.expanduser("~"), ".lienzo")
+    try:
+        with open(os.path.join(home, "config.json"), encoding="utf-8") as f:
+            urls = json.load(f).get("git_check") or []
+    except OSError, ValueError:
+        return []
+    return [u for u in urls if isinstance(u, str) and u.startswith("https://")]
+
+
+def clasificar_git(returncode: int, stderr: str) -> str:
+    """ok, vencida (pide login o lo rechaza) o error (red, repo, otra cosa)."""
+    if returncode == 0:
+        return "ok"
+    e = (stderr or "").lower()
+    pistas = (
+        "authentication failed",
+        "could not read username",
+        "terminal prompts disabled",
+        "401",
+        "403",
+        "credentials are incorrect",
+        "invalid username or password",
+    )
+    return "vencida" if any(p in e for p in pistas) else "error"
+
+
+def _medir_git() -> dict | None:
+    urls = _git_urls()
+    if not urls:
+        return None
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    out = {}
+    for url in urls:
+        try:
+            r = subprocess.run(
+                ["git", "ls-remote", "--heads", url],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                encoding="utf-8",
+                errors="replace",
+            )
+            out[url] = clasificar_git(r.returncode, r.stderr)
+        except OSError, subprocess.TimeoutExpired:
+            out[url] = "error"
+    return out
+
+
+def _refrescar_git() -> None:
+    global _git_cache
+    try:
+        _git_cache = (_medir_git(), time.monotonic())
+    finally:
+        _git_refrescando.release()
+
+
+def _git_auth() -> dict | None:
+    """El ultimo resultado (None sin urls configuradas); se renueva en un hilo: nunca bloquea."""
+    ahora = time.monotonic()
+    vencido = _git_cache is None or ahora - _git_cache[1] >= GIT_TTL_S
+    if vencido and _git_refrescando.acquire(blocking=False):
+        threading.Thread(target=_refrescar_git, daemon=True).start()
+    return _git_cache[0] if _git_cache else None
+
+
 def agentes_que_entran(mem_free_gb: float | None) -> int | None:
     """Cuantos agentes mas se pueden abrir sin bajar de RESERVA_GB libres. None sin dato de memoria."""
     if mem_free_gb is None:
         return None
     return max(0, int((mem_free_gb - RESERVA_GB) // GB_POR_AGENTE)) if mem_free_gb > RESERVA_GB else 0
+
+
+def _git_auth_seguro() -> dict | None:
+    try:
+        return _git_auth()
+    except Exception:  # la salud nunca levanta; un fallo aca no puede tapar memoria ni CPU
+        return None
 
 
 def snapshot() -> dict:
@@ -338,5 +424,6 @@ def snapshot() -> dict:
         "cpu_pct": cpu_pct,
         "temp_c": temp_c,
         "agentes_libres": agentes_que_entran(mem_free_gb),
+        "git_auth": _git_auth_seguro(),
         "ts": _now(),
     }

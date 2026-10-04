@@ -90,6 +90,8 @@ export interface PeerHealth {
   temp_c: number | null;
   /** cuantos agentes mas entran sin bajar de la reserva de memoria (health.agentes_que_entran) */
   agentes_libres?: number | null;
+  /** por url configurada en "git_check": ok, vencida o error (health.py prueba git ls-remote) */
+  git_auth?: Record<string, "ok" | "vencida" | "error"> | null;
 }
 
 /** `GET /peers` (ronda 2): una fila por PC de la federacion, la propia incluida (`local: true`).

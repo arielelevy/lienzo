@@ -20,7 +20,7 @@ def _reset():
 def test_snapshot_trae_las_cinco_claves():
     _reset()
     s = health.snapshot()
-    assert set(s) == {"mem_free_gb", "mem_total_gb", "cpu_pct", "temp_c", "agentes_libres", "ts"}
+    assert set(s) == {"mem_free_gb", "mem_total_gb", "cpu_pct", "temp_c", "agentes_libres", "git_auth", "ts"}
 
 
 def test_memoria_es_real_y_coherente():
@@ -56,6 +56,7 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
         "cpu_pct": None,
         "temp_c": None,
         "agentes_libres": None,
+        "git_auth": s["git_auth"],
         "ts": s["ts"],
     }
 
@@ -263,3 +264,16 @@ def test_agentes_que_entran_es_la_unica_regla_de_capacidad():
     assert health.agentes_que_entran(2.2) == 1  # 1,5 + 0,7
     assert health.agentes_que_entran(2.7) == 1
     assert health.agentes_que_entran(5.0) == 5
+
+
+def test_clasificar_git():
+    assert health.clasificar_git(0, "") == "ok"
+    assert health.clasificar_git(128, "fatal: Authentication failed for 'https://x'") == "vencida"
+    assert health.clasificar_git(128, "remote: Credentials are incorrect or have expired") == "vencida"
+    assert health.clasificar_git(128, "fatal: could not read Username: terminal prompts disabled") == "vencida"
+    assert health.clasificar_git(128, "fatal: unable to access: Could not resolve host") == "error"
+
+
+def test_git_auth_sin_urls_configuradas_es_none(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIENZO_HOME", str(tmp_path))
+    assert health._medir_git() is None

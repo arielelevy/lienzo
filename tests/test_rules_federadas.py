@@ -613,3 +613,34 @@ def test_fire_on_stop_de_coda_espera_y_no_dispara_si_la_tarjeta_volvio_a_trabaja
     monkeypatch.setattr(rl.time, "sleep", lambda _: None)  # sigue en `termino`: es un cierre real
     rl.fire_on_stop(SID)
     assert disparadas == ["r1"]
+
+
+def test_aviso_muerta_avisa_a_los_destinos_de_sus_reglas_con_como_restaurarla(aislado, monkeypatch):
+    enviados = []
+    monkeypatch.setattr(rl, "find_session", lambda to: {"session_id": to})
+    monkeypatch.setattr(
+        rl, "send_to_session", lambda dst, texto, adj: (enviados.append((dst["session_id"], texto)), (200, {}))[1]
+    )
+    monkeypatch.setattr(rl.rules, "items", [{"id": "r", "enabled": True, "kind": "on_stop", "from": SID, "to": OTHER}])
+    monkeypatch.setitem(
+        rl.sessions, SID, {"session_id": SID, "title": "Sesion 4", "pc": "pcB", "last_prompt": "hace la sesion 4"}
+    )
+    rl.aviso_muerta(SID, "corriendo")
+    assert len(enviados) == 1 and enviados[0][0] == OTHER
+    assert (
+        "murió sin terminar" in enviados[0][1] and f"session_id='{SID}'" in enviados[0][1] and "pcB" in enviados[0][1]
+    )
+
+
+def test_liveness_dispara_el_aviso_solo_si_moria_trabajando(aislado, monkeypatch):
+    llamadas = []
+    monkeypatch.setattr(ses, "on_died_working", lambda sid, prev: llamadas.append((sid, prev)))
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: False)
+    monkeypatch.setattr(
+        ses.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: target(*args)})()
+    )
+    for estado in ("corriendo", "termino"):
+        s = ses.new_session(SID, "coda", "hook")
+        s.update(pid=123, alive=True, state=estado)
+        assert ses.refresh_alive(s) is True and s["state"] == "muerta"
+    assert llamadas == [(SID, "corriendo")]  # la que estaba en termino no tenia nada a medias

@@ -158,8 +158,14 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
  *  server, agentes_libres) tambien es alerta: lanzar ahi pagina y arrastra a todas sus sesiones. */
 const TEMP_ALERTA_C = 85;
 
-export function alertaDe(h: { temp_c: number | null; agentes_libres?: number | null }): string | null {
+export function alertaDe(h: {
+  temp_c: number | null;
+  agentes_libres?: number | null;
+  git_auth?: Record<string, string> | null;
+}): string | null {
   const motivos: string[] = [];
+  const vencidas = Object.entries(h.git_auth ?? {}).filter(([, v]) => v === "vencida");
+  if (vencidas.length) motivos.push(`credencial de git vencida (${vencidas.map(([u]) => new URL(u).host).join(", ")})`);
   if (h.temp_c != null && h.temp_c >= TEMP_ALERTA_C) motivos.push(`a ${Math.round(h.temp_c)} °C`);
   if (h.agentes_libres === 0) motivos.push("sin memoria para otro agente");
   return motivos.length ? motivos.join(" y ") : null;

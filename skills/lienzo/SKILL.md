@@ -407,6 +407,15 @@ Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
   aplicar). Para ver una versión vieja de un archivo sin tocar el árbol: `git show HEAD:<archivo> >
   <algo>`, nunca `stash`/`checkout`/`reset`.
 
+## Secretos entre PCs (un token de git)
+
+Nunca pegues un token en un mensaje: queda en claro en los adjuntos y en los transcripts. Para que otra
+PC pueda pushear, `c.pasar_credencial_git(pc, "https://host/repo.git")` copia la credencial que ESTA PC
+ya tiene guardada: viaja cifrada y la otra la guarda en su almacén de Windows, sin pasar por vos. Para
+otro secreto: `c.enviar_secreto(pc, nombre, valor)` (queda 10 min) y `c.leer_secreto(id, pc=pc)` (una
+sola vez, desde cualquier PC de la LAN). Si `/peers` muestra `git_auth: vencida` en una PC, arreglalo
+antes de mandar un encargo que termine en push.
+
 ## Qué hace la coordinadora cuando llega un informe
 
 Leé el informe con `c.informe(s)`, no con `s["last_reply"]` a secas: mientras una coda trabaja, el

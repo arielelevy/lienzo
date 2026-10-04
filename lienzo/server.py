@@ -39,6 +39,7 @@ import mirror
 import pairing
 import restore
 import rules as rl
+import secretos
 import transcripts
 from rules import at_near, connections_of, local_dt, purge_stale_at_rules, rules_loop
 from sessions import (
@@ -980,6 +981,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(401, {"error": "hace falta iniciar sesion"})
             if parts == ["restaurables"]:
                 return self._json(200, restorables_all())
+            if parts == ["secrets"]:
+                # solo nombres y vencimientos: el valor no sale nunca por un listado. ?pc= lista los de esa PC
+                pc = (self.query.get("pc") or [""])[0]
+                if pc and pc != identity.pc_info()["pc_id"]:
+                    code, res = mirror.MIRROR.forward(pc, "GET", "/secrets")
+                    return self._json(code, res)
+                return self._json(200, {"secrets": secretos.BOVEDA.pendientes()})
+            if len(parts) == 2 and parts[0] == "secrets":
+                return self._secret_take(parts[1])
             if parts == ["sessions"]:
                 # serializar con el lock (es CPU pura) y escribir afuera: es el cuerpo mas grande
                 # que manda el server, y antes se escribia al socket con el lock tomado. El espejo
@@ -1092,6 +1102,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["rescan"]:
                 threading.Thread(target=sweep_once, daemon=True).start()
                 return self._json(202, {"ok": True})
+            if parts == ["secrets"]:
+                return self._secret_send()
             if parts == ["rules"]:
                 code, res = create_rule(self._json_body())
                 return self._json(code, res)
@@ -1162,6 +1174,61 @@ class Handler(BaseHTTPRequestHandler):
         else:
             body = self._json_body()
         code, res = mirror.MIRROR.forward(pc, "POST", f"/sessions/{sid}/{action}", body)
+        return self._json(code, res)
+
+    def _secret_take(self, sid: str) -> None:
+        """Lee UNA vez un secreto de destino memoria. Desde esta PC o cualquiera de la LAN (no por
+        el tunel). Con `?pc=<pc_id>` lo pide a esa PC: viaja cifrado con la clave del par y se
+        descifra aca. Despues de leerlo no existe mas en ningun lado."""
+        if self._via_tunnel() or not self._is_local():
+            return self._json(403, {"error": "un secreto solo se lee desde las PCs de la LAN"})
+        pc = (self.query.get("pc") or [""])[0]
+        if pc and pc != identity.pc_info()["pc_id"]:
+            key = _peer_key(pc)
+            if key is None:
+                return self._json(404, {"error": f"no hay una PC emparejada {pc}"})
+            code, res = mirror.MIRROR.forward(pc, "GET", f"/secrets/{sid}")
+            if code != 200:
+                return self._json(code, res)
+            try:
+                valor = secretos.descifrar(key, res.get("cifrado") or {})
+            except ValueError as e:
+                return self._json(502, {"error": str(e)})
+            return self._json(200, {"nombre": res.get("nombre"), "valor": valor, "pc": pc})
+        item = secretos.BOVEDA.tomar(sid)
+        if item is None:
+            return self._json(404, {"error": "no existe, ya se leyo o vencio"})
+        log(f"secreto «{item[0]}» leido y borrado")
+        return self._json(200, {"nombre": item[0], "valor": item[1]})
+
+    def _secret_send(self) -> None:
+        """POST /secrets {pc, nombre, destino, valor | desde: "git_local", git_url?, usuario?}: lo aplica
+        en esta PC o lo manda CIFRADO a la PC `pc` (mirror.forward no loguea cuerpos). Con
+        `desde: "git_local"` el valor sale del almacen de credenciales de esta PC. La respuesta nunca
+        trae el valor."""
+        d = self._json_body()
+        if d.get("desde") == "git_local" and d.get("destino") == "git":
+            # la credencial que esta PC ya tiene para ese host: el agente que lo pide nunca la ve
+            cred = secretos.leer_git_local(str(d.get("git_url") or ""))
+            if cred is None:
+                return self._json(404, {"error": "esta PC no tiene una credencial guardada para ese host"})
+            d = {**d, "usuario": d.get("usuario") or cred[0], "valor": cred[1]}
+        if motivo := secretos.validar(d):
+            return self._json(400, {"error": motivo})
+        valor = d.get("valor")
+        if not isinstance(valor, str):
+            return self._json(400, {"error": "valor: texto"})
+        pc = d.get("pc") or identity.pc_info()["pc_id"]
+        meta = {k: d.get(k) for k in ("nombre", "destino", "git_url", "usuario")}
+        if pc == identity.pc_info()["pc_id"]:
+            log(f"secreto «{meta['nombre']}» ({meta['destino']}) aplicado en esta PC")
+            code, res = secretos.recibir(meta, valor)
+            return self._json(code, res)
+        key = _peer_key(pc)
+        if key is None:
+            return self._json(404, {"error": f"no hay una PC emparejada {pc}"})
+        log(f"secreto «{meta['nombre']}» ({meta['destino']}) enviado cifrado a {pc}")
+        code, res = mirror.MIRROR.forward(pc, "POST", "/secrets", {**meta, "cifrado": secretos.cifrar(key, valor)})
         return self._json(code, res)
 
     def _login(self) -> None:
@@ -1609,6 +1676,18 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._json(code, res)
         if method == "GET" and rest == ["restaurables"]:
             return self._json(200, {"restaurables": restorables_local()})
+        if method == "POST" and rest == ["secrets"]:
+            return self._secret_receive(raw, pc_id)
+        if method == "GET" and rest == ["secrets"]:
+            return self._json(200, {"secrets": secretos.BOVEDA.pendientes()})
+        if method == "GET" and len(rest) == 2 and rest[0] == "secrets":
+            # otra PC lo lee: sale cifrado con la clave de ESE par y se borra de aca
+            key = _peer_key(pc_id or "")
+            item = secretos.BOVEDA.tomar(rest[1]) if key else None
+            if item is None:
+                return self._json(404, {"error": "no existe, ya se leyo o vencio"})
+            log(f"secreto «{item[0]}» leido desde {pc_id} y borrado")
+            return self._json(200, {"nombre": item[0], "cifrado": secretos.cifrar(key, item[1])})
         if method == "POST" and rest == ["restaurar"]:
             code, res = restore_local(self._body_json(raw))
             return self._json(code, res)
@@ -1635,6 +1714,22 @@ class PeerHandler(BaseHTTPRequestHandler):
             code, res = answer_pending(rest[1], d["decision"], d.get("reason", ""), d.get("answers"))
             return self._json(code, res)
         return self._json(404, {"error": "ruta desconocida"})
+
+    def _secret_receive(self, raw: bytes, pc_id: str | None) -> None:
+        """Un secreto que manda otra PC: viene cifrado con la clave del par, ademas de firmado."""
+        d = self._body_json(raw)
+        if motivo := secretos.validar(d):
+            return self._json(400, {"error": motivo})
+        key = _peer_key(pc_id or "")
+        try:
+            valor = secretos.descifrar(key, d.get("cifrado") or {}) if key else None
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        if valor is None:
+            return self._json(403, {"error": "PC no emparejada"})
+        log(f"secreto «{d['nombre']}» ({d['destino']}) recibido de {pc_id}")
+        code, res = secretos.recibir(d, valor)
+        return self._json(code, res)
 
     def _pair(self, raw: bytes) -> None:
         body = self._body_json(raw)

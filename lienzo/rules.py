@@ -437,6 +437,32 @@ def fire_on_stop(sid: str) -> None:
         fire_rule(r)
 
 
+def aviso_muerta(sid: str, prev: str) -> None:
+    """La sesion `sid` murio (desaparecio su proceso) mientras estaba {prev}: con un encargo a medias.
+    No hubo Stop, asi que sus reglas «cuando termine» nunca dispararian: se avisa a cada destino de
+    esas reglas, una vez, con lo necesario para restaurarla (medido el 2026-10-03: una coda de la
+    sesion 4 del curso murio sin contestar y nadie se entero)."""
+    with lock:
+        s = dict(sessions.get(sid) or {})
+        destinos = {r["to"] for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid}
+    if not s or not destinos:
+        return
+    titulo = s.get("title") or s.get("repo") or sid[:8]
+    pedido = short(s.get("last_prompt") or "", 160)
+    texto = (
+        f"[aviso automático] «{titulo}» ({sid[:8]}) murió sin terminar su encargo (estaba {prev}"
+        + (f"; último pedido: {pedido}" if pedido else "")
+        + f"). Restaurala con su contexto: coordinar.restaurar(session_id='{sid}', pc='{s.get('pc') or ''}')"
+        " y pedile que retome."
+    )
+    for to in destinos:
+        dst = find_session(to)
+        if dst is None:
+            continue
+        code, res = send_to_session(dst, texto, [])
+        state.log(f"aviso de muerte de {sid[:8]} -> {to[:8]}: {'ok' if code == 200 else res.get('error')}")
+
+
 def rules_loop() -> None:
     while True:
         try:
@@ -497,4 +523,5 @@ def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
 # sessions.py no importa este modulo: se engancha aca
 ses.on_turn_end = fire_on_stop
 ses.on_limit_notice = ensure_continue_rule
+ses.on_died_working = aviso_muerta
 ses.on_api_error = retry_after_api_error

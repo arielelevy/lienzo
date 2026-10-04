@@ -175,6 +175,34 @@ def informe(s):
     return r
 
 
+def pasar_credencial_git(pc, git_url, usuario=None):
+    """Copia a la PC `pc` la credencial de git que ESTA PC ya tiene para `git_url` (la del almacen de
+    Windows): viaja cifrada y la otra PC la guarda en el suyo. El valor nunca pasa por el agente ni
+    por su transcript. Devuelve (code, respuesta)."""
+    cuerpo = {"pc": pc, "nombre": f"git {git_url}", "destino": "git", "git_url": git_url, "desde": "git_local"}
+    if usuario:
+        cuerpo["usuario"] = usuario
+    return pedir("POST", "/secrets", cuerpo, timeout=60)
+
+
+def enviar_secreto(pc, nombre, valor, destino="memoria", git_url=None, usuario=None):
+    """Manda un secreto a la PC `pc`, cifrado. destino "memoria": queda 10 min y se lee UNA vez con
+    leer_secreto (desde cualquier PC de la LAN); "git": se guarda como credencial de git alla. Ojo:
+    el valor que se pasa aca queda en el transcript de quien llama; para git preferi
+    pasar_credencial_git. Devuelve (code, respuesta) — con "id" si es memoria."""
+    cuerpo = {"pc": pc, "nombre": nombre, "destino": destino, "valor": valor}
+    if git_url:
+        cuerpo["git_url"] = git_url
+    if usuario:
+        cuerpo["usuario"] = usuario
+    return pedir("POST", "/secrets", cuerpo, timeout=60)
+
+
+def leer_secreto(secreto_id, pc=None):
+    """Lee UNA vez un secreto de destino memoria (de esta PC, o de `pc`). Despues no existe mas."""
+    return pedir("GET", f"/secrets/{secreto_id}" + (f"?pc={pc}" if pc else ""))
+
+
 def estancada(s, minutos=5):
     """True si la tarjeta figura `corriendo` pero su pantalla no cambió en `minutos`: el agente (o el
     modelo detrás, p. ej. el DGX de coda) quedó colgado. Hay que llamarla de a ratos: guarda la

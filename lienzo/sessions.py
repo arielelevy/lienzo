@@ -60,6 +60,7 @@ last_sweep = 0.0
 # rules.py cargado no pasa nada.
 on_turn_end = lambda sid: None
 on_limit_notice = lambda s: None
+on_died_working = lambda sid, prev: None  # rules.py: avisar que murio con un encargo a medias
 on_api_error = lambda s, sig: None
 
 
@@ -1714,7 +1715,11 @@ def refresh_alive(s: dict) -> bool:
         return False
     s["alive"] = False
     s["dead_since"] = now()
+    prev = s.get("state")
     set_state(s, "muerta")
+    if prev in ("corriendo", "te_necesita"):
+        # murio con un encargo a medias: la coordinadora no recibe un Stop, asi que se le avisa aparte
+        threading.Thread(target=on_died_working, args=(s["session_id"], prev), daemon=True).start()
     return True
 
 

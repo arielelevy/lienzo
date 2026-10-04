@@ -378,3 +378,46 @@ def test_peer_caido_da_503_a_traves_del_forward(dos_pcs):
     code, body = mirror.MIRROR.forward(pc_id_b, "POST", f"/sessions/{SID_B}/interrupt", {})
     assert code == 503
     assert "error" in body
+
+
+def test_secreto_de_punta_a_punta_viaja_cifrado_y_se_lee_una_vez_desde_la_otra_pc(dos_pcs, monkeypatch):
+    """A le manda a B un secreto en memoria; A lo lee de vuelta desde B con ?pc=; la segunda lectura
+    ya no existe; y el valor no aparece en ningun log de A."""
+    pc_id_a, pc_id_b, key = dos_pcs["pc_id_a"], dos_pcs["pc_id_b"], dos_pcs["key"]
+    peer_port_b, ui_port_a = dos_pcs["peer_port_b"], dos_pcs["ui_port_a"]
+    logs = []
+    monkeypatch.setattr(server, "log", logs.append)
+    proc = _lanzar_b(dos_pcs["home_b"], peer_port_b)
+    try:
+        _esperar_listo(peer_port_b)
+        mirror.MIRROR.connect(pc_id_b, {"name": "pc-b", "color": "#222222"}, "127.0.0.1", peer_port_b, key, pc_id_a)
+        srv_a = ThreadingHTTPServer(("127.0.0.1", ui_port_a), server.Handler)
+        srv_a.daemon_threads = True
+        threading.Thread(target=srv_a.serve_forever, daemon=True).start()
+        try:
+            h = {"X-Lienzo": "1", "Content-Type": "application/json"}
+            conn = http.client.HTTPConnection("127.0.0.1", ui_port_a, timeout=5)
+            pedido = {"pc": pc_id_b, "nombre": "forgejo", "destino": "memoria", "valor": "token-ultra-123"}
+            conn.request("POST", "/secrets", body=json.dumps(pedido), headers=h)
+            r = conn.getresponse()
+            cuerpo = json.loads(r.read())
+            assert r.status == 200, cuerpo
+            assert "token-ultra-123" not in json.dumps(cuerpo)
+            conn.request("GET", f"/secrets?pc={pc_id_b}")
+            r = conn.getresponse()
+            lista = json.loads(r.read())
+            assert [x["nombre"] for x in lista["secrets"]] == ["forgejo"] and "token" not in json.dumps(lista)
+            conn.request("GET", f"/secrets/{cuerpo['id']}?pc={pc_id_b}")
+            r = conn.getresponse()
+            leido = json.loads(r.read())
+            assert r.status == 200 and leido["valor"] == "token-ultra-123"
+            conn.request("GET", f"/secrets/{cuerpo['id']}?pc={pc_id_b}")
+            r = conn.getresponse()
+            r.read()
+            assert r.status == 404
+            assert not any("token-ultra-123" in str(x) for x in logs)
+        finally:
+            srv_a.shutdown()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)

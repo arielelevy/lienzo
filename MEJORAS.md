@@ -42,6 +42,9 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-03 | **`drop_session(..., muerta=True)`** en vez de leer el texto de la razón, y **`ended_on_purpose` por lista blanca** (`restore.ON_PURPOSE`): una razón nueva de SessionEnd cuenta como muerte a restaurar | dos puntos pendientes: el texto usado como protocolo y la lista negra que perdía sesiones con razones nuevas |
 | 2026-10-03 | **Latencia por PC**: cada reenvío suma su latencia y `/peers` muestra `latencia_ms` (mediana de los últimos 50); las acciones que salen bien quedan en el log con sus ms y las lecturas solo si pasan de 2 s | antes solo se logueaban los reenvíos que fallaban y no había cómo ver una PC que se vuelve lenta |
 | 2026-10-03 | **Tira de PCs con CPU, latencia y alerta**: cada chip muestra memoria, CPU, temperatura y latencia, y se pone en rojo (con el motivo en el título) si la PC pasa de 85 °C o no le entra otro agente | pedido de Ariel: ver la salud de todas las PCs; esta PC marcó 95 °C y nadie lo veía |
+| 2026-10-03 | **Plan NUC, punto 1: secretos entre PCs** (`lienzo/secretos.py`, `POST/GET /secrets`): cifrados con la clave del par (keystream HMAC-SHA256 y encrypt-then-MAC), de un solo uso, vencen a los 10 min, se leen desde cualquier PC de la LAN (`?pc=` para los de otra PC) y nunca van a un log, un adjunto ni una respuesta. Destino `git` los guarda con `git credential approve`; `coordinar.pasar_credencial_git` copia la credencial de esta PC sin que el agente la vea | la otra PC perdió el login de git y no había forma segura de pasarle un token |
+| 2026-10-03 | **Plan NUC, punto 2: credenciales de git en la salud** (`git_auth` por cada url de `git_check` en `~/.lienzo/config.json`, `git ls-remote` cada 5 min sin ventana de login); la tira de PCs se pone en rojo con «credencial de git vencida» | detectar el login vencido antes de que la coda llegue al push |
+| 2026-10-03 | **Plan NUC, punto 3: aviso de sesión que murió con un encargo a medias**: si el proceso desaparece estando `corriendo` o `te_necesita`, se avisa a los destinos de sus reglas con el `coordinar.restaurar(...)` listo para pegar | una coda de la sesión 4 murió sin contestar y nadie se enteró |
 
 ## Pendiente (con evidencia)
 
@@ -120,16 +123,29 @@ Objetivo: coordinar una o varias NUC sin pantalla desde una sola PC, con control
 PC perdio las credenciales de git, la sesion 4 del curso quedo sin publicar y no habia forma segura de
 arreglarlo desde aca.
 
-1. **Canal cifrado para secretos** (ver Ideas): `POST /secrets`, vence en 10 min, un solo uso, solo en
+1. ✅ (hecho, ver arriba) **Canal cifrado para secretos** (ver Ideas): `POST /secrets`, vence en 10 min, un solo uso, solo en
    memoria o en el almacen de credenciales de Windows de la PC destino, nunca en adjuntos ni en logs.
-2. **Chequeo de credenciales de git**: `GET /peers` muestra `git_auth: ok|vencida` probando `git ls-remote`
+2. ✅ (hecho) **Chequeo de credenciales de git**: `GET /peers` muestra `git_auth: ok|vencida` probando `git ls-remote`
    con timeout corto, para detectar el problema antes de que la coda llegue al push.
-3. **Aviso de sesion que murio sin contestar**: una tarjeta que pasa a `muerta` con un encargo pendiente
+3. ✅ (hecho) **Aviso de sesion que murio sin contestar**: una tarjeta que pasa a `muerta` con un encargo pendiente
    dispara aviso a la coordinadora (paso con la sesion de integracion de la sesion 4 del curso).
 4. **Acceso de emergencia**: documentar Tailscale o RDP y mostrar en la tira de PCs si la NUC no responde.
 
-Pendiente de decision y de configuracion del usuario, no de un agente: arranque automatico de la NUC
-(auto-login, tarea al iniciar sesion, plan de energia) y ejecucion remota de comandos sin sesion de agente.
+5. **Arranque autonomo de la NUC** (pedido por el usuario, 2026-10-03; sin implementar): `install.py --headless`
+   que deja auto-login, una tarea al iniciar sesion que levanta `lienzo-server.cmd`, plan de energia sin
+   suspension y reinicio tras corte de luz. Las codas necesitan consola abierta: tiene que haber una sesion
+   de usuario iniciada, un servicio no alcanza. Opt-in, y `install.py --headless --quitar` lo deshace.
+   Ademas: que el server llame a `restaurar(todas=True)` al arrancar en una PC marcada `headless`,
+   respetando la memoria libre.
+6. **`POST /run` para comandos acotados en una PC remota** (pedido por el usuario, 2026-10-03; sin
+   implementar): solo para peers emparejados, firmado como el resto de `/peer/*`, con una lista de
+   comandos permitidos por PC en `config.json` (git status/fetch/log/cherry-pick/tag/push sin --force,
+   pytest, ruff, cr-rate), cwd dentro de `launch_roots`, salida y codigo de retorno devueltos y log de cada
+   corrida. Sin lista, no ejecuta nada. Motivo: para integrar la sesion 4 hubo que lanzar una sesion de
+   Claude solo para correr 7 comandos de git, y esa sesion murio antes de contestar.
+
+Los puntos 5 y 6 crean persistencia y ejecucion remota: antes de implementarlos los revisa y aprueba el
+usuario, no se delegan sin que lo diga.
 
 ## Ideas
 
