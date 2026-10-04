@@ -300,9 +300,9 @@ la tarjeta vieja desaparece:
 2. Esperar unos segundos, `POST /rescan`, y buscar la tarjeta nueva **por el mismo `pid`**.
 3. Reponerle el título, el mismo con la letra del encargo.
 4. Recablear su regla `on_stop` hacia la coordinadora (`repeat: true`), y borrar la vieja.
-5. Recién entonces mandarle el encargo, **al id nuevo**, empezando por «leé `AGENTS.md`/`CLAUDE.md`
-   y tu informe anterior; contestá en español». El `/clear` le saca el `CLAUDE.md` del contexto y
-   vuelve contestando en inglés.
+5. Recién entonces mandarle el encargo, **al id nuevo**, empezando por «leé `AGENTS.md`
+   y tu informe anterior; contestá en español». El `/clear` le saca el `AGENTS.md` del contexto y
+   vuelve contestando en inglés. (No hay `CLAUDE.md`: ni de usuario ni en los repos, sólo `AGENTS.md`.)
 
 `/compact` no cambia nada de eso: se manda y después el encargo al mismo id. Igual se verifica el
 efecto en el transcript, no el envío. `/exit` se verifica con que el proceso ya no exista y la
