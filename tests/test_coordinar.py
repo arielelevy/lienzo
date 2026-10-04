@@ -185,3 +185,14 @@ def test_informe_ignora_el_estado_de_herramienta_y_lo_que_corre():
     assert c.informe({"state": "corriendo", "last_reply": "Listo, termine"}) is None
     assert c.informe({"state": "termino", "last_reply": ""}) is None
     assert c.informe({"state": "termino", "last_reply": "B LISTA - hash abc"}) == "B LISTA - hash abc"
+
+
+def test_restaurar_espera_mas_que_el_reenvio_a_la_otra_pc(monkeypatch):
+    """El server local reenvia /restaurar a la PC dueña con RESTORE_TIMEOUT_S (300 s); el skill
+    esperaba 120 y veia un timeout aunque el relanzamiento siguiera andando (revision B16)."""
+    import federation
+
+    pedidos = []
+    monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: pedidos.append(timeout) or (200, {}))
+    c.restaurar(todas=True, pc="pcB")
+    assert pedidos[0] > federation.RESTORE_TIMEOUT_S

@@ -458,11 +458,18 @@ def restaurables(pc=None):
     return [e for e in r if e.get("pc") == pc] if pc else r
 
 
+RESTAURAR_TIMEOUT_S = 330  # el reenvío a la otra PC (300 s) más el margen del server local
+
+
 def restaurar(session_id=None, pc=None, todas=False, limit_by_memory=False):
     """POST /restaurar: relanza UNA sesión (`session_id`) o `todas` las de la PC `pc` (None = esta),
     de a una con ~2 s entre cada una. Devuelve (código, cuerpo) con `{restored, failed}`. `todas` se
     rechaza (409, con cuántas entran) si falta memoria en esa PC, salvo `limit_by_memory=True`, que
-    relanza solo las que entran. Mismo timeout largo que un lanzamiento: son varios en fila.
+    relanza solo las que entran. Son varios lanzamientos en fila: espera más que los 300 s con
+    que el server reenvía /restaurar a la PC dueña (federation.RESTORE_TIMEOUT_S). Con 120 s el
+    skill veía un timeout aunque el relanzamiento siguiera andando del otro lado; no duplica
+    sesiones (un segundo pedido da 409 mientras el primero corre), pero el llamador creía que
+    había fallado.
     """
     if bool(session_id) == bool(todas):
         raise ValueError("pasá session_id, o todas=True (una de las dos)")
@@ -471,7 +478,7 @@ def restaurar(session_id=None, pc=None, todas=False, limit_by_memory=False):
         cuerpo["pc"] = pc
     if limit_by_memory:
         cuerpo["limit_by_memory"] = True
-    return pedir("POST", "/restaurar", cuerpo, timeout=120)
+    return pedir("POST", "/restaurar", cuerpo, timeout=RESTAURAR_TIMEOUT_S)
 
 
 def lan():
