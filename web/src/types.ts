@@ -88,6 +88,8 @@ export interface PeerHealth {
   mem_total_gb?: number | null;
   cpu_pct: number | null;
   temp_c: number | null;
+  /** cuantos agentes mas entran sin bajar de la reserva de memoria (health.agentes_que_entran) */
+  agentes_libres?: number | null;
 }
 
 /** `GET /peers` (ronda 2): una fila por PC de la federacion, la propia incluida (`local: true`).
@@ -111,6 +113,8 @@ export interface Peer {
   last_seen: string;
   local: boolean;
   health: PeerHealth | null;
+  /** mediana de los ultimos reenvios a esa PC, en ms (solo las otras PCs) */
+  latencia_ms?: number | null;
 }
 
 export interface Pending {

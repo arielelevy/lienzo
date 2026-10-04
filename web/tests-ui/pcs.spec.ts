@@ -78,6 +78,21 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     await expect(notebook).toContainText("4");
     await expect(notebook).toContainText("2.1 GB");
     await expect(notebook).toContainText("71 °C");
+    await expect(oficina).toContainText("CPU 22%");
+    await expect(oficina).not.toHaveClass(/alerta/);
+  });
+
+  test("una PC caliente o sin memoria para otro agente se marca en rojo y dice por que", async ({ page }) => {
+    const caliente: Peer = {
+      ...PEER_NOTEBOOK_VIVA,
+      latencia_ms: 120,
+      health: { mem_free_gb: 1.2, mem_total_gb: 16, cpu_pct: 90, temp_c: 95, agentes_libres: 0 },
+    };
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, caliente]);
+    const notebook = page.locator(".pcstrip .pcchip", { hasText: "notebook" });
+    await expect(notebook).toHaveClass(/alerta/);
+    await expect(notebook).toContainText("120 ms");
+    await expect(notebook).toHaveAttribute("title", /a 95 °C y sin memoria para otro agente/);
   });
 
   test("click en un chip filtra a esa PC y nada mas; se vuelve con Todas", async ({ page }) => {

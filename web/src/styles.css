@@ -192,6 +192,9 @@ details.fold > summary,
 .pcstrip button.down { opacity: .55; border-style: dashed; }
 .pcstrip button.down .dot { background: none; border: 1.5px solid var(--dim); box-sizing: border-box; }
 .pcstrip .health { color: var(--dim); }
+/* PC caliente o sin memoria para otro agente: se ve antes de lanzarle nada */
+.pcstrip button.alerta { border-color: var(--err); }
+.pcstrip button.alerta .health { color: var(--err); }
 @media (max-width: 390px) { .pcstrip button { padding: 4px 7px; font-size: 11px; } }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; position: relative; }

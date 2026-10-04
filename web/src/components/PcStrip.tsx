@@ -121,13 +121,18 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
       </button>
       {peers.map((p) => {
         const down = p.alive === false;
+        const alerta = !down && p.health ? alertaDe(p.health) : null;
         return (
           <button
             key={p.pc_id}
             type="button"
-            className={`pcchip ${filter.has(p.pc_id) ? "on" : ""} ${down ? "down" : ""}`}
+            className={`pcchip ${filter.has(p.pc_id) ? "on" : ""} ${down ? "down" : ""} ${alerta ? "alerta" : ""}`}
             style={{ "--pc-color": p.color } as React.CSSProperties}
-            title={down ? `${p.name}: sin conexión hace ${ago(p.last_seen)}` : `${p.name} (Ctrl + click suma o saca PCs)`}
+            title={
+              down
+                ? `${p.name}: sin conexión hace ${ago(p.last_seen)}`
+                : `${p.name}${alerta ? ` — ${alerta}` : ""} (Ctrl + click suma o saca PCs)`
+            }
             aria-pressed={filter.has(p.pc_id)}
             onClick={(e) => (e.ctrlKey || e.metaKey ? onToggle(p.pc_id) : onSelect(p.pc_id))}
           >
@@ -137,7 +142,9 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
             {!down && p.health && (
               <span className="health">
                 {p.health.mem_free_gb != null && ` · ${p.health.mem_free_gb.toFixed(1)} GB`}
+                {p.health.cpu_pct != null && ` · CPU ${Math.round(p.health.cpu_pct)}%`}
                 {p.health.temp_c != null && ` · ${Math.round(p.health.temp_c)} °C`}
+                {p.latencia_ms != null && ` · ${p.latencia_ms} ms`}
               </span>
             )}
           </button>
@@ -145,4 +152,15 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
       })}
     </div>
   );
+}
+
+/** TEMP_ALERTA_C: desde aca una PC se esta cocinando. Sin memoria para un agente mas (la regla del
+ *  server, agentes_libres) tambien es alerta: lanzar ahi pagina y arrastra a todas sus sesiones. */
+const TEMP_ALERTA_C = 85;
+
+export function alertaDe(h: { temp_c: number | null; agentes_libres?: number | null }): string | null {
+  const motivos: string[] = [];
+  if (h.temp_c != null && h.temp_c >= TEMP_ALERTA_C) motivos.push(`a ${Math.round(h.temp_c)} °C`);
+  if (h.agentes_libres === 0) motivos.push("sin memoria para otro agente");
+  return motivos.length ? motivos.join(" y ") : null;
 }

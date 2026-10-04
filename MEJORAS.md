@@ -2,7 +2,7 @@
 
 Registro vivo: cada vez que repartir trabajo con el lienzo (sobre todo entre PCs) muestra un
 tropiezo o una idea, se anota acá con la evidencia, y cuando se arregla pasa a «Hecho». La fuente
-de cada punto es una sesión real, no una suposición. Última actualización: 2026-10-02.
+de cada punto es una sesión real, no una suposición. Última actualización: 2026-10-03.
 
 ## Hecho
 
@@ -41,6 +41,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-03 | **Una sola regla de capacidad**: `health.agentes_que_entran` (reserva 1,5 GB + 0,7 GB por agente); el server la usa en `/restaurar` y la publica como `agentes_libres` en la salud de cada PC, y `coordinar.capacidad` la lee de ahí | las constantes estaban repetidas en `server.py` y `coordinar.py` (punto pendiente «Capacidad de memoria duplicada») |
 | 2026-10-03 | **`drop_session(..., muerta=True)`** en vez de leer el texto de la razón, y **`ended_on_purpose` por lista blanca** (`restore.ON_PURPOSE`): una razón nueva de SessionEnd cuenta como muerte a restaurar | dos puntos pendientes: el texto usado como protocolo y la lista negra que perdía sesiones con razones nuevas |
 | 2026-10-03 | **Latencia por PC**: cada reenvío suma su latencia y `/peers` muestra `latencia_ms` (mediana de los últimos 50); las acciones que salen bien quedan en el log con sus ms y las lecturas solo si pasan de 2 s | antes solo se logueaban los reenvíos que fallaban y no había cómo ver una PC que se vuelve lenta |
+| 2026-10-03 | **Tira de PCs con CPU, latencia y alerta**: cada chip muestra memoria, CPU, temperatura y latencia, y se pone en rojo (con el motivo en el título) si la PC pasa de 85 °C o no le entra otro agente | pedido de Ariel: ver la salud de todas las PCs; esta PC marcó 95 °C y nadie lo veía |
 
 ## Pendiente (con evidencia)
 
@@ -113,8 +114,34 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   `_timeout_para` en `lienzo/federation.py`): una ruta nueva lenta se olvida y cae en los 5 s.
   Pasar el timeout como parámetro de `forward`.
 
+## Plan: una NUC sin pantalla como PC de trabajo (pedido del usuario, 2026-10-03)
+
+Objetivo: coordinar una o varias NUC sin pantalla desde una sola PC, con control total. Motivo real: la otra
+PC perdio las credenciales de git, la sesion 4 del curso quedo sin publicar y no habia forma segura de
+arreglarlo desde aca.
+
+1. **Canal cifrado para secretos** (ver Ideas): `POST /secrets`, vence en 10 min, un solo uso, solo en
+   memoria o en el almacen de credenciales de Windows de la PC destino, nunca en adjuntos ni en logs.
+2. **Chequeo de credenciales de git**: `GET /peers` muestra `git_auth: ok|vencida` probando `git ls-remote`
+   con timeout corto, para detectar el problema antes de que la coda llegue al push.
+3. **Aviso de sesion que murio sin contestar**: una tarjeta que pasa a `muerta` con un encargo pendiente
+   dispara aviso a la coordinadora (paso con la sesion de integracion de la sesion 4 del curso).
+4. **Acceso de emergencia**: documentar Tailscale o RDP y mostrar en la tira de PCs si la NUC no responde.
+
+Pendiente de decision y de configuracion del usuario, no de un agente: arranque automatico de la NUC
+(auto-login, tarea al iniciar sesion, plan de energia) y ejecucion remota de comandos sin sesion de agente.
+
 ## Ideas
 
+- **Canal cifrado para secretos entre PCs** (pedido del usuario, 2026-10-03): hoy un token de Forgejo solo
+  puede viajar como mensaje y queda en claro en `~/.lienzo/adjuntos/<id>/` de la PC dueña y en el
+  transcript de las dos sesiones. Evidencia: la otra PC (ar-it33940) perdio las credenciales de git, el
+  push de la sesion 4 no salio y no habia forma segura de pasarle un token. Propuesta: `POST /secrets` firmado
+  con la clave del peer y cifrado en transito, que guarda el secreto solo en memoria o en el almacen de
+  credenciales de Windows de la PC destino (nunca en adjuntos ni en el log), con vencimiento (p. ej. 10 min),
+  lectura de un solo uso, y un helper `coordinar.pasar_secreto(pc, nombre, valor)`. El texto del mensaje no
+  lleva el valor: la sesion lo pide con un nombre y el server lo inyecta como variable de entorno solo al
+  comando que la necesita. Ademas: ocultar el valor en el tablero y en `GET /sessions`.
 - Un panel «PCs» con la latencia y la memoria libre de cada una en vivo, y la cola del DGX.
 - `coordinar.repartir(proyecto, modulos, pcs)`: reparto automático según `capacidad`.
 - Aviso en el tablero cuando una tarjeta lleva N minutos `corriendo` sin que cambie su pantalla.
