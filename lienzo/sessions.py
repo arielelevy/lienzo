@@ -2170,10 +2170,19 @@ def coda_ask_open(pantalla: str) -> bool:
 def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
     """Contestar desde la tarjeta el permiso que CODA pide en su terminal, con teclas: Enter para
     permitir, Esc para denegar. Antes de teclear se confirma en la pantalla que el dialogo sigue
-    abierto: si ya se contesto en la terminal, un Enter caeria en la caja."""
+    abierto: si ya se contesto en la terminal, un Enter caeria en la caja.
+
+    Queda una ventana que esto NO cierra: entre read_screen (un subproceso, ~180 ms) y run_send el
+    cartel pudo cerrarse y abrirse otro, y el Enter contesta al nuevo sin haberlo mirado. Cerrarla
+    es el punto 0.2 del plan (aprobar contra el hash del comando que se vio). Lo que si se revalida,
+    bajo el lock y despues del envio, es que el permiso siga siendo el mismo (coda_at) antes de
+    marcarlo «enviado»: si en el medio llego otro, ese conserva sus botones."""
     if frenado := send_blocked(s):
         return frenado
-    if s.get("agent") != "coda" or not (s.get("needs") or {}).get("coda_at"):
+    with lock:
+        abierto = dict(s.get("needs") or {})
+    coda_at = abierto.get("coda_at")
+    if s.get("agent") != "coda" or not coda_at:
         return 409, {"ok": False, "error": "esa sesion no tiene un permiso de CODA abierto"}
     pantalla = "\n".join(read_screen(s).get("lines") or [])
     if not coda_ask_open(pantalla):
@@ -2184,12 +2193,17 @@ def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
         code, out = run_send(s, "", enter=False, key="escape")
     if code != 200:
         return code, out
-    needs = s.get("needs") or {}
-    state.log(f"permiso CODA {s['session_id'][:8]} -> {decision} ({needs.get('tool')}) desde el lienzo")
     with lock:
-        # coda_log_activity la devuelve a corriendo en cuanto la sesion vuelva a escribir en el log
-        s["needs"] = {**needs, "where": "enviado", "sent_ts": time.time()}
-        touch(s)
+        needs = s.get("needs") or {}
+        mismo = sessions.get(s["session_id"]) is s and needs.get("coda_at") == coda_at
+        if mismo:
+            # coda_log_activity la devuelve a corriendo en cuanto la sesion vuelva a escribir en el log
+            s["needs"] = {**needs, "where": "enviado", "sent_ts": time.time()}
+            touch(s)
+    state.log(
+        f"permiso CODA {s['session_id'][:8]} -> {decision} ({abierto.get('tool')}) desde el lienzo"
+        + ("" if mismo else "; mientras tanto el permiso cambio: el nuevo conserva sus botones")
+    )
     return 200, out
 
 
@@ -2323,17 +2337,22 @@ def set_stopped(s: dict, on: bool, by: str = "user") -> dict:
             touch(s)
         state.log(f"habilitada {s['session_id'][:8]}: vuelve a recibir")
         return {"interrupted": False, "notified": []}
-    if s.get("stopped_by"):
-        return {"interrupted": False, "notified": [], "already": True}
+    with lock:
+        # la marca va ANTES del Esc y en el mismo tramo con lock que la pregunta (plan de refactor
+        # 1.4, E4): antes se miraba afuera y se marcaba despues de un envio de hasta 60 s, y dos
+        # pedidos juntos mandaban dos Esc y avisaban dos veces. Si se puede interrumpir se decide
+        # aca mismo, antes de marcar: con la marca puesta send_blocked ya dice que no.
+        if s.get("stopped_by"):
+            return {"interrupted": False, "notified": [], "already": True}
+        hay_que_cortar = s.get("state") == "corriendo" and not send_blocked(s)
+        s["stopped_by"] = by
+        touch(s)
     interrupted = False
-    if s.get("state") == "corriendo" and not send_blocked(s):
+    if hay_que_cortar:
         code, out = run_send(s, "", enter=False, key="escape")
         interrupted = code == 200
         if not interrupted:
             state.log(f"detener: no pude interrumpir {s['session_id'][:8]} (pid {s['pid']}): {out}")
-    with lock:
-        s["stopped_by"] = by
-        touch(s)
     recipients = stopped_recipients(s)
     if recipients:
         _notify_async(lambda: notify_stopped(s, recipients))

@@ -134,3 +134,64 @@ def test_dos_sucesoras_a_la_vez_heredan_una_sola_vez(aislado, monkeypatch):
     assert errores == []
     assert sorted(resultados, key=str) == [None, old]
     assert len(heredadas) == 1 and ses.DEAD_TARGETS == {}
+
+
+# 1.4 leer afuera, escribir adentro revalidando --------------------------------------------------
+
+
+def _coda_con_permiso(monkeypatch, coda_at="t1"):
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    monkeypatch.setattr(ses.backend, "is_tmux", lambda s: False)
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": ["Approval Required", "Enter confirm"]})
+    s = ses.new_session("c0da" * 2, "coda", "hook")
+    s.update(pid=123, state="te_necesita", needs={"kind": "permission", "where": "terminal", "coda_at": coda_at})
+    st.sessions[s["session_id"]] = s
+    return s
+
+
+def test_contestar_coda_no_pisa_un_permiso_nuevo_que_llego_durante_el_envio(aislado, monkeypatch):
+    """E4: entre leer `needs` y escribir «enviado» pasan el subproceso de pantalla y el de send.py.
+    Si en ese rato coda abrio OTRO permiso (coda_log_activity puso un coda_at nuevo), marcarlo
+    «enviado» le escondia los botones de un pedido que nadie contesto."""
+    s = _coda_con_permiso(monkeypatch)
+
+    def envio(s_, final, enter=True, key=None):
+        with st.lock:
+            s_["needs"] = {"kind": "permission", "where": "terminal", "coda_at": "t2"}
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(ses, "run_send", envio)
+    code, _ = ses.answer_coda_ask(s, "allow")
+    assert code == 200
+    assert s["needs"]["coda_at"] == "t2" and s["needs"]["where"] == "terminal"
+
+
+def test_contestar_coda_marca_enviado_si_el_permiso_sigue_siendo_el_mismo(aislado, monkeypatch):
+    s = _coda_con_permiso(monkeypatch)
+    monkeypatch.setattr(ses, "run_send", lambda *a, **k: (200, {"ok": True}))
+    assert ses.answer_coda_ask(s, "allow")[0] == 200
+    assert s["needs"]["where"] == "enviado" and s["needs"]["coda_at"] == "t1"
+
+
+def test_detener_dos_veces_a_la_vez_manda_un_solo_esc(aislado, monkeypatch):
+    """E4: set_stopped miraba stopped_by afuera del lock y lo marcaba despues del Esc (un envio de
+    hasta 60 s): dos pedidos juntos mandaban dos Esc y avisaban dos veces a las conectadas."""
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    monkeypatch.setattr(ses, "mirror", None)
+    monkeypatch.setattr(ses, "_notify_async", lambda fn: None)
+    s = ses.new_session("5709" * 2, "claude", "hook")
+    s.update(pid=123, state="corriendo")
+    st.sessions[s["session_id"]] = s
+    escs, segunda = [], []
+
+    def envio(s_, final, enter=True, key=None):
+        escs.append(key)
+        if len(escs) == 1:
+            segunda.append(ses.set_stopped(s_, True))  # el otro pedido llega mientras se teclea
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(ses, "run_send", envio)
+    res = ses.set_stopped(s, True)
+    assert escs == ["escape"] and res["interrupted"] is True
+    assert segunda and segunda[0].get("already") is True
+    assert s["stopped_by"] == "user"
