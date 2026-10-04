@@ -1,5 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { ago, detail, isMissingRoute, rulesApi, sessionsApi, type ScreenResponse } from "../api";
+import { can } from "../agents";
 import { hhmm } from "../nl";
 import { isFree, needsPiReload, periodLabel, schedLabel, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
@@ -396,7 +397,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
         <div className="tabs">
           <button className={tab === "digest" ? "on" : ""} onClick={() => setTab("digest")} title="lo que pasó en cada turno: pedido, lo que fue diciendo y la respuesta">Chat</button>
           <button className={tab === "conn" ? "on" : ""} onClick={() => setTab("conn")} title="qué mandó, qué recibió y qué conexiones siguen activas">Conexiones</button>
-          {s.agent === "claude" && !s.orphan && (
+          {can(s.agent, "screen") && !s.orphan && (
             <button className={tab === "screen" ? "on" : ""} onClick={() => setTab("screen")} title="texto visible de la terminal, leído del buffer">Pantalla</button>
           )}
         </div>

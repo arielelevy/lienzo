@@ -3,7 +3,7 @@ import { ApiError, ago, rulesApi, sessionsApi } from "../api";
 import { coordinatorOf, everySeconds, fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection, splitEvery, type EveryUnit } from "../nl";
 import type { Session } from "../types";
 import { REPLY_TEMPLATE, shortName } from "../names";
-import { AGENTS } from "../agents";
+import { AGENTS, can } from "../agents";
 
 const KEY = "lienzo.forward.template";
 type Mode = "now" | "on_stop" | "at" | "native";
@@ -120,7 +120,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
     // ListAgents solo ve la propia maquina (plan multi-PC §3.5): sin esto, dos sesiones de PCs
     // distintas ofrecerian un canal que la propia sesion origen no puede abrir
     if ((from.pc ?? null) !== (targetSession.pc ?? null)) return "ListAgents solo ve su propia PC: el canal nativo no cruza PCs distintas";
-    const bad = [from, targetSession].filter((s) => s.agent !== "claude");
+    const bad = [from, targetSession].filter((s) => !can(s.agent, "nativeChannel"));
     if (!bad.length) {
       // el canal nativo se apoya en ListAgents, que es por entorno: un claude de Windows no ve a
       // uno de WSL/Unix (registros separados). Si una esta en tmux y la otra no, no se hablan.

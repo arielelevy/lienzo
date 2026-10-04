@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ago, failMsg, sessionsApi } from "../api";
+import { can } from "../agents";
 import { continueAt, useCardActions } from "../hooks/useCardActions";
 import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
@@ -635,7 +636,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               {s.stopped_by ? "▶ Habilitar (quitar stopped)" : "⏹ Detener (stopped)"}
             </button>
           )}
-          {s.agent === "claude" && writable && (
+          {can(s.agent, "coordinable") && writable && (
             <button
               type="button"
               role="menuitem"
@@ -650,7 +651,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               {s.coordinator ? "★ Quitarle el rol de coordinadora" : "☆ Coordinadora del repo"}
             </button>
           )}
-          {multiPc && s.agent === "claude" && writable && (
+          {multiPc && can(s.agent, "coordinable") && writable && (
             <button
               type="button"
               role="menuitem"
