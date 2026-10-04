@@ -40,6 +40,7 @@ import os
 import secrets
 import threading
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -61,6 +62,14 @@ SCRYPT_PARAMS = {"n": 2**14, "r": 8, "p": 1, "dklen": 32}
 
 class PeerLimitError(RuntimeError):
     """Se intento agregar un peer nuevo habiendo ya MAX_PEERS emparejados."""
+
+
+class PeerError(OSError):
+    """El peer contesto algo que no se puede usar: HTTP cortado a mitad (`IncompleteRead`, linea de
+    estado rota) o un cuerpo que no es JSON. Es OSError a proposito: todos los que le hablan a un
+    peer (mirror.forward, la salud) ya tratan OSError como «sin conexion con esa PC»; antes estos
+    dos casos salian como HTTPException/ValueError, que nadie atrapaba, y mataban el hilo de salud
+    o devolvian un 500 (revision 2026-10-04, B3)."""
 
 
 # --- firma y replay -----------------------------------------------------------------------
@@ -337,6 +346,7 @@ class SSEClient:
         on_reconnect: Callable[[], None] | None = None,
         backoff: Callable[[int], float] | None = None,
         connect_timeout: float = 5.0,
+        log: Callable[[str], None] | None = None,
     ):
         self.host = host
         self.port = port
@@ -346,6 +356,8 @@ class SSEClient:
         self.on_reconnect = on_reconnect
         self.backoff = backoff or _backoff_exponencial
         self.connect_timeout = connect_timeout
+        self.log = log or state.log
+        self._estado: str | None = None  # el ultimo motivo avisado (ver _avisar)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._conn: http.client.HTTPConnection | None = None
@@ -368,10 +380,33 @@ class SSEClient:
             except OSError:
                 pass
 
+    def _avisar(self, estado: str) -> bool:
+        """Al log solo cuando cambia el motivo (la idea de health.FuenteTemperatura._avisar): un
+        peer apagado no puede llenar el log con un rechazo cada pocos segundos, pero tampoco se
+        puede callar. Conectar bien de entrada no es noticia; volver a conectar despues de un
+        error, si."""
+        if estado == self._estado:
+            return False
+        primera = self._estado is None
+        self._estado = estado
+        if primera and estado == "conectado":
+            return False
+        self.log(f"SSE de {self.host}:{self.port}: {estado}")
+        return True
+
     def _run(self) -> None:
+        """Nunca deja morir el hilo: un evento que hace fallar a `on_event`, una respuesta HTTP
+        rota o cualquier otra excepcion se loguea y se reconecta (el server manda el snapshot
+        entero de nuevo). Antes solo se atrapaba OSError y el espejo de esa PC quedaba congelado
+        con la ultima foto, viendose vivo por la salud (revision 2026-10-04, B3)."""
         intento = 0
         while not self._stop.is_set():
-            conecto = self._conectar_y_leer()
+            try:
+                conecto = self._conectar_y_leer()
+            except Exception as e:
+                if self._avisar(f"falla ({type(e).__name__}: {e}); reconecto"):
+                    self.log(traceback.format_exc())  # el traceback, solo la primera vez
+                conecto = False
             if self._stop.is_set():
                 return
             intento = 0 if conecto else intento + 1
@@ -380,20 +415,23 @@ class SSEClient:
     def _conectar_y_leer(self) -> bool:
         """True si llego a conectar (aunque el server haya cortado enseguida): con eso alcanza
         para resetear el backoff, la idea es no escalar la espera cuando el peer esta vivo pero
-        el stream se corta seguido."""
+        el stream se corta seguido. Las excepciones que no son de red las atrapa `_run`."""
         conn = http.client.HTTPConnection(self.host, self.port, timeout=self.connect_timeout)
         self._conn = conn
         try:
             conn.request("GET", self.path, headers=self.headers_fn())
             resp = conn.getresponse()
             if resp.status != 200:
+                self._avisar(f"responde {resp.status}")
                 return False
+            self._avisar("conectado")
             if self.on_reconnect is not None:
                 self.on_reconnect()
             for evento in _leer_eventos_sse(resp, self._stop):
                 self.on_event(evento)
             return True
-        except OSError:
+        except OSError as e:
+            self._avisar(f"{type(e).__name__}: {e}")
             return False
         finally:
             conn.close()
@@ -529,9 +567,15 @@ class HTTPTransport:
             resp = conn.getresponse()
             data = resp.read()
             status = resp.status
+        except http.client.HTTPException as e:
+            # RemoteDisconnected ya es OSError; IncompleteRead y BadStatusLine no lo son
+            raise PeerError(f"{method} {path}: respuesta HTTP rota ({type(e).__name__}: {e})") from e
         finally:
             conn.close()
-        cuerpo = json.loads(data.decode("utf-8")) if data else {}
+        try:
+            cuerpo = json.loads(data.decode("utf-8")) if data else {}
+        except ValueError as e:  # incluye UnicodeDecodeError
+            raise PeerError(f"{method} {path}: {status} con un cuerpo que no es JSON ({e})") from e
         if status == 401 and isinstance(cuerpo, dict):
             # sin esto el tablero queda mudo: «firma invalida» no dice que hacer (medido el 2026-10-03)
             cuerpo = {

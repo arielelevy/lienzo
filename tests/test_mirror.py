@@ -60,6 +60,8 @@ class FakeTransport:
         raise NotImplementedError
 
     def request(self, peer, method, path, body=None):
+        if (method, path) == ("GET", "/peer/health") and (method, path) not in self.request_responses:
+            return 200, self.get(peer, path)  # la salud se pide con request (hace falta el codigo)
         if self.raise_on_request:
             raise OSError("peer caido")
         try:

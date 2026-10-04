@@ -12,6 +12,7 @@ from __future__ import annotations
 import statistics
 import threading
 import time
+import traceback
 from collections import deque
 from collections.abc import Callable
 
@@ -50,6 +51,7 @@ class _PeerMirror:
         self.last_seen: float = 0.0
         self.client: federation.SSEClient | None = None
         self.synced = False  # ya llego su snapshot completo en esta conexion
+        self.evento_raro: str | None = None  # el ultimo tipo de evento no-objeto avisado
 
 
 def _tag(items, pc_id: str) -> list[dict]:
@@ -69,6 +71,7 @@ class Mirror:
         self._lock = threading.RLock()
         self._peers: dict[str, _PeerMirror] = {}
         self._health_thread: threading.Thread | None = None
+        self._health_loop_error: str | None = None  # el ultimo motivo avisado por _health_loop
         self._stop = threading.Event()
 
     # --- alta y baja de peers -------------------------------------------------------------
@@ -131,6 +134,13 @@ class Mirror:
         """Un evento del SSE del peer (el mismo formato que /events: snapshot, session, removed,
         pending, links, rules, ping). pending/links/rules viajan como lista completa cada vez, no
         como delta: se reemplazan enteros, igual que hace el propio front con /events local."""
+        if not isinstance(ev, dict):
+            # un `data:` que no es un objeto JSON (federation._leer_eventos_sse lo entrega como
+            # texto): antes `ev.get` reventaba el hilo SSE y el espejo de esa PC quedaba congelado
+            if pm.evento_raro != type(ev).__name__:
+                pm.evento_raro = type(ev).__name__
+                self.log(f"evento SSE de {pm.info.get('name') or pm.pc_id} que no es un objeto, ignorado: {ev!r:.120}")
+            return
         t = ev.get("type")
         if t == "ping":
             with self._lock:
@@ -173,9 +183,18 @@ class Mirror:
         # espera antes de pedir la primera vez: recien conectado no hay salud todavia (peers_status
         # la muestra None hasta el primer HEALTH_EVERY_S), y asi un test que conecta un peer no
         # corre en carrera contra este hilo pidiendo salud de entrada.
+        # nunca deja morir el hilo: antes una excepcion que no fuera OSError (un JSON roto, un
+        # error en on_change) lo terminaba y la salud de todas las PCs quedaba congelada en la
+        # ultima foto (revision 2026-10-04, B3). Se avisa solo cuando cambia el motivo.
         while not self._stop.wait(HEALTH_EVERY_S):
             for pc_id in self.peer_ids():
-                self._poll_health(pc_id)
+                try:
+                    self._poll_health(pc_id)
+                except Exception as e:
+                    motivo = f"{type(e).__name__}: {e}"
+                    if motivo != self._health_loop_error:
+                        self._health_loop_error = motivo
+                        self.log(f"salud de {pc_id}: falla ({motivo})\n{traceback.format_exc()}")
 
     def _poll_health(self, pc_id: str) -> None:
         pm = self._get(pc_id)
@@ -183,7 +202,14 @@ class Mirror:
             return
         nombre = pm.info.get("name") or pc_id
         try:
-            h = self.transport.get(pm.conn, "/peer/health")
+            # `request` y no `get`: hace falta el codigo. Con `get`, un 401 (clave distinta, reloj
+            # corrido) devolvia su cuerpo de error como si fuera la salud, y la PC se veia VIVA
+            # aunque no aceptara ni un pedido (segunda revision 2026-10-04)
+            code, h = self.transport.request(pm.conn, "GET", "/peer/health")
+            if code != 200:
+                raise federation.PeerError(f"{code} {(h or {}).get('error') if isinstance(h, dict) else h}")
+            if not isinstance(h, dict):
+                raise federation.PeerError(f"la salud no es un objeto: {h!r:.80}")
         except OSError as e:
             # se avisa al empezar a fallar o al cambiar el motivo, no cada 15 s mientras siga igual
             error = f"{type(e).__name__}: {e}"
