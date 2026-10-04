@@ -371,3 +371,68 @@ def test_agente_desconocido_es_un_error_explicito(tmp_path):
     path = claude_transcript(tmp_path)
     with pytest.raises(ValueError, match="agente desconocido"):
         tr.parse("gemini", path)
+
+
+# --- paso 2: las guess_* en un modulo hoja ------------------------------------------------------
+
+LIENZO_DIR = str(Path(__file__).resolve().parents[1] / "lienzo")
+
+
+@pytest.mark.parametrize("modulo", ["agentes"])
+def test_el_modulo_nuevo_se_importa_solo_y_no_trae_sessions(modulo):
+    """Un modulo hoja: importado solo, en un proceso limpio, no arrastra sessions (ni rules, que
+    importa sessions). Si lo hiciera, launch/restore/transcripts cerrarian un ciclo de imports."""
+    import subprocess
+
+    codigo = (
+        f"import sys; sys.path.insert(0, {LIENZO_DIR!r}); import {modulo}; "
+        "malos = [m for m in ('sessions', 'rules', 'server') if m in sys.modules]; "
+        "assert not malos, malos"
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", codigo], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60
+    )
+    assert r.returncode == 0, r.stderr
+
+
+def test_sessions_reexporta_las_guess_del_modulo_hoja():
+    import agentes
+    import sessions as ses
+
+    for nombre in ("guess_claude", "guess_codex", "guess_pi", "guess_transcript", "transcript_home"):
+        assert getattr(ses, nombre) is getattr(agentes, nombre), nombre
+
+
+def test_un_parche_de_ses_guess_transcript_sigue_valiendo_en_el_barrido(monkeypatch):
+    """test_backend_tmux y test_pc_fields parchean ses.guess_transcript: el barrido tiene que
+    llamarla por el nombre de sessions, no por el de agentes."""
+    import sessions as ses
+    import state as st
+
+    llamadas = []
+    monkeypatch.setattr(ses.backend._win, "cwd_of", lambda pid: "D:/x")
+    monkeypatch.setattr(
+        ses.backend._win, "sweep", lambda: [{"pid": 77, "agent": "claude", "exe": "claude.exe", "created": st.now()}]
+    )
+    monkeypatch.setattr(ses, "guess_transcript", lambda *a, **k: llamadas.append(a) or (None, None))
+    monkeypatch.setattr(ses, "on_turn_end", lambda *a: None)
+    ses.sweep_once()
+    assert llamadas and llamadas[0][0] == "claude"
+
+
+def test_dos_pi_en_un_cwd_no_se_adivinan_por_actividad(monkeypatch):
+    """La misma guardia que test_integration_guards, pero parcheando agentes.guess_pi: ahi vive la
+    llamada desde que guess_transcript se mudo (el parche de ses.guess_pi ya no la intercepta)."""
+    import agentes
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(ses.backend._win, "cwd_of", lambda pid: "D:/shared")
+    monkeypatch.setattr(
+        ses.backend._win,
+        "sweep",
+        lambda: [{"pid": pid, "agent": "pi", "exe": "node.exe", "created": st.now()} for pid in (42, 43)],
+    )
+    monkeypatch.setattr(agentes, "guess_pi", lambda *args: pytest.fail("dos Pi en un cwd: identidad ambigua"))
+    ses.sweep_once()
+    assert all(s["transcript_path"] is None for s in st.sessions.values())
