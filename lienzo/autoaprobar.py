@@ -39,6 +39,9 @@ class Pedido:
 
 class ProveedorPermisos(ABC):
     nombre: str
+    # True si un «permitir» puede no hacer efecto y conviene repetirlo (un Enter tecleado en una
+    # terminal); False si la respuesta es definitiva (el hook la lee de un archivo): se contesta una vez
+    reintenta: bool = False
 
     @abstractmethod
     def abiertos(self) -> list[Pedido]:
@@ -78,6 +81,7 @@ class PendientesDeHook(ProveedorPermisos):
 
 class DialogoDeCoda(ProveedorPermisos):
     nombre = "coda"
+    reintenta = True
 
     def abiertos(self) -> list[Pedido]:
         with state.lock:
@@ -120,7 +124,7 @@ def ronda(ahora: float | None = None) -> list[tuple[Pedido, int]]:
     if not prendido():
         return []
     ahora = time.monotonic() if ahora is None else ahora
-    for k in [k for k, t in _intentados.items() if ahora - t > 10 * REINTENTO_S]:
+    for k in [k for k, t in _intentados.items() if ahora - t > 3600]:
         del _intentados[k]
     hechos = []
     for prov in PROVEEDORES:
@@ -130,7 +134,10 @@ def ronda(ahora: float | None = None) -> list[tuple[Pedido, int]]:
             state.log(f"auto-aprobar, proveedor {prov.nombre}: {type(e).__name__}: {e}")
             continue
         for p in pedidos:
-            if ahora - _intentados.get(p.id, -1e9) < REINTENTO_S:
+            previo = _intentados.get(p.id)
+            if previo is not None and (not prov.reintenta or ahora - previo < REINTENTO_S):
+                # medido el 2026-10-04: un pendiente de hook ya contestado seguia en la lista (su
+                # sesion ya no estaba) y se aprobaba cada 20 s; uno de hook se contesta una vez
                 continue
             _intentados[p.id] = ahora
             try:

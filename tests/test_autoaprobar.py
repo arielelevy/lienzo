@@ -71,7 +71,9 @@ def test_no_repite_el_mismo_pedido_hasta_el_reintento(monkeypatch):
     au.ronda(ahora=105)
     assert len(hechos) == 2
     au.ronda(ahora=100 + au.REINTENTO_S + 1)
-    assert len(hechos) == 4
+    # pasado el reintento, solo el cartel de coda se vuelve a contestar (un Enter puede no hacer
+    # efecto); el pendiente de hook ya contestado no se repite
+    assert len(hechos) == 3 and hechos[-1][0] == "coda"
 
 
 def test_un_proveedor_roto_no_frena_a_los_demas(monkeypatch):
