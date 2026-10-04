@@ -1653,8 +1653,10 @@ class Handler(BaseHTTPRequestHandler):
             code, res = mirror.MIRROR.forward(owner, "PUT", f"/sessions/{sid}/title", {"title": title})
             return self._json(code, res)
         set_title(s, title or "")  # toma el lock por dentro; leer la transcripcion, no
-        with lock:
-            touch(s)
+        if not touch(s):
+            # la borraron (o reemplazaron) mientras se leia la transcripcion: touch ya no la guarda
+            # ni la publica, y contestar 200 diria que el titulo quedo (revision 2026-10-04, S10)
+            return self._json(404, no_session())
         log(f"titulo de {sid[:8]} -> {s['title']!r} ({s.get('title_source')})")
         return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
 
@@ -2160,8 +2162,8 @@ class PeerHandler(BaseHTTPRequestHandler):
             if title is not None and not isinstance(title, str):
                 return self._json(400, {"error": "title debe ser un texto"})
             set_title(s, title or "")
-            with lock:
-                touch(s)
+            if not touch(s):  # borrada mientras se titulaba (S10, como en Handler._put_title)
+                return self._json(404, no_session())
             return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
         if action == "stopped":
             on = d.get("on")

@@ -426,3 +426,18 @@ def test_envio_con_copycat_si_el_origen_se_borra_durante_el_envio(srv, aislado, 
     monkeypatch.setattr(server, "hand_over", lambda dst, src, stop=True: {"handed": src["session_id"]})
     code, _, res = pedir(srv, "POST", f"/sessions/{sid}/send", {"text": "x", "from": SID_A, "copycat": True})
     assert code == 200 and "handed" not in res
+
+
+def test_titulo_de_una_tarjeta_borrada_durante_el_cambio_da_404(srv, aislado, monkeypatch):
+    """S10: set_title puede leer la transcripción (lento); si en el medio borraron la tarjeta,
+    touch no la guarda (sessions.touch ya revalida) y el server no tiene que decir 200."""
+    sid = "e0000000-0000-4000-8000-00000000000e"
+    st.sessions[sid] = {"session_id": sid, "agent": "claude", "pid": 1, "title": "viejo"}
+
+    def titular(s, title):
+        s["title"] = title
+        st.sessions.pop(sid, None)
+
+    monkeypatch.setattr(server, "set_title", titular)
+    code, _, res = pedir(srv, "PUT", f"/sessions/{sid}/title", {"title": "nuevo"})
+    assert code == 404 and res["code"] == "unknown_session"
