@@ -306,6 +306,19 @@ def create_on_stop(d: dict, text: str) -> tuple[int, dict]:
     conflicto_global = check_global_loop(d)
     if conflicto_global:
         return 409, conflicto_global
+    try:
+        max_fires = clamp_fires(d.get("max_fires") or 1)
+    except TypeError, ValueError, OverflowError:
+        return 400, {"error": "max_fires debe ser un numero"}
+    # los chequeos contra las reglas locales y el alta, bajo UN lock (revision 2026-10-04, S11):
+    # con locks separados, dos POST iguales a la vez pasaban los dos el de duplicado. `lock` es
+    # reentrante, asi que find_enabled y rules.add lo vuelven a tomar sin trabarse; adentro no hay
+    # red (check_global_loop y check_remote_destination quedan afuera)
+    with lock:
+        return _alta_on_stop(d, text, max_fires)
+
+
+def _alta_on_stop(d: dict, text: str, max_fires: int) -> tuple[int, dict]:
     inverse = find_enabled(
         lambda r: r.get("kind") == "on_stop" and r.get("from") == d["to"] and r.get("to") == d["from"]
     )
@@ -324,10 +337,6 @@ def create_on_stop(d: dict, text: str) -> tuple[int, dict]:
     )
     if dup:
         return 409, {"error": "ya existe esa conexión", "rule_id": dup["id"]}
-    try:
-        max_fires = clamp_fires(d.get("max_fires") or 1)
-    except TypeError, ValueError, OverflowError:
-        return 400, {"error": "max_fires debe ser un numero"}
     rule = new_rule(
         d,
         text,
@@ -352,6 +361,11 @@ def create_at(d: dict, text: str) -> tuple[int, dict]:
     extra, err = at_fields(d)
     if err:
         return 400, {"error": err}
+    with lock:  # el choque y el alta bajo un solo lock, como en create_on_stop (S11)
+        return _alta_at(d, text, at, extra)
+
+
+def _alta_at(d: dict, text: str, at: dt.datetime, extra: dict) -> tuple[int, dict]:
     # dos programadas a la misma consola en el mismo minuto se inyectan juntas ("Continuar" y
     # "continua" a las 01:01): choca cualquier `at` habilitada a +-2 min, periodica o no, sea cual
     # sea el texto; con "replace": true la nueva reemplaza a la existente

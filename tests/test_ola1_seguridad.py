@@ -441,3 +441,32 @@ def test_titulo_de_una_tarjeta_borrada_durante_el_cambio_da_404(srv, aislado, mo
     monkeypatch.setattr(server, "set_title", titular)
     code, _, res = pedir(srv, "PUT", f"/sessions/{sid}/title", {"title": "nuevo"})
     assert code == 404 and res["code"] == "unknown_session"
+
+
+def test_dos_altas_iguales_a_la_vez_dejan_una_sola_regla(aislado, monkeypatch):
+    """S11: la validación (¿ya hay una igual?) y el alta iban bajo locks separados; dos POST
+    iguales a la vez pasaban los dos el chequeo de duplicado."""
+    monkeypatch.setattr(st.rules, "path", str(aislado["tmp"] / "rules.json"))
+    st.rules.items.clear()
+    a, b = "f0000000-0000-4000-8000-00000000000a", "f0000000-0000-4000-8000-00000000000b"
+    for sid in (a, b):
+        st.sessions[sid] = {"session_id": sid, "agent": "claude", "pid": 1}
+    original = server.find_enabled
+
+    def lento(pred):
+        r = original(pred)
+        time.sleep(0.2)  # ensancha la ventana entre «no hay otra igual» y el alta
+        return r
+
+    monkeypatch.setattr(server, "find_enabled", lento)
+    d = {"kind": "on_stop", "from": a, "to": b, "text": "seguí"}
+    codigos = []
+    hilos = [threading.Thread(target=lambda: codigos.append(server.create_rule(dict(d))[0])) for _ in range(2)]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+    try:
+        assert sorted(codigos) == [200, 409] and len(st.rules.items) == 1
+    finally:
+        st.rules.items.clear()
