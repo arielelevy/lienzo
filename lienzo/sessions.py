@@ -712,9 +712,20 @@ def set_needs(s: dict, needs: dict) -> None:
     s["needs"] = {**needs, "since": now()}
 
 
-def touch(s: dict) -> None:
-    save_session(s)
-    state.broadcast({"type": "session", "session": s})
+def touch(s: dict) -> bool:
+    """Guarda la tarjeta y la publica, solo si sigue siendo LA tarjeta de su id en el registro;
+    devuelve si lo hizo. La guarda vive aca y no en cada llamador (plan de refactor 1.2, E1/S10):
+    despues de un envio de hasta 60 s, un touch sobre una tarjeta que se borro mientras tanto le
+    rehacia el archivo en disco y resucitaba en el proximo arranque, y sobre una reemplazada (mismo
+    id, otro dict) pisaba a la nueva. Todo lo que crea tarjetas (apply_event, adopt_process,
+    attach_transcript) las inserta en `sessions` antes del primer touch; load_sessions usa
+    save_session directo. Toma el lock (reentrante): vale igual llamado con o sin el."""
+    with lock:
+        if sessions.get(s.get("session_id")) is not s:
+            return False
+        save_session(s)
+        state.broadcast({"type": "session", "session": s})
+    return True
 
 
 STALE_STOP_S = 5.0  # timeout de los hooks: un Stop de otro pedido mas viejo que esto ya no es "tardio"

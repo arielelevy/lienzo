@@ -70,3 +70,30 @@ def test_un_gancho_sin_cablear_avisa_una_sola_vez(aislado):
     gancho("x")
     gancho("y", "z")
     assert len([m for m in aislado if "on_prueba" in m]) == 1
+
+
+# 1.2 touch() no resucita una tarjeta borrada ---------------------------------------------------
+
+
+def test_touch_sobre_una_tarjeta_borrada_no_la_reescribe(aislado, monkeypatch):
+    """E1/S10: un envio de hasta 60 s termina con touch(s) sobre una tarjeta que se borro mientras
+    tanto; el archivo de la tarjeta volvia a aparecer en disco y resucitaba en el proximo arranque."""
+    eventos = []
+    monkeypatch.setattr(st, "broadcast", eventos.append)
+    s = ses.new_session("b" * 8, "claude", "hook")
+    st.sessions[s["session_id"]] = s
+    assert ses.touch(s) is True
+    ruta = os.path.join(st.SESSIONS, f"{s['session_id']}.json")
+    assert os.path.exists(ruta)
+    ses.drop_session(s["session_id"], "prueba")
+    assert not os.path.exists(ruta)
+    eventos.clear()
+    assert ses.touch(s) is False
+    assert not os.path.exists(ruta) and eventos == []
+
+
+def test_touch_sobre_una_tarjeta_reemplazada_no_pisa_a_la_nueva(aislado):
+    vieja = ses.new_session("c" * 8, "claude", "hook")
+    nueva = ses.new_session("c" * 8, "claude", "hook")
+    st.sessions[nueva["session_id"]] = nueva
+    assert ses.touch(vieja) is False
