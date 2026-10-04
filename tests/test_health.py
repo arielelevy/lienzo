@@ -292,3 +292,20 @@ def test_git_auth_toma_enseguida_un_cambio_de_urls(monkeypatch):
     urls[0] = ["https://h/r.git"]
     health._git_auth()  # dispara la medicion nueva al ver otras urls
     assert health._git_auth() == {"https://h/r.git": "ok"}
+
+
+def test_ls_remote_colgado_vence_y_no_bloquea(monkeypatch):
+    """Si git (o el credential manager que deja vivo) no termina, se lo mata y da «error»: el hilo
+    de la salud nunca queda colgado."""
+    muertos = []
+
+    class P:
+        def wait(self, timeout):
+            raise health.subprocess.TimeoutExpired("git", timeout)
+
+        def kill(self):
+            muertos.append(1)
+
+    monkeypatch.setattr(health.subprocess, "Popen", lambda *a, **k: P())
+    assert health._ls_remote("https://h/r.git", timeout_s=0.1) == "error"
+    assert muertos == [1]

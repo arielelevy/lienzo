@@ -352,25 +352,38 @@ def _medir_git(urls: list[str] | None = None) -> dict | None:
     urls = _git_urls() if urls is None else urls
     if not urls:
         return None
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-    out = {}
-    for url in urls:
-        try:
-            r = subprocess.run(
-                ["git", "ls-remote", "--heads", url],
-                capture_output=True,
-                text=True,
-                timeout=20,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                encoding="utf-8",
-                errors="replace",
-            )
-            out[url] = clasificar_git(r.returncode, r.stderr)
-        except OSError, subprocess.TimeoutExpired:
-            out[url] = "error"
+    out = {url: _ls_remote(url) for url in urls}
     return out
+
+
+def _ls_remote(url: str, timeout_s: float = 20) -> str:
+    """ok, vencida o error para una url. La salida va a un ARCHIVO, no a una tuberia: con la
+    credencial vencida el Git Credential Manager queda vivo como nieto de git y retiene la tuberia,
+    y subprocess.run(timeout=) mata a git pero la lectura queda colgada para siempre (medido el
+    2026-10-03: el server de la otra PC nunca termino de medir y git_auth quedo en None)."""
+    import tempfile
+
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    argv = ["git", "-c", "credential.interactive=false", "ls-remote", "--heads", url]
+    with tempfile.TemporaryFile() as err:
+        try:
+            p = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=err,
+                env=env,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError:
+            return "error"
+        try:
+            rc = p.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            return "error"
+        err.seek(0)
+        return clasificar_git(rc, err.read().decode("utf-8", errors="replace"))
 
 
 def _refrescar_git(urls: list[str]) -> None:
