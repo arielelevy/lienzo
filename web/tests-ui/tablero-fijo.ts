@@ -356,8 +356,8 @@ export async function bloquearEscrituras(page: Page) {
  *  `peers` es GET /peers (ronda 2): sin pasarlo, la ruta cae al `route.fallback()` de mas abajo, que
  *  golpea el server de verdad (no la tiene todavia) y da 404 — el mismo comportamiento que "sin
  *  peers emparejados": la tira de PCs no tiene que aparecer en ninguno de los dos casos. */
-export async function instalarTablero(page: Page, sessionList: Session[] = sesiones(), peers?: Peer[]) {
-  const board = { sessions: sessionList, pending: pendientes(), links: vinculos(), rules: reglas() };
+export async function instalarTablero(page: Page, sessionList: Session[] = sesiones(), peers?: Peer[], extra?: { links?: Link[]; rules?: Rule[] }) {
+  const board = { sessions: sessionList, pending: pendientes(), links: [...vinculos(), ...(extra?.links ?? [])], rules: [...reglas(), ...(extra?.rules ?? [])] };
   const snapshot = { type: "snapshot", sessions: board.sessions, pending: board.pending, links: board.links, rules: board.rules };
 
   // el EventSource del navegador, reemplazado por un doble que entrega el snapshot y se queda
