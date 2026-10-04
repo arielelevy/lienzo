@@ -4,6 +4,7 @@ caso que el plan describe antes de que se arreglara."""
 
 import os
 import sys
+import threading
 import time
 
 import pytest
@@ -97,3 +98,39 @@ def test_touch_sobre_una_tarjeta_reemplazada_no_pisa_a_la_nueva(aislado):
     nueva = ses.new_session("c" * 8, "claude", "hook")
     st.sessions[nueva["session_id"]] = nueva
     assert ses.touch(vieja) is False
+
+
+# 1.3 DEAD_TARGETS bajo el lock ----------------------------------------------------------------
+
+
+def test_dos_sucesoras_a_la_vez_heredan_una_sola_vez(aislado, monkeypatch):
+    """E2: dos sesiones nuevas en la misma carpeta y del mismo agente nacen juntas. Sin el lock las
+    dos veian a la muerta como candidata; una heredaba y la otra moria con KeyError en su hilo."""
+    old = "d" * 8
+    monkeypatch.setattr(ses, "DEAD_TARGETS", {old: {"cwd": "D:/x", "agent": "claude", "since": time.time()}})
+    monkeypatch.setattr(ses, "mirror", None)
+    heredadas = []
+    monkeypatch.setattr(ses, "retarget_rules", lambda o, n: heredadas.append((o, n)) or 1)
+    norm = ses._norm_cwd
+
+    def lento(c):
+        time.sleep(0.05)  # que las dos pasadas por las candidatas se solapen
+        return norm(c)
+
+    monkeypatch.setattr(ses, "_norm_cwd", lento)
+    resultados, errores = [], []
+
+    def nace(sid):
+        try:
+            resultados.append(ses.adopt_dead_target({"session_id": sid, "agent": "claude", "cwd": "D:\\x"}))
+        except Exception as e:
+            errores.append(e)
+
+    hilos = [threading.Thread(target=nace, args=(sid,)) for sid in ("e" * 8, "f" * 8)]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join(5)
+    assert errores == []
+    assert sorted(resultados, key=str) == [None, old]
+    assert len(heredadas) == 1 and ses.DEAD_TARGETS == {}

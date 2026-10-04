@@ -474,6 +474,13 @@ def restore_on_drop(card: dict, muerta: bool) -> None:
 # Sucesion: una sesion que muere siendo destino de reglas deja sus datos aca hasta SUCESION_MAX_S; una
 # sesion nueva del mismo agente en la misma carpeta las hereda. Medido el 2026-10-03: la coordinadora
 # del gestor se cerro y se reabrio con otro id, y se borraron los avisos de todas las codas del curso.
+#
+# Se lee y se escribe SOLO con state.lock tomado (plan de refactor 1.3, E2): la escriben drop_session
+# (liveness, borrado) y la consumen los hilos de adopt_dead_target, y dos sucesoras que nacian juntas
+# heredaban las dos. Vive en memoria: la sucesion NO sobrevive a un reinicio del server. Las reglas
+# quedan estacionadas en rules.json (parked_to) pero, reiniciado el server, ya no hay quien las
+# reasigne solas: quedan deshabilitadas hasta un POST /rules/retarget a mano, o hasta que la purga
+# de las estacionadas hace mas de SUCESION_MAX_S (rules.purge_stale_xpc) se las lleva.
 SUCESION_MAX_S = 24 * 3600
 DEAD_TARGETS: dict[str, dict] = {}
 
@@ -516,20 +523,24 @@ def adopt_dead_target(s: dict) -> str | None:
     agente, misma carpeta, hace menos de SUCESION_MAX_S), hereda sus reglas aca y en las otras PCs.
     Devuelve el id viejo, o None."""
     ahora = time.time()
-    for k in [k for k, v in DEAD_TARGETS.items() if ahora - v["since"] > SUCESION_MAX_S]:
-        del DEAD_TARGETS[k]
-    candidatas = [
-        (v["since"], old)
-        for old, v in DEAD_TARGETS.items()
-        if v.get("agent") == s.get("agent")
-        and _norm_cwd(v.get("cwd")) == _norm_cwd(s.get("cwd"))
-        and old != s["session_id"]
-    ]
-    if not candidatas:
-        return None
-    old = max(candidatas)[1]
-    del DEAD_TARGETS[old]
-    retarget_rules(old, s["session_id"])
+    with lock:
+        for k in [k for k, v in DEAD_TARGETS.items() if ahora - v["since"] > SUCESION_MAX_S]:
+            DEAD_TARGETS.pop(k, None)
+        candidatas = [
+            (v["since"], old)
+            for old, v in DEAD_TARGETS.items()
+            if v.get("agent") == s.get("agent")
+            and _norm_cwd(v.get("cwd")) == _norm_cwd(s.get("cwd"))
+            and old != s["session_id"]
+        ]
+        if not candidatas:
+            return None
+        old = max(candidatas)[1]
+        # la elegida se reserva antes de soltar el lock: si otra sucesora ya se la llevo, esta no
+        # hereda (con un pop a secas las dos seguian adelante y las dos re-apuntaban las reglas)
+        if DEAD_TARGETS.pop(old, None) is None:
+            return None
+    retarget_rules(old, s["session_id"])  # toma el lock por dentro; el forward a otras PCs, no
     if mirror:
         for pc in mirror.MIRROR.peer_ids():
             code, res = mirror.MIRROR.forward(pc, "POST", "/rules/retarget", {"old": old, "new": s["session_id"]})
@@ -552,7 +563,8 @@ def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
         # carpeta (la coordinadora que se cerro y se reabrio), las hereda (adopt_dead_target)
         n = park_rules_to(sid)
         if n:
-            DEAD_TARGETS[sid] = {"cwd": card.get("cwd"), "agent": card.get("agent"), "since": time.time()}
+            with lock:
+                DEAD_TARGETS[sid] = {"cwd": card.get("cwd"), "agent": card.get("agent"), "since": time.time()}
             state.log(f"{n} reglas que avisaban a {sid[:8]} quedan en espera de una sucesora")
     else:
         rules.remove(lambda r: r["to"] == sid)
