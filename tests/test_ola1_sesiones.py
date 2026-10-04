@@ -446,3 +446,57 @@ def test_config_corrupta_se_aparta_y_set_config_key_no_escribe(aislado, tmp_path
 def test_config_que_no_existe_es_vacia_sin_log(aislado, tmp_path, monkeypatch):
     monkeypatch.setattr(st, "CONFIG_FILE", str(tmp_path / "config.json"))
     assert st.load_config() == {} and aislado == []
+
+
+# 1.15 errores silenciados (o a borbotones) ----------------------------------------------------
+
+
+def test_load_sessions_avisa_de_una_tarjeta_corrupta(aislado, tmp_path):
+    """E15: una tarjeta guardada con JSON roto se salteaba sin log y quedaba ahi para siempre."""
+    (tmp_path / "rota.json").write_text('{"session_id": "ro', encoding="utf-8")
+    (tmp_path / "sin_id.json").write_text('{"agent": "claude"}', encoding="utf-8")
+    ses.load_sessions()
+    assert st.sessions == {}
+    assert any("rota.json" in m and "corrupto" in m for m in aislado)
+    assert any("sin_id.json" in m for m in aislado)
+    assert not (tmp_path / "rota.json").exists()  # apartada: no se vuelve a avisar en cada arranque
+
+
+def test_sin_carpeta_de_eventos_se_avisa_una_vez(aislado, tmp_path, monkeypatch):
+    monkeypatch.setattr(ses, "EVENTS", str(tmp_path / "no-existe"))
+    for _ in range(3):
+        ses.consume_once()
+    assert len([m for m in aislado if "no-existe" in m]) == 1
+
+
+def test_sin_carpeta_de_pendientes_se_avisa_una_vez_y_no_se_pierden(aislado, tmp_path, monkeypatch):
+    """read_pending no atrapaba el listdir: scan_pending logueaba el traceback cada 0,5 s."""
+    monkeypatch.setattr(ses, "PENDING", str(tmp_path / "no-existe"))
+    monkeypatch.setattr(st, "pending", {"r1": {"request_id": "r1"}})
+    monkeypatch.setattr(ses, "pending", st.pending)
+    for _ in range(3):
+        ses.scan_pending_once()
+    assert len([m for m in aislado if "no-existe" in m]) == 1
+    assert "r1" in st.pending  # no poder leer no es «no hay ninguno»
+
+
+def test_un_pendiente_corrupto_se_avisa_una_vez(aislado, tmp_path, monkeypatch):
+    (tmp_path / "malo.json").write_text("{", encoding="utf-8")
+    monkeypatch.setattr(ses, "PENDING", str(tmp_path))
+    for _ in range(3):
+        assert ses.read_pending() == {}
+    assert len([m for m in aislado if "malo.json" in m]) == 1
+
+
+def test_read_screen_sin_poder_ejecutar_no_levanta(aislado, monkeypatch):
+    monkeypatch.setattr(ses.backend, "is_tmux", lambda s: False)
+
+    def no_ejecuta(*a, **k):
+        raise FileNotFoundError(2, "python no esta")
+
+    monkeypatch.setattr(ses.subprocess, "run", no_ejecuta)
+    s = {"session_id": "a" * 8, "pid": 1}
+    for _ in range(3):
+        r = ses.read_screen(s)
+        assert r["ok"] is False
+    assert len([m for m in aislado if "screen.py" in m]) == 1

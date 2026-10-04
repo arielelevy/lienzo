@@ -1594,7 +1594,10 @@ def consume_once() -> None:
     """Una vuelta sobre ~/.lienzo/events: aplica cada evento y borra su archivo."""
     try:
         names = sorted(os.listdir(EVENTS))
-    except OSError:
+        state.avisar_si_cambia("events", None)
+    except OSError as e:
+        # sin carpeta de eventos no llega ningun hook: antes no se decia (plan de refactor 1.15)
+        state.avisar_si_cambia("events", f"no se puede leer {EVENTS}: {e}; no llegan eventos de los hooks")
         names = []
     for n in names:
         p = os.path.join(EVENTS, n)
@@ -1626,7 +1629,9 @@ def consume_once() -> None:
 
 def read_pending() -> dict:
     """Los pedidos de permiso que hay ahora en ~/.lienzo/pending, por request_id. Un archivo a
-    medio escribir (el hook lo escribe con atomic_write, pero igual) se saltea, no rompe la vuelta."""
+    medio escribir (el hook lo escribe con atomic_write, pero igual) se saltea, no rompe la vuelta,
+    y se avisa una vez por archivo (se lee cada 0,5 s). Si no se puede listar el directorio levanta:
+    no poder leer no es «no hay ninguno», y scan_pending conserva lo que tenia."""
     found = {}
     for n in os.listdir(PENDING):
         if not n.endswith(".json"):
@@ -1635,7 +1640,10 @@ def read_pending() -> dict:
             with open(os.path.join(PENDING, n), encoding="utf-8") as f:
                 d = json.load(f)
             found[d["request_id"]] = d
-        except OSError, ValueError, KeyError:
+        except FileNotFoundError:
+            continue  # contestado o vencido entre el listdir y el open
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            state.avisar_si_cambia(f"pending {n}", f"pending {n} ilegible, se saltea: {type(e).__name__}: {e}")
             continue
     return found
 
@@ -1658,19 +1666,26 @@ def scan_pending() -> None:
     """Cada medio segundo: que permisos estan esperando respuesta. El hook los deja en disco y se
     los lleva el mismo al contestar o al vencer, asi que el directorio es la verdad."""
     while True:
-        try:
-            found = read_pending()
-            with lock:
-                changed = set(found) != set(pending)
-                pending.clear()
-                pending.update(found)
-                if changed:
-                    mark_pending(found)
-            if changed:
-                state.broadcast({"type": "pending", "pending": public_pending()})
-        except Exception:
-            state.log(traceback.format_exc())
+        scan_pending_once()
         time.sleep(0.5)
+
+
+def scan_pending_once() -> None:
+    """Una vuelta de scan_pending. Un error se loguea cuando cambia (avisar_si_cambia), no cada
+    0,5 s como antes, y deja los pendientes como estaban."""
+    try:
+        found = read_pending()
+        with lock:
+            changed = set(found) != set(pending)
+            pending.clear()
+            pending.update(found)
+            if changed:
+                mark_pending(found)
+        if changed:
+            state.broadcast({"type": "pending", "pending": public_pending()})
+        state.avisar_si_cambia("scan_pending", None)
+    except Exception:
+        state.avisar_si_cambia("scan_pending", f"pendientes de permiso:\n{traceback.format_exc()}")
 
 
 def public_pending() -> list[dict]:
@@ -2491,9 +2506,16 @@ def read_screen(s: dict) -> dict:
             timeout=15,
             creationflags=0x00000008,
         )
-        return json.loads(r.stdout.strip() or "{}")
+        out = json.loads(r.stdout.strip() or "{}")
+        state.avisar_si_cambia("screen.py", None)
+        return out
     except subprocess.TimeoutExpired, ValueError:
         return {"ok": False, "error": "screen.py no respondio"}
+    except OSError as e:
+        # no se pudo ni lanzar el subproceso: antes levantaba, y screen_loop logueaba el traceback
+        # cada 5 s por tarjeta, y contestar un permiso de coda daba 500 (plan de refactor 1.15)
+        state.avisar_si_cambia("screen.py", f"no se pudo ejecutar screen.py: {e}")
+        return {"ok": False, "error": "no se pudo ejecutar screen.py"}
 
 
 def screen_once() -> None:
@@ -2575,8 +2597,15 @@ def load_sessions() -> tuple[int, int]:
     sin_proceso: list[dict] = []
     for p in glob.glob(os.path.join(state.SESSIONS, "*.json")):
         try:
-            with open(p, encoding="utf-8") as f:
-                s = json.load(f)
+            # antes un JSON roto o sin session_id se salteaba sin log y quedaba en disco para siempre
+            # (plan de refactor 1.15, E15): el roto se aparta (.corrupto-<ts>), lo demas se loguea
+            s, err = state.leer_json(p)
+            if err is not None or not isinstance(s, dict) or not isinstance(s.get("session_id"), str):
+                if err is None:
+                    state.log(f"tarjeta {os.path.basename(p)} sin session_id: no se carga")
+                elif err == "ilegible":
+                    state.log(f"tarjeta {os.path.basename(p)} no se pudo leer: no se carga")
+                continue
             # tarjeta guardada por una version vieja: completar con la forma canonica, para que
             # /sessions no devuelva un campo presente en unas y ausente en otras
             for k, v in new_session(s["session_id"], s.get("agent") or "claude", s.get("source") or "hook").items():
@@ -2601,6 +2630,7 @@ def load_sessions() -> tuple[int, int]:
                 s["state"] = "muerta"
             sessions[s["session_id"]] = s
         except OSError, ValueError, KeyError:
+            state.log(f"tarjeta {os.path.basename(p)} no se pudo cargar:\n{traceback.format_exc()}")
             continue
     restore_on_start(sin_proceso)
     remember_live_cards()
