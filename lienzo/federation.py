@@ -267,35 +267,56 @@ def get_peer(path: str, pc_id: str) -> dict | None:
     return _cargar_peers(path).get(pc_id)
 
 
+# leer-modificar-escribir de peers.json bajo un solo lock: el alta de un emparejamiento (server) y
+# el beacon (update_peer_ip, cada 10 s) corren en hilos distintos, y sin lock el que escribia
+# segundo pisaba lo del primero con su copia vieja (revision 2026-10-04, B8). Un RLock de modulo
+# alcanza: hay un solo proceso escribiendo peers.json.
+_peers_write_lock = threading.RLock()
+
+
+def _guardar_peers(path: str, peers: dict) -> None:
+    _atomic_write(path, peers)
+    with _peers_cache_lock:
+        _peers_cache.pop(path, None)  # no fiarse del mtime: dos escrituras seguidas pueden empatar
+
+
 def add_peer(path: str, peer: dict) -> dict:
     """Alta o actualizacion de un peer por pc_id. Actualizar uno que ya esta no cuenta para el
     tope: solo un pc_id nuevo puede chocar con MAX_PEERS."""
     pc_id = peer["pc_id"]
-    peers = _cargar_peers(path, para_escribir=True)
-    if pc_id not in peers and len(peers) >= MAX_PEERS:
-        raise PeerLimitError(f"ya hay {MAX_PEERS} peers emparejados")
-    peers[pc_id] = peer
-    _atomic_write(path, peers)
+    with _peers_write_lock:
+        peers = _cargar_peers(path, para_escribir=True)
+        if pc_id not in peers and len(peers) >= MAX_PEERS:
+            raise PeerLimitError(f"ya hay {MAX_PEERS} peers emparejados")
+        peers[pc_id] = peer
+        _guardar_peers(path, peers)
     return peer
 
 
 def remove_peer(path: str, pc_id: str) -> bool:
-    peers = _cargar_peers(path, para_escribir=True)
-    if pc_id not in peers:
-        return False
-    del peers[pc_id]
-    _atomic_write(path, peers)
+    with _peers_write_lock:
+        peers = _cargar_peers(path, para_escribir=True)
+        if pc_id not in peers:
+            return False
+        del peers[pc_id]
+        _guardar_peers(path, peers)
     return True
 
 
 def update_peer_ip(path: str, pc_id: str, ip: str) -> bool:
-    """La actualiza el beacon UDP cuando el DHCP le cambio la IP a un peer ya emparejado."""
-    peers = _cargar_peers(path, para_escribir=True)
-    if pc_id not in peers:
-        return False
-    peers[pc_id]["ip"] = ip
-    peers[pc_id]["last_seen"] = time.time()
-    _atomic_write(path, peers)
+    """La actualiza el beacon UDP cuando el DHCP le cambio la IP a un peer ya emparejado. True si
+    el peer esta emparejado (cambie o no la IP). Solo escribe si la IP cambio: antes reescribia
+    peers.json cada 10 s por peer solo para anotar `last_seen`, que nadie lee de ahi (el «visto
+    hace» sale de beacon.seen() y del espejo, en memoria)."""
+    with _peers_write_lock:
+        peers = _cargar_peers(path, para_escribir=True)
+        if pc_id not in peers:
+            return False
+        if peers[pc_id].get("ip") == ip:
+            return True
+        peers[pc_id]["ip"] = ip
+        peers[pc_id]["last_seen"] = time.time()
+        _guardar_peers(path, peers)
     return True
 
 

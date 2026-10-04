@@ -433,3 +433,36 @@ def test_verify_sigue_devolviendo_bool():
     key, m, p, b, ts, nonce, sig = _firmado()
     assert fed.verify(key, m, p, b, ts, nonce, sig, fed.NonceCache(), now=ts) is True
     assert fed.verify(key, m, p, b, ts, nonce, "x", fed.NonceCache(), now=ts) is False
+
+
+# --- 1.12: peers.json leer-modificar-escribir sin lock; el beacon escribe aunque no cambie la IP ---
+
+
+def test_altas_concurrentes_de_peers_no_se_pisan(tmp_path, monkeypatch):
+    path = str(tmp_path / "peers.json")
+    escribir = fed._atomic_write
+
+    def escritura_lenta(p, obj):
+        time.sleep(0.1)  # agranda la ventana entre leer y escribir, como un disco lento
+        escribir(p, obj)
+
+    monkeypatch.setattr(fed, "_atomic_write", escritura_lenta)
+    hilos = [threading.Thread(target=fed.add_peer, args=(path, {"pc_id": f"p{i}", "key": "ab"})) for i in range(4)]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+    assert sorted(p["pc_id"] for p in fed.list_peers(path)) == ["p0", "p1", "p2", "p3"]
+
+
+def test_update_peer_ip_no_escribe_si_la_ip_no_cambio(tmp_path, monkeypatch):
+    path = str(tmp_path / "peers.json")
+    fed.add_peer(path, {"pc_id": "p1", "key": "ab", "ip": "10.0.0.5"})
+    escrituras = []
+    escribir = fed._atomic_write
+    monkeypatch.setattr(fed, "_atomic_write", lambda p, obj: (escrituras.append(obj), escribir(p, obj)))
+    assert fed.update_peer_ip(path, "p1", "10.0.0.5") is True  # el beacon cada 10 s: nada que escribir
+    assert escrituras == []
+    assert fed.update_peer_ip(path, "p1", "10.0.0.9") is True
+    assert len(escrituras) == 1
+    assert fed.get_peer(path, "p1")["ip"] == "10.0.0.9"
