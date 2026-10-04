@@ -539,6 +539,50 @@ def restaurar(session_id=None, pc=None, todas=False, limit_by_memory=False):
     return pedir("POST", "/restaurar", cuerpo, timeout=RESTAURAR_TIMEOUT_S)
 
 
+def copiar(pc, origen, destino, esperar=False, cada=5, **opciones):
+    """POST /xfer: copia `origen` (archivo o carpeta de ESTA PC) a la carpeta `destino` de la PC `pc`,
+    por el canal de peers (bloques firmados, retomable, verificado). Las dos rutas tienen que caer en
+    `copy_roots` de su PC. `opciones`: hilos, bs_mib, mbps, disco_mbps, espejo. Devuelve el id; con
+    `esperar=True`, la vista final (`avance`) cuando deja de copiar: `estado == "terminado"` es que
+    todo llegó y se verificó del otro lado. Si el POST falla, levanta RuntimeError con el motivo."""
+    code, res = pedir("POST", "/xfer", {"pc": pc, "origen": origen, "destino": destino, **opciones})
+    if code != 202:
+        raise RuntimeError(f"copiar: {code} {res}")
+    if not esperar:
+        return res["id"]
+    while True:
+        time.sleep(cada)
+        v = avance(res["id"])
+        if v.get("estado") not in ("listando", "copiando", "esperando"):
+            return v
+
+
+def avance(xid):
+    """GET /xfer/<id>: estado (listando, copiando, terminado, con_errores, error, pausado,
+    confirmar_espejo), pct, mbps, eta_s, archivos_hechos/total, salteados, errores, ultimos."""
+    return pedir("GET", f"/xfer/{xid}")[1] or {}
+
+
+def copias():
+    """GET /xfer: todas las copias de esta PC, la más nueva primero."""
+    r = pedir("GET", "/xfer")[1]
+    return r if isinstance(r, list) else []
+
+
+def pausar_copia(xid):
+    """DELETE /xfer/<id>: pausa; lo que está en vuelo termina. `retomar_copia` sigue desde ahí."""
+    return pedir("DELETE", f"/xfer/{xid}")
+
+
+def retomar_copia(xid):
+    return pedir("POST", f"/xfer/{xid}/retomar", {})
+
+
+def confirmar_espejo(xid):
+    """Con `espejo=True` la copia frena en `confirmar_espejo` mostrando `borraria`: esto la deja borrar."""
+    return pedir("POST", f"/xfer/{xid}/confirmar", {})
+
+
 def lan():
     """GET /peers/lan: las PCs de la LAN con el lienzo andando que todavía no están emparejadas
     (`{pc_id, name, ip, port, last_seen}`), por el anuncio sin firma del beacon cada 10 s. Es la

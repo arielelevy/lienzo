@@ -473,6 +473,36 @@ otra credencial no arregla nada. Arreglalo antes de mandar un encargo que termin
 La salud también trae `cuotas` por agente (`ok`, `agotada`, «agotada hasta HH:MM»). Lanzar una coda en
 una PC con la cuota agotada da 409: lanzala en otra PC o usá otro agente.
 
+## Copiar archivos a otra PC
+
+Para mover datos entre PCs (un volcado de la base, una carpeta de miles de archivos) está el canal
+del lienzo, no SMB ni un `scp`: va por el listener de peers, firmado con la clave del par, retoma
+tras un corte y verifica cada archivo.
+
+```python
+xid = c.copiar(pc, r"\\wsl.localhost\Ubuntu\home\yo\volcado", r"\\wsl.localhost\Ubuntu-24.04\home\otro\recibido")
+c.avance(xid)                 # estado, pct, mbps, eta_s, archivos_hechos, errores, ultimos
+v = c.copiar(pc, origen, destino, esperar=True)   # vuelve cuando termina, ya verificado del otro lado
+c.pausar_copia(xid); c.retomar_copia(xid)
+```
+
+- `destino` es siempre una **carpeta**: un archivo de origen cae como `destino/<nombre>`; una carpeta
+  copia su contenido adentro.
+- Origen y destino tienen que caer en **`copy_roots`** del `config.json` de cada PC (vacía es
+  ninguna). Si da 403, la carpeta no está ahí: agregarla en esa PC y reiniciar no hace falta, se lee en
+  cada pedido.
+- `estado == "terminado"` quiere decir que cada archivo se releyó del otro lado y coincidió bloque a
+  bloque. Recién ahí se puede borrar el origen (por ejemplo, la tabla de un volcado hecho de a una).
+  `con_errores`: lo que falló está en `errores`; `c.retomar_copia` lo reintenta sin rehacer lo hecho.
+- Una segunda copia de lo mismo manda sólo los bloques distintos. Nunca borra en el destino, salvo
+  `espejo=True`: ahí frena en `confirmar_espejo` con la lista `borraria`, y borra sólo después de
+  `c.confirmar_espejo(xid)`.
+- Se frena solo si cualquiera de las dos PCs baja de 1,5 GB libres (`detalle` dice «memoria baja»):
+  no es una falla, sigue cuando se libera. Con muchas sesiones abiertas puede quedar parada un rato.
+- Opciones: `hilos` (6), `bs_mib` (8), `mbps` y `disco_mbps` (topes, 0 = sin tope).
+- Rutas de WSL: con `\\wsl.localhost\<distro>\...`. Desde Windows se leen por 9p, que rinde bien con
+  archivos grandes y mal con miles de chicos.
+
 ## Qué hace la coordinadora cuando llega un informe
 
 Leé el informe con `c.informe(s)`, no con `s["last_reply"]` a secas: mientras una coda trabaja, el
