@@ -19,6 +19,11 @@ import os
 import subprocess
 import sys
 
+try:
+    from . import subproc
+except ImportError:  # con lienzo/ en sys.path (server.py, las pruebas)
+    import subproc
+
 # En Windows, la fuente tmux corre DENTRO de WSL: los comandos se prefijan con `wsl.exe` (distro por
 # defecto) para manejar el tmux de WSL desde el board de Windows. En Mac/Linux el prefijo es vacio
 # (tmux nativo). Asi el mismo modulo sirve de "fuente tmux nativa" y de "fuente wsl-tmux".
@@ -27,15 +32,13 @@ _VIA_WSL = bool(_PREFIX)
 
 
 def _tmux(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [*_PREFIX, "tmux", *args],
-        capture_output=True,
-        text=True,
-        input=stdin,
-        timeout=15,
-        encoding="utf-8",
-        errors="replace",
-    )
+    """Un comando de tmux. Nunca levanta TimeoutExpired ni OSError (revision 2026-10-04, 0.5): va
+    por subproc.correr, que mata el arbol al vencer y devuelve un codigo distinto de cero; antes un
+    tmux colgado (o un wsl.exe trabado) le tiraba la excepcion a quien llamara, y `list_panes` o
+    `send` no la atrapaban."""
+    argv = [*_PREFIX, "tmux", *args]
+    rc, out, err = subproc.correr(argv, entrada=stdin, timeout=15)
+    return subprocess.CompletedProcess(argv, rc, out, err)
 
 
 def available() -> bool:
@@ -216,12 +219,9 @@ def find_agent_panes(names: set[str]) -> list[dict]:
 
 def _wsl_run(*args: str) -> subprocess.CompletedProcess | None:
     """Un comando cualquiera dentro de WSL (readlink, etc.), con el prefijo wsl.exe."""
-    try:
-        return subprocess.run(
-            [*_PREFIX, *args], capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace"
-        )
-    except OSError, subprocess.SubprocessError:
-        return None
+    argv = [*_PREFIX, *args]
+    rc, out, err = subproc.correr(argv, timeout=15)
+    return None if rc == subproc.NO_ARRANCO else subprocess.CompletedProcess(argv, rc, out, err)
 
 
 def proc_cwd(pid: int | None) -> str:

@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import os
 import secrets
-import subprocess
 import threading
 import time
 import urllib.parse
+
+try:
+    from . import subproc
+except ImportError:  # con lienzo/ en sys.path (server.py, las pruebas)
+    import subproc
 
 TTL_S = 600  # 10 minutos: lo que tarda una coda en usarlo; despues se borra solo
 MAX_VALOR = 4096
@@ -131,22 +134,13 @@ def aplicar_git(git_url: str, usuario: str, valor: str) -> tuple[bool, str]:
     no aparece en la linea de comandos ni en la salida. Nunca abre una ventana de login."""
     partes = urllib.parse.urlsplit(git_url)
     entrada = f"protocol={partes.scheme}\nhost={partes.netloc}\nusername={usuario}\npassword={valor}\n\n"
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-    try:
-        r = subprocess.run(
-            ["git", "credential", "approve"],
-            input=entrada,
-            capture_output=True,
-            text=True,
-            timeout=20,
-            env=env,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return False, f"no se pudo correr git ({type(e).__name__})"
-    if r.returncode != 0:
+    # subproc.correr y no subprocess.run: con la salida en una tuberia, un Git Credential Manager
+    # que queda vivo como nieto de git la retiene y el pedido se cuelga aunque venza el timeout
+    # (el mismo cuelgue que ya se vio en health._ls_remote; revision 2026-10-04, 0.5)
+    rc, _out, err = subproc.correr(["git", "credential", "approve"], entrada=entrada, timeout=20, sin_prompts=True)
+    if rc != 0:
         # el error de git no deberia traer el valor, pero por las dudas se lo tapa
-        return False, (r.stderr or "git credential approve fallo").replace(valor, "***").strip()[:300]
+        return False, (err or "git credential approve fallo").replace(valor, "***").strip()[:300]
     return True, f"credencial guardada para {usuario}@{partes.netloc}"
 
 
@@ -155,21 +149,14 @@ def leer_git_local(git_url: str) -> tuple[str, str] | None:
     fill`), o None. Asi un agente pasa la credencial a otra PC sin verla nunca: el valor va del
     almacen de Windows al cifrado sin pasar por su transcript. Nunca abre una ventana de login."""
     partes = urllib.parse.urlsplit(git_url)
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-    try:
-        r = subprocess.run(
-            ["git", "credential", "fill"],
-            input=f"protocol={partes.scheme}\nhost={partes.netloc}\n\n",
-            capture_output=True,
-            text=True,
-            timeout=20,
-            env=env,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except OSError, subprocess.TimeoutExpired:
-        return None
-    campos = dict(linea.split("=", 1) for linea in (r.stdout or "").splitlines() if "=" in linea)
-    if r.returncode != 0 or not campos.get("password"):
+    rc, out, _err = subproc.correr(
+        ["git", "credential", "fill"],
+        entrada=f"protocol={partes.scheme}\nhost={partes.netloc}\n\n",
+        timeout=20,
+        sin_prompts=True,
+    )
+    campos = dict(linea.split("=", 1) for linea in out.splitlines() if "=" in linea)
+    if rc != 0 or not campos.get("password"):
         return None
     return campos.get("username") or "", campos["password"]
 

@@ -26,6 +26,11 @@ import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
+try:
+    from . import subproc
+except ImportError:  # con lienzo/ en sys.path (server.py, las pruebas)
+    import subproc
+
 WINDOWS = sys.platform == "win32"
 GB = 1024**3
 TEMP_TTL_S = 30
@@ -357,33 +362,15 @@ def _medir_git(urls: list[str] | None = None) -> dict | None:
 
 
 def _ls_remote(url: str, timeout_s: float = 20) -> str:
-    """ok, vencida o error para una url. La salida va a un ARCHIVO, no a una tuberia: con la
-    credencial vencida el Git Credential Manager queda vivo como nieto de git y retiene la tuberia,
-    y subprocess.run(timeout=) mata a git pero la lectura queda colgada para siempre (medido el
-    2026-10-03: el server de la otra PC nunca termino de medir y git_auth quedo en None)."""
-    import tempfile
-
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    """ok, vencida o error para una url. Va por subproc.correr: salida a un ARCHIVO y no a una
+    tuberia (con la credencial vencida el Git Credential Manager queda vivo como nieto de git y
+    retiene la tuberia; medido el 2026-10-03, el server de la otra PC nunca termino de medir y
+    git_auth quedo en None) y, al vencer, se mata el arbol entero y no solo git."""
     argv = ["git", "-c", "credential.interactive=false", "ls-remote", "--heads", url]
-    with tempfile.TemporaryFile() as err:
-        try:
-            p = subprocess.Popen(
-                argv,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=err,
-                env=env,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except OSError:
-            return "error"
-        try:
-            rc = p.wait(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            p.kill()
-            return "error"
-        err.seek(0)
-        return clasificar_git(rc, err.read().decode("utf-8", errors="replace"))
+    rc, _out, err = subproc.correr(argv, timeout=timeout_s, sin_prompts=True)
+    if rc in (subproc.VENCIDO, subproc.NO_ARRANCO):
+        return "error"
+    return clasificar_git(rc, err)
 
 
 def _refrescar_git(urls: list[str]) -> None:

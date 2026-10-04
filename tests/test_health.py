@@ -297,15 +297,14 @@ def test_git_auth_toma_enseguida_un_cambio_de_urls(monkeypatch):
 def test_ls_remote_colgado_vence_y_no_bloquea(monkeypatch):
     """Si git (o el credential manager que deja vivo) no termina, se lo mata y da «error»: el hilo
     de la salud nunca queda colgado."""
-    muertos = []
+    vistos = {}
 
-    class P:
-        def wait(self, timeout):
-            raise health.subprocess.TimeoutExpired("git", timeout)
+    def correr(argv, **k):
+        vistos.update(argv=argv, **k)
+        return health.subproc.VENCIDO, "", "git no termino en 0.1 s"
 
-        def kill(self):
-            muertos.append(1)
-
-    monkeypatch.setattr(health.subprocess, "Popen", lambda *a, **k: P())
+    monkeypatch.setattr(health.subproc, "correr", correr)
     assert health._ls_remote("https://h/r.git", timeout_s=0.1) == "error"
-    assert muertos == [1]
+    assert vistos["timeout"] == 0.1 and vistos["sin_prompts"] is True
+    monkeypatch.setattr(health.subproc, "correr", lambda argv, **k: (128, "", "fatal: Authentication failed"))
+    assert health._ls_remote("https://h/r.git") == "vencida"

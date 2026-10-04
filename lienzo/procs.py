@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 
 try:
-    from . import coda, procinfo
+    from . import coda, procinfo, subproc
 except ImportError:  # corriendo como script (python lienzo/hook.py) o con lienzo/ en sys.path
     import coda
     import procinfo
+    import subproc
 
 # re-export: el resto del codigo (server, send, screen, tests) sigue usando procs.alive, etc.
 AGENTS, agent_of, alive, image_path, proc_info = (
@@ -133,17 +133,14 @@ def pi_session_from_children(pid: int, children: list[int]) -> tuple[str, str] |
 
 def sweep() -> list[dict]:
     """Barrido de respaldo: agentes interactivos vivos. Lento (~1 s), usar poco."""
+    # subproc.correr: salida a archivo y el arbol muerto al vencer (revision 2026-10-04, 0.5). Un
+    # powershell trabado ya no deja colgado el barrido ni le tira TimeoutExpired.
+    rc, out, _err = subproc.correr(["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS], timeout=20)
+    if rc in (subproc.VENCIDO, subproc.NO_ARRANCO):
+        return []
     try:
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            encoding="utf-8",
-            errors="replace",
-        )
-        rows = json.loads(r.stdout or "[]")
-    except OSError, ValueError, subprocess.TimeoutExpired:
+        rows = json.loads(out or "[]")
+    except ValueError:
         return []
     if isinstance(rows, dict):
         rows = [rows]

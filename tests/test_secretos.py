@@ -54,20 +54,25 @@ def test_validar():
 def test_aplicar_git_manda_el_valor_por_stdin_y_lo_tapa_en_los_errores(monkeypatch):
     vistos = {}
 
-    class R:
-        returncode = 1
-        stderr = "fallo con token-123"
+    def correr(argv, **k):
+        vistos["argv"], vistos["input"], vistos["sin_prompts"] = argv, k["entrada"], k["sin_prompts"]
+        return 1, "", "fallo con token-123"
 
-    def run(argv, **k):
-        vistos["argv"], vistos["input"], vistos["env"] = argv, k["input"], k["env"]
-        return R()
-
-    monkeypatch.setattr(sec.subprocess, "run", run)
+    monkeypatch.setattr(sec.subproc, "correr", correr)
     ok, msg = sec.aplicar_git("https://git.x.com", "ariel", "token-123")
     assert not ok and "token-123" not in msg and "***" in msg
     assert "token-123" not in " ".join(vistos["argv"])
     assert "password=token-123" in vistos["input"] and "host=git.x.com" in vistos["input"]
-    assert vistos["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert vistos["sin_prompts"] is True
+
+
+def test_leer_git_local_vencido_da_none_sin_colgarse(monkeypatch):
+    """Revisión 2026-10-04, 0.5: con subprocess.run(capture_output) un credential manager vivo
+    colgaba la lectura para siempre. Ahora va por subproc.correr, que vuelve con VENCIDO."""
+    monkeypatch.setattr(sec.subproc, "correr", lambda argv, **k: (sec.subproc.VENCIDO, "", "no termino"))
+    assert sec.leer_git_local("https://git.x.com") is None
+    monkeypatch.setattr(sec.subproc, "correr", lambda argv, **k: (0, "username=u\npassword=p\n", ""))
+    assert sec.leer_git_local("https://git.x.com") == ("u", "p")
 
 
 def test_recibir_en_memoria_no_devuelve_el_valor():
