@@ -36,6 +36,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-03 | **El encargo largo a una coda se ejecuta**: el aviso del adjunto le pide ejecutar sin resumir ni pedir confirmación | las codas de las sesiones 3 y 4 resumieron el encargo y esperaron un segundo «arrancá» |
 | 2026-10-03 | `coordinar.informe(s)`: el `last_reply` solo si es un informe (None con «usando bash» o mientras corre) | la coordinadora confundía el estado de herramienta con el informe |
 | 2026-10-03 | **Aprobador oficial con lista permitida** (`skills/lienzo/aprobador.py`, `Politica` + `vigilar`): frena lo truncado, lo peligroso, rutas, `rm` y pushes no autorizados | los permisos largos se revisaban a mano y dos aprobadores sueltos en Temp tuvieron bugs (tramo vacío, `rm` de varios destinos) |
+| 2026-10-03 | **Temperatura en cualquier PC**: `health` lee todas las zonas térmicas (y `MSAcpi` si hay permisos) y elige `\_TZ.THRM` o, si no está, la zona plausible más caliente (25–120 °C) | la otra PC no tiene `\_TZ.THRM` y su `temp_c` quedaba siempre en None; esta PC marcó 95 °C |
 
 ## Pendiente (con evidencia)
 

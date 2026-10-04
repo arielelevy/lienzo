@@ -64,7 +64,7 @@ def test_temperatura_cacheada_30_segundos_no_repite_el_powershell(monkeypatch):
     llamadas = []
 
     class FakeResult:
-        stdout = "2981\n"  # deciKelvin: 25.0 C
+        stdout = "\\_TZ.THRM|2991\n"  # deciKelvin: 26.0 C, con la forma «zona|valor»
 
     def fake_run(*a, **k):
         llamadas.append(1)
@@ -76,17 +76,17 @@ def test_temperatura_cacheada_30_segundos_no_repite_el_powershell(monkeypatch):
     monkeypatch.setattr(health.time, "monotonic", lambda: reloj[0])
 
     primera = health._temp_c()
-    assert primera == 25.0
+    assert primera == 26.0
     assert len(llamadas) == 1
 
     reloj[0] += 10  # adentro de los 30 s de cache
     segunda = health._temp_c()
-    assert segunda == 25.0
+    assert segunda == 26.0
     assert len(llamadas) == 1, "10 s despues todavia tiene que servir del cache"
 
     reloj[0] += 25  # 35 s desde la primera: la cache vencio
     tercera = health._temp_c()
-    assert tercera == 25.0
+    assert tercera == 26.0
     assert len(llamadas) == 2
 
 
@@ -112,3 +112,13 @@ def test_snapshot_en_frio_y_con_cache(capsys):
     with capsys.disabled():
         print(f"\nsnapshot() en frio: {frio * 1000:.1f} ms · con cache: {cache * 1000:.1f} ms")
     assert cache < frio or cache < 0.05, "con la temperatura en cache no deberia tardar mas que en frio"
+
+
+def test_elegir_temp_prefiere_thrm_y_si_no_la_zona_plausible_mas_caliente():
+    r"""Esta PC tiene \_TZ.THRM; la otra no y quedaba en None (medido el 2026-10-03)."""
+    assert health._elegir_temp("\\_TZ.TZ01|2932\n\\_TZ.THRM|3682\n") == 95.1
+    assert health._elegir_temp("\\_TZ.TZ01|2932\n\\_TZ.CPUZ|3332\n\\_TZ.TZ02|3182\n") == 60.1
+    assert health._elegir_temp("acpi:ACPI\\ThermalZone\\TZ00_0|3232\n") == 50.1
+    assert health._elegir_temp("\\_TZ.TZ01|2932\n") is None  # 20 °C fijo: no es la PC
+    assert health._elegir_temp("") is None
+    assert health._elegir_temp("basura\n|\nx|abc\n") is None

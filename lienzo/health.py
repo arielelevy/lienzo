@@ -111,17 +111,41 @@ def _now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
-# El sensor bueno es \_TZ.THRM (\_TZ.TZ01 da 20 °C fijo, medido el 2026-09-26 en el skill lienzo).
+# Cada PC nombra distinto su sensor: en esta el bueno es \_TZ.THRM (\_TZ.TZ01 da 20 °C fijo, medido el
+# 2026-09-26), y la otra PC no tiene THRM y quedaba siempre en None (medido el 2026-10-03). Se leen
+# todas las zonas (y, si hay permisos, MSAcpi_ThermalZoneTemperature) y _elegir_temp decide.
 _TEMP_PS = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 Get-CimInstance Win32_PerfFormattedData_Counters_ThermalZoneInformation |
-  Where-Object { $_.Name -eq '\_TZ.THRM' } |
-  Select-Object -First 1 -ExpandProperty HighPrecisionTemperature
+  ForEach-Object { "$($_.Name)|$($_.HighPrecisionTemperature)" }
+Get-CimInstance -Namespace root/wmi MSAcpi_ThermalZoneTemperature |
+  ForEach-Object { "acpi:$($_.InstanceName)|$($_.CurrentTemperature)" }
 """
+
+TEMP_MIN_C = 25.0  # por debajo es un sensor fijo o de ambiente (TZ01 da 20 °C siempre)
+TEMP_MAX_C = 120.0  # por encima es una lectura rota
 
 # (valor o None, momento de la medicion en time.monotonic()); cara (~1s de powershell), cacheada
 _temp_cache: tuple[float | None, float] | None = None
 _temp_refrescando = threading.Lock()
+
+
+def _elegir_temp(salida: str) -> float | None:
+    r"""De las lineas «nombre|deciKelvin», la temperatura de la PC: \_TZ.THRM si esta y es plausible;
+    si no, la zona plausible mas caliente (la que importa para saber si la PC se cocina)."""
+    plausibles: dict[str, float] = {}
+    for linea in salida.splitlines():
+        nombre, _, valor = linea.strip().rpartition("|")
+        try:
+            c = round(float(valor) / 10 - 273.15, 1)
+        except ValueError:
+            continue
+        if nombre and TEMP_MIN_C <= c <= TEMP_MAX_C:
+            plausibles[nombre] = c
+    thrm = [v for k, v in plausibles.items() if k.upper().endswith("THRM")]
+    if thrm:
+        return thrm[0]
+    return max(plausibles.values()) if plausibles else None
 
 
 def _medir_temp() -> float | None:
@@ -138,9 +162,7 @@ def _medir_temp() -> float | None:
             encoding="utf-8",
             errors="replace",
         )
-        salida = (r.stdout or "").strip()
-        # HighPrecisionTemperature esta en deciKelvin
-        return round(float(salida.splitlines()[0]) / 10 - 273.15, 1) if salida else None
+        return _elegir_temp(r.stdout or "")
     except OSError, ValueError, subprocess.TimeoutExpired:
         return None
 
