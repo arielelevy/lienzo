@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, isMissingRoute, type AuthInfo } from "./api";
-import { Board, canReceive, colOf, norm, passesFilters } from "./components/Board";
+import { Board, colOf, norm, passesFilters } from "./components/Board";
 import { allAgents } from "./agents";
-import { canWrite, shortName, toggled } from "./names";
+import { canWrite, hasConsole, shortName, toggled } from "./names";
 import { Enroll } from "./components/Enroll";
 import { Forward } from "./components/Forward";
 import { Header } from "./components/Header";
@@ -224,7 +224,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     const filtros = { query, agents, pcFilter, localPcId, selectedRepos, coordOnly };
     const q = norm(query.trim());
     return Object.values(sessions)
-      .filter((s) => canReceive(s) && passesFilters(s, filtros, q) && colOf(s) !== "muerta" && !peerDown(s) && !markedLive.has(s.session_id))
+      .filter((s) => hasConsole(s) && passesFilters(s, filtros, q) && colOf(s) !== "muerta" && !peerDown(s) && !markedLive.has(s.session_id))
       .map((s) => s.session_id);
   }, [sessions, query, agents, pcFilter, localPcId, selectedRepos, coordOnly, peerDown, markedLive]);
   const markVisible = useCallback(() => setMarked((cur) => new Set([...cur, ...visibleToMark])), [visibleToMark]);

@@ -5,7 +5,7 @@ import { Card, freeGroups, PICK_MS } from "./Card";
 import { pcOf } from "./PcStrip";
 import { passesProjects } from "./ProjectStrip";
 import type { Link, Peer, Pending, Rule, Session, State } from "../types";
-import { searchText, shortName, stalledReason } from "../names";
+import { hasConsole, searchText, shortName, stalledReason } from "../names";
 
 /** Columnas del tablero. "Trabajo" junta corriendo y termino (el estado se ve como icono en la
  *  tarjeta); "Te necesita" y "Muerta" siguen aparte porque piden accion. El tipo State es del
@@ -229,7 +229,6 @@ function peerDownIn(s: Session, peersById: Map<string, Peer>, localPcId: string 
   return peer && peer.alive === false ? { since: peer.last_seen } : null;
 }
 
-export const canReceive = (s: Session | undefined) => !!s && s.alive && !!s.pid && !s.orphan && !s.no_console;
 /** Card dibuja el agarre ⇢ si recibe onGrip; el arrastre en si lo maneja el tablero por Pointer Events */
 const noGrip = () => undefined;
 
@@ -376,7 +375,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // conectar pide una sesion viva y con consola (a una muerta, huerfana o sin terminal no habria
     // a donde escribirle ni que programarle); moverla de lugar, no: eso es solo mirar el tablero.
     // una sesion de una PC caida tampoco: no hay a quien escribirle del otro lado
-    const conecta = canReceive(sessions[sid]) && !peerDownOf(sessions[sid]);
+    const conecta = !!sessions[sid] && hasConsole(sessions[sid]) && !peerDownOf(sessions[sid]);
     if (t.closest(".grip")) {
       if (!conecta) return;
       draggedRef.current = true;
@@ -666,7 +665,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     const cardAt = (e: PointerEvent) => {
       const sid = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-sid]")?.dataset.sid;
       const { sessions: ss, peersById: pcs, localPcId: local } = vivo.current;
-      return sid && canReceive(ss[sid]) && !peerDownIn(ss[sid], pcs, local) ? sid : null;
+      return sid && ss[sid] && hasConsole(ss[sid]) && !peerDownIn(ss[sid], pcs, local) ? sid : null;
     };
     const move = (e: PointerEvent) => {
       const board = boardRef.current;

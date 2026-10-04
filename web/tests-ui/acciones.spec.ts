@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Peer } from "../src/types";
-import { BASE, SID, abrirTablero, bloquearEscrituras, instalarTablero } from "./tablero-fijo";
+import { BASE, SID, abrirTablero, bloquearEscrituras, instalarTablero, sesiones } from "./tablero-fijo";
 
 /** Acciones contra el server y como se cuentan sus fallas (plan de refactor 2026-10-04, puntos F). */
 
@@ -134,4 +134,17 @@ test("F2: si /auth falla al abrir se reintenta, dice el motivo y entra cuando vu
   await page.clock.fastForward(4_000);
   await page.clock.fastForward(4_000);
   await expect(page.locator(".card").first()).toBeVisible();
+});
+
+test("F9: a una sesión detenida no se le ofrece «Mandar de nuevo»", async ({ page }) => {
+  // l2: envío de Flechas a Pruebas de interfaz, que acá está detenida (tiene consola, pero no recibe)
+  const lista = sesiones().map((s) =>
+    s.session_id === SID.permiso ? { ...s, stopped_by: "user", pending_id: null, needs: null, state: "termino" as const } : s,
+  );
+  await abrirTablero(page, lista);
+  const flecha = page.locator("svg.arrows g.arrow").filter({ has: page.locator("xpath=.//*[local-name()='title'][contains(., 'a lienzo · Pruebas de interfaz')]") });
+  await flecha.locator("circle.dot").dblclick({ force: true });
+  await expect(page.getByText("pasame la medición del glifo")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Mandar de nuevo" })).toBeDisabled();
+  await expect(page.getByText(/El destino está detenido/)).toBeVisible();
 });

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ago, api } from "../api";
 import { everySeconds, hhmm, nextAt, splitEvery, type EveryUnit } from "../nl";
-import { periodLabel, shortName, whenLabel } from "../names";
+import { canWrite, periodLabel, shortName, whenLabel } from "../names";
 import { GLYPH_HIT, computeSegs, laneHeight, type Band, type Rect, type Seg } from "../arrows-geometry";
 import type { Link, Rule, Session } from "../types";
 
@@ -266,7 +266,9 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   };
   const viewLinks = view ? links.filter((l) => view.ids.includes(l.id)).sort((a, c) => c.ts.localeCompare(a.ts)) : [];
   const viewTarget = view ? sessions[view.to] : undefined;
-  const canResend = !!viewTarget && viewTarget.alive && !viewTarget.orphan && !viewTarget.no_console && !viewTarget.pending_id;
+  // canWrite y no una copia de "tiene consola": una detenida (stopped) tiene consola pero no recibe
+  // mensajes, y el server le rechaza el envio; antes se ofrecia "Mandar de nuevo" igual
+  const canResend = !!viewTarget && canWrite(viewTarget) && !viewTarget.pending_id;
   const nameOf = (sid: string) => shortName(sessions[sid], sid.slice(0, 8));
   const resend = async () => {
     if (!view || !viewLinks[0]) return;
@@ -538,7 +540,9 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
             ? "Lo que se dijeron por el canal nativo no se reenvía desde acá."
             : canResend
               ? "Un envío hecho no se edita; se puede mandar de nuevo el último tal cual."
-              : "El destino no tiene consola donde escribir ahora."}
+              : viewTarget?.stopped_by
+                ? "El destino está detenido: no recibe mensajes hasta que lo habiliten."
+                : "El destino no tiene consola donde escribir ahora."}
         </div>
         <div className="btns">
           {removeBtn(view.ids[0], "borra esta flecha del tablero")}
