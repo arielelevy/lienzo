@@ -423,6 +423,108 @@ def _git_auth() -> dict | None:
     return _git.valor(tuple(urls))
 
 
+# --- cuota de coda ------------------------------------------------------------------------------
+# Medido el 2026-10-04: en una PC toda corrida de coda devolvia «Quota exceeded (code 154)» y el
+# tablero no lo mostraba. Se mira sin gastar tokens: la hora del ultimo «Quota exceeded» del log de
+# coda contra la del ultimo consumo de la tabla `usage` de su base. Lo mas nuevo gana.
+CODA_CUOTA_TTL_S = 60
+CODA_LOG_TAIL = 1024 * 1024
+CUOTA_ERR = "Quota exceeded"
+# lo formal es el codigo de la API de Globant que coda deja en el log (HTTP 401 con
+# {"error":{"message":"Quota exceeded","code":154}}); el texto queda como respaldo
+CUOTA_CODIGO = '"code":154'
+
+
+def _coda_home() -> str:
+    return os.environ.get("CODA_HOME") or os.path.join(os.path.expanduser("~"), ".coda")
+
+
+def _ultimo_error_de_cuota(home: str) -> float | None:
+    """Epoch (s) del ultimo «Quota exceeded» en coda.log (la cola), o None."""
+    p = os.path.join(home, "logs", "coda.log")
+    try:
+        size = os.path.getsize(p)
+        with open(p, "rb") as f:
+            f.seek(max(0, size - CODA_LOG_TAIL))
+            data = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    ultimo = None
+    for linea in data.splitlines():
+        if CUOTA_ERR not in linea and CUOTA_CODIGO not in linea and "(code 154)" not in linea:
+            continue
+        try:
+            t = json.loads(linea).get("time")
+            ultimo = dt.datetime.fromisoformat(str(t)).timestamp()
+        except ValueError, AttributeError, TypeError:
+            continue
+    return ultimo
+
+
+def _ultimo_uso(home: str) -> float | None:
+    """Epoch (s) del ultimo consumo registrado en la base de coda (tabla usage), o None."""
+    import sqlite3
+
+    p = os.path.join(home, "coda.db")
+    if not os.path.isfile(p):
+        return None
+    try:
+        con = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=2)
+        try:
+            fila = con.execute("SELECT MAX(created_at) FROM usage").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    return fila[0] / 1000 if fila and fila[0] else None
+
+
+def clasificar_cuota(error_s: float | None, uso_s: float | None) -> str:
+    """ok, agotada o desconocida: el hecho mas nuevo manda."""
+    if error_s is None and uso_s is None:
+        return "desconocida"
+    if error_s is not None and (uso_s is None or error_s > uso_s):
+        return "agotada"
+    return "ok"
+
+
+def _medir_cuota() -> str | None:
+    home = _coda_home()
+    if not os.path.isdir(home):
+        return None  # coda no esta instalado en esta PC: no hay nada que decir
+    return clasificar_cuota(_ultimo_error_de_cuota(home), _ultimo_uso(home))
+
+
+_cuota = CacheEnSegundoPlano("cuota de coda", CODA_CUOTA_TTL_S, lambda: _medir_cuota())
+
+
+def coda_cuota(esperar: bool = False) -> str | None:
+    """ok, agotada, desconocida, o None si coda no esta en esta PC. Nunca bloquea (salvo `esperar`)."""
+    try:
+        return _cuota.valor(esperar_primera=esperar)
+    except Exception:  # la salud nunca levanta
+        return None
+
+
+# {agente: "agotada hasta HH:MM" | "agotada"} de las tarjetas de esta PC (Claude, Codex, Pi avisan el
+# limite de uso en su transcripcion): lo enchufa server.py; health se importa suelto y no ve sesiones
+cuotas_de_sesiones: Callable[[], dict] = dict
+
+
+def cuotas() -> dict:
+    """Cuota por agente en esta PC: ok, agotada (o «agotada hasta HH:MM») o desconocida. Coda por su log
+    y su base; los demas por el limite de uso que sus tarjetas tienen vigente. Nunca levanta."""
+    out: dict = {}
+    c = coda_cuota()
+    if c is not None:
+        out["coda"] = c
+    try:
+        out.update(cuotas_de_sesiones() or {})
+    except Exception as e:  # la salud nunca levanta: sin el dato de sesiones queda lo de coda
+        log(f"cuotas de las sesiones: {type(e).__name__}: {e}")
+    return out
+
+
 def agentes_que_entran(mem_free_gb: float | None) -> int | None:
     """Cuantos agentes mas se pueden abrir sin bajar de RESERVA_GB libres. None sin dato de memoria."""
     if mem_free_gb is None:
@@ -458,5 +560,7 @@ def snapshot() -> dict:
         "temp_c": temp_c,
         "agentes_libres": agentes_que_entran(mem_free_gb),
         "git_auth": _git_auth_seguro(),
+        "coda_cuota": coda_cuota(),
+        "cuotas": cuotas(),
         "ts": _now(),
     }

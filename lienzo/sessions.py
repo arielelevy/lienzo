@@ -281,6 +281,27 @@ def apply_repo(s: dict, cwd: str) -> None:
     s["repo_key"] = identity.repo_key(cwd)
 
 
+def cuotas_de_sesiones() -> dict:
+    """{agente: "agotada hasta HH:MM"} por cada agente con una tarjeta viva de ESTA PC cuyo limite de
+    uso sigue vigente (limit_until en el futuro), o «agotada» si su ultimo error es de cuota sin hora.
+    Lo usa health.cuotas para la tira de PCs (pedido de Ariel, 2026-10-04: lo mismo que coda para
+    claude, codex y pi)."""
+    ahora = dt.datetime.now().astimezone()
+    out: dict = {}
+    with lock:
+        tarjetas = [dict(s) for s in sessions.values() if s.get("alive")]
+    for s in tarjetas:
+        agente = s.get("agent")
+        hasta = parse_ts(s.get("limit_until"))
+        if hasta and hasta > ahora:
+            previo = parse_ts((out.get(agente) or "").removeprefix("agotada hasta ")) if out.get(agente) else None
+            if not previo or hasta > previo:
+                out[agente] = f"agotada hasta {hasta.strftime('%H:%M')}"
+        elif any(p in (s.get("last_error") or "").lower() for p in ("quota exceeded", "sin cuota", "usage limit")):
+            out.setdefault(agente, "agotada")
+    return out
+
+
 def limit_until_of(turn: dict) -> str | None:
     """Si el turno termino con un aviso de limite de uso con hora ("try again at 7:57 PM"),
     esa hora en ISO local; la referencia es cuando se escribio el aviso, no ahora."""
@@ -1185,6 +1206,8 @@ def coda_log_activity(s: dict) -> bool:
         last, since = parse_ts(act.get("last_at")), parse_ts(s.get("state_since"))
         if last and since and last > since:
             set_state(s, "corriendo")
+    if act.get("error") and s.get("last_error") != act["error"]:
+        s["last_error"] = act["error"]  # «coda sin cuota»: la tarjeta lo dice en rojo en vez de «termino»
     if den := act.get("denied"):
         set_denied(
             s,

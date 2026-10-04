@@ -20,7 +20,7 @@ def _reset():
 def test_snapshot_trae_las_cinco_claves():
     _reset()
     s = health.snapshot()
-    assert set(s) == {"mem_free_gb", "mem_total_gb", "cpu_pct", "temp_c", "agentes_libres", "git_auth", "ts"}
+    assert set(s) == {"mem_free_gb", "mem_total_gb", "cpu_pct", "temp_c", "agentes_libres", "git_auth", "coda_cuota", "cuotas", "ts"}
 
 
 def test_memoria_es_real_y_coherente():
@@ -57,6 +57,8 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
         "temp_c": None,
         "agentes_libres": None,
         "git_auth": s["git_auth"],
+        "coda_cuota": s["coda_cuota"],
+        "cuotas": s["cuotas"],
         "ts": s["ts"],
     }
 

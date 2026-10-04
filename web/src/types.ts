@@ -94,6 +94,8 @@ export interface PeerHealth {
   agentes_libres?: number | null;
   /** por url configurada en "git_check": ok, vencida o error (health.py prueba git ls-remote) */
   git_auth?: Record<string, "ok" | "vencida" | "error"> | null;
+  /** cuota por agente en esa PC: "ok", "agotada", "agotada hasta HH:MM" o "desconocida" */
+  cuotas?: Record<string, string> | null;
 }
 
 /** `GET /peers` (ronda 2): una fila por PC de la federacion, la propia incluida (`local: true`).

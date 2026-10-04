@@ -162,8 +162,11 @@ export function alertaDe(h: {
   temp_c: number | null;
   agentes_libres?: number | null;
   git_auth?: Record<string, string> | null;
+  cuotas?: Record<string, string> | null;
 }): string | null {
   const motivos: string[] = [];
+  const sinCuota = Object.entries(h.cuotas ?? {}).filter(([, v]) => v.startsWith("agotada"));
+  if (sinCuota.length) motivos.push(`sin cuota: ${sinCuota.map(([a, v]) => (v === "agotada" ? a : `${a} (${v.replace("agotada ", "")})`)).join(", ")}`);
   const vencidas = Object.entries(h.git_auth ?? {}).filter(([, v]) => v === "vencida");
   if (vencidas.length) motivos.push(`credencial de git vencida (${vencidas.map(([u]) => new URL(u).host).join(", ")})`);
   if (h.temp_c != null && h.temp_c >= TEMP_ALERTA_C) motivos.push(`a ${Math.round(h.temp_c)} °C`);

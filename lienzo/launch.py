@@ -98,6 +98,15 @@ def _exe_path(exe_name: str) -> str | None:
     return propio if os.path.isfile(propio) else shutil.which(exe_name)
 
 
+def _cuota_coda() -> str | None:
+    try:
+        import health
+
+        return health.coda_cuota(esperar=True)
+    except Exception:  # no poder medir no frena un lanzamiento
+        return None
+
+
 def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: str | None = None) -> dict:
     """Escribe el .cmd en `<LIENZO_HOME>/launch/` y lo lanza con explorer.exe. Rechaza (sin tocar
     disco ni proceso) un `cwd` fuera de `launch_roots` y un `agent` desconocido. Devuelve
@@ -107,6 +116,13 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: s
     exe_name = AGENT_EXES.get(agent)
     if exe_name is None:
         return {"ok": False, "error": f"agente desconocido: {agent!r}"}
+    if agent == "coda" and _cuota_coda() == "agotada":
+        # abriria una terminal que falla en el primer turno (medido el 2026-10-04)
+        return {
+            "ok": False,
+            "code": 409,
+            "error": "coda no tiene cuota en esta PC («Quota exceeded»): lanzá en otra PC u otro agente",
+        }
     if not _cwd_allowed(cwd, _allowed_roots()):
         return {"ok": False, "error": "cwd fuera de launch_roots"}
     if not WINDOWS:

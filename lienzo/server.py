@@ -55,6 +55,7 @@ from sessions import (
     answer_pending,
     clean_attachments,
     consume_events,
+    cuotas_de_sesiones,
     drop_session,
     hand_over,
     interrupt_session,
@@ -2220,6 +2221,7 @@ def main() -> int:
     mirror.MIRROR.on_change = broadcast_mirror_snapshot
     mirror.MIRROR.log = log
     health.log = log
+    health.cuotas_de_sesiones = cuotas_de_sesiones
     peers_guardados = federation.list_peers(PEERS_FILE)
     peer_srv = None
     if a.peers or peers_guardados:

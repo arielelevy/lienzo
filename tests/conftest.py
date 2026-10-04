@@ -25,3 +25,22 @@ def _restaurar_en_tmp(tmp_path, monkeypatch):
 
     monkeypatch.setattr(restore, "path", lambda: str(tmp_path / "restaurar.json"))
     restore._last_live.clear()
+
+
+@pytest.fixture(autouse=True)
+def _sin_estado_real(tmp_path, monkeypatch):
+    """Ninguna prueba lee ni escribe el ~/.lienzo ni el ~/.coda de verdad (medido el 2026-10-04: las
+    de health leian el config.json real y salian a la red con un git ls-remote; las de launch veian
+    la cuota real de coda; y el log de pytest terminaba en el lienzo.log de la PC). CODA_HOME y
+    LIENZO_HOME apuntan a carpetas temporales vacias, el log va a un archivo temporal, y las caches
+    de health arrancan limpias."""
+    import health
+    import state
+
+    monkeypatch.setenv("CODA_HOME", str(tmp_path / "coda-home"))
+    monkeypatch.setenv("LIENZO_HOME", str(tmp_path / "lienzo-home"))
+    monkeypatch.setattr(state, "LOG", str(tmp_path / "lienzo.log"))
+    for cache in ("_cuota", "_git", "_temp"):
+        c = getattr(health, cache, None)
+        if c is not None and hasattr(c, "limpiar"):
+            c.limpiar()

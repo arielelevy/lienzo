@@ -110,6 +110,9 @@ def activity(pid: int) -> dict | None:
         elif msg == "prompt complete" and cli and act:
             act["running"] = False
             asks.clear()
+        elif "Quota exceeded" in line and act is not None:
+            # la cuota del modelo se acabo: el turno se aborta y la tarjeta tiene que decirlo
+            act["error"] = "coda sin cuota: Quota exceeded (code 154)"
         elif msg == "authorization.decision" and isinstance(d.get("toolName"), str):
             if act is None:
                 # el «prompt started» de este turno quedo antes de la ventana de LOG_TAIL_BYTES (el log
