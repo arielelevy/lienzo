@@ -20,7 +20,17 @@ def _reset():
 def test_snapshot_trae_las_cinco_claves():
     _reset()
     s = health.snapshot()
-    assert set(s) == {"mem_free_gb", "mem_total_gb", "cpu_pct", "temp_c", "agentes_libres", "git_auth", "coda_cuota", "cuotas", "ts"}
+    assert set(s) == {
+        "mem_free_gb",
+        "mem_total_gb",
+        "cpu_pct",
+        "temp_c",
+        "agentes_libres",
+        "git_auth",
+        "coda_cuota",
+        "cuotas",
+        "ts",
+    }
 
 
 def test_memoria_es_real_y_coherente():
@@ -307,3 +317,7 @@ def test_ls_remote_colgado_vence_y_no_bloquea(monkeypatch):
     assert vistos["timeout"] == 0.1 and vistos["sin_prompts"] is True
     monkeypatch.setattr(health.subproc, "correr", lambda argv, **k: (128, "", "fatal: Authentication failed"))
     assert health._ls_remote("https://h/r.git") == "vencida"
+
+
+def test_cannot_prompt_es_credencial_vencida():
+    assert health.clasificar_git(128, "fatal: Cannot prompt because user interactivity has been disabled.") == "vencida"

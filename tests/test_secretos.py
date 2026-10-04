@@ -104,3 +104,19 @@ def test_aplicar_git_usa_el_host_sin_credenciales_de_la_url(monkeypatch):
     ok, msg = sec.aplicar_git("https://a:b@git.x.com:8443/r", "u", "tok")
     assert ok and "host=git.x.com:8443\n" in vistos["entrada"] and "a:b" not in vistos["entrada"] + msg
     assert sec.validar({"destino": "git", "nombre": "x", "git_url": "https://h:99999", "usuario": "u"})
+
+
+def test_leer_git_local_prueba_con_la_ruta_y_despues_solo_el_host(monkeypatch):
+    """Medido el 2026-10-04: el GCM solo devolvia la credencial con path=…; sin la ruta queria abrir
+    una ventana de login y pasar_credencial_git daba 404."""
+    pedidos = []
+
+    def correr(argv, entrada=None, **k):
+        pedidos.append(entrada)
+        if "path=" in entrada:
+            return 0, "protocol=https\nhost=h.com\nusername=u\npassword=p\n", ""
+        return 128, "", "fatal: Cannot prompt because user interactivity has been disabled."
+
+    monkeypatch.setattr(sec.subproc, "correr", correr)
+    assert sec.leer_git_local("https://h.com/org/repo.git") == ("u", "p")
+    assert "path=org/repo.git" in pedidos[0]

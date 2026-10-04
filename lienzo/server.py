@@ -1463,7 +1463,12 @@ class Handler(JsonHandler):
             # la credencial que esta PC ya tiene para ese host: el agente que lo pide nunca la ve
             cred = secretos.leer_git_local(str(d.get("git_url") or ""))
             if cred is None:
-                return self._json(404, {"error": "esta PC no tiene una credencial guardada para ese host"})
+                return self._json(
+                    404,
+                    {
+                        "error": "no se pudo leer la credencial de git de esta PC sin abrir una ventana de login (no hay, o vencio: un git fetch aca la renueva)"
+                    },
+                )
             d = {**d, "usuario": d.get("usuario") or cred[0], "valor": cred[1]}
         if motivo := secretos.validar(d):
             return self._json(400, {"error": motivo})

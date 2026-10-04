@@ -389,6 +389,9 @@ def clasificar_git(returncode: int, stderr: str) -> str:
         "403",
         "credentials are incorrect",
         "invalid username or password",
+        # el Git Credential Manager con la credencial vencida quiere abrir una ventana de login y,
+        # sin interactividad, falla asi: es «vencida», no un error de red (medido el 2026-10-04)
+        "cannot prompt because user interactivity has been disabled",
     )
     return "vencida" if any(p in e for p in pistas) else "error"
 

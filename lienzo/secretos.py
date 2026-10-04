@@ -174,16 +174,22 @@ def leer_git_local(git_url: str) -> tuple[str, str] | None:
     host = _host_git(git_url)
     if host is None:
         return None
-    rc, out, _err = subproc.correr(
-        ["git", "credential", "fill"],
-        entrada=f"protocol=https\nhost={host}\n\n",
-        timeout=20,
-        sin_prompts=True,
-    )
-    campos = dict(linea.split("=", 1) for linea in out.splitlines() if "=" in linea)
-    if rc != 0 or not campos.get("password"):
-        return None
-    return campos.get("username") or "", campos["password"]
+    # primero con la ruta del repo y despues solo con el host: el GCM con proveedor OAuth generico a
+    # veces solo encuentra la credencial con `path` y, sin ella, quiere abrir una ventana de login
+    # (medido el 2026-10-04: «Cannot prompt because user interactivity has been disabled» y 404 en
+    # pasar_credencial_git, con la misma credencial andando para ls-remote)
+    ruta = urllib.parse.urlsplit(git_url).path.lstrip("/")
+    for extra in ([f"path={ruta}\n"] if ruta else []) + [""]:
+        rc, out, _err = subproc.correr(
+            ["git", "credential", "fill"],
+            entrada=f"protocol=https\nhost={host}\n{extra}\n",
+            timeout=20,
+            sin_prompts=True,
+        )
+        campos = dict(linea.split("=", 1) for linea in out.splitlines() if "=" in linea)
+        if rc == 0 and campos.get("password"):
+            return campos.get("username") or "", campos["password"]
+    return None
 
 
 def recibir(d: dict, valor: str) -> tuple[int, dict]:
