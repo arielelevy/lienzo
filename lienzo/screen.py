@@ -190,7 +190,11 @@ def dialog(lines: list[str]) -> dict | None:
     if len(run) >= 2:
         best = run
     if len(best) < 2 or sum(1 for _, o in best if o["cursor"]) != 1:
-        return None
+        return _dialog_de_flechas(lines)
+    return _armar(lines, best)
+
+
+def _armar(lines: list[str], best: list[tuple[int, dict]], **extra) -> dict:
     top = best[0][0]
 
     # el cuerpo del dialogo es lo que va entre la regla horizontal de arriba y la primera opcion;
@@ -206,7 +210,44 @@ def dialog(lines: list[str]) -> dict | None:
         "detail": " ".join(body[1:])[:400],
         "options": [{"n": o["n"], "text": o["text"]} for _, o in best],
         "selected": next(o["n"] for _, o in best if o["cursor"]),
+        **extra,
     }
+
+
+PIE_FLECHAS = "Enter to confirm"
+# «  > No, exit» / «    Yes, I trust this folder»: borde opcional, cursor opcional, el texto
+_OPT_FLECHA_RE = re.compile(r"^\s*[│┃║|]?\s*(?P<cur>[>❯›])?\s*(?P<txt>\S.*)$")
+
+
+def _dialog_de_flechas(lines: list[str]) -> dict | None:
+    """El dialogo de opciones SIN numero que la TUI de Claude dibuja sin recuadro (el de confianza de
+    una carpeta nueva desde 2.1.x: «Accessing workspace:» ... «> No, exit / Yes, I trust this folder»
+    y abajo «Enter to confirm · Esc to cancel»). El numero no elige nada: se contesta con flechas y
+    Enter, y por eso va `"teclas": "flechas"`. Para no confundirlo con texto cualquiera se pide el
+    pie, y justo arriba (salteando blancos) un bloque de dos lineas o mas con el texto en la misma
+    columna y exactamente una con el cursor adelante. Las opciones se numeran 1..k en orden (medido
+    el 2026-10-04 en ar-it33940: `dialog` daba None, el encargo + Enter eligio «No, exit» y la
+    sesion murio)."""
+    pie = next((i for i in range(len(lines) - 1, -1, -1) if PIE_FLECHAS in lines[i]), None)
+    if pie is None:
+        return None
+    fin = pie - 1
+    while fin >= 0 and not _sin_borde(lines[fin]):
+        fin -= 1
+    ini = fin
+    while ini - 1 >= 0 and _sin_borde(lines[ini - 1]):
+        ini -= 1
+    best: list[tuple[int, dict]] = []
+    columnas = set()
+    for i in range(ini, fin + 1):
+        m = _OPT_FLECHA_RE.match(lines[i].replace(" ", " ").rstrip().rstrip(BOX_CHARS).rstrip())
+        if not m:
+            return None
+        columnas.add(m.start("txt"))
+        best.append((i, {"n": len(best) + 1, "text": m.group("txt"), "cursor": bool(m.group("cur"))}))
+    if len(best) < 2 or len(columnas) != 1 or sum(1 for _, o in best if o["cursor"]) != 1:
+        return None
+    return _armar(lines, best, teclas="flechas")
 
 
 def main() -> int:

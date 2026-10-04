@@ -32,6 +32,17 @@ LEFT_CTRL_PRESSED = 0x0008
 LEFT_ALT_PRESSED = 0x0002
 VK_RETURN = 0x0D
 VK_ESCAPE = 0x1B
+VK_UP = 0x26
+VK_DOWN = 0x28
+ENHANCED_KEY = 0x0100
+# las teclas sueltas de --key: (virtual key, caracter, estado). Las flechas mueven el cursor de un
+# dialogo de la TUI sin numeros (el de confianza «Accessing workspace:»), y Enter lo confirma
+TECLAS = {
+    "escape": (VK_ESCAPE, "\x1b", 0),
+    "up": (VK_UP, "\0", ENHANCED_KEY),
+    "down": (VK_DOWN, "\0", ENHANCED_KEY),
+    "enter": (VK_RETURN, "\r", 0),
+}
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 FILE_SHARE_READ = 0x1
@@ -117,22 +128,23 @@ def key_records(text: str) -> list[INPUT_RECORD]:
     return recs
 
 
-def escape_records() -> list[INPUT_RECORD]:
-    """Un Esc solo. Es la tecla que interrumpe el turno en las dos TUIs (Claude Code y Codex); no
-    puede ir por `key_records` porque el texto que llega del lienzo viene sin caracteres de control
-    a proposito (strip_control, hallazgo A4)."""
+def tecla_records(key: str) -> list[INPUT_RECORD]:
+    """Una tecla sola de TECLAS. Esc es la que interrumpe el turno en las dos TUIs (Claude Code y
+    Codex); no puede ir por `key_records` porque el texto que llega del lienzo viene sin caracteres
+    de control a proposito (strip_control, hallazgo A4)."""
+    vk, ch, estado = TECLAS[key]
     recs: list[INPUT_RECORD] = []
-    scan = u32.MapVirtualKeyW(VK_ESCAPE, 0)
+    scan = u32.MapVirtualKeyW(vk, 0)
     for down in (True, False):
         r = INPUT_RECORD()
         r.EventType = KEY_EVENT
         k = r.Event.KeyEvent
         k.bKeyDown = down
         k.wRepeatCount = 1
-        k.wVirtualKeyCode = VK_ESCAPE
+        k.wVirtualKeyCode = vk
         k.wVirtualScanCode = scan
-        k.uChar.UnicodeChar = "\x1b"
-        k.dwControlKeyState = 0
+        k.uChar.UnicodeChar = ch
+        k.dwControlKeyState = estado
         recs.append(r)
     return recs
 
@@ -146,8 +158,8 @@ def inject(
     chunk_delay: float = 0.05,
     key: str | None = None,
 ) -> dict:
-    """Teclea `text` (mas Enter) en la consola de `pid`. Con `key="escape"` no se tipea texto: va
-    un Esc solo, que interrumpe el turno que corre."""
+    """Teclea `text` (mas Enter) en la consola de `pid`. Con `key` (una de TECLAS) no se tipea texto:
+    va esa tecla sola (Esc interrumpe el turno; flechas y Enter contestan un dialogo sin numeros)."""
     if not procs.alive(pid):
         return {"ok": False, "pid": pid, "error": "el proceso no existe"}
     if not procs.is_tui(pid):
@@ -172,9 +184,9 @@ def inject(
                     return f"WriteConsoleInputW fallo (error {ctypes.get_last_error()}, {written.value}/{len(recs)})"
                 return None
 
-            if key == "escape":
-                err = write(escape_records())
-                return {"ok": False, "pid": pid, "error": err} if err else {"ok": True, "pid": pid, "key": "escape"}
+            if key:
+                err = write(tecla_records(key))
+                return {"ok": False, "pid": pid, "error": err} if err else {"ok": True, "pid": pid, "key": key}
             for i in range(0, len(text), chunk):
                 err = write(key_records(text[i : i + chunk]))
                 if err:
@@ -205,7 +217,7 @@ def main() -> int:
     p.add_argument("--chunk", type=int, default=200)
     p.add_argument("--chunk-delay", type=float, default=0.05)
     p.add_argument("--keep-newlines", action="store_true", help="mandar Enter por cada salto (prueba T5)")
-    p.add_argument("--key", choices=["escape"], default=None, help="una tecla sola en vez de texto: Esc interrumpe")
+    p.add_argument("--key", choices=list(TECLAS), default=None, help="una tecla sola en vez de texto: Esc interrumpe")
     a = p.parse_args()
     if a.key:
         res = inject(a.pid, "", 0, key=a.key)

@@ -1977,7 +1977,8 @@ def run_send(s: dict, final: str, enter: bool = True, key: str | None = None) ->
 def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
     """Elegir una opcion del dialogo de la TUI que la tarjeta esta mostrando. Se teclea el numero
     y nada mas: en los menus de Claude Code la tecla del numero elige y confirma de una, y un Enter
-    de mas caeria en la caja de entrada. Se acepta solo un numero que este en el dialogo leido, no
+    de mas caeria en la caja de entrada. Un dialogo sin numeros (`teclas: flechas`) va con flechas y
+    Enter, revalidando la pantalla (_elegir_con_flechas). Se acepta solo un numero que este en el dialogo leido, no
     texto libre: esto escribe en la consola de otro proceso."""
     if frenado := send_blocked(s):
         return frenado
@@ -1985,7 +1986,10 @@ def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
     opciones = [o.get("n") for o in d.get("options") or []]
     if choice not in opciones:
         return 409, {"ok": False, "error": f"esa sesion no esta mostrando la opcion {choice}"}
-    code, out = run_send(s, str(choice), enter=False)
+    if d.get("teclas") == "flechas":
+        code, out = _elegir_con_flechas(s, d, choice)
+    else:
+        code, out = run_send(s, str(choice), enter=False)
     if code != 200:
         return code, out
     elegida = next((o.get("text") for o in d["options"] if o.get("n") == choice), str(choice))
@@ -1996,6 +2000,43 @@ def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
     out["choice"] = choice
     out["text"] = elegida
     return 200, out
+
+
+def _dialogo_en_pantalla(s: dict, visto: dict) -> tuple[dict | None, str | None]:
+    """El dialogo que la consola muestra AHORA, o (None, motivo) si no es el que se vio en la tarjeta."""
+    r = read_screen(s)
+    if not r.get("ok"):
+        return None, f"no pude leer la pantalla: {r.get('error')}"
+    d = screen.dialog(r.get("lines") or [])
+    if not d or [o["text"] for o in d["options"]] != [o.get("text") for o in visto.get("options") or []]:
+        return None, "el dialogo ya no esta en la pantalla (¿se contesto en la terminal?)"
+    return d, None
+
+
+def _elegir_con_flechas(s: dict, visto: dict, choice: int) -> tuple[int, dict]:
+    """Un dialogo sin numeros (el de confianza «Accessing workspace:»): el numero no elige nada. Se
+    mueve el cursor con `choice - selected` flechas y, antes del Enter, se relee la pantalla para
+    confirmar que el cursor quedo en la elegida: un Enter en otra opcion puede cerrar la sesion
+    («No, exit»)."""
+    d, motivo = _dialogo_en_pantalla(s, visto)
+    if not d:
+        return 409, {"ok": False, "error": motivo}
+    paso = choice - d["selected"]
+    for _ in range(abs(paso)):
+        code, out = run_send(s, "", enter=False, key="down" if paso > 0 else "up")
+        if code != 200:
+            return code, out
+    if paso:
+        time.sleep(0.3)  # que la TUI redibuje antes de releer
+        d, motivo = _dialogo_en_pantalla(s, visto)
+        if not d:
+            return 409, {"ok": False, "error": motivo}
+        if d["selected"] != choice:
+            return 409, {
+                "ok": False,
+                "error": f"el cursor quedo en la opcion {d['selected']}, no en la {choice}: no confirmo",
+            }
+    return run_send(s, "", enter=False, key="enter")
 
 
 def coda_ask_open(pantalla: str) -> bool:
@@ -2081,7 +2122,9 @@ def dialogo_abierto(s: dict) -> tuple[int, dict] | None:
     if not d:
         return None
     q = d.get("question") or "un dialogo de opciones"
-    confianza = "trust" in q.lower() or "confi" in q.lower()
+    # en el de flechas la pregunta es «Accessing workspace:» y el «trust» esta en el detalle
+    mira = f"{q} {d.get('detail') or ''}".lower()
+    confianza = any(p in mira for p in ("trust", "confi", "accessing workspace"))
     motivo = "dialogo de confianza abierto" if confianza else "la sesion muestra un dialogo"
     return 409, {
         "ok": False,

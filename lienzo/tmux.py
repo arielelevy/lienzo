@@ -285,12 +285,13 @@ def all_agents() -> list[dict]:
     return out
 
 
-_KEYS = {"escape": "Escape"}  # las teclas sueltas que acepta send.py, con su nombre en tmux
+# las teclas sueltas que acepta send.py, con su nombre en tmux
+_KEYS = {"escape": "Escape", "up": "Up", "down": "Down", "enter": "Enter"}
 
 
 def send(target: str, text: str, enter: bool = True, key: str | None = None) -> dict:
     """Teclea `text` literal en el pane y, salvo enter=False, un Enter aparte. Con `key` (las de
-    send.py: "escape") va esa tecla sola, sin texto ni Enter. El filtrado de caracteres de control
+    send.py: escape, up, down, enter) va esa tecla sola, sin texto ni Enter. El filtrado de caracteres de control
     (hallazgo A4) ya vino hecho en compose_send, que es agnostico del backend."""
     if key:
         if key not in _KEYS:
