@@ -139,12 +139,13 @@ py -3.14 install.py        # registra hooks de Claude/Codex/CODA y la extensión
 saca los hooks. El estado vive en `%USERPROFILE%\.lienzo\` (eventos, permisos pendientes,
 adjuntos, tarjetas); no toca AppData.
 
-**Recarga automática.** `lienzo-server.cmd` arranca el server con `LIENZO_RELOAD=1`: si cambia
-cualquier `.py` de `lienzo/` (un `git pull`, una edición), el server espera a que terminen de
-escribirse los archivos, comprueba que compilen y sale con el código 75, y el `.cmd` lo relanza en la
-misma ventana. Si un archivo cambiado tiene un error de sintaxis, no se relanza: sigue con el
-código viejo y lo avisa en el log. Cualquier otra salida (Ctrl+C, un error, matar el PID) corta el
-bucle. Sin el `.cmd`, el server no se recarga solo. Con dos PCs, un `git pull` en cada una alcanza.
+**Reinicio explícito.** Después de un `git pull` el server sigue con el código viejo hasta que se
+lo reinicia: `POST /restart` (o `coordinar.reiniciar()`; con `pc`, reinicia la otra PC). El server
+comprueba que el código nuevo compile, sale con el código 75 y `lienzo-server.cmd` lo relanza en la
+misma ventana; si algo no compila, contesta 409 y sigue andando con lo viejo. Antes se recargaba
+solo al cambiar cualquier `.py`, pero eso lo reiniciaba en medio del trabajo de los agentes (503,
+capturas y pruebas cortadas); quien lo quiera igual pone `"auto_reload": true` en `config.json`.
+Sin el `.cmd` no hay reinicio: salir apagaría el server.
 
 Codex pide confiar cada hook la primera vez que abre una sesión con `hooks.json` nuevo.
 
@@ -511,14 +512,20 @@ Con dos o más PCs emparejadas aparece, arriba del tablero, un chip **Todas** co
 PC con su nombre, cuántas tarjetas tiene ahí y —si está viva— memoria libre, CPU, temperatura y
 la latencia de los pedidos a esa PC (`GET /peers`); el conteo va en subíndice chico, para que no se
 lea como parte del nombre. **El chip se pone en rojo**, con el motivo al pasar el mouse, si la PC
-pasa de 85 °C, si no le entra otro agente sin bajar de 1,5 GB libres, o si su credencial de git
-venció: cada PC prueba con `git ls-remote` (sin abrir ventanas de login) las urls de la clave
-`git_check` de su `config.json`. La temperatura sale de LibreHardwareMonitor si está corriendo, o
+pasa de 85 °C, si no le entra otro agente sin bajar de 1,5 GB libres, o si algún agente se quedó sin
+cuota (coda por su log y su base, sin gastar tokens; Claude, Codex y Pi por el límite de uso que
+avisan sus tarjetas). **La credencial de git va aparte, en violeta**, con el motivo y el host: cada
+PC prueba con `git ls-remote` (sin abrir ventanas de login) las urls de la clave `git_check` de su
+`config.json`, y distingue `vencida` (la credencial, 401/403: se arregla con
+`coordinar.pasar_credencial_git`), `sin red` (no llega al host), `timeout` (git no terminó) y
+`error`. La temperatura sale de LibreHardwareMonitor si está corriendo, o
 de la zona térmica de Windows que haya. Click
 filtra a esa PC y nada más (Ctrl+click suma otra al filtro, ver *Elegir varias a la vez*): se
 vuelve con Todas. Una PC caída se ve en ○, sin
 memoria ni temperatura (sería un dato viejo), y sus tarjetas quedan grises con controles
 deshabilitados y "sin conexión hace X".
+
+![tira de PCs: la notebook en rojo por temperatura y memoria; la credencial de git, en violeta](docs/img/tira-pcs.png)
 
 Al lado, con dos o más proyectos en el tablero, un chip por repo (con sesiones vivas) más
 **★ Coordinadoras**, en el header al lado del buscador. **El click elige y nada más**: un proyecto
@@ -584,12 +591,13 @@ túnel, además la cookie de sesión.
 | PUT | `/sessions/<sid>/stopped` | `{on: true\|false}`; la llave. Prender: Esc si corre, `stopped_by: "user"`, aviso a la coordinadora y a las conectadas por regla vigente (la respuesta trae `interrupted` y `notified`). Apagar: vuelve a recibir. Mientras está prendida, `/send`, `/dialog` e `/interrupt` devuelven 409 y las reglas hacia ella se saltean |
 | PUT | `/sessions/<sid>/coordinator` | `{on: true\|false, scope?: "pc"}`; una coordinadora por repo en toda la federación, prender una apaga la anterior; `scope: "pc"` la separa sólo para esta PC |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
-| GET | `/peers` | la propia PC primero (`local: true`) y después cada peer emparejado, con `alive`, `last_seen`, `latencia_ms` y `health` (memoria, CPU, temperatura, `agentes_libres`, `git_auth`); sin peers, un array de un solo elemento |
+| GET | `/peers` | la propia PC primero (`local: true`) y después cada peer emparejado, con `alive`, `last_seen`, `latencia_ms` y `health` (memoria, CPU, temperatura, `agentes_libres`, `git_auth`, `cuotas`); sin peers, un array de un solo elemento |
 | POST | `/peers/offer` | `{ttl_s?}`; genera la palabra para emparejar (SPAKE2), `{phrase, expires}` |
 | POST | `/peers/join` | `{phrase, host, port}`; pega la frase del otro lado. 400 si no vale, 409 con tope de 4 ya emparejados |
 | GET | `/peers/lan` | las PCs de la LAN con el lienzo andando que todavía no están emparejadas, por el anuncio del beacon: `[{pc_id, name, ip, port, last_seen}]` |
 | DELETE | `/peers/<pc_id>` | revoca el peer y corta el espejo |
 | POST | `/sessions/launch` | `{pc?, cwd, agent, title?, model?}`; lanza una sesión nueva, local o en la PC `pc` (reenviado); `cwd` tiene que caer en `launch_roots` de esa PC; `model` agrega `--model` (coda, claude, codex) y la respuesta trae `model_applied` |
+| POST | `/restart` | `{pc?}`; reinicia el server de esta PC (o de la PC `pc`): sale con 75 y `lienzo-server.cmd` lo relanza. 409 si no corre bajo el `.cmd` o si el código no compila |
 | GET | `/restaurables` | las sesiones que se pueden relanzar tras un reinicio, de esta PC y de cada peer vivo (`pc`) |
 | POST | `/restaurar` | `{session_id \| all: true, pc?, limit_by_memory?}`; relanza desde su carpeta retomando la conversación, de a una; 409 si `all` no entra en la memoria libre o si ya hay otra restauración en curso |
 | GET | `/links` | envíos hechos; `kind` es `send`, `rule`, `native` o `user` |
