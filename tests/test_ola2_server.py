@@ -395,10 +395,9 @@ def test_restaurar_local_y_reenviado(entorno):
     t = al_tablero(entorno["tablero"], "POST", "/restaurar", json.dumps(d).encode())
     p = al_peer(entorno["peer"], "POST", "/peer/restaurar", json.dumps(d).encode())
     assert t == p and t[0] == 200
-    assert al_tablero(entorno["tablero"], "POST", "/restaurar", json.dumps({"pc": 5}).encode()) == (
-        400,
-        {"error": "pc debe ser un pc_id"},
-    )
+    malo = json.dumps({"pc": 5}).encode()
+    assert al_tablero(entorno["tablero"], "POST", "/restaurar", malo) == (400, {"error": "pc debe ser un pc_id"})
+    assert al_peer(entorno["peer"], "POST", "/peer/restaurar", malo) == (400, {"error": "pc debe ser un pc_id"})
     remoto = {"pc": "pcB", "all": True, "limit_by_memory": True, "otro": 1}
     assert al_tablero(entorno["tablero"], "POST", "/restaurar", json.dumps(remoto).encode())[0] == 200
     assert entorno["espejo"].llamadas[-1] == ("pcB", "POST", "/restaurar", {"all": True, "limit_by_memory": True})

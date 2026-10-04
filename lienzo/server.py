@@ -1263,6 +1263,65 @@ def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero
     return code, res
 
 
+# Las acciones que no son de una tarjeta pero tambien estaban en los dos listeners: un pedido de
+# permiso, lanzar, reapuntar reglas y restaurar. Mismo orden (validar -> ubicar la PC -> ejecutar o
+# reenviar) y mismo criterio: solo el tablero reenvia; lo que pide otra PC se hace aca.
+
+
+def accion_pending(request_id: str, d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
+    """POST /pending/<id>: contesta un pedido de permiso (o pregunta). Desde el tablero, el de otra
+    PC se reenvia a la suya."""
+    rechazo = validar_decision(d)
+    if rechazo is not None:
+        return rechazo
+    owner = _pending_owner(request_id) if desde_tablero else None
+    if owner is not None:
+        return mirror.MIRROR.forward(owner, "POST", f"/pending/{request_id}", d)
+    return answer_pending(request_id, d["decision"], d.get("reason", ""), d.get("answers"))
+
+
+def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
+    """POST /sessions/launch {pc, cwd, title, agent, model?} en el tablero (local con launch.launch,
+    o reenviada a la PC `pc` por /peer/launch) y POST /peer/launch (siempre local)."""
+    valid = validate_launch(d)
+    if valid is None:
+        return 400, {"error": "cwd y agent son obligatorios"}
+    cwd, agent, title = valid
+    model = d.get("model") if isinstance(d.get("model"), str) else None
+    pc = d.get("pc")
+    if desde_tablero and pc and pc != identity.pc_id():
+        cuerpo = {"cwd": cwd, "title": title, "agent": agent, **({"model": model} if model else {})}
+        return mirror.MIRROR.forward(pc, "POST", "/launch", cuerpo)
+    res = launch.launch(cwd, title, agent, model=model)
+    return (200 if res.get("ok") else 400), res
+
+
+def accion_retarget(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
+    """POST /rules/retarget {old, new}: las reglas que avisaban a `old` pasan a `new`. Desde el
+    tablero, aca y en las otras PCs; lo que pide otra PC, solo aca."""
+    if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
+        return 400, {"error": "hace falta old y new"}
+    n = ses_retarget_rules(d["old"], d["new"])
+    if not desde_tablero:
+        return 200, {"ok": True, "n": n}
+    ok, fallaron = fan_out("POST", "/rules/retarget", d)
+    n += sum(int(res.get("n") or 0) for res in ok.values())
+    # las PCs que no contestaron: sus reglas siguen apuntando a `old` (S14)
+    return 200, {"ok": True, "n": n, "unreachable": sorted(fallaron)}
+
+
+def accion_restaurar(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
+    """POST /restaurar {session_id | all: true, pc?, limit_by_memory?}: local con restore_local, o
+    desde el tablero reenviada a la PC `pc` por /peer/restaurar."""
+    pc = d.get("pc")
+    if pc is not None and not isinstance(pc, str):
+        return 400, {"error": "pc debe ser un pc_id"}
+    if desde_tablero and pc and pc != identity.pc_id():
+        cuerpo = {k: d[k] for k in ("session_id", "all", "limit_by_memory") if k in d}
+        return mirror.MIRROR.forward(pc, "POST", "/restaurar", cuerpo)
+    return restore_local(d)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "lienzo/0.1"
     protocol_version = "HTTP/1.1"
@@ -1615,31 +1674,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(code, res)
             if parts == ["rules", "retarget"]:
                 # a mano: las reglas que avisaban a `old` pasan a `new`, aca y en las otras PCs
-                d = self._json_body()
-                if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
-                    return self._json(400, {"error": "hace falta old y new"})
-                n = ses_retarget_rules(d["old"], d["new"])
-                ok, fallaron = fan_out("POST", "/rules/retarget", d)
-                n += sum(int(res.get("n") or 0) for res in ok.values())
-                # las PCs que no contestaron: sus reglas siguen apuntando a `old` (S14)
-                return self._json(200, {"ok": True, "n": n, "unreachable": sorted(fallaron)})
+                code, res = accion_retarget(self._json_body(), desde_tablero=True)
+                return self._json(code, res)
             if parts == ["peers", "offer"]:
                 return self._peers_offer()
             if parts == ["peers", "join"]:
                 return self._peers_join()
             if parts == ["sessions", "launch"]:
-                return self._launch()
+                code, res = accion_launch(self._json_body(), desde_tablero=True)
+                return self._json(code, res)
             if parts == ["restaurar"]:
                 return self._restaurar()
             if len(parts) == 2 and parts[0] == "pending":
-                d = self._json_body()
-                if d.get("decision") not in ("allow", "deny"):
-                    return self._json(400, {"error": "decision debe ser allow o deny"})
-                owner = _pending_owner(parts[1])
-                if owner is not None:
-                    code, res = mirror.MIRROR.forward(owner, "POST", f"/pending/{parts[1]}", d)
-                    return self._json(code, res)
-                code, res = answer_pending(parts[1], d["decision"], d.get("reason", ""), d.get("answers"))
+                code, res = accion_pending(parts[1], self._json_body(), desde_tablero=True)
                 return self._json(code, res)
             if len(parts) == 3 and parts[0] == "sessions" and ("POST", parts[2]) in ACCIONES_SESION:
                 return self._accion_sesion("POST", parts[1], parts[2])
@@ -1855,39 +1902,9 @@ class Handler(BaseHTTPRequestHandler):
         # 2026-10-04: la respuesta la traia en claro y quedo en la salida de quien emparejo)
         return self._json(200, {k: v for k, v in peer.items() if k != "key"})
 
-    def _launch(self) -> None:
-        """POST /sessions/launch {pc, cwd, title, agent}: local con launch.launch (frente B), o
-        reenviada a la PC `pc` por /peer/launch."""
-        d = self._json_body()
-        pc = d.get("pc")
-        valid = validate_launch(d)
-        if valid is None:
-            return self._json(400, {"error": "cwd y agent son obligatorios"})
-        cwd, agent, title = valid
-        model = d.get("model") if isinstance(d.get("model"), str) else None
-        if pc and pc != identity.pc_id():
-            code, res = mirror.MIRROR.forward(
-                pc,
-                "POST",
-                "/launch",
-                {"cwd": cwd, "title": title, "agent": agent, **({"model": model} if model else {})},
-            )
-            return self._json(code, res)
-        res = launch.launch(cwd, title, agent, model=model)
-        return self._json(200 if res.get("ok") else 400, res)
-
     def _restaurar(self) -> None:
-        """POST /restaurar {session_id | all: true, pc?, limit_by_memory?}: local con restore_local, o
-        reenviada a la PC `pc` por /peer/restaurar."""
-        d = self._json_body()
-        pc = d.get("pc")
-        if pc is not None and not isinstance(pc, str):
-            return self._json(400, {"error": "pc debe ser un pc_id"})
-        if pc and pc != identity.pc_id():
-            cuerpo = {k: d[k] for k in ("session_id", "all", "limit_by_memory") if k in d}
-            code, res = mirror.MIRROR.forward(pc, "POST", "/restaurar", cuerpo)
-            return self._json(code, res)
-        code, res = restore_local(d)
+        """POST /restaurar: accion_restaurar, que desde el tablero puede reenviar a la PC `pc`."""
+        code, res = accion_restaurar(self._json_body(), desde_tablero=True)
         return self._json(code, res)
 
     def do_DELETE(self):
@@ -2112,7 +2129,8 @@ class PeerHandler(BaseHTTPRequestHandler):
         if method == "GET" and rest == ["events"]:
             return self._events()
         if method == "POST" and rest == ["launch"]:
-            return self._launch(raw)
+            code, res = accion_launch(self._body_json(raw), desde_tablero=False)
+            return self._json(code, res)
         if method == "POST" and rest == ["rules"]:
             d = self._body_json(raw)
             if d.get("kind") == "on_stop" and d.get("from") not in sessions:
@@ -2135,7 +2153,7 @@ class PeerHandler(BaseHTTPRequestHandler):
             log(f"secreto «{item[0]}» leido desde {pc_id} y borrado")
             return self._json(200, {"nombre": item[0], "cifrado": secretos.cifrar(key, item[1])})
         if method == "POST" and rest == ["restaurar"]:
-            code, res = restore_local(self._body_json(raw))
+            code, res = accion_restaurar(self._body_json(raw), desde_tablero=False)
             return self._json(code, res)
         if method == "PUT" and rest == ["config"]:
             # otra PC emparejada prende o apaga auto-aprobar aca (el check del menu vale para todas)
@@ -2147,10 +2165,8 @@ class PeerHandler(BaseHTTPRequestHandler):
             log(f"config: {autoaprobar.CLAVE} = {d[autoaprobar.CLAVE]} (desde {pc_id})")
             return self._json(200, public_config())
         if method == "POST" and rest == ["rules", "retarget"]:
-            d = self._body_json(raw)
-            if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
-                return self._json(400, {"error": "hace falta old y new"})
-            return self._json(200, {"ok": True, "n": ses_retarget_rules(d["old"], d["new"])})
+            code, res = accion_retarget(self._body_json(raw), desde_tablero=False)
+            return self._json(code, res)
         if method == "POST" and rest == ["rules", "lock"]:
             return self._rules_lock(raw)
         if method == "POST" and rest == ["rules", "check"]:
@@ -2168,10 +2184,7 @@ class PeerHandler(BaseHTTPRequestHandler):
             drop_session(rest[1], "borrada desde otra PC")
             return self._json(200, {"ok": True})
         if len(rest) == 2 and rest[0] == "pending" and method == "POST":
-            d = self._body_json(raw)
-            if d.get("decision") not in ("allow", "deny"):
-                return self._json(400, {"error": "decision debe ser allow o deny"})
-            code, res = answer_pending(rest[1], d["decision"], d.get("reason", ""), d.get("answers"))
+            code, res = accion_pending(rest[1], self._body_json(raw), desde_tablero=False)
             return self._json(code, res)
         return self._json(404, {"error": "ruta desconocida"})
 
@@ -2199,16 +2212,6 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._json(400, {"error": str(e)})
         _connect_stored_peer(str(body.get("pc_id") or ""))
         return self._json(200, res)
-
-    def _launch(self, raw: bytes) -> None:
-        d = self._body_json(raw)
-        valid = validate_launch(d)
-        if valid is None:
-            return self._json(400, {"error": "cwd y agent son obligatorios"})
-        cwd, agent, title = valid
-        model = d.get("model") if isinstance(d.get("model"), str) else None
-        res = launch.launch(cwd, title, agent, model=model)
-        return self._json(200 if res.get("ok") else 400, res)
 
     def _rules_lock(self, raw: bytes) -> None:
         """POST /peer/rules/lock: el lock liviano de la carrera A<->B (plan §3.5), del lado de la
