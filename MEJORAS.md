@@ -32,6 +32,10 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-02 | **Compactación de coda**: `install.py` registra `PreCompact` y `PostCompact`; la tarjeta queda marcada «compactando» (vence a los 10 min) y ni el `Stop` ni `on_stop` cuentan como fin de turno | B y E mostraron «terminó» mientras compactaban; el doc de coda (`hooks.md`) lista esos dos eventos |
 | 2026-10-03 | **Los botones Permitir/Denegar de coda vuelven** si el permiso sigue abierto 20 s después de contestar (`CODA_SENT_RETRY_S`): la marca `where: "enviado"` los escondía para siempre | la tarjeta de D tuvo un permiso real abierto horas sin botones; el usuario: «no me aparecen los yes en lienzo» |
 | 2026-10-03 | `coordinar.cablear` y `regla_informe` **fallan claro si `YO` está vacío** | con `YO` vacío el server contestaba 404 «sesion destino desconocida» y parecía que la tarjeta nueva no existía |
+| 2026-10-03 | **Un 401 entre PCs dice el motivo y qué hacer**: `federation.causa_401` mide el reloj contra el `Date` de `/peer/hello` y el error queda «la otra PC no acepta mi firma (…). Reiniciá su lienzo; si sigue, reemparejá» | a las 20:02 todo dio «firma invalida» pelado y el tablero quedó mudo |
+| 2026-10-03 | **El encargo largo a una coda se ejecuta**: el aviso del adjunto le pide ejecutar sin resumir ni pedir confirmación | las codas de las sesiones 3 y 4 resumieron el encargo y esperaron un segundo «arrancá» |
+| 2026-10-03 | `coordinar.informe(s)`: el `last_reply` solo si es un informe (None con «usando bash» o mientras corre) | la coordinadora confundía el estado de herramienta con el informe |
+| 2026-10-03 | **Aprobador oficial con lista permitida** (`skills/lienzo/aprobador.py`, `Politica` + `vigilar`): frena lo truncado, lo peligroso, rutas, `rm` y pushes no autorizados | los permisos largos se revisaban a mano y dos aprobadores sueltos en Temp tuvieron bugs (tramo vacío, `rm` de varios destinos) |
 
 ## Pendiente (con evidencia)
 
@@ -41,9 +45,6 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   quien mira el tablero y a la coordinadora, que gasta consultas en revisar. Los permisos de los subagentes (forks) de Claude Code
   salen en la terminal del Claude principal y el tablero no los distingue. Idea: cuando el estado dice permiso en la terminal
   y la pantalla ya no muestra el cartel («Do you want to proceed?» o «Enter confirm»), limpiar `needs` y volver al estado real.
-- **`last_reply` de una coda que trabaja dice «usando bash» / «usando read»** (medido el 2026-10-02): es el último estado
-  de herramienta, no una respuesta; la coordinadora lo confunde con el informe. Idea: que `last_reply` quede vacío mientras la
-  tarjeta está `corriendo` y solo se llene con el texto final del turno.
 - **Coda: `stop_reason` del Stop sin mirar** (medido el 2026-10-02): el `Stop` trae `stop_reason` y el doc solo muestra
   `turn_complete`; ver qué otros valores existen (respuesta cortada que continúa, error) y usarlos en vez de adivinar.
 - **Probar `PreCompact`/`PostCompact` con una coda real**: solo hay prueba con eventos simulados, y falta correr
@@ -55,9 +56,6 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   resolver, todo lo que sale hacia esa PC dio `401 firma invalida` de repente (sin cambios de reloj ni de claves) y solo se
   arregló reiniciando su lienzo. Ideas: que las codas no cuelguen del proceso del server, y que ante un 401 el lienzo
   intente el reinicio del peer o avise con el motivo («su server no valida mi firma»), en vez de dejar el tablero mudo.
-- **Una coda lanzada con un encargo largo lo resume y se queda esperando** (medido con las sesiones 3 y 4): hay que mandar
-  un segundo mensaje «arrancá». Probar que `lanzar_y_titular(..., encargo=...)` mande el encargo y, si la tarjeta queda en
-  `termino` con un resumen, el «arrancá» solo; o pedirlo en la primera frase del encargo.
 - **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
   el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.
 - **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se

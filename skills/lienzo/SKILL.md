@@ -409,6 +409,15 @@ Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
 
 ## Qué hace la coordinadora cuando llega un informe
 
+Leé el informe con `c.informe(s)`, no con `s["last_reply"]` a secas: mientras una coda trabaja, el
+lienzo deja ahí «usando bash» o «usando read», que no es una respuesta. `informe` devuelve None en
+ese caso.
+
+Si te autorizan a aprobar permisos de una coda, usá `aprobador.py` (en esta carpeta) con una
+`Politica` mínima para esa tarea: verbos, carpetas, `rm` y pushes permitidos. Aprueba solo lo que
+pasa la lista, frena lo truncado y lo peligroso, y cada freno te lo informa para que decidas vos.
+Corre en segundo plano con `vigilar(...)` y se detiene cuando la tarea termina.
+
 Verificar contra el árbol, no contra el informe: `ruff check` y `ruff format --check` sobre esa
 carpeta, las pruebas de esa carpeta, `git status` para ver si tocó algo ajeno, y si el frente dice
 que dejó la máquina limpia, comprobarlo (`pgrep`, bases de prueba borradas). Después anotarlo en un

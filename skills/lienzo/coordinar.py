@@ -165,6 +165,16 @@ def reubicar(s, todas):
 _PANTALLAS = {}  # session_id -> (hash de la pantalla, desde cuándo no cambia)
 
 
+def informe(s):
+    """El `last_reply` de la tarjeta SOLO si es un informe: None mientras trabaja o si es el estado de
+    una herramienta («usando bash», «usando read»), que el lienzo deja ahi mientras corre una coda y
+    no es una respuesta (medido el 2026-10-03: se confundia con el informe final)."""
+    r = (s.get("last_reply") or "").strip()
+    if not r or s.get("state") == "corriendo" or re.fullmatch(r"usando [\w.\-]+( \(subagente\))?", r):
+        return None
+    return r
+
+
 def estancada(s, minutos=5):
     """True si la tarjeta figura `corriendo` pero su pantalla no cambió en `minutos`: el agente (o el
     modelo detrás, p. ej. el DGX de coda) quedó colgado. Hay que llamarla de a ratos: guarda la

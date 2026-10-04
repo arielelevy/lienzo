@@ -421,3 +421,64 @@ def test_signed_headers_firma_la_ruta_sin_query():
     h = fed.signed_headers(peer, "GET", "/peer/sessions/x/turns?n=5&before=2", b"")
     ts, nonce = float(h["X-Lienzo-Ts"]), h["X-Lienzo-Nonce"]
     assert h["X-Lienzo-Sig"] == fed.sign(peer.key, "GET", "/peer/sessions/x/turns", b"", ts, nonce)
+
+
+def test_401_del_peer_explica_el_motivo_y_que_hacer(monkeypatch):
+    """Un 401 de firma no puede quedar como «firma invalida» pelado: lleva la causa medible (reloj)
+    y la accion (reiniciar su lienzo o reemparejar)."""
+    peer = fed.PeerConn("h", 1, b"k" * 32, "yo")
+    monkeypatch.setattr(fed, "_reloj_cache", {})
+    monkeypatch.setattr(fed, "causa_401", lambda p: "los relojes coinciden (+0.1 s): clave distinta")
+
+    class Resp:
+        status = 401
+
+        def read(self):
+            return b'{"error": "firma invalida"}'
+
+    class Conn:
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            pass
+
+        def getresponse(self):
+            return Resp()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(fed.http.client, "HTTPConnection", Conn)
+    status, cuerpo = fed.HTTPTransport()._pedir(peer, "GET", "/peer/health")
+    assert status == 401
+    assert "firma invalida" in cuerpo["error"] and "relojes coinciden" in cuerpo["error"]
+    assert "Reinicia su lienzo" in cuerpo["error"]
+
+
+def test_causa_401_detecta_el_reloj_corrido(monkeypatch):
+    import email.utils
+
+    peer = fed.PeerConn("h", 9, b"k" * 32, "yo")
+    monkeypatch.setattr(fed, "_reloj_cache", {})
+    adelantado = email.utils.formatdate(fed.time.time() + 120, usegmt=True)
+
+    class Resp:
+        def getheader(self, n):
+            return adelantado
+
+    class Conn:
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, *a, **k):
+            pass
+
+        def getresponse(self):
+            return Resp()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(fed.http.client, "HTTPConnection", Conn)
+    assert "difiere" in fed.causa_401(peer) and "sincroniza" in fed.causa_401(peer)

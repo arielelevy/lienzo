@@ -4,7 +4,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "lienzo"))
-import coordinar as c  # noqa: E402
+import coordinar as c
 
 
 def _tarjeta(sid, **kw):
@@ -103,7 +103,7 @@ def test_pedir_devuelve_el_dict_del_error_http_o_el_texto_recortado(monkeypatch)
 
         return _urlopen
 
-    monkeypatch.setattr("urllib.request.urlopen", falla('{"error": "ñ", "gone": true}'.encode("utf-8")))
+    monkeypatch.setattr("urllib.request.urlopen", falla('{"error": "ñ", "gone": true}'.encode()))
     assert c.pedir("GET", "/x") == (404, {"error": "ñ", "gone": True})
     monkeypatch.setattr("urllib.request.urlopen", falla(b"<html>" + b"x" * 300))
     code, texto = c.pedir("GET", "/x")
@@ -166,3 +166,13 @@ def test_lanzar_y_titular_sin_cablear_no_crea_regla(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: None)
     c.lanzar_y_titular("pcB", r"D:\apps\x", "t", "coda", espera=5, cablear_al_lanzar=False)
     assert "/rules" not in pedidos
+
+
+def test_informe_ignora_el_estado_de_herramienta_y_lo_que_corre():
+    import coordinar as c
+
+    assert c.informe({"state": "termino", "last_reply": "usando bash"}) is None
+    assert c.informe({"state": "termino", "last_reply": "usando read (subagente)"}) is None
+    assert c.informe({"state": "corriendo", "last_reply": "Listo, termine"}) is None
+    assert c.informe({"state": "termino", "last_reply": ""}) is None
+    assert c.informe({"state": "termino", "last_reply": "B LISTA - hash abc"}) == "B LISTA - hash abc"

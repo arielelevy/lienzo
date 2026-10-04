@@ -450,6 +450,45 @@ def signed_headers(peer: PeerConn, method: str, path: str, body: bytes) -> dict:
     }
 
 
+_reloj_cache: dict[str, tuple[float, str]] = {}
+RELOJ_CACHE_S = 30.0
+
+
+def causa_401(peer: PeerConn) -> str:
+    """Por que la otra PC no acepta mi firma, en una frase y con el dato que se pueda medir: la
+    diferencia de reloj contra el `Date` de /peer/hello (sin firma). La ventana de firma es de
+    SIGN_WINDOW_S: pasada, toda firma da 401 aunque la clave sea la correcta. Cacheado unos
+    segundos por peer: un tablero entero de 401 no tiene que disparar un pedido por cada uno."""
+    clave = f"{peer.host}:{peer.port}"
+    hit = _reloj_cache.get(clave)
+    if hit and time.time() - hit[0] < RELOJ_CACHE_S:
+        return hit[1]
+    try:
+        import email.utils
+
+        t0 = time.time()
+        conn = http.client.HTTPConnection(peer.host, peer.port, timeout=2)
+        try:
+            conn.request("GET", "/peer/hello")
+            fecha = conn.getresponse().getheader("Date")
+        finally:
+            conn.close()
+        remoto = email.utils.parsedate_to_datetime(fecha).timestamp() if fecha else None
+        if remoto is None:
+            causa = "no pude medir su reloj"
+        else:
+            dif = remoto - (t0 + time.time()) / 2
+            causa = (
+                f"su reloj difiere {dif:+.0f} s del mio y la ventana es de {SIGN_WINDOW_S:.0f} s: sincroniza la hora"
+                if abs(dif) > SIGN_WINDOW_S
+                else f"los relojes coinciden ({dif:+.1f} s): clave distinta o su lienzo en mal estado"
+            )
+    except OSError, ValueError:
+        causa = "no pude consultar su reloj"
+    _reloj_cache[clave] = (time.time(), causa)
+    return causa
+
+
 SLOW_ACTIONS = ("/send", "/launch", "/attach")
 SLOW_TIMEOUT_S = 70.0  # un send tipea en la consola con un subproceso de hasta 60 s en la PC dueña
 # /restaurar con `all` relanza N sesiones con 2 s de pausa entre cada una: necesita mucho mas
@@ -492,7 +531,15 @@ class HTTPTransport:
             status = resp.status
         finally:
             conn.close()
-        return status, (json.loads(data.decode("utf-8")) if data else {})
+        cuerpo = json.loads(data.decode("utf-8")) if data else {}
+        if status == 401 and isinstance(cuerpo, dict):
+            # sin esto el tablero queda mudo: «firma invalida» no dice que hacer (medido el 2026-10-03)
+            cuerpo = {
+                **cuerpo,
+                "error": f"{cuerpo.get('error', '401')}: la otra PC no acepta mi firma ({causa_401(peer)}). "
+                "Reinicia su lienzo (lienzo-server.cmd); si sigue igual, reempareja las PCs.",
+            }
+        return status, cuerpo
 
     def get(self, peer: PeerConn, path: str) -> dict:
         return self._pedir(peer, "GET", path)[1]

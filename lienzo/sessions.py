@@ -148,8 +148,14 @@ def repo_coordinator(repo: str | None, pc: str | None, local: list[dict], remote
 ATTACH_WRAPPER = "Leé el archivo adjunto y respondé:"
 # la herramienta `read` de coda se traba (medido el 2026-10-02: 4 sesiones, Qwen y GLM, mas de una hora
 # en «usando read»), y su shell anda: a coda se le pide leer el adjunto con el shell. Empieza igual que
-# ATTACH_WRAPPER, asi que lo que detecta el mensaje envuelto (prefijo) lo sigue reconociendo.
-ATTACH_WRAPPER_SHELL = ATTACH_WRAPPER + " (NO uses la herramienta read: leelo con el shell, con type)"
+# ATTACH_WRAPPER, asi que lo que detecta el mensaje envuelto (prefijo) lo sigue reconociendo. Ademas
+# se le pide ejecutar: coda resumia el encargo largo y quedaba esperando un segundo «arranca» (medido
+# el 2026-10-03 con las sesiones 3 y 4 del curso).
+ATTACH_WRAPPER_SHELL = (
+    ATTACH_WRAPPER
+    + " (NO uses la herramienta read: leelo con el shell, con type). Despues EJECUTA lo que pide, sin resumirmelo"
+    " ni pedir confirmacion: solo paras si algo te frena o la decision es del humano."
+)
 SHELL_READERS = ("coda",)
 
 
