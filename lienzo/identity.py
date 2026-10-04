@@ -263,6 +263,13 @@ def _cached_origin(config_path: str) -> str | None:
         return url
 
 
+def origin_url(cwd: str | None) -> str | None:
+    """El remote `origin` tal cual del repo que contiene a `cwd`, o None (sin cwd, sin repo o sin
+    origin). Lo usa health para probar la credencial de git solo de los repos en uso."""
+    found = _find_repo_root(cwd) if cwd else None
+    return _cached_origin(os.path.join(found[1], "config")) if found else None
+
+
 def repo_key(cwd: str | None) -> str:
     """Remote `origin` normalizado del repo que contiene a `cwd`. Sin repo, o sin `cwd`: el nombre
     de la carpeta raiz del repo si lo hay, si no `repo_of(cwd)` (que ya sabe que hacer con

@@ -367,3 +367,55 @@ def test_clasificar_git_distingue_red_de_credencial():
 def test_ls_remote_que_no_termina_es_timeout(monkeypatch):
     monkeypatch.setattr(health.subproc, "correr", lambda *a, **k: (health.subproc.VENCIDO, "", ""))
     assert health._ls_remote("https://h/r.git") == "timeout"
+
+
+def test_git_urls_suma_los_repos_en_uso_a_las_fijas(tmp_path, monkeypatch):
+    """Bug 9 (2026-10-04): la tira seguia en «vencida» por un proyecto que ya no se usaba porque la
+    lista era solo la de git_check, a mano. Ahora entran los remotes de las sesiones vivas."""
+    monkeypatch.setenv("LIENZO_HOME", str(tmp_path))
+    (tmp_path / "config.json").write_text('{"git_check": ["https://fija/x.git"]}', encoding="utf-8")
+    monkeypatch.setattr(health, "_remotes_vistos", {})
+    monkeypatch.setattr(
+        health,
+        "remotes_de_sesiones",
+        lambda: ["https://en-uso/y.git", "git@ssh:z.git", "https://u:token@h/t.git", "https://fija/x.git"],
+    )
+    # ssh no pasa por el credential manager y una contraseña pegada viajaria en /peers: quedan afuera
+    assert health._git_urls() == ["https://en-uso/y.git", "https://fija/x.git"]
+
+
+def test_git_urls_suelta_un_repo_cerrado_pasada_la_gracia(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIENZO_HOME", str(tmp_path))
+    monkeypatch.setattr(health, "_remotes_vistos", {})
+    vivas = [["https://h/proyecto.git"]]
+    monkeypatch.setattr(health, "remotes_de_sesiones", lambda: vivas[0])
+    assert health._remotes_en_uso(ahora=1000) == ["https://h/proyecto.git"]
+    vivas[0] = []  # se cerro la ultima sesion de ese repo
+    assert health._remotes_en_uso(ahora=1000 + health.GIT_GRACIA_S - 1) == ["https://h/proyecto.git"]
+    assert health._remotes_en_uso(ahora=1000 + health.GIT_GRACIA_S + 1) == []
+
+
+def test_git_urls_sin_sesiones_si_falla_la_consulta(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIENZO_HOME", str(tmp_path))
+    monkeypatch.setattr(health, "_remotes_vistos", {})
+
+    def rompe():
+        raise RuntimeError("lock")
+
+    monkeypatch.setattr(health, "remotes_de_sesiones", rompe)
+    assert health._git_urls() == []
+
+
+def test_git_auth_mientras_mide_las_urls_nuevas_sigue_lo_ya_medido(monkeypatch):
+    """Abrir una sesion en otro repo cambia las urls: hasta que la medicion nueva termine, la tira
+    no queda sin dato de las urls que ya estaban."""
+    urls = [["https://h/a.git"]]
+    monkeypatch.setattr(health, "_git_urls", lambda: urls[0])
+    cache = health.CacheEnSegundoPlano("git", health.GIT_TTL_S, lambda u: {x: "vencida" for x in u})
+    monkeypatch.setattr(health, "_git", cache)
+    cache._medir((("https://h/a.git",),), time.monotonic())
+    monkeypatch.setattr(health.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: None})())
+    urls[0] = ["https://h/a.git", "https://h/b.git"]
+    assert health._git_auth() == {"https://h/a.git": "vencida"}
+    urls[0] = ["https://h/b.git"]  # la de antes ya no esta: no se muestra
+    assert health._git_auth() is None

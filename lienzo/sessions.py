@@ -302,6 +302,14 @@ def cuotas_de_sesiones() -> dict:
     return out
 
 
+def remotes_de_sesiones() -> list[str]:
+    """El remote `origin` de cada repo con una tarjeta viva de ESTA PC, sin repetir: health prueba la
+    credencial de git solo de esos (bug 9, 2026-10-04: la tira avisaba por un proyecto ya cerrado)."""
+    with lock:
+        cwds = {s.get("cwd") for s in sessions.values() if s.get("alive") and s.get("cwd")}
+    return sorted({u for u in map(identity.origin_url, cwds) if u})
+
+
 def limit_until_of(turn: dict) -> str | None:
     """Si el turno termino con un aviso de limite de uso con hora ("try again at 7:57 PM"),
     esa hora en ISO local; la referencia es cuando se escribio el aviso, no ahora."""

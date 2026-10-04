@@ -63,6 +63,7 @@ from sessions import (
     load_sessions,
     public_pending,
     read_screen,
+    remotes_de_sesiones,
     save_attachment,
     scan_pending,
     screen_loop,
@@ -2231,6 +2232,7 @@ def main() -> int:
     mirror.MIRROR.log = log
     health.log = log
     health.cuotas_de_sesiones = cuotas_de_sesiones
+    health.remotes_de_sesiones = remotes_de_sesiones
     secretos.al_guardar_git = health.renovar_git
     peers_guardados = federation.list_peers(PEERS_FILE)
     peer_srv = None

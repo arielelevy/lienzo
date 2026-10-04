@@ -57,6 +57,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-04 | **Cuota de agentes en la salud** (mejora 5): `cuotas` por agente; coda por el último error 154 de su log contra el último consumo de `coda.db` (sin gastar tokens), Claude/Codex/Pi por el `limit_until` de sus tarjetas; lanzar una coda sin cuota da 409 y la tarjeta dice «sin cuota» en vez de «terminó» | en una PC toda corrida de coda daba «Quota exceeded» y el tablero no lo mostraba |
 | 2026-10-04 | **`pasar_credencial_git` vuelve a andar** (bug 6): `git credential fill` prueba con `path=` antes que solo el host | el GCM con OAuth genérico quería abrir una ventana de login y el pedido daba 404 |
 | 2026-10-04 | **Credencial de git aparte en la tira, en violeta**: el chequeo distingue `vencida` (401/403), `sin_red`, `timeout` y `error`, y la tira muestra cada motivo con su host fuera de la alerta roja | el aviso de git en rojo se confundía con memoria y temperatura, y «error» para todo no decía si había que pasar otra credencial o mirar la red (pedido de Ariel, mejora 7) |
+| 2026-10-04 | **La credencial de git se prueba solo de los repos en uso** (bug 9): las urls salen del remote `origin` https de cada repo con una sesión viva en la PC (hasta 1 h después de la última) más las fijas de `git_check`; la tira muestra host y repo | la tira seguía diciendo «vencida» por un proyecto que Ariel ya no usaba, porque la lista era solo `git_check`, a mano |
 
 ## Pendiente (con evidencia)
 

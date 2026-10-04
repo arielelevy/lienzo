@@ -514,9 +514,11 @@ la latencia de los pedidos a esa PC (`GET /peers`); el conteo va en subíndice c
 lea como parte del nombre. **El chip se pone en rojo**, con el motivo al pasar el mouse, si la PC
 pasa de 85 °C, si no le entra otro agente sin bajar de 1,5 GB libres, o si algún agente se quedó sin
 cuota (coda por su log y su base, sin gastar tokens; Claude, Codex y Pi por el límite de uso que
-avisan sus tarjetas). **La credencial de git va aparte, en violeta**, con el motivo y el host: cada
-PC prueba con `git ls-remote` (sin abrir ventanas de login) las urls de la clave `git_check` de su
-`config.json`, y distingue `vencida` (la credencial, 401/403: se arregla con
+avisan sus tarjetas). **La credencial de git va aparte, en violeta**, con el motivo, el host y el
+repo: cada PC prueba con `git ls-remote` (sin abrir ventanas de login) el remote `origin` https de
+cada repo donde tiene una sesión viva (hasta una hora después de cerrar la última: un proyecto que
+ya no usás deja de aparecer solo), más las urls fijas de la clave `git_check` de su `config.json`
+(para vigilar un repo sin sesión abierta), y distingue `vencida` (la credencial, 401/403: se arregla con
 `coordinar.pasar_credencial_git`), `sin red` (no llega al host), `timeout` (git no terminó) y
 `error`. La temperatura sale de LibreHardwareMonitor si está corriendo, o
 de la zona térmica de Windows que haya. Click

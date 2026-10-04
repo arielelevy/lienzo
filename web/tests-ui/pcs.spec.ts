@@ -99,7 +99,7 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     const notebook = page.locator(".pcstrip .pcchip", { hasText: "notebook" });
     await expect(notebook).toHaveClass(/alerta/);
     await expect(notebook).toContainText("120 ms");
-    await expect(notebook).toHaveAttribute("title", /a 95 °C y sin memoria para otro agente — git: vencida \(git\.ejemplo\.com\)/);
+    await expect(notebook).toHaveAttribute("title", /a 95 °C y sin memoria para otro agente — git: vencida \(git\.ejemplo\.com · a\)/);
   });
 
   test("la credencial de git va aparte, en violeta y con el motivo, sin marcar la PC en rojo", async ({ page }) => {
@@ -118,7 +118,7 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     const notebook = page.locator(".pcstrip .pcchip", { hasText: "notebook" });
     await expect(notebook).not.toHaveClass(/alerta/);
     const git = notebook.locator(".git");
-    await expect(git).toContainText("git: timeout (git.ejemplo.com), sin red (otro.ejemplo.com)");
+    await expect(git).toContainText("git: timeout (git.ejemplo.com · a), sin red (otro.ejemplo.com · b)");
     await expect(git).toHaveCSS("color", "rgb(217, 70, 239)");
     await expect(page.locator(".pcstrip .pcchip", { hasText: "oficina" }).locator(".git")).toHaveCount(0);
   });

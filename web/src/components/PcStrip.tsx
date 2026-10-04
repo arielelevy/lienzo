@@ -186,16 +186,19 @@ const MOTIVO_GIT: Record<string, string> = {
 };
 
 /** El estado de la credencial de git, aparte de la alerta roja de recursos (pedido de Ariel,
- *  2026-10-04: se confundia con memoria y temperatura). Una linea por host con problema:
- *  «vencida (git.ejemplo.com)»; null si todas andan. vencida es la credencial (401/403), sin red y
- *  timeout son la red o git colgado: ahi pasar otra credencial no arregla nada. */
+ *  2026-10-04: se confundia con memoria y temperatura). Una linea por url con problema:
+ *  «vencida (git.ejemplo.com · curso)», host y repo, porque las urls salen de los repos con sesion
+ *  viva y hay que ver cual la trajo (bug 9); null si todas andan. vencida es la credencial (401/403),
+ *  sin red y timeout son la red o git colgado: ahi pasar otra credencial no arregla nada. */
 export function gitDe(h: { git_auth?: Record<string, string> | null }): string | null {
   const porMotivo = new Map<string, string[]>();
   for (const [url, v] of Object.entries(h.git_auth ?? {})) {
     if (v === "ok") continue;
     let host = url;
     try {
-      host = new URL(url).host;
+      const u = new URL(url);
+      const repo = u.pathname.replace(/\/+$/, "").split("/").pop()?.replace(/\.git$/, "");
+      host = repo ? `${u.host} · ${repo}` : u.host;
     } catch {
       /* url rara: se muestra entera */
     }

@@ -191,3 +191,38 @@ def test_repo_key_recalcula_si_cambia_el_config(hogar):
 def test_repo_key_del_propio_lienzo(hogar):
     # el repo real de este encargo: sirve de humo end-to-end sobre un .git/config de verdad
     assert idn.repo_key(ROOT) == "github.com/arielelevy/lienzo"
+
+
+# --- origin_url: la credencial de git se prueba solo de los repos en uso (bug 9) --------------
+
+def test_origin_url_tal_cual_desde_una_subcarpeta(hogar):
+    repo = _repo(hogar / "con-remote", remote="https://git.ejemplo.com/a/b.git")
+    sub = repo / "src"
+    sub.mkdir()
+    assert idn.origin_url(str(sub)) == "https://git.ejemplo.com/a/b.git"
+
+
+def test_origin_url_sin_repo_sin_remote_o_sin_cwd(hogar):
+    fuera = hogar / "no-es-un-repo"
+    fuera.mkdir()
+    assert idn.origin_url(str(fuera)) is None
+    assert idn.origin_url(str(_repo(hogar / "sin-remote"))) is None
+    assert idn.origin_url(None) is None
+
+
+def test_remotes_de_sesiones_solo_de_las_tarjetas_vivas(hogar, monkeypatch):
+    import sessions as ses
+
+    a = _repo(hogar / "a", remote="https://git.ejemplo.com/a.git")
+    b = _repo(hogar / "b", remote="https://git.ejemplo.com/b.git")
+    monkeypatch.setattr(
+        ses,
+        "sessions",
+        {
+            "1": {"alive": True, "cwd": str(a)},
+            "2": {"alive": True, "cwd": str(a / "sub")},  # mismo repo: una sola vez
+            "3": {"alive": False, "cwd": str(b)},  # cerrada: ya no cuenta
+            "4": {"alive": True, "cwd": None},
+        },
+    )
+    assert ses.remotes_de_sesiones() == ["https://git.ejemplo.com/a.git"]

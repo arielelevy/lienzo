@@ -9,8 +9,8 @@ levanta: un fallo de cualquier pieza deja ese campo en None y no interrumpe a la
 Fuera de Windows (Mac/Linux/WSL, backend tmux) el modulo tiene que importar igual: la memoria sale de
 /proc/meminfo donde existe, y CPU y temperatura quedan en None.
 
-Ademas, si ~/.lienzo/config.json trae "git_check", si las credenciales de git siguen valiendo
-(`git_auth`, renovado en segundo plano cada GIT_TTL_S).
+Ademas, si las credenciales de git siguen valiendo (`git_auth`, renovado en segundo plano cada
+GIT_TTL_S) para los remotes de los repos con una sesion viva y los fijos de "git_check".
 
 Lo usa server.py: GET /peer/health (que cada PC le pide a las otras, ver mirror.py), la fila de
 esta PC en GET /peers, la capacidad de /restaurar (agentes_que_entran) y `health.log`, que el
@@ -363,14 +363,23 @@ def _temp_c() -> float | None:
 
 
 # --- credenciales de git -------------------------------------------------------------------
-# Las urls a probar salen de ~/.lienzo/config.json (clave "git_check": ["https://..."]). Cada
-# GIT_TTL_S se corre `git ls-remote` en un hilo, sin ventana de login: si la credencial vencio, se ve
-# en /peers ANTES de que una coda llegue al push (medido el 2026-10-03: la otra PC perdio el login y
-# el push de la sesion 4 no salio).
+# Cada GIT_TTL_S se corre `git ls-remote` en un hilo, sin ventana de login: si la credencial vencio, se
+# ve en /peers ANTES de que una coda llegue al push (medido el 2026-10-03: la otra PC perdio el login y
+# el push de la sesion 4 no salio). Que urls: el remote `origin` https de cada repo con una sesion viva
+# en esta PC (hasta GIT_GRACIA_S despues de la ultima, para no titilar al cerrar y abrir) mas las fijas
+# de ~/.lienzo/config.json (clave "git_check"). Bug 9 (2026-10-04): con la lista solo a mano, la tira
+# seguia diciendo «vencida» por un proyecto que Ariel ya no usaba.
 GIT_TTL_S = 300
+GIT_GRACIA_S = 3600
+
+# remotes `origin` de los repos con una sesion viva de esta PC: lo enchufa server.py (igual que
+# cuotas_de_sesiones, health no ve sesiones)
+remotes_de_sesiones: Callable[[], list] = list
+_remotes_vistos: dict[str, float] = {}  # url -> ultima vez que una sesion viva la tenia
+_remotes_lock = threading.Lock()
 
 
-def _git_urls() -> list[str]:
+def _git_check_fijas() -> list[str]:
     home = os.environ.get("LIENZO_HOME") or os.path.join(os.path.expanduser("~"), ".lienzo")
     try:
         with open(os.path.join(home, "config.json"), encoding="utf-8") as f:
@@ -378,6 +387,37 @@ def _git_urls() -> list[str]:
     except OSError, ValueError:
         return []
     return [u for u in urls if isinstance(u, str) and u.startswith("https://")]
+
+
+def _probable(url: str) -> bool:
+    """Solo https (ssh usa llaves, no el credential manager) y sin contraseña pegada en la url: esa no
+    depende de ninguna credencial guardada y ademas viajaria en /peers a las otras PCs."""
+    if not isinstance(url, str) or not url.startswith("https://"):
+        return False
+    userinfo = url[len("https://") :].split("/", 1)[0].rpartition("@")[0]
+    return ":" not in userinfo
+
+
+def _remotes_en_uso(ahora: float | None = None) -> list[str]:
+    ahora = time.time() if ahora is None else ahora
+    try:
+        vivas = [u for u in (remotes_de_sesiones() or []) if _probable(u)]
+    except Exception as e:  # la salud nunca levanta: sin sesiones quedan las que ya se vieron
+        log(f"remotes de las sesiones: {type(e).__name__}: {e}")
+        vivas = []
+    with _remotes_lock:
+        for u in vivas:
+            _remotes_vistos[u] = ahora
+        for u, t in list(_remotes_vistos.items()):
+            if ahora - t > GIT_GRACIA_S:
+                del _remotes_vistos[u]
+        return list(_remotes_vistos)
+
+
+def _git_urls() -> list[str]:
+    """Las fijas de git_check mas las de los repos en uso, sin repetir y ordenadas: la lista es la
+    clave del cache y no puede cambiar de orden entre una vuelta y otra."""
+    return sorted(set(_git_check_fijas()) | set(_remotes_en_uso()))
 
 
 def clasificar_git(returncode: int, stderr: str) -> str:
@@ -460,9 +500,14 @@ _git = CacheEnSegundoPlano("credenciales de git", GIT_TTL_S, lambda urls: _medir
 
 
 def _git_auth() -> dict | None:
-    """El ultimo resultado (None sin urls configuradas); se renueva en un hilo: nunca bloquea."""
+    """El ultimo resultado (None sin urls en uso ni fijas); se renueva en un hilo: nunca bloquea."""
     urls = _git_urls()  # leer el config es barato: un cambio de urls se toma enseguida, sin esperar GIT_TTL_S
-    return _git.valor(tuple(urls))
+    v = _git.valor(tuple(urls))
+    if v is None and urls and isinstance(_git._valor, dict):
+        # se abrio o se cerro una sesion en otro repo y la medicion nueva todavia no termino: lo ya
+        # medido de las urls que siguen vale mas que dejar la tira sin dato hasta que termine
+        v = {u: e for u, e in _git._valor.items() if u in urls} or None
+    return v
 
 
 # --- cuota de coda ------------------------------------------------------------------------------
