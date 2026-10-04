@@ -25,6 +25,7 @@ def aislado(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "broadcast", lambda ev: None)
     logs: list[str] = []
     monkeypatch.setattr(st, "log", logs.append)
+    monkeypatch.setattr(st, "_avisos", {})
     st.sessions.clear()
     st.transcript_stat.clear()
     yield logs
@@ -195,3 +196,84 @@ def test_detener_dos_veces_a_la_vez_manda_un_solo_esc(aislado, monkeypatch):
     assert escs == ["escape"] and res["interrupted"] is True
     assert segunda and segunda[0].get("already") is True
     assert s["stopped_by"] == "user"
+
+
+# 1.5 una tarjeta rota no corta la pasada de liveness --------------------------------------------
+
+
+def test_una_tarjeta_rota_no_corta_la_pasada_de_liveness(aislado, monkeypatch):
+    """E7: el try envolvia la pasada entera; una tarjeta que levantaba dejaba sin revisar a las
+    que venian despues, sin guardar las vivas y sin barrido, cada 2 s y para siempre."""
+    for sid in ("aaaaaaaa", "bbbbbbbb"):
+        st.sessions[sid] = ses.new_session(sid, "claude", "hook")
+    vistas = []
+
+    def check(sid):
+        vistas.append(sid)
+        if sid == "aaaaaaaa":
+            raise KeyError("state")
+
+    barridos = []
+    monkeypatch.setattr(ses, "check_liveness", check)
+    monkeypatch.setattr(ses, "remember_live_cards", lambda: None)
+    monkeypatch.setattr(ses, "sweep_once", lambda: barridos.append(1))
+    monkeypatch.setattr(ses, "last_sweep", 0.0)
+    ses.liveness_pass(30)
+    ses.liveness_pass(30)
+    assert vistas.count("bbbbbbbb") == 2 and barridos
+    # el mismo error de la misma tarjeta se loguea una vez, no cada 2 s
+    assert len([m for m in aislado if "aaaaaaaa" in m]) == 1
+
+
+def test_un_barrido_que_falla_queda_en_el_log_y_no_corta_la_pasada(aislado, monkeypatch):
+    monkeypatch.setattr(ses, "remember_live_cards", lambda: None)
+    monkeypatch.setattr(ses, "last_sweep", 0.0)
+
+    def rompe():
+        raise OSError("tasklist no respondio")
+
+    monkeypatch.setattr(ses, "sweep_once", rompe)
+    ses.liveness_pass(30)
+    assert any("tasklist no respondio" in m for m in aislado)
+
+
+def test_guess_claude_saltea_una_transcripcion_que_desaparece(tmp_path, monkeypatch):
+    """Entre el glob y el getmtime la transcripcion puede borrarse: el OSError mataba el barrido."""
+    d = tmp_path / ".claude" / "projects" / st.claude_slug(r"D:\x")
+    d.mkdir(parents=True)
+    (d / "viva.jsonl").write_text("{}")
+    (d / "borrada.jsonl").write_text("{}")
+    real = os.path.getmtime
+
+    def mtime(p):
+        if str(p).endswith("borrada.jsonl"):
+            raise FileNotFoundError(p)
+        return real(p)
+
+    monkeypatch.setattr(ses.os.path, "getmtime", mtime)
+    sid, path = ses.guess_claude(r"D:\x", 0, str(tmp_path))
+    assert sid == "viva"
+
+
+def test_guess_codex_saltea_un_rollout_que_desaparece(tmp_path, monkeypatch):
+    d = tmp_path / ".codex" / "sessions" / "2026" / "10" / "04"
+    d.mkdir(parents=True)
+    (d / "rollout-borrado.jsonl").write_text("{}")
+    real = os.path.getmtime
+
+    def mtime(p):
+        if str(p).endswith("rollout-borrado.jsonl"):
+            raise FileNotFoundError(p)
+        return real(p)
+
+    monkeypatch.setattr(ses.os.path, "getmtime", mtime)
+    assert ses.guess_codex(r"D:\x", 0, str(tmp_path)) == (None, None)
+
+
+def test_avisar_si_cambia_loguea_solo_cuando_cambia(aislado):
+    st.avisar_si_cambia("k", "falla A")
+    st.avisar_si_cambia("k", "falla A")
+    st.avisar_si_cambia("k", "falla B")
+    st.avisar_si_cambia("k", None)  # se arreglo: lo dice una vez
+    st.avisar_si_cambia("k", None)
+    assert len([m for m in aislado if "falla" in m or "k:" in m]) == 3

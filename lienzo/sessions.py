@@ -1677,11 +1677,20 @@ def guess_claude(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str
     """Claude guarda una transcripcion por sesion en un directorio por cwd, y el nombre del archivo
     ES el session_id: alcanza con la mas nueva que siga viva despues de `t0`."""
     d = os.path.join(home, ".claude", "projects", claude_slug(cwd))
-    cands = [p for p in glob.glob(os.path.join(d, "*.jsonl")) if os.path.getmtime(p) >= t0]
+    cands = [(m, p) for p in glob.glob(os.path.join(d, "*.jsonl")) if (m := _mtime(p)) is not None and m >= t0]
     if not cands:
         return None, None
-    p = max(cands, key=os.path.getmtime)
+    p = max(cands, key=lambda c: c[0])[1]
     return os.path.splitext(os.path.basename(p))[0], p
+
+
+def _mtime(path: str) -> float | None:
+    """getmtime que no levanta: entre el glob y el stat una transcripcion puede borrarse (un /clear,
+    una limpieza), y el OSError cortaba el barrido entero (plan de refactor 1.5)."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
 
 
 def guess_codex(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str | None]:
@@ -1691,7 +1700,8 @@ def guess_codex(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str 
     nacio = t0 + BIRTH_MARGIN_S  # t0 ya viene con el margen restado
     best, best_gap = None, None
     for p in glob.glob(os.path.join(home, ".codex", "sessions", "*", "*", "*", "rollout-*.jsonl")):
-        if os.path.getmtime(p) < t0:
+        mtime = _mtime(p)
+        if mtime is None or mtime < t0:
             continue
         try:
             with open(p, "rb") as f:
@@ -1704,7 +1714,7 @@ def guess_codex(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str 
         if pl.get("originator") not in (None, "codex-tui", "codex_cli_rs"):
             continue  # Codex Desktop (importados), codex_exec, app-server: no son la TUI
         birth = parse_ts(pl.get("timestamp") or first.get("timestamp"))
-        gap = (birth.timestamp() if birth else os.path.getmtime(p)) - nacio
+        gap = (birth.timestamp() if birth else mtime) - nacio
         if gap < -BIRTH_MARGIN_S:
             continue  # arranco antes que el proceso: no es suyo
         if best_gap is None or abs(gap) < abs(best_gap):
@@ -1939,7 +1949,11 @@ def check_liveness(sid: str) -> None:
             return
         # transcripcion: el stat es barato (14 us) y va aca; leerla, no
         tp = s.get("transcript_path")
-        st = os.stat(tp) if tp and os.path.exists(tp) else None
+        try:
+            st = os.stat(tp) if tp else None
+        except OSError:
+            st = None  # no existe (todavia, o ya no): igual que antes con el exists, sin la carrera
+
         sig = (st.st_size, int(st.st_mtime)) if st else None
         if st and s["agent"] == "coda":
             # base en WAL: lo nuevo va al -wal y la base cambia recien en el checkpoint
@@ -1983,16 +1997,34 @@ def remember_live_cards() -> None:
     restore_guard(work)
 
 
+def liveness_pass(sweep_every: float) -> None:
+    """Una pasada de liveness: cada tarjeta, el registro de restaurables y, si toca, el barrido.
+    Cada tarjeta y el barrido van con su propio try (plan de refactor 1.5, E7): antes un solo try
+    envolvia todo, y una tarjeta que levantaba dejaba sin revisar a las que venian despues, sin
+    registro de vivas y sin barrido, cada 2 s y para siempre. El error de una tarjeta se loguea
+    cuando cambia (avisar_si_cambia), no en cada vuelta."""
+    with lock:
+        sids = list(sessions)
+    for sid in sids:
+        clave = f"liveness {sid[:8]}"
+        try:
+            check_liveness(sid)
+            state.avisar_si_cambia(clave, None)
+        except Exception:
+            state.avisar_si_cambia(clave, f"{clave} fallo:\n{traceback.format_exc()}")
+    remember_live_cards()  # nunca levanta (restore_guard)
+    if sweep_every and time.time() - last_sweep > sweep_every:
+        try:
+            sweep_once()
+            state.avisar_si_cambia("barrido", None)
+        except Exception:
+            state.avisar_si_cambia("barrido", f"barrido fallo:\n{traceback.format_exc()}")
+
+
 def liveness_loop(sweep_every: float) -> None:
     while True:
         try:
-            with lock:
-                sids = list(sessions)
-            for sid in sids:
-                check_liveness(sid)
-            remember_live_cards()
-            if sweep_every and time.time() - last_sweep > sweep_every:
-                sweep_once()
+            liveness_pass(sweep_every)
         except Exception:
             state.log(traceback.format_exc())
         time.sleep(2)

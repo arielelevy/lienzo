@@ -176,6 +176,27 @@ def log(msg: str) -> None:
         print(f"{t.strftime('%H:%M:%S')}  {tag:<8} {msg}", flush=True)
 
 
+_avisos: dict[str, str] = {}
+_avisos_lock = threading.Lock()
+
+
+def avisar_si_cambia(clave: str, msg: str | None) -> None:
+    """Loguea `msg` solo si es distinto del ultimo aviso de `clave`; `None` dice que se arreglo (y lo
+    loguea una vez, si habia algo). Para los bucles de fondo que fallan igual en cada vuelta (cada
+    0,5 s el de pendientes, cada 2 s la liveness): antes o se tragaban el error o inundaban el log.
+    Es la idea de FuenteTemperatura._avisar de health.py, para cualquier clave. Lock propio y no
+    `lock`: se llama desde adentro y desde afuera del lock de las tarjetas."""
+    with _avisos_lock:
+        prev = _avisos.get(clave)
+        if msg == prev:
+            return
+        if msg is None:
+            _avisos.pop(clave, None)
+        else:
+            _avisos[clave] = msg
+    log(msg if msg is not None else f"{clave}: se normalizo")
+
+
 def is_disconnect(e: BaseException) -> bool:
     """El navegador cerro la conexion (cambio de pestaña, recarga, SSE que se corta): no es un
     error nuestro y no merece traceback. WinError 10053/10054 son las variantes de Windows."""
