@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, ago, api } from "../api";
+import { ApiError, ago, rulesApi, sessionsApi } from "../api";
 import { coordinatorOf, everySeconds, fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection, splitEvery, type EveryUnit } from "../nl";
-import type { DigestResponse, Session } from "../types";
+import type { Session } from "../types";
 import { REPLY_TEMPLATE, shortName } from "../names";
 import { AGENTS } from "../agents";
 
@@ -137,7 +137,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    api.get<DigestResponse>(`/sessions/${from.session_id}/digest?n=5`).then((d) => {
+    sessionsApi.digest(from.session_id, 5).then((d) => {
       if (cancelled) return;
       const last = [...d.turns].reverse().find((t) => t.final && t.final.trim());
       if (last) setReply(last.final);
@@ -167,7 +167,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           toast("La sesión destino tiene un permiso pendiente", true);
           return;
         }
-        const r = await api.post<{ chars: number }>(`/sessions/${targetSession.session_id}/send`, {
+        const r = await sessionsApi.send(targetSession.session_id, {
           text,
           attachments: [],
           from: from.session_id,
@@ -175,7 +175,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         toast(`Enviado a ${shortName(targetSession)} (${r.chars} caracteres)`);
       } else if (mode === "native") {
         // se le habla a A (esta sesion) para que abra el canal con B; la flecha doble es A <-> B
-        await api.post(`/sessions/${from.session_id}/send`, {
+        await sessionsApi.send(from.session_id, {
           text: nativeInstruction(targetSession, nativeText),
           attachments: [],
           link_to: targetSession.session_id,
@@ -183,15 +183,15 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         });
         toast(`${shortName(from)} va a abrir el canal con ${shortName(targetSession)}`);
       } else if (mode === "on_stop") {
-        const rule = { kind: "on_stop", from: from.session_id, text: template, repeat, max_fires: repeat ? maxFires : 1 };
-        await api.post("/rules", { ...rule, to: targetSession.session_id });
+        const rule = { kind: "on_stop" as const, from: from.session_id, text: template, repeat, max_fires: repeat ? maxFires : 1 };
+        await rulesApi.create({ ...rule, to: targetSession.session_id });
         const alsoMe = notifyMe && me && me.session_id !== targetSession.session_id ? me : null;
         if (alsoMe) {
           // la primera regla ya quedo creada: si la segunda falla es un exito a medias, no una
           // falla. Antes iba al catch de afuera, el dialogo se quedaba abierto con "No se pudo" y
           // reintentar chocaba con la primera (409) o la duplicaba
           try {
-            await api.post("/rules", { ...rule, to: alsoMe.session_id });
+            await rulesApi.create({ ...rule, to: alsoMe.session_id });
           } catch (e) {
             toast(`Cuando ${shortName(from)} termine, su respuesta va a ${shortName(targetSession)}; a ${shortName(alsoMe)} no: ${(e as Error).message}`, true);
             onDone();
@@ -207,14 +207,14 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         }
         // el origen queda registrado (si no es la misma sesion) para dibujar la flecha A -> B
         const src = targetSession.session_id === from.session_id ? null : from.session_id;
-        const base = { kind: "at", from: src, to: targetSession.session_id, text: atText, at, ...(replace ? { replace: true } : {}) };
+        const base = { kind: "at" as const, from: src, to: targetSession.session_id, text: atText, at, ...(replace ? { replace: true } : {}) };
         try {
           if (every) {
             const fires = Math.min(50, Math.max(1, maxFires));
-            await api.post("/rules", { ...base, every_s: everySec, max_fires: fires, skip_busy: skipBusy });
+            await rulesApi.create({ ...base, every_s: everySec, max_fires: fires, skip_busy: skipBusy });
             toast(`Cada ${fmtEvery(everySec)} desde las ${hhmm} se manda "${atText}" a ${shortName(targetSession)} (hasta ${fires} ${fires === 1 ? "vez" : "veces"})`);
           } else {
-            await api.post("/rules", base);
+            await rulesApi.create(base);
             toast(`A las ${hhmm} se manda "${atText}" a ${shortName(targetSession)}`);
           }
         } catch (e) {

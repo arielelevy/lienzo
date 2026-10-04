@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { api } from "../api";
+import { rulesApi, sessionsApi } from "../api";
 import { canWrite, shortName } from "../names";
-import type { DigestResponse, Session } from "../types";
+import type { Session } from "../types";
 
 type Work = { from: string; name: string; text: string };
 let clipboard: Work | null = null;
@@ -29,7 +29,7 @@ export function useWorkClipboard(s: Session, pending: boolean, toast: (text: str
     if (!canCopy || copying) return;
     copying = true;
     try {
-      const d = await api.get<DigestResponse>(`/sessions/${s.session_id}/digest?n=5`);
+      const d = await sessionsApi.digest(s.session_id, 5);
       const turns = d.turns.map((t) => [
         `Pedido: ${t.prompt}`, ...(t.says || []), t.final,
         t.files.length ? `Archivos: ${t.files.join(", ")}` : "",
@@ -57,13 +57,13 @@ export function useWorkClipboard(s: Session, pending: boolean, toast: (text: str
     setBusy(true);
     try {
       // copycat: la copia hereda el título; stop_origin: la de origen recibe un Esc y queda "stopped"
-      const r = await api.post<{ interrupted?: boolean }>(`/sessions/${s.session_id}/send`, {
+      const r = await sessionsApi.send(s.session_id, {
         text: draft.text, from: draft.from, attachments: [], copycat: true, stop_origin: !duplicate,
       });
       let extra = "";
       if (duplicate) {
         try {
-          await api.post("/rules", { kind: "on_stop", from: s.session_id, to: draft.from, text: REPORT_TEMPLATE, max_fires: 1 });
+          await rulesApi.create({ kind: "on_stop", from: s.session_id, to: draft.from, text: REPORT_TEMPLATE, max_fires: 1 });
           extra = `; cuando termine, su informe va a ${draft.name}`;
         } catch (e) {
           extra = `; no se pudo conectar el informe de vuelta: ${(e as Error).message}`;

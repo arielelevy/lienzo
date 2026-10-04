@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ago, api, detail, failMsg } from "../api";
+import { ago, detail, failMsg, rulesApi, sessionsApi } from "../api";
 import { hhmm } from "../nl";
 import { canWrite, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
@@ -65,7 +65,7 @@ function useRename(s: Session, toast: ToastFn) {
     setEditing(false);
     if (!title || title === (s.title || "")) return;
     try {
-      await api.put(`/sessions/${s.session_id}/title`, { title });
+      await sessionsApi.title(s.session_id, title);
       toast("título guardado");
     } catch (e) {
       toast(failMsg("renombrar")(e), true);
@@ -422,19 +422,19 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const scheduleContinue = () =>
     limitAt &&
     act(async () => {
-      await api.post("/rules", { kind: "at", from: null, to: s.session_id, text: "Continuar", at: limitAt.toISOString() });
+      await rulesApi.create({ kind: "at", from: null, to: s.session_id, text: "Continuar", at: limitAt.toISOString() });
       return `A las ${hhmm(limitAt)} se le escribe "Continuar"`;
     }, failMsg("programar"));
   /** una opción del diálogo de la TUI: se teclea el número en su terminal, sin Enter */
   const pickDialog = (n: number, text: string) =>
     act(async () => {
-      await api.post(`/sessions/${s.session_id}/dialog`, { choice: n });
+      await sessionsApi.dialog(s.session_id, n);
       return `Elegido: ${text}`;
     }, failMsg("elegir"));
   /** el permiso que CODA pide en su terminal: Enter (Yes) o Esc, tecleado por el server */
   const codaDecide = (decision: "allow" | "deny") =>
     act(async () => {
-      await api.post(`/sessions/${s.session_id}/approve`, { decision });
+      await sessionsApi.approve(s.session_id, decision);
       return decision === "allow" ? "Permitido en su terminal" : "Denegado en su terminal";
     }, failMsg("contestar"));
   /** le avisa al agente que el humano autoriza lo que se le denego, para que lo reintente */
@@ -446,7 +446,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   };
   const quickSend = (text: string) =>
     act(async () => {
-      const r = await api.post<{ chars: number }>(`/sessions/${s.session_id}/send`, { text, attachments: [] });
+      const r = await sessionsApi.send(s.session_id, { text, attachments: [] });
       return `Enviado (${r.chars} caracteres)`;
     }, failMsg("enviar"));
   // estrella de coordinadora: a lo sumo una por repo; recibe los avisos "cuando termine" del
@@ -454,7 +454,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const toggleCoordinator = () => {
     const on = !s.coordinator;
     return act(async () => {
-      await api.put(`/sessions/${s.session_id}/coordinator`, { on });
+      await sessionsApi.coordinator(s.session_id, on);
       return on ? `${shortName(s)} es la coordinadora de ${s.repo}` : `${shortName(s)} ya no es la coordinadora`;
     }, failMsg());
   };
@@ -464,7 +464,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const togglePcCoordinator = () => {
     const on = !pcCoordinator;
     return act(async () => {
-      await api.put(`/sessions/${s.session_id}/coordinator`, on ? { on: true, scope: "pc" } : { on: false });
+      await sessionsApi.coordinator(s.session_id, on, "pc");
       return on ? `${shortName(s)} es la coordinadora de ${s.repo} en esta PC` : `${shortName(s)} ya no es la coordinadora de esta PC`;
     }, failMsg());
   };
@@ -474,7 +474,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const toggleStopped = () => {
     const on = !s.stopped_by;
     return act(async () => {
-      const r = await api.put<{ interrupted?: boolean; notified?: string[] }>(`/sessions/${s.session_id}/stopped`, { on });
+      const r = await sessionsApi.stopped(s.session_id, on);
       if (!on) return `${shortName(s)} habilitada: vuelve a recibir`;
       const avisadas = r.notified?.length ? `; avisadas: ${r.notified.join(", ")}` : "; sin conectadas a quien avisar";
       return `${shortName(s)} detenida${r.interrupted ? " (Esc en su terminal)" : ""}${avisadas}`;

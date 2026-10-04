@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api";
+import { api, rulesApi, sessionsApi } from "../api";
 import { AGENTS } from "../agents";
 import { coordinatorOf } from "../nl";
-import type { Rule, Session } from "../types";
+import type { Session } from "../types";
 import { canWrite, needsPiReload, REPLY_TEMPLATE, shortName } from "../names";
 import { useLocalFlag } from "../hooks/useLocalFlag";
 import "../card.css";
@@ -43,11 +43,11 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     try {
       // el agente contesta varias veces (informe, aclaraciones): la regla se repite, con tope. Si ya
       // hay una activa hacia la coordinadora (de esta casilla o de Conectar), no se crea otra
-      const active = (await api.get<Rule[]>("/rules")).some(
+      const active = (await rulesApi.list()).some(
         (r) => r.enabled && r.kind === "on_stop" && r.from === s.session_id && r.to === me.session_id,
       );
       if (active) return;
-      await api.post("/rules", { kind: "on_stop", from: s.session_id, to: me.session_id, text: REPLY_TEMPLATE, repeat: true, max_fires: 20 });
+      await rulesApi.create({ kind: "on_stop", from: s.session_id, to: me.session_id, text: REPLY_TEMPLATE, repeat: true, max_fires: 20 });
       toast(`Cuando ${shortName(s)} termine, su respuesta va a ${shortName(me)}`);
     } catch (e) {
       // 409: ya existe esa regla, o la inversa (seria un bucle). El envio ya se hizo; se avisa y listo
@@ -93,7 +93,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     if (s.typing && !confirm("Están tipeando en esa terminal; lo que mandes se mezcla con lo que escriben. Enviar igual?")) return;
     setBusy(true);
     try {
-      const r = await api.post<{ chars: number }>(`/sessions/${s.session_id}/send`, { text: t, attachments });
+      const r = await sessionsApi.send(s.session_id, { text: t, attachments });
       toast(`Enviado (${r.chars} caracteres)`);
       setText("");
       setAttachments([]);

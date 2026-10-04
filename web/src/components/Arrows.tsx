@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ago, api } from "../api";
+import { ago, rulesApi, sessionsApi, type RuleEdit } from "../api";
 import { everySeconds, hhmm, nextAt, splitEvery, type EveryUnit } from "../nl";
 import { canWrite, periodLabel, shortName, whenLabel } from "../names";
 import { GLYPH_HIT, computeSegs, laneHeight, type Band, type Rect, type Seg } from "../arrows-geometry";
@@ -214,7 +214,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   );
   const saveEdit = async () => {
     if (!edit) return;
-    const body: Record<string, unknown> = { text: edit.text };
+    const body: RuleEdit = { text: edit.text };
     if (edit.kind === "at") {
       const m = edit.time.trim().match(/^(\d{1,2}):(\d{2})$/);
       if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) {
@@ -232,7 +232,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     }
     setSaving(true);
     try {
-      await api.put(`/rules/${edit.id}`, body);
+      await rulesApi.update(edit.id, body);
       toast?.(
         edit.kind !== "at"
           ? "Conexión guardada"
@@ -274,7 +274,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     if (!view || !viewLinks[0]) return;
     setResending(true);
     try {
-      const r = await api.post<{ chars: number }>(`/sessions/${view.to}/send`, { text: viewLinks[0].text, attachments: [] });
+      const r = await sessionsApi.send(view.to, { text: viewLinks[0].text, attachments: [] });
       toast?.(`Reenviado a ${nameOf(view.to)} (${r.chars} caracteres)`);
       setView(null);
     } catch (e) {

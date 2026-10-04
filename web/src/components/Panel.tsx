@@ -1,5 +1,5 @@
 import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
-import { ago, api, detail, isMissingRoute } from "../api";
+import { ago, detail, isMissingRoute, rulesApi, sessionsApi, type ScreenResponse } from "../api";
 import { hhmm } from "../nl";
 import { isFree, needsPiReload, periodLabel, schedLabel, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
@@ -174,11 +174,10 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
   // el pendiente puede ser una pregunta con opciones y no un permiso: ahi van las opciones
   const preguntas = askQuestions(pending);
   const [tab, setTab] = useState<"digest" | "screen" | "conn">("digest");
-  type Screen = { ok: boolean; lines?: string[]; cols?: number; error?: string };
-  const [screen, setScreen] = useState<Screen | null>(null);
+  const [screen, setScreen] = useState<ScreenResponse | null>(null);
   // devuelve el resultado en vez de setearlo: el efecto decide si todavia aplica (cancelled)
-  const fetchScreen = useCallback((): Promise<Screen> =>
-    api.get<Screen>(`/sessions/${s.session_id}/screen`).catch((e) => ({ ok: false, error: (e as Error).message })),
+  const fetchScreen = useCallback((): Promise<ScreenResponse> =>
+    sessionsApi.screen(s.session_id).catch((e) => ({ ok: false, error: (e as Error).message })),
   [s.session_id]);
   // conexiones de la sesion: alimentan la pestana Conexiones y la fila de programadas del
   // encabezado. Las reglas llegan por SSE al App pero el Panel no las recibe: se piden a
@@ -190,8 +189,8 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
   useEffect(() => {
     let cancelled = false;
     const load = () =>
-      api
-        .get<ConnectionsResponse>(`/sessions/${s.session_id}/connections`)
+      sessionsApi
+        .connections(s.session_id)
         .then((c) => !cancelled && setConn(c))
         .catch((e) => {
           if (cancelled) return;
@@ -211,7 +210,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
   const dropSched = async (r: ConnectionRule) => {
     if (!confirm("Quitar esta programación?")) return;
     try {
-      await api.del(`/rules/${r.id}`);
+      await rulesApi.remove(r.id);
       toast("programación quitada");
     } catch (e) {
       toast(`No se pudo quitar: ${(e as Error).message}`, true);
@@ -267,7 +266,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
           return;
         }
         if (tab === "conn") return; // ya cargado por el efecto de conexiones
-        const d = await api.get<DigestResponse>(`/sessions/${s.session_id}/digest?n=10`);
+        const d = await sessionsApi.digest(s.session_id, 10);
         if (!cancelled) {
           setDigest(d);
           setNote(d.note ?? null);

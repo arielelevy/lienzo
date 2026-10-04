@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { sessionsApi } from "../api";
 import { shortName } from "../names";
 import type { Session } from "../types";
 
@@ -72,14 +72,14 @@ export function SelectionBar({ sids, sessions, onClear, visibleToMark, onMarkVis
   const send = async () => {
     const t = text.trim();
     if (!t || busy) return;
-    const todas = await run("Envío", (sid) => api.post(`/sessions/${sid}/send`, { text: t, attachments: [] }));
+    const todas = await run("Envío", (sid) => sessionsApi.send(sid, { text: t, attachments: [] }));
     if (todas) {
       setText("");
       setComposing(false);
     }
   };
   const interrupt = () => {
-    if (!busy) void run("Interrupción", (sid) => api.post(`/sessions/${sid}/interrupt`, {}));
+    if (!busy) void run("Interrupción", (sid) => sessionsApi.interrupt(sid));
   };
 
   const n = sids.length;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, isMissingRoute, type AuthInfo } from "./api";
+import { api, isMissingRoute, pendingApi, rulesApi, sessionsApi, type AuthInfo } from "./api";
 import { Board, colOf, norm, passesFilters } from "./components/Board";
 import { allAgents } from "./agents";
 import { canWrite, hasConsole, shortName, toggled } from "./names";
@@ -311,7 +311,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const decide = useCallback(
     async (requestId: string, decision: "allow" | "deny") => {
       try {
-        await api.post(`/pending/${requestId}`, { decision });
+        await pendingApi.decide(requestId, decision);
         toast(decision === "allow" ? "Permitido" : "Denegado");
       } catch (e) {
         toast(`No se pudo: ${(e as Error).message}`, true);
@@ -325,7 +325,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const answer = useCallback(
     async (requestId: string, answers: Record<string, string>) => {
       try {
-        await api.post(`/pending/${requestId}`, { decision: "allow", answers });
+        await pendingApi.answer(requestId, answers);
         toast(`Contestado: ${Object.values(answers).join(" · ")}`);
       } catch (e) {
         toast(`No se pudo contestar: ${(e as Error).message}`, true);
@@ -338,7 +338,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     async (sid: string) => {
       if (!confirm("Quitar la tarjeta? No toca la sesión.")) return;
       try {
-        await api.del(`/sessions/${sid}`);
+        await sessionsApi.remove(sid);
       } catch (e) {
         toast((e as Error).message, true);
       }
@@ -357,7 +357,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
 
   // estables: Board los usa como dependencias de listeners de document
   const deleteLink = useCallback((id: string) => api.del(`/links/${id}`).catch((e) => toast((e as Error).message, true)), [toast]);
-  const deleteRule = useCallback((id: string) => api.del(`/rules/${id}`).catch((e) => toast((e as Error).message, true)), [toast]);
+  const deleteRule = useCallback((id: string) => rulesApi.remove(id).catch((e) => toast((e as Error).message, true)), [toast]);
   const connectCards = useCallback((from: string, to: string) => setConnect({ from, to }), []);
 
   const sel = selected ? sessions[selected] : null;
