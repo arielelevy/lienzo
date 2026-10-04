@@ -148,3 +148,29 @@ test("F9: a una sesión detenida no se le ofrece «Mandar de nuevo»", async ({ 
   await expect(page.getByRole("button", { name: "Mandar de nuevo" })).toBeDisabled();
   await expect(page.getByText(/El destino está detenido/)).toBeVisible();
 });
+
+test("F10: si de las dos reglas «cuando termine» falla la segunda, se avisa el éxito a medias y se cierra", async ({ page }) => {
+  await abrirTablero(page);
+  const reglas: Record<string, unknown>[] = [];
+  await page.route("**/rules", (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    reglas.push(route.request().postDataJSON());
+    return route.fulfill(reglas.length === 1 ? json(200, { id: "r-a" }) : json(409, { error: "esa conexión ya existe" }));
+  });
+  // Alt + arrastre de Flechas (lienzo) a Motor de reglas: la coordinadora de lienzo es la otra punta del "avisarme"
+  const desde = await page.locator(`.card[data-sid="${SID.flechas}"] .title`).boundingBox();
+  const hasta = await page.locator(`.card[data-sid="${SID.reglas}"]`).boundingBox();
+  await page.keyboard.down("Alt");
+  await page.mouse.move(desde!.x + desde!.width / 2, desde!.y + desde!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hasta!.x + hasta!.width / 2, hasta!.y + hasta!.height / 2, { steps: 10 });
+  await page.mouse.up();
+  await page.keyboard.up("Alt");
+  const fwd = page.locator(".fwd");
+  await fwd.getByRole("radio", { name: /Cuando lienzo termine/ }).check();
+  await fwd.getByRole("checkbox", { name: /avisarme también acá/ }).check();
+  await fwd.getByRole("button", { name: "Conectar" }).click();
+  await expect(page.getByText(/su respuesta va a teorema · Motor de reglas; a lienzo · Coordinadora del lienzo no: esa conexión ya existe/)).toBeVisible();
+  await expect(fwd).toHaveCount(0);
+  expect(reglas.map((r) => r.to)).toEqual([SID.reglas, SID.coordinadora]);
+});

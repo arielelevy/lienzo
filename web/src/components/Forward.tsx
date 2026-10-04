@@ -187,7 +187,18 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         const rule = { kind: "on_stop", from: from.session_id, text: template, repeat, max_fires: repeat ? maxFires : 1 };
         await api.post("/rules", { ...rule, to: targetSession.session_id });
         const alsoMe = notifyMe && me && me.session_id !== targetSession.session_id ? me : null;
-        if (alsoMe) await api.post("/rules", { ...rule, to: alsoMe.session_id });
+        if (alsoMe) {
+          // la primera regla ya quedo creada: si la segunda falla es un exito a medias, no una
+          // falla. Antes iba al catch de afuera, el dialogo se quedaba abierto con "No se pudo" y
+          // reintentar chocaba con la primera (409) o la duplicaba
+          try {
+            await api.post("/rules", { ...rule, to: alsoMe.session_id });
+          } catch (e) {
+            toast(`Cuando ${shortName(from)} termine, su respuesta va a ${shortName(targetSession)}; a ${shortName(alsoMe)} no: ${(e as Error).message}`, true);
+            onDone();
+            return;
+          }
+        }
         toast(`Cuando ${shortName(from)} termine, su respuesta va a ${shortName(targetSession)}${alsoMe ? ` y a ${shortName(alsoMe)}` : ""}`);
       } else {
         const at = nextTimeIso(hhmm);
