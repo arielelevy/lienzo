@@ -110,6 +110,9 @@ devuelve `{ok, code, motivo, sid}` y hace lo que a mano se olvida:
   de reenviar;
 - un comando con barra (`/clear`, `/model`) a una tarjeta `corriendo` no se manda (409): en una
   consola ocupada queda encolado y se pierde. Si se sabe que está quieta, usar `enviar`;
+- **409 con `dialog_open`**: la tarjeta muestra un diálogo (el de confianza de Claude en una carpeta
+  nueva, por ejemplo) y lo tecleado lo contestaría. Ese diálogo lo decide el humano: avisale, no lo
+  aceptes vos ni lo esquives;
 - **404 con `gone`**: la otra PC ya no tiene esa tarjeta (la reinició, cerró la consola). El server
   la saca del tablero solo; con `proyecto` y `letra` se busca el frente por nombre **en esa misma
   PC** y se manda al id nuevo. Sin esos dos no adivina;
@@ -430,8 +433,12 @@ Nunca pegues un token en un mensaje: queda en claro en los adjuntos y en los tra
 PC pueda pushear, `c.pasar_credencial_git(pc, "https://host/repo.git")` copia la credencial que ESTA PC
 ya tiene guardada: viaja cifrada y la otra la guarda en su almacén de Windows, sin pasar por vos. Para
 otro secreto: `c.enviar_secreto(pc, nombre, valor)` (queda 10 min) y `c.leer_secreto(id, pc=pc)` (una
-sola vez, desde cualquier PC de la LAN). Si `/peers` muestra `git_auth: vencida` en una PC, arreglalo
-antes de mandar un encargo que termine en push.
+sola vez, desde cualquier PC de la LAN). `git_auth` en `/peers` dice por qué falla: `vencida` (la credencial: pasala con
+`pasar_credencial_git`), `sin_red` (no llega al host) o `timeout` (git no terminó): en esos dos, pasar
+otra credencial no arregla nada. Arreglalo antes de mandar un encargo que termine en push.
+
+La salud también trae `cuotas` por agente (`ok`, `agotada`, «agotada hasta HH:MM»). Lanzar una coda en
+una PC con la cuota agotada da 409: lanzala en otra PC o usá otro agente.
 
 ## Qué hace la coordinadora cuando llega un informe
 

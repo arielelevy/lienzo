@@ -51,26 +51,15 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-04 | **`propose_policy` de coda se ve como permiso**: esa herramienta abre «Approval Required» sin dejar un `ask` en el log; ahora el `PreToolUse` pone la tarjeta en «te necesita» con Permitir/Denegar (y el auto-aprobar la toma), y la próxima herramienta la libera | reporte de la coordinadora: una coda de la otra PC quedó esperando la aprobación de una regla y la tarjeta seguía en «corriendo» |
 | 2026-10-04 | **Refactor, ola 1** (plan del 2026-10-04, ahora en esta bitácora): 4 revisiones de diseño, 2 adversariales y 50 commits de 4 agentes: sin errores silenciados en hilos y archivos, concurrencia bajo el lock, aprobador endurecido, `subproc.correr`, cuerpo sin leer antes del login, espejo que no se congela, SPAKE2 en el emparejamiento | pedido de Ariel: código refactorizado, sin errores silenciados, con patrones que apliquen |
 | 2026-10-04 | **Permisos de coda que nadie veía**: (1) con auto-aprobar prendido, el hook `PreToolUse` de coda (ahora sincrónico) contesta `allow` y el cartel ni aparece; (2) si igual aparece, una coda «corriendo» quieta 8 s tiene su pantalla mirada (cada 10 s como mucho) y, con el cartel, pasa a «te necesita» con el comando; (3) el `ask` del log se ve aunque el inicio del turno quede fuera de la ventana | dos codas de la otra PC esperaron una hora un `npm run build` sin que el tablero ni el auto-aprobar lo vieran |
+| 2026-10-04 | **Refactor, ola 2**: acciones de tarjeta en una tabla compartida por `Handler` y `PeerHandler` (con prueba de paridad antes), registro de agentes en `agentes.py`, `CacheEnSegundoPlano` y una sola escritura atómica (`atomico.py`), cliente de API tipado, `<CardNeeds>` y `useCardActions`, `rules_api.py`, `JsonHandler` y `tarjeta_texto.py`; además `hook.py` anota un `config.json` corrupto en vez de callarse | el plan del 2026-10-04 completo; la suite sigue verde |
+| 2026-10-04 | **Reinicio explícito**: `POST /restart` y `coordinar.reiniciar(pc)`; el server ya no se reinicia solo al cambiar un `.py` (salvo `auto_reload: true`) | se reiniciaba en medio del trabajo de los agentes: 503, capturas y pruebas cortadas (pedido de Ariel) |
+| 2026-10-04 | **Bugs 1 a 4 del gestor**: la tarjeta real hereda el título de la provisoria; el 503 entre PCs dice el motivo (timeout, corte, reiniciando); `lanzar_y_titular` arreglado; el diálogo de confianza de Claude se reconoce, pasa la tarjeta a «te necesita» y `/send` contesta 409 `dialog_open` (lo decide el humano, nadie lo acepta solo) | informes del gestor en nombre de Ariel |
+| 2026-10-04 | **Cuota de agentes en la salud** (mejora 5): `cuotas` por agente; coda por el último error 154 de su log contra el último consumo de `coda.db` (sin gastar tokens), Claude/Codex/Pi por el `limit_until` de sus tarjetas; lanzar una coda sin cuota da 409 y la tarjeta dice «sin cuota» en vez de «terminó» | en una PC toda corrida de coda daba «Quota exceeded» y el tablero no lo mostraba |
+| 2026-10-04 | **`pasar_credencial_git` vuelve a andar** (bug 6): `git credential fill` prueba con `path=` antes que solo el host | el GCM con OAuth genérico quería abrir una ventana de login y el pedido daba 404 |
 | 2026-10-04 | **Credencial de git aparte en la tira, en violeta**: el chequeo distingue `vencida` (401/403), `sin_red`, `timeout` y `error`, y la tira muestra cada motivo con su host fuera de la alerta roja | el aviso de git en rojo se confundía con memoria y temperatura, y «error» para todo no decía si había que pasar otra credencial o mirar la red (pedido de Ariel, mejora 7) |
 
 ## Pendiente (con evidencia)
 
-- **Refactor, ola 2** (del plan del 2026-10-04, revisado por dos revisiones adversariales; la ola 1 ya
-  está en «Hecho»): (1) acciones de tarjeta en una tabla que usan `Handler` y `PeerHandler` (send,
-  approve, dialog, title, stopped, coordinator, pending, launch, retarget), en cuatro commits y con una
-  prueba de paridad antes, orden validar → ubicar → ejecutar o reenviar; (2) registro de agentes con
-  los DATOS (exe, retomar, modelo, parser) en `agentes.py` y error explícito ante un agente
-  desconocido (hoy cae a `parse_claude` sin aviso); las ramas de comportamiento quedan con su nombre;
-  antes, mover las `guess_*` de sessions a un módulo hoja; (3) `CacheEnSegundoPlano` para las dos
-  cachés de health y `_io.atomic_write` (la de auth no tiene el reintento de Windows); (4) front:
-  cliente de API tipado (los cuerpos de `/send` y `/rules` sin tipo hoy) y `<CardNeeds>` para achicar
-  `Card.tsx`; (5) partir `server.py` (la lógica de reglas a `rules_api.py`, una base `JsonHandler`) y
-  de `sessions.py` solo lo puro (`tarjeta_texto.py`) y las referencias (`referencias.py`), moviendo
-  los `monkeypatch` de las pruebas en un commit aparte. Descartados: Strategy para la política del
-  aprobador (es una funcionalidad nueva), helper de turnos para los parsers, contexto de acciones en
-  el front (sin medición).
-- **hook.py se traga un `config.json` corrupto** (`load_config` devuelve `{}`): el resto ya aparta el
-  archivo con aviso; hook.py lo duplica a propósito (arranca en cada evento) y quedó afuera.
 - **Pruebas que conviene escribir** (salieron de la revisión adversarial): matriz de autenticación
   por ruta para el túnel, paridad entre `Handler` y `PeerHandler`, el contrato de los 404
   (`unknown_session` contra ruta desconocida) y referencias (golden) por agente en los parsers.
