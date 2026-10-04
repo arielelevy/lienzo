@@ -618,6 +618,87 @@ def test_on_stop_libera_la_reserva_si_el_envio_revienta(reglas, monkeypatch):
 
     monkeypatch.setattr(rl, "fire_rule", envio_roto)
     for _ in range(2):
-        with pytest.raises(RuntimeError):
-            rl.fire_on_stop(ORIGEN)
+        rl.fire_on_stop(ORIGEN)  # la excepcion va al log (1.1), no corta nada
     assert disparos == ["r1", "r1"]  # sin last_fired no hay enfriamiento: la reserva no queda colgada
+
+
+# --- 1.1 (parte rules): una regla que revienta no se lleva puestas a las demas ni queda muda -----
+
+
+def _dos_reglas(st, kind="on_stop"):
+    base = {"kind": kind, "from": ORIGEN, "text": "x", "enabled": True, "repeat": True}
+    r1 = {**base, "id": "r1", "to": OTRA}
+    r2 = {**base, "id": "r2", "to": "30000000-0000-4000-8000-000000000003"}
+    st.rules.items.extend([r1, r2])
+    return r1, r2
+
+
+def test_on_stop_una_regla_que_revienta_no_corta_las_demas(reglas, monkeypatch, log_capturado):
+    import sessions as ses
+
+    rl, st, _ = reglas
+    monkeypatch.setattr(ses, "mirror", None)
+    st.sessions[ORIGEN] = ses.new_session(ORIGEN, "claude", "hook")
+    _dos_reglas(st)
+    disparos = []
+
+    def fire(regla):
+        disparos.append(regla["id"])
+        if regla["id"] == "r1":
+            raise RuntimeError("se cayo r1")
+
+    monkeypatch.setattr(rl, "fire_rule", fire)
+    rl.fire_on_stop(ORIGEN)
+    assert disparos == ["r1", "r2"]
+    assert any("Traceback" in m and "se cayo r1" in m for m in log_capturado)
+
+
+def test_aviso_muerta_un_destino_que_revienta_no_corta_los_demas(reglas, monkeypatch, log_capturado):
+    import sessions as ses
+
+    rl, st, _ = reglas
+    monkeypatch.setattr(ses, "mirror", None)
+    st.sessions[ORIGEN] = ses.new_session(ORIGEN, "claude", "hook")
+    r1, r2 = _dos_reglas(st)
+    for r in (r1, r2):
+        st.sessions[r["to"]] = ses.new_session(r["to"], "claude", "hook")
+    enviados = []
+
+    def send(dst, texto, adjuntos):
+        enviados.append(dst["session_id"])
+        if dst["session_id"] == OTRA:
+            raise RuntimeError("consola rota")
+        return 200, {}
+
+    monkeypatch.setattr(rl, "send_to_session", send)
+    rl.aviso_muerta(ORIGEN, "corriendo")
+    assert sorted(enviados) == sorted([r1["to"], r2["to"]])
+    assert any("Traceback" in m and "consola rota" in m for m in log_capturado)
+
+
+def test_rules_loop_una_regla_que_revienta_no_corta_las_demas(reglas, monkeypatch, log_capturado):
+    rl, st, _ = reglas
+    r1, r2 = _dos_reglas(st, kind="at")
+    for r in (r1, r2):
+        r["at"] = st.now()
+    disparos = []
+
+    def fire(regla):
+        disparos.append(regla["id"])
+        if regla["id"] == "r1":
+            raise RuntimeError("se cayo r1")
+
+    class _Fin(BaseException):
+        pass
+
+    def dormir(s):
+        raise _Fin
+
+    monkeypatch.setattr(rl, "fire_rule", fire)
+    import types
+
+    monkeypatch.setattr(rl, "time", types.SimpleNamespace(sleep=dormir))  # no el time.sleep de todos
+    with pytest.raises(_Fin):
+        rl.rules_loop()
+    assert disparos == ["r1", "r2"]
+    assert any("se cayo r1" in m for m in log_capturado)

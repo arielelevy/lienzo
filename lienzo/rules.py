@@ -472,6 +472,10 @@ def fire_on_stop(sid: str) -> None:
     for r in due:
         try:
             fire_rule(r)
+        except Exception:
+            # una regla rota no se lleva puestas a las demas del mismo Stop, y queda en el log
+            # (sessions.en_hilo atraparia la primera, pero cortando el resto; plan 1.1)
+            state.log(f"on_stop de {sid[:8]}, regla {r['id']}:\n{traceback.format_exc()}")
         finally:
             with lock:
                 _on_stop_en_vuelo.discard(r["id"])
@@ -498,10 +502,16 @@ def aviso_muerta(sid: str, prev: str) -> None:
         " y pedile que retome."
     )
     for to in destinos:
-        dst = find_session(to)
-        if dst is None:
+        try:
+            dst = find_session(to)
+            if dst is None:
+                state.log(f"aviso de muerte de {sid[:8]} -> {to[:8]}: el destino no se ve, no se avisa")
+                continue
+            code, res = send_to_session(dst, texto, [])
+        except Exception:
+            # un destino roto no deja sin aviso a los demas, y queda en el log (plan 1.1)
+            state.log(f"aviso de muerte de {sid[:8]} -> {to[:8]}:\n{traceback.format_exc()}")
             continue
-        code, res = send_to_session(dst, texto, [])
         state.log(f"aviso de muerte de {sid[:8]} -> {to[:8]}: {'ok' if code == 200 else res.get('error')}")
 
 
@@ -521,7 +531,12 @@ def rules_loop() -> None:
                     elif at <= t:
                         due.append(r)
             for r in due:
-                fire_rule(r)
+                try:
+                    fire_rule(r)
+                except Exception:
+                    # una regla rota no frena a las demas vencidas (antes cortaba la pasada entera,
+                    # y en cada vuelta otra vez, si la rota seguia vencida)
+                    state.log(f"regla {r.get('id')}:\n{traceback.format_exc()}")
         except Exception:
             state.log(traceback.format_exc())
         time.sleep(5)
