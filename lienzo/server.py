@@ -751,7 +751,7 @@ def huella_de_pantalla(lineas: list[str]) -> str | None:
 
 
 def aprobar_coda(s: dict, d: dict) -> tuple[int, dict]:
-    """POST /sessions/<id>/approve, local o pedido por otra PC. `d` ya trae decision valida.
+    """POST /sessions/<id>/approve, local o pedido por otra PC. `d` ya paso validar_approve.
 
     Con `expect` (sha256 hex del comando visible compacto, ver pantalla_coda.huella) se lee la
     pantalla y solo se teclea si el cartel sigue mostrando ESE comando; si no, 409. Antes el
@@ -763,9 +763,7 @@ def aprobar_coda(s: dict, d: dict) -> tuple[int, dict]:
     (que vuelve a leer la pantalla) el cartel todavia puede cambiar. Cerrarla del todo pide que
     la misma lectura que confirma el dialogo sea la que se compara, adentro de sessions."""
     expect = d.get("expect")
-    if expect is not None:
-        if not isinstance(expect, str) or not re.fullmatch(r"[0-9a-f]{64}", expect):
-            return 400, {"error": "expect debe ser el sha256 hex del comando"}
+    if expect is not None:  # su forma ya la miro validar_approve
         if not s.get("pid") or s.get("orphan"):
             return 409, {"ok": False, "error": "sin consola que leer"}
         actual = huella_de_pantalla(read_screen(s).get("lines") or [])
@@ -1106,6 +1104,83 @@ def accion_coordinator(s: dict, d: dict) -> tuple[int, dict]:
     return 200, {"ok": True, "coordinator": bool(s.get("coordinator"))}
 
 
+def validar_send(d: dict) -> tuple[int, dict] | None:
+    text, attachments = d.get("text", ""), d.get("attachments") or []
+    if (
+        not isinstance(text, str)
+        or not isinstance(attachments, list)
+        or any(not isinstance(a, str) for a in attachments)
+    ):
+        return _rechazo("text debe ser texto y attachments una lista de rutas")
+    return None
+
+
+def validar_decision(d: dict) -> tuple[int, dict] | None:
+    """approve y /pending: allow o deny."""
+    return None if d.get("decision") in ("allow", "deny") else _rechazo("decision debe ser allow o deny")
+
+
+def validar_approve(d: dict) -> tuple[int, dict] | None:
+    """La decision y, si viene, la forma de `expect` (la huella se compara en aprobar_coda, con la
+    pantalla delante)."""
+    rechazo = validar_decision(d)
+    if rechazo is not None:
+        return rechazo
+    expect = d.get("expect")
+    if expect is not None and (not isinstance(expect, str) or not re.fullmatch(r"[0-9a-f]{64}", expect)):
+        return _rechazo("expect debe ser el sha256 hex del comando")
+    return None
+
+
+def validar_dialog(d: dict) -> tuple[int, dict] | None:
+    choice = d.get("choice")
+    ok = isinstance(choice, int) and not isinstance(choice, bool)
+    return None if ok else _rechazo("choice debe ser el numero de la opcion")
+
+
+def sin_validar(d: dict) -> None:
+    return None
+
+
+def accion_send(s: dict, d: dict) -> tuple[int, dict]:
+    """POST /sessions/<id>/send: inyecta el texto en la consola. La flecha y copycat son del
+    tablero (envio_del_tablero): la PC duena solo teclea."""
+    return send_to_session(s, d.get("text", ""), d.get("attachments") or [])
+
+
+def accion_interrupt(s: dict, d: dict) -> tuple[int, dict]:
+    return interrupt_session(s)
+
+
+def accion_approve(s: dict, d: dict) -> tuple[int, dict]:
+    return aprobar_coda(s, d)
+
+
+def accion_dialog(s: dict, d: dict) -> tuple[int, dict]:
+    return answer_dialog(s, d["choice"])
+
+
+def canal_nativo_local(d: dict) -> tuple[int, dict] | None:
+    """Antes de teclear un envio del tablero en una tarjeta local: el canal nativo (Claude a Claude
+    por SendMessage) no cruza PCs. ListAgents es de la propia maquina y no hay forma de resolver un
+    nombre corto contra una sesion remota."""
+    if d.get("native"):
+        otro = d.get("link_to") or d.get("from")
+        if otro and mirror.MIRROR.owner_of(otro) is not None:
+            return 409, {"error": "el canal nativo no cruza PCs"}
+    return None
+
+
+def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
+    """Despues de un envio del tablero que entro (200), local o reenviado: la flecha la deja la PC
+    que envia, porque la duena no sabe de from/link_to (revision 2026-10-04, 0.11). Pegar trabajo
+    (copycat) solo con las dos tarjetas aca: hand_over necesita la de destino local."""
+    src_s = registrar_envio(sid, d)
+    if s is not None and src_s is not None and d.get("copycat") is True:
+        # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
+        res.update(hand_over(s, src_s, stop=d.get("stop_origin") is not False))
+
+
 @dataclass(frozen=True)
 class AccionSesion:
     """Una accion sobre una tarjeta: `/sessions/<id>/<nombre>` en el tablero y
@@ -1114,41 +1189,59 @@ class AccionSesion:
     `validar(d)` da el rechazo (codigo, cuerpo) o None; `ejecutar(s, d)` es `accion_<nombre>`,
     sobre la tarjeta local y con `d` ya validado; `reenvio(d)` es el cuerpo que viaja a la PC duena
     (el formato de /peer/*, que no cambia); `cuerpo` dice como se lee el pedido: "json", "nada"
-    (no se lee) o "adjunto" (crudo al tablero, en base64 entre PCs: ver los dos decodificadores)."""
+    (no se lee) o "adjunto" (crudo al tablero, en base64 entre PCs: ver los dos decodificadores);
+    `antes_local_tablero` y `despues_tablero` son lo que solo hace el tablero."""
 
     validar: Callable[[dict], tuple[int, dict] | None]
     ejecutar: Callable[[dict, dict], tuple[int, dict]]
     reenvio: Callable[[dict], dict] = dict
     cuerpo: str = "json"
+    # solo cuando lo pide el tablero: un rechazo antes de ejecutar en una tarjeta local, y lo que
+    # se hace despues de un 200 (local o reenviado). Hoy, el canal nativo, la flecha y copycat.
+    antes_local_tablero: Callable[[dict], tuple[int, dict] | None] | None = None
+    despues_tablero: Callable[[str, dict | None, dict, dict], None] | None = None
 
 
 ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
+    ("POST", "send"): AccionSesion(
+        validar_send, accion_send, antes_local_tablero=canal_nativo_local, despues_tablero=envio_del_tablero
+    ),
+    ("POST", "interrupt"): AccionSesion(sin_validar, accion_interrupt, reenvio=lambda d: {}, cuerpo="nada"),
+    ("POST", "approve"): AccionSesion(validar_approve, accion_approve),
+    ("POST", "dialog"): AccionSesion(validar_dialog, accion_dialog),
     ("PUT", "title"): AccionSesion(validar_title, accion_title, reenvio=lambda d: {"title": d.get("title")}),
     ("PUT", "stopped"): AccionSesion(validar_on, accion_stopped, reenvio=lambda d: {"on": d["on"]}),
     ("PUT", "coordinator"): AccionSesion(validar_on, accion_coordinator),
 }
 
 
-def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, reenviar: bool) -> tuple[int, dict]:
+def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     """La accion `nombre` sobre la tarjeta `sid`, con el cuerpo ya decodificado, en el orden fijo:
-    validar -> ubicar -> ejecutar o reenviar. Con `reenviar` (el tablero) una tarjeta de otra PC se
-    le pide a su duena; sin el (lo que pide otra PC) solo vale la tarjeta local: reenviar de nuevo
-    armaria rebotes en una malla de 3+ PCs."""
+    validar -> ubicar -> ejecutar o reenviar. Desde el tablero una tarjeta de otra PC se le pide a
+    su duena, y corren los pasos propios del tablero; lo que pide otra PC solo vale para la tarjeta
+    local: reenviar de nuevo armaria rebotes en una malla de 3+ PCs."""
     a = ACCIONES_SESION[(metodo, nombre)]
     rechazo = a.validar(d)
     if rechazo is not None:
         return rechazo
-    if reenviar:
+    if desde_tablero:
         s, owner = _route_session(sid)
     else:
         with lock:
             s = sessions.get(sid)
         owner = None
     if owner is not None:
-        return mirror.MIRROR.forward(owner, metodo, f"/sessions/{sid}/{nombre}", a.reenvio(d))
-    if s is None:
+        code, res = mirror.MIRROR.forward(owner, metodo, f"/sessions/{sid}/{nombre}", a.reenvio(d))
+    elif s is None:
         return 404, no_session()
-    return a.ejecutar(s, d)
+    else:
+        rechazo = a.antes_local_tablero(d) if desde_tablero and a.antes_local_tablero else None
+        if rechazo is not None:
+            return rechazo
+        code, res = a.ejecutar(s, d)
+    if desde_tablero and a.despues_tablero and code == 200:
+        a.despues_tablero(sid, s, d, res)
+    return code, res
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1529,61 +1622,26 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(code, res)
                 code, res = answer_pending(parts[1], d["decision"], d.get("reason", ""), d.get("answers"))
                 return self._json(code, res)
-            if len(parts) == 3 and parts[0] == "sessions":
-                sid, action = parts[1], parts[2]
-                if action not in ("send", "interrupt", "approve", "dialog", "attach"):
-                    return self._json(404, {"error": "ruta desconocida"})
+            if len(parts) == 3 and parts[0] == "sessions" and ("POST", parts[2]) in ACCIONES_SESION:
+                return self._accion_sesion("POST", parts[1], parts[2])
+            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "attach":
+                sid = parts[1]
                 s, owner = _route_session(sid)
                 if s is None and owner is None:
                     return self._json(404, no_session())
+                name = urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin")
+                if not self.raw:
+                    return self._json(400, {"error": "cuerpo vacio"})
                 if owner is not None:
-                    return self._forward_session_post(owner, sid, action)
-                if action == "send":
-                    return self._send(s)
-                if action == "interrupt":
-                    code, res = interrupt_session(s)
+                    # attach viaja como base64 adentro del JSON: no hay transporte binario entre PCs
+                    body = {"filename": name, "data_b64": base64.b64encode(self.raw).decode("ascii")}
+                    code, res = mirror.MIRROR.forward(owner, "POST", f"/sessions/{sid}/attach", body)
                     return self._json(code, res)
-                if action == "approve":
-                    d = self._json_body()
-                    if d.get("decision") not in ("allow", "deny"):
-                        return self._json(400, {"error": "decision debe ser allow o deny"})
-                    code, res = aprobar_coda(s, d)
-                    return self._json(code, res)
-                if action == "dialog":
-                    d = self._json_body()
-                    if not isinstance(d.get("choice"), int) or isinstance(d.get("choice"), bool):
-                        return self._json(400, {"error": "choice debe ser el numero de la opcion"})
-                    code, res = answer_dialog(s, d["choice"])
-                    return self._json(code, res)
-                if action == "attach":
-                    name = urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin")
-                    data = self.raw
-                    if not data:
-                        return self._json(400, {"error": "cuerpo vacio"})
-                    path = save_attachment(s["session_id"], name, data)
-                    return self._json(200, {"path": path, "bytes": len(data)})
+                path = save_attachment(s["session_id"], name, self.raw)
+                return self._json(200, {"path": path, "bytes": len(self.raw)})
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:
             return self._server_error(e)
-
-    def _forward_session_post(self, pc: str, sid: str, action: str) -> None:
-        """Reenvia send/interrupt/approve/dialog/attach a la PC dueña (plan §3.4) y devuelve su
-        respuesta tal cual. `attach` viaja como base64 adentro del JSON (no hay transporte binario
-        en federation.HTTPTransport.request todavia): mas trafico, pero sin agregar otro camino."""
-        if action == "attach":
-            name = urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin")
-            if not self.raw:
-                return self._json(400, {"error": "cuerpo vacio"})
-            body = {"filename": name, "data_b64": base64.b64encode(self.raw).decode("ascii")}
-        else:
-            body = self._json_body()
-        code, res = mirror.MIRROR.forward(pc, "POST", f"/sessions/{sid}/{action}", body)
-        if action == "send" and code == 200:
-            # la PC duena solo teclea el texto (PeerHandler no sabe de from/link_to): la flecha la
-            # registra la que envia, como en el caso local (revision 2026-10-04, 0.11). Pegar
-            # trabajo (copycat) entre PCs no se hace: hand_over necesita las dos tarjetas aca.
-            registrar_envio(sid, body)
-        return self._json(code, res)
 
     def _secret_take(self, sid: str) -> None:
         """Lee UNA vez un secreto de destino memoria. Desde esta PC o cualquiera de la LAN (no por
@@ -1678,31 +1736,6 @@ class Handler(BaseHTTPRequestHandler):
         log("acceso remoto configurado (passphrase + TOTP); enlace de alta valido 15 min")
         return self._json(200, res)
 
-    def _send(self, s: dict) -> None:
-        """POST /sessions/<id>/send: inyecta el texto en la consola y, solo si entro, deja la flecha
-        en el historial. Quien queda de cada lado depende de como se pidio el envio."""
-        d = self._json_body()
-        text, attachments = d.get("text", ""), d.get("attachments") or []
-        if (
-            not isinstance(text, str)
-            or not isinstance(attachments, list)
-            or any(not isinstance(a, str) for a in attachments)
-        ):
-            raise RequestError("text debe ser texto y attachments una lista de rutas")
-        if d.get("native"):
-            # el canal nativo (Claude a Claude por SendMessage) no cruza PCs: ListAgents es de la
-            # propia maquina y no hay forma de resolver un nombre corto contra una sesion remota
-            otro = d.get("link_to") or d.get("from")
-            if otro and mirror.MIRROR.owner_of(otro) is not None:
-                return self._json(409, {"error": "el canal nativo no cruza PCs"})
-        code, res = send_to_session(s, text, attachments)
-        if code == 200:
-            src_s = registrar_envio(s["session_id"], d)
-            if src_s is not None and d.get("copycat") is True:
-                # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
-                res.update(hand_over(s, src_s, stop=d.get("stop_origin") is not False))
-        return self._json(code, res)
-
     def do_PUT(self):
         parts = self._prepare(write=True, authenticated=True)
         if parts is None:
@@ -1770,7 +1803,7 @@ class Handler(BaseHTTPRequestHandler):
         """/sessions/<id>/<nombre>: decodifica el cuerpo y deja el resto a atender_accion (la misma
         que usa PeerHandler); la tarjeta de otra PC se reenvia a su duena (plan §3.4)."""
         d = self._cuerpo_accion(ACCIONES_SESION[(metodo, nombre)])
-        code, res = atender_accion(metodo, sid, nombre, d, reenviar=True)
+        code, res = atender_accion(metodo, sid, nombre, d, desde_tablero=True)
         return self._json(code, res)
 
     def _get_peers(self) -> None:
@@ -2120,8 +2153,10 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._rules_check(raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "GET" and rest[2] in SESSION_VIEWS:
             return self._session_view(rest[1], rest[2])
+        if len(rest) == 3 and rest[0] == "sessions" and method == "POST" and rest[2] == "attach":
+            return self._session_attach(rest[1], raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "POST":
-            return self._session_post(rest[1], rest[2], raw)
+            return self._accion_sesion(method, rest[1], rest[2], raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "PUT":
             return self._accion_sesion(method, rest[1], rest[2], raw)
         if len(rest) == 2 and rest[0] == "rules" and method == "DELETE":
@@ -2193,50 +2228,22 @@ class PeerHandler(BaseHTTPRequestHandler):
         code, res = session_view_response(s, view, self.query)
         return self._json(code, res)
 
-    def _session_post(self, sid: str, action: str, raw: bytes) -> None:
+    def _session_attach(self, sid: str, raw: bytes) -> None:
         with lock:
             s = sessions.get(sid)
         if s is None:
             return self._json(404, no_session())
-        if action == "send":
-            d = self._body_json(raw)
-            text, attachments = d.get("text", ""), d.get("attachments") or []
-            if (
-                not isinstance(text, str)
-                or not isinstance(attachments, list)
-                or any(not isinstance(a, str) for a in attachments)
-            ):
-                return self._json(400, {"error": "text debe ser texto y attachments una lista de rutas"})
-            code, res = send_to_session(s, text, attachments)
-            return self._json(code, res)
-        if action == "interrupt":
-            code, res = interrupt_session(s)
-            return self._json(code, res)
-        if action == "approve":
-            d = self._body_json(raw)
-            if d.get("decision") not in ("allow", "deny"):
-                return self._json(400, {"error": "decision debe ser allow o deny"})
-            code, res = aprobar_coda(s, d)
-            return self._json(code, res)
-        if action == "dialog":
-            d = self._body_json(raw)
-            if not isinstance(d.get("choice"), int) or isinstance(d.get("choice"), bool):
-                return self._json(400, {"error": "choice debe ser el numero de la opcion"})
-            code, res = answer_dialog(s, d["choice"])
-            return self._json(code, res)
-        if action == "attach":
-            d = self._body_json(raw)
-            name = d.get("filename") or "adjunto.bin"
-            data_b64 = d.get("data_b64")
-            if not isinstance(data_b64, str) or not data_b64:
-                return self._json(400, {"error": "cuerpo vacio"})
-            try:
-                data = base64.b64decode(data_b64, validate=True)
-            except ValueError, binascii.Error:
-                return self._json(400, {"error": "adjunto invalido"})
-            path = save_attachment(s["session_id"], name, data)
-            return self._json(200, {"path": path, "bytes": len(data)})
-        return self._json(404, {"error": "ruta desconocida"})
+        d = self._body_json(raw)
+        name = d.get("filename") or "adjunto.bin"
+        data_b64 = d.get("data_b64")
+        if not isinstance(data_b64, str) or not data_b64:
+            return self._json(400, {"error": "cuerpo vacio"})
+        try:
+            data = base64.b64decode(data_b64, validate=True)
+        except ValueError, binascii.Error:
+            return self._json(400, {"error": "adjunto invalido"})
+        path = save_attachment(s["session_id"], name, data)
+        return self._json(200, {"path": path, "bytes": len(data)})
 
     def _cuerpo_accion(self, a: AccionSesion, raw: bytes) -> dict:
         """El cuerpo de una accion de tarjeta tal como llega de otra PC: JSON, nada, o el adjunto en
@@ -2265,7 +2272,7 @@ class PeerHandler(BaseHTTPRequestHandler):
         a = ACCIONES_SESION.get((method, nombre))
         if a is None:
             return self._json(404, {"error": "ruta desconocida"})
-        code, res = atender_accion(method, sid, nombre, self._cuerpo_accion(a, raw), reenviar=False)
+        code, res = atender_accion(method, sid, nombre, self._cuerpo_accion(a, raw), desde_tablero=False)
         return self._json(code, res)
 
     def _events(self) -> None:

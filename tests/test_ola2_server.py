@@ -435,13 +435,10 @@ def test_ruta_desconocida_entre_pcs_con_tarjeta_conocida_no_trae_unknown_session
     assert code == 404 and res == {"error": "ruta desconocida"}
 
 
-# divergencia hasta la ola 2: PeerHandler buscaba la tarjeta antes de mirar la accion, asi que una
-# accion que no existe sobre una tarjeta que tampoco daba 404 con unknown_session (y mirror.forward
-# la tomaba por fantasma); Handler mira la accion primero y da «ruta desconocida»
-_XFAIL_POST = pytest.mark.xfail(strict=True, reason="PeerHandler: las POST todavia buscan la tarjeta primero")
-
-
-@pytest.mark.parametrize("method", [pytest.param("POST", marks=_XFAIL_POST), "PUT"])
+# hasta la ola 2 PeerHandler buscaba la tarjeta antes de mirar la accion, asi que una accion que
+# no existe sobre una tarjeta que tampoco daba 404 con unknown_session (y mirror.forward la tomaba
+# por fantasma); Handler mira la accion primero y da «ruta desconocida»
+@pytest.mark.parametrize("method", ["POST", "PUT"])
 def test_ruta_desconocida_entre_pcs_con_tarjeta_desconocida_no_trae_unknown_session(entorno, method):
     code, res = al_peer(entorno["peer"], method, f"/peer/sessions/{NADIE}/no-existe", b"{}")
     assert code == 404 and res == {"error": "ruta desconocida"}
