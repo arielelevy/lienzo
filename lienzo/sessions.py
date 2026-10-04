@@ -584,6 +584,9 @@ def cierra_turno(s: dict, prev: str | None, new: str) -> bool:
     return new == "termino" and prev in ("corriendo", "te_necesita") and (s.get("agent") != "pi" or s.get("hooked"))
 
 
+SALIDAS_A_PROPOSITO = ("/exit", "/quit", "exit", "quit")
+
+
 def marcar_muerta(s: dict, avisar: bool) -> None:
     """La tarjeta pasa a muerta: estado, `alive` y `dead_since` juntos, siempre por aca. Con el lock
     tomado. `avisar` (explicito en cada llamada) dice si, muriendo con un encargo a medias
@@ -602,7 +605,10 @@ def marcar_muerta(s: dict, avisar: bool) -> None:
     s["alive"] = False
     s["dead_since"] = s.get("dead_since") or now()
     set_state(s, "muerta")
-    if avisar and prev in ("corriendo", "te_necesita"):
+    # un /exit o /quit es el pedido de cerrarse: el proceso que termina despues no murio a medias
+    # (medido el 2026-10-04: cerrar cuatro codas con /exit mando cuatro avisos falsos de «murio»)
+    salida = (s.get("last_prompt") or "").strip().lower() in SALIDAS_A_PROPOSITO
+    if avisar and prev in ("corriendo", "te_necesita") and not salida:
         en_hilo(on_died_working, s["session_id"], prev)
 
 

@@ -500,3 +500,16 @@ def test_read_screen_sin_poder_ejecutar_no_levanta(aislado, monkeypatch):
         r = ses.read_screen(s)
         assert r["ok"] is False
     assert len([m for m in aislado if "screen.py" in m]) == 1
+
+
+def test_un_exit_no_avisa_que_murio_a_medias(monkeypatch):
+    """Medido el 2026-10-04: cerrar cuatro codas con /exit mando cuatro avisos falsos de «murio»."""
+    import sessions as ses
+
+    avisos = []
+    monkeypatch.setattr(ses, "en_hilo", lambda fn, *a: avisos.append(a))
+    for prompt, esperado in (("/exit", 0), ("seguí con la sesión 4", 1)):
+        avisos.clear()
+        s = {"session_id": "z" * 36, "state": "corriendo", "last_prompt": prompt, "needs": None}
+        ses.marcar_muerta(s, avisar=True)
+        assert len(avisos) == esperado, prompt
