@@ -40,6 +40,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-03 | **Temperatura desde LibreHardwareMonitor**: `health` lee primero `http://127.0.0.1:8085/data.json` (paquete del CPU, o el sensor real más caliente sin contar límites ni umbrales) y si no contesta sigue con WMI; URL en `LIENZO_LHM_URL`. Cada fuente es una `FuenteTemperatura` (clase abstracta: `leer` + `elegir`) en la cadena `FUENTES`; una fuente rota da None sin cortar la cadena y su motivo va al log al cambiar de estado, igual que el pedido de salud a otra PC (`mirror._poll_health`), que antes fallaba en silencio | el Dell Pro 14 no tiene zonas térmicas y MSAcpi da «no soportado» (0x8004100c); LHM 0.9.6 no lee el CPU de esa PC y por ahora da la RAM (~47 °C) |
 | 2026-10-03 | **Una sola regla de capacidad**: `health.agentes_que_entran` (reserva 1,5 GB + 0,7 GB por agente); el server la usa en `/restaurar` y la publica como `agentes_libres` en la salud de cada PC, y `coordinar.capacidad` la lee de ahí | las constantes estaban repetidas en `server.py` y `coordinar.py` (punto pendiente «Capacidad de memoria duplicada») |
 | 2026-10-03 | **`drop_session(..., muerta=True)`** en vez de leer el texto de la razón, y **`ended_on_purpose` por lista blanca** (`restore.ON_PURPOSE`): una razón nueva de SessionEnd cuenta como muerte a restaurar | dos puntos pendientes: el texto usado como protocolo y la lista negra que perdía sesiones con razones nuevas |
+| 2026-10-03 | **Latencia por PC**: cada reenvío suma su latencia y `/peers` muestra `latencia_ms` (mediana de los últimos 50); las acciones que salen bien quedan en el log con sus ms y las lecturas solo si pasan de 2 s | antes solo se logueaban los reenvíos que fallaban y no había cómo ver una PC que se vuelve lenta |
 
 ## Pendiente (con evidencia)
 
@@ -82,8 +83,6 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   la que el espejo se reemplaza. Hay que ver si el server corta el stream a propósito.
 - **`launch_roots` no se ve desde la otra PC**: `peers.json` no lo trae y no hay forma de saber qué
   carpetas permite un peer sin intentar lanzar. Mostrarlo en `GET /peers`.
-- **Log de los reenvíos que andan bien**: hoy solo se loguean los que fallan. Sumar la latencia
-  (ms) de cada reenvío ayudaría a ver una PC que se vuelve lenta.
 - **(Revisar: desactualizado) «Coda no tiene hooks»**: el 2026-10-02 las codas figuran `hooked=True`; antes nacía como tarjeta de barrido (`pid-NNNN`, sin título ni
   transcripción), cambia de id, y su estado no refleja que está trabajando. Un hook de coda daría
   título, estado y `last_reply` confiables.

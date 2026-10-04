@@ -273,6 +273,7 @@ def test_peers_status_recien_conectado_sin_salud_previa_no_esta_vivo():
             "last_seen": None,
             "local": False,
             "health": None,
+            "latencia_ms": None,
         }
     ]
 
@@ -333,3 +334,25 @@ def test_forward_a_un_peer_caido_da_503_con_su_nombre():
     code, body = m.forward("p1", "GET", "/sessions/a/screen")
     assert code == 503
     assert "notebook" in body["error"]
+
+
+def test_forward_registra_la_latencia_y_loguea_las_acciones_que_salen_bien():
+    """Una PC que se vuelve lenta tiene que verse: cada reenvio suma su latencia (mediana en
+    peers_status) y las acciones exitosas quedan en el log con sus ms; las lecturas rapidas no."""
+    t = FakeTransport(
+        request_responses={
+            ("POST", "/peer/sessions/a/send"): (200, {"ok": True}),
+            ("GET", "/peer/sessions/a/screen"): (200, {"lines": []}),
+        }
+    )
+    m = _mirror(t)
+    logs = []
+    m.log = logs.append
+    _connect(m, t, pc_id="p1")
+    m.forward("p1", "POST", "/sessions/a/send", {"text": "hola"})
+    m.forward("p1", "GET", "/sessions/a/screen")
+    assert len(m._peers["p1"].latencias_ms) == 2
+    assert any("POST /sessions/a/send: 200 (" in x and "ms)" in x for x in logs)
+    assert not any("GET /sessions/a/screen" in x for x in logs)
+    m._peers["p1"].last_seen = time.time()
+    assert isinstance(m.peers_status()[0]["latencia_ms"], int)

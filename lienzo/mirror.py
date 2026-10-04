@@ -9,8 +9,10 @@ ronda 3, sessions.py/rules.py/launch.py (owner_of, forward, sessions(), rules())
 
 from __future__ import annotations
 
+import statistics
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 
 import federation
@@ -27,6 +29,10 @@ def iso(ts: float) -> str:
     return dt.datetime.fromtimestamp(ts).astimezone().isoformat(timespec="milliseconds")
 
 
+LATENCIAS_N = 50  # reenvios recientes con que se calcula la latencia tipica de un peer
+LENTO_MS = 2000  # un GET que tarda mas que esto se loguea aunque haya salido bien
+
+
 class _PeerMirror:
     """Estado espejado de un solo peer, mas lo necesario para hablarle (conexion firmada)."""
 
@@ -40,6 +46,7 @@ class _PeerMirror:
         self.rules: list[dict] = []
         self.health: dict | None = None
         self.health_error: str | None = None  # el ultimo fallo avisado al pedir su salud
+        self.latencias_ms: deque[float] = deque(maxlen=LATENCIAS_N)  # de los reenvios que llegaron
         self.last_seen: float = 0.0
         self.client: federation.SSEClient | None = None
         self.synced = False  # ya llego su snapshot completo en esta conexion
@@ -245,6 +252,8 @@ class Mirror:
                         "last_seen": iso(pm.last_seen) if pm.last_seen else None,
                         "local": False,
                         "health": pm.health if vivo else None,
+                        # mediana de los ultimos reenvios: una PC que se vuelve lenta se ve aca
+                        "latencia_ms": round(statistics.median(pm.latencias_ms)) if pm.latencias_ms else None,
                     }
                 )
         return out
@@ -258,6 +267,7 @@ class Mirror:
             return 503, {"error": f"sin conexión con {pc_id}"}
         nombre = pm.info.get("name") or pc_id
         code, res = 0, {}
+        t0 = time.monotonic()
         for intento in (1, 2):
             try:
                 code, res = self.transport.request(pm.conn, method, f"/peer{path}", body)
@@ -274,8 +284,15 @@ class Mirror:
                 return 503, {"error": f"sin conexión con {nombre}"}
         if code == 404 and (res or {}).get("code") == "unknown_session":
             return self._tarjeta_fantasma(pm, path, nombre)
+        ms = (time.monotonic() - t0) * 1000
+        with self._lock:
+            pm.latencias_ms.append(ms)
         if code >= 400:
             self.log(f"→ {nombre} {method} {path}: {code} {(res or {}).get('error')}")
+        elif method != "GET" or ms > LENTO_MS:
+            # las acciones (enviar, aprobar, lanzar) quedan en el log con su latencia; las lecturas
+            # (pantalla cada pocos segundos) solo si fueron lentas, para no llenarlo
+            self.log(f"→ {nombre} {method} {path}: {code} ({ms:.0f} ms)")
         return code, res
 
     def _tarjeta_fantasma(self, pm: _PeerMirror, path: str, nombre: str) -> tuple[int, dict]:
