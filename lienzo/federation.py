@@ -107,16 +107,41 @@ def verify(
 ) -> bool:
     """True si la firma es valida, el ts cae dentro de +-window_s y el nonce no se vio antes. La
     comparacion de la firma es en tiempo constante (hmac.compare_digest); el registro de nonces
-    se consulta despues, asi que una firma invalida no gasta una entrada del cache."""
+    se consulta despues, asi que una firma invalida no gasta una entrada del cache. El motivo de
+    un rechazo lo da `verify_motivo`."""
+    return verify_motivo(key, method, path, body, ts, nonce, sig, nonces, window_s=window_s, now=now)[0]
+
+
+def verify_motivo(
+    key: bytes,
+    method: str,
+    path: str,
+    body: bytes,
+    ts: float,
+    nonce: str,
+    sig: str,
+    nonces: NonceCache,
+    *,
+    window_s: float = SIGN_WINDOW_S,
+    now: float | None = None,
+) -> tuple[bool, str]:
+    """Lo mismo que `verify`, con el motivo del rechazo ("" si pasa): un 401 que en el log dice
+    solo «firma invalida» no distingue reloj corrido, replay o clave distinta, que se arreglan
+    distinto (revision 2026-10-04, S2). El motivo no lleva nada secreto: ni la firma esperada ni
+    la clave, solo la diferencia de reloj."""
     ahora = time.time() if now is None else now
-    if abs(ahora - float(ts)) > window_s:
-        return False
+    dif = float(ts) - ahora
+    if abs(dif) > window_s:
+        return False, f"fuera de la ventana de tiempo: su reloj difiere {dif:+.0f} s (ventana {window_s:.0f} s)"
     if not isinstance(sig, str) or not sig.isascii():
-        return False  # compare_digest exige str ASCII (o bytes-like) de los dos lados; nunca TypeError
+        # compare_digest exige str ASCII (o bytes-like) de los dos lados; nunca TypeError
+        return False, "firma con formato invalido"
     esperada = sign(key, method, path, body, ts, nonce)
     if not hmac.compare_digest(esperada, sig):
-        return False
-    return nonces.add(nonce, now=ahora)
+        return False, "firma invalida: clave distinta o pedido alterado"
+    if not nonces.add(nonce, now=ahora):
+        return False, "nonce repetido (replay o reintento del mismo pedido)"
+    return True, ""
 
 
 class NonceCache:

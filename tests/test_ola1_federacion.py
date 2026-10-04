@@ -406,3 +406,30 @@ def test_peer_json_que_no_se_puede_leer_no_cambia_el_pc_id(lienzo_tmp, log_captu
     monkeypatch.setattr("builtins.open", real_open)
     with open(path, encoding="utf-8") as f:
         assert original in f.read()
+
+
+# --- 1.8: 401 sin motivo ------------------------------------------------------------------------
+
+
+def _firmado(key=b"k" * 32, ts=1_800_000_000.0, nonce="n1"):
+    return key, "POST", "/peer/x", b"{}", ts, nonce, fed.sign(key, "POST", "/peer/x", b"{}", ts, nonce)
+
+
+def test_verify_motivo_dice_por_que_rechaza():
+    key, m, p, b, ts, nonce, sig = _firmado()
+    cache = fed.NonceCache()
+    assert fed.verify_motivo(key, m, p, b, ts, nonce, sig, cache, now=ts) == (True, "")
+    ok, motivo = fed.verify_motivo(key, m, p, b, ts, nonce, sig, cache, now=ts)
+    assert not ok and "nonce repetido" in motivo
+    ok, motivo = fed.verify_motivo(key, m, p, b, ts, "n2", sig, cache, now=ts + 45)
+    assert not ok and "ventana" in motivo and "+45" in motivo.replace(" ", "")
+    ok, motivo = fed.verify_motivo(b"o" * 32, m, p, b, ts, "n3", sig, cache, now=ts)
+    assert not ok and "firma" in motivo
+    ok, motivo = fed.verify_motivo(key, m, p, b, ts, "n4", 123, cache, now=ts)
+    assert not ok and "formato" in motivo
+
+
+def test_verify_sigue_devolviendo_bool():
+    key, m, p, b, ts, nonce, sig = _firmado()
+    assert fed.verify(key, m, p, b, ts, nonce, sig, fed.NonceCache(), now=ts) is True
+    assert fed.verify(key, m, p, b, ts, nonce, "x", fed.NonceCache(), now=ts) is False
