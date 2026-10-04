@@ -56,7 +56,9 @@ CODEX_EVENTS = {
 CODA_EVENTS = {
     "SessionStart": (True, 5),
     "UserPromptSubmit": (True, 5),
-    "PreToolUse": (True, 5),
+    # sincronico: con auto-aprobar prendido, su respuesta decide el permiso (hook.py); sin el check
+    # no imprime nada y coda sigue como siempre. Cuesta el arranque de python por herramienta
+    "PreToolUse": (False, 5),
     # coda compacta el contexto en medio de un turno y el Stop llega igual: PreCompact/PostCompact
     # dejan marcada la compactacion para que no cuente como fin de turno (doc de coda, hooks.md)
     "PreCompact": (True, 5),

@@ -283,7 +283,27 @@ def main() -> int:
     if agent == "coda" and not data.get("transcript_path"):
         # CODA manda transcript_path vacio: su transcripcion es la base compartida (ver coda.py)
         data["transcript_path"] = os.path.join(os.environ.get("CODA_HOME") or os.path.join(HOME, ".coda"), "coda.db")
+    auto = agent == "coda" and event == "PreToolUse" and bool(cfg.get("auto_aprobar"))
+    if auto:
+        data["auto_aprobado"] = True  # el server lo deja en el log como AUTO-APROBADO
     atomic_write(event_path(sid, event), json.dumps(data, ensure_ascii=False))
+    if auto:
+        # Auto-aprobar TODO, en la fuente: coda deja que su PreToolUse decida el permiso
+        # (hookSpecificOutput.permissionDecision, ~/.coda/assets/docs/hooks.md), asi que con el check
+        # prendido no llega a mostrar el cartel «Approval Required». Es la forma robusta: no depende
+        # de leer su log ni su pantalla (medido el 2026-10-04: codas esperando una hora un permiso
+        # que el lienzo no veia). Este hook corre sincronico para coda (install.py) por eso.
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "permissionDecisionReason": "auto-aprobar del lienzo",
+                    }
+                }
+            )
+        )
     if event == "PermissionRequest":
         answer_permission(agent, data, cfg, sid)
     return 0

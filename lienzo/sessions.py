@@ -1326,8 +1326,11 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
     tool = str(ev.get("tool_name") or "?")
     name = tool.lower()
     inp = ev.get("tool_input") if isinstance(ev.get("tool_input"), dict) else {}
+    if ev.get("auto_aprobado"):
+        cmd = inp.get("command") or inp.get("cmd") or inp.get("file_path") or ""
+        state.log(f"AUTO-APROBADO (hook coda) {s['session_id'][:8]}: {tool} {short(str(cmd), 160)}")
     s["tool_count"] = (s.get("tool_count") or 0) + 1
-    if (s.get("needs") or {}).get("via") == "tool":
+    if (s.get("needs") or {}).get("via") in ("tool", "screen"):
         # la herramienta que habia abierto el dialogo ya se contesto: corre otra
         set_state(s, "corriendo")
     if name in CMD_TOOLS:
@@ -1417,7 +1420,7 @@ def coda_log_activity(s: dict) -> bool:
         elif needs.get("where") == "enviado" and time.time() - (needs.get("sent_ts") or 0) > CODA_SENT_RETRY_S:
             # el Enter/Esc no resolvio el permiso (sigue abierto en el log): se devuelven los botones
             s["needs"] = {**needs, "where": "terminal"}
-    elif s["state"] == "te_necesita" and needs.get("coda_at") and needs.get("via") != "tool":
+    elif s["state"] == "te_necesita" and needs.get("coda_at") and needs.get("via") not in ("tool", "screen"):
         # (el dialogo de una herramienta como propose_policy no figura en el log: lo cierra el
         # proximo PreToolUse o el fin del turno, no la ausencia de un `ask`)
         set_state(s, "corriendo" if act["running"] else "termino")
@@ -1997,6 +2000,63 @@ def refresh_alive(s: dict) -> bool:
     return True
 
 
+CODA_PANTALLA_QUIETA_S = 8  # una coda «corriendo» sin herramientas nuevas hace esto: puede estar en un cartel
+CODA_PANTALLA_CADA_S = 10  # y la pantalla se mira como mucho cada tanto (es un subproceso)
+_pantalla_mirada: dict[str, float] = {}
+
+
+def coda_mirar_pantalla(s: dict) -> bool:
+    """(Con el lock.) ¿Toca mirar la pantalla de esta coda en busca de un cartel de permiso? Sí si
+    figura corriendo, sin nada pedido, quieta hace CODA_PANTALLA_QUIETA_S y no se miro hace poco."""
+    if s.get("agent") != "coda" or s.get("state") != "corriendo" or s.get("needs") or not s.get("pid"):
+        return False
+    quieta = parse_ts(s.get("last_event_ts") or s.get("state_since"))
+    ahora = time.time()
+    if quieta and (dt.datetime.now().astimezone() - quieta).total_seconds() < CODA_PANTALLA_QUIETA_S:
+        return False
+    if ahora - _pantalla_mirada.get(s["session_id"], 0) < CODA_PANTALLA_CADA_S:
+        return False
+    _pantalla_mirada[s["session_id"]] = ahora
+    return True
+
+
+def coda_dialogo_en_pantalla(s: dict) -> bool:
+    """(Sin el lock.) Si la pantalla de la coda muestra el cartel «Approval Required», la tarjeta pasa a
+    te_necesita con el comando, para que se vea y el auto-aprobar lo tome. Es la red de abajo de las
+    otras dos señales (el `ask` del log y propose_policy): medido el 2026-10-04, dos codas de la otra
+    PC esperaron una hora un npm run build sin que el log mostrara el pedido. Devuelve si lo marco."""
+    lineas = (read_screen(s).get("lines") or []) if s.get("pid") else []
+    pantalla = "\n".join(lineas)
+    if not coda_ask_open(pantalla):
+        return False
+    try:
+        import pantalla_coda
+
+        cmd = pantalla_coda.comando_visible(lineas) or ""
+        clave = pantalla_coda.huella_comando(cmd) if cmd else "?"
+    except Exception:  # el formato del cartel cambio: igual se marca, sin el comando
+        cmd, clave = "", "?"
+    with lock:
+        if sessions.get(s["session_id"]) is not s or s.get("state") != "corriendo" or s.get("needs"):
+            return False
+        set_needs(
+            s,
+            {
+                "kind": "permission",
+                "tool": "bash",
+                "detail": short(cmd, 300) or "pide aprobación en su terminal",
+                "where": "terminal",
+                "via": "screen",
+            },
+        )
+        s["needs"]["coda_at"] = f"screen:{clave}"
+        touch(s)
+    state.log(
+        f"{s['session_id'][:8]}: coda espera una aprobación en su terminal ({short(cmd, 80) or 'sin comando visible'})"
+    )
+    return True
+
+
 def check_liveness(sid: str) -> None:
     """Un paso de liveness sobre una tarjeta: proceso vivo, purga de las muertas, y refresco si la
     transcripcion crecio. Lo unico caro (leer y parsear la transcripcion) corre sin el lock; todo lo
@@ -2008,6 +2068,7 @@ def check_liveness(sid: str) -> None:
         changed = refresh_alive(s)
         if s["agent"] == "coda" and s.get("alive") and s.get("pid") and s["state"] in ("corriendo", "te_necesita"):
             changed = coda_log_activity(s) or changed
+        mirar_pantalla = coda_mirar_pantalla(s)
         dead_since = parse_ts(s["dead_since"]) if s["state"] == "muerta" else None
         if dead_since and (dt.datetime.now().astimezone() - dead_since).total_seconds() > DEAD_GRACE_S:
             drop_session(sid, "muerta hace mas de 60 s", muerta=True)
@@ -2032,6 +2093,8 @@ def check_liveness(sid: str) -> None:
             transcript_stat[sid] = sig
         elif changed:
             touch(s)
+    if mirar_pantalla:
+        coda_dialogo_en_pantalla(s)  # un subproceso: sin el lock
     if not crecio:
         return
     r = read_transcript(s)  # lo caro, sin el lock
