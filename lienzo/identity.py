@@ -47,30 +47,73 @@ def _color_for(pc_id_: str) -> str:
 _peer_cache: tuple[str, tuple[int, int], dict] | None = None
 
 
+def _apartar_corrupto(path: str, motivo: str) -> None:
+    """peer.json ilegible: se renombra a `peer.json.corrupto-<ts>` y se avisa, en vez de pisarlo
+    en silencio con una identidad nueva (revision 2026-10-04, B15: perder el pc_id rompe todos los
+    emparejamientos y no quedaba ni el archivo para recuperarlo a mano). Mismo criterio que
+    federation.apartar_corrupto; no se importa de ahi para no cargar http.client aca."""
+    import time
+
+    destino = f"{path}.corrupto-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        os.replace(path, destino)
+    except OSError as e:
+        state.log(f"peer.json corrupto ({motivo}) y no lo pude apartar ({e}): se va a reescribir")
+        return
+    state.log(f"peer.json corrupto ({motivo}): lo aparte en {destino}; esta PC arranca con un pc_id nuevo")
+
+
 def _load_peer() -> dict | None:
+    """El contenido de peer.json, o None si no existe o estaba corrupto (y ya se aparto). Si
+    existe y no se puede leer (antivirus, permisos), NO devuelve None: eso haria crear un pc_id
+    nuevo encima de uno bueno. Usa la ultima lectura buena si la hay; si no, el error sube."""
     global _peer_cache
     path = _peer_path()
     try:
         st = os.stat(path)
-    except OSError:
+    except FileNotFoundError:
         return None
+    except OSError as e:
+        return _ultima_buena_o_error(path, e)
     firma = (st.st_mtime_ns, st.st_size)
     if _peer_cache is not None and _peer_cache[0] == path and _peer_cache[1] == firma:
         return dict(_peer_cache[2])
     try:
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
-    except OSError, ValueError:
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        return _ultima_buena_o_error(path, e)
+    except ValueError as e:  # incluye UnicodeDecodeError
+        _apartar_corrupto(path, f"JSON invalido: {e}")
         return None
     if not isinstance(d, dict) or not _PC_ID_RE.fullmatch(str(d.get("pc_id") or "")):
+        _apartar_corrupto(path, "sin un pc_id valido")
         return None
     _peer_cache = (path, firma, d)
     return dict(d)
 
 
+def _ultima_buena_o_error(path: str, error: OSError) -> dict:
+    """peer.json existe y no se pudo leer: la ultima lectura buena de `path`, o el error sube."""
+    if _peer_cache is not None and _peer_cache[0] == path:
+        state.log(f"peer.json: no lo pude leer ahora ({error}); sigo con la ultima lectura buena")
+        return dict(_peer_cache[2])
+    raise error
+
+
 def _save_peer(d: dict) -> None:
     os.makedirs(state.LIENZO, exist_ok=True)
-    state.atomic_write(_peer_path(), json.dumps(d, ensure_ascii=False, indent=1))
+    global _peer_cache
+    path = _peer_path()
+    state.atomic_write(path, json.dumps(d, ensure_ascii=False, indent=1))
+    # lo recien escrito ya es una «lectura buena»: si el proximo open falla (antivirus), se usa esta
+    try:
+        st = os.stat(path)
+        _peer_cache = (path, (st.st_mtime_ns, st.st_size), dict(d))
+    except OSError:
+        pass  # sin cache: la proxima lectura lo arma
 
 
 def _ensure_peer() -> dict:

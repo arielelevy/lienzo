@@ -177,12 +177,35 @@ _peers_cache: dict[str, tuple[tuple[int, int], dict]] = {}
 _peers_cache_lock = threading.Lock()
 
 
-def _cargar_peers(path: str) -> dict:
-    """Un peers.json corrupto no rompe: se trata como si no hubiera peers, y la proxima escritura
-    lo reemplaza por uno valido. Devuelve una copia: quien la recibe la puede modificar."""
+def apartar_corrupto(path: str, motivo: str) -> None:
+    """Un JSON que no se puede leer se renombra a `<archivo>.corrupto-<ts>` y se avisa al log, en
+    vez de tratarlo como vacio y pisarlo en la proxima escritura: antes un peers.json roto borraba
+    los emparejamientos sin rastro (revision 2026-10-04, B15). La misma idea que identity.py usa
+    con peer.json; si state.py llega a tener un helper comun, los dos pasan a usarlo."""
+    destino = f"{path}.corrupto-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        os.replace(path, destino)
+    except OSError as e:
+        state.log(f"{os.path.basename(path)} corrupto ({motivo}) y no lo pude apartar ({e}): se va a reescribir")
+        return
+    state.log(f"{os.path.basename(path)} corrupto ({motivo}): lo aparte en {destino} y sigo como si no existiera")
+
+
+def _cargar_peers(path: str, *, para_escribir: bool = False) -> dict:
+    """Un peers.json que no existe es «sin peers». Uno corrupto (JSON roto o que no es un objeto)
+    no rompe: se aparta con `apartar_corrupto` y se sigue sin peers. Uno que existe y no se puede
+    leer (antivirus, permisos) se avisa y NO se aparta: el archivo puede estar bien; por eso, con
+    `para_escribir` (alta, baja, IP), ese error sube en vez de devolver {}: escribir encima de un
+    archivo que no se pudo leer borraria los peers. Devuelve una copia: quien la recibe la puede
+    modificar."""
     try:
         st = os.stat(path)
-    except OSError:
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        state.log(f"peers.json: no lo puedo ver ({type(e).__name__}: {e})")
+        if para_escribir:
+            raise
         return {}
     firma = (st.st_mtime_ns, st.st_size)
     with _peers_cache_lock:
@@ -191,9 +214,19 @@ def _cargar_peers(path: str) -> dict:
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
-        except OSError, ValueError:
-            data = {}
-        data = data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except OSError as e:
+            state.log(f"peers.json: no lo puedo leer ({type(e).__name__}: {e})")
+            if para_escribir:
+                raise
+            return {}
+        except ValueError as e:  # incluye UnicodeDecodeError
+            apartar_corrupto(path, f"JSON invalido: {e}")
+            return {}
+        if not isinstance(data, dict):
+            apartar_corrupto(path, f"no es un objeto sino {type(data).__name__}")
+            return {}
         with _peers_cache_lock:
             _peers_cache[path] = (firma, data)
     else:
@@ -213,7 +246,7 @@ def add_peer(path: str, peer: dict) -> dict:
     """Alta o actualizacion de un peer por pc_id. Actualizar uno que ya esta no cuenta para el
     tope: solo un pc_id nuevo puede chocar con MAX_PEERS."""
     pc_id = peer["pc_id"]
-    peers = _cargar_peers(path)
+    peers = _cargar_peers(path, para_escribir=True)
     if pc_id not in peers and len(peers) >= MAX_PEERS:
         raise PeerLimitError(f"ya hay {MAX_PEERS} peers emparejados")
     peers[pc_id] = peer
@@ -222,7 +255,7 @@ def add_peer(path: str, peer: dict) -> dict:
 
 
 def remove_peer(path: str, pc_id: str) -> bool:
-    peers = _cargar_peers(path)
+    peers = _cargar_peers(path, para_escribir=True)
     if pc_id not in peers:
         return False
     del peers[pc_id]
@@ -232,7 +265,7 @@ def remove_peer(path: str, pc_id: str) -> bool:
 
 def update_peer_ip(path: str, pc_id: str, ip: str) -> bool:
     """La actualiza el beacon UDP cuando el DHCP le cambio la IP a un peer ya emparejado."""
-    peers = _cargar_peers(path)
+    peers = _cargar_peers(path, para_escribir=True)
     if pc_id not in peers:
         return False
     peers[pc_id]["ip"] = ip

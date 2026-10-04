@@ -4,6 +4,7 @@ modulos sueltos (lienzo/ en el sys.path, lo agrega conftest.py), igual que el se
 server.py."""
 
 import http.server
+import os
 import threading
 import time
 
@@ -297,3 +298,111 @@ def test_sse_que_conecto_y_se_corta_por_silencio_no_escala_el_backoff(monkeypatc
         cliente.stop()
         cerrar()
     assert intentos[:2] == [0, 0]
+
+
+# --- 0.8: un JSON corrupto borraba datos sin aviso (peers.json, peer.json) ---------------------
+
+
+@pytest.fixture
+def log_capturado(monkeypatch):
+    import state
+
+    log = []
+    monkeypatch.setattr(state, "log", log.append)
+    return log
+
+
+def _corruptos(carpeta, nombre):
+    return sorted(p for p in os.listdir(carpeta) if p.startswith(nombre + ".corrupto-"))
+
+
+def test_peers_json_corrupto_se_aparta_con_aviso_y_no_se_pisa(tmp_path, log_capturado):
+    path = str(tmp_path / "peers.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('{"p1": {"pc_id": "p1", "key": "ab"')  # cortado a mitad
+    assert fed.list_peers(path) == []
+    apartados = _corruptos(tmp_path, "peers.json")
+    assert len(apartados) == 1
+    with open(tmp_path / apartados[0], encoding="utf-8") as f:
+        assert f.read().startswith('{"p1"')  # el original, intacto para recuperarlo a mano
+    assert any("peers.json corrupto" in m for m in log_capturado)
+    fed.add_peer(path, {"pc_id": "p2", "key": "cd"})  # se puede seguir: el archivo nuevo es otro
+    assert [p["pc_id"] for p in fed.list_peers(path)] == ["p2"]
+
+
+def test_peers_json_que_no_existe_es_vacio_sin_aviso(tmp_path, log_capturado):
+    assert fed.list_peers(str(tmp_path / "peers.json")) == []
+    assert log_capturado == []
+
+
+def test_peers_json_que_no_se_puede_leer_no_se_pisa_al_escribir(tmp_path, log_capturado, monkeypatch):
+    path = str(tmp_path / "peers.json")
+    fed.add_peer(path, {"pc_id": "p1", "key": "ab"})
+    fed._peers_cache.clear()
+    real_open = open
+
+    def open_bloqueado(p, *a, **kw):
+        if str(p) == path and "w" not in (a[0] if a else kw.get("mode", "r")):
+            raise PermissionError(13, "lo tiene el antivirus")
+        return real_open(p, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", open_bloqueado)
+    assert fed.list_peers(path) == []  # leer: se avisa y se sigue
+    with pytest.raises(PermissionError):
+        fed.add_peer(path, {"pc_id": "p2", "key": "cd"})  # escribir encima: NO
+    monkeypatch.setattr("builtins.open", real_open)
+    assert [p["pc_id"] for p in fed.list_peers(path)] == ["p1"]
+
+
+@pytest.fixture
+def lienzo_tmp(tmp_path, monkeypatch, log_capturado):
+    import identity
+    import state
+
+    monkeypatch.setattr(state, "LIENZO", str(tmp_path))
+    monkeypatch.setattr(identity, "_peer_cache", None)
+    return tmp_path
+
+
+def test_peer_json_corrupto_se_aparta_con_aviso(lienzo_tmp, log_capturado):
+    import identity
+
+    with open(lienzo_tmp / "peer.json", "w", encoding="utf-8") as f:
+        f.write('{"pc_id": "0123456789ab", "name": ')
+    nuevo = identity.pc_id()
+    assert len(nuevo) == 12
+    apartados = _corruptos(lienzo_tmp, "peer.json")
+    assert len(apartados) == 1
+    with open(lienzo_tmp / apartados[0], encoding="utf-8") as f:
+        assert "0123456789ab" in f.read()  # la identidad vieja queda para recuperarla a mano
+    assert any("peer.json corrupto" in m for m in log_capturado)
+
+
+def test_peer_json_que_no_existe_se_crea_sin_aviso(lienzo_tmp, log_capturado):
+    import identity
+
+    assert len(identity.pc_id()) == 12
+    assert _corruptos(lienzo_tmp, "peer.json") == []
+    assert log_capturado == []
+
+
+def test_peer_json_que_no_se_puede_leer_no_cambia_el_pc_id(lienzo_tmp, log_capturado, monkeypatch):
+    """Antes un PermissionError pasajero (antivirus) devolvia None y se creaba un pc_id nuevo
+    encima del bueno: la PC perdia todos sus emparejamientos."""
+    import identity
+
+    original = identity.pc_id()
+    path = str(lienzo_tmp / "peer.json")
+    os.utime(path, (time.time() + 5, time.time() + 5))  # invalida el cache: obliga a releer
+    real_open = open
+
+    def open_bloqueado(p, *a, **kw):
+        if str(p) == path:
+            raise PermissionError(13, "lo tiene el antivirus")
+        return real_open(p, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", open_bloqueado)
+    assert identity.pc_id() == original
+    monkeypatch.setattr("builtins.open", real_open)
+    with open(path, encoding="utf-8") as f:
+        assert original in f.read()
