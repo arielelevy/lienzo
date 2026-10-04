@@ -377,3 +377,52 @@ def test_peer_json_invalido_da_400_y_no_se_toma_como_vacio(peer_srv, monkeypatch
     assert code == 400 and res["error"] == "JSON invalido" and enviados == []
     assert firmado(peer_srv, "POST", f"/peer/sessions/{sid}/send", b"[1]")[0] == 400
     assert firmado(peer_srv, "POST", f"/peer/sessions/{sid}/send", b'{"text": "hola"}')[0] == 200
+
+
+# 0.11 y S9: el envío entre tarjetas deja la flecha, aunque la destino sea de otra PC
+
+SID_A = "a0000000-0000-4000-8000-00000000000a"
+SID_REMOTA = "b0000000-0000-4000-8000-00000000000b"
+
+
+@pytest.fixture
+def links_tmp(aislado, monkeypatch):
+    monkeypatch.setattr(st.links, "path", str(aislado["tmp"] / "links.json"))
+    st.links.items.clear()
+    yield st.links
+    st.links.items.clear()
+
+
+def test_envio_a_una_tarjeta_de_otra_pc_registra_la_flecha(srv, aislado, links_tmp):
+    st.sessions[SID_A] = {"session_id": SID_A, "agent": "claude", "pid": 1}
+    aislado["espejo"].duenos[SID_REMOTA] = "pcB"
+    cuerpo = {"text": "hola", "from": SID_A}
+    code, _, _ = pedir(srv, "POST", f"/sessions/{SID_REMOTA}/send", cuerpo)
+    assert code == 200
+    assert aislado["espejo"].llamadas[-1] == ("pcB", "POST", f"/sessions/{SID_REMOTA}/send", cuerpo)
+    assert [(x["from"], x["to"], x["kind"]) for x in links_tmp.snapshot()] == [(SID_A, SID_REMOTA, "send")]
+
+
+def test_envio_remoto_que_falla_no_deja_flecha(srv, aislado, links_tmp):
+    st.sessions[SID_A] = {"session_id": SID_A, "agent": "claude", "pid": 1}
+    aislado["espejo"].duenos[SID_REMOTA] = "pcB"
+    aislado["espejo"].respuestas[("pcB", "POST", f"/sessions/{SID_REMOTA}/send")] = (409, {"error": "x"})
+    assert pedir(srv, "POST", f"/sessions/{SID_REMOTA}/send", {"text": "hola", "from": SID_A})[0] == 409
+    assert links_tmp.snapshot() == []
+
+
+def test_envio_con_copycat_si_el_origen_se_borra_durante_el_envio(srv, aislado, links_tmp, monkeypatch):
+    """S9: `src in sessions` se miraba sin el lock y después `sessions[src]`: si el origen se
+    borraba durante el envío (hasta 60 s), KeyError y 500 aunque el texto ya hubiera entrado."""
+    sid = "d0000000-0000-4000-8000-00000000000d"
+    st.sessions[SID_A] = {"session_id": SID_A, "agent": "claude", "pid": 1}
+    st.sessions[sid] = {"session_id": sid, "agent": "claude", "pid": 2}
+
+    def enviar(s, text, attachments):
+        st.sessions.pop(SID_A, None)  # lo borran mientras se teclea
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(server, "send_to_session", enviar)
+    monkeypatch.setattr(server, "hand_over", lambda dst, src, stop=True: {"handed": src["session_id"]})
+    code, _, res = pedir(srv, "POST", f"/sessions/{sid}/send", {"text": "x", "from": SID_A, "copycat": True})
+    assert code == 200 and "handed" not in res

@@ -690,6 +690,34 @@ def config_peers_loop(stop_event: threading.Event | None = None) -> None:
             log(f"reintento de auto-aprobar en otras PCs:\n{traceback.format_exc()}")
 
 
+def registrar_envio(sid: str, d: dict) -> dict | None:
+    """Despues de un envio que entro (200) a la tarjeta `sid`, deja la flecha en el historial segun
+    como se pidio, y devuelve la tarjeta de origen si es local (para copycat), o None.
+
+    Las tarjetas se leen con el lock tomado (revision 2026-10-04, S9): antes se miraba
+    `src in sessions` sin el lock y despues `sessions[src]`; si el origen se borraba en el medio
+    (el envio tarda hasta 60 s), KeyError y 500 con el texto ya tecleado. `sid` puede ser de
+    otra PC (0.11): el origen o el destino del canal nativo valen si se conocen aca o en el espejo."""
+    text = d.get("text", "") if isinstance(d.get("text"), str) else ""
+    src, link_to = d.get("from"), d.get("link_to")
+    kind = "native" if d.get("native") else "send"
+    with lock:
+        src_s = sessions.get(src) if isinstance(src, str) else None
+        link_to_local = isinstance(link_to, str) and link_to in sessions
+    if link_to and link_to != sid and (link_to_local or _known_session(link_to)):
+        # canal nativo: se le habla a A para que abra conversacion con B; la flecha es A -> B
+        add_link(sid, link_to, text, kind)
+        return None
+    if src and src != sid and (src_s is not None or _known_session(src)):
+        add_link(src, sid, text, kind)
+        return src_s
+    if not src and not link_to:
+        # lo que el usuario escribio desde el lienzo: queda en el historial de la sesion
+        # (pestana Conexiones) como 'recibido de vos'; sin flecha
+        add_link(None, sid, text, "user")
+    return None
+
+
 def huella_de_pantalla(lineas: list[str]) -> str | None:
     """La huella del comando del cartel de coda en `lineas`: la misma cuenta que arma el aprobador
     del skill (las dos salen de pantalla_coda), o None si no hay cartel."""
@@ -1429,6 +1457,11 @@ class Handler(BaseHTTPRequestHandler):
         else:
             body = self._json_body()
         code, res = mirror.MIRROR.forward(pc, "POST", f"/sessions/{sid}/{action}", body)
+        if action == "send" and code == 200:
+            # la PC duena solo teclea el texto (PeerHandler no sabe de from/link_to): la flecha la
+            # registra la que envia, como en el caso local (revision 2026-10-04, 0.11). Pegar
+            # trabajo (copycat) entre PCs no se hace: hand_over necesita las dos tarjetas aca.
+            registrar_envio(sid, body)
         return self._json(code, res)
 
     def _secret_take(self, sid: str) -> None:
@@ -1543,21 +1576,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(409, {"error": "el canal nativo no cruza PCs"})
         code, res = send_to_session(s, text, attachments)
         if code == 200:
-            sid, text = s["session_id"], d.get("text", "")
-            src, link_to = d.get("from"), d.get("link_to")
-            kind = "native" if d.get("native") else "send"
-            if link_to and link_to in sessions and link_to != sid:
-                # canal nativo: se le habla a A para que abra conversacion con B; la flecha es A -> B
-                add_link(sid, link_to, text, kind)
-            elif src and src in sessions and src != sid:
-                add_link(src, sid, text, kind)
-                if d.get("copycat") is True:
-                    # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
-                    res.update(hand_over(s, sessions[src], stop=d.get("stop_origin") is not False))
-            elif not src and not link_to:
-                # lo que el usuario escribio desde el lienzo: queda en el historial de la sesion
-                # (pestana Conexiones) como 'recibido de vos'; sin flecha
-                add_link(None, sid, text, "user")
+            src_s = registrar_envio(s["session_id"], d)
+            if src_s is not None and d.get("copycat") is True:
+                # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
+                res.update(hand_over(s, src_s, stop=d.get("stop_origin") is not False))
         return self._json(code, res)
 
     def do_PUT(self):
