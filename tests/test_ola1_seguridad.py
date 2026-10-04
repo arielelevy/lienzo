@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ruff: noqa: I001
 # el orden importa: `from lienzo import server` agrega lienzo/ al sys.path (ver test_server.py)
 from lienzo import server
+import federation as fed
 import pantalla_coda
 import state as st
 import subproc
@@ -282,3 +283,74 @@ def test_sin_autenticar_contesta_401_sin_esperar_el_cuerpo(srv, monkeypatch):
 def test_max_body_es_mayor_solo_en_attach():
     assert server.max_body("POST", ["sessions", "x", "attach"]) == server.MAX_ATTACH
     assert server.max_body("POST", ["sessions", "x", "send"]) == server.MAX_BODY
+
+
+# NUEVO B y 0.7 en el listener de peers: sin firma de un peer conocido no se lee el cuerpo
+
+CLAVE_PAR = b"k" * 32
+
+
+@pytest.fixture
+def peer_srv(aislado, monkeypatch):
+    peers = aislado["tmp"] / "peers.json"
+    monkeypatch.setattr(server, "PEERS_FILE", str(peers))
+    fed.add_peer(str(peers), {"pc_id": "pcB", "name": "b", "ip": "127.0.0.1", "port": 1, "key": CLAVE_PAR.hex()})
+    s = server.QuietServer(("127.0.0.1", 0), server.PeerHandler)
+    s.daemon_threads = True
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    yield s.server_address[1]
+    s.shutdown()
+    s.server_close()
+
+
+def crudo(port, cabecera: bytes, timeout=5):
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    s.sendall(cabecera)
+    t0 = time.monotonic()
+    resp = s.recv(4096)
+    s.close()
+    return resp, time.monotonic() - t0
+
+
+def firmado(port, method, path, body: bytes, pc="pcB", clave=CLAVE_PAR):
+    ts = time.time()
+    nonce = os.urandom(8).hex()
+    h = {
+        "X-Lienzo-Peer": pc,
+        "X-Lienzo-Ts": repr(ts),
+        "X-Lienzo-Nonce": nonce,
+        "X-Lienzo-Sig": fed.sign(clave, method, path, body, ts, nonce),
+        "Content-Type": "application/json",
+    }
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    c.request(method, path, body=body, headers=h)
+    r = c.getresponse()
+    texto = r.read()
+    c.close()
+    return r.status, json.loads(texto) if texto else None
+
+
+def test_peer_sin_headers_de_firma_da_401_sin_leer_el_cuerpo(peer_srv):
+    resp, dt = crudo(peer_srv, b"POST /peer/sessions/x/attach HTTP/1.1\r\nHost: x\r\nContent-Length: 60000000\r\n\r\n")
+    assert resp.startswith(b"HTTP/1.1 401") and dt < 4 and b"Connection: close" in resp
+
+
+def test_peer_desconocido_da_401_sin_leer_el_cuerpo(peer_srv):
+    resp, dt = crudo(
+        peer_srv,
+        b"POST /peer/sessions/x/send HTTP/1.1\r\nHost: x\r\nContent-Length: 5000000\r\n"
+        b"X-Lienzo-Peer: intruso\r\nX-Lienzo-Ts: 1\r\nX-Lienzo-Nonce: n\r\nX-Lienzo-Sig: s\r\n\r\n",
+    )
+    assert resp.startswith(b"HTTP/1.1 401") and dt < 4
+
+
+def test_peer_rutas_sin_firma_leen_como_maximo_max_body(peer_srv):
+    largo = server.MAX_BODY + 1
+    resp, _ = crudo(peer_srv, f"POST /peer/pair HTTP/1.1\r\nHost: x\r\nContent-Length: {largo}\r\n\r\n".encode())
+    assert resp.startswith(b"HTTP/1.1 413")
+
+
+def test_peer_firmado_sigue_andando(peer_srv):
+    code, res = firmado(peer_srv, "GET", "/peer/restaurables", b"")
+    assert code == 200 and "restaurables" in res
+    assert firmado(peer_srv, "GET", "/peer/restaurables", b"", clave=b"z" * 32)[0] == 401

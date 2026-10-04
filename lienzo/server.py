@@ -477,6 +477,30 @@ def _peer_key(pc_id: str) -> bytes | None:
         return None
 
 
+def _sin_firma(method: str, rest: list[str]) -> bool:
+    """Las dos rutas del listener de peers que no van firmadas: son como se consigue la clave."""
+    return (method == "GET" and rest == ["hello"]) or (method == "POST" and rest == ["pair"])
+
+
+AVISO_401_S = 60.0  # el mismo motivo de la misma PC se loguea a lo sumo una vez por minuto
+_avisos_401: dict[tuple[str, str], float] = {}
+_avisos_401_lock = threading.Lock()
+
+
+def _avisar_401(quien: str, motivo: str) -> None:
+    """Loguea por que se rechazo un pedido de peer, con limite de frecuencia: un peer con el reloj
+    corrido reintenta cada pocos segundos y llenaria el log con la misma linea."""
+    ahora = time.monotonic()
+    clave = (quien, motivo)
+    with _avisos_401_lock:
+        if ahora - _avisos_401.get(clave, -AVISO_401_S) < AVISO_401_S:
+            return
+        _avisos_401[clave] = ahora
+        if len(_avisos_401) > 256:  # no crece sin limite con pc_id inventados
+            _avisos_401.clear()
+    log(f"peer {quien}: 401 ({motivo})")
+
+
 def verify_peer_request(headers, method: str, path: str, body: bytes) -> str | None:
     """`pc_id` del peer verificado, o None (headers incompletos, peer desconocido, firma que no
     calza, fuera de ventana o nonce repetido: `federation.verify` ya cubre las cuatro)."""
@@ -1819,29 +1843,52 @@ class PeerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _parts_and_body(self) -> tuple[list[str], bytes] | None:
+    def _cerrar(self, code: int, error: str) -> None:
+        """Contesta y cierra: el cuerpo quedo sin leer (o a medias) en el socket."""
+        self.close_connection = True
+        body = json.dumps({"error": error}, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _parts_and_body(self, method: str) -> tuple[list[str], bytes] | None:
         """Ruta partida y cuerpo leido, con los mismos limites que Handler._route (Content-Length
-        exacto, sin Transfer-Encoding, techo MAX_ATTACH en /attach). None (ya contestado) si algo
-        no cierra."""
+        exacto, sin Transfer-Encoding). None (ya contestado) si algo no cierra.
+
+        La firma cubre el cuerpo, asi que no se puede verificar sin leerlo; pero ANTES de leer se
+        exige lo que si se puede mirar: los cuatro headers de firma y que `X-Lienzo-Peer` sea una
+        PC emparejada. Si no, 401 y se cierra sin leer: antes cualquier equipo de la LAN mandaba
+        hasta 64 MB sin firma y se leian enteros (revision 2026-10-04, 0.7 y segunda revision).
+        Las rutas sin firma (hello, pair) leen como maximo MAX_BODY; MAX_ATTACH solo con un peer
+        conocido."""
         u = urllib.parse.urlparse(self.path)
         self.query = urllib.parse.parse_qs(u.query)
         parts = [p for p in u.path.split("/") if p]
         lengths = self.headers.get_all("Content-Length", [])
         length = lengths[0].strip() if len(lengths) == 1 else "0"
         if self.headers.get("Transfer-Encoding") or len(lengths) > 1 or not re.fullmatch(r"[0-9]{1,20}", length):
-            self.close_connection = True
-            self._json(400, {"error": "Content-Length invalido o Transfer-Encoding no soportado"})
+            self._cerrar(400, "Content-Length invalido o Transfer-Encoding no soportado")
             return None
         n = int(length)
-        cap = MAX_ATTACH if parts[-1:] == ["attach"] else MAX_BODY
+        rest = parts[1:] if parts[:1] == ["peer"] else None
+        sin_firma = rest is not None and _sin_firma(method, rest)
+        if rest is not None and not sin_firma:
+            claimed = self.headers.get("X-Lienzo-Peer") or ""
+            completos = all(self.headers.get(h) for h in ("X-Lienzo-Ts", "X-Lienzo-Nonce", "X-Lienzo-Sig"))
+            if not claimed or not completos or _peer_key(claimed) is None:
+                _avisar_401(claimed or self.client_address[0], "sin headers de firma o PC no emparejada")
+                self._cerrar(401, "firma invalida")
+                return None
+        cap = MAX_ATTACH if parts[-1:] == ["attach"] and rest is not None and not sin_firma else MAX_BODY
         if n > cap:
-            self.close_connection = True
-            self._json(413, {"error": "cuerpo demasiado grande"})
+            self._cerrar(413, "cuerpo demasiado grande")
             return None
         raw = self.rfile.read(n) if n else b""
         if len(raw) != n:
-            self.close_connection = True
-            self._json(400, {"error": "cuerpo incompleto"})
+            self._cerrar(400, "cuerpo incompleto")
             return None
         return parts, raw
 
@@ -1852,7 +1899,7 @@ class PeerHandler(BaseHTTPRequestHandler):
             return {}
 
     def _dispatch(self, method: str) -> None:
-        got = self._parts_and_body()
+        got = self._parts_and_body(method)
         if got is None:
             return
         parts, raw = got
@@ -1860,7 +1907,7 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._json(404, {"error": "ruta desconocida"})
         rest = parts[1:]
         path = urllib.parse.urlparse(self.path).path
-        sin_firma = (method == "GET" and rest == ["hello"]) or (method == "POST" and rest == ["pair"])
+        sin_firma = _sin_firma(method, rest)
         pc_id = None
         if not sin_firma:
             pc_id = verify_peer_request(self.headers, method, path, raw)
