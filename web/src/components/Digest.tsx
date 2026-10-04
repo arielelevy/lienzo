@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import { whenLabel } from "../names";
 import type { DigestTurn } from "../types";
-import { copyText, useLocalToast, type ToastFn } from "./Card";
+import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 
 export function Digest({ turn: t, toast: extToast }: { turn: DigestTurn; toast?: ToastFn }) {
   const { toast, node: toastNode } = useLocalToast(extToast);

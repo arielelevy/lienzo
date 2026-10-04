@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ago, detail, failMsg, rulesApi, sessionsApi } from "../api";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ago, detail, failMsg, sessionsApi } from "../api";
+import { continueAt, useCardActions } from "../hooks/useCardActions";
+import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
 import { canWrite, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
@@ -7,44 +9,6 @@ import { PermissionButtons, PermissionPrompt } from "./PermissionPrompt";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
-
-export type ToastFn = (msg: string, err?: boolean) => void;
-
-/** Toast: si el componente recibe el global por props lo usa; si no, muestra uno chico propio
- *  (posicionado dentro del contenedor, que tiene que ser position: relative). */
-export function useLocalToast(external?: ToastFn) {
-  const [msg, setMsg] = useState<{ text: string; err: boolean } | null>(null);
-  const timer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-  const toast = useCallback<ToastFn>(
-    (text, err = false) => {
-      if (external) {
-        external(text, err);
-        return;
-      }
-      setMsg({ text, err });
-      window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => setMsg(null), 2500);
-    },
-    [external],
-  );
-  const node =
-    msg && !external ? (
-      <div className={`ctoast ${msg.err ? "err" : ""}`} role="status">
-        {msg.text}
-      </div>
-    ) : null;
-  return { toast, node };
-}
-
-export async function copyText(text: string, toast: ToastFn) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast("copiado");
-  } catch (e) {
-    toast(`no se pudo copiar: ${(e as Error).message}`, true);
-  }
-}
 
 /** Renombrar en el lugar: `start` abre un input con el titulo actual (seleccionado); Enter guarda
  *  por PUT /sessions/<sid>/title, Escape o blur cancelan. Devuelve el input listo para poner donde
@@ -320,7 +284,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(timer);
   }, []);
-  const [busy, setBusy] = useState(false);
+  const { busy, pcCoordinator, scheduleContinue, pickDialog, codaDecide, quickSend, autorizarDenegado, toggleCoordinator, togglePcCoordinator, toggleStopped } = useCardActions(s, toast);
   const rename = useRename(s, toast);
   // el grupo de libres se abre y se cierra para todas sus tarjetas a la vez (ver `useGroupOpen`)
   const group = useGroupOpen(`${s.repo}|${s.agent}`);
@@ -397,7 +361,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
 
   // limite de uso con hora de vuelta (Codex): un click deja programado "Continuar" un minuto
   // despues; si ya hay una regla a esa hora (manual o automatica) el chip de abajo la muestra
-  const limitAt = s.limit_until ? new Date(new Date(s.limit_until).getTime() + 60_000) : null;
+  const limitAt = continueAt(s);
   const stalledWhy = stalledReason(s);
   const stalled = stalledWhy === "sin actividad" ? `sin actividad desde hace ${ago(s.state_since)}` : stalledWhy;
   // 30 s de margen: si la regla ya disparo y el navegador va unos segundos adelantado, no se ofrece
@@ -406,80 +370,6 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const hasContinue =
     !!limitAt && rules.some((r) => r.kind === "at" && r.to === s.session_id && !!r.at && Math.abs(new Date(r.at).getTime() - limitAt.getTime()) < 5 * 60_000);
 
-  /** accion contra el server con los botones deshabilitados mientras dura: `fn` devuelve el texto
-   *  del toast de exito, `fail` arma el de error a partir del error (failMsg distingue la ruta que
-   *  falta de cualquier otro 404) */
-  const act = async (fn: () => Promise<string>, fail: (e: unknown) => string) => {
-    setBusy(true);
-    try {
-      toast(await fn());
-    } catch (e) {
-      toast(fail(e), true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const scheduleContinue = () =>
-    limitAt &&
-    act(async () => {
-      await rulesApi.create({ kind: "at", from: null, to: s.session_id, text: "Continuar", at: limitAt.toISOString() });
-      return `A las ${hhmm(limitAt)} se le escribe "Continuar"`;
-    }, failMsg("programar"));
-  /** una opción del diálogo de la TUI: se teclea el número en su terminal, sin Enter */
-  const pickDialog = (n: number, text: string) =>
-    act(async () => {
-      await sessionsApi.dialog(s.session_id, n);
-      return `Elegido: ${text}`;
-    }, failMsg("elegir"));
-  /** el permiso que CODA pide en su terminal: Enter (Yes) o Esc, tecleado por el server */
-  const codaDecide = (decision: "allow" | "deny") =>
-    act(async () => {
-      await sessionsApi.approve(s.session_id, decision);
-      return decision === "allow" ? "Permitido en su terminal" : "Denegado en su terminal";
-    }, failMsg("contestar"));
-  /** le avisa al agente que el humano autoriza lo que se le denego, para que lo reintente */
-  const autorizarDenegado = () => {
-    const d = s.last_denied;
-    if (!d) return;
-    const que = d.detalle ? `${d.tool} ${d.detalle}` : d.tool;
-    void quickSend(`El humano autoriza lo que se te denegó (${que}). Reintentalo; si la regla te lo vuelve a frenar, avisame y no insistas.`);
-  };
-  const quickSend = (text: string) =>
-    act(async () => {
-      const r = await sessionsApi.send(s.session_id, { text, attachments: [] });
-      return `Enviado (${r.chars} caracteres)`;
-    }, failMsg("enviar"));
-  // estrella de coordinadora: a lo sumo una por repo; recibe los avisos "cuando termine" del
-  // SendBox y el "avisame" del parser. Un server anterior a la ruta contesta 404 y la estrella solo avisa
-  const toggleCoordinator = () => {
-    const on = !s.coordinator;
-    return act(async () => {
-      await sessionsApi.coordinator(s.session_id, on);
-      return on ? `${shortName(s)} es la coordinadora de ${s.repo}` : `${shortName(s)} ya no es la coordinadora`;
-    }, failMsg());
-  };
-  // coordinadora separada solo para esta PC (plan §3.6): no apaga ni la reemplaza la federada de
-  // otra PC del mismo repo. Apagarla no necesita mandar el scope, `set_coordinator` lo limpia solo
-  const pcCoordinator = s.coordinator && s.coordinator_scope === "pc";
-  const togglePcCoordinator = () => {
-    const on = !pcCoordinator;
-    return act(async () => {
-      await sessionsApi.coordinator(s.session_id, on, "pc");
-      return on ? `${shortName(s)} es la coordinadora de ${s.repo} en esta PC` : `${shortName(s)} ya no es la coordinadora de esta PC`;
-    }, failMsg());
-  };
-
-  // la llave stopped: prendida no recibe mensajes ni reglas (el server avisa a sus conectadas),
-  // apagada vuelve a recibir. La prende el pegado de su trabajo en otra tarjeta, o el menu
-  const toggleStopped = () => {
-    const on = !s.stopped_by;
-    return act(async () => {
-      const r = await sessionsApi.stopped(s.session_id, on);
-      if (!on) return `${shortName(s)} habilitada: vuelve a recibir`;
-      const avisadas = r.notified?.length ? `; avisadas: ${r.notified.join(", ")}` : "; sin conectadas a quien avisar";
-      return `${shortName(s)} detenida${r.interrupted ? " (Esc en su terminal)" : ""}${avisadas}`;
-    }, failMsg());
-  };
   const stoppedBy = s.stopped_by === "user" ? "la detuvieron desde el tablero" : s.stopped_by ? `su trabajo siguió en ${shortName(sessions[s.stopped_by], "otra sesión")}` : "";
 
   // Plegada adentro de un grupo de libres: no se dibuja, la representa la tarjeta del grupo. Va
