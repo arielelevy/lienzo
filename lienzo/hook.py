@@ -57,11 +57,29 @@ def now_iso() -> str:
 
 
 def load_config() -> dict:
+    """config.json, o vacia si no existe. Si esta corrupto (o no es un objeto) o no se puede abrir,
+    tambien vacia, pero no en silencio: queda anotado en bad-<nanos>.txt de EVENTS, como un evento
+    roto. Apartarlo no es cosa del hook: lo hace el server (state.load_config, con log) en su
+    proxima lectura, a los pocos segundos. Nunca levanta: el hook no puede romper al agente."""
+    path = os.path.join(LIENZO, "config.json")
     try:
-        with open(os.path.join(LIENZO, "config.json"), encoding="utf-8") as f:
-            return json.load(f)
-    except OSError, ValueError:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        if isinstance(cfg, dict):
+            return cfg
+        motivo = f"no es un objeto JSON sino {type(cfg).__name__}"
+    except FileNotFoundError:
         return {}
+    except (OSError, ValueError) as e:
+        motivo = f"{type(e).__name__}: {e}"
+    try:
+        os.makedirs(EVENTS, exist_ok=True)
+        atomic_write(
+            os.path.join(EVENTS, f"bad-{time.time_ns()}.txt"), f"config.json ({path}): {motivo}; se toma vacia"
+        )
+    except OSError:
+        pass
+    return {}
 
 
 def read_pc_id() -> str | None:

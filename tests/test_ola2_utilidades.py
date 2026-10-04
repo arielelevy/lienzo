@@ -145,3 +145,52 @@ def test_wmi_va_por_subproc_y_un_powershell_colgado_es_una_falla_logueada(monkey
     assert health.ZonasTermicasWMI().medir() is None
     assert vistos["argv"][0] == "powershell" and vistos["timeout"] == 5
     assert avisos == ["temperatura, fuente wmi: falla (OSError: powershell no termino en 5 s)"]
+
+
+# --- hook.load_config: un config.json corrupto no se calla ---------------------------------
+
+
+def _hook_en(tmp_path, monkeypatch):
+    monkeypatch.setattr(hook, "LIENZO", str(tmp_path))
+    monkeypatch.setattr(hook, "EVENTS", str(tmp_path / "events"))
+
+
+def _anotados(tmp_path) -> list[str]:
+    d = tmp_path / "events"
+    return [(d / n).read_text(encoding="utf-8") for n in os.listdir(d) if n.startswith("bad-")] if d.exists() else []
+
+
+def test_hook_config_corrupto_queda_anotado_y_se_toma_vacio(tmp_path, monkeypatch):
+    _hook_en(tmp_path, monkeypatch)
+    (tmp_path / "config.json").write_text('{"wait": 30,', encoding="utf-8")
+    assert hook.load_config() == {}
+    [nota] = _anotados(tmp_path)
+    assert "config.json" in nota and "JSONDecodeError" in nota
+    assert (tmp_path / "config.json").exists(), "apartarlo es cosa del server, no del hook"
+
+
+def test_hook_config_que_no_es_objeto_tambien_se_anota(tmp_path, monkeypatch):
+    _hook_en(tmp_path, monkeypatch)
+    (tmp_path / "config.json").write_text("[1, 2]", encoding="utf-8")
+    assert hook.load_config() == {}
+    [nota] = _anotados(tmp_path)
+    assert "no es un objeto JSON sino list" in nota
+
+
+def test_hook_config_ausente_o_bueno_no_anota_nada(tmp_path, monkeypatch):
+    _hook_en(tmp_path, monkeypatch)
+    assert hook.load_config() == {}
+    (tmp_path / "config.json").write_text('{"wait": 30}', encoding="utf-8")
+    assert hook.load_config() == {"wait": 30}
+    assert _anotados(tmp_path) == []
+
+
+def test_hook_config_corrupto_sin_poder_anotar_igual_devuelve_vacio(tmp_path, monkeypatch):
+    _hook_en(tmp_path, monkeypatch)
+    (tmp_path / "config.json").write_text("{", encoding="utf-8")
+
+    def no_se_puede(path, text):
+        raise PermissionError("disco de solo lectura")
+
+    monkeypatch.setattr(hook, "atomic_write", no_se_puede)
+    assert hook.load_config() == {}
