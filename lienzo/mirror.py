@@ -307,7 +307,8 @@ class Mirror:
             except OSError as e:
                 # timeout o corte a mitad: puede haberse ejecutado, asi que NO se reintenta
                 self.log(f"→ {nombre} {method} {path}: {type(e).__name__}: {e}")
-                return 503, {"error": f"sin conexión con {nombre}"}
+                # con el motivo: un 503 pelado no decia si fue un timeout, un corte o la PC reiniciandose
+                return 503, {"error": f"sin conexión con {nombre} ({type(e).__name__}: {e})"}
         if code == 404 and (res or {}).get("code") == "unknown_session":
             return self._tarjeta_fantasma(pm, path, nombre)
         ms = (time.monotonic() - t0) * 1000
