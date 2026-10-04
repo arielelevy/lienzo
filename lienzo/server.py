@@ -2227,6 +2227,7 @@ def main() -> int:
     mirror.MIRROR.log = log
     health.log = log
     health.cuotas_de_sesiones = cuotas_de_sesiones
+    secretos.al_guardar_git = health.renovar_git
     peers_guardados = federation.list_peers(PEERS_FILE)
     peer_srv = None
     if a.peers or peers_guardados:

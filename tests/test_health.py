@@ -279,7 +279,7 @@ def test_clasificar_git():
     assert health.clasificar_git(0, "") == "ok"
     assert health.clasificar_git(128, "fatal: Authentication failed for 'https://x'") == "vencida"
     assert health.clasificar_git(128, "remote: Credentials are incorrect or have expired") == "vencida"
-    assert health.clasificar_git(128, "fatal: could not read Username: terminal prompts disabled") == "vencida"
+    assert health.clasificar_git(128, "fatal: could not read Username: terminal prompts disabled") == "no_verificable"
     assert health.clasificar_git(128, "fatal: unable to access: Could not resolve host") == "sin_red"
 
 
@@ -319,8 +319,40 @@ def test_ls_remote_colgado_vence_y_no_bloquea(monkeypatch):
     assert health._ls_remote("https://h/r.git") == "vencida"
 
 
-def test_cannot_prompt_es_credencial_vencida():
-    assert health.clasificar_git(128, "fatal: Cannot prompt because user interactivity has been disabled.") == "vencida"
+def test_cannot_prompt_no_es_vencida_sino_no_verificable():
+    """Bug 8: el GCM que no puede pedir la credencial no mando nada al servidor; no prueba que venza."""
+    err = "fatal: Cannot prompt because user interactivity has been disabled.\nfatal: unable to get password from user"
+    assert health.clasificar_git(128, err) == "no_verificable"
+
+
+def test_ls_remote_prueba_con_la_ruta_si_por_host_no_puede(monkeypatch):
+    llamadas = []
+
+    def correr(argv, **k):
+        llamadas.append(argv)
+        if "credential.useHttpPath=true" in argv:
+            return 0, "abc refs/heads/main", ""
+        return 128, "", "fatal: Cannot prompt because user interactivity has been disabled."
+
+    monkeypatch.setattr(health.subproc, "correr", correr)
+    assert health._ls_remote("https://h/r.git") == "ok"
+    assert len(llamadas) == 2
+    # las dos sin poder pedir: no verificable, no vencida
+    monkeypatch.setattr(
+        health.subproc,
+        "correr",
+        lambda argv, **k: (128, "", "fatal: Cannot prompt because user interactivity has been disabled."),
+    )
+    assert health._ls_remote("https://h/r.git") == "no_verificable"
+    # un rechazo real del servidor en cualquiera de las dos manda
+    respuestas = iter(
+        [
+            (128, "", "fatal: Cannot prompt because user interactivity has been disabled."),
+            (128, "", "fatal: Authentication failed"),
+        ]
+    )
+    monkeypatch.setattr(health.subproc, "correr", lambda argv, **k: next(respuestas))
+    assert health._ls_remote("https://h/r.git") == "vencida"
 
 
 def test_clasificar_git_distingue_red_de_credencial():

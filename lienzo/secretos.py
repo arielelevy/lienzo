@@ -24,6 +24,7 @@ import secrets
 import threading
 import time
 import urllib.parse
+from collections.abc import Callable
 
 try:
     from . import subproc
@@ -34,6 +35,9 @@ TTL_S = 600  # 10 minutos: lo que tarda una coda en usarlo; despues se borra sol
 MAX_VALOR = 4096
 NONCE_BYTES = 16
 DESTINOS = ("git", "memoria")
+
+# lo enchufa server.py (health.renovar_git): una credencial nueva se prueba enseguida y no a los 5 min
+al_guardar_git: Callable[[], None] = lambda: None
 
 
 def _subclave(clave: bytes, etiqueta: bytes) -> bytes:
@@ -200,6 +204,11 @@ def recibir(d: dict, valor: str) -> tuple[int, dict]:
         if _CONTROL & set(valor):
             return 400, {"error": "valor: sin saltos de linea ni caracteres nulos"}
         ok, msg = aplicar_git(d["git_url"], d["usuario"], valor)
+        if ok:
+            try:
+                al_guardar_git()
+            except Exception as e:  # probar de nuevo es un extra: la credencial ya quedo guardada
+                msg += f" (no se pudo volver a probar git ahora: {type(e).__name__})"
         return (200 if ok else 502), ({"ok": True, "detalle": msg} if ok else {"ok": False, "error": msg})
     sid = BOVEDA.guardar(d["nombre"], valor)
     return 200, {"ok": True, "id": sid, "vence_en_s": TTL_S}

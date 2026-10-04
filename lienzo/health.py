@@ -161,6 +161,10 @@ class CacheEnSegundoPlano:
         self._clave: tuple = ()
         self._error: str | None = None
 
+    def renovar(self) -> None:
+        """Que el proximo pedido mida de nuevo sin esperar el TTL. Mientras mide, sigue el valor de antes."""
+        self._momento = None
+
     def valor(self, *clave, esperar_primera: bool = False) -> object:
         ahora = time.monotonic()
         if self._momento is None and esperar_primera:
@@ -377,24 +381,33 @@ def _git_urls() -> list[str]:
 
 
 def clasificar_git(returncode: int, stderr: str) -> str:
-    """ok, vencida (pide login o lo rechaza), sin_red (no resuelve o no conecta) o error (otra cosa)."""
+    """ok, vencida (el servidor RECHAZO la credencial), no_verificable (no hubo credencial que mandar
+    sin abrir una ventana de login), sin_red (no resuelve o no conecta) o error (otra cosa)."""
     if returncode == 0:
         return "ok"
     e = (stderr or "").lower()
-    pistas = (
+    rechazo = (
         "authentication failed",
-        "could not read username",
-        "terminal prompts disabled",
         "401",
         "403",
         "credentials are incorrect",
         "invalid username or password",
-        # el Git Credential Manager con la credencial vencida quiere abrir una ventana de login y,
-        # sin interactividad, falla asi: es «vencida», no un error de red (medido el 2026-10-04)
-        "cannot prompt because user interactivity has been disabled",
     )
-    if any(p in e for p in pistas):
+    if any(p in e for p in rechazo):
         return "vencida"
+    # git o el Git Credential Manager querian PEDIR la credencial y sin interactividad no pueden: no
+    # se mando nada al servidor, asi que no prueba que este vencida. Bug 8 (2026-10-04): la tira decia
+    # «vencida» en las dos PCs mientras el push andaba en las dos (el GCM con proveedor generico a veces
+    # encuentra la credencial solo por host y a veces solo con la ruta)
+    sin_pedir = (
+        "cannot prompt because user interactivity has been disabled",
+        "could not read username",
+        "could not read password",
+        "terminal prompts disabled",
+        "unable to get password from user",
+    )
+    if any(p in e for p in sin_pedir):
+        return "no_verificable"
     # la red, no la credencial: el host no resuelve o no se puede conectar (mejora 7, 2026-10-04:
     # distinguir «sin red» de una credencial vencida en la tira de PCs)
     red = (
@@ -423,13 +436,23 @@ def _ls_remote(url: str, timeout_s: float = 20) -> str:
     tuberia (con la credencial vencida el Git Credential Manager queda vivo como nieto de git y
     retiene la tuberia; medido el 2026-10-03, el server de la otra PC nunca termino de medir y
     git_auth quedo en None) y, al vencer, se mata el arbol entero y no solo git."""
-    argv = ["git", "-c", "credential.interactive=false", "ls-remote", "--heads", url]
-    rc, _out, err = subproc.correr(argv, timeout=timeout_s, sin_prompts=True)
-    if rc == subproc.VENCIDO:
-        return "timeout"  # git no termino: red muy lenta, o el credential manager esperando un login
-    if rc == subproc.NO_ARRANCO:
-        return "error"  # git no esta instalado o no arranca
-    return clasificar_git(rc, err)
+    # primero solo por host y despues con la ruta (credential.useHttpPath): el GCM con proveedor
+    # generico guarda a veces de una forma y a veces de la otra (bug 8). Con que una ande, es ok
+    vistos = []
+    for extra in ([], ["-c", "credential.useHttpPath=true"]):
+        argv = ["git", "-c", "credential.interactive=false", *extra, "ls-remote", "--heads", url]
+        rc, _out, err = subproc.correr(argv, timeout=timeout_s, sin_prompts=True)
+        if rc == subproc.VENCIDO:
+            estado = "timeout"  # git no termino: red muy lenta, o el credential manager esperando un login
+        elif rc == subproc.NO_ARRANCO:
+            return "error"  # git no esta instalado o no arranca: probar otra vez no cambia nada
+        else:
+            estado = clasificar_git(rc, err)
+        if estado in ("ok", "sin_red"):
+            return estado  # sin red, la segunda vuelta tampoco llega
+        vistos.append(estado)
+    # el diagnostico mas firme de los dos: un rechazo del servidor antes que «no se pudo probar»
+    return min(vistos, key=("vencida", "timeout", "no_verificable", "error").index)
 
 
 # la clave son las urls: si cambian, CacheEnSegundoPlano mide enseguida sin esperar GIT_TTL_S
@@ -549,6 +572,13 @@ def agentes_que_entran(mem_free_gb: float | None) -> int | None:
     if mem_free_gb is None:
         return None
     return max(0, int((mem_free_gb - RESERVA_GB) // GB_POR_AGENTE)) if mem_free_gb > RESERVA_GB else 0
+
+
+def renovar_git() -> None:
+    """Medir git_auth de nuevo ya: lo llama el server al guardar una credencial que llego de otra PC
+    (medido el 2026-10-04: el token llegaba y la tira seguia en violeta hasta 5 min, el GIT_TTL_S)."""
+    _git.renovar()
+    _git_auth_seguro()  # dispara el hilo ahora, sin esperar al proximo /peers
 
 
 def _git_auth_seguro() -> dict | None:

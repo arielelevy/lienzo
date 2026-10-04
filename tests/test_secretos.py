@@ -120,3 +120,27 @@ def test_leer_git_local_prueba_con_la_ruta_y_despues_solo_el_host(monkeypatch):
     monkeypatch.setattr(sec.subproc, "correr", correr)
     assert sec.leer_git_local("https://h.com/org/repo.git") == ("u", "p")
     assert "path=org/repo.git" in pedidos[0]
+
+
+def test_recibir_git_vuelve_a_probar_git_enseguida(monkeypatch):
+    """Una credencial que llega se prueba ya: antes la tira seguia en violeta hasta 5 min."""
+    monkeypatch.setattr(sec, "aplicar_git", lambda *a: (True, "credencial guardada"))
+    llamadas = []
+    monkeypatch.setattr(sec, "al_guardar_git", lambda: llamadas.append(1))
+    d = {"destino": "git", "nombre": "t", "git_url": "https://h/r.git", "usuario": "u"}
+    assert sec.recibir(d, "valor")[0] == 200
+    assert llamadas == [1]
+    monkeypatch.setattr(sec, "aplicar_git", lambda *a: (False, "fallo"))
+    assert sec.recibir(d, "valor")[0] == 502
+    assert llamadas == [1]  # si no se guardo, no hay nada nuevo que probar
+
+
+def test_renovar_mide_de_nuevo_sin_esperar_el_ttl():
+    import health
+
+    medidas = iter(["vieja", "nueva"])
+    c = health.CacheEnSegundoPlano("prueba", 3600, lambda: next(medidas))
+    assert c.valor(esperar_primera=True) == "vieja"
+    assert c.valor(esperar_primera=True) == "vieja"  # dentro del TTL no mide
+    c.renovar()
+    assert c.valor(esperar_primera=True) == "nueva"

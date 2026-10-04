@@ -177,7 +177,13 @@ export function alertaDe(h: {
   return motivos.length ? motivos.join(" y ") : null;
 }
 
-const MOTIVO_GIT: Record<string, string> = { vencida: "vencida", sin_red: "sin red", timeout: "timeout", error: "error" };
+const MOTIVO_GIT: Record<string, string> = {
+  vencida: "vencida",
+  no_verificable: "no verificable",
+  sin_red: "sin red",
+  timeout: "timeout",
+  error: "error",
+};
 
 /** El estado de la credencial de git, aparte de la alerta roja de recursos (pedido de Ariel,
  *  2026-10-04: se confundia con memoria y temperatura). Una linea por host con problema:
