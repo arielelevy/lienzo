@@ -303,6 +303,10 @@ def decode_signed_beacon(
 # --- cliente SSE con reconexion --------------------------------------------------------------
 
 
+SSE_PING_S = 15.0  # cada cuanto manda un ping el /events del server (server.py)
+SSE_READ_TIMEOUT_S = 35.0  # mas que dos pings: uno perdido no corta el stream
+
+
 def _backoff_exponencial(intento: int) -> float:
     return min(0.5 * (2**intento), 10.0)
 
@@ -418,12 +422,21 @@ class SSEClient:
         el stream se corta seguido. Las excepciones que no son de red las atrapa `_run`."""
         conn = http.client.HTTPConnection(self.host, self.port, timeout=self.connect_timeout)
         self._conn = conn
+        conectado = False
         try:
             conn.request("GET", self.path, headers=self.headers_fn())
+            sock = conn.sock  # despues de getresponse puede quedar en None (Connection: close)
             resp = conn.getresponse()
             if resp.status != 200:
                 self._avisar(f"responde {resp.status}")
                 return False
+            conectado = True
+            # el timeout de conexion (5 s) quedaba como timeout de LECTURA y el server manda un
+            # ping cada 15 s: el stream se cortaba solo cada pocos segundos, se perdian eventos y
+            # se reenviaba el snapshot entero (revision 2026-10-04, B2). Conectado, se espera mas
+            # que dos pings antes de darlo por muerto.
+            if sock is not None:
+                sock.settimeout(SSE_READ_TIMEOUT_S)
             self._avisar("conectado")
             if self.on_reconnect is not None:
                 self.on_reconnect()
@@ -432,7 +445,7 @@ class SSEClient:
             return True
         except OSError as e:
             self._avisar(f"{type(e).__name__}: {e}")
-            return False
+            return conectado  # conecto y se corto despues: no es un fallo para el backoff
         finally:
             conn.close()
 

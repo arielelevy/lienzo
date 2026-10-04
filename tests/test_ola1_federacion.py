@@ -215,3 +215,85 @@ def test_evento_sse_que_no_es_objeto_se_ignora_sin_reventar():
         assert len(log) == 1  # el mismo tipo raro se avisa una vez
     finally:
         m.stop()
+
+
+# --- 0.10: el SSE entre PCs reconecta cada pocos segundos -------------------------------------
+
+
+class _HandlerPing(http.server.BaseHTTPRequestHandler):
+    """Un /peer/events de verdad: un ping cada `cada_s` hasta que el test termine."""
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        est = self.server.est
+        with est["lock"]:
+            est["conexiones"] += 1
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        try:
+            while not est["fin"].wait(est["cada_s"]):
+                self.wfile.write(b'data: {"type": "ping"}\n\n')
+                self.wfile.flush()
+        except OSError:
+            pass
+
+
+def test_sse_no_reconecta_entre_pings_mas_lentos_que_el_timeout_de_conexion():
+    """El timeout de conexion (5 s en produccion) quedaba como timeout de lectura y el ping es cada
+    15 s: el stream se cortaba y reconectaba solo, perdiendo eventos. Aca a escala: conexion de 1 s,
+    ping cada 3 s."""
+    srv, cerrar = _server(_HandlerPing)
+    srv.est = {"lock": threading.Lock(), "conexiones": 0, "fin": threading.Event(), "cada_s": 3.0}
+    eventos = []
+    cliente = fed.SSEClient(
+        *srv.server_address,
+        "/peer/events",
+        headers_fn=dict,
+        on_event=eventos.append,
+        backoff=lambda i: 0.0,
+        connect_timeout=1.0,
+        log=lambda m: None,
+    )
+    cliente.start()
+    try:
+        assert _esperar(lambda: len(eventos) >= 2, timeout=8)
+    finally:
+        srv.est["fin"].set()
+        cliente.stop()
+        cerrar()
+    assert srv.est["conexiones"] == 1
+
+
+def test_sse_que_conecto_y_se_corta_por_silencio_no_escala_el_backoff(monkeypatch):
+    """Conecto y despues el peer quedo mudo mas que el timeout de lectura: cuenta como conectado
+    (backoff 0), no como un fallo de conexion."""
+    monkeypatch.setattr(fed, "SSE_READ_TIMEOUT_S", 0.3)
+    srv, cerrar = _server(_HandlerPing)
+    srv.est = {"lock": threading.Lock(), "conexiones": 0, "fin": threading.Event(), "cada_s": 60.0}
+    intentos = []
+
+    def backoff(i):
+        intentos.append(i)
+        return 0.0
+
+    cliente = fed.SSEClient(
+        *srv.server_address,
+        "/peer/events",
+        headers_fn=dict,
+        on_event=lambda e: None,
+        backoff=backoff,
+        log=lambda m: None,
+    )
+    cliente.start()
+    try:
+        assert _esperar(lambda: len(intentos) >= 2)
+    finally:
+        srv.est["fin"].set()
+        cliente.stop()
+        cerrar()
+    assert intentos[:2] == [0, 0]
