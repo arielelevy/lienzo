@@ -54,6 +54,7 @@ from sessions import (
     answer_dialog,
     answer_pending,
     clean_attachments,
+    coda_viva,
     consume_events,
     cuotas_de_sesiones,
     drop_session,
@@ -2233,6 +2234,7 @@ def main() -> int:
     health.log = log
     health.cuotas_de_sesiones = cuotas_de_sesiones
     health.remotes_de_sesiones = remotes_de_sesiones
+    health.coda_viva = coda_viva
     secretos.al_guardar_git = health.renovar_git
     peers_guardados = federation.list_peers(PEERS_FILE)
     peer_srv = None

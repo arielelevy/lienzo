@@ -302,6 +302,13 @@ def cuotas_de_sesiones() -> dict:
     return out
 
 
+def coda_viva() -> bool:
+    """¿Hay una tarjeta viva de coda en ESTA PC? health muestra la cuota de coda solo entonces (bug 10,
+    2026-10-04: «sin cuota: coda» en rojo sin que nadie usara coda)."""
+    with lock:
+        return any(s.get("alive") and s.get("agent") == "coda" for s in sessions.values())
+
+
 def remotes_de_sesiones() -> list[str]:
     """El remote `origin` de cada repo con una tarjeta viva de ESTA PC, sin repetir: health prueba la
     credencial de git solo de esos (bug 9, 2026-10-04: la tira avisaba por un proyecto ya cerrado)."""

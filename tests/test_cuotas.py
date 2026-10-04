@@ -81,3 +81,12 @@ def test_cuotas_de_sesiones_toma_el_limite_vigente(monkeypatch):
     monkeypatch.setattr(ses, "sessions", st.sessions)
     out = ses.cuotas_de_sesiones()
     assert out["claude"].startswith("agotada hasta ") and out["codex"] == "agotada" and "pi" not in out
+
+
+def test_coda_viva_solo_con_una_tarjeta_viva_de_coda(monkeypatch):
+    monkeypatch.setattr(
+        ses, "sessions", {"1": {"alive": False, "agent": "coda"}, "2": {"alive": True, "agent": "claude"}}
+    )
+    assert ses.coda_viva() is False
+    ses.sessions["3"] = {"alive": True, "agent": "coda"}
+    assert ses.coda_viva() is True

@@ -598,11 +598,37 @@ def coda_cuota(esperar: bool = False) -> str | None:
 cuotas_de_sesiones: Callable[[], dict] = dict
 
 
+# ¿hay una tarjeta viva de coda en esta PC? Lo enchufa server.py. La cuota de coda solo se muestra
+# con coda en uso (o hasta CODA_GRACIA_S despues de la ultima): bug 10 (2026-10-04), la tira ponia la
+# PC en rojo con «sin cuota: coda» sin que nadie usara coda, por un error viejo de su log. El 409 de
+# lanzar una coda sin cuota (launch.py) sigue mirando coda_cuota, la de verdad
+coda_viva: Callable[[], bool] = lambda: False
+CODA_GRACIA_S = 3600
+_coda_vista: list[float | None] = [None]  # ultima vez que hubo una tarjeta viva de coda
+
+
+def coda_en_uso(ahora: float | None = None) -> bool:
+    ahora = time.time() if ahora is None else ahora
+    try:
+        viva = bool(coda_viva())
+    except Exception as e:  # la salud nunca levanta: sin el dato vale la ultima vez que se vio
+        log(f"coda viva: {type(e).__name__}: {e}")
+        viva = False
+    if viva:
+        _coda_vista[0] = ahora
+    return _coda_vista[0] is not None and ahora - _coda_vista[0] <= CODA_GRACIA_S
+
+
+def _coda_cuota_en_uso() -> str | None:
+    return coda_cuota() if coda_en_uso() else None
+
+
 def cuotas() -> dict:
     """Cuota por agente en esta PC: ok, agotada (o «agotada hasta HH:MM») o desconocida. Coda por su log
-    y su base; los demas por el limite de uso que sus tarjetas tienen vigente. Nunca levanta."""
+    y su base, solo si esta en uso; los demas por el limite de uso que sus tarjetas tienen vigente.
+    Nunca levanta."""
     out: dict = {}
-    c = coda_cuota()
+    c = _coda_cuota_en_uso()
     if c is not None:
         out["coda"] = c
     try:
@@ -654,7 +680,7 @@ def snapshot() -> dict:
         "temp_c": temp_c,
         "agentes_libres": agentes_que_entran(mem_free_gb),
         "git_auth": _git_auth_seguro(),
-        "coda_cuota": coda_cuota(),
+        "coda_cuota": _coda_cuota_en_uso(),
         "cuotas": cuotas(),
         "ts": _now(),
     }

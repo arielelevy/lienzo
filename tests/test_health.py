@@ -414,8 +414,38 @@ def test_git_auth_mientras_mide_las_urls_nuevas_sigue_lo_ya_medido(monkeypatch):
     cache = health.CacheEnSegundoPlano("git", health.GIT_TTL_S, lambda u: {x: "vencida" for x in u})
     monkeypatch.setattr(health, "_git", cache)
     cache._medir((("https://h/a.git",),), time.monotonic())
-    monkeypatch.setattr(health.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: None})())
+    monkeypatch.setattr(
+        health.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: None})()
+    )
     urls[0] = ["https://h/a.git", "https://h/b.git"]
     assert health._git_auth() == {"https://h/a.git": "vencida"}
     urls[0] = ["https://h/b.git"]  # la de antes ya no esta: no se muestra
     assert health._git_auth() is None
+
+
+def test_cuota_de_coda_solo_con_coda_en_uso(monkeypatch):
+    """Bug 10 (2026-10-04): la tira ponia la PC en rojo con «sin cuota: coda» sin que nadie usara coda
+    (un error viejo del log). Sin tarjeta viva de coda, ni cuotas() ni el snapshot la traen; con una,
+    si, y sigue hasta CODA_GRACIA_S despues de cerrarla."""
+    monkeypatch.setattr(health, "coda_cuota", lambda esperar=False: "agotada")
+    monkeypatch.setattr(health, "cuotas_de_sesiones", dict)
+    monkeypatch.setattr(health, "_coda_vista", [None])
+    viva = [False]
+    monkeypatch.setattr(health, "coda_viva", lambda: viva[0])
+    assert health.cuotas() == {}
+    assert health.snapshot()["coda_cuota"] is None
+    viva[0] = True
+    assert health.cuotas() == {"coda": "agotada"}
+    viva[0] = False  # se cerro la coda: la gracia la sostiene un rato y despues se suelta
+    assert health.coda_en_uso(ahora=time.time() + health.CODA_GRACIA_S - 5)
+    assert not health.coda_en_uso(ahora=time.time() + health.CODA_GRACIA_S + 5)
+
+
+def test_coda_en_uso_no_levanta_si_falla_la_consulta(monkeypatch):
+    monkeypatch.setattr(health, "_coda_vista", [None])
+
+    def rompe():
+        raise RuntimeError("lock")
+
+    monkeypatch.setattr(health, "coda_viva", rompe)
+    assert health.coda_en_uso() is False
