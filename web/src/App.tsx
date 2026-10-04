@@ -10,7 +10,7 @@ import { Login } from "./components/Login";
 import { Pairing } from "./components/Pairing";
 import { Panel } from "./components/Panel";
 import { pcOf, PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
-import { ProjectStrip, repoGroups, useProjectFilter } from "./components/ProjectStrip";
+import { ProjectStrip, expandSelected, repoGroups, useProjectFilter } from "./components/ProjectStrip";
 import { SelectionBar } from "./components/SelectionBar";
 import { Setup, TotpQr } from "./components/Setup";
 import { Toasts, useToasts } from "./components/Toasts";
@@ -144,7 +144,9 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const peerDown = useCallback((s: Session) => peersById.get(pcOf(s, localPcId) ?? "")?.alive === false, [peersById, localPcId]);
   // tira de proyectos (pedido de Ariel, parte 3): un chip por repo con sesiones vivas, y ★ Coordinadoras
   const projectGroups = useMemo(() => repoGroups(Object.values(sessions)), [sessions]);
-  const { selected: selectedRepos, coordOnly, selectRepo, toggleRepo, showAll: showAllRepos, toggleCoord } = useProjectFilter(projectGroups);
+  const { selected: selectedGroups, coordOnly, selectRepo, toggleRepo, showAll: showAllRepos, toggleCoord } = useProjectFilter(projectGroups);
+  // un chip junta el mismo proyecto de varias PCs: el filtro de tarjetas recibe todos sus miembros
+  const selectedRepos = useMemo(() => expandSelected(selectedGroups, projectGroups), [selectedGroups, projectGroups]);
 
   // seleccion multiple de tarjetas (Ctrl + click): los session_id marcados, en el orden en que se
   // marcaron. Se calcula sobre lo que existe: una sesion que desaparece sale sola de la seleccion
@@ -437,7 +439,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         projects={
           <ProjectStrip
             groups={projectGroups}
-            selected={selectedRepos}
+            selected={selectedGroups}
             coordOnly={coordOnly}
             onSelectRepo={selectRepo}
             onToggleRepo={toggleRepo}

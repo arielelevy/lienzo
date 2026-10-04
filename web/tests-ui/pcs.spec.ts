@@ -224,6 +224,24 @@ test.describe("chips de proyecto: repo y ★ Coordinadoras (pedido de Ariel)", (
     await expect(strip.locator(".pjchip.star")).toHaveText("★ Coordinadoras");
   });
 
+  test("el mismo proyecto en dos PCs es un solo chip, aunque una tenga remote y la otra no", async ({ page }) => {
+    // pedido de Ariel (2026-10-04): «chess» salia dos veces, una por PC. Aca demo de la notebook
+    // trae repo_key (remote) y la de oficina no (cae en «demo», la carpeta): igual es un chip
+    let primera = true;
+    const list = sinLibres(sesiones()).map((s) => {
+      if (s.repo !== "demo" || !primera) return s;
+      primera = false;
+      return { ...s, pc: "note-1", repo: "Demo", repo_key: "github.com/ariel/demo" };
+    });
+    await abrirTablero(page, list, [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
+    const demo = page.locator(".pjchip", { hasText: /^demo/i });
+    await expect(demo).toHaveCount(1);
+    await expect(demo).toContainText("3");
+    await demo.click();
+    await esperarQuietud(page);
+    await expect(page.locator(".card")).toHaveCount(3);
+  });
+
   test("por defecto no hay ninguno elegido y se ve todo; el click elige y nada mas", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
     await expect(page.locator(".pjchip.on")).toHaveText(["Todos"]);

@@ -88,19 +88,58 @@ interface RepoGroup {
   key: string;
   label: string;
   count: number;
+  /** los `repo_key || repo` de sus sesiones: lo que el filtro compara contra cada tarjeta */
+  members: string[];
 }
 
-/** Un grupo por repo (agrupa por `repo_key` si viene, y si no por `repo`); la etiqueta siempre es
- *  `repo`. Orden: el que mas sesiones tiene primero. */
+/** Un grupo por proyecto, aunque sus sesiones sean de distintas PCs: se juntan las que comparten
+ *  `repo_key` (el remote normalizado, la identidad entre PCs) Y las que comparten el nombre `repo`
+ *  sin distinguir mayusculas. Pedido de Ariel (2026-10-04): «chess» salia dos veces, una por PC,
+ *  porque en una PC la carpeta tenia remote y en la otra no (repo_key distinto, mismo nombre). La
+ *  clave del grupo es el menor de sus miembros, estable mientras no cambien las sesiones; la
+ *  etiqueta, el `repo` mas repetido. Orden: el que mas sesiones tiene primero. */
 export function repoGroups(sessions: Session[]): RepoGroup[] {
-  const by = new Map<string, RepoGroup>();
+  // union-find sobre «k:<repo_key|repo>» y «n:<nombre en minusculas>»
+  const padre = new Map<string, string>();
+  const raiz = (x: string): string => {
+    let r = x;
+    while (padre.get(r) !== r) r = padre.get(r) ?? r;
+    padre.set(x, r);
+    return r;
+  };
+  const unir = (a: string, b: string) => {
+    for (const x of [a, b]) if (!padre.has(x)) padre.set(x, x);
+    const ra = raiz(a);
+    const rb = raiz(b);
+    if (ra !== rb) padre.set(ra < rb ? rb : ra, ra < rb ? ra : rb);
+  };
+  for (const s of sessions) unir(`k:${s.repo_key || s.repo}`, `n:${(s.repo || "").toLowerCase()}`);
+  const by = new Map<string, { members: Set<string>; labels: Map<string, number>; count: number }>();
   for (const s of sessions) {
-    const key = s.repo_key || s.repo;
-    const g = by.get(key);
-    if (g) g.count++;
-    else by.set(key, { key, label: s.repo, count: 1 });
+    const member = s.repo_key || s.repo;
+    const r = raiz(`k:${member}`);
+    const g = by.get(r) ?? { members: new Set<string>(), labels: new Map<string, number>(), count: 0 };
+    g.members.add(member);
+    g.labels.set(s.repo, (g.labels.get(s.repo) ?? 0) + 1);
+    g.count++;
+    by.set(r, g);
   }
-  return [...by.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  return [...by.values()]
+    .map((g) => {
+      const members = [...g.members].sort();
+      const label = [...g.labels].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0][0];
+      return { key: members[0], label, count: g.count, members };
+    })
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+/** Lo elegido (claves de grupo) expandido a todos los miembros de cada grupo: es lo que va al
+ *  filtro de tarjetas (passesProjects compara `repo_key || repo` de cada una). */
+export function expandSelected(selected: Set<string>, groups: RepoGroup[]): Set<string> {
+  if (selected.size === 0) return selected;
+  const out = new Set(selected);
+  for (const g of groups) if (selected.has(g.key)) for (const m of g.members) out.add(m);
+  return out;
 }
 
 interface Props {
