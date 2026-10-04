@@ -117,6 +117,14 @@ def activity(pid: int) -> dict | None:
             act["last_at"] = d.get("time")
             if d.get("decision") == "ask" and sid:
                 asks[sid] = {"tool": d["toolName"], "cause": d.get("askCause"), "sub": not cli, "at": d.get("time")}
+            elif d.get("decision") == "deny":
+                # coda la denego sola (politica de comandos): nadie la ve si no se avisa
+                act["denied"] = {
+                    "tool": d["toolName"],
+                    "cause": d.get("denialCause"),
+                    "sub": not cli,
+                    "at": d.get("time"),
+                }
     if act:
         act["asking"] = next(reversed(asks.values()), None)
     return act

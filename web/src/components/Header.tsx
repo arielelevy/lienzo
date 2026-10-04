@@ -22,7 +22,7 @@ interface Props {
   /** el menu ⋯ se acaba de abrir (no en cada toggle): abrirlo es cambiar de contexto, asi que App
    *  cierra lo que haya abierto detras (panel, dialogo de conectar, ayuda) */
   onMenuOpen?: () => void;
-  flags: { label: string; icon: string; on: boolean; toggle: () => void; title: string }[];
+  flags: { label: string; icon: string; on: boolean; toggle: () => void; title: string; danger?: boolean }[];
   /** los chips de proyecto (ProjectStrip), que van despues de los de agente */
   projects?: React.ReactNode;
 }
@@ -132,7 +132,7 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
             {/* la descripcion va visible debajo del nombre: el title nativo tarda un segundo en aparecer
                 y nadie lo espera para saber que hace "Pensamiento" */}
             {flags.map((f) => (
-              <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle}>
+              <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle} className={f.danger ? "danger" : undefined}>
                 <span className="row">
                   {/* "sí"/"no" y no "on"/"off": es lo único que quedaba en inglés en toda la app */}
                   {f.icon} {f.label} <span className={`state ${f.on ? "on" : ""}`}>{f.on ? "sí" : "no"}</span>

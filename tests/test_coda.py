@@ -289,3 +289,37 @@ def test_permiso_enviado_que_sigue_abierto_devuelve_los_botones(monkeypatch):
     s["needs"]["sent_ts"] = ses.time.time() - ses.CODA_SENT_RETRY_S - 1
     ses.coda_log_activity(s)
     assert s["needs"]["where"] == "terminal"
+
+
+def test_una_denegacion_de_coda_llega_a_la_tarjeta_una_sola_vez(monkeypatch):
+    import sessions as ses
+    import state as st
+
+    logs = []
+    monkeypatch.setattr(st, "log", logs.append)
+    den = {"tool": "bash", "cause": "command-policy", "sub": False, "at": "2026-10-04T01:00:00Z"}
+    act = {
+        "running": True,
+        "asking": None,
+        "last_at": None,
+        "last_tool": "bash",
+        "tools": 2,
+        "sub": False,
+        "denied": den,
+    }
+    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    s = {
+        "session_id": "d" * 36,
+        "agent": "coda",
+        "pid": 1,
+        "state": "corriendo",
+        "state_since": "x",
+        "hooked": True,
+        "needs": None,
+        "last_cmd": "git push --force",
+    }
+    ses.coda_log_activity(s)
+    assert s["last_denied"]["tool"] == "bash" and s["last_denied"]["detalle"] == "git push --force"
+    assert "comando que pide" in s["last_denied"]["motivo"]
+    ses.coda_log_activity(s)
+    assert sum("DENEGADO" in x for x in logs) == 1

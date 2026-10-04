@@ -30,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import auth
+import autoaprobar
 import beacon
 import federation
 import health
@@ -1359,9 +1360,18 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in d.items():
             if not isinstance(v, bool):
                 return self._json(400, {"error": f"{k} debe ser true o false"})
+        if autoaprobar.CLAVE in d and (self._via_tunnel() or not self._is_local()):
+            # aprobar todo sin mirar solo se prende desde la LAN, nunca por el tunel
+            return self._json(403, {"error": "auto-aprobar solo se cambia desde una PC de la LAN"})
         for k, v in d.items():
             set_config_key(k, v)
             log(f"config: {k} = {v} (desde la UI, {self._client_ip()})")
+        if autoaprobar.CLAVE in d:
+            # «aprueba todo» vale para todas las PCs emparejadas, no solo para esta
+            for pc in mirror.MIRROR.peer_ids():
+                code, res = mirror.MIRROR.forward(pc, "PUT", "/config", {autoaprobar.CLAVE: d[autoaprobar.CLAVE]})
+                if code != 200:
+                    log(f"auto-aprobar en {pc}: {code} {(res or {}).get('error')}")
         return self._json(200, public_config())
 
     def _put_title(self, sid: str) -> None:
@@ -1705,6 +1715,14 @@ class PeerHandler(BaseHTTPRequestHandler):
         if method == "POST" and rest == ["restaurar"]:
             code, res = restore_local(self._body_json(raw))
             return self._json(code, res)
+        if method == "PUT" and rest == ["config"]:
+            # otra PC emparejada prende o apaga auto-aprobar aca (el check del menu vale para todas)
+            d = self._body_json(raw)
+            if set(d) != {autoaprobar.CLAVE} or not isinstance(d[autoaprobar.CLAVE], bool):
+                return self._json(400, {"error": f"solo {autoaprobar.CLAVE} (true o false)"})
+            set_config_key(autoaprobar.CLAVE, d[autoaprobar.CLAVE])
+            log(f"config: {autoaprobar.CLAVE} = {d[autoaprobar.CLAVE]} (desde {pc_id})")
+            return self._json(200, public_config())
         if method == "POST" and rest == ["rules", "retarget"]:
             d = self._body_json(raw)
             if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
@@ -2070,6 +2088,7 @@ def main() -> int:
     threading.Thread(target=liveness_loop, args=(0 if a.no_sweep else a.sweep_every,), daemon=True).start()
     threading.Thread(target=screen_loop, daemon=True).start()
     threading.Thread(target=rules_loop, daemon=True).start()
+    autoaprobar.arrancar()
     if a.remote:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()
     if os.environ.get("LIENZO_RELOAD") == "1":

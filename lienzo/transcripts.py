@@ -848,6 +848,38 @@ def _last_question(final: str) -> str:
     return oraciones[-1].strip() if oraciones else linea
 
 
+# Una herramienta que el agente no pudo usar porque una regla, una politica o un clasificador la
+# denego (no el humano, que la rechaza a proposito). Claude: «Permission for this action was denied by
+# the Claude Code auto mode classifier», «Permission to use Bash has been denied»; los demas agentes
+# dicen parecido. Medido el 2026-10-04: las denegaciones de la otra PC nunca llegaban al lienzo.
+DENIAL_RE = re.compile(
+    r"permission (?:for this action|to use \S+) (?:was|has been) denied"
+    r"|denied by (?:the )?(?:claude code )?(?:auto mode classifier|policy|command policy|hook)"
+    r"|blocked by (?:a |the )?(?:hook|policy|command policy)"
+    r"|tool call denied(?! by user)",
+    re.IGNORECASE,
+)
+
+
+def denials(turn: dict) -> list[dict]:
+    """Las herramientas denegadas del turno: {tool, motivo, detalle}. `detalle` es el comando o el
+    archivo, en una linea. Lo que rechaza el humano no cuenta."""
+    out = []
+    for b in turn.get("blocks") or []:
+        if b.get("kind") != "tool":
+            continue
+        res = b.get("result") or {}
+        texto = res.get("text") or ""
+        if not res.get("is_error") or not DENIAL_RE.search(texto):
+            continue
+        inp = b.get("input") or {}
+        detalle = inp.get("command") or inp.get("cmd") or inp.get("file_path") or inp.get("path") or ""
+        out.append(
+            {"tool": b.get("name") or "?", "motivo": _first_line(texto, 200), "detalle": _first_line(str(detalle), 200)}
+        )
+    return out
+
+
 def digest_turn(turn: dict) -> dict:
     files, commands, errors, questions, reads = [], [], [], [], 0
     peers: list[str] = []

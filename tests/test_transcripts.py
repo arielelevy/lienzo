@@ -433,3 +433,26 @@ def test_error_de_api_al_final_si_cuenta(tmp_path):
     assert t["error"] == ERROR_API
     assert t["ended"] is True
     assert tr.retryable_error(t["error"]) is True
+
+
+def test_denials_reconoce_lo_que_denego_una_regla_o_el_clasificador_y_no_lo_que_rechazo_el_humano():
+    """Medido el 2026-10-04: las denegaciones de la otra PC nunca llegaban al lienzo."""
+    from lienzo import transcripts as tr
+
+    def tool(texto, error=True, **inp):
+        return {"kind": "tool", "name": "Bash", "input": inp, "result": {"text": texto, "is_error": error}}
+
+    turno = {
+        "blocks": [
+            tool(
+                "Permission for this action was denied by the Claude Code auto mode classifier. Reason: x",
+                command="rm -rf a",
+            ),
+            tool("The user doesn't want to proceed with this tool use.", command="ls"),
+            tool("salio todo bien", error=False, command="pwd"),
+            tool("Permission to use Bash has been denied by your settings", command="curl x"),
+        ]
+    }
+    d = tr.denials(turno)
+    assert [x["detalle"] for x in d] == ["rm -rf a", "curl x"]
+    assert "auto mode classifier" in d[0]["motivo"]

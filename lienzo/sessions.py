@@ -801,6 +801,7 @@ def turn_say(t: dict) -> str | None:
 
 
 REFRESH_KEYS = (
+    "last_denied",
     "title",
     "branch",
     "last_prompt",
@@ -902,6 +903,25 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
         set_state(s, "termino" if t.get("ended") else "corriendo")
 
 
+def set_denied(s: dict, d: dict) -> None:
+    """Marca en la tarjeta el ultimo permiso DENEGADO (por regla, politica o clasificador). Solo si
+    es nuevo: la misma denegacion releida de la transcripcion no se vuelve a anunciar."""
+    clave = (d.get("tool"), d.get("motivo") or d.get("cause"), d.get("detalle"), d.get("turno") or d.get("at"))
+    prev = s.get("last_denied") or {}
+    if (
+        prev.get("tool"),
+        prev.get("motivo") or prev.get("cause"),
+        prev.get("detalle"),
+        prev.get("turno") or prev.get("at"),
+    ) == clave:
+        return
+    s["last_denied"] = {**d, "visto": now()}
+    state.log(
+        f"permiso DENEGADO a {s['session_id'][:8]}: {d.get('tool')} ({d.get('motivo') or d.get('cause') or 'sin motivo'})"
+        + (f" {d['detalle']}" if d.get("detalle") else "")
+    )
+
+
 def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     """Vuelca el ultimo turno de la transcripcion a la tarjeta: actividad de adentro, pedido y
     respuesta, estado (solo si la sesion no tiene hooks, o force_state) y el error del turno."""
@@ -914,6 +934,8 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
         apply_turn_hooked(s, t)
     else:
         apply_turn_unhooked(s, t)
+    if negadas := transcripts.denials(t):
+        set_denied(s, {**negadas[-1], "fuente": "transcript", "turno": t.get("id") or t.get("prompt_ts")})
     # error del turno (Codex: limite de uso, abortado; Claude: no aplica hoy) va aparte, en rojo
     s["last_error"] = short(t.get("error") or "", 300) or None
     if s["last_error"] and not t.get("final"):
@@ -1152,6 +1174,7 @@ def title_from_prompt(s: dict) -> None:
 def hook_prompt_submit(s: dict, ev: dict) -> None:
     set_state(s, "corriendo")
     s["stopped_by"] = None  # volvio a trabajar: la marca de detenida ya no cuenta
+    s["last_denied"] = None  # pedido nuevo: lo denegado antes ya se resolvio o se descarto
     # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
     s["prompt_id"] = ev.get("prompt_id")
     s["prompt_ts"] = s["last_event_ts"]
@@ -1262,6 +1285,18 @@ def coda_log_activity(s: dict) -> bool:
         last, since = parse_ts(act.get("last_at")), parse_ts(s.get("state_since"))
         if last and since and last > since:
             set_state(s, "corriendo")
+    if den := act.get("denied"):
+        set_denied(
+            s,
+            {
+                "tool": den["tool"],
+                "motivo": CODA_ASK_CAUSES.get(den.get("cause") or "", den.get("cause") or ""),
+                "detalle": s.get("last_cmd") or "",
+                "at": den.get("at"),
+                "fuente": "coda",
+                "sub": den.get("sub"),
+            },
+        )
     ask = act.get("asking") if act["running"] else None
     needs = s.get("needs") or {}
     if ask and s["state"] in ("corriendo", "te_necesita"):
@@ -1279,7 +1314,11 @@ def coda_log_activity(s: dict) -> bool:
         s["tool_count"] = act["tools"]
         if s["state"] == "corriendo":
             s["last_reply"] = f"usando {act['last_tool']}" + (" (subagente)" if act["sub"] else "")
-    return before != (s["state"], s.get("needs"), s.get("tool_count"), s.get("last_reply"))
+    return before != (s["state"], s.get("needs"), s.get("tool_count"), s.get("last_reply")) or bool(
+        act.get("denied")
+        and (s.get("last_denied") or {}).get("at") == act["denied"].get("at")
+        and (s.get("last_denied") or {}).get("visto", "") >= (s.get("state_since") or "")
+    )
 
 
 def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:

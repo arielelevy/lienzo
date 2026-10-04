@@ -60,7 +60,7 @@ STATES = ("corriendo", "te_necesita", "termino", "muerta")
 LINKS_FILE = os.path.join(LIENZO, "links.json")
 RULES_FILE = os.path.join(LIENZO, "rules.json")
 CONFIG_FILE = os.path.join(LIENZO, "config.json")
-UI_CONFIG_KEYS = ("auto_continue", "auto_retry")  # lo unico que la UI puede leer y escribir por /config
+UI_CONFIG_KEYS = ("auto_continue", "auto_retry", "auto_aprobar")  # lo unico que la UI puede leer y escribir por /config
 
 # Regla del lock (RLock, reentrante). Toda escritura sobre `sessions`, sobre `pending` o sobre el
 # dict de una tarjeta va con el lock tomado. Lo lento queda AFUERA y se aplica despues: el subproceso

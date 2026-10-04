@@ -143,6 +143,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     () => toggleConfig("auto_continue", 'Ante un límite de uso con hora, se programa "Continuar" solo', "Continuar automático apagado"),
     [toggleConfig],
   );
+  const toggleAutoAprobar = useCallback(() => {
+    if (!config?.auto_aprobar && !window.confirm("PELIGRO: cada permiso que pida cualquier agente (Claude, Codex, Pi, coda) en cualquier PC se aprueba solo, sin que nadie lo mire. ¿Prenderlo?")) return;
+    void toggleConfig("auto_aprobar", "AUTO-APROBAR TODO prendido: nadie revisa los permisos", "Auto-aprobar apagado");
+  }, [config, toggleConfig]);
   const toggleAutoRetry = useCallback(
     () => toggleConfig("auto_retry", 'Ante un error de API, se reintenta solo (una vez por error)', "Reintento automático apagado"),
     [toggleConfig],
@@ -313,6 +317,16 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         : "el server que corre no tiene /config: reiniciá el server",
     },
     {
+      label: "Auto-aprobar TODO (peligroso)",
+      icon: "☠",
+      on: !!config?.auto_aprobar,
+      toggle: toggleAutoAprobar,
+      danger: true,
+      title: config
+        ? "aprueba solo, sin mirarlo, cada permiso que pida cualquier agente en cualquier PC emparejada (las preguntas con opciones no). Cada aprobación queda en el log como AUTO-APROBADO"
+        : "el server que corre no tiene /config: reiniciá el server",
+    },
+    {
       label: "Continuar solo tras límite de uso",
       icon: "⏰",
       on: !!config?.auto_continue,
@@ -325,6 +339,12 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
 
   return (
     <div className={`${details ? "details" : ""} ${sel ? "panel-open" : ""}`}>
+      {config?.auto_aprobar && (
+        <div className="auto-aprobar-aviso" role="alert">
+          ☠ AUTO-APROBAR TODO prendido: cada permiso se aprueba solo, sin mirarlo
+          <button onClick={toggleAutoAprobar}>Apagar</button>
+        </div>
+      )}
       <Header
         authInfo={authInfo}
         connected={connected}

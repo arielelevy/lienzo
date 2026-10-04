@@ -30,6 +30,8 @@ export interface Session {
   last_prompt: string;
   last_reply: string;
   last_error?: string | null;
+  /** el ultimo permiso que una regla, una politica o un clasificador DENEGO (no el humano) */
+  last_denied?: { tool: string; motivo?: string; detalle?: string; fuente?: string; visto?: string } | null;
   /** aviso de limite de uso con hora de vuelta (ISO): la tarjeta ofrece programar "Continuar" */
   limit_until?: string | null;
   /** aviso de limite ya atendido por el server (regla automatica creada para ese limit_until) */
@@ -194,6 +196,8 @@ export interface Config {
   auto_continue: boolean;
   /** turno muerto por un error de API ("stopped arriving"): reintentar solo, una vez por error */
   auto_retry: boolean;
+  /** PELIGROSO: aprobar solo, sin mirar, todo permiso que pida cualquier agente de cualquier PC */
+  auto_aprobar?: boolean;
 }
 
 export interface Rule {

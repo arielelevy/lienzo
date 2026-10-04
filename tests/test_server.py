@@ -333,10 +333,10 @@ def test_set_config_key_solo_toca_esa_clave(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({"ejemplos": "D:/x", "wait": 60, "auto_continue": True}), encoding="utf-8")
     monkeypatch.setattr(st, "CONFIG_FILE", str(cfg))
-    assert st.public_config() == {"auto_continue": True, "auto_retry": False}
+    assert st.public_config() == {"auto_continue": True, "auto_retry": False, "auto_aprobar": False}
     st.set_config_key("auto_continue", False)
     assert json.loads(cfg.read_text(encoding="utf-8")) == {"ejemplos": "D:/x", "wait": 60, "auto_continue": False}
-    assert st.public_config() == {"auto_continue": False, "auto_retry": False}
+    assert st.public_config() == {"auto_continue": False, "auto_retry": False, "auto_aprobar": False}
     # sin archivo: se crea con la clave sola
     cfg.unlink()
     st.set_config_key("auto_continue", True)

@@ -439,6 +439,13 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       await api.post(`/sessions/${s.session_id}/approve`, { decision });
       return decision === "allow" ? "Permitido en su terminal" : "Denegado en su terminal";
     }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo contestar: ${m}`));
+  /** le avisa al agente que el humano autoriza lo que se le denego, para que lo reintente */
+  const autorizarDenegado = () => {
+    const d = s.last_denied;
+    if (!d) return;
+    const que = d.detalle ? `${d.tool} ${d.detalle}` : d.tool;
+    void quickSend(`El humano autoriza lo que se te denegó (${que}). Reintentalo; si la regla te lo vuelve a frenar, avisame y no insistas.`);
+  };
   const quickSend = (text: string) =>
     act(async () => {
       const r = await api.post<{ chars: number }>(`/sessions/${s.session_id}/send`, { text, attachments: [] });
@@ -870,6 +877,20 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           )}
         </div>
       ) : null}
+      {/* permiso que una regla, una politica o un clasificador denego: no espera nada, pero si nadie
+          lo ve el agente sigue sin eso (medido el 2026-10-04 en la otra PC) */}
+      {s.last_denied && !p && (
+        <div className="needs denied">
+          <b>Denegado: {s.last_denied.tool}</b>
+          {s.last_denied.detalle && <code>{s.last_denied.detalle}</code>}
+          {s.last_denied.motivo && <div className="dim small">{s.last_denied.motivo}</div>}
+          {writable && (
+            <div className="btns">
+              <button className="allow" onClick={(e) => { e.stopPropagation(); autorizarDenegado(); }}>Autorizar y que reintente</button>
+            </div>
+          )}
+        </div>
+      )}
       {/* diálogo de la TUI ("Switch model?"): no es un permiso, no dispara hooks y nadie lo ve
           desde afuera; se lee de la pantalla cada 5 s. Un permiso pendiente le gana (el server ya
           no publica el diálogo en ese caso) */}
