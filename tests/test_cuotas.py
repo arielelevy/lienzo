@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ruff: noqa: I001
-from lienzo import server  # noqa: F401
+from lienzo import server
 import health
 import launch
 import sessions as ses
@@ -49,6 +49,16 @@ def test_launch_de_coda_sin_cuota_da_409(monkeypatch):
     monkeypatch.setattr(launch, "_cuota_coda", lambda: "agotada")
     res = launch.launch("D:/x", "t", "coda")
     assert res["ok"] is False and res["code"] == 409 and "cuota" in res["error"]
+
+
+def test_el_server_contesta_el_409_de_launch_y_no_un_400(monkeypatch):
+    """La revision de DISENO (2026-10-04) encontro que accion_launch contestaba 400 a todo fallo."""
+    monkeypatch.setattr(server, "validate_launch", lambda d: ("D:/x", "coda", "t"))
+    monkeypatch.setattr(server.launch, "launch", lambda *a, **k: {"ok": False, "code": 409, "error": "coda sin cuota"})
+    code, res = server.accion_launch({"cwd": "D:/x", "agent": "coda"}, desde_tablero=True)
+    assert code == 409 and res == {"ok": False, "error": "coda sin cuota"}
+    monkeypatch.setattr(server.launch, "launch", lambda *a, **k: {"ok": False, "error": "cwd fuera de launch_roots"})
+    assert server.accion_launch({"cwd": "D:/x", "agent": "coda"}, desde_tablero=True)[0] == 400
 
 
 def test_cuotas_de_sesiones_toma_el_limite_vigente(monkeypatch):

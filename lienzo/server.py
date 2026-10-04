@@ -989,7 +989,11 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
         cuerpo = {"cwd": cwd, "title": title, "agent": agent, **({"model": model} if model else {})}
         return mirror.MIRROR.forward(pc, "POST", "/launch", cuerpo)
     res = launch.launch(cwd, title, agent, model=model)
-    return (200 if res.get("ok") else 400), res
+    if res.get("ok"):
+        return 200, res
+    # launch dice su codigo cuando no es un pedido mal hecho (409: coda sin cuota en esta PC)
+    codigo = res.pop("code", None)
+    return (codigo if isinstance(codigo, int) and 400 <= codigo < 600 else 400), res
 
 
 def accion_retarget(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
