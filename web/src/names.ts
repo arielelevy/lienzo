@@ -9,6 +9,11 @@ import type { Link, Needs, Rule, Session } from "./types";
  *  arrows-geometry (modulo puro con tests) y se reexporta desde aca. */
 export { periodLabel };
 
+/** Plantilla de "cuando termine": la respuesta completa, con quien la manda. La usan Conectar
+ *  (la que se ofrece hasta que el usuario la edita) y el "avisarme cuando termine" del SendBox;
+ *  antes cada uno tenia su copia del mismo texto. */
+export const REPLY_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
+
 /** Nombre corto de una sesion: "repo · titulo" (titulo cortado a 24) o "repo · id" si no tiene. */
 export function shortName(o: Session | undefined, fallback = "otra sesión"): string {
   if (!o) return fallback;

@@ -2,10 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, ago, api } from "../api";
 import { coordinatorOf, everySeconds, fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection, splitEvery, type EveryUnit } from "../nl";
 import type { DigestResponse, Session } from "../types";
-import { shortName } from "../names";
+import { REPLY_TEMPLATE, shortName } from "../names";
 import { AGENTS } from "../agents";
 
-const DEFAULT_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
 const KEY = "lienzo.forward.template";
 type Mode = "now" | "on_stop" | "at" | "native";
 
@@ -19,9 +18,9 @@ function nativeInstruction(b: Session, text: string): string {
 
 function loadTemplate(): string {
   try {
-    return localStorage.getItem(KEY) || DEFAULT_TEMPLATE;
+    return localStorage.getItem(KEY) || REPLY_TEMPLATE;
   } catch {
-    return DEFAULT_TEMPLATE;
+    return REPLY_TEMPLATE;
   }
 }
 

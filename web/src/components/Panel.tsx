@@ -43,7 +43,8 @@ class ErrorBoundary extends Component<{ resetKey: string; children: ReactNode },
 
 interface Props {
   session: Session;
-  /** las demas sesiones vivas con consola: el SendBox busca ahi a la coordinadora */
+  /** las demas sesiones a las que se les puede escribir (App: canWrite y su PC no caida): el
+   *  SendBox busca ahi a la coordinadora */
   others: Session[];
   transcriptTick: number;
   onClose: () => void;

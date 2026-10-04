@@ -3,18 +3,17 @@ import { api } from "../api";
 import { AGENTS } from "../agents";
 import { coordinatorOf } from "../nl";
 import type { Rule, Session } from "../types";
-import { canWrite, needsPiReload, shortName } from "../names";
+import { canWrite, needsPiReload, REPLY_TEMPLATE, shortName } from "../names";
 import { useLocalFlag } from "../hooks/useLocalFlag";
 import "../card.css";
 
 const QUICK = ["Continuá", "sí", "no", "dale"];
 const NOTIFY_KEY = "lienzo.send.notifyme";
-// misma plantilla que Conectar > "cuando termine": la respuesta completa, con quien la manda
-const NOTIFY_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{respuesta}";
 
 interface Props {
   session: Session;
-  /** las demas sesiones vivas con consola: entre ellas se busca a la coordinadora */
+  /** las demas sesiones a las que se les puede escribir: App filtra con canWrite (sin las
+   *  detenidas) y saca las de una PC caida. Entre ellas se busca a la coordinadora */
   others: Session[];
   toast: (msg: string, err?: boolean) => void;
   /** enfocar el textarea al montar (y al cambiar de sesion): "Darle trabajo" deja el cursor listo */
@@ -48,7 +47,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
         (r) => r.enabled && r.kind === "on_stop" && r.from === s.session_id && r.to === me.session_id,
       );
       if (active) return;
-      await api.post("/rules", { kind: "on_stop", from: s.session_id, to: me.session_id, text: NOTIFY_TEMPLATE, repeat: true, max_fires: 20 });
+      await api.post("/rules", { kind: "on_stop", from: s.session_id, to: me.session_id, text: REPLY_TEMPLATE, repeat: true, max_fires: 20 });
       toast(`Cuando ${shortName(s)} termine, su respuesta va a ${shortName(me)}`);
     } catch (e) {
       // 409: ya existe esa regla, o la inversa (seria un bucle). El envio ya se hizo; se avisa y listo
