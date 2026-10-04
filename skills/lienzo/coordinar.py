@@ -316,6 +316,14 @@ def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None, cab
     return None
 
 
+def reiniciar(pc=None):
+    """Reinicia el server de lienzo de esta PC (o de `pc`): sale y lienzo-server.cmd lo relanza en la
+    misma ventana. Desde el 2026-10-04 el server ya no se reinicia solo al cambiar un .py (salvo
+    `auto_reload: true` en config.json): despues de un git pull hay que llamar a esto. 409 si no corre
+    bajo lienzo-server.cmd o si hay codigo que no compila."""
+    return pedir("POST", "/restart", {"pc": pc} if pc else {}, timeout=30)
+
+
 def titular(s, titulo):
     return pedir("PUT", f"/sessions/{s['session_id']}/title", {"title": titulo})[0]
 

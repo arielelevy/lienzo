@@ -998,6 +998,18 @@ def recalc_title(s: dict) -> bool:
 # --- eventos de hooks -------------------------------------------------------------
 
 
+def heredar_de_provisoria(prov: dict, s: dict) -> None:
+    """La tarjeta real hereda de la provisoria (`pid-N` del barrido) lo que se le puso a mano antes de
+    que llegara el primer hook: el titulo del usuario y la marca de coordinadora. Medido el
+    2026-10-04: lanzar_y_titular titulaba la provisoria y, al pasar al id real, el titulo se perdia y
+    salia del primer mensaje («Bien el diagnostico. Reintenta…» en vez de «encargo F»)."""
+    if prov.get("title_source") == "user" and s.get("title_source") != "user":
+        s["title"], s["title_source"] = prov.get("title"), "user"
+    for k in ("coordinator", "coordinator_scope", "copycat_of"):
+        if prov.get(k) and not s.get(k):
+            s[k] = prov[k]
+
+
 def claim_pid(s: dict, ev: dict) -> None:
     """El evento trae un pid vivo: la tarjeta se lo queda, salvo que ya sea de otra. Otra tarjeta con
     el mismo pid: si es un placeholder del barrido (source sweep o id "pid-N") es la misma sesion y
@@ -1016,6 +1028,7 @@ def claim_pid(s: dict, ev: dict) -> None:
                     # cableado hecha al lanzarla, un link) pasa al sid real antes de darlo de baja
                     if any(repoint_refs(other_sid, sid)):
                         rules.publish()
+                    heredar_de_provisoria(other, s)
                     drop_session(other_sid, "duplicada por barrido")
                 elif continues_session(other, ev):
                     continue_session(other, s)

@@ -89,6 +89,7 @@ from state import (
     clients,
     is_disconnect,
     links,
+    load_config,
     lock,
     log,
     now,
@@ -1389,6 +1390,16 @@ class Handler(JsonHandler):
             if parts == ["rescan"]:
                 threading.Thread(target=sweep_once, daemon=True).start()
                 return self._json(202, {"ok": True})
+            if parts == ["restart"]:
+                # {pc?}: esta PC o la PC `pc` (por /peer/restart, firmado). Solo desde la LAN
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "reiniciar solo desde una PC de la LAN"})
+                pc = self._json_body().get("pc")
+                if pc and pc != identity.pc_id():
+                    code, res = mirror.MIRROR.forward(pc, "POST", "/restart", {})
+                    return self._json(code, res)
+                code, res = reiniciar()
+                return self._json(code, res)
             if parts == ["secrets"]:
                 return self._secret_send()
             if parts == ["rules"]:
@@ -1808,6 +1819,10 @@ class PeerHandler(JsonHandler):
             return self._json(code, res)
         if method == "GET" and rest == ["restaurables"]:
             return self._json(200, {"restaurables": restorables_local()})
+        if method == "POST" and rest == ["restart"]:
+            log(f"reinicio pedido por {pc_id}")
+            code, res = reiniciar()
+            return self._json(code, res)
         if method == "POST" and rest == ["secrets"]:
             return self._secret_receive(raw, pc_id)
         if method == "GET" and rest == ["secrets"]:
@@ -2000,6 +2015,20 @@ def _syntax_error(changed: list[str]) -> str | None:
     return None
 
 
+def reiniciar() -> tuple[int, dict]:
+    """Reinicio explicito: sale con RELOAD_EXIT para que lienzo-server.cmd lo relance en la misma
+    ventana, medio segundo despues de contestar. No sale si no corre bajo ese .cmd (nadie lo
+    levantaria) ni si algun .py no compila (relanzaria codigo roto)."""
+    if os.environ.get("LIENZO_RELOAD") != "1":
+        return 409, {"error": "este server no corre bajo lienzo-server.cmd: si sale, nadie lo relanza"}
+    err = _syntax_error(list(_source_stamp()))
+    if err:
+        return 409, {"error": f"no reinicio: hay codigo que no compila ({err})"}
+    log("reinicio pedido explicitamente")
+    threading.Timer(0.5, lambda: os._exit(RELOAD_EXIT)).start()
+    return 202, {"ok": True, "reinicia": True}
+
+
 def reload_loop() -> None:
     """Si cambia algun .py del server, sale con RELOAD_EXIT para que lienzo-server.cmd lo relance
     en la misma ventana. Solo corre bajo ese .cmd (LIENZO_RELOAD=1): sin el, salir apagaria el
@@ -2010,6 +2039,13 @@ def reload_loop() -> None:
         time.sleep(RELOAD_EVERY_S)
         now = _source_stamp()
         if now == base:
+            continue
+        if not load_config().get("auto_reload"):
+            # apagado por defecto (pedido de Ariel, 2026-10-04): con varios agentes cambiando .py el
+            # server se reiniciaba a cada rato y cortaba pruebas, capturas y pedidos entre PCs. Se
+            # reinicia explicito: POST /restart o coordinar.reiniciar(). Se toma el codigo nuevo
+            # como base para no reiniciar de golpe si despues se prende auto_reload.
+            base = now
             continue
         time.sleep(RELOAD_SETTLE_S)
         if _source_stamp() != now:
