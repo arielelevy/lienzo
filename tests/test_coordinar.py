@@ -22,8 +22,10 @@ def test_reubicar_sigue_a_la_tarjeta_cuando_cambia_de_id():
 
 def test_enviar_seguro_da_ok_aunque_la_tarjeta_cambie_de_id(monkeypatch):
     vieja = _tarjeta("pid-100")
-    monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: (200, {"ok": True}))
-    monkeypatch.setattr(c, "sesiones", lambda: [_tarjeta("uuid-real", state="corriendo")])
+    enviados = []
+    monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: enviados.append(r) or (200, {"ok": True}))
+    # enviar_seguro relee la tarjeta antes de mandar: el id cambia recien despues del envio
+    monkeypatch.setattr(c, "sesiones", lambda: [_tarjeta("uuid-real", state="corriendo")] if enviados else [vieja])
     monkeypatch.setattr("time.sleep", lambda s: None)
     r = c.enviar_seguro(vieja, "hola", enlazar=False, espera=3)
     assert r["ok"] is True and r["sid"] == "uuid-real"
@@ -61,8 +63,9 @@ def test_enviar_seguro_rechaza_caracteres_de_control(monkeypatch):
 
 
 def test_enviar_seguro_acepta_saltos_de_linea(monkeypatch):
-    monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: (200, {"ok": True}))
-    monkeypatch.setattr(c, "sesiones", lambda: [_tarjeta("u1", state="corriendo")])
+    enviados = []
+    monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: enviados.append(r) or (200, {"ok": True}))
+    monkeypatch.setattr(c, "sesiones", lambda: [_tarjeta("u1", state="corriendo" if enviados else "termino")])
     monkeypatch.setattr("time.sleep", lambda s: None)
     assert c.enviar_seguro(_tarjeta("u1"), "linea 1\nlinea 2\t con tab", enlazar=False, espera=2)["ok"] is True
 
@@ -127,7 +130,8 @@ def test_enviar_seguro_reubica_el_frente_cuando_la_tarjeta_ya_no_existe(monkeypa
             return 404, {"error": "esa tarjeta ya no existe", "gone": True}
         return 200, {"ok": True}
 
-    nuevo = _tarjeta("nuevo", title="app - encargo A - x", alive=True, state="termino")
+    # otro proceso (pid 200): si fuera el mismo pid, releer la vieja ya daria con la nueva
+    nuevo = _tarjeta("nuevo", pid=200, title="app - encargo A - x", alive=True, state="termino")
     monkeypatch.setattr(c, "pedir", pedir)
     # la nueva pasa a corriendo recien cuando le llega el envio (si ya corria, eso no probaria nada)
     monkeypatch.setattr(
@@ -136,6 +140,56 @@ def test_enviar_seguro_reubica_el_frente_cuando_la_tarjeta_ya_no_existe(monkeypa
     monkeypatch.setattr("time.sleep", lambda s: None)
     r = c.enviar_seguro(_tarjeta("viejo"), "hola", proyecto="app", letra="A", enlazar=False, espera=2)
     assert r["ok"] is True and r["sid"] == "nuevo" and llamadas == ["/sessions/viejo/send", "/sessions/nuevo/send"]
+
+
+def _envio(monkeypatch, respuestas, estados, **tarjeta):
+    """enviar_seguro contra un server falso: `respuestas` son los (code, cuerpo) de cada POST y
+    `estados` lo que muestra la tarjeta antes y despues del primer envio que entra (200)."""
+    enviados, entro = [], []
+
+    def pedir(m, r, cuerpo=None, timeout=20):
+        enviados.append(cuerpo["text"])
+        res = respuestas[min(len(enviados), len(respuestas)) - 1]
+        if res[0] == 200:
+            entro.append(True)
+        return res
+
+    monkeypatch.setattr(c, "pedir", pedir)
+    monkeypatch.setattr(c, "sesiones", lambda: [_tarjeta("u1", **tarjeta, **estados[1 if entro else 0])])
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    return enviados
+
+
+def test_enviar_seguro_relee_la_tarjeta_y_a_una_ocupada_le_pide_el_cambio_de_prompt(monkeypatch):
+    quieta = {"state": "corriendo", "last_prompt": "viejo"}
+    enviados = _envio(monkeypatch, [(200, {"ok": True})], [quieta, quieta])
+    r = c.enviar_seguro(_tarjeta("u1", state="termino"), "hola", enlazar=False, espera=2)  # `s` vieja: se relee
+    assert r["ok"] is False and r["code"] == 200 and "no hay prueba" in r["motivo"] and enviados == ["hola"]
+    _envio(monkeypatch, [(200, {"ok": True})], [quieta, {"state": "corriendo", "last_prompt": "hola"}])
+    assert c.enviar_seguro(_tarjeta("u1"), "hola", enlazar=False, espera=2)["ok"] is True
+
+
+def test_enviar_seguro_no_manda_un_comando_con_barra_a_una_ocupada(monkeypatch):
+    enviados = _envio(monkeypatch, [(200, {"ok": True})], [{"state": "corriendo"}] * 2)
+    r = c.enviar_seguro(_tarjeta("u1"), "/clear", enlazar=False)
+    assert r["ok"] is False and r["code"] == 409 and enviados == []
+
+
+def test_enviar_seguro_reintenta_solo_lo_que_no_salio(monkeypatch):
+    estados = [{"state": "termino"}, {"state": "corriendo"}]
+    # 503 con no_llego (PC desconocida, conexion rechazada) y el lienzo local rechazando: se reintenta
+    no_llego = (503, {"error": "sin conexión con pcB", "no_llego": True})
+    enviados = _envio(monkeypatch, [no_llego, (200, {"ok": True})], estados)
+    assert c.enviar_seguro(_tarjeta("u1"), "hola", enlazar=False, espera=2)["ok"] is True and len(enviados) == 2
+    rechazada = (0, "URLError: <urlopen error [WinError 10061] ... actively refused it>")
+    enviados = _envio(monkeypatch, [rechazada, (200, {"ok": True})], estados)
+    assert c.enviar_seguro(_tarjeta("u1"), "hola", enlazar=False, espera=2)["ok"] is True and len(enviados) == 2
+    # timeout, o 503 sin la marca (corte a mitad): pudo haberse tecleado, no se duplica
+    corte = (503, {"error": "sin conexión con pcB (TimeoutError: timed out)"})
+    for falla in ((0, "TimeoutError: timed out"), corte):
+        enviados = _envio(monkeypatch, [falla, (200, {"ok": True})], estados)
+        r = c.enviar_seguro(_tarjeta("u1"), "hola", enlazar=False, espera=2)
+        assert r["ok"] is False and len(enviados) == 1 and "pudo haberse tecleado" in r["motivo"], falla
 
 
 def test_cuerpo_envio_enlaza_solo_con_yo():

@@ -81,7 +81,10 @@ el estado. La coordinadora lleva `<proyecto> - coordinadora - <descripción>`. S
 `.cmd`. Si a una sesión viva se le da un encargo nuevo, se renombra con la descripción nueva y
 conserva la letra. **Con más de una PC en el tablero**, el título suma la PC:
 `<proyecto> - encargo A @notebook - <descripción>`, para no confundir dos encargos A de PCs
-distintas de un vistazo.
+distintas de un vistazo. Mejor todavía: **no repetir letra entre PCs**. Si se repite,
+`coordinar.frentes()` no adivina cuál es: devuelve las dos como `A@<pc_id>` y no hay clave `A`
+(el `pc_id` de `GET /peers`, no el `@` del título). Con `frentes(proyecto, pc=…)` se ve una sola PC
+y vuelve a haber `A`.
 
 ### Lanzar en otra PC
 
@@ -99,12 +102,26 @@ Un `200` de `send` sólo dice que el server aceptó el pedido; para una tarjeta 
 que se haya tecleado. Usar **`coordinar.enviar_seguro(s, texto, proyecto=…, letra=…)`**, que
 devuelve `{ok, code, motivo, sid}` y hace lo que a mano se olvida:
 
-- verifica que la tarjeta lo tomó (pasa a `corriendo` o cambia su `last_prompt`) y, si no, lo dice;
+- relee la tarjeta antes de mandar (la que se le pasa puede estar vieja) y verifica que lo tomó:
+  que cambie su `last_prompt`, o que pase a `corriendo` si antes no lo estaba. **A una tarjeta que
+  ya estaba `corriendo` el estado no le prueba nada** (puede estar ocupada, o pegada así tras un
+  `/compact`): si su prompt no cambia, devuelve `ok: False` con «no hay prueba de que lo tomó».
+  Puede haberle llegado igual, como mensaje intercalado: mirar su pantalla o su transcript antes
+  de reenviar;
+- un comando con barra (`/clear`, `/model`) a una tarjeta `corriendo` no se manda (409): en una
+  consola ocupada queda encolado y se pierde. Si se sabe que está quieta, usar `enviar`;
 - **404 con `gone`**: la otra PC ya no tiene esa tarjeta (la reinició, cerró la consola). El server
-  la saca del tablero solo; con `proyecto` y `letra` se busca el frente por nombre y se manda al id
-  nuevo. Sin esos dos no adivina;
-- **503** (sin conexión con esa PC): espera y reintenta, hasta dos veces;
-- una tarjeta detenida (`stopped_by`) no se manda: devuelve por qué.
+  la saca del tablero solo; con `proyecto` y `letra` se busca el frente por nombre **en esa misma
+  PC** y se manda al id nuevo. Sin esos dos no adivina;
+- **503 con `no_llego`** (la PC no está en la federación o rechazó la conexión): el pedido no salió,
+  así que espera y reintenta, hasta dos veces. **Un timeout o un 503 sin esa marca no se
+  reintenta**: el corte pudo ser después de teclear, y reintentar duplicaría el encargo. El
+  `motivo` lo dice («pudo haberse tecleado igual»): mirar la tarjeta antes de reenviar. Con un
+  server viejo en la otra PC (sin la marca) nunca reintenta;
+- una tarjeta detenida (`stopped_by`) no se manda: devuelve por qué;
+- un texto con caracteres de control se corta antes de mandar (400): casi siempre es una ruta de
+  Windows en un string de Python sin escapar (`"D:\apps"` lleva un `\a`, que es BEL). Rutas con `/`
+  o en *raw string*.
 
 Si `ok` es falso, **no seguir como si el frente trabajara**: mirar `motivo`. El server deja el
 rastro en `~/.lienzo/lienzo.log` (líneas `→ <pc> POST /sessions/…`); si no hay nada, el pedido no
@@ -426,6 +443,13 @@ Si te autorizan a aprobar permisos de una coda, usá `aprobador.py` (en esta car
 `Politica` mínima para esa tarea: verbos, carpetas, `rm` y pushes permitidos. Aprueba solo lo que
 pasa la lista, frena lo truncado y lo peligroso, y cada freno te lo informa para que decidas vos.
 Corre en segundo plano con `vigilar(...)` y se detiene cuando la tarea termina.
+
+**Por defecto solo aprueba git de lectura** (`GIT_LECTURA`: `status`, `log`, `diff`, `show`…): ni
+`add`, `commit`, `pull`, `checkout`, `switch`, `fetch` ni `push`. En un árbol compartido solo
+commitea la coordinadora, y un `checkout` le cambia la rama a todas las sesiones. Una coda que
+trabaja sola en su árbol (y commitea ella) los habilita explícitamente:
+`Politica(git_ok=a.GIT_LECTURA + a.GIT_ESCRITURA, …)`, y aun así cada `push` tiene que estar en
+`pushes`. Nunca a un frente de un árbol compartido.
 
 Verificar contra el árbol, no contra el informe: `ruff check` y `ruff format --check` sobre esa
 carpeta, las pruebas de esa carpeta, `git status` para ver si tocó algo ajeno, y si el frente dice

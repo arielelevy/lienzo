@@ -400,7 +400,9 @@ corre el proceso — nunca se replican, se le piden a la PC dueña por la red. `
 lo local con lo espejado de las demás PCs de forma transparente, y `/sessions/<sid>/send`,
 `/interrupt`, `/dialog`, `/pending/<id>`, `/attach` y `DELETE` funcionan igual sea la sesión local o
 remota: si la tarjeta es de otra PC, el server reenvía el pedido y devuelve la respuesta tal cual
-(**503** `{"error": "sin conexión con <pc>"}` si esa PC no contesta).
+(**503** `{"error": "sin conexión con <pc>"}` si esa PC no contesta). El 503 suma `"no_llego": true`
+solo cuando el pedido no salió (PC desconocida o conexión rechazada) y se puede reintentar; sin esa
+marca (timeout, corte a mitad) pudo haberse ejecutado del otro lado.
 
 ### Emparejar
 

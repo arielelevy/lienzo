@@ -1872,7 +1872,13 @@ def test_forward_reintenta_solo_si_el_pedido_no_llego():
     assert m.forward("pcB", "POST", "/sessions/fantasma/send", {})[0] == 200 and len(t.llamadas) == 2
     t = _TransporteFalso([TimeoutError(), (200, {"ok": True})])
     m, _ = _espejo_con(t)
-    assert m.forward("pcB", "POST", "/sessions/fantasma/send", {})[0] == 503 and len(t.llamadas) == 1
+    code, res = m.forward("pcB", "POST", "/sessions/fantasma/send", {})
+    assert code == 503 and len(t.llamadas) == 1 and "no_llego" not in res  # pudo haberse ejecutado
+    t = _TransporteFalso([ConnectionRefusedError(), ConnectionRefusedError()])
+    m, _ = _espejo_con(t)
+    code, res = m.forward("pcB", "POST", "/sessions/fantasma/send", {})
+    assert code == 503 and res.get("no_llego") is True  # no salio: el cliente puede reintentar
+    assert m.forward("pc-que-no-existe", "POST", "/sessions/x/send", {})[1].get("no_llego") is True
 
 
 def test_el_envio_a_otra_pc_espera_mas_que_un_pedido_comun():

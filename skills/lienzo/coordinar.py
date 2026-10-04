@@ -115,10 +115,17 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
     """Como `enviar`, pero no da por hecho que llegó: devuelve {"ok", "code", "motivo", "sid"}.
 
     Un 200 sólo dice que el server aceptó el pedido. Acá además se verifica que la tarjeta lo tomó
-    (pasa a `corriendo`, o `last_prompt` cambia) y se cubren las fallas de otra PC:
+    y se cubren las fallas de otra PC:
+    - La tarjeta se relee antes de mandar (la `s` que se pasa puede ser vieja). Cuenta como tomado
+      que cambie `last_prompt`/`prompt_id`, o que pase a `corriendo` si antes no lo estaba.
+    - Un comando con barra (`/clear`, `/model`) a una tarjeta `corriendo` no se manda: en una
+      consola ocupada queda encolado y se pierde. Si se sabe que está quieta, usar `enviar`.
     - 404 con `gone` (la tarjeta ya no existe allá): se vuelve a buscar el frente por nombre
-      (`proyecto` + `letra`) y se manda al id nuevo, una vez. Sin `proyecto`/`letra` no se adivina.
-    - 503 (sin conexión con esa PC): se espera y se reintenta, hasta `reintentos` veces.
+      (`proyecto` + `letra`) en la misma PC y se manda al id nuevo, una vez. Sin `proyecto`/`letra`
+      no se adivina.
+    - 503 con `no_llego` (el pedido no salió: PC desconocida o conexión rechazada) o el lienzo local
+      que rechaza la conexión: se espera y se reintenta, hasta `reintentos` veces. Un timeout o un
+      503 sin esa marca (corte a mitad) pudo haberse tecleado del otro lado: NO se reintenta.
     - Detenida (`stopped_by`) o muerta: no se manda, se dice por qué.
     """
     permitidos = "\n\t\r"  # salto de línea, tab y retorno
@@ -133,12 +140,20 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
             "motivo": f"el texto trae caracteres de control {raros} (¿una ruta de Windows sin escapar?)",
             "sid": s["session_id"],
         }
-    sid = s["session_id"]
     for intento in range(reintentos + 1):
+        s = reubicar(s, sesiones()) or s
+        sid = s["session_id"]
         if s.get("stopped_by"):
             return {"ok": False, "code": 409, "motivo": f"detenida por {s['stopped_by']}", "sid": sid}
         antes = (s.get("last_prompt"), s.get("prompt_id"))
         ya_corria = s.get("state") == "corriendo"
+        if ya_corria and texto.lstrip().startswith("/"):
+            return {
+                "ok": False,
+                "code": 409,
+                "motivo": "comando con barra a una tarjeta corriendo: quedaría encolado y se pierde",
+                "sid": sid,
+            }
         code, res = pedir("POST", f"/sessions/{sid}/send", _cuerpo_envio(sid, texto, enlazar), timeout=80)
         if code == 200:
             fin = time.time() + espera
@@ -150,25 +165,32 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
                 tomo = (n.get("last_prompt"), n.get("prompt_id")) != antes if n else False
                 if n and (tomo or (not ya_corria and n.get("state") == "corriendo")):
                     return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": n["session_id"]}
-            return {
-                "ok": False,
-                "code": 200,
-                "motivo": f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)",
-                "sid": sid,
-            }
+            motivo = (
+                f"ya estaba corriendo: el server lo aceptó pero en {espera} s no cambió su prompt, así que no hay "
+                "prueba de que lo tomó (mirar su pantalla o transcript antes de reenviar)"
+                if ya_corria
+                else f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)"
+            )
+            return {"ok": False, "code": 200, "motivo": motivo, "sid": sid}
         if code == 404 and isinstance(res, dict) and res.get("gone") and proyecto and letra:
             nuevo = frentes(proyecto, pc=s.get("pc")).get(letra)
             if nuevo and nuevo["session_id"] != sid:
-                s, sid = nuevo, nuevo["session_id"]
+                s = nuevo
                 continue
-        # solo un 503 (no llego a la otra PC) se reintenta: un timeout (0) pudo haberse tecleado
-        # del otro lado y reintentarlo lo duplicaria
-        if code == 503 and intento < reintentos:
+        # solo se reintenta lo que no salio: un 503 con `no_llego` o el lienzo local rechazando la
+        # conexion. Un timeout (0) o un 503 sin la marca (corte a mitad) pudo haberse tecleado del
+        # otro lado y reintentarlo lo duplicaria
+        no_salio = (code == 503 and isinstance(res, dict) and res.get("no_llego")) or (
+            code == 0 and "refused" in str(res).lower()
+        )
+        if no_salio and intento < reintentos:
             time.sleep(3 * (intento + 1))
             continue
-        motivo = res.get("error") if isinstance(res, dict) and res.get("error") else res
-        return {"ok": False, "code": code, "motivo": str(motivo)[:200], "sid": sid}
-    return {"ok": False, "code": 0, "motivo": "sin respuesta", "sid": sid}
+        motivo = str(res.get("error") if isinstance(res, dict) and res.get("error") else res)[:200]
+        if code in (0, 503) and not no_salio:
+            motivo += " — pudo haberse tecleado igual: mirar la tarjeta antes de reenviar"
+        return {"ok": False, "code": code, "motivo": motivo, "sid": sid}
+    return {"ok": False, "code": 0, "motivo": "sin respuesta", "sid": s["session_id"]}
 
 
 def reubicar(s, todas):

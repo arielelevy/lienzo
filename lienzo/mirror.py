@@ -287,10 +287,12 @@ class Mirror:
     def forward(self, pc_id: str, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
         """Reenvia un comando a la PC dueña (`path` sin el prefijo `/peer`, que se agrega aca) y
         devuelve su respuesta tal cual: codigo y cuerpo. Peer caido, o desconocido: 503, para que
-        el front lo muestre igual que "no hay consola donde escribir"."""
+        el front lo muestre igual que "no hay consola donde escribir". El 503 lleva `no_llego` solo
+        cuando el pedido seguro no salio de aca (peer desconocido, conexion rechazada): ese se puede
+        reintentar; uno sin la marca pudo haberse ejecutado del otro lado (timeout, corte a mitad)."""
         pm = self._get(pc_id)
         if pm is None:
-            return 503, {"error": f"sin conexión con {pc_id}"}
+            return 503, {"error": f"sin conexión con {pc_id}", "no_llego": True}
         nombre = pm.info.get("name") or pc_id
         code, res = 0, {}
         t0 = time.monotonic()
@@ -302,7 +304,7 @@ class Mirror:
                 # el pedido no llego a ningun lado: reintentar una vez no puede duplicar nada
                 if intento == 2:
                     self.log(f"→ {nombre} {method} {path}: conexion rechazada")
-                    return 503, {"error": f"sin conexión con {nombre}"}
+                    return 503, {"error": f"sin conexión con {nombre}", "no_llego": True}
                 time.sleep(0.5)
             except OSError as e:
                 # timeout o corte a mitad: puede haberse ejecutado, asi que NO se reintenta
