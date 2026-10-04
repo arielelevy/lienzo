@@ -310,11 +310,6 @@ def test_cuerpo_malo_a_tarjeta_desconocida_mismo_codigo_post(entorno, method, ac
     assert ef_t == ef_p == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="divergencia: Handler valida el cuerpo de las PUT antes de buscar la tarjeta (400) y "
-    "PeerHandler la busca primero (404); el orden de la ola 2 es validar -> ubicar -> ejecutar",
-)
 @pytest.mark.parametrize("method,accion,malo", _PUT_MALOS, ids=[c[1] for c in _PUT_MALOS])
 def test_cuerpo_malo_a_tarjeta_desconocida_mismo_codigo_put(entorno, method, accion, malo):
     (t, ef_t), (p, ef_p) = por_los_dos(entorno, method, accion, NADIE, malo)
@@ -440,13 +435,13 @@ def test_ruta_desconocida_entre_pcs_con_tarjeta_conocida_no_trae_unknown_session
     assert code == 404 and res == {"error": "ruta desconocida"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="divergencia: PeerHandler busca la tarjeta antes de mirar la accion, asi que una accion que "
-    "no existe sobre una tarjeta que tampoco da 404 con unknown_session (y mirror.forward la toma por "
-    "fantasma); Handler mira la accion primero y da «ruta desconocida»",
-)
-@pytest.mark.parametrize("method", ["POST", "PUT"])
+# divergencia hasta la ola 2: PeerHandler buscaba la tarjeta antes de mirar la accion, asi que una
+# accion que no existe sobre una tarjeta que tampoco daba 404 con unknown_session (y mirror.forward
+# la tomaba por fantasma); Handler mira la accion primero y da «ruta desconocida»
+_XFAIL_POST = pytest.mark.xfail(strict=True, reason="PeerHandler: las POST todavia buscan la tarjeta primero")
+
+
+@pytest.mark.parametrize("method", [pytest.param("POST", marks=_XFAIL_POST), "PUT"])
 def test_ruta_desconocida_entre_pcs_con_tarjeta_desconocida_no_trae_unknown_session(entorno, method):
     code, res = al_peer(entorno["peer"], method, f"/peer/sessions/{NADIE}/no-existe", b"{}")
     assert code == 404 and res == {"error": "ruta desconocida"}

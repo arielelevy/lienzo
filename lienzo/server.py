@@ -25,6 +25,8 @@ import threading
 import time
 import traceback
 import urllib.parse
+from collections.abc import Callable
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1050,6 +1052,105 @@ def decode_json_body(raw: bytes) -> dict:
     return d
 
 
+# --- acciones de tarjeta: una tabla para el tablero y para las otras PCs (ola 2) ---------------
+#
+# Antes cada accion estaba dos veces, en Handler y en PeerHandler, y las copias se separaron: las
+# PUT validaban antes de buscar la tarjeta en un lado y despues en el otro, y PeerHandler buscaba
+# la tarjeta antes de mirar si la accion existia (una accion que esa PC no conoce, sobre una
+# tarjeta que ya no esta, daba unknown_session y no «ruta desconocida»). Ahora cada accion se
+# define una vez y el orden es uno solo, el de `atender_accion`: validar el cuerpo -> ubicar la
+# tarjeta (aca o en la PC duena) -> ejecutar o reenviar. Lo que distingue a los dos listeners es
+# como llega el cuerpo (cada uno lo decodifica antes) y que solo el tablero reenvia.
+
+
+def _rechazo(msg: str) -> tuple[int, dict]:
+    return 400, {"error": msg}
+
+
+def validar_title(d: dict) -> tuple[int, dict] | None:
+    title = d.get("title")
+    return _rechazo("title debe ser un texto") if title is not None and not isinstance(title, str) else None
+
+
+def validar_on(d: dict) -> tuple[int, dict] | None:
+    """La llave (stopped) y la coordinadora: `on` booleano."""
+    return None if isinstance(d.get("on"), bool) else _rechazo("on debe ser true o false")
+
+
+def accion_title(s: dict, d: dict) -> tuple[int, dict]:
+    """PUT /sessions/<id>/title: titulo a mano. Vacio vuelve a la logica automatica."""
+    set_title(s, d.get("title") or "")  # toma el lock por dentro; leer la transcripcion, no
+    if not touch(s):
+        # la borraron (o reemplazaron) mientras se leia la transcripcion: touch ya no la guarda
+        # ni la publica, y contestar 200 diria que el titulo quedo (revision 2026-10-04, S10)
+        return 404, no_session()
+    log(f"titulo de {s['session_id'][:8]} -> {s['title']!r} ({s.get('title_source')})")
+    return 200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")}
+
+
+def accion_stopped(s: dict, d: dict) -> tuple[int, dict]:
+    """PUT /sessions/<id>/stopped: la llave. {on: true} la detiene (Esc si corre, aviso a sus
+    conectadas, no recibe nada); {on: false} la habilita."""
+    res = set_stopped(s, d["on"])
+    return 200, {"ok": True, "stopped_by": s.get("stopped_by"), **res}
+
+
+def accion_coordinator(s: dict, d: dict) -> tuple[int, dict]:
+    """PUT /sessions/<id>/coordinator: marca la coordinadora del repo (a lo sumo una en toda la
+    federacion). `scope: "pc"` la separa solo para esta PC (plan §3.6)."""
+    changed = set_coordinator(s, d["on"], scope=d.get("scope"))
+    log(
+        f"coordinadora de {s.get('repo')}: {s['session_id'][:8]} -> {d['on']} "
+        f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"
+    )
+    return 200, {"ok": True, "coordinator": bool(s.get("coordinator"))}
+
+
+@dataclass(frozen=True)
+class AccionSesion:
+    """Una accion sobre una tarjeta: `/sessions/<id>/<nombre>` en el tablero y
+    `/peer/sessions/<id>/<nombre>` entre PCs.
+
+    `validar(d)` da el rechazo (codigo, cuerpo) o None; `ejecutar(s, d)` es `accion_<nombre>`,
+    sobre la tarjeta local y con `d` ya validado; `reenvio(d)` es el cuerpo que viaja a la PC duena
+    (el formato de /peer/*, que no cambia); `cuerpo` dice como se lee el pedido: "json", "nada"
+    (no se lee) o "adjunto" (crudo al tablero, en base64 entre PCs: ver los dos decodificadores)."""
+
+    validar: Callable[[dict], tuple[int, dict] | None]
+    ejecutar: Callable[[dict, dict], tuple[int, dict]]
+    reenvio: Callable[[dict], dict] = dict
+    cuerpo: str = "json"
+
+
+ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
+    ("PUT", "title"): AccionSesion(validar_title, accion_title, reenvio=lambda d: {"title": d.get("title")}),
+    ("PUT", "stopped"): AccionSesion(validar_on, accion_stopped, reenvio=lambda d: {"on": d["on"]}),
+    ("PUT", "coordinator"): AccionSesion(validar_on, accion_coordinator),
+}
+
+
+def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, reenviar: bool) -> tuple[int, dict]:
+    """La accion `nombre` sobre la tarjeta `sid`, con el cuerpo ya decodificado, en el orden fijo:
+    validar -> ubicar -> ejecutar o reenviar. Con `reenviar` (el tablero) una tarjeta de otra PC se
+    le pide a su duena; sin el (lo que pide otra PC) solo vale la tarjeta local: reenviar de nuevo
+    armaria rebotes en una malla de 3+ PCs."""
+    a = ACCIONES_SESION[(metodo, nombre)]
+    rechazo = a.validar(d)
+    if rechazo is not None:
+        return rechazo
+    if reenviar:
+        s, owner = _route_session(sid)
+    else:
+        with lock:
+            s = sessions.get(sid)
+        owner = None
+    if owner is not None:
+        return mirror.MIRROR.forward(owner, metodo, f"/sessions/{sid}/{nombre}", a.reenvio(d))
+    if s is None:
+        return 404, no_session()
+    return a.ejecutar(s, d)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "lienzo/0.1"
     protocol_version = "HTTP/1.1"
@@ -1611,12 +1712,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._put_config()
             if parts == ["peers", "self"]:
                 return self._put_peer_self()
-            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "title":
-                return self._put_title(parts[1])
-            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "coordinator":
-                return self._put_coordinator(parts[1])
-            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "stopped":
-                return self._put_stopped(parts[1])
+            if len(parts) == 3 and parts[0] == "sessions" and ("PUT", parts[2]) in ACCIONES_SESION:
+                return self._accion_sesion("PUT", parts[1], parts[2])
             if len(parts) == 2 and parts[0] == "rules":
                 code, res = edit_rule(parts[1], self._json_body())
                 return self._json(code, res)
@@ -1660,61 +1757,21 @@ class Handler(BaseHTTPRequestHandler):
         # cuando contestan (reintentar_config_peers).
         return self._json(200, {**public_config(), "peers": propagar_auto_aprobar(d[autoaprobar.CLAVE])})
 
-    def _put_title(self, sid: str) -> None:
-        """PUT /sessions/<id>/title: titulo a mano. Vacio vuelve a la logica automatica. `sid` de
-        otra PC (plan §3.4): se valida el cuerpo igual, y recien despues se reenvia."""
-        title = self._json_body().get("title")
-        if title is not None and not isinstance(title, str):
-            return self._json(400, {"error": "title debe ser un texto"})
-        s, owner = _route_session(sid)
-        if s is None and owner is None:
-            return self._json(404, no_session())
-        if owner is not None:
-            code, res = mirror.MIRROR.forward(owner, "PUT", f"/sessions/{sid}/title", {"title": title})
-            return self._json(code, res)
-        set_title(s, title or "")  # toma el lock por dentro; leer la transcripcion, no
-        if not touch(s):
-            # la borraron (o reemplazaron) mientras se leia la transcripcion: touch ya no la guarda
-            # ni la publica, y contestar 200 diria que el titulo quedo (revision 2026-10-04, S10)
-            return self._json(404, no_session())
-        log(f"titulo de {sid[:8]} -> {s['title']!r} ({s.get('title_source')})")
-        return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
+    def _cuerpo_accion(self, a: AccionSesion) -> dict:
+        """El cuerpo de una accion de tarjeta tal como llega al tablero: JSON, nada, o el adjunto
+        crudo con el nombre en X-Filename."""
+        if a.cuerpo == "nada":
+            return {}
+        if a.cuerpo == "adjunto":
+            return {"filename": urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin"), "data": self.raw}
+        return self._json_body()
 
-    def _put_stopped(self, sid: str) -> None:
-        """PUT /sessions/<id>/stopped: la llave. {on: true} la detiene (Esc si corre, aviso a sus
-        conectadas, no recibe nada); {on: false} la habilita."""
-        on = self._json_body().get("on")
-        if not isinstance(on, bool):
-            return self._json(400, {"error": "on debe ser true o false"})
-        s, owner = _route_session(sid)
-        if s is None and owner is None:
-            return self._json(404, no_session())
-        if owner is not None:
-            code, res = mirror.MIRROR.forward(owner, "PUT", f"/sessions/{sid}/stopped", {"on": on})
-            return self._json(code, res)
-        res = set_stopped(s, on)
-        return self._json(200, {"ok": True, "stopped_by": s.get("stopped_by"), **res})
-
-    def _put_coordinator(self, sid: str) -> None:
-        """PUT /sessions/<id>/coordinator: marca la coordinadora del repo (a lo sumo una en toda la
-        federacion). `scope: "pc"` la separa solo para esta PC (plan §3.6)."""
-        d = self._json_body()
-        on = d.get("on")
-        if not isinstance(on, bool):
-            return self._json(400, {"error": "on debe ser true o false"})
-        scope = d.get("scope")
-        s, owner = _route_session(sid)
-        if s is None and owner is None:
-            return self._json(404, no_session())
-        if owner is not None:
-            code, res = mirror.MIRROR.forward(owner, "PUT", f"/sessions/{sid}/coordinator", d)
-            return self._json(code, res)
-        changed = set_coordinator(s, on, scope=scope)
-        log(
-            f"coordinadora de {s.get('repo')}: {sid[:8]} -> {on} "
-            f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"
-        )
-        return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
+    def _accion_sesion(self, metodo: str, sid: str, nombre: str) -> None:
+        """/sessions/<id>/<nombre>: decodifica el cuerpo y deja el resto a atender_accion (la misma
+        que usa PeerHandler); la tarjeta de otra PC se reenvia a su duena (plan §3.4)."""
+        d = self._cuerpo_accion(ACCIONES_SESION[(metodo, nombre)])
+        code, res = atender_accion(metodo, sid, nombre, d, reenviar=True)
+        return self._json(code, res)
 
     def _get_peers(self) -> None:
         """GET /peers: la propia PC primero (`local: true`), despues cada peer emparejado. Sin
@@ -2066,7 +2123,7 @@ class PeerHandler(BaseHTTPRequestHandler):
         if len(rest) == 3 and rest[0] == "sessions" and method == "POST":
             return self._session_post(rest[1], rest[2], raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "PUT":
-            return self._session_put(rest[1], rest[2], raw)
+            return self._accion_sesion(method, rest[1], rest[2], raw)
         if len(rest) == 2 and rest[0] == "rules" and method == "DELETE":
             rules.remove(lambda x: x["id"] == rest[1])
             return self._json(200, {"ok": True})
@@ -2181,34 +2238,35 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._json(200, {"path": path, "bytes": len(data)})
         return self._json(404, {"error": "ruta desconocida"})
 
-    def _session_put(self, sid: str, action: str, raw: bytes) -> None:
-        with lock:
-            s = sessions.get(sid)
-        if s is None:
-            return self._json(404, no_session())
+    def _cuerpo_accion(self, a: AccionSesion, raw: bytes) -> dict:
+        """El cuerpo de una accion de tarjeta tal como llega de otra PC: JSON, nada, o el adjunto en
+        base64 adentro del JSON (no hay transporte binario entre PCs). Queda igual que el del
+        tablero ({filename, data}), asi la accion no sabe por donde vino."""
+        if a.cuerpo == "nada":
+            return {}
         d = self._body_json(raw)
-        if action == "title":
-            title = d.get("title")
-            if title is not None and not isinstance(title, str):
-                return self._json(400, {"error": "title debe ser un texto"})
-            set_title(s, title or "")
-            if not touch(s):  # borrada mientras se titulaba (S10, como en Handler._put_title)
-                return self._json(404, no_session())
-            return self._json(200, {"ok": True, "title": s["title"], "title_source": s.get("title_source")})
-        if action == "stopped":
-            on = d.get("on")
-            if not isinstance(on, bool):
-                return self._json(400, {"error": "on debe ser true o false"})
-            res = set_stopped(s, on)
-            return self._json(200, {"ok": True, "stopped_by": s.get("stopped_by"), **res})
-        if action == "coordinator":
-            on = d.get("on")
-            if not isinstance(on, bool):
-                return self._json(400, {"error": "on debe ser true o false"})
-            scope = d.get("scope")
-            set_coordinator(s, on, scope=scope)
-            return self._json(200, {"ok": True, "coordinator": bool(s.get("coordinator"))})
-        return self._json(404, {"error": "ruta desconocida"})
+        if a.cuerpo != "adjunto":
+            return d
+        name, data_b64 = d.get("filename"), d.get("data_b64")
+        data = b""
+        if isinstance(data_b64, str) and data_b64:
+            try:
+                data = base64.b64decode(data_b64, validate=True)
+            except ValueError, binascii.Error:
+                raise RequestError("adjunto invalido") from None
+        # el nombre llega como texto siempre, como en el tablero (sale de X-Filename): uno que no
+        # es texto hacia reventar save_attachment
+        return {"filename": name if isinstance(name, str) and name else "adjunto.bin", "data": data}
+
+    def _accion_sesion(self, method: str, sid: str, nombre: str, raw: bytes) -> None:
+        """/peer/sessions/<id>/<nombre>: la accion se mira ANTES que la tarjeta, asi una que esta
+        PC no conoce es «ruta desconocida» y no unknown_session (que el espejo de la otra PC toma
+        como tarjeta fantasma). Despues, lo mismo que el tablero, sin reenviar."""
+        a = ACCIONES_SESION.get((method, nombre))
+        if a is None:
+            return self._json(404, {"error": "ruta desconocida"})
+        code, res = atender_accion(method, sid, nombre, self._cuerpo_accion(a, raw), reenviar=False)
+        return self._json(code, res)
 
     def _events(self) -> None:
         snapshot = json.dumps({"type": "snapshot", "build": build_id(), **_local_state()}, ensure_ascii=False)
