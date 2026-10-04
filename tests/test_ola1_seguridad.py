@@ -487,3 +487,14 @@ def test_restaurar_que_revienta_no_devuelve_el_texto_de_la_excepcion(aislado, mo
     assert code == 400 and "secreto" not in error and "RuntimeError" not in error
     eid = error.split("(")[-1].rstrip(")")
     assert any(eid in x and "secreto" in x for x in aislado["logs"])
+
+
+def test_lan_ip_avisa_cuando_cae_a_localhost(aislado, monkeypatch):
+    """S17: sin red, el listener de peers quedaba en 127.0.0.1 sin ninguna línea que lo dijera."""
+
+    def sin_red(*a, **k):
+        raise OSError("red inalcanzable")
+
+    monkeypatch.setattr(server.socket, "socket", sin_red)
+    assert server._lan_ip() == "127.0.0.1"
+    assert any("127.0.0.1" in x and "red inalcanzable" in x for x in aislado["logs"])

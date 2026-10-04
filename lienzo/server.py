@@ -2207,7 +2207,10 @@ def _lan_ip() -> str:
             return s.getsockname()[0]
         finally:
             s.close()
-    except OSError:
+    except OSError as e:
+        # sin esta linea el listener de peers quedaba en localhost en silencio, y desde la otra PC
+        # solo se veia «sin conexion» (revision 2026-10-04, S17)
+        log(f"no se pudo averiguar la IP de LAN ({type(e).__name__}: {e}): el listener de peers usa 127.0.0.1")
         return "127.0.0.1"
 
 
