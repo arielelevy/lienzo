@@ -120,20 +120,43 @@ def validar(d: dict) -> str | None:
         return "nombre: texto de 1 a 100 caracteres"
     if d.get("destino") == "git":
         url = d.get("git_url")
-        partes = urllib.parse.urlsplit(url) if isinstance(url, str) else None
-        if not partes or partes.scheme != "https" or not partes.hostname:
+        if not isinstance(url, str) or _CONTROL & set(url) or _host_git(url) is None:
             return "git_url: una url https (p. ej. https://git.ejemplo.com)"
         if not isinstance(d.get("usuario"), str) or not d["usuario"].strip():
             return "usuario: hace falta para git"
+        if _CONTROL & set(d["usuario"]):
+            return "usuario: sin saltos de linea ni caracteres nulos"
+        if isinstance(d.get("valor"), str) and _CONTROL & set(d["valor"]):
+            return "valor: sin saltos de linea ni caracteres nulos"
     return None
+
+
+# `git credential` lee lineas clave=valor: un salto de linea en el usuario o en el valor agregaba
+# claves propias (otro host, otro protocolo) y un \0 corta la entrada (revision 2026-10-04, 0.6).
+_CONTROL = frozenset("\r\n\0")
+
+
+def _host_git(url: str) -> str | None:
+    """hostname[:puerto] de una url https, o None. No `netloc`: ese trae `usuario:clave@` si la url
+    los tiene, y terminaba en la linea host= de git credential."""
+    partes = urllib.parse.urlsplit(url)
+    try:
+        puerto = partes.port
+    except ValueError:
+        return None
+    if partes.scheme != "https" or not partes.hostname:
+        return None
+    return partes.hostname + (f":{puerto}" if puerto else "")
 
 
 def aplicar_git(git_url: str, usuario: str, valor: str) -> tuple[bool, str]:
     """Guarda la credencial con `git credential approve`: el helper de git (en Windows, el Git
     Credential Manager) la deja en el almacen de credenciales del sistema. El valor va por stdin:
     no aparece en la linea de comandos ni en la salida. Nunca abre una ventana de login."""
-    partes = urllib.parse.urlsplit(git_url)
-    entrada = f"protocol={partes.scheme}\nhost={partes.netloc}\nusername={usuario}\npassword={valor}\n\n"
+    host = _host_git(git_url)
+    if host is None or _CONTROL & set(usuario + valor):
+        return False, "url, usuario o valor invalidos para git credential"
+    entrada = f"protocol=https\nhost={host}\nusername={usuario}\npassword={valor}\n\n"
     # subproc.correr y no subprocess.run: con la salida en una tuberia, un Git Credential Manager
     # que queda vivo como nieto de git la retiene y el pedido se cuelga aunque venza el timeout
     # (el mismo cuelgue que ya se vio en health._ls_remote; revision 2026-10-04, 0.5)
@@ -141,17 +164,19 @@ def aplicar_git(git_url: str, usuario: str, valor: str) -> tuple[bool, str]:
     if rc != 0:
         # el error de git no deberia traer el valor, pero por las dudas se lo tapa
         return False, (err or "git credential approve fallo").replace(valor, "***").strip()[:300]
-    return True, f"credencial guardada para {usuario}@{partes.netloc}"
+    return True, f"credencial guardada para {usuario}@{host}"
 
 
 def leer_git_local(git_url: str) -> tuple[str, str] | None:
     """(usuario, valor) de la credencial que ESTA PC ya tiene guardada para ese host (`git credential
     fill`), o None. Asi un agente pasa la credencial a otra PC sin verla nunca: el valor va del
     almacen de Windows al cifrado sin pasar por su transcript. Nunca abre una ventana de login."""
-    partes = urllib.parse.urlsplit(git_url)
+    host = _host_git(git_url)
+    if host is None:
+        return None
     rc, out, _err = subproc.correr(
         ["git", "credential", "fill"],
-        entrada=f"protocol={partes.scheme}\nhost={partes.netloc}\n\n",
+        entrada=f"protocol=https\nhost={host}\n\n",
         timeout=20,
         sin_prompts=True,
     )
@@ -166,6 +191,8 @@ def recibir(d: dict, valor: str) -> tuple[int, dict]:
     if len(valor) > MAX_VALOR or not valor:
         return 400, {"error": f"el valor tiene que tener entre 1 y {MAX_VALOR} caracteres"}
     if d["destino"] == "git":
+        if _CONTROL & set(valor):
+            return 400, {"error": "valor: sin saltos de linea ni caracteres nulos"}
         ok, msg = aplicar_git(d["git_url"], d["usuario"], valor)
         return (200 if ok else 502), ({"ok": True, "detalle": msg} if ok else {"ok": False, "error": msg})
     sid = BOVEDA.guardar(d["nombre"], valor)

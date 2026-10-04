@@ -80,3 +80,27 @@ def test_recibir_en_memoria_no_devuelve_el_valor():
     assert code == 200 and "token-123" not in str(res)
     assert sec.BOVEDA.tomar(res["id"]) == ("n", "token-123")
     assert sec.recibir({"destino": "memoria", "nombre": "n"}, "")[0] == 400
+
+
+@pytest.mark.parametrize("malo", ["u\nprotocol=https", "u\r", "u\0"])
+def test_validar_rechaza_saltos_de_linea_en_usuario_y_valor(malo):
+    """Revisión 2026-10-04, 0.6: `git credential approve` lee líneas clave=valor; un `\n` en el
+    usuario o en el valor agregaba claves propias (otro host, otro protocolo)."""
+    base = {"destino": "git", "nombre": "x", "git_url": "https://h"}
+    assert sec.validar({**base, "usuario": malo})
+    assert sec.validar({**base, "usuario": "u", "valor": "tok" + malo})
+    code, res = sec.recibir({**base, "usuario": "u"}, "tok" + malo)
+    assert code == 400 and "tok" not in str(res)
+
+
+def test_aplicar_git_usa_el_host_sin_credenciales_de_la_url(monkeypatch):
+    """`netloc` trae `user:pass@`: el host que se le pasa a git es hostname[:puerto]."""
+    vistos = {}
+    monkeypatch.setattr(sec.subproc, "correr", lambda argv, **k: vistos.update(k) or (0, "", ""))
+    assert (
+        sec.validar({"destino": "git", "nombre": "x", "git_url": "https://a:b@git.x.com:8443/r", "usuario": "u"})
+        is None
+    )
+    ok, msg = sec.aplicar_git("https://a:b@git.x.com:8443/r", "u", "tok")
+    assert ok and "host=git.x.com:8443\n" in vistos["entrada"] and "a:b" not in vistos["entrada"] + msg
+    assert sec.validar({"destino": "git", "nombre": "x", "git_url": "https://h:99999", "usuario": "u"})
