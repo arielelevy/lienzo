@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ago, detail, failMsg, sessionsApi } from "../api";
+import { ago, failMsg, sessionsApi } from "../api";
 import { continueAt, useCardActions } from "../hooks/useCardActions";
 import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
-import { canWrite, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
-import { Ask, askQuestions } from "./Ask";
-import { PermissionButtons, PermissionPrompt } from "./PermissionPrompt";
+import { canWrite, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
+import { CardNeeds } from "./CardNeeds";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
@@ -284,7 +283,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(timer);
   }, []);
-  const { busy, pcCoordinator, scheduleContinue, pickDialog, codaDecide, quickSend, autorizarDenegado, toggleCoordinator, togglePcCoordinator, toggleStopped } = useCardActions(s, toast);
+  const actions = useCardActions(s, toast);
+  const { busy, pcCoordinator, scheduleContinue, quickSend, toggleCoordinator, togglePcCoordinator, toggleStopped } = actions;
   const rename = useRename(s, toast);
   // el grupo de libres se abre y se cierra para todas sus tarjetas a la vez (ver `useGroupOpen`)
   const group = useGroupOpen(`${s.repo}|${s.agent}`);
@@ -345,8 +345,6 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   // botones rapidos: solo si la sesion espera input de verdad o pregunto algo. Una que entrego un
   // informe y no pregunto nada no tiene nada que continuar ni que contestar: alcanza la caja del panel
   const quick = writable && !s.pending_id && !p && (s.needs?.kind === "idle" || asks);
-  // pendiente que en realidad es una pregunta con opciones: se contesta eligiendo (Ask.tsx)
-  const preguntas = askQuestions(p);
   // libre: viva, con consola y sin ningun pedido todavia (sesion recien abierta). No hay nada que
   // continuar ni que contestar: en vez de los botones rapidos, un solo "Darle trabajo" que abre el
   // panel con el cursor en la caja
@@ -728,70 +726,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           ✓ {recentFrom} · hace {ago(recent.ts)}
         </div>
       )}
-      {/* lo que pide la sesion va antes que la respuesta: Permitir/Denegar es lo primero visible.
-          Si lo que espera es una pregunta con opciones, van las opciones: no hay nada que permitir */}
-      {p && preguntas.length > 0 ? (
-        <Ask pending={p} questions={preguntas} onAnswer={onAnswer} onDecide={onDecide} />
-      ) : p ? (
-        <PermissionPrompt tool={p.tool_name} detail={detail(p.tool_input)} note={`vence ${hhmm(new Date(p.expires_at))}`} onDecide={(d) => onDecide(p.request_id, d)} />
-      ) : s.state === "te_necesita" && s.needs && !(quick && s.needs.kind === "idle") ? (
-        /* ociosa con botones rapidos: el aviso va en una linea con los botones, mas abajo */
-        <div className="needs terminal">
-          <b>{needsLabel(s.needs)}</b>
-          {s.needs.detail && <code>{s.needs.detail}</code>}
-          {s.agent === "coda" && s.needs.coda_at && s.needs.where === "terminal" && writable ? (
-            // CODA no tiene un hook que espere la respuesta: los botones teclean Enter o Esc en su
-            // diálogo, y el server confirma antes en la pantalla que el diálogo siga abierto
-            <PermissionButtons onDecide={codaDecide} note="se teclea en su terminal" />
-          ) : (
-            <div className="dim small">
-              {s.needs.kind === "idle" ? "podés escribirle desde acá" : s.needs.where === "enviado" ? "respuesta enviada a la terminal" : s.needs.where === "terminal" ? "contestar en la terminal" : "esperando al lienzo"}
-            </div>
-          )}
-        </div>
-      ) : null}
-      {/* permiso que una regla, una politica o un clasificador denego: no espera nada, pero si nadie
-          lo ve el agente sigue sin eso (medido el 2026-10-04 en la otra PC) */}
-      {s.last_denied && !p && (
-        <div className="needs denied">
-          <b>Denegado: {s.last_denied.tool}</b>
-          {s.last_denied.detalle && <code>{s.last_denied.detalle}</code>}
-          {s.last_denied.motivo && <div className="dim small">{s.last_denied.motivo}</div>}
-          {writable && (
-            <div className="btns">
-              <button className="allow" onClick={(e) => { e.stopPropagation(); autorizarDenegado(); }}>Autorizar y que reintente</button>
-            </div>
-          )}
-        </div>
-      )}
-      {/* diálogo de la TUI ("Switch model?"): no es un permiso, no dispara hooks y nadie lo ve
-          desde afuera; se lee de la pantalla cada 5 s. Un permiso pendiente le gana (el server ya
-          no publica el diálogo en ese caso) */}
-      {!p && s.dialog && writable && (
-        <div className="needs ask tui">
-          <b>Espera que elijas en la terminal</b>
-          <div className="q">
-            <div className="qtext">{s.dialog.question}</div>
-            {s.dialog.detail && <div className="dim small">{s.dialog.detail}</div>}
-            {s.dialog.options.map((o) => (
-              <button
-                key={o.n}
-                type="button"
-                className={`opt ${o.n === s.dialog!.selected ? "on" : ""}`}
-                disabled={busy}
-                data-always-tab=""
-                title={o.n === s.dialog!.selected ? "la que está marcada en la terminal" : "se teclea el número en su terminal"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  pickDialog(o.n, o.text);
-                }}
-              >
-                <span className="olabel">{o.n}. {o.text}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* lo que pide la sesion va antes que la respuesta: Permitir/Denegar es lo primero visible */}
+      <CardNeeds session={s} pending={p} quick={quick} writable={writable} actions={actions} onDecide={onDecide} onAnswer={onAnswer} />
       {s.last_error ? (
         <div className={`error ${errorOpen ? "open" : ""}`}>
           <span className="etext">⚠ {errorOpen ? s.last_error : err.head}</span>
