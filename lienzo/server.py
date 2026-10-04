@@ -1165,15 +1165,6 @@ class Handler(BaseHTTPRequestHandler):
                 return True
         return False
 
-    def _session(self, sid: str) -> dict | None:
-        """La tarjeta pedida, o None con el 404 ya contestado. Es el arranque de toda ruta
-        /sessions/<id>/..., que si no repite la busqueda con el lock y el mismo mensaje de error."""
-        with lock:
-            s = sessions.get(sid)
-        if s is None:
-            self._json(404, no_session())
-        return s
-
     def _json_body(self) -> dict:
         """JSON del cuerpo tolerante a clientes que mandan latin-1 (un curl desde Git Bash)."""
         try:
