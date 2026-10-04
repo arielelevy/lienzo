@@ -422,7 +422,7 @@ def test_verify_motivo_dice_por_que_rechaza():
     ok, motivo = fed.verify_motivo(key, m, p, b, ts, nonce, sig, cache, now=ts)
     assert not ok and "nonce repetido" in motivo
     ok, motivo = fed.verify_motivo(key, m, p, b, ts, "n2", sig, cache, now=ts + 45)
-    assert not ok and "ventana" in motivo and "+45" in motivo.replace(" ", "")
+    assert not ok and "ventana" in motivo and "-45 s" in motivo  # su reloj esta 45 s atras del mio
     ok, motivo = fed.verify_motivo(b"o" * 32, m, p, b, ts, "n3", sig, cache, now=ts)
     assert not ok and "firma" in motivo
     ok, motivo = fed.verify_motivo(key, m, p, b, ts, "n4", 123, cache, now=ts)
