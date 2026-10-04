@@ -377,7 +377,7 @@ def test_agente_desconocido_es_un_error_explicito(tmp_path):
 LIENZO_DIR = str(Path(__file__).resolve().parents[1] / "lienzo")
 
 
-@pytest.mark.parametrize("modulo", ["agentes", "transcripts", "launch", "restore"])
+@pytest.mark.parametrize("modulo", ["agentes", "tarjeta_texto", "transcripts", "launch", "restore"])
 def test_el_modulo_nuevo_se_importa_solo_y_no_trae_sessions(modulo):
     """Un modulo hoja: importado solo, en un proceso limpio, no arrastra sessions (ni rules, que
     importa sessions). Si lo hiciera, launch/restore/transcripts cerrarian un ciclo de imports."""
@@ -481,3 +481,35 @@ def test_el_perfil_es_inmutable():
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         agentes.AGENTES["claude"].exe = "otro.exe"
+
+
+# --- paso 4: lo puro del texto de la tarjeta, en tarjeta_texto.py --------------------------------
+
+
+def test_sessions_reexporta_lo_que_paso_a_tarjeta_texto():
+    """server.py, rules.py y las pruebas lo siguen usando como ses.<nombre>."""
+    import sessions as ses
+    import tarjeta_texto
+
+    nombres = [n for n in vars(tarjeta_texto) if not n.startswith("__")]
+    nombres = [n for n in nombres if n not in ("annotations", "json", "os", "re", "transcripts", "short")]
+    assert "choose_title" in nombres and "turn_say" in nombres and "strip_control" in nombres
+    for n in nombres:
+        assert getattr(ses, n) is getattr(tarjeta_texto, n), n
+
+
+def test_el_titulo_sale_igual_que_antes(tmp_path):
+    """Una muestra de la regla del titulo, que ahora vive en tarjeta_texto."""
+    import tarjeta_texto as tt
+
+    md = tmp_path / "encargo.md"
+    md.write_text("# Partir sessions.py\n\ncuerpo", encoding="utf-8")
+    s = {"title": "Leer archivo adjunto", "title_source": "transcript"}
+    tt.set_last_prompt(s, f"{tt.ATTACH_WRAPPER} Adjunto: {md}", via="lienzo")
+    tt.choose_title(s, "Mensaje 20260906")
+    assert (s["title"], s["title_source"]) == ("Partir sessions.py", "prompt")
+    s = {"last_prompt": "arreglá el login\nmas detalle", "title": None}
+    tt.choose_title(s, None)
+    assert (s["title"], s["title_source"]) == ("arreglá el login", "prompt")
+    tt.choose_title(s, "Arreglo del login")
+    assert (s["title"], s["title_source"]) == ("Arreglo del login", "transcript")
