@@ -277,3 +277,35 @@ def test_avisar_si_cambia_loguea_solo_cuando_cambia(aislado):
     st.avisar_si_cambia("k", None)  # se arreglo: lo dice una vez
     st.avisar_si_cambia("k", None)
     assert len([m for m in aislado if "falla" in m or "k:" in m]) == 3
+
+
+# 1.6 un evento que no se puede borrar no se reaplica --------------------------------------------
+
+
+def test_un_evento_que_no_se_puede_borrar_se_aplica_una_sola_vez(aislado, tmp_path, monkeypatch):
+    """E8: si Windows no deja borrar el archivo del evento (antivirus, indexador), la vuelta
+    siguiente lo volvia a leer y aplicar, cada 0,25 s: un UserPromptSubmit repetido reabria el
+    turno, un Stop repetido volvia a disparar las reglas."""
+    eventos = tmp_path / "events"
+    eventos.mkdir()
+    (eventos / "0001-ev.json").write_text('{"hook_event_name": "Stop", "session_id": "x"}', encoding="utf-8")
+    monkeypatch.setattr(ses, "EVENTS", str(eventos))
+    monkeypatch.setattr(ses, "_aplicados", {})
+    aplicados = []
+    monkeypatch.setattr(ses, "apply_event", aplicados.append)
+    real_remove = os.remove
+
+    def remove(p):
+        if str(p).endswith("0001-ev.json"):
+            raise PermissionError(32, "en uso por otro proceso")
+        return real_remove(p)
+
+    monkeypatch.setattr(ses.os, "remove", remove)
+    for _ in range(3):
+        ses.consume_once()
+    assert len(aplicados) == 1
+    assert len([m for m in aislado if "0001-ev.json" in m]) == 1
+    # cuando por fin se puede borrar, se borra y deja de ocupar lugar en el set
+    monkeypatch.setattr(ses.os, "remove", real_remove)
+    ses.consume_once()
+    assert not (eventos / "0001-ev.json").exists() and ses._aplicados == {}

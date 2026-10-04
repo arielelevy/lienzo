@@ -1535,36 +1535,64 @@ def apply_event(ev: dict) -> None:
         touch(s)
 
 
+# Eventos ya aplicados cuyo archivo Windows no dejo borrar (antivirus, indexador con el archivo
+# abierto): sin esto la vuelta siguiente lo releia y lo volvia a aplicar cada 0,25 s (plan de
+# refactor 1.6, E8). Se reintenta el borrado en cada vuelta y al lograrlo el nombre sale del set.
+# Acotado: los nombres llevan la hora, y uno que lleva tanto sin poder borrarse es basura igual.
+_aplicados: dict[str, None] = {}
+APLICADOS_MAX = 1000
+
+
+def _borrar_evento(n: str, p: str) -> None:
+    try:
+        os.remove(p)
+    except FileNotFoundError:
+        _aplicados.pop(n, None)
+    except OSError as e:
+        if n not in _aplicados:
+            state.log(f"evento {n}: aplicado pero no se pudo borrar ({e}); no se vuelve a aplicar")
+            _aplicados[n] = None
+            while len(_aplicados) > APLICADOS_MAX:
+                _aplicados.pop(next(iter(_aplicados)))
+    else:
+        _aplicados.pop(n, None)
+
+
 def consume_events() -> None:
     while True:
-        try:
-            names = sorted(os.listdir(EVENTS))
-        except OSError:
-            names = []
-        for n in names:
-            p = os.path.join(EVENTS, n)
-            if n.endswith(".tmp"):
-                continue
-            if not n.endswith(".json"):
-                try:
-                    # bad-*.txt: lo que un hook no pudo parsear. El getmtime iba fuera del try y un
-                    # archivo que desaparecia entre el listdir y esta linea mataba el hilo entero
-                    if n.startswith("bad-") and time.time() - os.path.getmtime(p) > 3600:
-                        os.remove(p)
-                except OSError:
-                    pass
-                continue
+        consume_once()
+        time.sleep(0.25)
+
+
+def consume_once() -> None:
+    """Una vuelta sobre ~/.lienzo/events: aplica cada evento y borra su archivo."""
+    try:
+        names = sorted(os.listdir(EVENTS))
+    except OSError:
+        names = []
+    for n in names:
+        p = os.path.join(EVENTS, n)
+        if n.endswith(".tmp"):
+            continue
+        if n in _aplicados:
+            _borrar_evento(n, p)  # ya aplicado: solo falta que Windows lo suelte
+            continue
+        if not n.endswith(".json"):
             try:
-                with open(p, encoding="utf-8") as f:
-                    ev = json.load(f)
-                apply_event(ev)
-            except Exception:
-                state.log(f"evento {n} fallo:\n{traceback.format_exc()}")
-            try:
-                os.remove(p)
+                # bad-*.txt: lo que un hook no pudo parsear. El getmtime iba fuera del try y un
+                # archivo que desaparecia entre el listdir y esta linea mataba el hilo entero
+                if n.startswith("bad-") and time.time() - os.path.getmtime(p) > 3600:
+                    os.remove(p)
             except OSError:
                 pass
-        time.sleep(0.25)
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                ev = json.load(f)
+            apply_event(ev)
+        except Exception:
+            state.log(f"evento {n} fallo:\n{traceback.format_exc()}")
+        _borrar_evento(n, p)  # aplicado o fallido, no se vuelve a intentar (como antes)
 
 
 # --- pendientes de permiso -----------------------------------------------------------
