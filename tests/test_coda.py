@@ -356,3 +356,28 @@ def test_propose_policy_de_coda_pone_la_tarjeta_en_te_necesita_y_la_siguiente_he
     assert s["state"] == "te_necesita"
     ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "ls"}, "host_ts": "t2"})
     assert s["state"] == "corriendo" and s["needs"] is None
+
+
+def test_un_permiso_cuyo_inicio_de_turno_quedo_fuera_de_la_ventana_igual_se_ve(tmp_path, monkeypatch):
+    """Medido el 2026-10-04: el «prompt started» quedo antes del ultimo MB del log (compartido por
+    todas las codas) y el «ask» de npm run build no se veia: ni el tablero ni el auto-aprobar."""
+    import json as _json
+
+    import coda
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    linea = {
+        "pid": 77,
+        "clientName": "cli",
+        "sessionId": "s1",
+        "msg": "authorization.decision",
+        "toolName": "bash",
+        "decision": "ask",
+        "askCause": "command-policy",
+        "time": "t1",
+    }
+    (logs / "coda.log").write_text(_json.dumps(linea) + "\n", encoding="utf-8")
+    monkeypatch.setattr(coda, "home", lambda: str(tmp_path))
+    act = coda.activity(77)
+    assert act is not None and act["running"] and act["asking"]["tool"] == "bash"

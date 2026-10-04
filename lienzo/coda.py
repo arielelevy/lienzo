@@ -110,7 +110,13 @@ def activity(pid: int) -> dict | None:
         elif msg == "prompt complete" and cli and act:
             act["running"] = False
             asks.clear()
-        elif msg == "authorization.decision" and act and isinstance(d.get("toolName"), str):
+        elif msg == "authorization.decision" and isinstance(d.get("toolName"), str):
+            if act is None:
+                # el «prompt started» de este turno quedo antes de la ventana de LOG_TAIL_BYTES (el log
+                # es de todas las codas de la PC y un turno largo lo deja afuera): una decision de
+                # permiso de este pid prueba que hay un turno abierto. Sin esto el pedido no se veia y
+                # el auto-aprobar no lo tomaba (medido el 2026-10-04: npm run build esperando 1 h)
+                act = {"running": True, "tools": 0, "last_tool": None, "sub": False, "last_at": None}
             act["tools"] += 1
             act["last_tool"] = d["toolName"]
             act["sub"] = not cli
