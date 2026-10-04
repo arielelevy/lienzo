@@ -130,6 +130,12 @@ class Mirror:
         with self._lock:
             return self._peers.get(pc_id)
 
+    def conn_of(self, pc_id: str) -> federation.PeerConn | None:
+        """Donde esta y con que clave se le firma a ese peer: lo que usa xfer.py para su propia
+        conexion (bloques binarios, keep-alive), sin pasar por el JSON de `forward`."""
+        pm = self._get(pc_id)
+        return pm.conn if pm is not None else None
+
     def _apply_event(self, pm: _PeerMirror, ev: dict) -> None:
         """Un evento del SSE del peer (el mismo formato que /events: snapshot, session, removed,
         pending, links, rules, ping). pending/links/rules viajan como lista completa cada vez, no

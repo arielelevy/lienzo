@@ -29,6 +29,7 @@ def test_snapshot_trae_las_cinco_claves():
         "git_auth",
         "coda_cuota",
         "cuotas",
+        "xfer",
         "ts",
     }
 
@@ -69,6 +70,7 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
         "git_auth": s["git_auth"],
         "coda_cuota": s["coda_cuota"],
         "cuotas": s["cuotas"],
+        "xfer": None,
         "ts": s["ts"],
     }
 

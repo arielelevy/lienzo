@@ -603,6 +603,8 @@ cuotas_de_sesiones: Callable[[], dict] = dict
 # PC en rojo con «sin cuota: coda» sin que nadie usara coda, por un error viejo de su log. El 409 de
 # lanzar una coda sin cuota (launch.py) sigue mirando coda_cuota, la de verdad
 coda_viva: Callable[[], bool] = lambda: False
+# el avance de las copias a otra PC (xfer.resumen), para el chip; lo pone el server
+xfer_resumen: Callable[[], dict | None] = lambda: None
 CODA_GRACIA_S = 3600
 _coda_vista: list[float | None] = [None]  # ultima vez que hubo una tarjeta viva de coda
 
@@ -659,6 +661,13 @@ def _git_auth_seguro() -> dict | None:
         return None
 
 
+def _xfer_seguro() -> dict | None:
+    try:
+        return xfer_resumen()
+    except Exception:  # el avance de una copia nunca rompe la salud
+        return None
+
+
 def snapshot() -> dict:
     """Memoria, CPU y temperatura de esta PC, ahora mismo. Nunca levanta una excepcion."""
     try:
@@ -682,5 +691,6 @@ def snapshot() -> dict:
         "git_auth": _git_auth_seguro(),
         "coda_cuota": _coda_cuota_en_uso(),
         "cuotas": cuotas(),
+        "xfer": _xfer_seguro(),
         "ts": _now(),
     }

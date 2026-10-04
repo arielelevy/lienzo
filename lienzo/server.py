@@ -43,6 +43,7 @@ import restore
 import rules as rl
 import secretos
 import transcripts
+import xfer
 from rules import connections_of, purge_stale_at_rules, rules_loop
 
 # la API de reglas (validar, alta y edicion) vive en rules_api.py; se reexporta lo que las pruebas
@@ -1299,6 +1300,11 @@ class Handler(JsonHandler):
                 return self._doc_img(parts[2])
             if parts == ["peers"]:
                 return self._get_peers()
+            if parts == ["xfer"]:
+                return self._json(200, xfer.todos())
+            if len(parts) == 2 and parts[0] == "xfer":
+                code, res = xfer.ver(parts[1])
+                return self._json(code, res)
             if parts == ["peers", "lan"]:
                 return self._get_peers_lan()
             if parts == ["pending"]:
@@ -1397,6 +1403,13 @@ class Handler(JsonHandler):
             if parts == ["rescan"]:
                 threading.Thread(target=sweep_once, daemon=True).start()
                 return self._json(202, {"ok": True})
+            if parts == ["xfer"]:
+                # copiar a otra PC (xfer.py): {pc, origen, destino, bs_mib?, hilos?, mbps?, disco_mbps?, espejo?}
+                code, res = xfer.nuevo(self._json_body(), identity.pc_id())
+                return self._json(code, res)
+            if len(parts) == 3 and parts[0] == "xfer" and parts[2] in ("retomar", "confirmar"):
+                code, res = xfer.retomar(parts[1], confirmar=parts[2] == "confirmar")
+                return self._json(code, res)
             if parts == ["restart"]:
                 # {pc?}: esta PC o la PC `pc` (por /peer/restart, firmado). Solo desde la LAN
                 if self._via_tunnel() or not self._is_local():
@@ -1672,6 +1685,9 @@ class Handler(JsonHandler):
                 return self._json(200, {"ok": True})
             if len(parts) == 2 and parts[0] == "peers":
                 return self._delete_peer(parts[1])
+            if len(parts) == 2 and parts[0] == "xfer":
+                code, res = xfer.pausar(parts[1])  # pausa: POST /xfer/<id>/retomar sigue desde ahi
+                return self._json(code, res)
             if len(parts) == 2 and parts[0] == "rules" and not any(r["id"] == parts[1] for r in rules.snapshot()):
                 dueña = mirror.MIRROR.rule_owner(parts[1])
                 if dueña:
@@ -1762,9 +1778,14 @@ class PeerHandler(JsonHandler):
                     _avisar_401(claimed or self.client_address[0], "sin headers de firma o PC no emparejada")
                     self.close_connection = True
                     raise RequestError("firma invalida", 401)
-            self._exigir_techo(
-                n, MAX_ATTACH if parts[-1:] == ["attach"] and rest is not None and not sin_firma else MAX_BODY
-            )
+            firmada = rest is not None and not sin_firma
+            if firmada and rest[:1] == ["xfer"]:
+                techo = xfer.MAX_CUERPO  # un bloque de copia entre PCs (xfer.py), ya con un peer conocido
+            elif firmada and parts[-1:] == ["attach"]:
+                techo = MAX_ATTACH
+            else:
+                techo = MAX_BODY
+            self._exigir_techo(n, techo)
             return parts, self._leer_cuerpo(n)
         except RequestError as e:
             self.close_connection = True  # el cuerpo quedo sin leer (o a medias) en el socket
@@ -1807,6 +1828,12 @@ class PeerHandler(JsonHandler):
         self._dispatch("DELETE")
 
     def _route(self, method: str, rest: list[str], raw: bytes, pc_id: str | None) -> None:
+        if method == "POST" and rest[:1] == ["xfer"]:
+            # copia entre PCs (xfer.py): miles de pedidos por trabajo, no van uno por uno al log
+            code, res = xfer.atender_peer(rest[1:], raw)
+            if code >= 400:
+                log(f"peer POST /peer/{'/'.join(rest)} de {pc_id}: {code} {res.get('error')}")
+            return self._json(code, res)
         log(f"peer {method} /peer/{'/'.join(rest)}" + (f" de {pc_id}" if pc_id else ""))
         if method == "GET" and rest == ["hello"]:
             info = identity.pc_info()
@@ -2236,6 +2263,9 @@ def main() -> int:
     health.remotes_de_sesiones = remotes_de_sesiones
     health.coda_viva = coda_viva
     secretos.al_guardar_git = health.renovar_git
+    xfer.log = log
+    xfer.conn_de = mirror.MIRROR.conn_of
+    health.xfer_resumen = xfer.resumen
     peers_guardados = federation.list_peers(PEERS_FILE)
     peer_srv = None
     if a.peers or peers_guardados:
@@ -2252,6 +2282,7 @@ def main() -> int:
         _connect_peer_from_record(peer)
     if peers_guardados:
         threading.Thread(target=xpc_purge_loop, daemon=True).start()
+    xfer.arrancar()  # los trabajos de copia que estaban andando antes del reinicio siguen solos
     # siempre, no solo con peers guardados: uno emparejado despues tambien puede quedar pendiente
     threading.Thread(target=config_peers_loop, daemon=True).start()
     if peer_srv is not None:
