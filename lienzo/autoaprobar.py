@@ -111,7 +111,11 @@ class DialogoDeCoda(ProveedorPermisos):
 
 
 PROVEEDORES: list[ProveedorPermisos] = [PendientesDeHook(), DialogoDeCoda()]
-_intentados: dict[str, float] = {}
+# pedido -> (cuando se intento, si la respuesta fue definitiva). Definitiva = 2xx o 4xx: se contesto,
+# o el pedido ya no esta (404/409/410: contestado en otro lado o vencido). Un 5xx o una excepcion
+# (disco lleno al escribir la respuesta) NO lo es: antes se marcaba antes de contestar, y un error
+# de disco dejaba el pendiente de hook sin aprobar para siempre (plan de refactor 1.14, E16)
+_intentados: dict[str, tuple[float, bool]] = {}
 
 
 def prendido() -> bool:
@@ -124,7 +128,7 @@ def ronda(ahora: float | None = None) -> list[tuple[Pedido, int]]:
     if not prendido():
         return []
     ahora = time.monotonic() if ahora is None else ahora
-    for k in [k for k, t in _intentados.items() if ahora - t > 3600]:
+    for k in [k for k, (t, _) in _intentados.items() if ahora - t > 3600]:
         del _intentados[k]
     hechos = []
     for prov in PROVEEDORES:
@@ -135,16 +139,21 @@ def ronda(ahora: float | None = None) -> list[tuple[Pedido, int]]:
             continue
         for p in pedidos:
             previo = _intentados.get(p.id)
-            if previo is not None and (not prov.reintenta or ahora - previo < REINTENTO_S):
-                # medido el 2026-10-04: un pendiente de hook ya contestado seguia en la lista (su
-                # sesion ya no estaba) y se aprobaba cada 20 s; uno de hook se contesta una vez
-                continue
-            _intentados[p.id] = ahora
+            if previo is not None:
+                cuando, definitivo = previo
+                if ahora - cuando < REINTENTO_S:
+                    continue  # un fallo se reintenta con espera, no cada 2 s
+                if definitivo and not prov.reintenta:
+                    # medido el 2026-10-04: un pendiente de hook ya contestado seguia en la lista (su
+                    # sesion ya no estaba) y se aprobaba cada 20 s; uno de hook se contesta una vez
+                    continue
             try:
                 code, _ = prov.aprobar(p)
             except Exception as e:
-                state.log(f"auto-aprobar {p.session_id[:8]}: {type(e).__name__}: {e}")
+                _intentados[p.id] = (ahora, False)
+                state.log(f"auto-aprobar {p.session_id[:8]}: {type(e).__name__}: {e}; se reintenta")
                 continue
+            _intentados[p.id] = (ahora, code < 500)
             state.log(f"AUTO-APROBADO ({prov.nombre}) {p.agente} {p.session_id[:8]}: {p.que} -> {code}")
             hechos.append((p, code))
     return hechos

@@ -4,6 +4,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ruff: noqa: I001
@@ -91,3 +93,45 @@ def test_un_proveedor_roto_no_frena_a_los_demas(monkeypatch):
     monkeypatch.setattr(au, "PROVEEDORES", [Roto(), *au.PROVEEDORES])
     au.ronda(ahora=100)
     assert len(hechos) == 2
+
+
+def test_un_error_de_disco_no_deja_el_pedido_sin_aprobar_para_siempre(monkeypatch):
+    """E16 (plan de refactor 1.14): el pedido se marcaba como intentado ANTES de contestar; si
+    answer_pending fallaba (disco lleno, answers/ bloqueado), el pendiente de hook no se volvia a
+    contestar nunca y el agente quedaba esperando. Un 5xx o una excepcion se reintentan, con espera."""
+    hechos = _armar(monkeypatch, True)
+    monkeypatch.setattr(st, "sessions", {})  # solo el pendiente de hook
+    intentos = []
+
+    def falla(rid, dec, reason=""):
+        intentos.append(rid)
+        if len(intentos) == 1:
+            raise OSError(28, "No space left on device")
+        if len(intentos) == 2:
+            return 500, {"ok": False}
+        hechos.append(("hook", rid, dec))
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(ses, "answer_pending", falla)
+    au.ronda(ahora=100)
+    au.ronda(ahora=101)  # antes de la espera no se insiste
+    assert intentos == ["r1"]
+    au.ronda(ahora=100 + au.REINTENTO_S + 1)
+    assert intentos == ["r1", "r1"]
+    au.ronda(ahora=100 + 2 * au.REINTENTO_S + 2)
+    assert hechos == [("hook", "r1", "allow")]
+    au.ronda(ahora=100 + 5 * au.REINTENTO_S)  # contestado: no se repite
+    assert len(intentos) == 3
+
+
+@pytest.mark.parametrize("code", [404, 409, 410])
+def test_un_pedido_que_ya_no_esta_no_se_reintenta(monkeypatch, code):
+    """Un pendiente ya contestado o vencido devuelve 4xx: reintentarlo seria insistir cada 20 s
+    sobre algo que no existe."""
+    _armar(monkeypatch, True)
+    monkeypatch.setattr(st, "sessions", {})
+    intentos = []
+    monkeypatch.setattr(ses, "answer_pending", lambda rid, dec, reason="": (intentos.append(rid), (code, {}))[1])
+    for t in (100, 100 + au.REINTENTO_S + 1, 100 + 10 * au.REINTENTO_S):
+        au.ronda(ahora=t)
+    assert intentos == ["r1"]
