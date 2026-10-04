@@ -232,7 +232,10 @@ def test_el_permiso_de_coda_se_detecta_aunque_el_titulo_se_salga_de_la_pantalla(
     import sessions as ses
 
     titulo = "  Approval Required\n  bash\n  echo hola\n  ❯ Yes\n    No\n  ↑↓ move · Enter confirm · Esc deny"
-    largo = "\n".join(f"  linea {i} de un heredoc" for i in range(40)) + "\n  ❯ Yes\n    No\n  ↑↓ move · Enter confirm · Esc deny"
+    largo = (
+        "\n".join(f"  linea {i} de un heredoc" for i in range(40))
+        + "\n  ❯ Yes\n    No\n  ↑↓ move · Enter confirm · Esc deny"
+    )
     assert ses.coda_ask_open(titulo) is True
     assert ses.coda_ask_open(largo) is True  # el titulo ya no se ve, el pie sí
     assert ses.coda_ask_open("  Ask anything... (/ for commands ? for shortcuts)") is False
@@ -266,8 +269,21 @@ def test_permiso_enviado_que_sigue_abierto_devuelve_los_botones(monkeypatch):
     ask = {"cause": "command-policy", "tool": "bash", "sub": False, "at": "2026-10-03T01:03:27.675Z"}
     act = {"running": True, "asking": ask, "last_at": None, "last_tool": "bash", "tools": 3, "sub": False}
     monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
-    s = {"session_id": "b" * 36, "agent": "coda", "pid": 1, "state": "te_necesita", "state_since": "x", "hooked": True,
-         "needs": {"kind": "permission", "tool": "bash", "where": "enviado", "coda_at": ask["at"], "sent_ts": ses.time.time()}}
+    s = {
+        "session_id": "b" * 36,
+        "agent": "coda",
+        "pid": 1,
+        "state": "te_necesita",
+        "state_since": "x",
+        "hooked": True,
+        "needs": {
+            "kind": "permission",
+            "tool": "bash",
+            "where": "enviado",
+            "coda_at": ask["at"],
+            "sent_ts": ses.time.time(),
+        },
+    }
     ses.coda_log_activity(s)
     assert s["needs"]["where"] == "enviado"  # recien enviado: se espera
     s["needs"]["sent_ts"] = ses.time.time() - ses.CODA_SENT_RETRY_S - 1

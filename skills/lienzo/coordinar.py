@@ -117,7 +117,12 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
         # el server borra los caracteres de control sin avisar (strip_control): una ruta de Windows
         # con una barra invertida sin escapar (la «a» de D:\apps pasa a ser BEL) llega rota y el
         # agente busca archivos que no existen. Se corta acá.
-        return {"ok": False, "code": 400, "motivo": f"el texto trae caracteres de control {raros} (¿una ruta de Windows sin escapar?)", "sid": s["session_id"]}
+        return {
+            "ok": False,
+            "code": 400,
+            "motivo": f"el texto trae caracteres de control {raros} (¿una ruta de Windows sin escapar?)",
+            "sid": s["session_id"],
+        }
     sid = s["session_id"]
     for intento in range(reintentos + 1):
         if s.get("stopped_by"):
@@ -131,7 +136,12 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
                 n = reubicar(s, sesiones())
                 if n and (n.get("state") == "corriendo" or (n.get("last_prompt"), n.get("prompt_id")) != antes):
                     return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": n["session_id"]}
-            return {"ok": False, "code": 200, "motivo": f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)", "sid": sid}
+            return {
+                "ok": False,
+                "code": 200,
+                "motivo": f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)",
+                "sid": sid,
+            }
         if code == 404 and isinstance(res, dict) and res.get("gone") and proyecto and letra:
             nuevo = frentes(proyecto).get(letra)
             if nuevo and nuevo["session_id"] != sid:
@@ -156,7 +166,10 @@ def reubicar(s, todas):
         (
             x
             for x in todas
-            if s.get("pid") and x.get("pid") == s.get("pid") and x.get("pc") == s.get("pc") and x.get("cwd") == s.get("cwd")
+            if s.get("pid")
+            and x.get("pid") == s.get("pid")
+            and x.get("pc") == s.get("pc")
+            and x.get("cwd") == s.get("cwd")
         ),
         None,
     )
@@ -243,11 +256,14 @@ def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None, cab
     la coordinadora, para que el aviso de que terminó (o de que se colgó) llegue solo. La tarjeta nace
     como `pid-N` y al llegar su primer hook pasa a su id real: el lienzo le traslada la regla. Con
     `cablear_al_lanzar=False` se la deja sin regla (solo para una sesión de prueba descartable)."""
+
     def en_carpeta():
         return {
             x["session_id"]: x
             for x in sesiones()
-            if x.get("agent") == agent and (x.get("cwd") or "").lower() == cwd.lower() and (pc is None or x.get("pc") == pc)
+            if x.get("agent") == agent
+            and (x.get("cwd") or "").lower() == cwd.lower()
+            and (pc is None or x.get("pc") == pc)
         }
 
     antes = set(en_carpeta())
@@ -283,7 +299,9 @@ def regla_informe(s, texto, max_fires=30):
     turnos avisa solo el primero.
     """
     if not YO:
-        raise ValueError("c.YO esta vacio: fija c.YO = <session_id de la coordinadora> antes de cablear (sin eso el server contesta 404 'sesion destino desconocida')")
+        raise ValueError(
+            "c.YO esta vacio: fija c.YO = <session_id de la coordinadora> antes de cablear (sin eso el server contesta 404 'sesion destino desconocida')"
+        )
     return pedir(
         "POST",
         "/rules",
@@ -301,7 +319,9 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
     Una tarjeta de OTRA PC crea su regla en esa PC (ahi ocurre el Stop): si esa PC tiene un lienzo
     viejo, falla con un mensaje que lo dice (hace falta `git pull` y reiniciarlo)."""
     if not YO:
-        raise ValueError("c.YO esta vacio: fija c.YO = <session_id de la coordinadora> antes de cablear (sin eso el server contesta 404 'sesion destino desconocida')")
+        raise ValueError(
+            "c.YO esta vacio: fija c.YO = <session_id de la coordinadora> antes de cablear (sin eso el server contesta 404 'sesion destino desconocida')"
+        )
     r = pedir("GET", "/rules")[1]
     r = r if isinstance(r, list) else (r or {}).get("rules", []) or []
     ya = {x.get("from") for x in r if x.get("to") == YO and x.get("kind") == "on_stop"}
@@ -316,12 +336,25 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
             out["ya_estaban"].append(sid)
             continue
         nombre = (s.get("title") or s.get("repo") or sid[:8])[:40]
-        msg = texto or f"[regla automática] Terminó «{nombre}» ({sid[:8]}). Leé su `last_reply` en GET /sessions (la tarjeta {sid}) y decidí el próximo paso."
-        code, res = pedir("POST", "/rules", {"kind": "on_stop", "from": sid, "to": YO, "text": msg, "repeat": True, "max_fires": max_fires})
+        msg = (
+            texto
+            or f"[regla automática] Terminó «{nombre}» ({sid[:8]}). Leé su `last_reply` en GET /sessions (la tarjeta {sid}) y decidí el próximo paso."
+        )
+        code, res = pedir(
+            "POST",
+            "/rules",
+            {"kind": "on_stop", "from": sid, "to": YO, "text": msg, "repeat": True, "max_fires": max_fires},
+        )
         if code == 200:
             out["creadas"].append(sid)
         else:
-            out["fallaron"].append({"sid": sid, "code": code, "error": (res if isinstance(res, str) else (res or {}).get("error", ""))[:140]})
+            out["fallaron"].append(
+                {
+                    "sid": sid,
+                    "code": code,
+                    "error": (res if isinstance(res, str) else (res or {}).get("error", ""))[:140],
+                }
+            )
     return out
 
 

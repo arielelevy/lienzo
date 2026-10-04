@@ -437,6 +437,73 @@ def restore_on_drop(card: dict, muerta: bool) -> None:
     restore_guard(work)
 
 
+# Sucesion: una sesion que muere siendo destino de reglas deja sus datos aca hasta SUCESION_MAX_S; una
+# sesion nueva del mismo agente en la misma carpeta las hereda. Medido el 2026-10-03: la coordinadora
+# del gestor se cerro y se reabrio con otro id, y se borraron los avisos de todas las codas del curso.
+SUCESION_MAX_S = 24 * 3600
+DEAD_TARGETS: dict[str, dict] = {}
+
+
+def park_rules_to(sid: str) -> int:
+    """Deshabilita y marca (parked_to) las reglas que avisan a `sid`. Devuelve cuantas."""
+    with lock:
+        suyas = [r for r in rules.items if r.get("to") == sid and not r.get("parked_to")]
+        for r in suyas:
+            r["parked_to"], r["parked_since"], r["enabled"] = sid, now(), False
+        if suyas:
+            rules.save()
+    if suyas:
+        rules.publish()
+    return len(suyas)
+
+
+def retarget_rules(old: str, new: str) -> int:
+    """Las reglas que avisaban a `old` (estacionadas o no) pasan a avisar a `new`, habilitadas."""
+    with lock:
+        suyas = [r for r in rules.items if old in (r.get("to"), r.get("parked_to"))]
+        for r in suyas:
+            r["to"], r["enabled"] = new, True
+            r.pop("parked_to", None)
+            r.pop("parked_since", None)
+        if suyas:
+            rules.save()
+    if suyas:
+        rules.publish()
+        state.log(f"{len(suyas)} reglas que avisaban a {old[:8]} ahora avisan a {new[:8]}")
+    return len(suyas)
+
+
+def _norm_cwd(c: str | None) -> str:
+    return (c or "").replace("\\", "/").rstrip("/").lower()
+
+
+def adopt_dead_target(s: dict) -> str | None:
+    """Si `s` (recien nacida) es la sucesora de una sesion que murio siendo destino de reglas (mismo
+    agente, misma carpeta, hace menos de SUCESION_MAX_S), hereda sus reglas aca y en las otras PCs.
+    Devuelve el id viejo, o None."""
+    ahora = time.time()
+    for k in [k for k, v in DEAD_TARGETS.items() if ahora - v["since"] > SUCESION_MAX_S]:
+        del DEAD_TARGETS[k]
+    candidatas = [
+        (v["since"], old)
+        for old, v in DEAD_TARGETS.items()
+        if v.get("agent") == s.get("agent")
+        and _norm_cwd(v.get("cwd")) == _norm_cwd(s.get("cwd"))
+        and old != s["session_id"]
+    ]
+    if not candidatas:
+        return None
+    old = max(candidatas)[1]
+    del DEAD_TARGETS[old]
+    retarget_rules(old, s["session_id"])
+    if mirror:
+        for pc in mirror.MIRROR.peer_ids():
+            code, res = mirror.MIRROR.forward(pc, "POST", "/rules/retarget", {"old": old, "new": s["session_id"]})
+            if code != 200:
+                state.log(f"heredar reglas de {old[:8]} en {pc}: {code} {(res or {}).get('error')}")
+    return old
+
+
 def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
     """Borra la tarjeta. `reason` es solo para el log; `muerta` (el proceso desaparecio) es lo que
     decide si se recuerda para restaurar. False si no existia (no se toco nada, ni el registro)."""
@@ -445,7 +512,16 @@ def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
         if not forget_session(sid):
             return False
     links.remove(lambda l: sid in (l["from"], l["to"]))
-    rules.remove(lambda r: sid in (r.get("from"), r["to"]))
+    rules.remove(lambda r: r.get("from") == sid)  # las suyas mueren con ella
+    if muerta and card:
+        # las que le AVISABAN quedan estacionadas: si vuelve a abrirse una sesion igual en esa
+        # carpeta (la coordinadora que se cerro y se reabrio), las hereda (adopt_dead_target)
+        n = park_rules_to(sid)
+        if n:
+            DEAD_TARGETS[sid] = {"cwd": card.get("cwd"), "agent": card.get("agent"), "since": time.time()}
+            state.log(f"{n} reglas que avisaban a {sid[:8]} quedan en espera de una sucesora")
+    else:
+        rules.remove(lambda r: r["to"] == sid)
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
     restore_on_drop(card, muerta)
     state.broadcast({"type": "removed", "session_id": sid})
@@ -999,8 +1075,7 @@ def set_coordinator(s: dict, on: bool, scope: str | None = None) -> list[dict]:
                 )
                 if code != 200:
                     state.log(
-                        f"apagar coordinadora remota {other['session_id'][:8]} en {other.get('pc')}: "
-                        f"{res.get('error')}"
+                        f"apagar coordinadora remota {other['session_id'][:8]} en {other.get('pc')}: {res.get('error')}"
                     )
     return changed
 
@@ -1162,7 +1237,9 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
         s["last_reply"] = f"usando {tool}" + (" (subagente)" if sub else "")
 
 
-CODA_SENT_RETRY_S = 20  # tras contestar, si el permiso sigue abierto pasado este tiempo, la tarjeta vuelve a mostrar los botones
+CODA_SENT_RETRY_S = (
+    20  # tras contestar, si el permiso sigue abierto pasado este tiempo, la tarjeta vuelve a mostrar los botones
+)
 CODA_ASK_CAUSES = {
     "command-policy": "comando que pide confirmación",
     "unresolved-command": "comando que no pudo verificar",
@@ -1320,6 +1397,8 @@ def apply_event(ev: dict) -> None:
         s["alive"] = True
         s["dead_since"] = None
         apply_hook(s, ev, name, created)
+        if created and DEAD_TARGETS:
+            threading.Thread(target=adopt_dead_target, args=(dict(s),), daemon=True).start()
         if ev_pid_dead and not (s.get("pid") and backend.agent_alive(s)):
             set_state(s, "muerta")
             s["alive"] = False
@@ -1865,9 +1944,7 @@ def _under_adjuntos(path: str) -> bool:
         return False
 
 
-def compose_send(
-    sid: str, text: str, attachments: list[str], agent: str | None = None
-) -> tuple[str, str, list[str]]:
+def compose_send(sid: str, text: str, attachments: list[str], agent: str | None = None) -> tuple[str, str, list[str]]:
     """(lo que se tipea, lo que escribio el usuario, los adjuntos). Un mensaje largo o de varias
     lineas no se tipea: se guarda como .md y viaja como 'Leé el archivo adjunto...' (§6.5). Para un
     agente de SHELL_READERS el aviso le pide leerlo con el shell y no con su herramienta `read`."""

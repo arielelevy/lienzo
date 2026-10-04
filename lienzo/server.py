@@ -66,6 +66,7 @@ from sessions import (
     sweep_once,
     touch,
 )
+from sessions import retarget_rules as ses_retarget_rules
 from state import (
     ADJUNTOS,
     ANSWERS,
@@ -357,7 +358,9 @@ def create_rule(d: dict) -> tuple[int, dict]:
             # guardarla aca no la dispararia nunca. Se crea alla, y aca se ve por el espejo.
             code, res = mirror.MIRROR.forward(origen, "POST", "/rules", d)
             if code == 404 and (res or {}).get("error") == "ruta desconocida":
-                return 502, {"error": "la otra PC tiene un lienzo viejo que no sabe crear reglas: git pull y reiniciarlo"}
+                return 502, {
+                    "error": "la otra PC tiene un lienzo viejo que no sabe crear reglas: git pull y reiniciarlo"
+                }
             return code, res
     text = str(d.get("text") or "")
     conflicto = check_remote_destination(d, text)
@@ -684,9 +687,7 @@ def restore_local(d: dict) -> tuple[int, dict]:
             if i:
                 time.sleep(RESTORE_GAP_S)
             try:
-                res = launch.launch(
-                    e["cwd"], e.get("title") or e.get("repo") or "", e["agent"], resume=e["session_id"]
-                )
+                res = launch.launch(e["cwd"], e.get("title") or e.get("repo") or "", e["agent"], resume=e["session_id"])
             except Exception as ex:
                 res = {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
             if res.get("ok"):
@@ -1107,6 +1108,16 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["rules"]:
                 code, res = create_rule(self._json_body())
                 return self._json(code, res)
+            if parts == ["rules", "retarget"]:
+                # a mano: las reglas que avisaban a `old` pasan a `new`, aca y en las otras PCs
+                d = self._json_body()
+                if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
+                    return self._json(400, {"error": "hace falta old y new"})
+                n = ses_retarget_rules(d["old"], d["new"])
+                for pc in mirror.MIRROR.peer_ids():
+                    code, res = mirror.MIRROR.forward(pc, "POST", "/rules/retarget", d)
+                    n += (res or {}).get("n", 0) if code == 200 else 0
+                return self._json(200, {"ok": True, "n": n})
             if parts == ["peers", "offer"]:
                 return self._peers_offer()
             if parts == ["peers", "join"]:
@@ -1462,7 +1473,10 @@ class Handler(BaseHTTPRequestHandler):
         model = d.get("model") if isinstance(d.get("model"), str) else None
         if pc and pc != identity.pc_id():
             code, res = mirror.MIRROR.forward(
-                pc, "POST", "/launch", {"cwd": cwd, "title": title, "agent": agent, **({"model": model} if model else {})}
+                pc,
+                "POST",
+                "/launch",
+                {"cwd": cwd, "title": title, "agent": agent, **({"model": model} if model else {})},
             )
             return self._json(code, res)
         res = launch.launch(cwd, title, agent, model=model)
@@ -1691,6 +1705,11 @@ class PeerHandler(BaseHTTPRequestHandler):
         if method == "POST" and rest == ["restaurar"]:
             code, res = restore_local(self._body_json(raw))
             return self._json(code, res)
+        if method == "POST" and rest == ["rules", "retarget"]:
+            d = self._body_json(raw)
+            if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
+                return self._json(400, {"error": "hace falta old y new"})
+            return self._json(200, {"ok": True, "n": ses_retarget_rules(d["old"], d["new"])})
         if method == "POST" and rest == ["rules", "lock"]:
             return self._rules_lock(raw)
         if method == "POST" and rest == ["rules", "check"]:
@@ -1928,7 +1947,9 @@ def reload_loop() -> None:
         changed = [p for p in now if now[p] != base.get(p)] + [p for p in base if p not in now]
         err = _syntax_error(changed)
         if err:
-            log(f"recarga: cambio en {', '.join(os.path.basename(p) for p in changed)} con error de sintaxis ({err}); sigo con el codigo viejo")
+            log(
+                f"recarga: cambio en {', '.join(os.path.basename(p) for p in changed)} con error de sintaxis ({err}); sigo con el codigo viejo"
+            )
             base = now
             continue
         log(f"recarga: cambio en {', '.join(sorted(os.path.basename(p) for p in changed))}; reinicio")

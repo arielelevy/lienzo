@@ -70,8 +70,13 @@ def test_enviar_seguro_acepta_saltos_de_linea(monkeypatch):
 def test_cablear_crea_una_regla_por_frente_vivo_y_no_repite(monkeypatch):
     c.YO = "coord"
     creadas = []
-    ses = [_tarjeta("coord"), _tarjeta("a", alive=True), _tarjeta("b", alive=True), _tarjeta("muerta", alive=False),
-           _tarjeta("c", alive=True, coordinator=True)]
+    ses = [
+        _tarjeta("coord"),
+        _tarjeta("a", alive=True),
+        _tarjeta("b", alive=True),
+        _tarjeta("muerta", alive=False),
+        _tarjeta("c", alive=True, coordinator=True),
+    ]
 
     def pedir(m, r, cuerpo=None, timeout=20):
         if m == "GET":
@@ -88,7 +93,9 @@ def test_cablear_crea_una_regla_por_frente_vivo_y_no_repite(monkeypatch):
 def test_cablear_cuenta_los_fallos_con_el_motivo(monkeypatch):
     c.YO = "coord"
     monkeypatch.setattr(c, "sesiones", lambda: [_tarjeta("a", alive=True)])
-    monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: (200, []) if m == "GET" else (502, {"error": "git pull"}))
+    monkeypatch.setattr(
+        c, "pedir", lambda m, r, cuerpo=None, timeout=20: (200, []) if m == "GET" else (502, {"error": "git pull"})
+    )
     r = c.cablear()
     assert r["creadas"] == [] and r["fallaron"][0]["code"] == 502 and "git pull" in r["fallaron"][0]["error"]
 
@@ -153,7 +160,9 @@ def test_lanzar_y_titular_cablea_la_tarjeta_nueva_a_la_coordinadora(monkeypatch)
     r = c.lanzar_y_titular("pcB", r"D:\apps\x", "t", "coda", espera=5)
     assert r["session_id"] == "pid-9"
     regla = next(b for m, ruta, b in pedidos if ruta == "/rules")
-    assert regla["kind"] == "on_stop" and regla["from"] == "pid-9" and regla["to"] == "coord" and regla["repeat"] is True
+    assert (
+        regla["kind"] == "on_stop" and regla["from"] == "pid-9" and regla["to"] == "coord" and regla["repeat"] is True
+    )
 
 
 def test_lanzar_y_titular_sin_cablear_no_crea_regla(monkeypatch):

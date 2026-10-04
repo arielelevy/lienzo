@@ -96,7 +96,9 @@ def render_template(tpl: str, s: dict | None) -> str:
     )
 
 
-ON_STOP_SETTLE_S = 15  # el Stop de una coda a veces llega en un hueco (compactacion, entre herramientas) y sigue trabajando
+ON_STOP_SETTLE_S = (
+    15  # el Stop de una coda a veces llega en un hueco (compactacion, entre herramientas) y sigue trabajando
+)
 ON_STOP_COOLDOWN_S = 30  # dos sesiones conectadas en ambos sentidos no se contestan en bucle
 CONTINUE_TEXT = "Continuar"
 CONTINUE_DELAY_S = 60
@@ -444,7 +446,9 @@ def aviso_muerta(sid: str, prev: str) -> None:
     sesion 4 del curso murio sin contestar y nadie se entero)."""
     with lock:
         s = dict(sessions.get(sid) or {})
-        destinos = {r["to"] for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid}
+        destinos = {
+            r["to"] for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid
+        }
     if not s or not destinos:
         return
     titulo = s.get("title") or s.get("repo") or sid[:8]
@@ -489,14 +493,26 @@ def purge_stale_xpc(known_remote, known_local) -> int:
     """Saca las reglas con destino en otra PC cuyo destino ya no existe en ningun lado. Solo se llama
     con los peers sincronizados (mirror.all_synced): antes, una tarjeta ajena que no se ve es una que
     todavia no llego. `known_local(sid)` y `known_remote(sid)` dicen si la tarjeta existe."""
+    limite = dt.datetime.now().astimezone() - dt.timedelta(seconds=ses.SUCESION_MAX_S)
     with lock:
-        rotas = [r for r in rules.items if r.get("xpc") and not known_local(r["to"]) and not known_remote(r["to"])]
-        if rotas:
-            ids = {r["id"] for r in rotas}
-            rules.items[:] = [r for r in rules.items if r["id"] not in ids]
+        rotas = [
+            r
+            for r in rules.items
+            if r.get("xpc") and not r.get("parked_to") and not known_local(r["to"]) and not known_remote(r["to"])
+        ]
+        # el destino desaparecio: en vez de borrarlas se estacionan, por si la PC del destino avisa
+        # que hay una sucesora (POST /peer/rules/retarget); las que nadie heredo en 24 h se van
+        for r in rotas:
+            r["parked_to"], r["parked_since"], r["enabled"] = r["to"], now(), False
+        viejas = {
+            r["id"] for r in rules.items if r.get("parked_since") and (local_dt(r["parked_since"]) or limite) < limite
+        }
+        if viejas:
+            rules.items[:] = [r for r in rules.items if r["id"] not in viejas]
+        if rotas or viejas:
             rules.save()
     if rotas:
-        state.log(f"purgadas {len(rotas)} reglas con destino en otra PC que ya no existe")
+        state.log(f"{len(rotas)} reglas con destino en otra PC que ya no existe: en espera de una sucesora")
     return len(rotas)
 
 

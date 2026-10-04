@@ -554,9 +554,9 @@ def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
     assert code == 200
     assert typed[-1][typed[-1].index("--text") + 1].startswith(ses.ATTACH_WRAPPER)
     assert out["chars"] == len(msg.strip()), "el toast cuenta el mensaje, no el envoltorio"
-    assert s["last_prompt"].startswith(
-        "Sos parte de la fase 1."
-    ), "la tarjeta muestra el contenido, no 'Leé el archivo adjunto'"
+    assert s["last_prompt"].startswith("Sos parte de la fase 1."), (
+        "la tarjeta muestra el contenido, no 'Leé el archivo adjunto'"
+    )
     assert s["state"] == "corriendo"
     # sesion terminada por SessionEnd (/clear, resume): la consola es de otra; el envio sale pero
     # esta tarjeta no vuelve a 'corriendo'
@@ -1898,7 +1898,9 @@ def test_regla_con_origen_en_otra_pc_se_crea_alla(monkeypatch):
     llamadas = []
     monkeypatch.setattr(srv, "_known_session", lambda sid: True)
     monkeypatch.setattr(srv, "_rule_target_pc", lambda sid: "pcB" if sid == "remota" else None)
-    monkeypatch.setattr(mirror.MIRROR, "forward", lambda pc, m, path, body=None: (llamadas.append((pc, m, path)) or (200, {"id": "r1"})))
+    monkeypatch.setattr(
+        mirror.MIRROR, "forward", lambda pc, m, path, body=None: llamadas.append((pc, m, path)) or (200, {"id": "r1"})
+    )
     code, res = srv.create_rule({"kind": "on_stop", "from": "remota", "to": "local", "text": "x", "repeat": True})
     assert (code, res) == (200, {"id": "r1"}) and llamadas == [("pcB", "POST", "/rules")]
 
@@ -1938,7 +1940,14 @@ def test_purge_stale_xpc_solo_saca_las_que_no_existen_en_ningun_lado(tmp_path, m
         ]
     try:
         n = rl.purge_stale_xpc(known_remote=lambda sid: sid == "viva_remota", known_local=lambda sid: False)
-        assert n == 1 and [r["id"] for r in rl.rules.items] == ["a", "c"]
+        # la del destino que desaparecio no se borra: queda en espera (deshabilitada) de una sucesora
+        b = next(r for r in rl.rules.items if r["id"] == "b")
+        assert n == 1 and b["parked_to"] == "fantasma" and b["enabled"] is False
+        assert [r["id"] for r in rl.rules.items] == ["a", "b", "c"]
+        # 24 h sin sucesora: se va
+        b["parked_since"] = "2000-01-01T00:00:00-03:00"
+        rl.purge_stale_xpc(known_remote=lambda sid: sid == "viva_remota", known_local=lambda sid: False)
+        assert [r["id"] for r in rl.rules.items] == ["a", "c"]
     finally:
         with srv.lock:
             rl.rules.items[:] = antes
@@ -1952,7 +1961,9 @@ def test_borrar_una_regla_de_otra_pc_se_reenvia_a_su_dueña(monkeypatch):
 
     llamadas = []
     monkeypatch.setattr(mirror.MIRROR, "rule_owner", lambda rid: "pcB" if rid == "remota1" else None)
-    monkeypatch.setattr(mirror.MIRROR, "forward", lambda pc, m, path, body=None: (llamadas.append((pc, m, path)) or (200, {"ok": True})))
+    monkeypatch.setattr(
+        mirror.MIRROR, "forward", lambda pc, m, path, body=None: llamadas.append((pc, m, path)) or (200, {"ok": True})
+    )
     httpd = srv.QuietServer(("127.0.0.1", 0), srv.Handler)
     import threading
 
@@ -1972,15 +1983,56 @@ def test_repoint_refs_pasa_reglas_y_links_de_la_provisoria_a_la_real(tmp_path, m
 
     monkeypatch.setattr(ses_mod.rules, "path", str(tmp_path / "rules.json"))
     monkeypatch.setattr(ses_mod.links, "path", str(tmp_path / "links.json"))
-    monkeypatch.setattr(ses_mod.rules, "items", [
-        {"id": "r1", "from": "pid-123", "to": "coord"},
-        {"id": "r2", "from": "otra", "to": "pid-123"},
-        {"id": "r3", "from": "otra", "to": "coord"},
-    ])
+    monkeypatch.setattr(
+        ses_mod.rules,
+        "items",
+        [
+            {"id": "r1", "from": "pid-123", "to": "coord"},
+            {"id": "r2", "from": "otra", "to": "pid-123"},
+            {"id": "r3", "from": "otra", "to": "coord"},
+        ],
+    )
     monkeypatch.setattr(ses_mod.links, "items", [{"id": "l1", "from": "coord", "to": "pid-123"}])
     with ses_mod.lock:
         assert ses_mod.repoint_refs("pid-123", "uuid-real") == (2, 1)
-    assert [(r["from"], r["to"]) for r in ses_mod.rules.items] == [("uuid-real", "coord"), ("otra", "uuid-real"), ("otra", "coord")]
+    assert [(r["from"], r["to"]) for r in ses_mod.rules.items] == [
+        ("uuid-real", "coord"),
+        ("otra", "uuid-real"),
+        ("otra", "coord"),
+    ]
     assert ses_mod.links.items[0]["to"] == "uuid-real"
     with ses_mod.lock:
         assert ses_mod.repoint_refs("pid-123", "uuid-real") == (0, 0)  # idempotente
+
+
+def test_la_coordinadora_que_se_reabre_en_la_misma_carpeta_hereda_sus_avisos(aislado, monkeypatch, tmp_path):
+    """Medido el 2026-10-03: la coordinadora se cerro y se reabrio con otro id, y se borraron los avisos
+    de todas las codas. Ahora sus reglas quedan en espera y la sesion nueva igual (agente y carpeta) las
+    hereda; las de una sesion borrada a mano siguen yendose."""
+    import rules as rl
+
+    monkeypatch.setattr(rl.rules, "path", str(tmp_path / "rules.json"))
+    monkeypatch.setattr(ses, "DEAD_TARGETS", {})
+    monkeypatch.setattr(ses, "mirror", None)
+    vieja = ses.new_session("aaaaaaaa-0000-4000-8000-000000000001", "claude", "hook")
+    vieja["cwd"] = r"D:\Apps\gestor"
+    st.sessions[vieja["session_id"]] = vieja
+    monkeypatch.setattr(
+        rl.rules, "items", [{"id": "r1", "kind": "on_stop", "from": "coda", "to": vieja["session_id"], "enabled": True}]
+    )
+    ses.drop_session(vieja["session_id"], "muerta hace mas de 60 s", muerta=True)
+    assert rl.rules.items[0]["parked_to"] == vieja["session_id"] and rl.rules.items[0]["enabled"] is False
+
+    otra = ses.new_session("bbbbbbbb-0000-4000-8000-000000000002", "claude", "hook")
+    otra["cwd"] = r"D:\Apps\otra"
+    assert ses.adopt_dead_target(otra) is None  # otra carpeta: no es sucesora
+    nueva = ses.new_session("cccccccc-0000-4000-8000-000000000003", "claude", "hook")
+    nueva["cwd"] = "d:/apps/gestor/"
+    assert ses.adopt_dead_target(nueva) == vieja["session_id"]
+    r = rl.rules.items[0]
+    assert r["to"] == nueva["session_id"] and r["enabled"] is True and "parked_to" not in r
+
+    # borrada a mano (no muerta): sus reglas se van como antes
+    st.sessions[nueva["session_id"]] = nueva
+    ses.drop_session(nueva["session_id"], "borrada desde la UI")
+    assert rl.rules.items == []
