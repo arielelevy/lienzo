@@ -280,7 +280,7 @@ def test_clasificar_git():
     assert health.clasificar_git(128, "fatal: Authentication failed for 'https://x'") == "vencida"
     assert health.clasificar_git(128, "remote: Credentials are incorrect or have expired") == "vencida"
     assert health.clasificar_git(128, "fatal: could not read Username: terminal prompts disabled") == "vencida"
-    assert health.clasificar_git(128, "fatal: unable to access: Could not resolve host") == "error"
+    assert health.clasificar_git(128, "fatal: unable to access: Could not resolve host") == "sin_red"
 
 
 def test_git_auth_sin_urls_configuradas_es_none(tmp_path, monkeypatch):
@@ -313,7 +313,7 @@ def test_ls_remote_colgado_vence_y_no_bloquea(monkeypatch):
         return health.subproc.VENCIDO, "", "git no termino en 0.1 s"
 
     monkeypatch.setattr(health.subproc, "correr", correr)
-    assert health._ls_remote("https://h/r.git", timeout_s=0.1) == "error"
+    assert health._ls_remote("https://h/r.git", timeout_s=0.1) == "timeout"
     assert vistos["timeout"] == 0.1 and vistos["sin_prompts"] is True
     monkeypatch.setattr(health.subproc, "correr", lambda argv, **k: (128, "", "fatal: Authentication failed"))
     assert health._ls_remote("https://h/r.git") == "vencida"
@@ -321,3 +321,17 @@ def test_ls_remote_colgado_vence_y_no_bloquea(monkeypatch):
 
 def test_cannot_prompt_es_credencial_vencida():
     assert health.clasificar_git(128, "fatal: Cannot prompt because user interactivity has been disabled.") == "vencida"
+
+
+def test_clasificar_git_distingue_red_de_credencial():
+    assert health.clasificar_git(128, "fatal: unable to access 'https://h/': Could not resolve host: h") == "sin_red"
+    assert (
+        health.clasificar_git(128, "fatal: unable to access 'https://h/': Failed to connect to h port 443") == "sin_red"
+    )
+    assert health.clasificar_git(128, "remote: HTTP Basic: Access denied (401)") == "vencida"
+    assert health.clasificar_git(128, "fatal: repository not found") == "error"
+
+
+def test_ls_remote_que_no_termina_es_timeout(monkeypatch):
+    monkeypatch.setattr(health.subproc, "correr", lambda *a, **k: (health.subproc.VENCIDO, "", ""))
+    assert health._ls_remote("https://h/r.git") == "timeout"

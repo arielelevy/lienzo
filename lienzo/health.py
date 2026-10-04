@@ -377,7 +377,7 @@ def _git_urls() -> list[str]:
 
 
 def clasificar_git(returncode: int, stderr: str) -> str:
-    """ok, vencida (pide login o lo rechaza) o error (red, repo, otra cosa)."""
+    """ok, vencida (pide login o lo rechaza), sin_red (no resuelve o no conecta) o error (otra cosa)."""
     if returncode == 0:
         return "ok"
     e = (stderr or "").lower()
@@ -393,7 +393,21 @@ def clasificar_git(returncode: int, stderr: str) -> str:
         # sin interactividad, falla asi: es «vencida», no un error de red (medido el 2026-10-04)
         "cannot prompt because user interactivity has been disabled",
     )
-    return "vencida" if any(p in e for p in pistas) else "error"
+    if any(p in e for p in pistas):
+        return "vencida"
+    # la red, no la credencial: el host no resuelve o no se puede conectar (mejora 7, 2026-10-04:
+    # distinguir «sin red» de una credencial vencida en la tira de PCs)
+    red = (
+        "could not resolve host",
+        "failed to connect",
+        "connection timed out",
+        "connection refused",
+        "network is unreachable",
+        "timed out",
+        "unable to connect",
+        "connection was reset",
+    )
+    return "sin_red" if any(p in e for p in red) else "error"
 
 
 def _medir_git(urls: list[str] | None = None) -> dict | None:
@@ -411,8 +425,10 @@ def _ls_remote(url: str, timeout_s: float = 20) -> str:
     git_auth quedo en None) y, al vencer, se mata el arbol entero y no solo git."""
     argv = ["git", "-c", "credential.interactive=false", "ls-remote", "--heads", url]
     rc, _out, err = subproc.correr(argv, timeout=timeout_s, sin_prompts=True)
-    if rc in (subproc.VENCIDO, subproc.NO_ARRANCO):
-        return "error"
+    if rc == subproc.VENCIDO:
+        return "timeout"  # git no termino: red muy lenta, o el credential manager esperando un login
+    if rc == subproc.NO_ARRANCO:
+        return "error"  # git no esta instalado o no arranca
     return clasificar_git(rc, err)
 
 

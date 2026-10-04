@@ -122,6 +122,7 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
       {peers.map((p) => {
         const down = p.alive === false;
         const alerta = !down && p.health ? alertaDe(p.health) : null;
+        const git = !down && p.health ? gitDe(p.health) : null;
         return (
           <button
             key={p.pc_id}
@@ -131,7 +132,7 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
             title={
               down
                 ? `${p.name}: sin conexión hace ${ago(p.last_seen)}`
-                : `${p.name}${alerta ? ` — ${alerta}` : ""} (Ctrl + click suma o saca PCs)`
+                : `${p.name}${alerta ? ` — ${alerta}` : ""}${git ? ` — git: ${git}` : ""} (Ctrl + click suma o saca PCs)`
             }
             aria-pressed={filter.has(p.pc_id)}
             onClick={(e) => (e.ctrlKey || e.metaKey ? onToggle(p.pc_id) : onSelect(p.pc_id))}
@@ -145,6 +146,11 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
                 {p.health.cpu_pct != null && ` · CPU ${Math.round(p.health.cpu_pct)}%`}
                 {p.health.temp_c != null && ` · ${Math.round(p.health.temp_c)} °C`}
                 {p.latencia_ms != null && ` · ${p.latencia_ms} ms`}
+              </span>
+            )}
+            {git && (
+              <span className="git" aria-label={`git: ${git}`}>
+                <span aria-hidden="true">⚿</span> git: {git}
               </span>
             )}
           </button>
@@ -161,15 +167,34 @@ const TEMP_ALERTA_C = 85;
 export function alertaDe(h: {
   temp_c: number | null;
   agentes_libres?: number | null;
-  git_auth?: Record<string, string> | null;
   cuotas?: Record<string, string> | null;
 }): string | null {
   const motivos: string[] = [];
   const sinCuota = Object.entries(h.cuotas ?? {}).filter(([, v]) => v.startsWith("agotada"));
   if (sinCuota.length) motivos.push(`sin cuota: ${sinCuota.map(([a, v]) => (v === "agotada" ? a : `${a} (${v.replace("agotada ", "")})`)).join(", ")}`);
-  const vencidas = Object.entries(h.git_auth ?? {}).filter(([, v]) => v === "vencida");
-  if (vencidas.length) motivos.push(`credencial de git vencida (${vencidas.map(([u]) => new URL(u).host).join(", ")})`);
   if (h.temp_c != null && h.temp_c >= TEMP_ALERTA_C) motivos.push(`a ${Math.round(h.temp_c)} °C`);
   if (h.agentes_libres === 0) motivos.push("sin memoria para otro agente");
   return motivos.length ? motivos.join(" y ") : null;
+}
+
+const MOTIVO_GIT: Record<string, string> = { vencida: "vencida", sin_red: "sin red", timeout: "timeout", error: "error" };
+
+/** El estado de la credencial de git, aparte de la alerta roja de recursos (pedido de Ariel,
+ *  2026-10-04: se confundia con memoria y temperatura). Una linea por host con problema:
+ *  «vencida (git.ejemplo.com)»; null si todas andan. vencida es la credencial (401/403), sin red y
+ *  timeout son la red o git colgado: ahi pasar otra credencial no arregla nada. */
+export function gitDe(h: { git_auth?: Record<string, string> | null }): string | null {
+  const porMotivo = new Map<string, string[]>();
+  for (const [url, v] of Object.entries(h.git_auth ?? {})) {
+    if (v === "ok") continue;
+    let host = url;
+    try {
+      host = new URL(url).host;
+    } catch {
+      /* url rara: se muestra entera */
+    }
+    const m = MOTIVO_GIT[v] ?? v;
+    porMotivo.set(m, [...(porMotivo.get(m) ?? []), host]);
+  }
+  return porMotivo.size ? [...porMotivo].map(([m, hosts]) => `${m} (${hosts.join(", ")})`).join(", ") : null;
 }

@@ -1,6 +1,6 @@
 :root {
   --bg: #0f1115; --panel: #171a21; --card: #1d212b; --line: #2a2f3b; --fg: #e6e8ee; --dim: #8b93a7; --acc: #5b9cff;
-  --run: #3fb950; --need: #f0b429; --dead: #f05b5b; --claude: #d97757; --codex: #10a37f; --pi: #9b7fe8; --coda: #43a2ca; --coda-bg: #0a1016; --err: #f05b5b;
+  --run: #3fb950; --need: #f0b429; --dead: #f05b5b; --claude: #d97757; --codex: #10a37f; --pi: #9b7fe8; --coda: #43a2ca; --coda-bg: #0a1016; --err: #f05b5b; --git: #d946ef;
   /* texto sobre un fondo lleno de color (boton principal, badges, chips prendidos, toast de la
      tarjeta): el blanco no llega al minimo de WCAG AA sobre ninguno de esos colores --2,75 sobre el
      azul, 3,12 sobre el naranja de Claude, 3,20 sobre el verde de Codex-- y la tinta oscura da de
@@ -195,6 +195,8 @@ details.fold > summary,
 /* PC caliente o sin memoria para otro agente: se ve antes de lanzarle nada */
 .pcstrip button.alerta { border-color: var(--err); }
 .pcstrip button.alerta .health { color: var(--err); }
+/* credencial de git: violeta propio, que no se confunda con el rojo/naranja de recursos ni con --pi */
+.pcstrip .git { color: var(--git); border-left: 1px solid var(--git); padding-left: 5px; margin-left: 1px; }
 @media (max-width: 390px) { .pcstrip button { padding: 4px 7px; font-size: 11px; } }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; position: relative; }

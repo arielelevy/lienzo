@@ -99,7 +99,28 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     const notebook = page.locator(".pcstrip .pcchip", { hasText: "notebook" });
     await expect(notebook).toHaveClass(/alerta/);
     await expect(notebook).toContainText("120 ms");
-    await expect(notebook).toHaveAttribute("title", /credencial de git vencida \(git\.ejemplo\.com\) y a 95 °C y sin memoria para otro agente/);
+    await expect(notebook).toHaveAttribute("title", /a 95 °C y sin memoria para otro agente — git: vencida \(git\.ejemplo\.com\)/);
+  });
+
+  test("la credencial de git va aparte, en violeta y con el motivo, sin marcar la PC en rojo", async ({ page }) => {
+    const sinGit: Peer = {
+      ...PEER_NOTEBOOK_VIVA,
+      health: {
+        mem_free_gb: 6,
+        mem_total_gb: 16,
+        cpu_pct: 20,
+        temp_c: 50,
+        agentes_libres: 3,
+        git_auth: { "https://git.ejemplo.com/a.git": "timeout", "https://otro.ejemplo.com/b.git": "sin_red" },
+      },
+    };
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, sinGit]);
+    const notebook = page.locator(".pcstrip .pcchip", { hasText: "notebook" });
+    await expect(notebook).not.toHaveClass(/alerta/);
+    const git = notebook.locator(".git");
+    await expect(git).toContainText("git: timeout (git.ejemplo.com), sin red (otro.ejemplo.com)");
+    await expect(git).toHaveCSS("color", "rgb(217, 70, 239)");
+    await expect(page.locator(".pcstrip .pcchip", { hasText: "oficina" }).locator(".git")).toHaveCount(0);
   });
 
   test("click en un chip filtra a esa PC y nada mas; se vuelve con Todas", async ({ page }) => {

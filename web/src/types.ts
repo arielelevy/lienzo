@@ -92,8 +92,9 @@ export interface PeerHealth {
   temp_c: number | null;
   /** cuantos agentes mas entran sin bajar de la reserva de memoria (health.agentes_que_entran) */
   agentes_libres?: number | null;
-  /** por url configurada en "git_check": ok, vencida o error (health.py prueba git ls-remote) */
-  git_auth?: Record<string, "ok" | "vencida" | "error"> | null;
+  /** por url configurada en "git_check" (health.py prueba git ls-remote): ok, vencida (la credencial,
+   *  401/403), sin_red (no llega al host), timeout (git no termino) o error (otra cosa) */
+  git_auth?: Record<string, "ok" | "vencida" | "sin_red" | "timeout" | "error"> | null;
   /** cuota por agente en esa PC: "ok", "agotada", "agotada hasta HH:MM" o "desconocida" */
   cuotas?: Record<string, string> | null;
 }
