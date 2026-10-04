@@ -323,3 +323,36 @@ def test_una_denegacion_de_coda_llega_a_la_tarjeta_una_sola_vez(monkeypatch):
     assert "comando que pide" in s["last_denied"]["motivo"]
     ses.coda_log_activity(s)
     assert sum("DENEGADO" in x for x in logs) == 1
+
+
+def test_propose_policy_de_coda_pone_la_tarjeta_en_te_necesita_y_la_siguiente_herramienta_la_libera(monkeypatch):
+    """Medido el 2026-10-04: propose_policy abre «Approval Required» sin dejar un ask en el log; la
+    tarjeta seguia en corriendo y ni el tablero ni el auto-aprobar lo veian."""
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(ses, "on_turn_end", lambda sid: None)
+    s = {"session_id": "e" * 36, "agent": "coda", "state": "corriendo", "state_since": "x", "needs": None}
+    ses.coda_tool(s, {"tool_name": "propose_policy", "tool_input": {"rule": "git reset --hard"}, "host_ts": "t1"})
+    n = s["needs"]
+    assert s["state"] == "te_necesita" and n["kind"] == "permission" and n["where"] == "terminal" and n["coda_at"]
+    assert "git reset --hard" in n["detail"]
+    # el log no muestra un ask: igual no se limpia (lo cierra la proxima herramienta)
+    monkeypatch.setattr(
+        ses.coda,
+        "activity",
+        lambda pid: {
+            "running": True,
+            "asking": None,
+            "last_at": None,
+            "last_tool": "propose_policy",
+            "tools": 1,
+            "sub": False,
+        },
+    )
+    s["pid"], s["hooked"] = 1, True
+    ses.coda_log_activity(s)
+    assert s["state"] == "te_necesita"
+    ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "ls"}, "host_ts": "t2"})
+    assert s["state"] == "corriendo" and s["needs"] is None

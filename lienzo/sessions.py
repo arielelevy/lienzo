@@ -1240,6 +1240,9 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
     name = tool.lower()
     inp = ev.get("tool_input") if isinstance(ev.get("tool_input"), dict) else {}
     s["tool_count"] = (s.get("tool_count") or 0) + 1
+    if (s.get("needs") or {}).get("via") == "tool":
+        # la herramienta que habia abierto el dialogo ya se contesto: corre otra
+        set_state(s, "corriendo")
     if name in CMD_TOOLS:
         raw = str(inp.get("command") or inp.get("cmd") or "").strip().replace("\n", " ")
         raw = CD_PREFIX_RE.sub("", raw).strip()
@@ -1258,7 +1261,26 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
         set_state(s, "corriendo")
     if s["state"] == "corriendo":
         s["last_reply"] = f"usando {tool}" + (" (subagente)" if sub else "")
+    if name in CODA_DIALOG_TOOLS and not sub:
+        # estas herramientas abren SIEMPRE un dialogo «Approval Required» y no dejan un `ask` en el
+        # log de coda: sin esto la tarjeta seguia en corriendo y nadie veia el pedido (medido el
+        # 2026-10-04: propose_policy de una regla permanente para git reset --hard)
+        detalle = short(json.dumps(inp, ensure_ascii=False), 300) if inp else ""
+        set_needs(
+            s,
+            {
+                "kind": "permission",
+                "tool": tool,
+                "detail": f"{CODA_DIALOG_TOOLS[name]} {detalle}".strip(),
+                "where": "terminal",
+                "via": "tool",
+            },
+        )
+        s["needs"]["coda_at"] = f"tool:{ev.get('host_ts') or now()}"
 
+
+# herramientas de coda que siempre piden aprobacion en su terminal, con lo que piden
+CODA_DIALOG_TOOLS = {"propose_policy": "propone una regla de permisos permanente:"}
 
 CODA_SENT_RETRY_S = (
     20  # tras contestar, si el permiso sigue abierto pasado este tiempo, la tarjeta vuelve a mostrar los botones
@@ -1308,7 +1330,9 @@ def coda_log_activity(s: dict) -> bool:
         elif needs.get("where") == "enviado" and time.time() - (needs.get("sent_ts") or 0) > CODA_SENT_RETRY_S:
             # el Enter/Esc no resolvio el permiso (sigue abierto en el log): se devuelven los botones
             s["needs"] = {**needs, "where": "terminal"}
-    elif s["state"] == "te_necesita" and needs.get("coda_at"):
+    elif s["state"] == "te_necesita" and needs.get("coda_at") and needs.get("via") != "tool":
+        # (el dialogo de una herramienta como propose_policy no figura en el log: lo cierra el
+        # proximo PreToolUse o el fin del turno, no la ausencia de un `ask`)
         set_state(s, "corriendo" if act["running"] else "termino")
     if not s.get("hooked") and act["running"] and act["last_tool"]:
         s["tool_count"] = act["tools"]
