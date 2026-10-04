@@ -277,3 +277,18 @@ def test_clasificar_git():
 def test_git_auth_sin_urls_configuradas_es_none(tmp_path, monkeypatch):
     monkeypatch.setenv("LIENZO_HOME", str(tmp_path))
     assert health._medir_git() is None
+
+
+def test_git_auth_toma_enseguida_un_cambio_de_urls(monkeypatch):
+    """Medido el 2026-10-03: el server midio antes de que se agregara git_check y quedo 5 min en None."""
+    urls = [[]]
+    monkeypatch.setattr(health, "_git_urls", lambda: urls[0])
+    monkeypatch.setattr(health, "_medir_git", lambda u=None: {x: "ok" for x in (u or [])} or None)
+    monkeypatch.setattr(
+        health.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: target(*args)})()
+    )
+    monkeypatch.setattr(health, "_git_cache", None)
+    assert health._git_auth() is None
+    urls[0] = ["https://h/r.git"]
+    health._git_auth()  # dispara la medicion nueva al ver otras urls
+    assert health._git_auth() == {"https://h/r.git": "ok"}

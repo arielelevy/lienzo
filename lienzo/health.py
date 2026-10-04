@@ -317,7 +317,7 @@ def _temp_c() -> float | None:
 # en /peers ANTES de que una coda llegue al push (medido el 2026-10-03: la otra PC perdio el login y
 # el push de la sesion 4 no salio).
 GIT_TTL_S = 300
-_git_cache: tuple[dict | None, float] | None = None
+_git_cache: tuple[dict | None, float, tuple] | None = None  # (resultado, momento, urls)
 _git_refrescando = threading.Lock()
 
 
@@ -348,8 +348,8 @@ def clasificar_git(returncode: int, stderr: str) -> str:
     return "vencida" if any(p in e for p in pistas) else "error"
 
 
-def _medir_git() -> dict | None:
-    urls = _git_urls()
+def _medir_git(urls: list[str] | None = None) -> dict | None:
+    urls = _git_urls() if urls is None else urls
     if not urls:
         return None
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
@@ -373,21 +373,22 @@ def _medir_git() -> dict | None:
     return out
 
 
-def _refrescar_git() -> None:
+def _refrescar_git(urls: list[str]) -> None:
     global _git_cache
     try:
-        _git_cache = (_medir_git(), time.monotonic())
+        _git_cache = (_medir_git(urls), time.monotonic(), tuple(urls))
     finally:
         _git_refrescando.release()
 
 
 def _git_auth() -> dict | None:
     """El ultimo resultado (None sin urls configuradas); se renueva en un hilo: nunca bloquea."""
+    urls = _git_urls()  # leer el config es barato: un cambio de urls se toma enseguida, sin esperar GIT_TTL_S
     ahora = time.monotonic()
-    vencido = _git_cache is None or ahora - _git_cache[1] >= GIT_TTL_S
+    vencido = _git_cache is None or ahora - _git_cache[1] >= GIT_TTL_S or _git_cache[2] != tuple(urls)
     if vencido and _git_refrescando.acquire(blocking=False):
-        threading.Thread(target=_refrescar_git, daemon=True).start()
-    return _git_cache[0] if _git_cache else None
+        threading.Thread(target=_refrescar_git, args=(urls,), daemon=True).start()
+    return _git_cache[0] if _git_cache and _git_cache[2] == tuple(urls) else None
 
 
 def agentes_que_entran(mem_free_gb: float | None) -> int | None:
