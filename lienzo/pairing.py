@@ -1,6 +1,6 @@
-"""Emparejamiento entre dos PCs (plan-multi-pc-2026-09-26.md §3.1; plan-refactor-2026-10-04.md 0.4).
-Una PC ofrece una frase corta (PHRASE_WORDS palabras del generador EFF de auth.new_passphrase); la
-otra la pega. La clave del par NO sale de la frase: sale de un Diffie-Hellman efimero que la frase
+"""Emparejamiento entre dos PCs (plan-multi-pc-2026-09-26.md §3.1; punto 0.4 del plan de refactor del
+2026-10-04, hoy en MEJORAS.md como «Refactor, ola 1»). Una PC ofrece una frase de UNA palabra
+(PHRASE_WORDS, de la lista EFF de auth.new_passphrase) y la otra la pega. La clave del par NO sale de la frase: sale de un Diffie-Hellman efimero que la frase
 autentica (SPAKE2 sobre el grupo MODP de 2048 bits del RFC 3526), asi que capturar el trafico no
 sirve para nada.
 

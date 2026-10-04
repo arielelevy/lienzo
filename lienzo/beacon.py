@@ -3,14 +3,15 @@ cada PC manda dos cosas:
 
 - un anuncio **sin firma** (pc_id, nombre, puerto): es el que hace que el tablero muestre todas las
   PCs de la LAN con el lienzo corriendo, emparejadas o no. No da ningun permiso: emparejar sigue
-  pidiendo la frase de seis palabras, y hablarle a una PC sigue pidiendo la clave del par.
+  pidiendo la frase de una palabra que muestra la otra PC (SPAKE2, ver pairing.py), y hablarle a
+  una PC sigue pidiendo la clave del par.
 - por cada peer emparejado, un anuncio firmado con la clave de ESE par
   (federation.encode_signed_beacon): el que decodifica con la clave de un peer conocido le
   actualiza la IP (federation.update_peer_ip). Sin firma, cualquiera podria desviar esa IP.
 
 Un socket UDP con SO_BROADCAST alcanza porque no hace falta conocer la IP de la LAN de antemano.
 
-`start(port, stop_event)` es la firma que usa server.py (ronda 2): `port` es el puerto TCP propio
+`start(port, stop_event)` es como lo arranca server.py: `port` es el puerto TCP propio
 del listener de peers (7322), el que se anuncia adentro de cada beacon para que quien lo reciba
 sepa donde hablarle despues. El socket UDP en si escucha y emite en `udp_port` (7323 fijo en
 produccion, inyectable solo para pruebas).

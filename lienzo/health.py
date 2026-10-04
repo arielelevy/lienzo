@@ -9,7 +9,12 @@ levanta: un fallo de cualquier pieza deja ese campo en None y no interrumpe a la
 Fuera de Windows (Mac/Linux/WSL, backend tmux) el modulo tiene que importar igual: la memoria sale de
 /proc/meminfo donde existe, y CPU y temperatura quedan en None.
 
-No se conecta a server.py todavia (eso es la ronda 2, GET /peer/health).
+Ademas, si ~/.lienzo/config.json trae "git_check", si las credenciales de git siguen valiendo
+(`git_auth`, renovado en segundo plano cada GIT_TTL_S).
+
+Lo usa server.py: GET /peer/health (que cada PC le pide a las otras, ver mirror.py), la fila de
+esta PC en GET /peers, la capacidad de /restaurar (agentes_que_entran) y `health.log`, que el
+server apunta a su log.
 """
 
 from __future__ import annotations

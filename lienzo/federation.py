@@ -1,33 +1,27 @@
-"""Federacion entre PCs de la misma LAN (plan-multi-pc-2026-09-26.md). Ronda 1: el modulo entero,
-sin enchufar a server.py todavia (eso es ronda 2). Piezas, en el orden en que las usaria la
-ronda 2:
+"""Federacion entre PCs de la misma LAN (plan-multi-pc-2026-09-26.md): las piezas de bajo nivel
+que comparten server.py (el listener de peers, PeerHandler en :7322), pairing.py,
+beacon.py y mirror.py.
 
-  1. Emparejamiento: `derive_pair_key` saca la clave compartida de un par de PCs a partir de una
-     frase de seis palabras (reusa el estilo de auth.py: passphrase normalizada + scrypt), con
-     sal derivada de los dos `pc_id` ordenados. Se guarda en peers.json junto con el peer.
-  2. peers.json: `add_peer`, `remove_peer`, `list_peers`, `update_peer_ip`. Tope de `MAX_PEERS`.
-  3. Firma de cada request entre peers: `sign` / `verify`, con ventana de tiempo y `NonceCache`
-     contra replay.
-  4. Beacon UDP: `encode_beacon` / `decode_beacon` (anonimo, para descubrir) y
-     `encode_signed_beacon` / `decode_signed_beacon` (firmado con la clave del par, para no
-     aceptar a cualquiera que grite en la LAN).
+  1. `derive_pair_key`: scrypt de la frase de emparejamiento (normalizada, como la passphrase de
+     auth.py) con sal derivada de los dos `pc_id` ordenados. NO es la clave del par: pairing.py la
+     usa solo para sacar el escalar con el que SPAKE2 ciega los publicos; la clave del par sale del
+     Diffie-Hellman de SPAKE2 (ver pairing.py). La frase es de una palabra (pairing.PHRASE_WORDS).
+  2. peers.json (en LIENZO_HOME, la ruta la pasa quien llama): `add_peer`, `remove_peer`,
+     `list_peers`, `get_peer`, `update_peer_ip`, con tope `MAX_PEERS`; uno corrupto se aparta con
+     aviso (`apartar_corrupto`).
+  3. Firma de cada request entre peers: `sign` / `verify` / `verify_motivo`, con ventana de tiempo
+     y `NonceCache` contra replay; `causa_401` explica un rechazo (reloj corrido, clave distinta).
+  4. Beacon UDP: `encode_beacon` / `decode_beacon` (anonimo, para descubrir PCs en la LAN) y
+     `encode_signed_beacon` / `decode_signed_beacon_ts` (firmado con la clave del par, para no
+     aceptar una IP nueva de cualquiera que grite en la LAN). El hilo que los manda y recibe es
+     beacon.py.
   5. `SSEClient`: cliente saliente contra `/peer/events` de un peer, con reconexion y backoff
-     inyectable; llama a `on_reconnect` en cada conexion (incluida la primera) porque el plan
-     pide pedir el snapshot completo al (re)conectar.
-  6. `Transport` (Protocol) y `HTTPTransport`: lo minimo que la ronda 2 necesita para hablarle a
-     un peer (`get`, `post`, `put`, `delete`, `subscribe`), todo firmado.
+     inyectable; llama a `on_reconnect` en cada conexion (incluida la primera) para pedir el
+     snapshot completo al (re)conectar. Lo usa el espejo (mirror.py).
+  6. `Transport` (Protocol) y `HTTPTransport`: como se le habla a un peer (`get`, `post`, `put`,
+     `delete`, `subscribe`), todo firmado, con plazos mas largos para las acciones lentas.
 
-Lo que falta para enchufarlo (ronda 2):
-  - Un listener `:7322` en server.py que reciba `/peer/*`, verifique la firma de cada request
-    contra el peer que dice ser el emisor (por `pc_id` o por IP) y sirva `/peer/events` con el
-    broadcast que ya existe en state.py.
-  - Que `identity.py` (frente A de esta ronda) le pase `pc_id()` a `derive_pair_key` y que
-    `peers.json` viva en `LIENZO_HOME`, no en un parametro suelto como en estos tests.
-  - El emisor del beacon (un hilo que llama a `encode_signed_beacon` cada 10 s) y el listener que
-    lo recibe y llama `update_peer_ip`: hoy solo estan las funciones de codificar/decodificar.
-  - `install.py --peer`: la regla de firewall del 7322 en el perfil Privado.
-
-Solo biblioteca estandar: hashlib, hmac, secrets, socket, http.client, json, threading.
+Solo biblioteca estandar: hashlib, hmac, secrets, http.client, json, threading.
 """
 
 from __future__ import annotations
@@ -170,7 +164,7 @@ class NonceCache:
             del self._vistos[n]
 
 
-# --- emparejamiento: KDF de la frase de seis palabras --------------------------------------
+# --- emparejamiento: KDF de la frase (el escalar de SPAKE2 sale de aca, ver pairing.py) --------
 
 
 def _salt_del_par(pc_id_a: str, pc_id_b: str) -> bytes:
@@ -181,9 +175,11 @@ def _salt_del_par(pc_id_a: str, pc_id_b: str) -> bytes:
 
 
 def derive_pair_key(passphrase: str, pc_id_a: str, pc_id_b: str) -> bytes:
-    """Clave compartida de un par de PCs: mismo par de pc_id (en cualquier orden) y misma frase de
-    seis palabras dan la misma clave en las dos puntas. Cambiar la frase, o el par, cambia la
-    clave. scrypt de stdlib con los mismos parametros que auth.py usa para la passphrase."""
+    """La clave de la FRASE de un par de PCs: mismo par de pc_id (en cualquier orden) y misma frase
+    dan lo mismo en las dos puntas; cambiar la frase, o el par, la cambia. scrypt de stdlib con los
+    mismos parametros que auth.py usa para la passphrase. No es la clave del par (antes si, y con
+    una frase de una palabra se sacaba offline de cualquier mensaje firmado): pairing.py la usa
+    solo para el escalar con el que SPAKE2 ciega los publicos."""
     normalizada = " ".join(passphrase.lower().split())
     salt = _salt_del_par(pc_id_a, pc_id_b)
     return hashlib.scrypt(normalizada.encode("utf-8"), salt=salt, **SCRYPT_PARAMS)
@@ -558,7 +554,7 @@ class PeerConn:
 
 
 class Transport(Protocol):
-    """Lo que la ronda 2 necesita del transporte hacia un peer: pedir, escribir y suscribirse a
+    """Lo que el server y el espejo necesitan del transporte hacia un peer: pedir, escribir y suscribirse a
     sus eventos. Una implementacion de broker (Redis, Azure Web PubSub) cumpliria el mismo
     Protocol sin tocar el resto del codigo."""
 
@@ -662,7 +658,7 @@ class HTTPTransport:
         self, peer: PeerConn, method: str, path: str, body: bytes = b"", timeout: float | None = None
     ) -> tuple[int, dict]:
         """(status, cuerpo). Los metodos publicos de siempre (get/post/put/delete) devuelven solo
-        el cuerpo, como antes; `request` (para el enrutado de comandos, ronda 2) devuelve las dos
+        el cuerpo, como antes; `request` (reenviar una accion a la PC duena, /peer/health) devuelve las dos
         cosas, porque ahi hace falta reenviar el codigo tal cual lo dio el peer."""
         headers = self._headers_firmados(peer, method, path, body)
         conn = http.client.HTTPConnection(peer.host, peer.port, timeout=timeout or self.timeout)
