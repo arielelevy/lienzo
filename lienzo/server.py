@@ -1821,8 +1821,14 @@ class Handler(BaseHTTPRequestHandler):
     def _delete_peer(self, pc_id: str) -> None:
         """DELETE /peers/<pc_id>: revocar. Corta el espejo y lo saca de peers.json; el peer, del
         otro lado, se entera cuando le deja de contestar (no hay aviso activo)."""
+        try:
+            removed = federation.remove_peer(PEERS_FILE, pc_id)
+        except OSError as e:
+            # peers.json existe y no se pudo leer (federation ya no lo pisa): no se olvida nada y
+            # el espejo sigue como estaba, para no quedar a medias
+            log(f"peer {pc_id}: no se pudo revocar ({e})")
+            return self._json(409, {"error": "no se pudo leer peers.json (ver el log): la PC sigue emparejada"})
         mirror.MIRROR.disconnect(pc_id)
-        removed = federation.remove_peer(PEERS_FILE, pc_id)
         log(f"peer {pc_id} revocado" + ("" if removed else " (no estaba emparejado)"))
         return self._json(200, {"ok": True})
 

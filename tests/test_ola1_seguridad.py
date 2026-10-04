@@ -513,3 +513,17 @@ def test_excepcion_en_cualquier_hilo_llega_al_log(aislado, monkeypatch):
     h.start()
     h.join()
     assert any("hilo-de-prueba" in x and "ValueError: se rompio el hilo" in x for x in aislado["logs"])
+
+
+def test_olvidar_un_peer_con_peers_json_ilegible_da_un_error_claro(srv, aislado, monkeypatch):
+    """federation.remove_peer ahora levanta OSError si peers.json existe y no se puede leer (antes
+    lo pisaba): el server contesta un error que se entiende, no 500, y no corta el espejo."""
+    cortados = []
+    aislado["espejo"].disconnect = cortados.append
+
+    def ilegible(path, pc_id):
+        raise OSError("peers.json corrupto")
+
+    monkeypatch.setattr(server.federation, "remove_peer", ilegible)
+    code, _, res = pedir(srv, "DELETE", "/peers/pcB")
+    assert code == 409 and "peers.json" in res["error"] and cortados == []
