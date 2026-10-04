@@ -1,7 +1,7 @@
 """Tests de lienzo/pairing.py (plan-multi-pc-2026-09-26.md, ronda 2 encargo A): offer/accept del
 lado que muestra la frase, con freno de intentos y tope de peers; y un punta a punta real de
 join() contra un servidor HTTP minimo (que expone /peer/hello y /peer/pair llamando a accept(),
-tal como lo va a enchufar server.py en esta ronda) corriendo por sockets de verdad. El lado que
+tal como lo enchufa server.py; desde 0.4 son dos POST /peer/pair, "start" y "confirm") corriendo por sockets de verdad. El lado que
 pega la frase corre en un subproceso con su propio LIENZO_HOME, para no compartir el estado
 global de este proceso (que se queda siendo la otra PC todo el tiempo)."""
 
@@ -40,8 +40,39 @@ def hogar(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _req(pc_id, name="otra", color="#111111", port=7322, proof=""):
-    return {"pc_id": pc_id, "name": name, "color": color, "port": port, "proof": proof}
+def _req(pc_id, name="otra", color="#111111", port=7322, **extra):
+    return {"pc_id": pc_id, "name": name, "color": color, "port": port, **extra}
+
+
+class _Joiner:
+    """El lado que pega la frase, armado a mano con las mismas piezas que pairing.join(): sirve
+    para hablarle a accept() sin red y para meter un proof roto en el medio."""
+
+    def __init__(self, frase, su_pc_id, otro_pc_id=None):
+        self.su_pc_id = su_pc_id
+        self.otro_pc_id = otro_pc_id or idn.pc_id()
+        self.clave_frase = fed.derive_pair_key(frase, su_pc_id, self.otro_pc_id)
+        self.w = pairing._w(self.clave_frase)
+        self.x = pairing._exponente()
+        self.x_pub = pairing._cegar(self.x, self.w, pairing.M)
+
+    def start(self, **extra):
+        return _req(self.su_pc_id, step="start", spake=pairing._hex(self.x_pub), **extra)
+
+    def confirm(self, res_start, proof=None, **extra):
+        y_pub = int(res_start["spake"], 16)
+        k = pairing._compartido(y_pub, self.w, pairing.N, self.x)
+        self.transcript = pairing._transcript(self.su_pc_id, self.otro_pc_id, self.x_pub, y_pub)
+        self.clave = pairing._clave_final(self.clave_frase, self.transcript, k)
+        if proof is None:
+            proof = pairing._confirmacion(self.clave, b"join", self.transcript)
+        return _req(self.su_pc_id, step="confirm", hs=res_start["hs"], proof=proof, **extra)
+
+
+def _emparejar(frase, su_pc_id="abc123abc123", **extra):
+    j = _Joiner(frase, su_pc_id)
+    res = pairing.accept(j.confirm(pairing.accept(j.start()), **extra))
+    return j, res
 
 
 # --- offer / accept: local, sin red -------------------------------------------------------------
@@ -55,99 +86,100 @@ def test_offer_da_una_palabra_y_vencimiento_futuro():
 
 def test_accept_sin_oferta_pendiente_rechaza(hogar):
     with pytest.raises(pairing.PairingError):
-        pairing.accept(_req("otro-pc-id-1"))
+        pairing.accept(_Joiner("lo que sea", "otro-pc-id-1").start())
 
 
 def test_accept_con_proof_correcto_guarda_el_peer_y_devuelve_proof_de_vuelta(hogar):
     oferta = pairing.offer()
-    su_pc_id = "abc123abc123"
-    mi_pc_id = idn.pc_id()
-    key = fed.derive_pair_key(oferta["phrase"], mi_pc_id, su_pc_id)
-    proof = pairing._proof(key, su_pc_id)
-    resultado = pairing.accept(_req(su_pc_id, name="notebook", proof=proof))
-    assert resultado["pc_id"] == mi_pc_id
+    j, resultado = _emparejar(oferta["phrase"], name="notebook")
+    assert resultado["pc_id"] == idn.pc_id()
     assert resultado["port"] == pairing.PEER_PORT
-    assert resultado["proof"] == pairing._proof(key, mi_pc_id)
+    assert resultado["proof"] == pairing._confirmacion(j.clave, b"offer", j.transcript)
     peers = fed.list_peers(pairing._peers_path())
     assert len(peers) == 1
-    assert peers[0]["pc_id"] == su_pc_id
+    assert peers[0]["pc_id"] == "abc123abc123"
     assert peers[0]["name"] == "notebook"
-    assert peers[0]["key"] == key.hex()
+    assert peers[0]["key"] == j.clave.hex()
 
 
 def test_accept_consume_la_frase_un_segundo_intento_ya_no_sirve(hogar):
     oferta = pairing.offer()
-    su_pc_id = "abc123abc123"
-    key = fed.derive_pair_key(oferta["phrase"], idn.pc_id(), su_pc_id)
-    proof = pairing._proof(key, su_pc_id)
-    pairing.accept(_req(su_pc_id, proof=proof))
+    j, _ = _emparejar(oferta["phrase"])
     with pytest.raises(pairing.PairingError):
-        pairing.accept(_req(su_pc_id, proof=proof))
+        pairing.accept(j.start())
 
 
 def test_accept_con_frase_vencida_rechaza(hogar):
     oferta = pairing.offer(ttl_s=-1)  # ya vencida
-    su_pc_id = "abc123abc123"
-    key = fed.derive_pair_key(oferta["phrase"], idn.pc_id(), su_pc_id)
-    proof = pairing._proof(key, su_pc_id)
     with pytest.raises(pairing.PairingError):
-        pairing.accept(_req(su_pc_id, proof=proof))
+        pairing.accept(_Joiner(oferta["phrase"], "abc123abc123").start())
 
 
 def test_accept_con_proof_invalido_rechaza(hogar):
-    pairing.offer()
-    with pytest.raises(pairing.PairingError):
-        pairing.accept(_req("abc123abc123", proof="0" * 64))
-
-
-def test_accept_con_proof_invalido_no_consume_la_frase(hogar):
-    """Un intento fallido no gasta la frase: la PC que la muestra puede reintentar sin generar
-    una frase nueva."""
     oferta = pairing.offer()
+    j = _Joiner(oferta["phrase"], "abc123abc123")
+    res = pairing.accept(j.start())
     with pytest.raises(pairing.PairingError):
+        pairing.accept(j.confirm(res, proof="0" * 64))
+
+
+def test_accept_con_proof_invalido_consume_la_frase(hogar):
+    """Un intento fallido gasta la frase (0.4): un atacante activo tiene un solo intento por frase
+    mostrada, aunque la frase sea de una palabra. Antes no la gastaba."""
+    oferta = pairing.offer()
+    j = _Joiner(oferta["phrase"], "abc123abc123")
+    with pytest.raises(pairing.PairingError, match="frase nueva"):
+        pairing.accept(j.confirm(pairing.accept(j.start()), proof="0" * 64))
+    with pytest.raises(pairing.PairingError, match="vencida o inexistente"):
+        _emparejar(oferta["phrase"])  # la frase correcta ya no sirve
+    assert fed.list_peers(pairing._peers_path()) == []
+
+
+def test_accept_rechaza_el_formato_viejo_sin_dh(hogar):
+    pairing.offer()
+    with pytest.raises(pairing.PairingError, match="viejo"):
         pairing.accept(_req("abc123abc123", proof="0" * 64))
-    su_pc_id = "abc123abc123"
-    key = fed.derive_pair_key(oferta["phrase"], idn.pc_id(), su_pc_id)
-    proof = pairing._proof(key, su_pc_id)
-    resultado = pairing.accept(_req(su_pc_id, proof=proof))
-    assert resultado["pc_id"] == idn.pc_id()
 
 
 def test_accept_respeta_el_tope_de_peers(hogar):
     for i in range(fed.MAX_PEERS):
         fed.add_peer(pairing._peers_path(), {"pc_id": f"peer{i:07d}", "name": "x", "key": "ab" * 32})
     oferta = pairing.offer()
-    su_pc_id = "abc123abc123"
-    key = fed.derive_pair_key(oferta["phrase"], idn.pc_id(), su_pc_id)
-    proof = pairing._proof(key, su_pc_id)
+    with pytest.raises(pairing.PairingError, match="peers emparejados"):
+        _emparejar(oferta["phrase"])
+
+
+def test_accept_con_peers_json_ilegible_da_un_error_claro(hogar, monkeypatch):
+    def romper(*a, **k):
+        raise OSError("acceso denegado")
+
+    monkeypatch.setattr(fed, "add_peer", romper)
+    oferta = pairing.offer()
+    with pytest.raises(pairing.PairingError, match="peers.json"):
+        _emparejar(oferta["phrase"])
+
+
+def _fallar_una_vez():
+    oferta = pairing.offer()
+    j = _Joiner(oferta["phrase"], "abc123abc123")
     with pytest.raises(pairing.PairingError):
-        pairing.accept(_req(su_pc_id, proof=proof))
+        pairing.accept(j.confirm(pairing.accept(j.start()), proof="0" * 64))
 
 
 def test_cinco_intentos_fallidos_bloquean_accept_quince_minutos(hogar):
     for _ in range(pairing.MAX_FAILS):
-        pairing.offer()
-        with pytest.raises(pairing.PairingError):
-            pairing.accept(_req("abc123abc123", proof="0" * 64))
+        _fallar_una_vez()
     oferta = pairing.offer()
-    su_pc_id = "abc123abc123"
-    key = fed.derive_pair_key(oferta["phrase"], idn.pc_id(), su_pc_id)
-    proof = pairing._proof(key, su_pc_id)
     with pytest.raises(pairing.PairingError, match="bloqueado"):
-        pairing.accept(_req(su_pc_id, proof=proof))  # el sexto, con proof correcto, cae igual
+        _emparejar(oferta["phrase"])  # el sexto, con la frase correcta, cae igual
 
 
 def test_bloqueo_se_libera_pasados_los_quince_minutos(hogar):
     for _ in range(pairing.MAX_FAILS):
-        pairing.offer()
-        with pytest.raises(pairing.PairingError):
-            pairing.accept(_req("abc123abc123", proof="0" * 64))
+        _fallar_una_vez()
     pairing._blocked_until = time.time() - 1  # simula que ya paso el bloqueo
     oferta = pairing.offer()
-    su_pc_id = "abc123abc123"
-    key = fed.derive_pair_key(oferta["phrase"], idn.pc_id(), su_pc_id)
-    proof = pairing._proof(key, su_pc_id)
-    resultado = pairing.accept(_req(su_pc_id, proof=proof))
+    _, resultado = _emparejar(oferta["phrase"])
     assert resultado["pc_id"] == idn.pc_id()
 
 
@@ -164,7 +196,7 @@ def test_mi_port_respeta_la_variable_de_entorno(hogar, monkeypatch):
 class _HandlerPeer(BaseHTTPRequestHandler):
     """Server de prueba minimo: expone /peer/hello y /peer/pair llamando a accept(), tal como C
     lo va a enchufar en server.py. /peer/hello no va firmado (todavia no hay clave compartida);
-    /peer/pair valida por el proof del cuerpo, no por una firma HMAC de request."""
+    /peer/pair valida por el intercambio DH del cuerpo, no por una firma HMAC de request."""
 
     protocol_version = "HTTP/1.1"
 
@@ -250,7 +282,7 @@ def test_join_punta_a_punta_contra_un_server_http_real(hogar, tmp_path):
     assert peer_b["pc_id"] == mi_pc_id
     assert peer_b["key"] == peers_de_a[0]["key"]
 
-    print(f"emparejamiento de punta a punta: {duracion * 1000:.0f} ms (incluye dos scrypt)")
+    print(f"emparejamiento de punta a punta: {duracion * 1000:.0f} ms (incluye dos scrypt y el DH)")
 
 
 def test_join_con_frase_equivocada_no_guarda_nada_de_ningun_lado(hogar, tmp_path):
