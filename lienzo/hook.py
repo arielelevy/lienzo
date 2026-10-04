@@ -25,8 +25,10 @@ T0 = time.perf_counter()
 
 try:
     from . import procinfo
+    from .atomico import atomic_write
 except ImportError:  # corriendo como script (python lienzo/hook.py) o con lienzo/ en sys.path
     import procinfo
+    from atomico import atomic_write
 
 
 def _lienzo_home_arg() -> str | None:
@@ -52,13 +54,6 @@ ANSWERS = os.path.join(LIENZO, "answers")
 
 def now_iso() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="milliseconds")
-
-
-def atomic_write(path: str, text: str) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.replace(tmp, path)
 
 
 def load_config() -> dict:

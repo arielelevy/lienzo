@@ -206,25 +206,13 @@ def is_disconnect(e: BaseException) -> bool:
 
 
 def atomic_write(path: str, text: str) -> None:
-    """Escritura atomica. El .tmp lleva el id del hilo: dos hilos que guardan la misma tarjeta a la
-    vez (consume_events bajo lock, liveness/screen_loop sin lock) chocaban en el mismo .tmp y
-    os.replace fallaba con WinError 32 (medido 2026-09-05 16:30). Y si Windows todavia tiene el
-    destino abierto por otro lector (antivirus, el otro hilo), se reintenta un poco."""
-    tmp = f"{path}.{threading.get_ident()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-    for i in range(5):
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if i == 4:
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-                raise
-            time.sleep(0.05 * (i + 1))
+    """Escritura atomica con el reintento de Windows: la de atomico.py, la unica del lienzo (la
+    comparten auth y hook). El import va aca adentro para no tocar el resto de state.py."""
+    try:
+        from . import atomico
+    except ImportError:  # con lienzo/ en sys.path (server.py, las pruebas)
+        import atomico
+    atomico.atomic_write(path, text)
 
 
 def short(s, n=300) -> str:

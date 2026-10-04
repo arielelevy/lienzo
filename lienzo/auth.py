@@ -21,6 +21,7 @@ import threading
 import time
 
 import state
+from atomico import atomic_write
 
 # Fuente unica de la carpeta de estado (LIENZO_HOME, plan multi-PC §F0): auth.py no tiene el
 # motivo de hook.py para evitar state.py (no corre como subproceso por evento ni imprime nada
@@ -42,10 +43,9 @@ _blocked_until: dict[str, float] = {}
 
 
 def _atomic(path: str, obj) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=1)
-    os.replace(tmp, path)
+    """Por atomico.atomic_write, con su reintento de Windows: con el os.replace pelado, un
+    antivirus que tenia abierto auth.json justo en ese momento daba un 500 en pleno login."""
+    atomic_write(path, json.dumps(obj, indent=1))
 
 
 def _load(path: str) -> dict:
