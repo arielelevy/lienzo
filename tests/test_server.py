@@ -1893,7 +1893,7 @@ def test_restaurar_en_otra_pc_tiene_su_propio_timeout_largo():
 
 def test_regla_con_origen_en_otra_pc_se_crea_alla(monkeypatch):
     import mirror
-    import server as srv
+    import rules_api as srv
 
     llamadas = []
     monkeypatch.setattr(srv, "_known_session", lambda sid: True)
@@ -1907,7 +1907,7 @@ def test_regla_con_origen_en_otra_pc_se_crea_alla(monkeypatch):
 
 def test_regla_origen_remoto_contra_lienzo_viejo_da_un_error_que_explica(monkeypatch):
     import mirror
-    import server as srv
+    import rules_api as srv
 
     monkeypatch.setattr(srv, "_known_session", lambda sid: True)
     monkeypatch.setattr(srv, "_rule_target_pc", lambda sid: "pcB" if sid == "remota" else None)
@@ -1917,7 +1917,7 @@ def test_regla_origen_remoto_contra_lienzo_viejo_da_un_error_que_explica(monkeyp
 
 
 def test_regla_con_destino_remoto_queda_marcada_xpc_y_sobrevive_al_arranque(monkeypatch):
-    import server as srv
+    import rules_api as srv
 
     monkeypatch.setattr(srv, "_rule_target_pc", lambda sid: "pcB" if sid == "remota" else None)
     r = srv.new_rule({"kind": "on_stop", "from": "local", "to": "remota"}, "t")

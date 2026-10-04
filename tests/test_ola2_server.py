@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lienzo import server
 import federation as fed
 import pantalla_coda
+import rules_api
 import state as st
 
 CLAVE_PAR = b"p" * 32
@@ -438,3 +439,46 @@ def test_ruta_desconocida_entre_pcs_con_tarjeta_conocida_no_trae_unknown_session
 def test_ruta_desconocida_entre_pcs_con_tarjeta_desconocida_no_trae_unknown_session(entorno, method):
     code, res = al_peer(entorno["peer"], method, f"/peer/sessions/{NADIE}/no-existe", b"{}")
     assert code == 404 and res == {"error": "ruta desconocida"}
+
+
+# --- la API de reglas en rules_api.py --------------------------------------------------------
+
+
+def test_server_reexporta_la_api_de_reglas():
+    for nombre in ("create_rule", "edit_rule", "check_rule", "at_fields", "find_enabled"):
+        assert getattr(server, nombre) is getattr(rules_api, nombre)
+
+
+def test_dos_altas_iguales_a_la_vez_dejan_una_sola_regla(tmp_path, monkeypatch):
+    """S11 (como en test_ola1_seguridad.py, que parcha server.find_enabled: desde que la API de
+    reglas vive en rules_api, ese parche ya no ensancha la ventana). El chequeo de duplicado y el
+    alta, bajo un solo lock."""
+    monkeypatch.setattr(st.rules, "path", str(tmp_path / "rules.json"))
+    monkeypatch.setattr(st, "log", lambda msg: None)
+    monkeypatch.setattr(st, "broadcast", lambda ev: None)
+    monkeypatch.setattr(server.mirror, "MIRROR", EspejoFalso())
+    st.rules.items.clear()
+    st.sessions.clear()
+    a, b = "f0000000-0000-4000-8000-00000000000a", "f0000000-0000-4000-8000-00000000000b"
+    for sid in (a, b):
+        st.sessions[sid] = {"session_id": sid, "agent": "claude", "pid": 1}
+    original = rules_api.find_enabled
+
+    def lento(pred):
+        r = original(pred)
+        time.sleep(0.2)  # ensancha la ventana entre «no hay otra igual» y el alta
+        return r
+
+    monkeypatch.setattr(rules_api, "find_enabled", lento)
+    d = {"kind": "on_stop", "from": a, "to": b, "text": "seguí"}
+    codigos = []
+    hilos = [threading.Thread(target=lambda: codigos.append(server.create_rule(dict(d))[0])) for _ in range(2)]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+    try:
+        assert sorted(codigos) == [200, 409] and len(st.rules.items) == 1
+    finally:
+        st.rules.items.clear()
+        st.sessions.clear()
