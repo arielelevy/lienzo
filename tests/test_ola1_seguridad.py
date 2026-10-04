@@ -354,3 +354,14 @@ def test_peer_firmado_sigue_andando(peer_srv):
     code, res = firmado(peer_srv, "GET", "/peer/restaurables", b"")
     assert code == 200 and "restaurables" in res
     assert firmado(peer_srv, "GET", "/peer/restaurables", b"", clave=b"z" * 32)[0] == 401
+
+
+def test_peer_401_deja_el_motivo_en_el_log_una_vez_por_minuto(peer_srv, aislado, monkeypatch):
+    """1.8: el 401 decía solo «firma invalida» en los dos lados; reloj corrido, replay y clave
+    distinta se arreglan distinto. Al cliente le sigue llegando «firma invalida»."""
+    monkeypatch.setattr(server, "_avisos_401", {})
+    for _ in range(3):
+        code, res = firmado(peer_srv, "GET", "/peer/restaurables", b"", clave=b"z" * 32)
+        assert code == 401 and res["error"] == "firma invalida"
+    motivos = [x for x in aislado["logs"] if "401" in x]
+    assert len(motivos) == 1 and "clave distinta" in motivos[0]

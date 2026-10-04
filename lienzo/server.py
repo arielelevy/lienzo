@@ -503,21 +503,32 @@ def _avisar_401(quien: str, motivo: str) -> None:
 
 def verify_peer_request(headers, method: str, path: str, body: bytes) -> str | None:
     """`pc_id` del peer verificado, o None (headers incompletos, peer desconocido, firma que no
-    calza, fuera de ventana o nonce repetido: `federation.verify` ya cubre las cuatro)."""
+    calza, fuera de ventana o nonce repetido: `federation.verify_motivo` cubre las cuatro).
+
+    El motivo de cada rechazo va al log con limite de frecuencia (revision 2026-10-04, 1.8): un 401
+    que decia solo «firma invalida» no distinguia reloj corrido, replay o clave distinta, que se
+    arreglan distinto. Al cliente le sigue llegando «firma invalida» (federation le suma su pista)."""
     claimed = headers.get("X-Lienzo-Peer") or ""
     ts_raw = headers.get("X-Lienzo-Ts")
     nonce = headers.get("X-Lienzo-Nonce")
     sig = headers.get("X-Lienzo-Sig")
     if not claimed or not ts_raw or not nonce or not sig:
+        _avisar_401(claimed or "?", "faltan headers de firma")
         return None
     key = _peer_key(claimed)
     if key is None:
+        _avisar_401(claimed, "PC no emparejada")
         return None
     try:
         ts = float(ts_raw)
     except ValueError:
+        _avisar_401(claimed, "X-Lienzo-Ts no es un numero")
         return None
-    return claimed if federation.verify(key, method, path, body, ts, nonce, sig, _peer_nonces) else None
+    ok, motivo = federation.verify_motivo(key, method, path, body, ts, nonce, sig, _peer_nonces)
+    if not ok:
+        _avisar_401(claimed, motivo)
+        return None
+    return claimed
 
 
 def _connect_peer_from_record(peer: dict) -> None:
