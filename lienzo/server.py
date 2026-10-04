@@ -38,6 +38,7 @@ import identity
 import launch
 import mirror
 import pairing
+import pantalla_coda
 import restore
 import rules as rl
 import secretos
@@ -620,6 +621,36 @@ def config_peers_loop(stop_event: threading.Event | None = None) -> None:
             reintentar_config_peers()
         except Exception:
             log(f"reintento de auto-aprobar en otras PCs:\n{traceback.format_exc()}")
+
+
+def huella_de_pantalla(lineas: list[str]) -> str | None:
+    """La huella del comando del cartel de coda en `lineas`: la misma cuenta que arma el aprobador
+    del skill (las dos salen de pantalla_coda), o None si no hay cartel."""
+    return pantalla_coda.huella(lineas)
+
+
+def aprobar_coda(s: dict, d: dict) -> tuple[int, dict]:
+    """POST /sessions/<id>/approve, local o pedido por otra PC. `d` ya trae decision valida.
+
+    Con `expect` (sha256 hex del comando visible compacto, ver pantalla_coda.huella) se lee la
+    pantalla y solo se teclea si el cartel sigue mostrando ESE comando; si no, 409. Antes el
+    aprobador del skill miraba la pantalla, decidia y despues pedia aprobar: si en el medio el
+    cartel cambio, el Enter aprobaba un comando que nadie habia juzgado (revision 2026-10-04,
+    0.2). Sin `expect`, como siempre (el boton de la tarjeta).
+
+    Esto ACHICA la ventana pero no la cierra: entre esta lectura y la tecla de answer_coda_ask
+    (que vuelve a leer la pantalla) el cartel todavia puede cambiar. Cerrarla del todo pide que
+    la misma lectura que confirma el dialogo sea la que se compara, adentro de sessions."""
+    expect = d.get("expect")
+    if expect is not None:
+        if not isinstance(expect, str) or not re.fullmatch(r"[0-9a-f]{64}", expect):
+            return 400, {"error": "expect debe ser el sha256 hex del comando"}
+        if not s.get("pid") or s.get("orphan"):
+            return 409, {"ok": False, "error": "sin consola que leer"}
+        actual = huella_de_pantalla(read_screen(s).get("lines") or [])
+        if actual != expect:
+            return 409, {"ok": False, "error": "el comando en pantalla cambió", "code": "expect_mismatch"}
+    return answer_coda_ask(s, d["decision"])
 
 
 def session_view_response(s: dict, view: str, query: dict) -> tuple[int, dict]:
@@ -1280,7 +1311,7 @@ class Handler(BaseHTTPRequestHandler):
                     d = self._json_body()
                     if d.get("decision") not in ("allow", "deny"):
                         return self._json(400, {"error": "decision debe ser allow o deny"})
-                    code, res = answer_coda_ask(s, d["decision"])
+                    code, res = aprobar_coda(s, d)
                     return self._json(code, res)
                 if action == "dialog":
                     d = self._json_body()
@@ -1957,7 +1988,7 @@ class PeerHandler(BaseHTTPRequestHandler):
             d = self._body_json(raw)
             if d.get("decision") not in ("allow", "deny"):
                 return self._json(400, {"error": "decision debe ser allow o deny"})
-            code, res = answer_coda_ask(s, d["decision"])
+            code, res = aprobar_coda(s, d)
             return self._json(code, res)
         if action == "dialog":
             d = self._body_json(raw)

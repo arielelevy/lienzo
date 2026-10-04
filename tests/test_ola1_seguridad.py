@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ruff: noqa: I001
 # el orden importa: `from lienzo import server` agrega lienzo/ al sys.path (ver test_server.py)
 from lienzo import server
+import pantalla_coda
 import state as st
 import subproc
 
@@ -194,3 +195,46 @@ def test_restaurables_avisa_las_pcs_que_no_contestaron_en_un_header(srv, aislado
     code, headers, res = pedir(srv, "GET", "/restaurables")
     assert code == 200 and isinstance(res, list)
     assert headers.get("X-Lienzo-Unreachable") == "pcB,pcC"
+
+
+# 0.2: aprobar contra la huella del comando que se juzgó
+
+PANTALLA = ["┃ ⚠  Approval Required", "   git status   │ panel", "  ❯ Yes"]
+
+
+@pytest.fixture
+def coda(aislado, monkeypatch):
+    sid = "c0da0000-0000-4000-8000-000000000001"
+    st.sessions[sid] = {"session_id": sid, "agent": "coda", "pid": 4242, "needs": {"coda_at": "x"}}
+    contestados = []
+    monkeypatch.setattr(server, "read_screen", lambda s: {"ok": True, "lines": list(PANTALLA)})
+    monkeypatch.setattr(server, "answer_coda_ask", lambda s, d: contestados.append(d) or (200, {"ok": True}))
+    return sid, contestados
+
+
+def test_approve_con_expect_que_no_coincide_da_409_y_no_teclea(srv, coda):
+    sid, contestados = coda
+    otra = pantalla_coda.huella_comando("gitpushoriginmain")
+    code, _, res = pedir(srv, "POST", f"/sessions/{sid}/approve", {"decision": "allow", "expect": otra})
+    assert code == 409 and res["error"] == "el comando en pantalla cambió" and contestados == []
+
+
+def test_approve_con_expect_que_coincide_teclea(srv, coda):
+    sid, contestados = coda
+    buena = pantalla_coda.huella(PANTALLA)
+    code, _, _ = pedir(srv, "POST", f"/sessions/{sid}/approve", {"decision": "allow", "expect": buena})
+    assert code == 200 and contestados == ["allow"]
+
+
+def test_approve_sin_expect_sigue_como_antes_y_expect_malformado_da_400(srv, coda):
+    sid, contestados = coda
+    assert pedir(srv, "POST", f"/sessions/{sid}/approve", {"decision": "deny"})[0] == 200
+    assert pedir(srv, "POST", f"/sessions/{sid}/approve", {"decision": "allow", "expect": "zz"})[0] == 400
+    assert contestados == ["deny"]
+
+
+def test_la_huella_del_skill_y_la_del_server_son_la_misma():
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills", "lienzo"))
+    import aprobador
+
+    assert aprobador.huella(PANTALLA) == pantalla_coda.huella(PANTALLA) == server.huella_de_pantalla(PANTALLA)
