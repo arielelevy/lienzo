@@ -365,3 +365,15 @@ def test_peer_401_deja_el_motivo_en_el_log_una_vez_por_minuto(peer_srv, aislado,
         assert code == 401 and res["error"] == "firma invalida"
     motivos = [x for x in aislado["logs"] if "401" in x]
     assert len(motivos) == 1 and "clave distinta" in motivos[0]
+
+
+def test_peer_json_invalido_da_400_y_no_se_toma_como_vacio(peer_srv, monkeypatch):
+    """S8: `{}` en vez de 400 hacía que un envío con el cuerpo roto tecleara un Enter vacío."""
+    sid = "5e000000-0000-4000-8000-000000000001"
+    st.sessions[sid] = {"session_id": sid, "agent": "claude", "pid": 1}
+    enviados = []
+    monkeypatch.setattr(server, "send_to_session", lambda s, t, a: enviados.append(t) or (200, {"ok": True}))
+    code, res = firmado(peer_srv, "POST", f"/peer/sessions/{sid}/send", b'{"text": ')
+    assert code == 400 and res["error"] == "JSON invalido" and enviados == []
+    assert firmado(peer_srv, "POST", f"/peer/sessions/{sid}/send", b"[1]")[0] == 400
+    assert firmado(peer_srv, "POST", f"/peer/sessions/{sid}/send", b'{"text": "hola"}')[0] == 200

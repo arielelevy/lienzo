@@ -1904,10 +1904,15 @@ class PeerHandler(BaseHTTPRequestHandler):
         return parts, raw
 
     def _body_json(self, raw: bytes) -> dict:
+        """El cuerpo como objeto JSON, o RequestError 400 como en Handler (revision 2026-10-04, S8):
+        antes un JSON roto se tomaba como `{}` y, por ejemplo, un envio con el cuerpo cortado
+        tecleaba un Enter vacio en la consola."""
         try:
             return decode_json_body(raw)
-        except ValueError:
-            return {}
+        except NotAnObject as e:
+            raise RequestError("el cuerpo debe ser un objeto JSON") from e
+        except ValueError as e:
+            raise RequestError("JSON invalido") from e
 
     def _dispatch(self, method: str) -> None:
         got = self._parts_and_body(method)
@@ -1926,6 +1931,8 @@ class PeerHandler(BaseHTTPRequestHandler):
                 return self._json(401, {"error": "firma invalida"})
         try:
             self._route(method, rest, raw, pc_id)
+        except RequestError as e:
+            self._json(e.status, {"error": str(e)})
         except Exception:
             eid = secrets.token_hex(4)
             log(f"error {eid} en peer {method} {self.path}:\n{traceback.format_exc()}")
