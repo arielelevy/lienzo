@@ -1160,6 +1160,24 @@ def accion_dialog(s: dict, d: dict) -> tuple[int, dict]:
     return answer_dialog(s, d["choice"])
 
 
+def validar_attach(d: dict) -> tuple[int, dict] | None:
+    """`d` es {filename, data} ya decodificado (crudo en el tablero, base64 entre PCs)."""
+    return None if d.get("data") else _rechazo("cuerpo vacio")
+
+
+def accion_attach(s: dict, d: dict) -> tuple[int, dict]:
+    """POST /sessions/<id>/attach: guarda el archivo en ADJUNTOS/<sid>/ y devuelve su ruta, que
+    despues viaja en `attachments` de un envio."""
+    path = save_attachment(s["session_id"], d["filename"], d["data"])
+    return 200, {"path": path, "bytes": len(d["data"])}
+
+
+def reenvio_attach(d: dict) -> dict:
+    """El adjunto entre PCs viaja como base64 adentro del JSON: no hay transporte binario en
+    federation.HTTPTransport.request. Mas trafico, pero sin otro camino."""
+    return {"filename": d["filename"], "data_b64": base64.b64encode(d["data"]).decode("ascii")}
+
+
 def canal_nativo_local(d: dict) -> tuple[int, dict] | None:
     """Antes de teclear un envio del tablero en una tarjeta local: el canal nativo (Claude a Claude
     por SendMessage) no cruza PCs. ListAgents es de la propia maquina y no hay forma de resolver un
@@ -1209,6 +1227,7 @@ ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
     ("POST", "interrupt"): AccionSesion(sin_validar, accion_interrupt, reenvio=lambda d: {}, cuerpo="nada"),
     ("POST", "approve"): AccionSesion(validar_approve, accion_approve),
     ("POST", "dialog"): AccionSesion(validar_dialog, accion_dialog),
+    ("POST", "attach"): AccionSesion(validar_attach, accion_attach, reenvio=reenvio_attach, cuerpo="adjunto"),
     ("PUT", "title"): AccionSesion(validar_title, accion_title, reenvio=lambda d: {"title": d.get("title")}),
     ("PUT", "stopped"): AccionSesion(validar_on, accion_stopped, reenvio=lambda d: {"on": d["on"]}),
     ("PUT", "coordinator"): AccionSesion(validar_on, accion_coordinator),
@@ -1624,21 +1643,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(code, res)
             if len(parts) == 3 and parts[0] == "sessions" and ("POST", parts[2]) in ACCIONES_SESION:
                 return self._accion_sesion("POST", parts[1], parts[2])
-            if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "attach":
-                sid = parts[1]
-                s, owner = _route_session(sid)
-                if s is None and owner is None:
-                    return self._json(404, no_session())
-                name = urllib.parse.unquote(self.headers.get("X-Filename") or "adjunto.bin")
-                if not self.raw:
-                    return self._json(400, {"error": "cuerpo vacio"})
-                if owner is not None:
-                    # attach viaja como base64 adentro del JSON: no hay transporte binario entre PCs
-                    body = {"filename": name, "data_b64": base64.b64encode(self.raw).decode("ascii")}
-                    code, res = mirror.MIRROR.forward(owner, "POST", f"/sessions/{sid}/attach", body)
-                    return self._json(code, res)
-                path = save_attachment(s["session_id"], name, self.raw)
-                return self._json(200, {"path": path, "bytes": len(self.raw)})
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:
             return self._server_error(e)
@@ -2153,8 +2157,6 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._rules_check(raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "GET" and rest[2] in SESSION_VIEWS:
             return self._session_view(rest[1], rest[2])
-        if len(rest) == 3 and rest[0] == "sessions" and method == "POST" and rest[2] == "attach":
-            return self._session_attach(rest[1], raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "POST":
             return self._accion_sesion(method, rest[1], rest[2], raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "PUT":
@@ -2227,23 +2229,6 @@ class PeerHandler(BaseHTTPRequestHandler):
             return self._json(404, no_session())
         code, res = session_view_response(s, view, self.query)
         return self._json(code, res)
-
-    def _session_attach(self, sid: str, raw: bytes) -> None:
-        with lock:
-            s = sessions.get(sid)
-        if s is None:
-            return self._json(404, no_session())
-        d = self._body_json(raw)
-        name = d.get("filename") or "adjunto.bin"
-        data_b64 = d.get("data_b64")
-        if not isinstance(data_b64, str) or not data_b64:
-            return self._json(400, {"error": "cuerpo vacio"})
-        try:
-            data = base64.b64decode(data_b64, validate=True)
-        except ValueError, binascii.Error:
-            return self._json(400, {"error": "adjunto invalido"})
-        path = save_attachment(s["session_id"], name, data)
-        return self._json(200, {"path": path, "bytes": len(data)})
 
     def _cuerpo_accion(self, a: AccionSesion, raw: bytes) -> dict:
         """El cuerpo de una accion de tarjeta tal como llega de otra PC: JSON, nada, o el adjunto en

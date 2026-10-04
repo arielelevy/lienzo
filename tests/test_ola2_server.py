@@ -272,15 +272,12 @@ def test_adjunto_entre_pcs_con_base64_roto_es_400(entorno):
     assert entorno["efectos"] == []
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="divergencia: el tablero siempre le pasa un texto a save_attachment (sale de X-Filename) y "
-    "PeerHandler le pasaba `filename` tal cual vino en el JSON; con un numero, save_attachment revienta (500)",
-)
 def test_adjunto_entre_pcs_con_nombre_que_no_es_texto_no_llega_a_save_attachment(entorno):
+    """Hasta la ola 2 PeerHandler le pasaba `filename` tal cual a save_attachment, que con un
+    numero revienta (500); el tablero siempre le pasa un texto (sale de X-Filename)."""
     raw = json.dumps({"filename": 5, "data_b64": base64.b64encode(b"x").decode()}).encode()
-    al_peer(entorno["peer"], "POST", f"/peer/sessions/{SID}/attach", raw)
-    assert all(isinstance(ef[2], str) for ef in entorno["efectos"] if ef[0] == "attach")
+    assert al_peer(entorno["peer"], "POST", f"/peer/sessions/{SID}/attach", raw)[0] == 200
+    assert [ef[2] for ef in entorno["efectos"]] == ["adjunto.bin"]
 
 
 ACCIONES_DE_TARJETA = [c for c in CASOS if c[1] != "pending"]
