@@ -47,16 +47,26 @@ if _WIN:
         ctypes.POINTER(wt.ULONG),
     ]
 
-AGENTS = {"claude.exe": "claude", "codex.exe": "codex", "pi.exe": "pi", "coda.exe": "coda"}
+    # tambien adentro del if: estaban sueltos y el modulo no importaba fuera de Windows, con lo que
+    # caian hook, procs y el backend tmux en Mac/Linux (revision 2026-10-04, B7)
+    _shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    _shell32.CommandLineToArgvW.argtypes = [wt.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    _shell32.CommandLineToArgvW.restype = ctypes.POINTER(wt.LPWSTR)
+    _k32.LocalFree.argtypes = [wt.HLOCAL]
 
-_shell32 = ctypes.WinDLL("shell32", use_last_error=True)
-_shell32.CommandLineToArgvW.argtypes = [wt.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
-_shell32.CommandLineToArgvW.restype = ctypes.POINTER(wt.LPWSTR)
-_k32.LocalFree.argtypes = [wt.HLOCAL]
+AGENTS = {"claude.exe": "claude", "codex.exe": "codex", "pi.exe": "pi", "coda.exe": "coda"}
 
 
 def command_args(command: str) -> list[str]:
-    """Argumentos Windows, sin confundir rutas con espacios ni texto del prompt."""
+    """Argumentos Windows, sin confundir rutas con espacios ni texto del prompt. Fuera de Windows,
+    las reglas de una shell POSIX (shlex, importado aca para no pesarle al arranque de hook.py)."""
+    if not _WIN:
+        import shlex
+
+        try:
+            return shlex.split(command or "")
+        except ValueError:  # comillas sin cerrar: mejor algo que nada
+            return (command or "").split()
     count = ctypes.c_int()
     argv = _shell32.CommandLineToArgvW(command, ctypes.byref(count)) if command else None
     if not argv:

@@ -702,3 +702,32 @@ def test_rules_loop_una_regla_que_revienta_no_corta_las_demas(reglas, monkeypatc
         rl.rules_loop()
     assert disparos == ["r1", "r2"]
     assert any("se cayo r1" in m for m in log_capturado)
+
+
+# --- 1.16: procinfo.py no importaba fuera de Windows -------------------------------------------
+
+
+def test_procinfo_importa_y_responde_nada_fuera_de_windows(monkeypatch):
+    """En Mac/Linux no hay ctypes.WinDLL: el modulo tiene que importar igual (lo usan hook, procs y
+    backend) y las consultas Win32 devolver «nada»."""
+    import ctypes
+    import importlib.util
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delattr(ctypes, "WinDLL", raising=False)
+    ruta = os.path.join(os.path.dirname(fed.__file__), "procinfo.py")
+    spec = importlib.util.spec_from_file_location("procinfo_fuera_de_windows", ruta)
+    pi = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pi)
+    assert pi.open_process(1234) is None
+    assert pi.alive(1234) is False
+    assert pi.proc_info(1234) == (None, None)
+    assert pi.command_args('node "/opt/pi coding/cli.js" --mode rpc') == [
+        "node",
+        "/opt/pi coding/cli.js",
+        "--mode",
+        "rpc",
+    ]
+    assert pi.command_args("") == []
+    assert pi.agent_of("/usr/bin/claude") is None  # sin .exe: no es un agente de Windows
