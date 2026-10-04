@@ -527,3 +527,41 @@ def test_olvidar_un_peer_con_peers_json_ilegible_da_un_error_claro(srv, aislado,
     monkeypatch.setattr(server.federation, "remove_peer", ilegible)
     code, _, res = pedir(srv, "DELETE", "/peers/pcB")
     assert code == 409 and "peers.json" in res["error"] and cortados == []
+
+
+# NUEVO A: el espejo reconecta cuando cambia la IP de un peer
+
+
+class BeaconFalso:
+    def __init__(self, vistos):
+        self.vistos = vistos
+
+    def seen(self):
+        return self.vistos
+
+
+def test_beacon_reconecta_aunque_peers_json_ya_tenga_la_ip_nueva(aislado, monkeypatch):
+    """beacon.py escribe la IP nueva en peers.json antes que _beacon_sync_loop la mire, así que
+    comparar contra peers.json siempre daba igual y el espejo seguía colgado de la IP vieja. Y la
+    PC que ofreció la frase guarda ip "": nunca conectaba. Se compara contra la IP con la que el
+    espejo está conectado."""
+    peers = aislado["tmp"] / "peers.json"
+    monkeypatch.setattr(server, "PEERS_FILE", str(peers))
+    monkeypatch.setattr(server.identity, "pc_id", lambda: "pcA")
+    monkeypatch.setattr(server, "_ip_conectada", {})
+    conexiones = []
+    aislado["espejo"].connect = lambda pc, info, host, port, key, yo: conexiones.append((pc, host))
+    aislado["espejo"].disconnect = lambda pc: None
+    registro = {"pc_id": "pcB", "name": "b", "ip": "10.0.0.1", "port": 7322, "key": CLAVE_PAR.hex()}
+    fed.add_peer(str(peers), registro)
+    server._connect_peer_from_record(registro)
+    assert conexiones == [("pcB", "10.0.0.1")]
+    fed.update_peer_ip(str(peers), "pcB", "10.0.0.2")  # lo que hace beacon.py antes
+    server._beacon_sync_once(BeaconFalso({"pcB": {"ip": "10.0.0.2"}}))
+    assert conexiones[-1] == ("pcB", "10.0.0.2")
+    server._beacon_sync_once(BeaconFalso({"pcB": {"ip": "10.0.0.2"}}))
+    assert len(conexiones) == 2, "con la misma IP no se reconecta"
+    # la que ofreció la frase: ip "" en peers.json, nunca se había conectado
+    fed.add_peer(str(peers), {"pc_id": "pcC", "name": "c", "ip": "", "port": 7322, "key": CLAVE_PAR.hex()})
+    server._beacon_sync_once(BeaconFalso({"pcC": {"ip": "10.0.0.3"}}))
+    assert conexiones[-1] == ("pcC", "10.0.0.3")

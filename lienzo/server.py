@@ -545,6 +545,14 @@ def verify_peer_request(headers, method: str, path: str, body: bytes) -> str | N
     return claimed
 
 
+# La IP con la que el espejo esta conectado a cada peer, la que se le paso a mirror.connect. El
+# beacon compara contra esto y no contra peers.json: beacon.py escribe la IP nueva en peers.json
+# ANTES de que _beacon_sync_loop la mire, asi que esa comparacion siempre daba igual y el espejo
+# seguia colgado de la IP vieja (segunda revision 2026-10-04).
+_ip_conectada: dict[str, str] = {}
+_ip_conectada_lock = threading.Lock()
+
+
 def _connect_peer_from_record(peer: dict) -> None:
     """Arranca (o reemplaza) el espejo de un peer recien emparejado, de cualquiera de los dos
     lados (quien ofrecio la frase, u_pairing.accept_, o quien la pego, _pairing.join_): los dos
@@ -563,6 +571,8 @@ def _connect_peer_from_record(peer: dict) -> None:
     mirror.MIRROR.connect(
         pc_id, {"name": peer.get("name"), "color": peer.get("color")}, host, port, key, identity.pc_id()
     )
+    with _ip_conectada_lock:
+        _ip_conectada[pc_id] = host
     log(f"espejo conectado: {peer.get('name') or pc_id} ({host}:{port})")
 
 
@@ -1829,6 +1839,8 @@ class Handler(BaseHTTPRequestHandler):
             log(f"peer {pc_id}: no se pudo revocar ({e})")
             return self._json(409, {"error": "no se pudo leer peers.json (ver el log): la PC sigue emparejada"})
         mirror.MIRROR.disconnect(pc_id)
+        with _ip_conectada_lock:
+            _ip_conectada.pop(pc_id, None)
         log(f"peer {pc_id} revocado" + ("" if removed else " (no estaba emparejado)"))
         return self._json(200, {"ok": True})
 
@@ -2354,20 +2366,37 @@ def _beacon_sync_loop(stop_event: threading.Event, beacon) -> None:
     lo que beacon.py ya junto, no manda nada por si mismo."""
     while not stop_event.wait(5.0):
         try:
-            vistos = beacon.seen()
-        except Exception as e:
-            log(f"beacon: fallo al leer lo visto: {e}")
+            _beacon_sync_once(beacon)
+        except Exception:
+            log(f"beacon: fallo al sincronizar las IP:\n{traceback.format_exc()}")
+
+
+def _beacon_sync_once(beacon) -> None:
+    """Una pasada: cada peer emparejado que el beacon ve en una IP distinta de la que usa el
+    espejo (o sin espejo conectado: la PC que ofrecio la frase guarda ip "" y nunca conectaba) se
+    anota en peers.json y se reconecta."""
+    try:
+        vistos = beacon.seen()
+    except Exception as e:
+        log(f"beacon: fallo al leer lo visto: {e}")
+        return
+    for pc_id, info in vistos.items():
+        ip = info.get("ip") if isinstance(info, dict) else None
+        if not ip:
             continue
-        for pc_id, info in vistos.items():
-            ip = info.get("ip") if isinstance(info, dict) else None
-            if not ip:
-                continue
-            peer = federation.get_peer(PEERS_FILE, pc_id)
-            if peer is None or peer.get("ip") == ip:
-                continue
+        peer = federation.get_peer(PEERS_FILE, pc_id)
+        with _ip_conectada_lock:
+            conectada = _ip_conectada.get(pc_id)
+        if peer is None or conectada == ip:
+            continue
+        try:
             federation.update_peer_ip(PEERS_FILE, pc_id, ip)
-            _connect_peer_from_record({**peer, "ip": ip})
-            log(f"peer {peer.get('name') or pc_id}: IP actualizada por beacon a {ip}")
+        except OSError as e:
+            log(f"peer {pc_id}: no se pudo anotar la IP {ip} en peers.json ({e}); se reconecta igual")
+        _connect_peer_from_record({**peer, "ip": ip})
+        log(
+            f"peer {peer.get('name') or pc_id}: espejo reconectado por beacon a {ip} (antes {conectada or 'sin conexion'})"
+        )
 
 
 def instalar_excepthook() -> None:
