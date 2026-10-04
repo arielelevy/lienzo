@@ -20,12 +20,36 @@ import { useLocalFlag } from "./hooks/useLocalFlag";
 import { useNotifications } from "./hooks/useNotifications";
 import type { Config, ConfigPut, Session, State } from "./types";
 
+/** sin /auth todavia: cada cuanto se reintenta y desde cuantas fallas seguidas se dice el motivo */
+const AUTH_RETRY_MS = 4000;
+const AUTH_FAILS_SHOWN = 3;
+
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
-  const refreshAuth = useCallback(() => api.get<AuthInfo>("/auth").then(setAuthInfo).catch(() => null), []);
+  // fallas seguidas de /auth y la ultima: sin authInfo la pantalla es "conectando…", y antes un
+  // /auth que fallaba al abrir (server reiniciandose, sin red) la dejaba asi para siempre, sin
+  // reintentar ni decir por que
+  const [authFail, setAuthFail] = useState<{ n: number; msg: string } | null>(null);
+  const refreshAuth = useCallback(
+    () =>
+      api
+        .get<AuthInfo>("/auth")
+        .then((a) => {
+          setAuthInfo(a);
+          setAuthFail(null);
+        })
+        .catch((e) => setAuthFail((f) => ({ n: (f?.n ?? 0) + 1, msg: (e as Error).message }))),
+    [],
+  );
   useEffect(() => {
     refreshAuth();
   }, [refreshAuth]);
+  // mientras no hay authInfo se reintenta solo; con authInfo el reloj de 20 s del tablero lo refresca
+  useEffect(() => {
+    if (authInfo) return;
+    const id = window.setInterval(refreshAuth, AUTH_RETRY_MS);
+    return () => window.clearInterval(id);
+  }, [authInfo, refreshAuth]);
 
   // el alta vive aca arriba: mientras esta abierta no la tapa ni el login ni un corte del SSE
   const [showSetup, setShowSetup] = useState(false);
@@ -58,7 +82,20 @@ export default function App() {
       />
     );
   }
-  if (!authInfo) return <div className="empty">conectando…</div>;
+  if (!authInfo) {
+    // las primeras fallas son lo normal de un server que se esta reiniciando: el motivo aparece
+    // recien despues de varias, para no asustar en cada arranque
+    return (
+      <div className="empty">
+        conectando…
+        {authFail && authFail.n >= AUTH_FAILS_SHOWN && (
+          <div className="small dim" role="alert" style={{ marginTop: 6 }}>
+            El server no contesta ({authFail.msg}). Se reintenta cada {AUTH_RETRY_MS / 1000} s; si sigue así, fijate que esté corriendo.
+          </div>
+        )}
+      </div>
+    );
+  }
   if (authInfo.configured && !authInfo.authenticated) return <Login onDone={refreshAuth} mode={authInfo.mode} initialPassphrase={prefill} />;
   return <Dashboard authInfo={authInfo} refreshAuth={refreshAuth} onSetup={() => setShowSetup(true)} />;
 }

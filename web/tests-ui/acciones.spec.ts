@@ -117,3 +117,21 @@ test("F1: si otra PC no tomó auto-aprobar, el toast dice cuál", async ({ page 
   await expect(page.getByText(/notebook no lo tomó \(timed out\)/)).toBeVisible();
   await expect(page.locator(".auto-aprobar-aviso")).toBeVisible();
 });
+
+test("F2: si /auth falla al abrir se reintenta, dice el motivo y entra cuando vuelve", async ({ page }) => {
+  await page.clock.install();
+  await bloquearEscrituras(page);
+  await instalarTablero(page);
+  let fallas = 4;
+  await page.route("**/auth", (route) => (fallas-- > 0 ? route.abort("connectionrefused") : route.fallback()));
+  await page.goto(BASE);
+  await expect(page.getByText("conectando…")).toBeVisible();
+  // la primera falla no dice nada: es lo normal mientras el server arranca
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.clock.fastForward(4_000);
+  await page.clock.fastForward(4_000);
+  await expect(page.getByRole("alert")).toContainText("El server no contesta");
+  await page.clock.fastForward(4_000);
+  await page.clock.fastForward(4_000);
+  await expect(page.locator(".card").first()).toBeVisible();
+});
