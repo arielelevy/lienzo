@@ -120,6 +120,38 @@ ENROLL_S = 15 * 60
 MAX_BODY = 8 * 1024 * 1024
 MAX_ATTACH = 64 * 1024 * 1024
 
+# Las rutas que no piden login (revision 2026-10-04, 0.7): Handler._prepare las consulta ANTES de
+# leer el cuerpo, asi un anonimo por el tunel recibe 401 sin que se lea un byte. Son las mismas
+# que do_GET/do_POST atienden antes de su `if not self._authed()`; si se agrega una ahi, va aca
+# tambien (y si no, cae del lado seguro: pide login). PUT y DELETE no tienen ninguna.
+RUTAS_PUBLICAS = {
+    ("GET", ()),  # la pagina
+    ("GET", ("docs",)),  # la misma pagina, el front muestra la referencia
+    ("GET", ("favicon.svg",)),
+    ("GET", ("health",)),
+    ("GET", ("auth",)),
+    ("GET", ("totp",)),  # se niega solo fuera de la PC
+    ("GET", ("enroll",)),  # el token del alta es la credencial
+    ("POST", ("login",)),
+    ("POST", ("logout",)),
+    ("POST", ("setup",)),  # se niega solo fuera de la PC
+}
+PREFIJOS_PUBLICOS = {("GET", "assets")}  # los estaticos del build: /assets/<nombre>
+
+
+def es_publica(method: str, parts: list[str]) -> bool:
+    if (method, tuple(parts)) in RUTAS_PUBLICAS:
+        return True
+    return len(parts) == 2 and (method, parts[0]) in PREFIJOS_PUBLICOS
+
+
+def max_body(method: str, parts: list[str]) -> int:
+    """El techo del cuerpo de un pedido: /attach sube archivos e imagenes y tiene el suyo."""
+    if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "attach":
+        return MAX_ATTACH
+    return MAX_BODY
+
+
 # --- HTTP ------------------------------------------------------------------------------
 
 
@@ -964,14 +996,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         for k, v in (extra_headers or {}).items():
             self.send_header(k, v)
+        if self.close_connection:
+            self.send_header("Connection", "close")  # que el cliente no reuse un socket que se cierra
         self.end_headers()
         self.wfile.write(body)
 
-    def _route(self) -> list[str]:
-        """Primera linea de cada do_*, antes de decidir nada. Lee el cuerpo: si queda sin leer en el
-        socket (un 403 o un 404 tempranos), el siguiente request de la misma conexion keep-alive lo
-        toma como linea de pedido y contesta 501. Y parte la ruta: devuelve los tramos de la URL, que
-        es con lo que cada handler elige, y deja la query en `self.query`."""
+    def _route(self, read: bool = True) -> list[str]:
+        """Primera linea de cada do_*, antes de decidir nada. Parte la ruta (devuelve los tramos de
+        la URL, que es con lo que cada handler elige, y deja la query en `self.query`) y valida el
+        Content-Length. Con `read=False` no lee el cuerpo: `_prepare` lo lee con `_read_body`
+        recien despues de autenticar."""
         u = urllib.parse.urlparse(self.path)
         self.query = urllib.parse.parse_qs(u.query)
         self.query_string = u.query  # para reenviar una vista remota (§3.3) con los mismos n/before
@@ -981,29 +1015,47 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get("Transfer-Encoding") or len(lengths) > 1 or not re.fullmatch(r"[0-9]{1,20}", length):
             self.close_connection = True
             raise RequestError("Content-Length invalido o Transfer-Encoding no soportado")
-        n = int(length)
-        cap = MAX_ATTACH if (len(parts) == 3 and parts[0] == "sessions" and parts[2] == "attach") else MAX_BODY
-        if n > cap:
+        self._length = int(length)
+        if self._length > max_body(getattr(self, "command", ""), parts):
             self.close_connection = True
             raise RequestError("cuerpo demasiado grande", 413)
+        if read:
+            self._read_body()
+        return parts
+
+    def _read_body(self) -> None:
+        """Lee el cuerpo ya validado por `_route`. Si un rechazo temprano lo deja sin leer en el
+        socket, el siguiente request de la misma conexion keep-alive lo tomaria como linea de pedido
+        y contestaria 501: por eso todo rechazo antes de leer cierra la conexion (`_prepare`)."""
+        n = self._length
         self.raw = self.rfile.read(n) if n else b""
         if len(self.raw) != n:
             self.close_connection = True
             raise RequestError("cuerpo incompleto")
-        return parts
 
     def _prepare(self, *, write: bool = False, authenticated: bool = False) -> list[str] | None:
-        """Mismos limites, Host y CSRF para todos los metodos; None si ya se rechazo."""
+        """Mismos limites, Host, login y CSRF para todos los metodos; None si ya se rechazo.
+
+        El login se mira ANTES de leer el cuerpo (revision 2026-10-04, 0.7): antes se leian hasta
+        8 MB (64 MB en /attach) de un anonimo por el tunel y recien despues se le decia 401. Que
+        ruta es publica sale de RUTAS_PUBLICAS (es_publica); las demas exigen `_authed`, que para
+        la propia PC y la LAN es siempre True (el cambio solo toca lo que entra por el tunel).
+        `authenticated` queda por compatibilidad: PUT y DELETE no tienen rutas publicas."""
+        self.raw = None
         try:
-            parts = self._route()
+            parts = self._route(read=False)
+            if (authenticated or not es_publica(self.command, parts)) and not self._authed():
+                raise RequestError("hace falta iniciar sesion", 401)
+            # Host y CSRF despues de leer: un 400/403 deja la conexion keep-alive usable, como antes
+            self._read_body()
             if not self._host_ok():
                 raise RequestError("Host no valido")
             if write and not self._csrf_ok():
                 raise RequestError("falta X-Lienzo o el Origin no es propio", 403)
-            if authenticated and not self._authed():
-                raise RequestError("hace falta iniciar sesion", 401)
             return parts
         except Exception as e:
+            if self.raw is None:
+                self.close_connection = True  # el cuerpo quedo en el socket: no se reusa la conexion
             self._server_error(e)
             return None
 

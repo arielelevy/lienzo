@@ -4,6 +4,7 @@ y procesos: subproc.correr (0.5) y lo que cambia en el server (0.2, 0.3, 0.7, 0.
 import http.client
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -238,3 +239,46 @@ def test_la_huella_del_skill_y_la_del_server_son_la_misma():
     import aprobador
 
     assert aprobador.huella(PANTALLA) == pantalla_coda.huella(PANTALLA) == server.huella_de_pantalla(PANTALLA)
+
+
+# 0.7: sin autenticar no se lee el cuerpo
+
+TUNEL = {"CF-Connecting-IP": "203.0.113.9"}
+
+
+def test_por_el_tunel_sin_cookie_todo_da_401_salvo_las_rutas_publicas(srv, monkeypatch):
+    monkeypatch.setattr(server.auth, "check", lambda cookie: False)
+    for method, path in (("GET", "/sessions"), ("GET", "/config"), ("POST", "/rules"), ("PUT", "/config")):
+        assert pedir(srv, method, path, {}, TUNEL)[0] == 401, (method, path)
+    assert pedir(srv, "DELETE", "/rules/x", None, TUNEL)[0] == 401
+    for path in ("/health", "/auth"):
+        assert pedir(srv, "GET", path, None, TUNEL)[0] == 200, path
+    assert server.es_publica("POST", ["login"]) and server.es_publica("GET", ["assets", "x.js"])
+    assert not server.es_publica("GET", ["docs", "x.md"]) and not server.es_publica("POST", ["sessions", "x", "send"])
+
+
+def test_desde_la_pc_o_la_lan_no_pide_login(srv):
+    assert pedir(srv, "GET", "/sessions")[0] == 200
+    assert pedir(srv, "PUT", "/config", {"auto_continue": True})[0] == 200
+
+
+def test_sin_autenticar_contesta_401_sin_esperar_el_cuerpo(srv, monkeypatch):
+    """Antes _prepare leía hasta 8 MB (64 MB en /attach) antes de mirar la cookie: un anónimo por
+    el túnel ocupaba un hilo y memoria. Ahora contesta 401 y cierra sin leer: un cuerpo declarado
+    y nunca enviado ya no retiene la conexión 30 s."""
+    monkeypatch.setattr(server.auth, "check", lambda cookie: False)
+    s = socket.create_connection(("127.0.0.1", srv), timeout=5)
+    s.sendall(
+        b"POST /sessions/x/attach HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Lienzo: 1\r\n"
+        b"CF-Connecting-IP: 203.0.113.9\r\nContent-Length: 60000000\r\n\r\n"
+    )
+    t0 = time.monotonic()
+    resp = s.recv(4096)
+    s.close()
+    assert resp.startswith(b"HTTP/1.1 401") and time.monotonic() - t0 < 4
+    assert b"Connection: close" in resp
+
+
+def test_max_body_es_mayor_solo_en_attach():
+    assert server.max_body("POST", ["sessions", "x", "attach"]) == server.MAX_ATTACH
+    assert server.max_body("POST", ["sessions", "x", "send"]) == server.MAX_BODY
