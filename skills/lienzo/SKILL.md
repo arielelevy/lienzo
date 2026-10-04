@@ -451,6 +451,14 @@ Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
   de cuatro sesiones a la vez, y el `pop` posterior chocó con una edición concurrente y quedó sin
   aplicar). Para ver una versión vieja de un archivo sin tocar el árbol: `git show HEAD:<archivo> >
   <algo>`, nunca `stash`/`checkout`/`reset`.
+- **Una tarjeta en `te_necesita` sin nada en `GET /pending` tiene el permiso en la pantalla.** Una
+  regla `ask` de Claude Code (por ejemplo `Bash(rm -r*)`, «Ask rule … overrides auto mode») no pasa
+  por el hook de permisos: aparece como diálogo numerado en la terminal, y `/pending` sigue
+  mostrando sólo lo vencido. Se lee con `GET /sessions/<sid>/screen` (el comando completo está en
+  `dialog.detail`) y se contesta con `POST /sessions/<sid>/dialog {choice}`. **Leer el comando antes
+  de contestar**: el 2026-10-04 un frente pidió así `rm -rf /d/Users` en la PC esclava (desde Git
+  Bash, `D:\Users` entero) para limpiar una carpeta que había creado por error; la respuesta fue «No» y
+  un mensaje con la ruta exacta a borrar después de listarla.
 
 ## Secretos entre PCs (un token de git)
 
