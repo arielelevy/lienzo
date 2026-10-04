@@ -1757,7 +1757,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(409, {"error": str(e)})
         _connect_peer_from_record(peer)
         log(f"peer emparejado: {peer.get('name') or peer.get('pc_id')} ({host}:{port})")
-        return self._json(200, peer)
+        # la clave del par no sale nunca del server: se guarda en peers.json y nada mas (medido el
+        # 2026-10-04: la respuesta la traia en claro y quedo en la salida de quien emparejo)
+        return self._json(200, {k: v for k, v in peer.items() if k != "key"})
 
     def _launch(self) -> None:
         """POST /sessions/launch {pc, cwd, title, agent}: local con launch.launch (frente B), o
