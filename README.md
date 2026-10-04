@@ -261,6 +261,11 @@ en la tarjeta con sus opciones; elegir una teclea el número en su terminal.
 - **Aprobar o denegar un permiso** sin ir a la terminal: la tarjeta muestra el comando con
   Permitir y Denegar. Nunca "permitir siempre". El pedido vence a los 60 segundos y ahí el prompt
   aparece en la terminal como siempre.
+- **Permisos denegados**: lo que una regla, una política o un clasificador le niega a un agente
+  (no lo que rechazás vos) aparece en su tarjeta como «Denegado: herramienta», con el comando y el
+  motivo, y un botón «Autorizar y que reintente» que se lo dice al agente. Vale para Claude, Codex y
+  Pi (sale de la transcripción) y para coda (sale de su log, que también avisa cuando coda propone
+  una regla de permisos permanente con `propose_policy`).
 - **Elegir una opción cuando la sesión te pregunta**: `AskUserQuestion` llega por el mismo hook
   que un permiso, pero no es un permiso. La tarjeta muestra la pregunta y sus opciones con la
   descripción de cada una; se toca la que va (o se escribe otra cosa) y el agente sigue, sin
@@ -319,10 +324,9 @@ mandado queda en la pestaña Conexiones. Un click en el glifo elige la flecha y 
 el doble click abre el editor de la regla o los mensajes de ese par; Quitar vive adentro, con
 confirmación. Un botón del menú las oculta, y en pantallas de menos de 900 px no se dibujan.
 
-### Las dos automatizaciones
+### Las automatizaciones
 
-Las dos viven en el menú ⋯ y las dos vienen apagadas. Son lo único que corre sin que hagas nada, y
-las dos tienen tope: un disparo por aviso.
+Viven en el menú ⋯ y vienen apagadas. Son lo único que corre sin que hagas nada.
 
 - **Continuar solo tras límite de uso**: cuando una sesión avisa que llegó al límite con hora de
   vuelta, deja programada la regla "Continuar" un minuto después. Si borrás la regla, no la vuelve
@@ -331,6 +335,13 @@ las dos tienen tope: un disparo por aviso.
   stopped arriving" (o un timeout, o un `overloaded_error`), programa "Continuar" diez segundos
   después —tiempo de sobra para quitarla si no querés—. Un límite de uso o un problema de crédito
   no entran acá: eso no se arregla reintentando.
+- **☠ Auto-aprobar TODO (peligroso)**: el check en negro. Aprueba solo, sin mirarlo, cada permiso
+  que pida cualquier agente (Claude, Codex, Pi, coda) en **todas las PCs emparejadas**; no contesta
+  las preguntas con opciones. Pide confirmación al prenderlo, deja una barra negra arriba con
+  «Apagar» mientras está prendido, y cada aprobación queda en `lienzo.log` como AUTO-APROBADO. Se
+  prende solo desde una PC de la LAN (nunca por el túnel). Si una PC no lo toma (estaba caída), la
+  UI lo avisa y se le reenvía cuando vuelve. Está hecho con proveedores (`lienzo/autoaprobar.py`):
+  uno por cada forma de pedir permiso (el hook de Claude/Codex/Pi y el cartel de coda).
 
 ## Delegar trabajo a varias sesiones
 
@@ -393,9 +404,13 @@ remota: si la tarjeta es de otra PC, el server reenvía el pedido y devuelve la 
 
 ### Emparejar
 
-**🖥 Varias PCs**, en el menú ⋯: una PC ofrece una frase de seis palabras (el mismo generador EFF
-del acceso remoto), la otra la pega. De ahí sale una clave compartida por par, guardada en
-`peers.json` de las dos puntas; **tope de 4 peers**. La misma pantalla lista los peers y los
+**🖥 Varias PCs**, en el menú ⋯: una PC ofrece una palabra (de la lista EFF), la otra la pega
+dentro de los 5 minutos. La clave del par **no sale de la palabra**: sale de un intercambio SPAKE2
+(Diffie-Hellman sobre el grupo MODP de 2048 bits, cegado con la palabra), así que quien escucha la
+red no aprende nada y quien se hace pasar por la otra PC tiene un solo intento. Una palabra mal
+tipeada se gasta (hay que generar otra) y cinco errores bloquean el emparejamiento 15 minutos. La
+clave queda en `peers.json` de las dos puntas; **tope de 4 peers**. Las dos PCs tienen que tener
+la misma versión para emparejarse (una vieja contesta «formato viejo»). La misma pantalla lista los peers y los
 revoca; revocar corta el espejo y lo saca de `peers.json`, y del otro lado se entera cuando deja
 de contestarle.
 
@@ -491,8 +506,13 @@ todavía no tiene botón en el tablero.
 ### La tira de PCs y los chips de proyecto
 
 Con dos o más PCs emparejadas aparece, arriba del tablero, un chip **Todas** con el total y uno por
-PC con su nombre, cuántas tarjetas tiene ahí y —si está viva— memoria libre y temperatura
-(`GET /peers`); el conteo va en subíndice chico, para que no se lea como parte del nombre. Click
+PC con su nombre, cuántas tarjetas tiene ahí y —si está viva— memoria libre, CPU, temperatura y
+la latencia de los pedidos a esa PC (`GET /peers`); el conteo va en subíndice chico, para que no se
+lea como parte del nombre. **El chip se pone en rojo**, con el motivo al pasar el mouse, si la PC
+pasa de 85 °C, si no le entra otro agente sin bajar de 1,5 GB libres, o si su credencial de git
+venció: cada PC prueba con `git ls-remote` (sin abrir ventanas de login) las urls de la clave
+`git_check` de su `config.json`. La temperatura sale de LibreHardwareMonitor si está corriendo, o
+de la zona térmica de Windows que haya. Click
 filtra a esa PC y nada más (Ctrl+click suma otra al filtro, ver *Elegir varias a la vez*): se
 vuelve con Todas. Una PC caída se ve en ○, sin
 memoria ni temperatura (sería un dato viejo), y sus tarjetas quedan grises con controles
@@ -520,13 +540,26 @@ manejar sus propios avisos "cuando termine" sin que crucen la red.
 una sola máquina: no hay forma de mapear un nombre nativo (`app-1c`) a una sesión de otra PC. El
 tablero no ofrece la flecha doble entre tarjetas de PCs distintas.
 
+### Secretos entre PCs
+
+Un token nunca se pega en un mensaje: quedaría en claro en los adjuntos y en los transcripts.
+`coordinar.pasar_credencial_git(pc, url)` copia a otra PC la credencial de git que esta ya tiene
+guardada: viaja cifrada con la clave del par y la otra la guarda en su almacén de Windows, sin que
+ningún agente la vea. Para otro secreto, `coordinar.enviar_secreto(pc, nombre, valor)` lo deja 10
+minutos en memoria y `coordinar.leer_secreto(id, pc=pc)` lo lee una sola vez, desde cualquier PC de
+la LAN. Nunca va a un log, un adjunto ni una respuesta.
+
 ### Seguridad, en criollo
 
 Con esto, un peer emparejado puede teclear en los agentes de la otra PC y lanzar sesiones nuevas:
 mismo nivel de riesgo que el acceso remoto de arriba, mitigado igual —listener aparte que sólo
 atiende `/peer/*`, bind a la IP de LAN (nunca `0.0.0.0`), firewall sólo en perfil Privado, toda
 request firmada con ventana y nonce, `launch` restringido a `launch_roots` y a ejecutables fijos,
-peers revocables, tope de 4—. Cada request de un peer queda en `lienzo.log` con la etiqueta `peer`.
+peers revocables, tope de 4—. La clave del par sale de SPAKE2 (ver *Emparejar*): capturar tráfico
+no sirve para adivinarla. Un pedido sin firma de una PC emparejada recibe 401 sin que se lea el
+cuerpo, y el motivo de cada 401 (reloj corrido, nonce repetido, firma) queda en el log. Ojo:
+**con auto-aprobar prendido, una PC emparejada puede ejecutar comandos en las otras**: prendelo
+sabiendo eso. Cada request de un peer queda en `lienzo.log` con la etiqueta `peer`.
 
 ## API
 
@@ -543,13 +576,14 @@ túnel, además la cookie de sesión.
 | POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío entre sesiones, con `native` lo marca como canal nativo. Con `from` y `copycat: true` es "pegar trabajo": la tarjeta hereda el título con la marca copycat (`copycat_of`) y, salvo `stop_origin: false`, la de origen recibe un Esc si corre y queda `stopped_by`; la respuesta trae `interrupted` |
 | POST | `/sessions/<sid>/interrupt` | un Esc en su terminal: corta el turno que corre. 409 si la sesión no está corriendo (en una quieta el Esc borra la caja) |
 | POST | `/sessions/<sid>/dialog` | `{choice: n}`; elige una opción del diálogo de la TUI que la tarjeta está mostrando (se teclea el número, sin Enter). 409 si esa sesión no está mostrando esa opción |
+| POST | `/sessions/<sid>/approve` | `{decision: allow\|deny, expect?}`; contesta el permiso que coda muestra en su terminal (Enter o Esc). Con `expect` (sha256 del comando visible) solo teclea si la pantalla sigue mostrando ese comando: si cambió, 409 `expect_mismatch` |
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
 | PUT | `/sessions/<sid>/title` | `{title}`; el título pasa a ser del usuario y no se recalcula |
 | PUT | `/sessions/<sid>/stopped` | `{on: true\|false}`; la llave. Prender: Esc si corre, `stopped_by: "user"`, aviso a la coordinadora y a las conectadas por regla vigente (la respuesta trae `interrupted` y `notified`). Apagar: vuelve a recibir. Mientras está prendida, `/send`, `/dialog` e `/interrupt` devuelven 409 y las reglas hacia ella se saltean |
 | PUT | `/sessions/<sid>/coordinator` | `{on: true\|false, scope?: "pc"}`; una coordinadora por repo en toda la federación, prender una apaga la anterior; `scope: "pc"` la separa sólo para esta PC |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
-| GET | `/peers` | la propia PC primero (`local: true`) y después cada peer emparejado, con `alive`, `last_seen` y `health` (memoria, CPU, temperatura); sin peers, un array de un solo elemento |
-| POST | `/peers/offer` | `{ttl_s?}`; genera la frase de seis palabras para emparejar, `{phrase, expires}` |
+| GET | `/peers` | la propia PC primero (`local: true`) y después cada peer emparejado, con `alive`, `last_seen`, `latencia_ms` y `health` (memoria, CPU, temperatura, `agentes_libres`, `git_auth`); sin peers, un array de un solo elemento |
+| POST | `/peers/offer` | `{ttl_s?}`; genera la palabra para emparejar (SPAKE2), `{phrase, expires}` |
 | POST | `/peers/join` | `{phrase, host, port}`; pega la frase del otro lado. 400 si no vale, 409 con tope de 4 ya emparejados |
 | GET | `/peers/lan` | las PCs de la LAN con el lienzo andando que todavía no están emparejadas, por el anuncio del beacon: `[{pc_id, name, ip, port, last_seen}]` |
 | DELETE | `/peers/<pc_id>` | revoca el peer y corta el espejo |
@@ -563,8 +597,11 @@ túnel, además la cookie de sesión.
 | DELETE | `/links/<id>`, `/rules/<id>` | quita la flecha o la conexión; una regla que vive en otra PC se reenvía a su dueña |
 | GET | `/pending` | permisos esperando respuesta |
 | POST | `/pending/<id>` | `{decision: allow\|deny}` |
-| GET | `/config` | `{auto_continue, auto_retry}` |
-| PUT | `/config` | `{auto_continue: true\|false, auto_retry: true\|false}`; sólo esas claves, el resto de `config.json` no se toca |
+| GET | `/config` | `{auto_continue, auto_retry, auto_aprobar}` |
+| PUT | `/config` | `{auto_continue?, auto_retry?, auto_aprobar?}` (booleanos); sólo esas claves, el resto de `config.json` no se toca. `auto_aprobar` solo desde la LAN y se manda a todas las PCs: la respuesta trae `peers: {pc_id: "ok" \| error}` |
+| POST | `/secrets` | `{pc?, nombre, destino: git\|memoria, valor \| desde: "git_local", git_url?, usuario?}`; un secreto cifrado a esa PC. La respuesta nunca trae el valor |
+| GET | `/secrets`, `/secrets/<id>?pc=` | los secretos en memoria (sin valores); leer uno lo borra. Solo desde la LAN |
+| POST | `/rules/retarget` | `{old, new}`; las reglas que avisaban a `old` pasan a `new`, en todas las PCs |
 | GET | `/events` | SSE con cada cambio de sesiones, pendientes, links, reglas |
 | GET | `/docs`, `/docs/README.md`, `/docs/DISENO.es.md`, `/docs/img/<x>.png` | la referencia buscable (menú ⋯ → Referencia) y los archivos que lee, tal como están en el repo |
 | POST | `/rescan` | barrido de procesos ahora |
@@ -597,9 +634,13 @@ lienzo/
   server.py        handler HTTP + SSE, túnel, arranque de los hilos, listener de peers (7322) y sus rutas `/peer/*`
   identity.py      pc_id, nombre y color de esta PC (`peer.json`); identidad de un repo por su remote `origin`, sin `git` por subprocess
   federation.py    firma HMAC con ventana y nonce, KDF del emparejamiento, `peers.json`, beacon (codificar/decodificar), cliente SSE con reconexión, transporte HTTP
-  pairing.py       frase de seis palabras: quién la ofrece, quién la valida, quién la pega (`offer`/`accept`/`join`)
+  pairing.py       emparejamiento con SPAKE2: quién ofrece la palabra, quién la valida, quién la pega (`offer`/`accept`/`join`)
+  secretos.py      secretos entre PCs: cifrado con la clave del par, un solo uso, credenciales de git
+  autoaprobar.py   auto-aprobar TODO, con un proveedor por forma de pedir permiso
+  subproc.py       `correr()`: subprocesos (git, powershell, tmux) que nunca cuelgan al server
+  pantalla_coda.py el comando del cartel de permiso de coda y su huella (para `expect`)
   beacon.py        hilo que emite y escucha el beacon UDP (7323) y actualiza la IP de cada peer
-  health.py        memoria, CPU y temperatura de esta PC, sin dependencias nuevas
+  health.py        memoria, CPU, temperatura (fuentes intercambiables), capacidad y credenciales de git de esta PC
   mirror.py        espejo en memoria de cada peer conectado (SSE saliente), enrutado (`owner_of`, `forward`) y salud
   launch.py        lanza una sesión nueva, local o pedida por otra PC, restringido a `launch_roots`: `.cmd` en Windows, tmux en Mac/Linux/WSL
 web/               interfaz (Vite + React + TypeScript); `npm run build` deja web/dist
@@ -609,7 +650,7 @@ web/               interfaz (Vite + React + TypeScript); `npm run build` deja we
   src/hooks/               datos por SSE, avisos del navegador y flags guardados en el navegador
   src/components/PcStrip.tsx       tira de PCs arriba del tablero, filtro por PC
   src/components/ProjectStrip.tsx  chips de proyecto (elige, no oculta) y ★ Coordinadoras
-skills/lienzo/     skill para agentes: cómo lanzar terminales, repartir frentes y coordinarlos; `coordinar.py` es el cliente de la API
+skills/lienzo/     skill para agentes: cómo lanzar terminales, repartir frentes y coordinarlos; `coordinar.py` es el cliente de la API y `aprobador.py` aprueba permisos de una coda con una lista permitida
 tests/             pytest: transcripciones reales, procesos vivos, la máquina de estados del server y la federación entre PCs
 install.py         alta y baja de los hooks; `--peer` para la regla de firewall del emparejamiento
 lienzo-server.cmd  arranque (Windows)
@@ -622,14 +663,14 @@ e `install.py`, y sirve para correr dos instancias en la misma PC (dos puertos, 
 si fueran dos PCs.
 
 ```powershell
-python -m pytest tests -q                                   # 380 tests
-python -m ruff check lienzo tests install.py                # lint
-python -m black lienzo tests install.py                     # formato
+py -3.14 -m pytest tests -q                                 # 735 tests
+py -3.14 -m ruff check .                                    # lint
+py -3.14 -m ruff format lienzo tests skills                 # formato
 cd web; npm run build                                       # tsc + vite
 cd web; npm run lint                                        # eslint (typescript-eslint + react-hooks); las reglas del compilador de React quedan como advertencia
 cd web; node --experimental-strip-types src/arrows-geometry.test.ts   # 37 tests de las flechas
 cd web; node --experimental-strip-types src/nl.test.ts                # 79 aserciones del parser de frases
-cd web; npm run test:ui                                               # 35 pruebas de interfaz en el navegador (Playwright)
+cd web; npm run test:ui                                               # 115 pruebas de interfaz en el navegador (Playwright)
 ```
 
 Las de interfaz miden el tablero pintado (alturas, subcolumnas, flechas, scroll, contraste) contra
@@ -648,7 +689,9 @@ andando en el 7321 —no lo arrancan ni lo reinician—, la primera vez bajan Ch
   sessions/      una tarjeta por sesión
   links.json     envíos hechos (flechas y pestaña Conexiones)
   rules.json     conexiones (cuando termine, a una hora), vigentes y cumplidas
-  config.json    auto_continue, launch_roots, y lo que comparte con hook.py (espera de permisos, ejemplos)
+  config.json    auto_continue, auto_retry, auto_aprobar, launch_roots, git_check, y lo que comparte con hook.py (espera de permisos, ejemplos)
+  config_pendiente.json  el valor de auto_aprobar que alguna PC no tomó, para reenviárselo cuando vuelva
+  *.corrupto-<fecha>     un JSON de estado que no se pudo leer, apartado (con aviso en el log) en vez de pisarlo
   auth.json      clave TOTP del acceso remoto
   peer.json      identidad de esta PC: pc_id, nombre, color
   peers.json     PCs emparejadas: pc_id, nombre, ip, puerto, clave del par

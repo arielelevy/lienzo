@@ -49,11 +49,30 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-04 | **Los permisos DENEGADOS llegan al lienzo** (coda por su log, `decision: deny`; Claude, Codex y Pi por la transcripción): la tarjeta muestra «Denegado: herramienta», el comando y el motivo, con «Autorizar y que reintente»; lo que rechaza el humano no cuenta | en la otra PC había denegaciones que nunca llegaban |
 | 2026-10-04 | **Auto-aprobar TODO (peligroso, a pedido)**: check en negro en el menú ⋯, con confirmación y barra negra arriba mientras está prendido; vale para todas las PCs emparejadas y solo se prende desde la LAN. Patrón de proveedores (`lienzo/autoaprobar.py`): `PendientesDeHook` (Claude, Codex, Pi) y `DialogoDeCoda`; no contesta preguntas con opciones y cada aprobación queda en el log como AUTO-APROBADO | pedido de Ariel |
 | 2026-10-04 | **`propose_policy` de coda se ve como permiso**: esa herramienta abre «Approval Required» sin dejar un `ask` en el log; ahora el `PreToolUse` pone la tarjeta en «te necesita» con Permitir/Denegar (y el auto-aprobar la toma), y la próxima herramienta la libera | reporte de la coordinadora: una coda de la otra PC quedó esperando la aprobación de una regla y la tarjeta seguía en «corriendo» |
-| 2026-10-04 | **Refactor, ola 1** (`docs/plan-refactor-2026-10-04.md`): 4 revisiones de diseño, 2 adversariales y 50 commits de 4 agentes: sin errores silenciados en hilos y archivos, concurrencia bajo el lock, aprobador endurecido, `subproc.correr`, cuerpo sin leer antes del login, espejo que no se congela, SPAKE2 en el emparejamiento | pedido de Ariel: código refactorizado, sin errores silenciados, con patrones que apliquen |
+| 2026-10-04 | **Refactor, ola 1** (plan del 2026-10-04, ahora en esta bitácora): 4 revisiones de diseño, 2 adversariales y 50 commits de 4 agentes: sin errores silenciados en hilos y archivos, concurrencia bajo el lock, aprobador endurecido, `subproc.correr`, cuerpo sin leer antes del login, espejo que no se congela, SPAKE2 en el emparejamiento | pedido de Ariel: código refactorizado, sin errores silenciados, con patrones que apliquen |
 | 2026-10-04 | **Permisos de coda que nadie veía**: (1) con auto-aprobar prendido, el hook `PreToolUse` de coda (ahora sincrónico) contesta `allow` y el cartel ni aparece; (2) si igual aparece, una coda «corriendo» quieta 8 s tiene su pantalla mirada (cada 10 s como mucho) y, con el cartel, pasa a «te necesita» con el comando; (3) el `ask` del log se ve aunque el inicio del turno quede fuera de la ventana | dos codas de la otra PC esperaron una hora un `npm run build` sin que el tablero ni el auto-aprobar lo vieran |
 
 ## Pendiente (con evidencia)
 
+- **Refactor, ola 2** (del plan del 2026-10-04, revisado por dos revisiones adversariales; la ola 1 ya
+  está en «Hecho»): (1) acciones de tarjeta en una tabla que usan `Handler` y `PeerHandler` (send,
+  approve, dialog, title, stopped, coordinator, pending, launch, retarget), en cuatro commits y con una
+  prueba de paridad antes, orden validar → ubicar → ejecutar o reenviar; (2) registro de agentes con
+  los DATOS (exe, retomar, modelo, parser) en `agentes.py` y error explícito ante un agente
+  desconocido (hoy cae a `parse_claude` sin aviso); las ramas de comportamiento quedan con su nombre;
+  antes, mover las `guess_*` de sessions a un módulo hoja; (3) `CacheEnSegundoPlano` para las dos
+  cachés de health y `_io.atomic_write` (la de auth no tiene el reintento de Windows); (4) front:
+  cliente de API tipado (los cuerpos de `/send` y `/rules` sin tipo hoy) y `<CardNeeds>` para achicar
+  `Card.tsx`; (5) partir `server.py` (la lógica de reglas a `rules_api.py`, una base `JsonHandler`) y
+  de `sessions.py` solo lo puro (`tarjeta_texto.py`) y las referencias (`referencias.py`), moviendo
+  los `monkeypatch` de las pruebas en un commit aparte. Descartados: Strategy para la política del
+  aprobador (es una funcionalidad nueva), helper de turnos para los parsers, contexto de acciones en
+  el front (sin medición).
+- **hook.py se traga un `config.json` corrupto** (`load_config` devuelve `{}`): el resto ya aparta el
+  archivo con aviso; hook.py lo duplica a propósito (arranca en cada evento) y quedó afuera.
+- **Pruebas que conviene escribir** (salieron de la revisión adversarial): matriz de autenticación
+  por ruta para el túnel, paridad entre `Handler` y `PeerHandler`, el contrato de los 404
+  (`unknown_session` contra ruta desconocida) y referencias (golden) por agente en los parsers.
 - **La tarjeta se queda en «Te necesita» con un permiso que ya no existe** (medido el 2026-10-02): la tarjeta del Claude del gestor
   mostró durante unas 16 horas «Pide permiso» con el comando de un ruff de un subagente, desde un aviso (Notification) de las 05:06,
   aunque en su terminal no había ningún cartel. Ese permiso lo había aprobado yo hacía horas y la marca no se limpió. Confunde a
