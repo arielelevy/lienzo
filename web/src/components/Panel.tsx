@@ -1,5 +1,5 @@
 import { Component, useCallback, useEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
-import { ago, api, detail } from "../api";
+import { ago, api, detail, isMissingRoute } from "../api";
 import { hhmm } from "../nl";
 import { isFree, needsPiReload, periodLabel, schedLabel, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
@@ -193,7 +193,9 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
         .then((c) => !cancelled && setConn(c))
         .catch((e) => {
           if (cancelled) return;
-          if ((e as Error).message === "404") setConn("old");
+          // isMissingRoute y no `message === "404"`: un server que contesta {"error": "ruta
+          // desconocida"} trae ese texto como mensaje, y la fila quedaba esperando para siempre
+          if (isMissingRoute(e)) setConn("old");
           else console.warn("connections:", e); // sin red o server caido: se reintenta en 30 s
         });
     load();

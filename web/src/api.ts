@@ -20,6 +20,21 @@ async function parse<T>(r: Response): Promise<T> {
   return j as T;
 }
 
+/** El server que corre es anterior a esa ruta: un 404 de la ruta, no de la tarjeta. Antes se
+ *  comparaba el mensaje con "404" o "ruta desconocida" en cada componente, y el Panel solo miraba
+ *  "404", asi que con un server que contesta JSON ({"error": "ruta desconocida"}) nunca lo detectaba.
+ *  Un 404 de tarjeta desconocida trae `code: "unknown_session"` (server.py no_session; mirror.py
+ *  depende de ese code) y no es "reiniciá el server": la tarjeta se fue, nada mas. */
+export function isMissingRoute(e: unknown): boolean {
+  if (!(e instanceof ApiError) || e.status !== 404 || e.body.code === "unknown_session") return false;
+  return e.body.error === "ruta desconocida" || !e.body.error;
+}
+
+/** Texto del toast de error de una accion: "reiniciá el server" si falta la ruta, si no
+ *  "No se pudo <verbo>: <motivo>". Sin verbo queda "No se pudo: <motivo>". */
+export const failMsg = (verbo = "") => (e: unknown): string =>
+  isMissingRoute(e) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo${verbo ? ` ${verbo}` : ""}: ${(e as Error).message}`;
+
 const request = <T,>(path: string, options?: RequestInit): Promise<T> => fetch(path, options).then(parse<T>);
 const jsonRequest = <T,>(method: string, path: string, body: unknown) =>
   request<T>(path, { method, headers: HEADERS, body: JSON.stringify(body) });

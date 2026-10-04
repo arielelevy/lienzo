@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ago, api, detail } from "../api";
+import { ago, api, detail, failMsg } from "../api";
 import { hhmm } from "../nl";
 import { canWrite, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, needsLabel, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { Ask, askQuestions } from "./Ask";
@@ -45,9 +45,6 @@ export async function copyText(text: string, toast: ToastFn) {
   }
 }
 
-/** el server que corre es anterior a esa ruta (404 crudo, o su JSON "ruta desconocida") */
-const noRoute = (m: string) => m === "404" || m === "ruta desconocida";
-
 /** Renombrar en el lugar: `start` abre un input con el titulo actual (seleccionado); Enter guarda
  *  por PUT /sessions/<sid>/title, Escape o blur cancelan. Devuelve el input listo para poner donde
  *  iba el titulo. */
@@ -70,8 +67,7 @@ function useRename(s: Session, toast: ToastFn) {
       await api.put(`/sessions/${s.session_id}/title`, { title });
       toast("título guardado");
     } catch (e) {
-      const m = (e as Error).message;
-      toast(noRoute(m) ? "reiniciá el server" : `No se pudo renombrar: ${m}`, true);
+      toast(failMsg("renombrar")(e), true);
     }
   };
   const input = editing ? (
@@ -410,13 +406,14 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     !!limitAt && rules.some((r) => r.kind === "at" && r.to === s.session_id && !!r.at && Math.abs(new Date(r.at).getTime() - limitAt.getTime()) < 5 * 60_000);
 
   /** accion contra el server con los botones deshabilitados mientras dura: `fn` devuelve el texto
-   *  del toast de exito, `fail` arma el de error a partir del mensaje */
-  const act = async (fn: () => Promise<string>, fail: (m: string) => string) => {
+   *  del toast de exito, `fail` arma el de error a partir del error (failMsg distingue la ruta que
+   *  falta de cualquier otro 404) */
+  const act = async (fn: () => Promise<string>, fail: (e: unknown) => string) => {
     setBusy(true);
     try {
       toast(await fn());
     } catch (e) {
-      toast(fail((e as Error).message), true);
+      toast(fail(e), true);
     } finally {
       setBusy(false);
     }
@@ -426,19 +423,19 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     act(async () => {
       await api.post("/rules", { kind: "at", from: null, to: s.session_id, text: "Continuar", at: limitAt.toISOString() });
       return `A las ${hhmm(limitAt)} se le escribe "Continuar"`;
-    }, (m) => `No se pudo programar: ${m}`);
+    }, failMsg("programar"));
   /** una opción del diálogo de la TUI: se teclea el número en su terminal, sin Enter */
   const pickDialog = (n: number, text: string) =>
     act(async () => {
       await api.post(`/sessions/${s.session_id}/dialog`, { choice: n });
       return `Elegido: ${text}`;
-    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo elegir: ${m}`));
+    }, failMsg("elegir"));
   /** el permiso que CODA pide en su terminal: Enter (Yes) o Esc, tecleado por el server */
   const codaDecide = (decision: "allow" | "deny") =>
     act(async () => {
       await api.post(`/sessions/${s.session_id}/approve`, { decision });
       return decision === "allow" ? "Permitido en su terminal" : "Denegado en su terminal";
-    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo contestar: ${m}`));
+    }, failMsg("contestar"));
   /** le avisa al agente que el humano autoriza lo que se le denego, para que lo reintente */
   const autorizarDenegado = () => {
     const d = s.last_denied;
@@ -450,7 +447,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     act(async () => {
       const r = await api.post<{ chars: number }>(`/sessions/${s.session_id}/send`, { text, attachments: [] });
       return `Enviado (${r.chars} caracteres)`;
-    }, (m) => `No se pudo enviar: ${m}`);
+    }, failMsg("enviar"));
   // estrella de coordinadora: a lo sumo una por repo; recibe los avisos "cuando termine" del
   // SendBox y el "avisame" del parser. Un server anterior a la ruta contesta 404 y la estrella solo avisa
   const toggleCoordinator = () => {
@@ -458,7 +455,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     return act(async () => {
       await api.put(`/sessions/${s.session_id}/coordinator`, { on });
       return on ? `${shortName(s)} es la coordinadora de ${s.repo}` : `${shortName(s)} ya no es la coordinadora`;
-    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`));
+    }, failMsg());
   };
   // coordinadora separada solo para esta PC (plan §3.6): no apaga ni la reemplaza la federada de
   // otra PC del mismo repo. Apagarla no necesita mandar el scope, `set_coordinator` lo limpia solo
@@ -468,7 +465,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     return act(async () => {
       await api.put(`/sessions/${s.session_id}/coordinator`, on ? { on: true, scope: "pc" } : { on: false });
       return on ? `${shortName(s)} es la coordinadora de ${s.repo} en esta PC` : `${shortName(s)} ya no es la coordinadora de esta PC`;
-    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`));
+    }, failMsg());
   };
 
   // la llave stopped: prendida no recibe mensajes ni reglas (el server avisa a sus conectadas),
@@ -480,7 +477,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       if (!on) return `${shortName(s)} habilitada: vuelve a recibir`;
       const avisadas = r.notified?.length ? `; avisadas: ${r.notified.join(", ")}` : "; sin conectadas a quien avisar";
       return `${shortName(s)} detenida${r.interrupted ? " (Esc en su terminal)" : ""}${avisadas}`;
-    }, (m) => (noRoute(m) ? "El server que corre no tiene esta ruta todavía: reiniciá el server" : `No se pudo: ${m}`));
+    }, failMsg());
   };
   const stoppedBy = s.stopped_by === "user" ? "la detuvieron desde el tablero" : s.stopped_by ? `su trabajo siguió en ${shortName(sessions[s.stopped_by], "otra sesión")}` : "";
 
