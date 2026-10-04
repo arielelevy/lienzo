@@ -510,6 +510,118 @@ def _pending_owner(request_id: str) -> str | None:
     return next((p.get("pc") for p in mirror.MIRROR.pending() if p.get("request_id") == request_id), None)
 
 
+def fan_out(
+    method: str, path: str, body: dict | None = None, *, pcs: list[str] | None = None
+) -> tuple[dict[str, dict], dict[str, str]]:
+    """Manda el mismo pedido a varias PCs (todas las conectadas, o `pcs`) a la vez y devuelve
+    (ok, fallaron): {pc_id: cuerpo} de las que contestaron 200 y {pc_id: motivo} del resto.
+
+    Revision 2026-10-04 (S14): retarget, auto-aprobar y restaurables repetian el mismo bucle y
+    cada uno escondia las fallas a su manera (un 200 igual, un log, nada). Con esto el llamador
+    tiene las fallas en la mano y las pone en la respuesta. En paralelo: una PC caida tarda lo que
+    tarde su timeout, y antes eso se sumaba por cada PC."""
+    destinos = mirror.MIRROR.peer_ids() if pcs is None else list(pcs)
+    ok: dict[str, dict] = {}
+    fallaron: dict[str, str] = {}
+
+    def uno(pc: str) -> None:
+        try:
+            code, res = mirror.MIRROR.forward(pc, method, path, body)
+        except Exception as e:  # forward ya convierte la red en 503; esto es un bug, que no corte a las demas
+            log(f"fan_out {method} {path} a {pc}:\n{traceback.format_exc()}")
+            code, res = 0, {"error": f"{type(e).__name__}"}
+        if code == 200:
+            ok[pc] = res if isinstance(res, dict) else {"body": res}
+        else:
+            motivo = (res or {}).get("error") if isinstance(res, dict) else None
+            fallaron[pc] = str(motivo or f"HTTP {code}")
+
+    hilos = [threading.Thread(target=uno, args=(pc,), daemon=True) for pc in destinos]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+    return ok, fallaron
+
+
+# auto-aprobar que no llego a una PC (caida o con error): {pc_id: valor que se quiso poner}. Se le
+# vuelve a mandar cuando esa PC esta viva (reintentar_config_peers, cada CONFIG_REINTENTO_S): sin
+# esto, una PC caida cuando se apago auto-aprobar quedaba prendida para siempre (revision
+# 2026-10-04, 0.3). En disco porque el server se reinicia solo con cada cambio de codigo, y un
+# pendiente en memoria se perdia justo en el caso que importa.
+CONFIG_PENDIENTE_FILE = os.path.join(LIENZO, "config_pendiente.json")
+CONFIG_REINTENTO_S = 5.0
+_config_pendiente_lock = threading.Lock()  # tambien serializa las propagaciones: llegan en orden
+
+
+def _leer_config_pendiente() -> dict[str, bool]:
+    try:
+        with open(CONFIG_PENDIENTE_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        log(f"config pendiente para otras PCs ilegible ({type(e).__name__}: {e}); se descarta")
+        return {}
+    return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, bool)} if isinstance(d, dict) else {}
+
+
+def _guardar_config_pendiente(d: dict[str, bool]) -> None:
+    try:
+        tmp = CONFIG_PENDIENTE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        os.replace(tmp, CONFIG_PENDIENTE_FILE)
+    except OSError as e:
+        log(f"no se pudo guardar el auto-aprobar pendiente para otras PCs: {e}")
+
+
+def propagar_auto_aprobar(valor: bool, pcs: list[str] | None = None) -> dict[str, str]:
+    """Pone auto-aprobar en `valor` en las otras PCs (todas, o `pcs`). Devuelve {pc_id: "ok" | motivo};
+    las que fallaron quedan pendientes con ese valor y las que contestaron dejan de estarlo."""
+    with _config_pendiente_lock:
+        ok, fallaron = fan_out("PUT", "/config", {autoaprobar.CLAVE: valor}, pcs=pcs)
+        pend = _leer_config_pendiente()
+        for pc in ok:
+            pend.pop(pc, None)
+        for pc, motivo in fallaron.items():
+            pend[pc] = valor
+            log(f"auto-aprobar = {valor} no llego a {pc} ({motivo}); se reintenta cuando conteste")
+        _guardar_config_pendiente(pend)
+    return {**{pc: "ok" for pc in ok}, **fallaron}
+
+
+def olvidar_config_pendiente(pc: str) -> None:
+    """`pc` acaba de cambiar auto-aprobar por su cuenta (PUT /peer/config): su valor es mas nuevo que
+    el pendiente de aca, que ya no se le manda."""
+    with _config_pendiente_lock:
+        pend = _leer_config_pendiente()
+        if pend.pop(pc, None) is not None:
+            _guardar_config_pendiente(pend)
+
+
+def reintentar_config_peers() -> None:
+    """Manda el auto-aprobar pendiente a las PCs que hoy estan vivas (recien conectadas, o que
+    volvieron)."""
+    vivos = {p["pc_id"] for p in mirror.MIRROR.peers_status() if p.get("alive")}
+    with _config_pendiente_lock:
+        pend = {pc: v for pc, v in _leer_config_pendiente().items() if pc in vivos}
+    for valor in (False, True):
+        pcs = [pc for pc, v in pend.items() if v is valor]
+        if pcs:
+            res = propagar_auto_aprobar(valor, pcs)
+            log(f"auto-aprobar pendiente = {valor} reenviado: {res}")
+
+
+def config_peers_loop(stop_event: threading.Event | None = None) -> None:
+    stop_event = stop_event or threading.Event()
+    while not stop_event.wait(CONFIG_REINTENTO_S):
+        try:
+            reintentar_config_peers()
+        except Exception:
+            log(f"reintento de auto-aprobar en otras PCs:\n{traceback.format_exc()}")
+
+
 def session_view_response(s: dict, view: str, query: dict) -> tuple[int, dict]:
     """Las cuatro vistas de una tarjeta (SESSION_VIEWS): screen, connections, turns, digest. La usan
     Handler._session_view (local) y PeerHandler (pedida por otra PC bajo demanda, §3.3)."""
@@ -635,15 +747,25 @@ def restorables_local() -> list[dict]:
 
 
 def restorables_all() -> list[dict]:
-    """De esta PC y de cada peer vivo (GET /peer/restaurables), cada una con su `pc`."""
+    """Las restaurables de todas las PCs, sin decir cuales no contestaron (restorables_con_fallas)."""
+    return restorables_con_fallas()[0]
+
+
+def restorables_con_fallas() -> tuple[list[dict], list[str]]:
+    """(restaurables, unreachable): de esta PC y de cada peer vivo (GET /peer/restaurables), cada
+    una con su `pc`, y los pc_id que no se pudieron consultar (caidos o con error). Antes una PC
+    que no contestaba simplemente no aparecia, igual que una sin nada para restaurar (S14)."""
     out = restorables_local()
+    vivos, caidos = [], []
     for peer in mirror.MIRROR.peers_status():
-        if not peer.get("alive"):
-            continue
-        code, res = mirror.MIRROR.forward(peer["pc_id"], "GET", "/restaurables")
-        if code == 200 and isinstance(res, dict):
-            out += [{**e, "pc": peer["pc_id"]} for e in res.get("restaurables") or [] if isinstance(e, dict)]
-    return sorted(out, key=lambda e: str(e.get("ended_at") or e.get("saved_at") or ""), reverse=True)
+        (vivos if peer.get("alive") else caidos).append(peer["pc_id"])
+    ok, fallaron = fan_out("GET", "/restaurables", pcs=vivos)
+    for pc, res in ok.items():
+        out += [{**e, "pc": pc} for e in res.get("restaurables") or [] if isinstance(e, dict)]
+    for pc, motivo in fallaron.items():
+        log(f"restaurables de {pc}: {motivo}")
+    orden = sorted(out, key=lambda e: str(e.get("ended_at") or e.get("saved_at") or ""), reverse=True)
+    return orden, sorted(caidos + list(fallaron))
 
 
 def restore_capacity(n: int) -> tuple[int, dict]:
@@ -982,7 +1104,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
             if parts == ["restaurables"]:
-                return self._json(200, restorables_all())
+                # el cuerpo sigue siendo la lista (contrato con el front y con coordinar.py); las PCs
+                # que no contestaron van en un header, para no confundirlas con «no hay nada» (S14)
+                lista, caidas = restorables_con_fallas()
+                return self._json(200, lista, {"X-Lienzo-Unreachable": ",".join(caidas)} if caidas else None)
             if parts == ["secrets"]:
                 # solo nombres y vencimientos: el valor no sale nunca por un listado. ?pc= lista los de esa PC
                 pc = (self.query.get("pc") or [""])[0]
@@ -1115,10 +1240,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
                     return self._json(400, {"error": "hace falta old y new"})
                 n = ses_retarget_rules(d["old"], d["new"])
-                for pc in mirror.MIRROR.peer_ids():
-                    code, res = mirror.MIRROR.forward(pc, "POST", "/rules/retarget", d)
-                    n += (res or {}).get("n", 0) if code == 200 else 0
-                return self._json(200, {"ok": True, "n": n})
+                ok, fallaron = fan_out("POST", "/rules/retarget", d)
+                n += sum(int(res.get("n") or 0) for res in ok.values())
+                # las PCs que no contestaron: sus reglas siguen apuntando a `old` (S14)
+                return self._json(200, {"ok": True, "n": n, "unreachable": sorted(fallaron)})
             if parts == ["peers", "offer"]:
                 return self._peers_offer()
             if parts == ["peers", "join"]:
@@ -1366,13 +1491,14 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in d.items():
             set_config_key(k, v)
             log(f"config: {k} = {v} (desde la UI, {self._client_ip()})")
-        if autoaprobar.CLAVE in d:
-            # «aprueba todo» vale para todas las PCs emparejadas, no solo para esta
-            for pc in mirror.MIRROR.peer_ids():
-                code, res = mirror.MIRROR.forward(pc, "PUT", "/config", {autoaprobar.CLAVE: d[autoaprobar.CLAVE]})
-                if code != 200:
-                    log(f"auto-aprobar en {pc}: {code} {(res or {}).get('error')}")
-        return self._json(200, public_config())
+        if autoaprobar.CLAVE not in d:
+            return self._json(200, public_config())
+        # «aprueba todo» vale para todas las PCs emparejadas, no solo para esta. Antes la falla en
+        # otra PC iba solo al log y la UI mostraba el valor nuevo como si valiera en todas: apagar
+        # auto-aprobar podia dejarlo prendido en una PC caida (revision 2026-10-04, 0.3). Ahora la
+        # respuesta dice PC por PC, y las que fallaron quedan pendientes: se les vuelve a mandar
+        # cuando contestan (reintentar_config_peers).
+        return self._json(200, {**public_config(), "peers": propagar_auto_aprobar(d[autoaprobar.CLAVE])})
 
     def _put_title(self, sid: str) -> None:
         """PUT /sessions/<id>/title: titulo a mano. Vacio vuelve a la logica automatica. `sid` de
@@ -1721,6 +1847,7 @@ class PeerHandler(BaseHTTPRequestHandler):
             if set(d) != {autoaprobar.CLAVE} or not isinstance(d[autoaprobar.CLAVE], bool):
                 return self._json(400, {"error": f"solo {autoaprobar.CLAVE} (true o false)"})
             set_config_key(autoaprobar.CLAVE, d[autoaprobar.CLAVE])
+            olvidar_config_pendiente(pc_id or "")
             log(f"config: {autoaprobar.CLAVE} = {d[autoaprobar.CLAVE]} (desde {pc_id})")
             return self._json(200, public_config())
         if method == "POST" and rest == ["rules", "retarget"]:
@@ -2114,6 +2241,8 @@ def main() -> int:
         _connect_peer_from_record(peer)
     if peers_guardados:
         threading.Thread(target=xpc_purge_loop, daemon=True).start()
+    # siempre, no solo con peers guardados: uno emparejado despues tambien puede quedar pendiente
+    threading.Thread(target=config_peers_loop, daemon=True).start()
     if peer_srv is not None:
         stop_beacon = threading.Event()
         beacon.start(a.peer_port, stop_beacon)
