@@ -20,7 +20,7 @@ def _reset():
 def test_snapshot_trae_las_cinco_claves():
     _reset()
     s = health.snapshot()
-    assert set(s) == {"mem_free_gb", "mem_total_gb", "cpu_pct", "temp_c", "ts"}
+    assert set(s) == {"mem_free_gb", "mem_total_gb", "cpu_pct", "temp_c", "agentes_libres", "ts"}
 
 
 def test_memoria_es_real_y_coherente():
@@ -50,7 +50,14 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
     monkeypatch.setattr(health._k32, "GetSystemTimes", revienta)
     monkeypatch.setattr(health, "_temp_c", lambda: (_ for _ in ()).throw(OSError("simulado")))
     s = health.snapshot()
-    assert s == {"mem_free_gb": None, "mem_total_gb": None, "cpu_pct": None, "temp_c": None, "ts": s["ts"]}
+    assert s == {
+        "mem_free_gb": None,
+        "mem_total_gb": None,
+        "cpu_pct": None,
+        "temp_c": None,
+        "agentes_libres": None,
+        "ts": s["ts"],
+    }
 
 
 def test_temperatura_o_none_y_valor_ya_no_finito_da_none(monkeypatch):
@@ -247,3 +254,12 @@ def test_una_fuente_que_falla_lo_avisa_al_cambiar_de_estado_y_no_cada_vez(monkey
         "temperatura, fuente fija: sin lectura plausible",
         "temperatura, fuente fija: ok",
     ]
+
+
+def test_agentes_que_entran_es_la_unica_regla_de_capacidad():
+    assert health.agentes_que_entran(None) is None
+    assert health.agentes_que_entran(1.0) == 0  # bajo la reserva
+    assert health.agentes_que_entran(1.5) == 0
+    assert health.agentes_que_entran(2.2) == 1  # 1,5 + 0,7
+    assert health.agentes_que_entran(2.7) == 1
+    assert health.agentes_que_entran(5.0) == 5

@@ -618,8 +618,6 @@ def _stream_sse(handler: BaseHTTPRequestHandler, initial_json: str, extra_client
 # --- restaurar sesiones tras un reinicio (restore.py) --------------------------------------
 
 RESTORE_GAP_S = 2.0  # entre un relanzado y el siguiente: no hundir la memoria con N agentes de golpe
-RESTORE_BASE_GB = 1.5  # memoria libre que tiene que sobrar...
-RESTORE_PER_AGENT_GB = 0.7  # ...mas esto por cada agente que se relanza
 _restore_busy = threading.Lock()
 
 
@@ -644,14 +642,11 @@ def restorables_all() -> list[dict]:
 
 
 def restore_capacity(n: int) -> tuple[int, dict]:
-    """(cuantos entran, snapshot) con la memoria libre de ahora: hace falta RESTORE_BASE_GB +
-    RESTORE_PER_AGENT_GB * N. Sin dato de memoria entran todos (no se bloquea a ciegas)."""
+    """(cuantos entran, snapshot) con la memoria libre de ahora, por la regla de health
+    (agentes_que_entran). Sin dato de memoria entran todos (no se bloquea a ciegas)."""
     snap = health.snapshot()
-    free = snap.get("mem_free_gb")
-    if free is None:
-        return n, snap
-    fit = int((free - RESTORE_BASE_GB) // RESTORE_PER_AGENT_GB) if free > RESTORE_BASE_GB else 0
-    return max(0, min(n, fit)), snap
+    fit = health.agentes_que_entran(snap.get("mem_free_gb"))
+    return (n if fit is None else min(n, fit)), snap
 
 
 def restore_local(d: dict) -> tuple[int, dict]:
@@ -673,7 +668,7 @@ def restore_local(d: dict) -> tuple[int, dict]:
             if fit < n:
                 msg = (
                     f"memoria libre {snap.get('mem_free_gb')} GB: de {n} sesiones entran {fit} "
-                    f"(hacen falta {RESTORE_BASE_GB} GB + {RESTORE_PER_AGENT_GB} GB por cada una)"
+                    f"(hacen falta {health.RESERVA_GB} GB + {health.GB_POR_AGENTE} GB por cada una)"
                 )
                 if d.get("limit_by_memory") is not True or fit == 0:
                     return 409, {"error": msg, "restorable": n, "fit": fit, "mem_free_gb": snap.get("mem_free_gb")}

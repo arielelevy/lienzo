@@ -192,15 +192,19 @@ def estancada(s, minutos=5):
 
 
 def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5):
-    """¿Aguanta esa PC `n` sesiones más? Devuelve {ok, libre_gb, necesita_gb}. Una sesión ocupa unos
-    0,7 GB; con menos de `reserva_gb` libres Windows empieza a paginar y arrastra al resto."""
+    """¿Aguanta esa PC `n` sesiones más? Devuelve {ok, libre_gb, necesita_gb, entran}. La regla es la
+    del server (`agentes_libres` en su salud, lienzo/health.py); `gb_por_sesion` y `reserva_gb` solo
+    se usan con un peer viejo que todavía no publica ese campo."""
     for p in salud():
         if p.get("pc_id") == pc or (pc is None and p.get("local")):
-            libre = (p.get("health") or {}).get("mem_free_gb")
+            h = p.get("health") or {}
+            libre, entran = h.get("mem_free_gb"), h.get("agentes_libres")
             if libre is None:
-                return {"ok": True, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1)}
-            return {"ok": libre - n * gb_por_sesion >= reserva_gb, "libre_gb": libre, "necesita_gb": round(n * gb_por_sesion, 1)}
-    return {"ok": False, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1)}
+                return {"ok": True, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1), "entran": None}
+            if entran is None:  # peer viejo: la cuenta de antes
+                entran = max(0, int((libre - reserva_gb) // gb_por_sesion)) if libre > reserva_gb else 0
+            return {"ok": n <= entran, "libre_gb": libre, "necesita_gb": round(n * gb_por_sesion, 1), "entran": entran}
+    return {"ok": False, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1), "entran": None}
 
 
 def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None, cablear_al_lanzar=True):

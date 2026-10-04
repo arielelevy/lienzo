@@ -38,6 +38,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
 | 2026-10-03 | **Aprobador oficial con lista permitida** (`skills/lienzo/aprobador.py`, `Politica` + `vigilar`): frena lo truncado, lo peligroso, rutas, `rm` y pushes no autorizados | los permisos largos se revisaban a mano y dos aprobadores sueltos en Temp tuvieron bugs (tramo vacío, `rm` de varios destinos) |
 | 2026-10-03 | **Temperatura en cualquier PC**: `health` lee todas las zonas térmicas (y `MSAcpi` si hay permisos) y elige `\_TZ.THRM` o, si no está, la zona plausible más caliente (25–120 °C) | la otra PC no tiene `\_TZ.THRM` y su `temp_c` quedaba siempre en None; esta PC marcó 95 °C |
 | 2026-10-03 | **Temperatura desde LibreHardwareMonitor**: `health` lee primero `http://127.0.0.1:8085/data.json` (paquete del CPU, o el sensor real más caliente sin contar límites ni umbrales) y si no contesta sigue con WMI; URL en `LIENZO_LHM_URL`. Cada fuente es una `FuenteTemperatura` (clase abstracta: `leer` + `elegir`) en la cadena `FUENTES`; una fuente rota da None sin cortar la cadena y su motivo va al log al cambiar de estado, igual que el pedido de salud a otra PC (`mirror._poll_health`), que antes fallaba en silencio | el Dell Pro 14 no tiene zonas térmicas y MSAcpi da «no soportado» (0x8004100c); LHM 0.9.6 no lee el CPU de esa PC y por ahora da la RAM (~47 °C) |
+| 2026-10-03 | **Una sola regla de capacidad**: `health.agentes_que_entran` (reserva 1,5 GB + 0,7 GB por agente); el server la usa en `/restaurar` y la publica como `agentes_libres` en la salud de cada PC, y `coordinar.capacidad` la lee de ahí | las constantes estaban repetidas en `server.py` y `coordinar.py` (punto pendiente «Capacidad de memoria duplicada») |
 
 ## Pendiente (con evidencia)
 
@@ -53,7 +54,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   `install.py` en las dos PCs para que coda los mande (toca `~/.coda/config.json`).
 - **`--coda-home DIR` aísla la configuración de coda** (está en `coda --help`): sirve para lanzar con `--model` sin pisar el
   modelo por defecto de la PC (ver el punto de `--model`). Falta ver cómo conserva el login.
-- **Reiniciar lienzo en la otra PC cierra las codas que corren** (medido el 2026-10-03): la coda de la sesión 3 quedó
+- **Reiniciar lienzo en la otra PC cierra las codas que corren** (medido el 2026-10-03; la recarga automática por `git pull` NO las cerró: la coda de la sesión 4 siguió viva; la hipótesis de pestañas de Windows Terminal en la misma ventana del server tampoco, según la coda A cada coda abre en su propia consola, aunque lo dijo leyendo el código y no la configuración): la coda de la sesión 3 quedó
   `ended_at` en el mismo segundo del reinicio y hubo que restaurarla (`restaurar`, con contexto). Además, con la causa sin
   resolver, todo lo que sale hacia esa PC dio `401 firma invalida` de repente (sin cambios de reloj ni de claves) y solo se
   arregló reiniciando su lienzo. Ideas: que las codas no cuelguen del proceso del server, y que ante un 401 el lienzo
@@ -95,9 +96,6 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   con un reinicio real).
 - **Pruebas reales pendientes** (solo se probaron con transportes simulados): recuperación cuando una
   tarjeta remota ya no existe, y el reintento ante conexión rechazada.
-- **Capacidad de memoria duplicada**: `restore_capacity` en `lienzo/server.py` (1,5 GB de reserva, 0,7
-  por sesión) y `coordinar.capacidad` en `skills/lienzo/coordinar.py` (`reserva_gb=1.5`,
-  `gb_por_sesion=0.7`) repiten las mismas constantes. Que el skill se las pida al server.
 - **Detectar el lienzo viejo de la otra PC por capacidades**: hoy se reconoce por el texto «ruta
   desconocida» de la respuesta (`cablear` y el reenvío). Un campo de capacidades en el handshake
   (`/peer/health` o el emparejado) sería un contrato; el texto cambia sin avisar.

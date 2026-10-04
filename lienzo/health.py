@@ -29,6 +29,11 @@ from collections.abc import Callable
 WINDOWS = sys.platform == "win32"
 GB = 1024**3
 TEMP_TTL_S = 30
+# Capacidad: la UNICA regla de cuantos agentes mas entran en una PC (la usan /restaurar del server y
+# coordinar.capacidad, que antes repetian estas constantes). Con menos de RESERVA_GB libres Windows
+# empieza a paginar y arrastra al resto; cada agente ocupa unos GB_POR_AGENTE.
+RESERVA_GB = 1.5
+GB_POR_AGENTE = 0.7
 
 
 if WINDOWS:
@@ -306,6 +311,13 @@ def _temp_c() -> float | None:
     return _temp_cache[0]
 
 
+def agentes_que_entran(mem_free_gb: float | None) -> int | None:
+    """Cuantos agentes mas se pueden abrir sin bajar de RESERVA_GB libres. None sin dato de memoria."""
+    if mem_free_gb is None:
+        return None
+    return max(0, int((mem_free_gb - RESERVA_GB) // GB_POR_AGENTE)) if mem_free_gb > RESERVA_GB else 0
+
+
 def snapshot() -> dict:
     """Memoria, CPU y temperatura de esta PC, ahora mismo. Nunca levanta una excepcion."""
     try:
@@ -325,5 +337,6 @@ def snapshot() -> dict:
         "mem_total_gb": round(mem_total_gb, 2) if mem_total_gb is not None else None,
         "cpu_pct": cpu_pct,
         "temp_c": temp_c,
+        "agentes_libres": agentes_que_entran(mem_free_gb),
         "ts": _now(),
     }

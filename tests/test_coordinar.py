@@ -33,7 +33,7 @@ def test_capacidad_avisa_si_no_alcanza_la_memoria(monkeypatch):
     monkeypatch.setattr(c, "salud", lambda: [{"pc_id": "pcB", "health": {"mem_free_gb": 2.7}}])
     assert c.capacidad("pcB", 1)["ok"] is True
     assert c.capacidad("pcB", 2)["ok"] is False  # 2,7 - 1,4 = 1,3 GB: por debajo de la reserva
-    assert c.capacidad("pcB", 10) == {"ok": False, "libre_gb": 2.7, "necesita_gb": 7.0}
+    assert c.capacidad("pcB", 10) == {"ok": False, "libre_gb": 2.7, "necesita_gb": 7.0, "entran": 1}
     assert c.capacidad("desconocida", 1)["ok"] is False
 
 
