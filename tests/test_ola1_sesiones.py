@@ -378,3 +378,71 @@ def test_marcar_muerta_es_la_unica_forma(aislado, hilos):
     s.update(state="te_necesita", alive=True, dead_since=None)
     ses.marcar_muerta(s, avisar=True)
     assert hilos == [("on_died_working", "6" * 8, "te_necesita")]
+
+
+# 0.8 un JSON corrupto no borra datos sin aviso --------------------------------------------------
+
+
+def _apartados(path):
+    return sorted(p for p in os.listdir(os.path.dirname(path)) if p.startswith(os.path.basename(path) + ".corrupto-"))
+
+
+def test_reglas_corruptas_se_apartan_y_no_se_pisan(aislado, tmp_path):
+    """E3: rules.json con un byte roto se cargaba como lista vacia, sin log, y el primer save lo
+    pisaba: se perdian todas las reglas sin rastro."""
+    path = str(tmp_path / "rules.json")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write('[{"id": "r1", "to": "x"')  # cortado a la mitad
+    lista = st.JsonList(path, "rules")
+    lista.load(lambda r: True)
+    assert lista.items == []
+    apartados = _apartados(path)
+    assert len(apartados) == 1 and not os.path.exists(path)
+    with open(os.path.join(tmp_path, apartados[0]), encoding="utf-8") as f:
+        assert f.read() == '[{"id": "r1", "to": "x"'  # el contenido sigue ahi para rescatarlo
+    assert any("rules.json" in m and "corrupto" in m for m in aislado)
+
+
+def test_reglas_que_no_existen_arrancan_vacias_sin_log(aislado, tmp_path):
+    lista = st.JsonList(str(tmp_path / "rules.json"), "rules")
+    lista.load(lambda r: True)
+    assert lista.items == [] and aislado == []
+
+
+def test_reglas_ilegibles_no_se_pisan_al_guardar(aislado, tmp_path, monkeypatch):
+    """Si el archivo existe pero no se pudo leer (bloqueado, sin permiso), guardar la lista vacia
+    en memoria borraria las reglas del disco."""
+    path = tmp_path / "rules.json"
+    path.write_text('[{"id": "r1"}]', encoding="utf-8")
+    lista = st.JsonList(str(path), "rules")
+    real_open = open
+
+    def abrir(p, *a, **k):
+        if str(p) == str(path):
+            raise PermissionError(13, "bloqueado")
+        return real_open(p, *a, **k)
+
+    monkeypatch.setattr("builtins.open", abrir)
+    lista.load(lambda r: True)
+    monkeypatch.setattr("builtins.open", real_open)
+    lista.items.append({"id": "r2"})
+    lista.save()
+    assert path.read_text(encoding="utf-8") == '[{"id": "r1"}]'
+    assert any("rules.json" in m for m in aislado)
+
+
+def test_config_corrupta_se_aparta_y_set_config_key_no_escribe(aislado, tmp_path, monkeypatch):
+    cfg = tmp_path / "config.json"
+    cfg.write_text('{"ejemplos": [1, 2', encoding="utf-8")
+    monkeypatch.setattr(st, "CONFIG_FILE", str(cfg))
+    assert st.set_config_key("auto_continue", True) is False
+    assert not cfg.exists() and len(_apartados(str(cfg))) == 1
+    assert any("config.json" in m and "corrupto" in m for m in aislado)
+    # apartada la corrupta, la proxima escritura arranca un archivo nuevo
+    assert st.set_config_key("auto_continue", True) is True
+    assert st.load_config() == {"auto_continue": True}
+
+
+def test_config_que_no_existe_es_vacia_sin_log(aislado, tmp_path, monkeypatch):
+    monkeypatch.setattr(st, "CONFIG_FILE", str(tmp_path / "config.json"))
+    assert st.load_config() == {} and aislado == []

@@ -265,6 +265,43 @@ def parse_ts(raw) -> dt.datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=dt.UTC)
 
 
+# --- JSON en disco ------------------------------------------------------------------------
+
+
+def apartar_corrupto(path: str, motivo) -> None:
+    """Renombra un JSON que no se pudo parsear a `<archivo>.corrupto-<ts>` y lo dice en el log.
+    Antes se tomaba como vacio en silencio y el primer guardado lo pisaba: se perdian las reglas
+    o la config sin rastro (plan de refactor 0.8, E3). Apartado, el contenido sigue en disco para
+    rescatarlo a mano, y el que lo usa arranca vacio."""
+    nombre = os.path.basename(path)
+    dest = f"{path}.corrupto-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        os.replace(path, dest)
+    except FileNotFoundError:
+        return  # otro hilo ya lo aparto
+    except OSError as e:
+        log(f"{nombre} corrupto ({motivo}) y no se pudo apartar: {e}")
+        return
+    log(f"{nombre} corrupto ({motivo}): apartado como {os.path.basename(dest)}; se arranca vacio")
+
+
+def leer_json(path: str) -> tuple[object, str | None]:
+    """(dato, error). Si no existe: (None, None), vacio y sin log. Si no parsea: lo aparta
+    (apartar_corrupto) y devuelve (None, "corrupto"). Si existe y no se pudo abrir (bloqueado, sin
+    permiso): (None, "ilegible"), sin log (lo loguea quien llama, que sabe cada cuanto lee): quien
+    lo use no debe escribir encima."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f), None
+    except FileNotFoundError:
+        return None, None
+    except ValueError as e:  # JSONDecodeError y UnicodeDecodeError
+        apartar_corrupto(path, e)
+        return None, "corrupto"
+    except OSError:
+        return None, "ilegible"
+
+
 # --- listas persistidas: vinculos y reglas -----------------------------------------------
 
 
@@ -276,15 +313,26 @@ class JsonList:
         self.path = path
         self.event = event
         self.items: list[dict] = []
+        # el archivo existe pero no se pudo leer (bloqueado, sin permiso): guardar la lista vacia
+        # que quedo en memoria lo pisaria. Mientras siga asi, save() no escribe
+        self.no_pisar = False
 
     def load(self, keep) -> None:
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                self.items = [x for x in json.load(f) if keep(x)]
-        except OSError, ValueError:
-            self.items = []
+        datos, err = leer_json(self.path)
+        if err is None and datos is not None and not isinstance(datos, list):
+            apartar_corrupto(self.path, "no es una lista")
+        self.no_pisar = err == "ilegible"
+        if self.no_pisar:
+            log(f"{os.path.basename(self.path)} existe y no se pudo leer: se arranca vacio y no se guarda encima")
+        self.items = [x for x in datos if keep(x)] if isinstance(datos, list) else []
 
     def save(self) -> None:
+        if self.no_pisar:
+            avisar_si_cambia(
+                f"guardar {self.path}",
+                f"no se guarda {os.path.basename(self.path)}: no se pudo leer al arrancar y se pisaria con lo que hay en memoria",
+            )
+            return
         try:
             atomic_write(self.path, json.dumps(self.items, ensure_ascii=False, indent=1))
         except OSError as e:
@@ -324,14 +372,23 @@ rules = JsonList(RULES_FILE, "rules")  # {id, kind: on_stop|at, from, to, text, 
 # --- config.json ---------------------------------------------------------------------------
 
 
+def _leer_config() -> tuple[dict, str | None]:
+    """(config, error): error None si se leyo (o no existe: vacia), "corrupto" si no era un objeto
+    JSON (ya quedo apartado), "ilegible" si existe y no se pudo abrir."""
+    d, err = leer_json(CONFIG_FILE)
+    if err is None and d is not None and not isinstance(d, dict):
+        apartar_corrupto(CONFIG_FILE, "no es un objeto")
+        err = "corrupto"
+    # se lee cada 2 s (auto-aprobar): el «no se pudo abrir» se loguea cuando cambia, no en cada vuelta
+    avisar_si_cambia("config.json", "config.json no se pudo abrir: se toma vacia" if err == "ilegible" else None)
+    return (d if err is None and isinstance(d, dict) else {}), err
+
+
 def load_config() -> dict:
-    """~/.lienzo/config.json (lo comparte con hook.py): ejemplos, wait, auto_continue, auto_retry."""
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            d = json.load(f)
-            return d if isinstance(d, dict) else {}
-    except OSError, ValueError:
-        return {}
+    """~/.lienzo/config.json (lo comparte con hook.py): ejemplos, wait, auto_continue, auto_retry.
+    Si no existe, vacia. Si esta corrupta, se aparta como config.json.corrupto-<ts> (con log) y se
+    toma vacia (plan de refactor 0.8, E3)."""
+    return _leer_config()[0]
 
 
 def public_config() -> dict:
@@ -339,9 +396,16 @@ def public_config() -> dict:
     return {k: bool(cfg.get(k)) for k in UI_CONFIG_KEYS}
 
 
-def set_config_key(key: str, value: bool) -> None:
-    """Escribe una sola clave y deja el resto del archivo como estaba (hook.py lee ejemplos y wait)."""
+def set_config_key(key: str, value: bool) -> bool:
+    """Escribe una sola clave y deja el resto del archivo como estaba (hook.py lee ejemplos y wait).
+    Si la lectura fallo (corrupta o ilegible) NO escribe: un archivo nuevo con una sola clave
+    tiraba el resto (ejemplos, wait, launch_roots) sin aviso. Devuelve si escribio; la corrupta ya
+    quedo apartada, asi que el proximo intento arranca un archivo nuevo."""
     with lock:
-        cfg = load_config()
+        cfg, err = _leer_config()
+        if err is not None:
+            log(f"config: no se escribe {key}={value}: config.json {err} al leerla")
+            return False
         cfg[key] = value
         atomic_write(CONFIG_FILE, json.dumps(cfg, ensure_ascii=False, indent=1))
+        return True
