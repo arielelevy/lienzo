@@ -96,6 +96,20 @@ de `launch_roots` de esa PC (`config.json`; vacía o ausente es *ninguna* carpet
 después de un barrido: pedir `GET /peers` para saber qué `pc_id` usar, y buscar la tarjeta nueva
 por `title` (o por `pc` + orden de aparición) una vez que el barrido corrió.
 
+**`400 cwd fuera de launch_roots` también quiere decir «la carpeta no existe»** (`_cwd_allowed`
+pide `isdir`; medido el 2026-10-04 con `D:\apps\chess` sin clonar y `launch_roots: ["D:/apps"]`). En
+una PC esclava, la que el usuario no toca, no se le pide que vaya: se lanza una sesión auxiliar en
+una carpeta que esa PC ya admite (las `cwd` de `restaurables(pc)`) con un pedido corto —crear la
+carpeta vacía y, si hace falta, sumarla a `launch_roots` sin tocar otra clave— y se le manda `/exit`
+al terminar. `launch.py` relee `config.json` en cada lanzamiento: no hace falta reiniciar el server.
+El primer frente clona adentro (`git clone … .`).
+
+**Una carpeta nueva abre el diálogo de confianza de Claude antes que cualquier hook.** Antes de
+mandarle el encargo a una tarjeta recién lanzada, mirar `GET /sessions/<sid>/screen`: si muestra el
+diálogo y `dialog` vino vacío, el lienzo no lo reconoció y el Enter del encargo elige la opción
+marcada, que es «No, exit»: la sesión muere como `pid-N`, sin `session_id` ni nada que restaurar
+(medido el 2026-10-04 con la variante sin números, «> No, exit / Yes, I trust this folder»).
+
 ### Mandar un encargo a otra PC y saber si llegó
 
 Un `200` de `send` sólo dice que el server aceptó el pedido; para una tarjeta de otra PC no prueba
@@ -236,9 +250,16 @@ Tres reglas que evitan el desastre con varias sesiones en un solo working tree:
   solo árbol es un conflicto de índice garantizado, y ramas separadas no sirven: hay un solo árbol.
   **Con varias PCs, la regla es un commiter por árbol**, no necesariamente la misma persona en cada
   una: en la PC remota los frentes tampoco commitean, y al cerrar la ronda la coordinadora le pide a
-  una de esas sesiones, la **delegada de esa PC**, que commitee todo en una rama propia y haga push;
+  una de esas sesiones, la **delegada de esa PC**, que commitee todo y haga push;
   la coordinadora hace `fetch`, verifica en un `git worktree` local (contra el árbol, nunca contra el
   informe) y mergea.
+- **Entre PCs se sincroniza por una sola rama temporal de la ronda** (`ronda-<fecha>`), la misma
+  para todas: cada commiter hace `pull --rebase` y `push` sobre ella, nunca `--force`. Al cerrar, la
+  coordinadora la mergea en la rama principal local y la borra de `origin`. **Nunca se pushea la rama
+  que despliega** ni se abre un PR (hay workflows que corren en `pull_request`): antes del primer
+  push, leer los `on:` de `.github/workflows/`, y después comprobar con `gh run list --branch …` que
+  la rama no disparó nada. Worktrees por frente, no: los guiones del repo suelen tener la ruta del
+  árbol fija y cada worktree necesitaría sus propias dependencias.
 - **Las bases de datos de prueba llevan el número del frente y el pid en el nombre.** Dos suites que
   crean y destruyen la misma base se pisan, y produce fallas que después pasan solas y confunden.
 
@@ -381,6 +402,10 @@ Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
    adentro de WSL, y compactar lo llevó a 1,93 GB en segundos. `autoMemoryReclaim=gradual` en el `.wslconfig` ayuda, pero devuelve la caché más lento de
    lo que la llenan un índice o una subida grande (medido el 2026-09-26: Windows en 210 MB con
    `gradual` puesto).
+   **Si `drop_caches` no mueve nada, lo de WSL no es caché**: el 2026-10-04 `free -m` dio 8,2 GB
+   `used` y 3,8 de `buff/cache`, y Windows bajó igual de 1.268 a 815 MB disponibles. Lo que ocupa son
+   los servicios levantados (API, dev server, motores, base): bajarlos o lanzar en la otra PC si
+   `capacidad(pc, n)` da lugar.
 2. Cerrar con `/exit` las sesiones que terminaron.
 3. Postergar lo que no apura (mediciones de navegador) y decírselo al frente.
 
