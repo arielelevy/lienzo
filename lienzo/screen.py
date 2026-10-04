@@ -153,6 +153,17 @@ def input_area(lines: list[str]) -> dict:
 _OPT_RE = re.compile(r"^(?P<cur>[>❯›])?\s*(?P<n>\d{1,2})\.\s+(?P<txt>\S.*)$")
 
 
+BOX_CHARS = "│┃║|╭╮╰╯"
+
+
+def _sin_borde(raw: str) -> str:
+    """La linea sin el borde de un recuadro: el dialogo de confianza de Claude («Do you trust the files
+    in this folder?») se dibuja adentro de uno (│ ❯ 1. Yes, proceed │) y la opcion no empezaba con el
+    numero, asi que no se reconocia (medido el 2026-10-04: tres sesiones lanzadas en una carpeta sin
+    confianza recibieron el encargo + Enter, eligieron «No, exit» y murieron)."""
+    return raw.strip().strip(BOX_CHARS).strip()
+
+
 def dialog(lines: list[str]) -> dict | None:
     """El dialogo de opciones numeradas que la TUI de Claude dibuja donde va la caja de entrada
     ("Switch model?", "Do you want to...?"). No dispara ningun hook --no es una herramienta pidiendo
@@ -165,7 +176,7 @@ def dialog(lines: list[str]) -> dict | None:
     run: list[tuple[int, dict]] = []
     best: list[tuple[int, dict]] = []
     for i, raw in enumerate(lines):
-        m = _OPT_RE.match(raw.strip())
+        m = _OPT_RE.match(_sin_borde(raw))
         if m and int(m.group("n")) == len(run) + 1:
             run.append((i, {"n": int(m.group("n")), "text": m.group("txt").strip(), "cursor": bool(m.group("cur"))}))
             continue
@@ -181,10 +192,15 @@ def dialog(lines: list[str]) -> dict | None:
     if len(best) < 2 or sum(1 for _, o in best if o["cursor"]) != 1:
         return None
     top = best[0][0]
+
     # el cuerpo del dialogo es lo que va entre la regla horizontal de arriba y la primera opcion;
     # su primera linea es la pregunta ("Switch model?") y el resto, la explicacion
-    rule = max((i for i, l in enumerate(lines[:top]) if l.strip() and set(l.strip()) <= set(RULE_CHARS)), default=-1)
-    body = [l.strip() for l in lines[max(rule + 1, top - 12) : top] if l.strip()]
+    def es_regla(l: str) -> bool:
+        t = l.strip()
+        return bool(t) and set(t) <= set(RULE_CHARS) | set(BOX_CHARS)
+
+    rule = max((i for i, l in enumerate(lines[:top]) if es_regla(l)), default=-1)
+    body = [_sin_borde(l) for l in lines[max(rule + 1, top - 12) : top] if _sin_borde(l)]
     return {
         "question": body[0] if body else "",
         "detail": " ".join(body[1:])[:400],

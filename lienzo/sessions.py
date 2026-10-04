@@ -2032,6 +2032,33 @@ def interrupt_session(s: dict) -> tuple[int, dict]:
     return 200, out
 
 
+def dialogo_abierto(s: dict) -> tuple[int, dict] | None:
+    """409 si la sesion muestra un dialogo de opciones de la TUI (el de confianza de una carpeta,
+    «Switch model?»): un texto + Enter elegiria la opcion marcada (en el de confianza, «No, exit», y la
+    sesion se cierra). Con el dialogo ya visto por el barrido alcanza con mirarlo; una sesion recien
+    lanzada (sin hooks todavia) se mira en el momento, porque el dialogo de confianza aparece antes
+    que cualquier hook y el barrido de pantalla pasa cada 5 s."""
+    d = s.get("dialog")
+    if d is None and s.get("agent") == "claude" and not s.get("hooked"):
+        r = read_screen(s)
+        d = screen.dialog(r.get("lines") or []) if r.get("ok") else None
+        if d:
+            with lock:
+                if sessions.get(s["session_id"]) is s:
+                    s["dialog"] = d
+                    touch(s)
+    if not d:
+        return None
+    q = d.get("question") or "un dialogo de opciones"
+    confianza = "trust" in q.lower() or "confi" in q.lower()
+    motivo = "dialogo de confianza abierto" if confianza else "la sesion muestra un dialogo"
+    return 409, {
+        "ok": False,
+        "code": "dialog_open",
+        "error": f"{motivo} («{short(q, 80)}»): elegí una opción en la tarjeta antes de mandarle nada",
+    }
+
+
 def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
     """Inyecta texto en la consola de la sesion y deja la tarjeta corriendo. Si `s` es de otra PC
     (mirror.owner_of, frente C, plan multi-PC §3.4), en cambio se reenvia con mirror.forward: la
@@ -2043,6 +2070,8 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     if owner is not None:
         return _mirror_forward(owner, "POST", f"/sessions/{sid}/send", {"text": text, "attachments": attachments})
     if frenado := send_blocked(s):
+        return frenado
+    if frenado := dialogo_abierto(s):
         return frenado
     final, orig, attachments = compose_send(sid, text, attachments, agent=s.get("agent"))
     if not final:
@@ -2260,6 +2289,16 @@ def screen_once() -> None:
                 s["suggestion"] = sug
                 s["typing"] = typing
                 s["dialog"] = d
+                touch(s)
+            # el dialogo espera una eleccion: la tarjeta va a «te necesita» (se ve en la columna y
+            # avisa), y vuelve cuando se cierra. Nadie lo contesta solo: ni el auto-aprobar, que
+            # solo atiende permisos (la confianza en una carpeta la decide el humano)
+            needs = s.get("needs") or {}
+            if d and not needs and s["state"] in ("termino", "corriendo"):
+                set_needs(s, {"kind": "dialog", "detail": short(d.get("question") or "", 300), "where": "terminal"})
+                touch(s)
+            elif not d and needs.get("kind") == "dialog":
+                set_state(s, "termino")
                 touch(s)
 
 
