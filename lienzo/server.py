@@ -951,8 +951,13 @@ def restore_local(d: dict) -> tuple[int, dict]:
                 time.sleep(RESTORE_GAP_S)
             try:
                 res = launch.launch(e["cwd"], e.get("title") or e.get("repo") or "", e["agent"], resume=e["session_id"])
-            except Exception as ex:
-                res = {"ok": False, "error": f"{type(ex).__name__}: {ex}"}
+            except Exception:
+                # el texto de la excepcion puede llevar rutas y nombres de la maquina, y esta
+                # respuesta sale por el tunel: al cliente un id, al log el traceback con ese id
+                # (revision 2026-10-04, S13; el mismo criterio que Handler._server_error)
+                eid = secrets.token_hex(4)
+                log(f"error {eid} al restaurar {e['session_id'][:8]}:\n{traceback.format_exc()}")
+                res = {"ok": False, "error": f"error interno al relanzar ({eid})"}
             if res.get("ok"):
                 restore.forget(e["session_id"])
                 restored.append(

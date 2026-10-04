@@ -470,3 +470,20 @@ def test_dos_altas_iguales_a_la_vez_dejan_una_sola_regla(aislado, monkeypatch):
         assert sorted(codigos) == [200, 409] and len(st.rules.items) == 1
     finally:
         st.rules.items.clear()
+
+
+def test_restaurar_que_revienta_no_devuelve_el_texto_de_la_excepcion(aislado, monkeypatch):
+    """S13: el error iba tal cual al cliente (rutas, nombres de la máquina; por el túnel sale
+    afuera). Ahora un id corto, y el traceback con ese id en el log."""
+    sid = "9a000000-0000-4000-8000-00000000009a"
+    monkeypatch.setattr(server, "restorables_local", lambda: [{"session_id": sid, "cwd": "x", "agent": "claude"}])
+
+    def revienta(*a, **k):
+        raise RuntimeError("C:/Users/secreto/ruta")
+
+    monkeypatch.setattr(server.launch, "launch", revienta)
+    code, res = server.restore_local({"session_id": sid})
+    error = res["failed"][0]["error"]
+    assert code == 400 and "secreto" not in error and "RuntimeError" not in error
+    eid = error.split("(")[-1].rstrip(")")
+    assert any(eid in x and "secreto" in x for x in aislado["logs"])
