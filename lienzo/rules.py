@@ -344,12 +344,35 @@ def handle_peer_check(req: dict) -> tuple[int, dict]:
     return 200, {"conflict": _rule_clash(rule, list(rules.items) + ses._mirror_rules())}
 
 
+def _espejo_incompleto() -> bool:
+    """Hay PCs conectadas y alguna todavia no mando su snapshot: una tarjeta que no se ve puede ser
+    una que todavia no llego. Sin federacion (o con un espejo que no sabe decirlo) es False."""
+    m = getattr(getattr(ses, "mirror", None), "MIRROR", None)
+    try:
+        return m is not None and bool(m.peer_ids()) and not m.all_synced()
+    except AttributeError:
+        return False
+
+
 def fire_rule(rule: dict) -> None:
     with lock:
         src = sessions.get(rule.get("from") or "")
     dst = find_session(rule["to"])
     if dst is None:
+        # antes se borraba aca mismo y sin log: al arrancar, con el espejo vacio, una regla hacia
+        # otra PC desaparecia sin rastro (revision 2026-10-04, B10). Si el destino puede estar en
+        # una PC que todavia no se ve, se espera (rules_loop reintenta cada 5 s; on_stop, en el
+        # proximo Stop); las de otra PC que de verdad ya no existen las estaciona purge_stale_xpc,
+        # que corre con los peers sincronizados
+        if rule.get("xpc") or _espejo_incompleto():
+            motivo = "en espera: el destino todavia no se ve (otra PC sin conectar o sin sincronizar)"
+            if rule.get("last_result") != motivo:
+                with lock:
+                    rule["last_result"] = motivo
+                state.log(f"regla {rule['id']} ({rule.get('kind')}) -> {rule['to'][:8]}: {motivo}")
+            return
         rules.remove(lambda r: r["id"] == rule["id"])
+        state.log(f"regla {rule['id']} ({rule.get('kind')}) -> {rule['to'][:8]}: borrada, el destino ya no existe")
         return
     periodic = rule.get("kind") == "at" and bool(rule.get("every_s"))
     if dst.get("stopped_by") and (periodic or rule.get("kind") == "on_stop"):

@@ -466,3 +466,107 @@ def test_update_peer_ip_no_escribe_si_la_ip_no_cambio(tmp_path, monkeypatch):
     assert fed.update_peer_ip(path, "p1", "10.0.0.9") is True
     assert len(escrituras) == 1
     assert fed.get_peer(path, "p1")["ip"] == "10.0.0.9"
+
+
+# --- 1.13: una regla hacia otra PC se borraba sin log si el espejo estaba vacio -------------------
+
+OTRA = "20000000-0000-4000-8000-000000000002"
+
+
+class _Espejo:
+    """Lo que rules necesita del espejo: owner_of/forward/sessions/rules, y peer_ids/all_synced."""
+
+    def __init__(self, peers=("pc-b",), synced=False):
+        self._peers, self._synced = list(peers), synced
+
+    def owner_of(self, sid):
+        return None
+
+    def forward(self, *a, **kw):
+        return 503, {"error": "no"}
+
+    def sessions(self):
+        return []
+
+    def rules(self):
+        return []
+
+    def peer_ids(self):
+        return list(self._peers)
+
+    def all_synced(self):
+        return bool(self._peers) and self._synced
+
+
+@pytest.fixture
+def reglas(tmp_path, monkeypatch, log_capturado):
+    import types
+
+    import rules as rl
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "LIENZO", str(tmp_path))
+    monkeypatch.setattr(st, "SESSIONS", str(tmp_path / "sessions"))
+    monkeypatch.setattr(st, "broadcast", lambda ev: None)
+    monkeypatch.setattr(st.rules, "path", str(tmp_path / "rules.json"))
+    monkeypatch.setattr(st.rules, "items", [])
+    monkeypatch.setattr(st.links, "path", str(tmp_path / "links.json"))
+    monkeypatch.setattr(st.links, "items", [])
+    os.makedirs(st.SESSIONS, exist_ok=True)
+    st.sessions.clear()
+
+    def con_espejo(espejo):
+        monkeypatch.setattr(ses, "mirror", types.SimpleNamespace(MIRROR=espejo))
+
+    yield rl, st, con_espejo
+    st.sessions.clear()
+
+
+def _regla(xpc=False):
+    r = {"id": "r1", "kind": "at", "from": None, "to": OTRA, "text": "x", "enabled": True, "fired": 0}
+    return {**r, "xpc": True} if xpc else r
+
+
+def test_fire_rule_no_borra_si_el_espejo_no_termino_de_sincronizar(reglas, log_capturado):
+    rl, st, con_espejo = reglas
+    con_espejo(_Espejo(synced=False))
+    r = _regla()
+    st.rules.items.append(r)
+    rl.fire_rule(r)
+    rl.fire_rule(r)  # la vuelta siguiente del bucle: sigue esperando, sin repetir el aviso
+    assert r in st.rules.items and r["enabled"] is True and r["fired"] == 0
+    assert len([m for m in log_capturado if "r1" in m and "espera" in m]) == 1
+
+
+def test_fire_rule_hacia_otra_pc_no_se_borra_sin_peers_conectados(reglas, log_capturado):
+    """El arranque: el espejo todavia vacio. La regla xpc espera; la purga (purge_stale_xpc) es la
+    que decide, con los peers sincronizados."""
+    rl, st, con_espejo = reglas
+    con_espejo(_Espejo(peers=()))
+    r = _regla(xpc=True)
+    st.rules.items.append(r)
+    rl.fire_rule(r)
+    assert r in st.rules.items
+
+
+def test_fire_rule_borra_con_log_si_el_destino_no_existe_y_todo_esta_sincronizado(reglas, log_capturado):
+    rl, st, con_espejo = reglas
+    con_espejo(_Espejo(synced=True))
+    r = _regla()
+    st.rules.items.append(r)
+    rl.fire_rule(r)
+    assert r not in st.rules.items
+    assert any("r1" in m and "borrada" in m for m in log_capturado)
+
+
+def test_fire_rule_sin_federacion_borra_con_log(reglas, log_capturado, monkeypatch):
+    import sessions as ses
+
+    rl, st, _ = reglas
+    monkeypatch.setattr(ses, "mirror", None)
+    r = _regla()
+    st.rules.items.append(r)
+    rl.fire_rule(r)
+    assert r not in st.rules.items
+    assert any("r1" in m and "borrada" in m for m in log_capturado)
