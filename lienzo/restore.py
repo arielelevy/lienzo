@@ -23,8 +23,8 @@ import threading
 import time
 
 import identity
-import launch
 import state
+from agentes import AGENTES
 
 MAX_AGE_DAYS = 7
 MAX_ENTRIES = 200
@@ -32,9 +32,10 @@ LIVE_DEBOUNCE_S = 30.0
 REFRESH_SAVED_S = 300.0  # una entrada sin cambios no se reescribe antes de esto
 
 # claude y codex retoman por id: tiene que ser un UUID de verdad (el `pid-NNN` de una tarjeta del
-# barrido no sirve). pi y coda retoman "la ultima de esta carpeta": alcanza con el cwd
+# barrido no sirve). pi y coda retoman "la ultima de esta carpeta": alcanza con el cwd. Quien retoma
+# por id lo dice el registro de agentes (agentes.py)
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-_BY_ID = ("claude", "codex")
+_BY_ID = tuple(nombre for nombre, p in AGENTES.items() if p.retomar_por_id)
 
 # razones de SessionEnd que NO son una salida a proposito: "other" es lo que deja cerrar la
 # ventana o apagar la PC; sin razon (hook viejo o evento perdido) tampoco hay prueba de salida
@@ -81,7 +82,7 @@ def ended_on_purpose(card: dict) -> bool:
 
 def eligible(card: dict) -> bool:
     agent, cwd = card.get("agent"), card.get("cwd")
-    if agent not in launch.AGENT_EXES or not isinstance(cwd, str) or not cwd:
+    if agent not in AGENTES or not isinstance(cwd, str) or not cwd:
         return False
     if not os.path.isdir(cwd):
         return False

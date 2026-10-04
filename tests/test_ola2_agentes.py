@@ -366,7 +366,6 @@ def test_turns_usa_el_mismo_parser(agent, tmp_path):
     assert _normal({"meta": r["meta"], "turns": r["turns"]}, tmp_path) == GOLDEN[agent]
 
 
-@pytest.mark.xfail(reason="hasta el paso 3: un agente desconocido caia a parse_claude sin aviso", strict=True)
 def test_agente_desconocido_es_un_error_explicito(tmp_path):
     path = claude_transcript(tmp_path)
     with pytest.raises(ValueError, match="agente desconocido"):
@@ -378,7 +377,7 @@ def test_agente_desconocido_es_un_error_explicito(tmp_path):
 LIENZO_DIR = str(Path(__file__).resolve().parents[1] / "lienzo")
 
 
-@pytest.mark.parametrize("modulo", ["agentes"])
+@pytest.mark.parametrize("modulo", ["agentes", "transcripts", "launch", "restore"])
 def test_el_modulo_nuevo_se_importa_solo_y_no_trae_sessions(modulo):
     """Un modulo hoja: importado solo, en un proceso limpio, no arrastra sessions (ni rules, que
     importa sessions). Si lo hiciera, launch/restore/transcripts cerrarian un ciclo de imports."""
@@ -436,3 +435,49 @@ def test_dos_pi_en_un_cwd_no_se_adivinan_por_actividad(monkeypatch):
     monkeypatch.setattr(agentes, "guess_pi", lambda *args: pytest.fail("dos Pi en un cwd: identidad ambigua"))
     ses.sweep_once()
     assert all(s["transcript_path"] is None for s in st.sessions.values())
+
+
+# --- paso 3: el registro de agentes -------------------------------------------------------------
+
+
+def test_el_registro_tiene_los_cuatro_agentes_y_sus_datos_de_siempre():
+    """Los mismos valores que vivian sueltos en launch.py (AGENT_EXES, _RESUME_BY_ID, _RESUME_LAST,
+    _MODEL_AGENTS) y restore.py (_BY_ID)."""
+    import agentes
+    import launch
+    import restore
+
+    assert set(agentes.AGENTES) == {"claude", "codex", "pi", "coda"}
+    assert launch.AGENT_EXES == {"claude": "claude.exe", "codex": "codex.exe", "pi": "pi.exe", "coda": "coda.exe"}
+    assert set(restore._BY_ID) == {"claude", "codex"}
+    uid = "0123abcd-0000-4000-8000-000000000000"
+    assert launch._resume_args("claude", uid) == ["--resume", uid]
+    assert launch._resume_args("codex", uid) == ["resume", uid]
+    assert launch._resume_args("pi", uid) == ["--resume"]
+    assert launch._resume_args("coda", "pid-1") == ["--lastsession"]
+    assert launch._resume_args("claude", "pid-1") == []
+    assert launch._resume_args("gemini", uid) == []
+    assert {a for a in agentes.AGENTES if launch._model_args(a, "m-1")} == {"claude", "codex", "coda"}
+    assert launch._model_args("gemini", "m-1") == []
+
+
+def test_cada_parser_del_registro_existe_en_transcripts():
+    import agentes
+
+    for nombre, p in agentes.AGENTES.items():
+        assert callable(getattr(tr, p.parser, None)), nombre
+        assert set(p.parser_args) <= {"max_bytes", "leaf_id"}, nombre
+
+
+def test_el_parser_se_busca_al_parsear_y_un_parche_vale(monkeypatch, tmp_path):
+    monkeypatch.setattr(tr, "parse_codex", lambda path, max_bytes: {"meta": {"parcheado": True}, "turns": []})
+    assert tr.parse("codex", codex_transcript(tmp_path))["meta"] == {"parcheado": True}
+
+
+def test_el_perfil_es_inmutable():
+    import dataclasses
+
+    import agentes
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        agentes.AGENTES["claude"].exe = "otro.exe"

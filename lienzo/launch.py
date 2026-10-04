@@ -19,15 +19,12 @@ import subprocess
 import sys
 
 import state
+from agentes import AGENTES
 
 WINDOWS = sys.platform == "win32"
 
-AGENT_EXES = {
-    "claude": "claude.exe",
-    "codex": "codex.exe",
-    "pi": "pi.exe",
-    "coda": "coda.exe",
-}
+# los ejecutables salen del registro de agentes (agentes.py); el nombre queda porque lo leen otros
+AGENT_EXES = {nombre: p.exe for nombre, p in AGENTES.items()}
 # las que hacen que un `claude` hijo se crea anidado y se apague solo (ver el docstring)
 _CLAUDE_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SSE_PORT")
 
@@ -36,33 +33,34 @@ _CLAUDE_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSIO
 _UNSAFE_TITLE_RE = re.compile(r'[&|<>^%"\r\n]')
 
 # retomar una sesion (restore.py): claude y codex por id, pi y coda "la ultima de esta carpeta" (sin
-# id). El id se interpola en la linea del .cmd, asi que solo entra si es [0-9a-fA-F-]{8,40}
+# id), segun el registro de agentes. El id se interpola en la linea del .cmd, asi que solo entra si
+# es [0-9a-fA-F-]{8,40}
 _RESUME_ID_RE = re.compile(r"[0-9a-fA-F-]{8,40}")
-_RESUME_BY_ID = {"claude": ["--resume"], "codex": ["resume"]}
-_RESUME_LAST = {"pi": ["--resume"], "coda": ["--lastsession"]}
 
 
 def _resume_args(agent: str, resume: str | None) -> list[str]:
     """Argumentos para retomar, o [] si no se puede (sin pedido, o un id que no es de verdad para
     un agente que retoma por id). Cada elemento es seguro de escribir tal cual en el .cmd."""
-    if not resume:
+    p = AGENTES.get(agent)
+    if not resume or p is None:
         return []
-    if agent in _RESUME_LAST:
-        return list(_RESUME_LAST[agent])
-    if agent in _RESUME_BY_ID and isinstance(resume, str) and _RESUME_ID_RE.fullmatch(resume):
-        return [*_RESUME_BY_ID[agent], resume]
+    if p.retomar_ultima:
+        return list(p.retomar_ultima)
+    if p.retomar_por_id and isinstance(resume, str) and _RESUME_ID_RE.fullmatch(resume):
+        return [*p.retomar_por_id, resume]
     return []
 
 
-# elegir el modelo al lanzar: coda, claude y codex lo reciben con --model. El id entra en la linea del
-# .cmd, asi que solo pasa [A-Za-z0-9._/:@-] (sin espacios ni nada que reinterprete el .cmd)
+# elegir el modelo al lanzar: los que el registro marca con acepta_modelo (coda, claude y codex) lo
+# reciben con --model. El id entra en la linea del .cmd, asi que solo pasa [A-Za-z0-9._/:@-] (sin
+# espacios ni nada que reinterprete el .cmd)
 _MODEL_RE = re.compile(r"[A-Za-z0-9._/:@-]{1,80}")
-_MODEL_AGENTS = ("coda", "claude", "codex")
 
 
 def _model_args(agent: str, model: str | None) -> list[str]:
     """`--model <id>` si el agente lo soporta y el id es valido; [] si no."""
-    if isinstance(model, str) and agent in _MODEL_AGENTS and _MODEL_RE.fullmatch(model):
+    p = AGENTES.get(agent)
+    if isinstance(model, str) and p is not None and p.acepta_modelo and _MODEL_RE.fullmatch(model):
         return ["--model", model]
     return []
 

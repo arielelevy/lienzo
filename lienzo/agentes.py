@@ -1,8 +1,13 @@
 """Lo que cambia de un agente a otro (claude, codex, pi, coda), en un modulo hoja: no importa sessions
 ni nada que lo importe, asi que launch, restore, transcripts y sessions lo pueden leer sin ciclos.
 
-Por ahora: adivinar la transcripcion de un agente que encontro el barrido (las `guess_*`, que antes
-vivian en sessions.py; sessions las reexporta con el mismo nombre)."""
+Dos cosas:
+- `AGENTES`, el registro con los DATOS de cada agente (`Perfil`): ejecutable, como se retoma, si
+  acepta --model y que parser lee su transcripcion. Lo leen launch.py, restore.py y
+  transcripts.parse. Las ramas de COMPORTAMIENTO (lo que Pi o CODA hacen distinto en sessions.py,
+  cada una con su comentario) no son datos y no viven aca.
+- adivinar la transcripcion de un agente que encontro el barrido (las `guess_*`, que antes vivian
+  en sessions.py; sessions las reexporta con el mismo nombre)."""
 
 from __future__ import annotations
 
@@ -10,9 +15,73 @@ import glob
 import json
 import os
 import re
+from dataclasses import dataclass
 
-import tmux
-from state import HOME, claude_slug, parse_ts
+try:
+    import tmux
+    from state import HOME, claude_slug, parse_ts
+except ImportError:  # importado como lienzo.agentes, sin lienzo/ en sys.path
+    from . import tmux
+    from .state import HOME, claude_slug, parse_ts
+
+# --- registro de agentes ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Perfil:
+    """Los datos de un agente. `retomar_por_id` son los argumentos que van ANTES del session_id
+    (claude y codex retoman una sesion dada); `retomar_ultima`, los que retoman «la ultima de esta
+    carpeta» sin id (pi y coda). `parser` es el NOMBRE de la funcion de transcripts.py, que se busca
+    recien al parsear (guardar la funcion al importar dejaria afuera los monkeypatch), y
+    `parser_args` dice cuales de max_bytes / leaf_id recibe despues de la ruta, en ese orden."""
+
+    exe: str
+    parser: str
+    parser_args: tuple[str, ...]
+    retomar_por_id: tuple[str, ...] = ()
+    retomar_ultima: tuple[str, ...] = ()
+    acepta_modelo: bool = False
+
+
+AGENTES: dict[str, Perfil] = {
+    "claude": Perfil(
+        exe="claude.exe",
+        parser="parse_claude",
+        parser_args=("max_bytes",),
+        retomar_por_id=("--resume",),
+        acepta_modelo=True,
+    ),
+    "codex": Perfil(
+        exe="codex.exe",
+        parser="parse_codex",
+        parser_args=("max_bytes",),
+        retomar_por_id=("resume",),
+        acepta_modelo=True,
+    ),
+    # Pi elige la rama activa con leaf_id; no recibe --model
+    "pi": Perfil(exe="pi.exe", parser="parse_pi", parser_args=("max_bytes", "leaf_id"), retomar_ultima=("--resume",)),
+    # CODA guarda todas las sesiones en una misma base: leaf_id es la sesion, y se lee por filas, no por bytes
+    "coda": Perfil(
+        exe="coda.exe",
+        parser="parse_coda",
+        parser_args=("leaf_id",),
+        retomar_ultima=("--lastsession",),
+        acepta_modelo=True,
+    ),
+}
+
+
+class AgenteDesconocido(ValueError):
+    """Un agente que no esta en AGENTES. Antes transcripts.parse lo leia como Claude sin avisar."""
+
+
+def perfil(agent: str) -> Perfil:
+    """El perfil de `agent`, o AgenteDesconocido con el nombre."""
+    p = AGENTES.get(agent) if isinstance(agent, str) else None
+    if p is None:
+        raise AgenteDesconocido(f"agente desconocido: {agent!r} (conocidos: {', '.join(AGENTES)})")
+    return p
+
 
 # --- adivinar la transcripcion de un agente del barrido ---------------------------------------
 

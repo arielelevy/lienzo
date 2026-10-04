@@ -31,6 +31,11 @@ import json
 import os
 import re
 
+try:
+    import agentes
+except ImportError:  # importado como lienzo.transcripts, sin lienzo/ en sys.path
+    from . import agentes
+
 TAIL_BYTES = 2 * 1024 * 1024
 FILE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "edit", "write"}
 SHELL_TOOLS = {"Bash", "PowerShell", "shell", "exec", "exec_command", "bash", "powershell"}
@@ -792,11 +797,12 @@ def leaf_of(s: dict) -> str | None:
 
 
 def parse(agent: str, path: str, max_bytes: int = TAIL_BYTES, leaf_id: str | None = None) -> dict:
-    if agent == "pi":
-        return parse_pi(path, max_bytes, leaf_id)
-    if agent == "coda":
-        return parse_coda(path, leaf_id)
-    return parse_codex(path, max_bytes) if agent == "codex" else parse_claude(path, max_bytes)
+    """La transcripcion de `agent` con su parser, segun el registro de agentes (agentes.py). Un
+    agente que no esta ahi es agentes.AgenteDesconocido (un ValueError): antes se leia como Claude
+    sin avisar. La funcion se busca por nombre recien aca, asi un monkeypatch de parse_* vale."""
+    p = agentes.perfil(agent)
+    args = {"max_bytes": max_bytes, "leaf_id": leaf_id}
+    return globals()[p.parser](path, *(args[a] for a in p.parser_args))
 
 
 def turns(
