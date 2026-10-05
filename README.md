@@ -560,6 +560,46 @@ ningún agente la vea. Para otro secreto, `coordinar.enviar_secreto(pc, nombre, 
 minutos en memoria y `coordinar.leer_secreto(id, pc=pc)` lo lee una sola vez, desde cualquier PC de
 la LAN. Nunca va a un log, un adjunto ni una respuesta.
 
+### Copiar archivos entre PCs
+
+`POST /xfer {pc, origen, destino}` (o `coordinar.copiar` desde el skill) copia un archivo o una
+carpeta de esta PC a la carpeta `destino` de otra PC emparejada, por el mismo listener de peers: sin
+SMB, sin un puerto nuevo y sin otra credencial. Es un `robocopy /Z /MT` hecho en casa:
+
+- **Por bloques y retomable.** Un archivo grande viaja en bloques de 8 MiB, cada uno su propio pedido
+  firmado (HMAC de la clave del par, ventana de ±30 s, nonce), así que la firma de siempre alcanza.
+  El que recibe escribe a `<archivo>.parte` y anota en `<archivo>.parte.diario` cada bloque que llegó
+  y verificó. Un corte de red, un reinicio del server o de la PC retoman desde el diario. El que
+  manda guarda su avance en `~/.lienzo/xfer/trabajos/`: al reiniciar, las copias que andaban siguen
+  solas, a mitad del árbol, sin volver a leer lo ya verificado.
+- **Paralelo.** Varios bloques en vuelo (6 hilos por defecto, `hilos`) y, para los archivos de menos
+  de 1 MiB, paquetes de hasta 256 archivos u 8 MiB por pedido, varios a la vez.
+- **Verificado.** sha256 por bloque al llegar (en esta CPU, con SHA-NI, sha256 hace 1,5 GB/s y
+  blake2b 0,56). Al cerrar, el que recibe relee el `.parte` entero, lo compara bloque a bloque con la
+  lista del que manda, y recién ahí lo renombra al nombre bueno: nunca queda un archivo a medias con
+  ese nombre. Un bloque que llega distinto se rechaza (422) y se vuelve a mandar. Un archivo que
+  cambia en el origen mientras viaja se detecta (tamaño o fecha) y se vuelve a pasar, sólo lo distinto.
+- **Sólo lo que cambió.** Si el destino ya tiene el archivo, se comparan los hashes por bloque y
+  viajan sólo los distintos; tamaño y fecha iguales no alcanzan para saltearlo. Para no releer GB en
+  cada pasada, el destino guarda los hashes de lo que ya tiene en `~/.lienzo/xfer/hashes.db`, válidos
+  mientras no cambien el tamaño ni la fecha de ese archivo.
+- **Nunca borra en el destino**, salvo `espejo: true`: ahí frena en `confirmar_espejo` con la lista
+  `borraria`, y borra sólo después de `POST /xfer/<id>/confirmar`.
+- **No mata la máquina.** Topes `mbps` (red) y `disco_mbps` (lectura), hilos en modo segundo plano
+  de Windows (CPU, disco y memoria con prioridad baja), y freno si cualquiera de las dos PCs baja de
+  1,5 GB libres, la misma reserva de `agentes_libres`. Frenada no es error: sigue cuando se libera.
+- **Rutas permitidas.** Origen y destino tienen que caer en `copy_roots` del `config.json` de su PC
+  (vacía o ausente es ninguna, como `launch_roots`). Se lee en cada pedido: no hace falta reiniciar.
+
+```json
+"copy_roots": ["\\\\wsl.localhost\\Ubuntu\\home\\yo\\.cache\\volcado", "C:\\datos\\salida"]
+```
+
+**WSL.** Las rutas van como `\\wsl.localhost\<distro>\...` y el server, que corre en Windows, las lee
+y escribe por 9p. Medido en la PC de Ariel: 149 MB/s leyendo un archivo de 2 GB (más que una LAN
+gigabit), pero sólo ~600 archivos/s con 16 hilos leyendo archivos de 50 KB. Para un volcado de pocos
+archivos grandes sirve tal cual; miles de archivos chicos dentro de WSL rinden mucho menos.
+
 ### Seguridad, en criollo
 
 Con esto, un peer emparejado puede teclear en los agentes de la otra PC y lanzar sesiones nuevas:
@@ -613,6 +653,10 @@ túnel, además la cookie de sesión.
 | PUT | `/config` | `{auto_continue?, auto_retry?, auto_aprobar?}` (booleanos); sólo esas claves, el resto de `config.json` no se toca. `auto_aprobar` solo desde la LAN y se manda a todas las PCs: la respuesta trae `peers: {pc_id: "ok" \| error}` |
 | POST | `/secrets` | `{pc?, nombre, destino: git\|memoria, valor \| desde: "git_local", git_url?, usuario?}`; un secreto cifrado a esa PC. La respuesta nunca trae el valor |
 | GET | `/secrets`, `/secrets/<id>?pc=` | los secretos en memoria (sin valores); leer uno lo borra. Solo desde la LAN |
+| POST | `/xfer` | `{pc, origen, destino, hilos?, bs_mib?, mbps?, disco_mbps?, espejo?}`; copia un archivo o carpeta de esta PC a la carpeta `destino` de la PC `pc` (ver *Copiar archivos entre PCs*); 202 con `{id}` |
+| GET | `/xfer`, `/xfer/<id>` | las copias de esta PC; una con `estado`, `pct`, `mbps`, `red_mbps`, `eta_s`, `archivos_hechos`/`archivos_total`, `salteados`, `errores`, `ultimos` (y `borraria` en modo espejo) |
+| DELETE | `/xfer/<id>` | pausa la copia; lo que está en vuelo termina |
+| POST | `/xfer/<id>/retomar`, `/xfer/<id>/confirmar` | sigue una copia pausada o con errores, sin rehacer lo hecho; `confirmar` deja borrar al modo espejo |
 | POST | `/rules/retarget` | `{old, new}`; las reglas que avisaban a `old` pasan a `new`, en todas las PCs |
 | GET | `/events` | SSE con cada cambio de sesiones, pendientes, links, reglas |
 | GET | `/docs`, `/docs/README.md`, `/docs/DISENO.es.md`, `/docs/img/<x>.png` | la referencia buscable (menú ⋯ → Referencia) y los archivos que lee, tal como están en el repo |
@@ -622,8 +666,9 @@ túnel, además la cookie de sesión.
 Todo lo de arriba es del puerto de siempre (7321, sólo `127.0.0.1`), para el tablero. Entre PCs hay
 otra API, en el listener de peers (7322 por defecto): `/peer/hello` y `/peer/pair` (el
 emparejamiento, sin firma) y `/peer/{snapshot,health,events}` más `/peer/sessions/<sid>/...`,
-`/peer/launch`, `/peer/rules` (crear y `DELETE`), `/peer/rules/{lock,check}`, `/peer/restaurables` y
-`/peer/restaurar` (firmados con HMAC, ver "Varias PCs"). Ninguna la llama el navegador: son PC a PC.
+`/peer/launch`, `/peer/rules` (crear y `DELETE`), `/peer/rules/{lock,check}`, `/peer/restaurables`,
+`/peer/restaurar` y `/peer/xfer/{estado,bloque,paquete,cerrar,sobrantes,borrar}` (firmados con HMAC,
+ver "Varias PCs"). Ninguna la llama el navegador: son PC a PC.
 Un envío, un lanzamiento o un `attach` entre PCs espera hasta 70 s (teclear en una consola tarda), y
 una restauración con `all`, hasta 300 s.
 
@@ -648,6 +693,7 @@ lienzo/
   federation.py    firma HMAC con ventana y nonce, KDF del emparejamiento, `peers.json`, beacon (codificar/decodificar), cliente SSE con reconexión, transporte HTTP
   pairing.py       emparejamiento con SPAKE2: quién ofrece la palabra, quién la valida, quién la pega (`offer`/`accept`/`join`)
   secretos.py      secretos entre PCs: cifrado con la clave del par, un solo uso, credenciales de git
+  xfer.py          copiar archivos entre PCs: el que manda (`Trabajo`) y el que recibe (`/peer/xfer/*`), bloques, diario, verificación
   autoaprobar.py   auto-aprobar TODO, con un proveedor por forma de pedir permiso
   subproc.py       `correr()`: subprocesos (git, powershell, tmux) que nunca cuelgan al server
   pantalla_coda.py el comando del cartel de permiso de coda y su huella (para `expect`)
