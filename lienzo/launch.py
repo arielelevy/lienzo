@@ -65,6 +65,36 @@ def _model_args(agent: str, model: str | None) -> list[str]:
     return []
 
 
+# el nombre corto entra en la linea del .cmd: solo [A-Za-z0-9._-], sin nada que la reinterprete
+_NOMBRE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def nombre_corto(title: str) -> str:
+    """El nombre para el canal nativo (ListAgents, SendMessage), sacado del titulo de la tarjeta:
+    `chesstudia - encargo I - ...` da `chesstudia-I`, `chesstudia - coordinadora - ...` da
+    `chesstudia-coordinadora`, y cualquier otro titulo, sus primeras palabras. Sin acentos."""
+    import unicodedata
+
+    plano = unicodedata.normalize("NFKD", title or "").encode("ascii", "ignore").decode()
+    partes = [p.strip() for p in plano.split(" - ") if p.strip()]
+    if len(partes) >= 2:
+        rol = re.sub(r"^encargo\s+", "", partes[1], flags=re.I)
+        base = f"{partes[0]}-{rol}"
+    else:
+        base = partes[0] if partes else ""
+    return _NOMBRE_RE.sub("-", base).strip("-.")[:40].strip("-.")
+
+
+def _nombre_args(agent: str, title: str) -> list[str]:
+    """Los argumentos que nombran la sesion al lanzarla (`nombrar` del registro), o [] si el agente
+    no se deja nombrar o el titulo no da nombre."""
+    p = AGENTES.get(agent)
+    nombre = nombre_corto(title)
+    if p is None or not p.nombrar or not nombre:
+        return []
+    return [a.replace("{nombre}", nombre) for a in p.nombrar]
+
+
 def _sanitize_title(title: str) -> str:
     limpio = _UNSAFE_TITLE_RE.sub(" ", (title or "").strip())
     return state.short(" ".join(limpio.split()), 120) or "lienzo"
@@ -132,8 +162,11 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: s
         return {"ok": False, "error": f"no encuentro {exe_name} en esta PC"}
     resume_args = _resume_args(agent, resume)
     model_args = _model_args(agent, model)
-    extra = [*resume_args, *model_args]
+    nombre_args = _nombre_args(agent, title)
+    extra = [*resume_args, *model_args, *nombre_args]
     res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
+    if nombre_args and res.get("ok"):
+        res["native_name"] = nombre_corto(title)
     if resume is not None:
         res["resumed"] = bool(resume_args)
     if model is not None:

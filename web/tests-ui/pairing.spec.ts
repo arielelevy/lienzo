@@ -237,14 +237,14 @@ test.describe("el selector de destino descarta las sesiones de una PC caída (Ap
 });
 
 test.describe("canal nativo entre PCs distintas (plan §3.5)", () => {
-  test("no se ofrece entre dos sesiones de Claude Code de PCs distintas", async ({ page }) => {
+  test("se ofrece entre dos sesiones de Claude Code de PCs distintas (Remote Control, 2026-10-05)", async ({ page }) => {
     await abrirTablero(page, conDosPc(), [PEER_LOCAL, PEER_NOTEBOOK]);
     // coordinadora (lienzo, PC local, claude) -> reglas (teorema, "note-1", claude): mismo agente, distinta PC
     await conectar(page, SID.coordinadora, SID.reglas);
     await expect(page.locator(".fwd")).toBeVisible();
     const nativo = page.locator(".fwd .modes label", { hasText: "Canal nativo" });
-    await expect(nativo.locator("input")).toBeDisabled();
-    await expect(page.locator(".fwd")).toContainText("ListAgents solo ve su propia PC");
+    await expect(nativo.locator("input")).toBeEnabled();
+    await expect(page.locator(".fwd")).not.toContainText("ListAgents solo ve su propia PC");
   });
 
   test("se sigue ofreciendo entre dos sesiones de Claude Code de la misma PC", async ({ page }) => {

@@ -33,7 +33,9 @@ class Perfil:
     (claude y codex retoman una sesion dada); `retomar_ultima`, los que retoman «la ultima de esta
     carpeta» sin id (pi y coda). `parser` es el NOMBRE de la funcion de transcripts.py, que se busca
     recien al parsear (guardar la funcion al importar dejaria afuera los monkeypatch), y
-    `parser_args` dice cuales de max_bytes / leaf_id recibe despues de la ruta, en ese orden."""
+    `parser_args` dice cuales de max_bytes / leaf_id recibe despues de la ruta, en ese orden.
+    `nombrar` son los argumentos que van ANTES del nombre corto de la sesion al lanzarla (ver
+    launch._nombre_args); vacio si el agente no se deja nombrar."""
 
     exe: str
     parser: str
@@ -41,6 +43,7 @@ class Perfil:
     retomar_por_id: tuple[str, ...] = ()
     retomar_ultima: tuple[str, ...] = ()
     acepta_modelo: bool = False
+    nombrar: tuple[str, ...] = ()
 
 
 AGENTES: dict[str, Perfil] = {
@@ -50,6 +53,9 @@ AGENTES: dict[str, Perfil] = {
         parser_args=("max_bytes",),
         retomar_por_id=("--resume",),
         acepta_modelo=True,
+        # -n le da el nombre con que la ven ListAgents y SendMessage (si no, sale «chess-f6»), y
+        # --remote-control la publica en la cuenta: sin eso el canal nativo no cruza PCs
+        nombrar=("-n", "{nombre}", "--remote-control", "{nombre}"),
     ),
     "codex": Perfil(
         exe="codex.exe",

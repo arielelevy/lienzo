@@ -59,6 +59,8 @@ export interface Session {
   /** La extension/hook ya publico la identidad exacta de esta sesion. */
   hooked?: boolean;
   pending_id: string | null;
+  /** el nombre con que la ven ListAgents y SendMessage (lo pone el lienzo al lanzar o al renombrar) */
+  native_name?: string | null;
   orphan?: boolean;
   no_console?: boolean;
   /** que fuente maneja la tarjeta: "win32" (Windows) o "tmux" (Mac/Linux/WSL). Ausente = primario. */

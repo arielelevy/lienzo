@@ -191,7 +191,9 @@ no lo arregla. Una PC caída se ve en ○ y sus tarjetas quedan grises.
 ![tira de PCs](docs/img/tira-pcs.png)
 
 La ★ coordinadora es una por repo en toda la federación; `scope: "pc"` la separa para una PC. El
-canal nativo (`SendMessage`) no cruza PCs.
+canal nativo (`ListAgents` / `SendMessage`) cruza PCs con Remote Control y la misma cuenta: el
+lienzo lanza cada Claude con `-n <nombre> --remote-control`, y `POST /sessions/<sid>/native` (o ✎
+Renombrar en la tarjeta) nombra y publica una que ya corre.
 
 ### Secretos entre PCs
 

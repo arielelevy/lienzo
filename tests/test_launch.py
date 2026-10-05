@@ -202,8 +202,22 @@ def test_fuera_de_windows_lanza_adentro_de_tmux_sin_el_entorno_de_claude(aislado
         "-c",
         str(root / "proyecto"),
     ]
-    assert argv[9] == "env" and argv[-1] == os.path.join(st.HOME, ".local", "bin", "claude")
+    exe = os.path.join(st.HOME, ".local", "bin", "claude")
+    # el nombre corto para el canal nativo, sin el & ni nada que se interprete
+    assert argv[9] == "env" and argv[-5:] == [exe, "-n", "miapp-A-rm--rf", "--remote-control", "miapp-A-rm--rf"]
     assert ["-u", "CLAUDECODE"] == argv[10:12], "un claude hijo con CLAUDECODE se cree anidado y se apaga"
+    assert res["native_name"] == "miapp-A-rm--rf"
+
+
+def test_nombre_corto_para_el_canal_nativo():
+    assert launch.nombre_corto("chesstudia - encargo I - pasaje formateado") == "chesstudia-I"
+    assert launch.nombre_corto("chesstudia - coordinadora - ronda 1006") == "chesstudia-coordinadora"
+    assert launch.nombre_corto("chesstudia - encargo Ñ - la Biblioteca") == "chesstudia-N"
+    assert launch.nombre_corto("Canal nativo entre PCs") == "Canal-nativo-entre-PCs"
+    assert launch.nombre_corto("") == ""
+    # solo claude se deja nombrar; sin titulo no hay nombre
+    assert launch._nombre_args("codex", "app - encargo A - x") == []
+    assert launch._nombre_args("claude", "") == []
 
 
 def test_fuera_de_windows_busca_el_ejecutable_sin_exe(aislado, monkeypatch):
@@ -258,4 +272,15 @@ def test_modelo_y_resume_se_combinan(aislado, monkeypatch):
     res = launch.launch(str(root / "p"), "t", "claude", resume="0a1de326-0f51-41f4-8ca7-4807e11950f3", model="opus")
     cuerpo = _cuerpo_del_cmd(res)
     assert res["resumed"] is True and res["model_applied"] is True
-    assert " --resume 0a1de326-0f51-41f4-8ca7-4807e11950f3 --model opus\r\n" in cuerpo
+    assert " --resume 0a1de326-0f51-41f4-8ca7-4807e11950f3 --model opus -n t --remote-control t\r\n" in cuerpo
+
+
+def test_dialogo_de_remote_control_nunca_elige_desconectar():
+    import sessions as ses
+
+    apagado = {"question": "Remote Control", "options": [{"n": 1, "text": "Enable Remote Control  Opens a secure connection"}, {"n": 2, "text": "Never mind"}]}
+    prendido = {"question": "Remote Control", "options": [{"n": 1, "text": "Disconnect this session"}, {"n": 2, "text": "Keep it"}]}
+    otro = {"question": "Switch model?", "options": [{"n": 1, "text": "Yes"}]}
+    assert ses._opcion_remote_control(apagado) == 1
+    assert ses._opcion_remote_control(prendido) == 2
+    assert ses._opcion_remote_control(otro) is None

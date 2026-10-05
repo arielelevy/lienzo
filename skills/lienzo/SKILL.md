@@ -36,9 +36,8 @@ andando que todavía no están emparejadas, con su IP y puerto. `lienzo-server.c
 pantalla "🖥 Varias PCs", no la coordinadora.
 
 Qué cambia para coordinar: la tira de PCs arriba del tablero (con menos de dos PCs no aparece), el
-título de una tarjeta lleva `@<pc>` cuando hay más de una en el tablero, y **el canal nativo Claude
-a Claude no cruza PCs** (`ListAgents` es de la máquina donde corre; entre frentes de PCs distintas
-todo pasa por el lienzo). El resto de este skill (nombres, no pid; el patrón coordinadora/frentes;
+título de una tarjeta lleva `@<pc>` cuando hay más de una en el tablero, y el canal nativo Claude a
+Claude **cruza PCs solo con Remote Control** (ver «El canal nativo», más abajo). El resto de este skill (nombres, no pid; el patrón coordinadora/frentes;
 las trampas) vale igual entre PCs, con los agregados que siguen en cada sección.
 
 ## La regla que más cuesta aprender: por nombre, nunca por pid
@@ -211,19 +210,30 @@ explícito**, o los acentos se rompen. Lo que se usa para repartir:
 | `GET /peers` | las PCs de la federación, la propia primero (`local: true`), con `alive` y `health` (memoria, CPU, temperatura) |
 | `POST /sessions/launch` | `{pc?, cwd, agent, title}`: lanza una sesión nueva, local o en la PC `pc` |
 
-**El canal nativo Claude a Claude** va por afuera: `ListAgents` lista las sesiones vivas de **esta
-máquina** y `SendMessage` les habla. El lienzo lo dibuja como flecha doble pero no lo intermedia, y
-**no cruza PCs**: no hay forma de mapear un nombre nativo (`app-1c`) a una sesión de otra PC, así
-que entre frentes de PCs distintas todo pasa por el lienzo (por nombre y `session_id`, como
-siempre), nunca por `ListAgents`.
+**El canal nativo Claude a Claude** va por afuera: `ListAgents` lista las sesiones vivas y
+`SendMessage` les habla. El lienzo lo dibuja como flecha doble pero no lo intermedia. Ve las de
+**esta máquina** y, de las otras PCs, solo las que tienen **Remote Control** prendido con la misma
+cuenta de claude.ai (verificado el 2026-10-05: `chesstudia-I`, en otra PC, recibió y contestó).
+
+- **El lienzo las deja visibles y con nombre al lanzarlas**: un Claude lanzado por el lienzo arranca
+  con `-n <nombre> --remote-control <nombre>`, y el nombre sale del título (`chesstudia - encargo I
+  - ...` da `chesstudia-I`; la coordinadora, `chesstudia-coordinadora`). La respuesta del launch lo
+  trae en `native_name`.
+- **Una sesión que ya corre** se nombra con `POST /sessions/<sid>/native` (`{name?}`; sin `name`
+  sale del título): teclea `/rename` y `/remote-control` y contesta solo el diálogo de Remote
+  Control. Solo con la sesión quieta (409 si está corriendo). Renombrar la tarjeta con ✎ en el
+  tablero hace lo mismo.
+- **Sin eso**, `ListAgents` muestra nombres automáticos (`chess-f6`) y no ve las sesiones de otra PC.
+  En cada PC conviene `"remoteControlAtStartup": true` en `~/.claude/settings.json`, para que
+  también las sesiones abiertas a mano queden publicadas; eso lo prende el usuario.
 
 **La coordinadora usa el lienzo para todo, también entre dos sesiones de Claude.** Medido el
 2026-09-26 con seis sesiones de un mismo repo:
 
-- **Los nombres nativos no dicen qué frente es cada uno.** `ListAgents` devolvió `app-77`,
-  `app-48`, `app-37`, `app-3e`, con «busy» o «idle» y la hora de arranque, y ningún título. Mapear un
-  nombre a un frente cuesta preguntarle a cada uno, y un error manda el encargo al frente equivocado.
-  El lienzo direcciona por `session_id` con el título a la vista.
+- **Los nombres nativos no decían qué frente era cada uno.** `ListAgents` devolvió `app-77`,
+  `app-48`, `app-37`, `app-3e`, sin título. Desde el 2026-10-05 el lienzo las nombra (ver arriba),
+  pero una sesión abierta a mano sigue saliendo así hasta que se la nombra. El lienzo direcciona por
+  `session_id` con el título a la vista.
 - **Hablarle a una sesión ocupada no necesita el canal nativo.** Un `POST /sessions/<sid>/send` a una
   sesión que está trabajando le llega igual en el turno en curso, como mensaje intercalado (salvo un
   comando con barra, ver trampas). Es lo mismo que daría `SendMessage`.

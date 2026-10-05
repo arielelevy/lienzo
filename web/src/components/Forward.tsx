@@ -9,11 +9,14 @@ const KEY = "lienzo.forward.template";
 type Mode = "now" | "on_stop" | "at" | "native";
 
 /** Instruccion que se le inyecta a A para que abra el canal nativo de Claude Code con B.
- *  Los nombres internos (lienzo-04, demo-bf) no se pueden mapear desde afuera: A los resuelve
- *  con ListAgents a partir del repo y el titulo de B. */
+ *  Si el lienzo le puso nombre a B (al lanzarla o al renombrarla) va ese; si no, A la resuelve
+ *  con ListAgents a partir del repo y el titulo. Cruza PCs: con Remote Control, ListAgents ve las
+ *  sesiones de la misma cuenta en las otras maquinas. */
 function nativeInstruction(b: Session, text: string): string {
-  const who = b.title ? `"${b.title}" (repo ${b.repo})` : `repo ${b.repo}`;
-  return `Abrí un canal con otra sesión de Claude Code de esta máquina. Usá ListAgents y ubicá la sesión que corresponde a ${who}, que arrancó hace ${ago(b.started)}; no sos vos. Mandale con SendMessage lo siguiente y seguí la conversación por ese mismo canal (respondiéndole con SendMessage) hasta cerrar el tema; al final resumime acá qué quedó: ${text}`;
+  const who = b.native_name
+    ? `la que ListAgents muestra como "${b.native_name}"`
+    : `la que corresponde a ${b.title ? `"${b.title}" (repo ${b.repo})` : `repo ${b.repo}`}, que arrancó hace ${ago(b.started)}`;
+  return `Abrí un canal con otra sesión de Claude Code (puede estar en otra PC). Usá ListAgents y ubicá ${who}; no sos vos. Mandale con SendMessage lo siguiente y seguí la conversación por ese mismo canal (respondiéndole con SendMessage) hasta cerrar el tema; al final resumime acá qué quedó: ${text}`;
 }
 
 function loadTemplate(): string {
@@ -117,9 +120,8 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const nativeWhy = useMemo(() => {
     if (!targetSession) return "elegí primero una sesión destino";
     if (targetSession.session_id === from.session_id) return "es un canal entre dos sesiones: elegí otra como destino";
-    // ListAgents solo ve la propia maquina (plan multi-PC §3.5): sin esto, dos sesiones de PCs
-    // distintas ofrecerian un canal que la propia sesion origen no puede abrir
-    if ((from.pc ?? null) !== (targetSession.pc ?? null)) return "ListAgents solo ve su propia PC: el canal nativo no cruza PCs distintas";
+    // entre PCs anda con Remote Control (el lienzo lanza con --remote-control): ListAgents ve las
+    // sesiones de la misma cuenta en las otras maquinas
     const bad = [from, targetSession].filter((s) => !can(s.agent, "nativeChannel"));
     if (!bad.length) {
       // el canal nativo se apoya en ListAgents, que es por entorno: un claude de Windows no ve a

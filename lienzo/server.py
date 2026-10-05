@@ -53,6 +53,7 @@ from sessions import (
     add_link,
     answer_coda_ask,
     answer_dialog,
+    nombrar_nativo,
     answer_pending,
     clean_attachments,
     coda_viva,
@@ -847,6 +848,21 @@ def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     return send_to_session(s, d.get("text", ""), d.get("attachments") or [])
 
 
+def validar_native(d: dict) -> tuple[int, dict] | None:
+    name = d.get("name")
+    return _rechazo("name debe ser un texto") if name is not None and not isinstance(name, str) else None
+
+
+def accion_native(s: dict, d: dict) -> tuple[int, dict]:
+    """POST /sessions/<id>/native {name?}: la deja en el canal nativo (ListAgents y SendMessage, de
+    esta PC y de las otras con la misma cuenta) con ese nombre, o el que sale de su titulo. Corre en
+    la PC duena: teclea /rename y /remote-control y contesta el dialogo."""
+    nombre = launch.nombre_corto(d.get("name") or s.get("title") or s.get("repo") or "")
+    if not nombre:
+        return 400, {"error": "sin titulo no hay de donde sacar un nombre: pasá name"}
+    return nombrar_nativo(s, nombre)
+
+
 def accion_interrupt(s: dict, d: dict) -> tuple[int, dict]:
     return interrupt_session(s)
 
@@ -877,15 +893,6 @@ def reenvio_attach(d: dict) -> dict:
     return {"filename": d["filename"], "data_b64": base64.b64encode(d["data"]).decode("ascii")}
 
 
-def canal_nativo_local(d: dict) -> tuple[int, dict] | None:
-    """Antes de teclear un envio del tablero en una tarjeta local: el canal nativo (Claude a Claude
-    por SendMessage) no cruza PCs. ListAgents es de la propia maquina y no hay forma de resolver un
-    nombre corto contra una sesion remota."""
-    if d.get("native"):
-        otro = d.get("link_to") or d.get("from")
-        if otro and mirror.MIRROR.owner_of(otro) is not None:
-            return 409, {"error": "el canal nativo no cruza PCs"}
-    return None
 
 
 def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
@@ -921,8 +928,9 @@ class AccionSesion:
 
 ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
     ("POST", "send"): AccionSesion(
-        validar_send, accion_send, antes_local_tablero=canal_nativo_local, despues_tablero=envio_del_tablero
+        validar_send, accion_send, despues_tablero=envio_del_tablero
     ),
+    ("POST", "native"): AccionSesion(validar_native, accion_native),
     ("POST", "interrupt"): AccionSesion(sin_validar, accion_interrupt, reenvio=lambda d: {}, cuerpo="nada"),
     ("POST", "approve"): AccionSesion(validar_approve, accion_approve),
     ("POST", "dialog"): AccionSesion(validar_dialog, accion_dialog),

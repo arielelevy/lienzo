@@ -2159,6 +2159,74 @@ def dialogo_abierto(s: dict) -> tuple[int, dict] | None:
     }
 
 
+def _opcion_remote_control(d: dict) -> int | None:
+    """En el dialogo de /remote-control, la opcion que deja la sesion publicada: «Enable» si estaba
+    apagado; si ya estaba prendido el mismo comando ofrece desconectar, y ahi se elige la que NO
+    desconecta. None si el dialogo no es ese o no se reconoce ninguna."""
+    if "remote control" not in (d.get("question") or "").lower():
+        return None
+    ops = [(o.get("n"), (o.get("text") or "").lower()) for o in d.get("options") or []]
+    for n, t in ops:
+        if t.startswith("enable") or t.startswith("connect"):
+            return n
+    for n, t in ops:
+        if not any(p in t for p in ("disconnect", "disable", "stop", "turn off")):
+            return n
+    return None
+
+
+def _menu_remote_control_abierto(s: dict) -> bool:
+    """El menu que abre /remote-control cuando ya estaba prendido (Disconnect / Show QR / Continue):
+    va con flechas y screen.dialog no lo reconoce. Se cierra con Esc, que es «Continue»."""
+    r = read_screen(s)
+    texto = "\n".join((r.get("lines") or [])[-12:]) if r.get("ok") else ""
+    return "Disconnect this session" in texto and "Esc to continue" in texto
+
+
+def nombrar_nativo(s: dict, nombre: str, esperar_dialogo: float = 10.0) -> tuple[int, dict]:
+    """Deja una sesion de Claude Code visible en el canal nativo con `nombre`: teclea `/rename` y
+    `/remote-control`, y contesta el dialogo de Remote Control desde aca (sin esto habia que ir a
+    cada consola a darle Enable). Sin Remote Control, ListAgents de otra PC no la ve. Va por
+    run_send y no por send_to_session: un comando con barra no dispara Stop, y la tarjeta quedaria
+    «corriendo» para siempre. Solo con la sesion quieta: en una ocupada el comando queda encolado."""
+    if s.get("agent") != "claude":
+        return 409, {"ok": False, "error": "solo Claude Code tiene canal nativo"}
+    if s.get("state") == "corriendo":
+        return 409, {"ok": False, "error": "esta corriendo: se nombra cuando quede quieta"}
+    if frenado := send_blocked(s) or dialogo_abierto(s):
+        return frenado
+    if _menu_remote_control_abierto(s):  # quedo de una vez anterior: teclear encima lo eligiria
+        run_send(s, "", enter=False, key="escape")
+        time.sleep(1)
+    for texto in (f"/rename {nombre}", "/remote-control"):
+        code, out = run_send(s, texto)
+        if code != 200:
+            return code, out
+        time.sleep(1.5)
+    fin = time.time() + esperar_dialogo
+    while time.time() < fin:
+        r = read_screen(s)
+        d = screen.dialog(r.get("lines") or []) if r.get("ok") else None
+        n = _opcion_remote_control(d) if d else None
+        if n is None and _menu_remote_control_abierto(s):
+            # ya estaba publicada: Esc la deja como estaba, sin desconectar
+            run_send(s, "", enter=False, key="escape")
+            break
+        if n is not None:
+            with lock:
+                s["dialog"] = d
+            code, out = answer_dialog(s, n)
+            if code != 200:
+                return code, out
+            break
+        time.sleep(1)
+    with lock:
+        s["native_name"] = nombre
+        touch(s)
+    state.log(f"canal nativo {s['session_id'][:8]} -> {nombre}")
+    return 200, {"ok": True, "native_name": nombre}
+
+
 def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
     """Inyecta texto en la consola de la sesion y deja la tarjeta corriendo. Si `s` es de otra PC
     (mirror.owner_of, frente C, plan multi-PC §3.4), en cambio se reenvia con mirror.forward: la
