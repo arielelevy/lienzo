@@ -117,10 +117,12 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, sinGit]);
     const notebook = page.locator(".pcstrip .pcchip", { hasText: "notebook" });
     await expect(notebook).not.toHaveClass(/alerta/);
-    const git = notebook.locator(".git");
+    // desde 55f83d3 el violeta es un boton aparte, al lado del chip (click: pasarle la credencial)
+    const wrap = (nombre: string) => page.locator(".pcstrip .pcwrap", { has: page.locator(".pcchip", { hasText: nombre }) });
+    const git = wrap("notebook").locator(".pcgit");
     await expect(git).toContainText("git: timeout (git.ejemplo.com · a), sin red (otro.ejemplo.com · b)");
     await expect(git).toHaveCSS("color", "rgb(217, 70, 239)");
-    await expect(page.locator(".pcstrip .pcchip", { hasText: "oficina" }).locator(".git")).toHaveCount(0);
+    await expect(wrap("oficina").locator(".pcgit")).toHaveCount(0);
   });
 
   test("click en un chip filtra a esa PC y nada mas; se vuelve con Todas", async ({ page }) => {
