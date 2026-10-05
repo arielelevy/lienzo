@@ -60,8 +60,11 @@ export function useCardActions(s: Session, toast: ToastFn) {
   const autorizarDenegado = () => {
     const d = s.last_denied;
     if (!d) return;
-    const que = d.detalle ? `${d.tool} ${d.detalle}` : d.tool;
-    void quickSend(`El humano autoriza lo que se te denegó (${que}). Reintentalo; si la regla te lo vuelve a frenar, avisame y no insistas.`);
+    // todas las del turno, una por una: con una sola, «lo que se te denego» autorizaba tambien lo que
+    // la tarjeta no mostraba (un rm -r detras de una suma inofensiva, 2026-10-04)
+    const lista = d.todas && d.todas.length > 1 ? d.todas : [d];
+    const que = lista.map((x, i) => `${lista.length > 1 ? `(${i + 1}) ` : ""}${x.detalle ? `${x.tool} ${x.detalle}` : x.tool}`).join("; ");
+    void quickSend(`El humano autoriza lo que se te denegó: ${que}. Reintentá sólo eso; si la regla te lo vuelve a frenar, avisame y no insistas.`);
   };
 
   // estrella de coordinadora: a lo sumo una por repo; recibe los avisos "cuando termine" del

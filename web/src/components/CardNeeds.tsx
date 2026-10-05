@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { detail } from "../api";
 import type { CardActions } from "../hooks/useCardActions";
 import { hhmm } from "../nl";
@@ -22,6 +23,10 @@ interface Props {
  *  que la respuesta: Permitir/Denegar es lo primero visible. */
 export function CardNeeds({ session: s, pending: p, quick, writable, actions, onDecide, onAnswer }: Props) {
   const { busy, codaDecide, pickDialog, autorizarDenegado } = actions;
+  // autorizar una denegacion que borra o pisa algo pide un segundo click, atado a ESA denegacion
+  // (`visto`): si llega otra, el primer click no vale para la nueva
+  const [confirmadaEn, setConfirmadaEn] = useState<string | null>(null);
+  const confirmarGrave = !!s.last_denied?.visto && confirmadaEn === s.last_denied.visto;
   // pendiente que en realidad es una pregunta con opciones: se contesta eligiendo (Ask.tsx)
   const preguntas = askQuestions(p);
   return (
@@ -50,13 +55,43 @@ export function CardNeeds({ session: s, pending: p, quick, writable, actions, on
       {/* permiso que una regla, una politica o un clasificador denego: no espera nada, pero si nadie
           lo ve el agente sigue sin eso (medido el 2026-10-04 en la otra PC) */}
       {s.last_denied && !p && (
-        <div className="needs denied">
-          <b>Denegado: {s.last_denied.tool}</b>
+        <div className={`needs denied ${s.last_denied.grave ? "grave" : ""}`}>
+          <b>
+            {s.last_denied.grave ? "Denegado, borra o pisa algo: " : "Denegado: "}
+            {s.last_denied.tool}
+            {(s.last_denied.n ?? 1) > 1 && ` · ${s.last_denied.n} en este turno`}
+          </b>
           {s.last_denied.detalle && <code>{s.last_denied.detalle}</code>}
           {s.last_denied.motivo && <div className="dim small">{s.last_denied.motivo}</div>}
+          {/* las demas del turno: autorizar las autoriza a todas, asi que se ven todas */}
+          {(s.last_denied.todas?.length ?? 0) > 1 && (
+            <ul className="denied-otras">
+              {s.last_denied.todas!.filter((x) => x.detalle !== s.last_denied!.detalle).map((x, i) => (
+                <li key={i} className={x.grave ? "grave" : ""}>
+                  <code>{x.detalle || x.tool}</code>
+                </li>
+              ))}
+            </ul>
+          )}
           {writable && (
             <div className="btns">
-              <button className="allow" onClick={(e) => { e.stopPropagation(); autorizarDenegado(); }}>Autorizar y que reintente</button>
+              <button
+                className={s.last_denied.grave ? "deny" : "allow"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (s.last_denied?.grave && !confirmarGrave) return setConfirmadaEn(s.last_denied.visto ?? null);
+                  setConfirmadaEn(null);
+                  autorizarDenegado();
+                }}
+              >
+                {s.last_denied.grave
+                  ? confirmarGrave
+                    ? "Sí, autorizar también el borrado"
+                    : "Autorizar todo (incluye un borrado)"
+                  : (s.last_denied.n ?? 1) > 1
+                    ? `Autorizar las ${s.last_denied.n} y que reintente`
+                    : "Autorizar y que reintente"}
+              </button>
             </div>
           )}
         </div>

@@ -31,7 +31,18 @@ export interface Session {
   last_reply: string;
   last_error?: string | null;
   /** el ultimo permiso que una regla, una politica o un clasificador DENEGO (no el humano) */
-  last_denied?: { tool: string; motivo?: string; detalle?: string; fuente?: string; visto?: string } | null;
+  last_denied?: {
+    tool: string;
+    motivo?: string;
+    detalle?: string;
+    fuente?: string;
+    visto?: string;
+    /** borra o pisa algo (por el motivo del clasificador o por el comando) */
+    grave?: boolean;
+    /** cuantas se denegaron en el turno, y cuales (hasta 8): la principal es la grave, si hay */
+    n?: number;
+    todas?: { tool: string; motivo?: string; detalle?: string; grave?: boolean }[];
+  } | null;
   /** aviso de limite de uso con hora de vuelta (ISO): la tarjeta ofrece programar "Continuar" */
   limit_until?: string | null;
   /** aviso de limite ya atendido por el server (regla automatica creada para ese limit_until) */

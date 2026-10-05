@@ -816,13 +816,14 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
 def set_denied(s: dict, d: dict) -> None:
     """Marca en la tarjeta el ultimo permiso DENEGADO (por regla, politica o clasificador). Solo si
     es nuevo: la misma denegacion releida de la transcripcion no se vuelve a anunciar."""
-    clave = (d.get("tool"), d.get("motivo") or d.get("cause"), d.get("detalle"), d.get("turno") or d.get("at"))
+    clave = (d.get("tool"), d.get("motivo") or d.get("cause"), d.get("detalle"), d.get("turno") or d.get("at"), d.get("n"))
     prev = s.get("last_denied") or {}
     if (
         prev.get("tool"),
         prev.get("motivo") or prev.get("cause"),
         prev.get("detalle"),
         prev.get("turno") or prev.get("at"),
+        prev.get("n"),
     ) == clave:
         return
     s["last_denied"] = {**d, "visto": now()}
@@ -845,7 +846,19 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     else:
         apply_turn_unhooked(s, t)
     if negadas := transcripts.denials(t):
-        set_denied(s, {**negadas[-1], "fuente": "transcript", "turno": t.get("id") or t.get("prompt_ts")})
+        # la grave manda (la ultima grave), y la tarjeta ve todas: si no, un `rm -r` denegado quedaba
+        # tapado por una denegacion inofensiva posterior y se autorizaba sin verlo (2026-10-04)
+        principal = next((d for d in reversed(negadas) if d.get("grave")), negadas[-1])
+        set_denied(
+            s,
+            {
+                **principal,
+                "n": len(negadas),
+                "todas": negadas[-8:],
+                "fuente": "transcript",
+                "turno": t.get("id") or t.get("prompt_ts"),
+            },
+        )
     # error del turno (Codex: limite de uso, abortado; Claude: no aplica hoy) va aparte, en rojo
     s["last_error"] = short(t.get("error") or "", 300) or None
     if s["last_error"] and not t.get("final"):

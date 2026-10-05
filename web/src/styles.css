@@ -238,6 +238,10 @@ details.fold > summary,
 .card .needs.terminal { background: #24262e; border-color: #3b4050; }
 /* permiso que una regla o un clasificador denego: no espera nada, pero hay que verlo */
 .card .needs.denied { background: #2a1416; border-color: var(--err); }
+.card .needs.denied.grave { border-width: 2px; }
+.card .needs.denied.grave > b { color: var(--err); }
+.card .needs .denied-otras { margin: 4px 0 0; padding-left: 16px; font-size: 11.5px; }
+.card .needs .denied-otras li.grave code { color: var(--err); }
 /* auto-aprobar TODO: negro, para que no se confunda con un check cualquiera */
 .menu button.danger, [role="menu"] button.danger { background: #000; color: #fff; border: 1px solid var(--err); }
 .menu button.danger .desc, [role="menu"] button.danger .desc { color: #f0a0a0; }

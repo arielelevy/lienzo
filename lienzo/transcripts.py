@@ -867,9 +867,31 @@ DENIAL_RE = re.compile(
 )
 
 
+# Lo que no se deshace: el motivo del clasificador o el comando mismo. Medido el 2026-10-04: en un
+# turno se denegaron un `rm -r` de carpetas de paginas y, despues, una suma en Python; la tarjeta
+# mostraba solo la ultima (inofensiva) y «Autorizar y que reintente» autorizaba las dos.
+GRAVE_MOTIVO_RE = re.compile(r"irreversible|destruct|exfiltrat|credential|production", re.IGNORECASE)
+GRAVE_CMD_RE = re.compile(
+    r"(?:^|[\s;&|(`])(?:rm\s+-\w*[rf]|rm\s|rmdir\s|del\s|rd\s+/s|remove-item\b|git\s+reset\s+--hard|"
+    r"git\s+push\s+(?:-f\b|--force)|git\s+clean\s+-\w*f|drop\s+(?:table|database)\b|truncate\s+table\b|mkfs|format\s+\w:)",
+    re.IGNORECASE,
+)
+
+
+def _detalle_grave(cmd: str) -> tuple[bool, str]:
+    """(si el comando borra o pisa algo, el pedazo a mostrar). El pedazo grave suele venir despues de
+    los primeros 200 caracteres (un `cd`, un conteo), asi que se muestra desde ahi."""
+    m = GRAVE_CMD_RE.search(cmd)
+    if m is None:
+        return False, _first_line(cmd, 200)
+    desde = max(0, m.start() - 30)
+    return True, ("…" if desde else "") + _first_line(cmd[desde:], 200)
+
+
 def denials(turn: dict) -> list[dict]:
-    """Las herramientas denegadas del turno: {tool, motivo, detalle}. `detalle` es el comando o el
-    archivo, en una linea. Lo que rechaza el humano no cuenta."""
+    """Las herramientas denegadas del turno: {tool, motivo, detalle, grave}. `detalle` es el comando o
+    el archivo, en una linea (desde la parte grave si la hay); `grave` dice si borra o pisa algo, por
+    el motivo del clasificador o por el comando. Lo que rechaza el humano no cuenta."""
     out = []
     for b in turn.get("blocks") or []:
         if b.get("kind") != "tool":
@@ -879,9 +901,15 @@ def denials(turn: dict) -> list[dict]:
         if not res.get("is_error") or not DENIAL_RE.search(texto):
             continue
         inp = b.get("input") or {}
-        detalle = inp.get("command") or inp.get("cmd") or inp.get("file_path") or inp.get("path") or ""
+        cmd = str(inp.get("command") or inp.get("cmd") or inp.get("file_path") or inp.get("path") or "")
+        grave_cmd, detalle = _detalle_grave(cmd)
         out.append(
-            {"tool": b.get("name") or "?", "motivo": _first_line(texto, 200), "detalle": _first_line(str(detalle), 200)}
+            {
+                "tool": b.get("name") or "?",
+                "motivo": _first_line(texto, 200),
+                "detalle": detalle,
+                "grave": grave_cmd or bool(GRAVE_MOTIVO_RE.search(texto)),
+            }
         )
     return out
 

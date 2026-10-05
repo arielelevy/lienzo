@@ -456,3 +456,36 @@ def test_denials_reconoce_lo_que_denego_una_regla_o_el_clasificador_y_no_lo_que_
     d = tr.denials(turno)
     assert [x["detalle"] for x in d] == ["rm -rf a", "curl x"]
     assert "auto mode classifier" in d[0]["motivo"]
+
+
+def test_la_denegacion_grave_manda_aunque_venga_antes_y_lejos_en_el_comando(monkeypatch):
+    """Medido el 2026-10-04: un `rm -r` de carpetas de paginas (pasados los 200 caracteres del comando)
+    y despues una suma en Python, las dos denegadas; la tarjeta mostraba solo la suma y «Autorizar y que
+    reintente» autorizaba tambien el borrado sin que se viera."""
+    from lienzo import transcripts as tr
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+
+    def tool(cmd, motivo):
+        return {"kind": "tool", "name": "Bash", "input": {"command": cmd}, "result": {"text": motivo, "is_error": True}}
+
+    clasif = "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [{}]"
+    borrar = (
+        "S=/c/Users/x/scratchpad; cd /c/datos/paginas; total=0; for d in $(cat $S/sha.txt); do [[ \"$d\" =~ "
+        "^[0-9a-f]{64}$ ]] || exit 1; total=$((total + $(du -sb \"$d\" | cut -f1))); done; echo \"bytes $total\"; "
+        "for d in $(cat $S/sha.txt); do rm -r -- \"/c/datos/paginas/$d\"; done; ls | wc -l"
+    )
+    sumar = 'cd /d/x; python3 -c "print(sum([1,2,3]))"; head -5 corpus/incluidos.txt'
+    turno = {"id": "t1", "blocks": [tool(borrar, clasif.format("Irreversible Local Destruction")), tool(sumar, clasif.format("x"))]}
+    d = tr.denials(turno)
+    assert d[0]["grave"] is True and "rm -r" in d[0]["detalle"]
+    assert d[1]["grave"] is False
+
+    s = {"session_id": "f" * 36, "agent": "claude", "state": "corriendo", "last_denied": None}
+    monkeypatch.setattr(ses, "apply_turn_unhooked", lambda s, t: None)
+    monkeypatch.setattr(ses, "turn_activity", lambda t: {})
+    ses.apply_turn(s, turno, force_state=False)
+    assert "rm -r" in s["last_denied"]["detalle"] and s["last_denied"]["grave"] is True
+    assert s["last_denied"]["n"] == 2 and len(s["last_denied"]["todas"]) == 2
