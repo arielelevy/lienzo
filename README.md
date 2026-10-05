@@ -7,9 +7,9 @@ Hasta 4 PCs de la misma LAN se ven y se manejan desde cualquier tablero.
 
 Corre local, en `127.0.0.1:7321`. No hospeda terminales ni guarda historial propio: es un monitor
 con derecho a contestar. La arquitectura, con los recorridos de cada pedido dibujados, está en
-[la página de arquitectura](https://claude.ai/artifact/L7amyG8LHwLiogTUU6ojZg) (privada: hay que
-compartirla para que otros la abran); el diseño completo, en [`DISENO.es.md`](DISENO.es.md), y lo que
-falta, con su evidencia, en [`MEJORAS.md`](MEJORAS.md).
+[la página de arquitectura](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/) (pública); el
+diseño completo, en [`DISENO.es.md`](DISENO.es.md), y lo que falta, con su evidencia, en
+[`MEJORAS.md`](MEJORAS.md).
 
 ![Tablero](docs/img/tablero.png)
 
