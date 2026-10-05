@@ -261,3 +261,77 @@ def test_una_pc_que_dejo_de_anunciar_se_va_de_la_lista(hogar, monkeypatch):
     assert beacon.discovered(max_age_s=60) != []
     beacon._descubiertas["0123456789ab"]["last_seen"] -= 120
     assert beacon.discovered(max_age_s=60) == []
+
+
+# --- broadcast dirigido, barrido unicast y respuesta (2026-10-05) ---------------------------------
+
+
+def test_con_el_broadcast_limitado_sale_tambien_el_dirigido_de_cada_red_propia():
+    ips = ["192.168.50.64", "172.17.240.1", "192.168.50.70"]
+    assert beacon.destinos(beacon.BROADCAST_LIMITADO, ips) == [
+        "255.255.255.255",
+        "172.17.240.255",
+        "192.168.50.255",
+    ]
+
+
+def test_con_otra_direccion_sale_solo_esa():
+    assert beacon.destinos("127.0.0.1", ["192.168.50.64"]) == ["127.0.0.1"]
+
+
+def test_el_barrido_cubre_la_24_propia_sin_la_ip_propia():
+    objetivos = beacon.objetivos_barrido(["192.168.50.64"])
+    assert len(objetivos) == 253
+    assert "192.168.50.64" not in objetivos
+    assert objetivos[0] == "192.168.50.1" and objetivos[-1] == "192.168.50.254"
+
+
+def _par(hogar, pc_id="peer-remoto1"):
+    key = b"k" * 32
+    fed.add_peer(
+        beacon._peers_path(),
+        {"pc_id": pc_id, "name": "notebook", "ip": "192.168.1.63", "port": 7322, "key": key.hex()},
+    )
+    return key
+
+
+def test_faltan_los_peers_sin_beacon_reciente(hogar):
+    _par(hogar)
+    assert [p["pc_id"] for p in beacon.faltantes()] == ["peer-remoto1"]
+    beacon._seen["peer-remoto1"] = {"ip": "192.168.50.193", "last_seen": time.time()}
+    assert beacon.faltantes() == []
+    beacon._seen["peer-remoto1"]["last_seen"] -= beacon.DISCOVERED_TTL_S + 1
+    assert [p["pc_id"] for p in beacon.faltantes()] == ["peer-remoto1"]
+
+
+def test_un_peer_que_reaparece_recibe_respuesta_una_sola_vez(hogar):
+    key = _par(hogar)
+    respuestas = []
+
+    def responder(peer, addr):
+        respuestas.append((peer["pc_id"], addr[0]))
+
+    paquete = fed.encode_signed_beacon(key, "peer-remoto1", "notebook", 7322)
+    beacon._recibir(_SocketDeUnPaquete(paquete, "192.168.50.193"), responder)
+    time.sleep(0.01)  # el ts firmado tiene que crecer entre los dos beacons
+    otro = fed.encode_signed_beacon(key, "peer-remoto1", "notebook", 7322)
+    beacon._recibir(_SocketDeUnPaquete(otro, "192.168.50.193"), responder)
+
+    assert respuestas == [("peer-remoto1", "192.168.50.193")]
+    peer = next(p for p in fed.list_peers(beacon._peers_path()) if p["pc_id"] == "peer-remoto1")
+    assert peer["ip"] == "192.168.50.193"
+
+
+def test_el_barrido_manda_el_beacon_firmado_de_cada_faltante_a_cada_host(hogar, monkeypatch):
+    _par(hogar)
+    monkeypatch.setattr(beacon, "_ipv4_propias", lambda: ["192.168.50.64"])
+    enviados = []
+
+    class _Sock:
+        def sendto(self, data, addr):
+            enviados.append(addr)
+
+    assert beacon._barrer(_Sock(), 7323, 7322) == 253
+    assert ("192.168.50.193", 7323) in enviados
+    beacon._seen["peer-remoto1"] = {"ip": "192.168.50.193", "last_seen": time.time()}
+    assert beacon._barrer(_Sock(), 7323, 7322) == 0
