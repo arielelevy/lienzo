@@ -1223,7 +1223,13 @@ def coda_log_activity(s: dict) -> bool:
             set_state(s, "corriendo")
     if act.get("error") and s.get("last_error") != act["error"]:
         s["last_error"] = act["error"]  # «coda sin cuota»: la tarjeta lo dice en rojo en vez de «termino»
-    if den := act.get("denied"):
+    den = act.get("denied")
+    pedido, cuando = parse_ts(s.get("prompt_ts")), parse_ts((den or {}).get("at"))
+    if den and pedido and cuando and cuando < pedido:
+        # del turno anterior: el log todavia no tiene el «prompt started» del pedido nuevo, que ya
+        # borro la marca. Sin esto volvia enseguida y el boton «Autorizar» no se iba (2026-10-04)
+        den = None
+    if den:
         set_denied(
             s,
             {

@@ -325,6 +325,45 @@ def test_una_denegacion_de_coda_llega_a_la_tarjeta_una_sola_vez(monkeypatch):
     assert sum("DENEGADO" in x for x in logs) == 1
 
 
+def test_la_denegacion_del_turno_anterior_no_vuelve_despues_de_un_pedido_nuevo(monkeypatch):
+    """Medido el 2026-10-04 en ar-it33940: cada «Autorizar y que reintente» borraba la marca (pedido
+    nuevo) y la lectura siguiente del log, que todavia no tenia el «prompt started» del turno nuevo,
+    volvia a poner la denegacion del turno anterior: el boton no se iba y Ariel lo apreto 15 veces."""
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    den = {"tool": "bash", "cause": "command-policy", "sub": False, "at": "2026-10-04T23:59:56Z"}
+    act = {
+        "running": True,
+        "asking": None,
+        "last_at": None,
+        "last_tool": "bash",
+        "tools": 2,
+        "sub": False,
+        "denied": den,
+    }
+    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    s = {
+        "session_id": "e" * 36,
+        "agent": "coda",
+        "pid": 1,
+        "state": "corriendo",
+        "state_since": "x",
+        "hooked": True,
+        "needs": None,
+        "last_cmd": None,
+        "last_denied": None,  # el pedido nuevo la acaba de borrar
+        "prompt_ts": "2026-10-04T21:00:00.349-03:00",  # 00:00:00 UTC: despues de la denegacion
+    }
+    ses.coda_log_activity(s)
+    assert s["last_denied"] is None
+    # una denegacion del turno en curso si llega
+    act["denied"] = {**den, "at": "2026-10-05T00:00:05Z"}
+    ses.coda_log_activity(s)
+    assert s["last_denied"] and s["last_denied"]["tool"] == "bash"
+
+
 def test_propose_policy_de_coda_pone_la_tarjeta_en_te_necesita_y_la_siguiente_herramienta_la_libera(monkeypatch):
     """Medido el 2026-10-04: propose_policy abre «Approval Required» sin dejar un ask en el log; la
     tarjeta seguia en corriendo y ni el tablero ni el auto-aprobar lo veian."""
