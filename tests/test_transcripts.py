@@ -462,9 +462,10 @@ def test_la_denegacion_grave_manda_aunque_venga_antes_y_lejos_en_el_comando(monk
     """Medido el 2026-10-04: un `rm -r` de carpetas de paginas (pasados los 200 caracteres del comando)
     y despues una suma en Python, las dos denegadas; la tarjeta mostraba solo la suma y «Autorizar y que
     reintente» autorizaba tambien el borrado sin que se viera."""
-    from lienzo import transcripts as tr
     import sessions as ses
     import state as st
+
+    from lienzo import transcripts as tr
 
     monkeypatch.setattr(st, "log", lambda m: None)
 
