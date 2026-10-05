@@ -7,6 +7,7 @@ canal: el receptor que muere a mitad y se retoma desde el diario, un bloque que 
 vuelve a pedir, un archivo que cambia en el origen mientras viaja, una ruta fuera de copy_roots y
 una firma vieja."""
 
+import contextlib
 import hashlib
 import http.client
 import json
@@ -111,10 +112,8 @@ def canal(tmp_path, monkeypatch):
             t._hilo.join(timeout=10)
     xfer.TRABAJOS.clear()
     xfer.CACHE.cerrar()
-    try:
+    with contextlib.suppress(Exception):  # ya muerto por la prueba
         rec.matar()
-    except Exception:  # ya muerto por la prueba
-        pass
 
 
 def _escribir(p, data: bytes) -> None:
