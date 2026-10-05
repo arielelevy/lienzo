@@ -101,7 +101,9 @@ def test_peer_firewall_con_admin_llama_netsh_para_cada_regla(monkeypatch, capsys
     monkeypatch.setattr(install, "is_admin", lambda: True)
     monkeypatch.setattr(install.subprocess, "run", _run)
     install.peer_firewall(uninstall=False, dry_run=False)
-    assert len(llamadas) == len(install.FIREWALL_RULES) == 4
+    # por cada regla, borrar la anterior (no duplicar al correr --peer dos veces) y agregarla
+    assert len(llamadas) == 2 * len(install.FIREWALL_RULES) == 8
+    assert [a[3] for a in llamadas] == ["delete", "add"] * 4
     assert any("localport=7322" in a for a in llamadas)
     assert any("localport=7323" in a for a in llamadas)
     salida = capsys.readouterr().out

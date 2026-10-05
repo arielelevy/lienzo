@@ -460,6 +460,12 @@ Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
   lienzo encuentra la IP 100.x solo y cambia de dirección sin hacer nada; hace falta
   `install.py --peer` de nuevo, como administrador, para la regla de firewall de la tailnet.
   «el puerto está cerrado» es que no corre el lienzo allá; «no contesta el puerto» es el firewall.
+  Si una PC entra a esta por Tailscale (el log tiene `peer GET /peer/events de <pc_id>`) pero esta no
+  llega a la otra, a la otra le falta el código nuevo: `git pull`, `install.py --peer` como
+  administrador y reiniciar el lienzo (pasos en `docs/tailscale-otra-pc.md`). `tailscale status`
+  muestra la 100.x de cada PC. Por Tailscale solo va el tráfico a las IP 100.x; lo demás sigue igual.
+  En una PC del trabajo, que el usuario le pregunte a IT antes de instalarlo y apague MagicDNS
+  ahí: no decidirlo por él.
 - **`/clear` en una sesión de otra PC se busca por `pid` *y* `pc`**, no sólo por `pid`: dos PCs
   distintas pueden tener el mismo número de PID sueltos por casualidad, y buscar sólo por `pid`
   después de un `/rescan` puede encontrar la tarjeta de la PC equivocada.

@@ -6,6 +6,12 @@ desde la otra en cualquier red, y el lienzo la encuentra solo (commit `9fc9f4a`,
 
 Hacer esto **en las dos PCs**:
 
+0. **Si es la PC del trabajo:** preguntarle antes a IT. Tailscale es un túnel hacia equipos de una
+   cuenta personal, y puede ir contra la política o hacer saltar al antivirus corporativo. Si lo
+   instalás, en esa PC apagá **Use Tailscale DNS** (ícono de la bandeja → Preferences) para no pisar
+   el DNS de la VPN de la empresa, y no actives *exit node* ni *subnet routes*. Por Tailscale solo va
+   el tráfico a las IP 100.x; el resto sigue por donde iba.
+
 1. **Instalar Tailscale** desde <https://tailscale.com/download> y entrar con **la misma cuenta** en
    las dos. Comprobar que se ven:
 
@@ -13,6 +19,10 @@ Hacer esto **en las dos PCs**:
    tailscale status        # tiene que listar la otra PC, con su IP 100.x
    tailscale ping <nombre-de-la-otra-pc>
    ```
+
+   Con winget: `winget install --id Tailscale.Tailscale -e`. Si el login dice *«device with
+   nodekey:… already exists»*, correr `tailscale logout` y después `tailscale up`, y entrar con el
+   link que muestra.
 
 2. **Traer el código**:
 

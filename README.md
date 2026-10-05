@@ -190,7 +190,25 @@ usa solo:
 
 Hace falta volver a correr `install.py --peer` (como administrador) para la regla de Tailscale. Una
 PC no emparejada que está en la tailnet aparece igual en «PCs de la LAN» y se empareja con la
-palabra de siempre.
+palabra de siempre. Los pasos para cada PC están en [docs/tailscale-otra-pc.md](docs/tailscale-otra-pc.md).
+
+**Qué va por Tailscale:** solo lo que va a una IP 100.x (los otros equipos de la tailnet). Internet,
+el mail y una VPN corporativa siguen por su camino, salvo que se elija un *exit node*.
+
+Lo que se aprendió al instalarlo (2026-10-05):
+
+- `winget install --id Tailscale.Tailscale -e` lo instala sin vueltas.
+- Si el login dice *«device with nodekey:… already exists; please log out explicitly»*:
+  `tailscale logout` y después `tailscale up`, que queda esperando con un link nuevo. Un
+  `tailscale login --timeout=…` se corta antes de que termines en el navegador y la web dice
+  «Login successful» pero `tailscale status` sigue en *Logged out*.
+- Las dos PCs tienen que tener este código: una PC con el lienzo viejo acepta a la otra por
+  Tailscale (la conexión entra), pero no anuncia la suya ni escucha en su 100.x, y desde acá se ve
+  caída.
+- **En una PC del trabajo**, antes de instalarlo, preguntarle a IT: es un túnel que la conecta con
+  equipos de una cuenta personal y puede chocar con la política o con el antivirus corporativo. Si
+  se instala, apagar *Use Tailscale DNS* (MagicDNS) en esa PC para no pisar el DNS de la VPN de la
+  empresa, y no usar *exit node* ni *subnet routes*.
 
 **Por qué no llega una PC**: el chip de la tira dice el motivo cuando una PC está caída:
 

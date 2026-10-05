@@ -239,6 +239,10 @@ def peer_firewall(uninstall: bool, dry_run=False) -> None:
         if dry_run:
             print("[dry-run]", " ".join(args))
             continue
+        if not uninstall:
+            # netsh add no reemplaza: cada --peer sumaba otra regla con el mismo nombre (medido el
+            # 2026-10-05, dos copias de cada una). Se borra la anterior; si no habia, falla y da igual
+            subprocess.run(firewall_args(nombre, proto, puerto, True), capture_output=True, text=True)
         r = subprocess.run(args, capture_output=True, text=True)
         if r.returncode != 0:
             print(f"regla de firewall {nombre} fallo:", (r.stderr or r.stdout).strip())
