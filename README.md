@@ -165,7 +165,42 @@ impostor tiene un solo intento. Las PCs con el lienzo andando se descubren solas
 
 Un **listener aparte** (7322) atiende sólo `/peer/*`, en la IP de LAN (nunca `0.0.0.0`), y cada
 pedido va firmado con HMAC de la clave del par, ventana de ±30 s y nonce.
-`py -3.14 install.py --peer` abre 7322 TCP y 7323 UDP sólo en el perfil Privado del firewall.
+`py -3.14 install.py --peer` abre 7322 TCP y 7323 UDP sólo en el perfil Privado del firewall, y en
+cualquier perfil sólo entre IP de Tailscale (100.64.0.0/10 de los dos lados).
+
+### Cuando la red no deja verse a las PCs: Tailscale
+
+Un Wi-Fi público (un bar, una estación de servicio) suele **aislar a los clientes**: la puerta de
+enlace contesta, pero la otra PC no responde ni ARP y ningún paquete de la LAN pasa entre las dos.
+Ni el broadcast ni el barrido unicast del beacon lo saltan. Medido el 2026-10-05 en «YPF Clientes 2».
+
+La salida es [Tailscale](https://tailscale.com): instalarlo en las dos PCs y entrar con la misma
+cuenta. Cada PC queda con una IP 100.x.y.z alcanzable desde la otra en cualquier red, y el lienzo la
+usa solo:
+
+- el beacon lee los equipos de la tailnet (`tailscale status --json`, una vez por minuto) y les
+  manda sus anuncios por unicast, además del broadcast de la LAN;
+- un peer queda con más de una dirección (`ips` en `peers.json`: la de la LAN y la de Tailscale). El
+  espejo sigue con la que usa mientras tenga beacon; si se apaga, pasa a otra viva, la de la LAN
+  antes que la de Tailscale;
+- el listener de peers abre también en la IP de Tailscale (si Tailscale se prende después, lo nota
+  en menos de un minuto);
+- una IP sólo se acepta por el beacon firmado con la clave del par, con el ts creciente de
+  siempre: la tailnet no da permiso para nada, es otro camino para el mismo paquete.
+
+Hace falta volver a correr `install.py --peer` (como administrador) para la regla de Tailscale. Una
+PC no emparejada que está en la tailnet aparece igual en «PCs de la LAN» y se empareja con la
+palabra de siempre.
+
+**Por qué no llega una PC**: el chip de la tira dice el motivo cuando una PC está caída:
+
+| En la tira | Qué pasa | Qué hacer |
+|---|---|---|
+| sin ARP: la red aísla a los equipos | Wi-Fi público con aislamiento de clientes | Tailscale o un hotspot del celular |
+| la PC está en la red pero no contesta el puerto | el firewall la frena (perfil Público) o el lienzo está colgado | `install.py --peer`, o marcar la red como Privada |
+| el puerto está cerrado | la PC contesta, pero no corre el lienzo con `--peers` | arrancar el lienzo en esa PC |
+| la última IP conocida es de otra red | la PC cambió de red | Tailscale la encuentra en cualquiera |
+| no llega por Tailscale | Tailscale apagado o con otra cuenta en alguna de las dos | prenderlo en las dos |
 
 ### Lanzar, cablear y restaurar en otra PC
 
@@ -305,6 +340,7 @@ lienzo/
   pairing.py       emparejamiento con SPAKE2
   mirror.py        espejo de cada peer, enrutado y salud
   beacon.py        beacon UDP (7323)
+  red.py           Tailscale (tailnet, IP propia) y el diagnóstico de un peer que no llega
   health.py        memoria, CPU, temperatura, capacidad, credenciales de git
   launch.py        lanzar sesiones (.cmd en Windows, tmux fuera)
   restore.py       restaurar sesiones tras un reinicio

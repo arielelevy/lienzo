@@ -162,7 +162,7 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
             style={{ "--pc-color": p.color } as React.CSSProperties}
             title={
               down
-                ? `${p.name}: sin conexión hace ${ago(p.last_seen)}`
+                ? `${p.name}: sin conexión hace ${ago(p.last_seen)}${p.diagnostico ? ` — ${p.diagnostico}` : ""}`
                 : `${p.name}${alerta ? ` — ${alerta}` : ""}${git ? ` — git: ${git}` : ""} (Ctrl + click suma o saca PCs)`
             }
             aria-pressed={filter.has(p.pc_id)}
@@ -179,6 +179,7 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
                 {p.latencia_ms != null && ` · ${p.latencia_ms} ms`}
               </span>
             )}
+            {down && p.diagnostico && <span className="health diag">{` · ${p.diagnostico}`}</span>}
           </button>
           {git && (
             <button

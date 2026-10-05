@@ -17,6 +17,7 @@ from collections import deque
 from collections.abc import Callable
 
 import federation
+import red
 
 HEALTH_EVERY_S = 15.0
 # sin snapshot, evento SSE (incluido el ping cada 15 s) ni salud en este tiempo: el peer se
@@ -47,6 +48,7 @@ class _PeerMirror:
         self.rules: list[dict] = []
         self.health: dict | None = None
         self.health_error: str | None = None  # el ultimo fallo avisado al pedir su salud
+        self.diagnostico: str | None = None  # por que no llega, para el tablero (red.diagnosticar)
         self.latencias_ms: deque[float] = deque(maxlen=LATENCIAS_N)  # de los reenvios que llegaron
         self.last_seen: float = 0.0
         self.client: federation.SSEClient | None = None
@@ -68,6 +70,7 @@ class Mirror:
         self.transport = transport or federation.HTTPTransport()
         self.on_change = on_change or (lambda: None)
         self.log: Callable[[str], None] = lambda msg: None  # server.py lo cambia por su log
+        self.diagnosticar: Callable[[str, BaseException], str | None] = red.diagnosticar  # inyectable
         self._lock = threading.RLock()
         self._peers: dict[str, _PeerMirror] = {}
         self._health_thread: threading.Thread | None = None
@@ -219,13 +222,20 @@ class Mirror:
         except OSError as e:
             # se avisa al empezar a fallar o al cambiar el motivo, no cada 15 s mientras siga igual
             error = f"{type(e).__name__}: {e}"
+            diagnostico = self.diagnosticar(pm.conn.host, e)
+            with self._lock:
+                cambio = diagnostico != pm.diagnostico
+                pm.diagnostico = diagnostico
             if error != pm.health_error:
                 pm.health_error = error
-                self.log(f"→ {nombre} GET /health: {error}")
+                self.log(f"→ {nombre} GET /health: {error}" + (f" ({diagnostico})" if diagnostico else ""))
+            if cambio:
+                self.on_change()
             return
         if pm.health_error is not None:
             pm.health_error = None
             self.log(f"→ {nombre} GET /health: responde de nuevo")
+        pm.diagnostico = None
         with self._lock:
             pm.health = h
             pm.last_seen = time.time()
@@ -284,6 +294,7 @@ class Mirror:
                         "last_seen": iso(pm.last_seen) if pm.last_seen else None,
                         "local": False,
                         "health": pm.health if vivo else None,
+                        "diagnostico": None if vivo else pm.diagnostico,
                         # mediana de los ultimos reenvios: una PC que se vuelve lenta se ve aca
                         "latencia_ms": round(statistics.median(pm.latencias_ms)) if pm.latencias_ms else None,
                     }

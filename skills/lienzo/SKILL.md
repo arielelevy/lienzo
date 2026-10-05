@@ -453,6 +453,13 @@ Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
 - **Un peer caído no avisa activamente**: se nota porque su chip en la tira pasa a ○ (sin memoria ni
   temperatura, sería un dato viejo) y sus tarjetas quedan grises con los controles deshabilitados a
   los 45 s sin novedades de esa PC. No hay push de "se cayó fulano": hay que mirar la tira.
+  **El chip caído dice por qué** (`diagnostico` en `GET /peers`): «sin ARP: la red aísla a los
+  equipos» es un Wi-Fi público con aislamiento de clientes (medido el 2026-10-05 en «YPF Clientes
+  2»: ni el broadcast ni el barrido unicast lo saltan). No reintentar ni tocar el firewall: decirle
+  al usuario que use **Tailscale** en las dos PCs (misma cuenta) o un hotspot. Con Tailscale el
+  lienzo encuentra la IP 100.x solo y cambia de dirección sin hacer nada; hace falta
+  `install.py --peer` de nuevo, como administrador, para la regla de firewall de la tailnet.
+  «el puerto está cerrado» es que no corre el lienzo allá; «no contesta el puerto» es el firewall.
 - **`/clear` en una sesión de otra PC se busca por `pid` *y* `pc`**, no sólo por `pid`: dos PCs
   distintas pueden tener el mismo número de PID sueltos por casualidad, y buscar sólo por `pid`
   después de un `/rescan` puede encontrar la tarjeta de la PC equivocada.

@@ -136,6 +136,8 @@ export interface Peer {
   health: PeerHealth | null;
   /** mediana de los ultimos reenvios a esa PC, en ms (solo las otras PCs) */
   latencia_ms?: number | null;
+  /** por que no llega (sin ARP, puerto cerrado, otra red, Tailscale), solo si no esta viva */
+  diagnostico?: string | null;
 }
 
 export interface Pending {

@@ -39,11 +39,13 @@ import launch
 import mirror
 import pairing
 import pantalla_coda
+import red
 import restore
 import rules as rl
 import secretos
 import transcripts
 import xfer
+from beacon import DISCOVERED_TTL_S as BEACON_TTL_S
 from rules import connections_of, purge_stale_at_rules, rules_loop
 
 # la API de reglas (validar, alta y edicion) vive en rules_api.py; se reexporta lo que las pruebas
@@ -53,7 +55,6 @@ from sessions import (
     add_link,
     answer_coda_ask,
     answer_dialog,
-    nombrar_nativo,
     answer_pending,
     clean_attachments,
     coda_viva,
@@ -64,6 +65,7 @@ from sessions import (
     interrupt_session,
     liveness_loop,
     load_sessions,
+    nombrar_nativo,
     public_pending,
     read_screen,
     remotes_de_sesiones,
@@ -2176,23 +2178,61 @@ def _beacon_sync_loop(stop_event: threading.Event, beacon) -> None:
             log(f"beacon: fallo al sincronizar las IP:\n{traceback.format_exc()}")
 
 
+def _tailscale_listener_loop(stop_event: threading.Event, lan_host: str, port: int) -> None:
+    """El listener de peers escucha en la IP de LAN; por Tailscale el pedido llega a la IP 100.x,
+    asi que hace falta otro en esa. Tailscale puede prenderse despues del lienzo: se mira cada
+    minuto hasta que aparece, y se abre una sola vez."""
+    avisado = None
+    while True:
+        ip = red.tailscale_propia()
+        if ip and ip != lan_host:
+            try:
+                srv = QuietServer((ip, port), PeerHandler)
+            except OSError as e:
+                if avisado != str(e):  # una vez por motivo, no cada minuto
+                    avisado = str(e)
+                    log(f"listener de peers por Tailscale: no se pudo tomar {ip}:{port} ({e})")
+            else:
+                srv.daemon_threads = True
+                threading.Thread(target=srv.serve_forever, daemon=True).start()
+                log(f"listener de peers por Tailscale en http://{ip}:{port}")
+                return
+        if stop_event.wait(60.0):
+            return
+
+
+def elegir_direccion(info: dict, conectada: str | None, ahora: float, ttl_s: float) -> str | None:
+    """Con cual de las direcciones vivas de un peer (las que mandaron un beacon firmado hace menos de
+    `ttl_s`) conectar el espejo: la que ya usa mientras siga viva, para no saltar entre la LAN y
+    Tailscale cuando llega por las dos; si no, la de la LAN antes que la de Tailscale, y entre
+    iguales la mas reciente. None si no hay ninguna viva o si la conectada sigue sirviendo."""
+    ips = info.get("ips") or ({info["ip"]: info.get("last_seen", ahora)} if info.get("ip") else {})
+    vivas = {ip: t for ip, t in ips.items() if ahora - t <= ttl_s}
+    if not vivas or conectada in vivas:
+        return None
+    return max(vivas, key=lambda ip: (not red.es_tailscale(ip), vivas[ip]))
+
+
 def _beacon_sync_once(beacon) -> None:
-    """Una pasada: cada peer emparejado que el beacon ve en una IP distinta de la que usa el
-    espejo (o sin espejo conectado: la PC que ofrecio la frase guarda ip "" y nunca conectaba) se
-    anota en peers.json y se reconecta."""
+    """Una pasada: cada peer emparejado cuya direccion conectada ya no tiene beacon y que tiene otra
+    viva (o sin espejo conectado: la PC que ofrecio la frase guarda ip "" y nunca conectaba) se
+    anota en peers.json y se reconecta por esa."""
     try:
         vistos = beacon.seen()
     except Exception as e:
         log(f"beacon: fallo al leer lo visto: {e}")
         return
+    ahora = time.time()
     for pc_id, info in vistos.items():
-        ip = info.get("ip") if isinstance(info, dict) else None
+        if not isinstance(info, dict):
+            continue
+        with _ip_conectada_lock:
+            conectada = _ip_conectada.get(pc_id)
+        ip = elegir_direccion(info, conectada, ahora, BEACON_TTL_S)
         if not ip:
             continue
         peer = federation.get_peer(PEERS_FILE, pc_id)
-        with _ip_conectada_lock:
-            conectada = _ip_conectada.get(pc_id)
-        if peer is None or conectada == ip:
+        if peer is None:
             continue
         try:
             federation.update_peer_ip(PEERS_FILE, pc_id, ip)
@@ -2297,6 +2337,9 @@ def main() -> int:
         stop_beacon = threading.Event()
         beacon.start(a.peer_port, stop_beacon)
         threading.Thread(target=_beacon_sync_loop, args=(stop_beacon, beacon), daemon=True).start()
+        threading.Thread(
+            target=_tailscale_listener_loop, args=(stop_beacon, peer_host, a.peer_port), daemon=True
+        ).start()
 
     srv.daemon_threads = True
     with lock:

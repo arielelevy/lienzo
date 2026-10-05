@@ -188,9 +188,15 @@ def ensure_state(dry_run=False) -> None:
 
 # --- firewall para el emparejamiento entre PCs (plan multi-PC §3.2) --------------------------
 
+# En la LAN, solo el perfil Privado. Por Tailscale (2026-10-05), cualquier perfil pero solo entre
+# IP de la tailnet (100.64.0.0/10) de los dos lados: el Wi-Fi publico que aisla a los clientes es
+# justo el caso, y ahi el perfil es Publico. Hablarle al lienzo sigue pidiendo la clave del par.
+TAILNET = "100.64.0.0/10"
 FIREWALL_RULES = (
-    ("Lienzo Peer TCP", "TCP", 7322),
-    ("Lienzo Beacon UDP", "UDP", 7323),
+    ("Lienzo Peer TCP", "TCP", 7322, ("profile=private",)),
+    ("Lienzo Beacon UDP", "UDP", 7323, ("profile=private",)),
+    ("Lienzo Peer TCP Tailscale", "TCP", 7322, ("profile=any", f"localip={TAILNET}", f"remoteip={TAILNET}")),
+    ("Lienzo Beacon UDP Tailscale", "UDP", 7323, ("profile=any", f"localip={TAILNET}", f"remoteip={TAILNET}")),
 )
 
 
@@ -201,7 +207,7 @@ def is_admin() -> bool:
         return False
 
 
-def firewall_args(nombre: str, proto: str, puerto: int, uninstall: bool) -> list:
+def firewall_args(nombre: str, proto: str, puerto: int, uninstall: bool, extra: tuple = ("profile=private",)) -> list:
     if uninstall:
         return ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={nombre}"]
     return [
@@ -215,20 +221,21 @@ def firewall_args(nombre: str, proto: str, puerto: int, uninstall: bool) -> list
         "action=allow",
         f"protocol={proto}",
         f"localport={puerto}",
-        "profile=private",
+        *extra,
     ]
 
 
 def peer_firewall(uninstall: bool, dry_run=False) -> None:
     """Regla de firewall de Windows para el listener de peers (7322 TCP) y el beacon (7323 UDP),
-    solo en el perfil Privado (plan multi-PC §3.2): en una red publica el puerto no escucha. Sin
+    solo en el perfil Privado (plan multi-PC §3.2): en una red publica el puerto no escucha, salvo
+    entre IP de Tailscale (FIREWALL_RULES). Sin
     permisos de administrador no se puede escribir una regla de firewall: se avisa claro y se sale
     sin tocar nada mas de la instalacion."""
     if not dry_run and not is_admin():
         print("regla de firewall para el emparejamiento: hace falta ser administrador, no se toco nada")
         return
-    for nombre, proto, puerto in FIREWALL_RULES:
-        args = firewall_args(nombre, proto, puerto, uninstall)
+    for nombre, proto, puerto, extra in FIREWALL_RULES:
+        args = firewall_args(nombre, proto, puerto, uninstall, extra)
         if dry_run:
             print("[dry-run]", " ".join(args))
             continue
@@ -245,7 +252,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--uninstall", action="store_true")
     parser.add_argument(
-        "--peer", action="store_true", help="regla de firewall (7322 TCP, 7323 UDP, perfil Privado) para emparejar PCs"
+        "--peer",
+        action="store_true",
+        help="regla de firewall (7322 TCP, 7323 UDP, perfil Privado, y entre IP de Tailscale) para emparejar PCs",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="imprime lo que haria (hooks y firewall), sin escribir nada"

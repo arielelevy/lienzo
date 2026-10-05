@@ -48,7 +48,7 @@ def _puerto_libre() -> int:
 # --- _recibir / seen(), a nivel de socket, sin el hilo -------------------------------------------
 
 
-def test_recibir_un_beacon_valido_actualiza_la_ip_y_seen(hogar):
+def test_recibir_un_beacon_valido_anota_la_direccion_y_seen(hogar):
     key = b"k" * 32
     fed.add_peer(
         beacon._peers_path(),
@@ -68,8 +68,11 @@ def test_recibir_un_beacon_valido_actualiza_la_ip_y_seen(hogar):
         receptor.close()
 
     peer = next(p for p in fed.list_peers(beacon._peers_path()) if p["pc_id"] == "peer-remoto1")
-    assert peer["ip"] == "127.0.0.1"
+    # la direccion nueva se suma a `ips`; `ip` (la del espejo) la cambia server.py, no el beacon
+    assert peer["ips"] == ["127.0.0.1"]
+    assert peer["ip"] == "10.0.0.1"
     assert beacon.seen()["peer-remoto1"]["ip"] == "127.0.0.1"
+    assert set(beacon.seen()["peer-remoto1"]["ips"]) == {"127.0.0.1"}
 
 
 def test_recibir_beacon_de_un_peer_desconocido_no_rompe_ni_actualiza_nada(hogar):
@@ -319,7 +322,7 @@ def test_un_peer_que_reaparece_recibe_respuesta_una_sola_vez(hogar):
 
     assert respuestas == [("peer-remoto1", "192.168.50.193")]
     peer = next(p for p in fed.list_peers(beacon._peers_path()) if p["pc_id"] == "peer-remoto1")
-    assert peer["ip"] == "192.168.50.193"
+    assert "192.168.50.193" in peer["ips"]
 
 
 def test_el_barrido_manda_el_beacon_firmado_de_cada_faltante_a_cada_host(hogar, monkeypatch):

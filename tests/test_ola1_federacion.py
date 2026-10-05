@@ -760,10 +760,11 @@ def test_beacon_acepta_por_peer_solo_un_ts_estrictamente_mayor(tmp_path, monkeyp
     def recibir(ts, ip):
         sock.paquetes.append((fed.encode_signed_beacon(key, "p1", "notebook", 7322, ts=ts), (ip, 7323)))
         beacon._recibir(sock)
-        return fed.get_peer(path, "p1")["ip"]
+        return beacon.seen()["p1"]["ip"]
 
     assert recibir(t, "10.0.0.5") == "10.0.0.5"
     assert recibir(t - 5, "10.0.0.66") == "10.0.0.5"  # uno viejo capturado: no desvia la IP
     assert recibir(t, "10.0.0.66") == "10.0.0.5"  # el mismo reenviado: tampoco
     assert recibir(t + 10, "10.0.0.7") == "10.0.0.7"
-    assert beacon.seen()["p1"]["ip"] == "10.0.0.7"
+    assert "10.0.0.66" not in beacon.seen()["p1"]["ips"]
+    assert fed.get_peer(path, "p1")["ips"] == ["10.0.0.5", "10.0.0.7"]

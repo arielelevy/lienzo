@@ -42,7 +42,18 @@ def test_firewall_args_baja():
 
 
 def test_reglas_son_7322_tcp_y_7323_udp():
-    assert install.FIREWALL_RULES == (("Lienzo Peer TCP", "TCP", 7322), ("Lienzo Beacon UDP", "UDP", 7323))
+    assert [r[:3] for r in install.FIREWALL_RULES[:2]] == [
+        ("Lienzo Peer TCP", "TCP", 7322),
+        ("Lienzo Beacon UDP", "UDP", 7323),
+    ]
+    assert all(r[3] == ("profile=private",) for r in install.FIREWALL_RULES[:2])
+
+
+def test_por_tailscale_cualquier_perfil_pero_solo_entre_ip_de_la_tailnet():
+    tailscale = [r for r in install.FIREWALL_RULES if "Tailscale" in r[0]]
+    assert [(r[1], r[2]) for r in tailscale] == [("TCP", 7322), ("UDP", 7323)]
+    for _nombre, _proto, _puerto, extra in tailscale:
+        assert set(extra) == {"profile=any", "localip=100.64.0.0/10", "remoteip=100.64.0.0/10"}
 
 
 # --- peer_firewall con dry_run: nunca llama a subprocess.run ------------------------------------
@@ -90,7 +101,7 @@ def test_peer_firewall_con_admin_llama_netsh_para_cada_regla(monkeypatch, capsys
     monkeypatch.setattr(install, "is_admin", lambda: True)
     monkeypatch.setattr(install.subprocess, "run", _run)
     install.peer_firewall(uninstall=False, dry_run=False)
-    assert len(llamadas) == 2
+    assert len(llamadas) == len(install.FIREWALL_RULES) == 4
     assert any("localport=7322" in a for a in llamadas)
     assert any("localport=7323" in a for a in llamadas)
     salida = capsys.readouterr().out

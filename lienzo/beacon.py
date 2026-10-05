@@ -19,7 +19,12 @@ eso, mientras haya un peer emparejado sin anuncio reciente, cada `SWEEP_S` se le
 firmado por unicast a cada IP de las /24 propias; el que lo recibe y no habia visto a ese peer hace
 poco le contesta con su propio beacon firmado, por unicast a la IP de donde vino. Asi los dos
 aprenden la IP nueva del otro sin broadcast, con la misma firma y la misma regla de ts creciente.
-Un aislamiento de clientes del Wi-Fi (sin ARP entre equipos) no lo arregla nada de esto.
+Un aislamiento de clientes del Wi-Fi (sin ARP entre equipos) no lo arregla nada de esto: para eso
+esta Tailscale (2026-10-05). Si esta instalado, cada anuncio sale ademas por unicast a cada equipo
+de la tailnet (red.tailnet_ips), y un peer queda con mas de una direccion: `seen()` guarda cuando
+se vio por cada una, y server.py elige con cual conectar el espejo (la que ya usa mientras siga
+viva; si no, la de la LAN antes que la de Tailscale). La firma y el ts creciente no cambian: la
+tailnet no da permiso para nada, solo es otro camino por donde llega el mismo beacon firmado.
 
 `start(port, stop_event)` es como lo arranca server.py: `port` es el puerto TCP propio
 del listener de peers (7322), el que se anuncia adentro de cada beacon para que quien lo reciba
@@ -40,6 +45,7 @@ from collections.abc import Callable
 
 import federation as fed
 import identity
+import red
 import state
 
 BEACON_PORT = 7323
@@ -49,7 +55,7 @@ BROADCAST_LIMITADO = "255.255.255.255"
 SWEEP_S = 60.0  # cada cuanto se barren las /24 propias por un peer emparejado que no anuncia
 
 _lock = threading.RLock()
-_seen: dict[str, dict] = {}  # pc_id -> {"ip", "last_seen"}, solo peers emparejados (anuncio firmado)
+_seen: dict[str, dict] = {}  # pc_id -> {"ip", "last_seen", "ips": {ip: last_seen}}, solo emparejados (firmado)
 _descubiertas: dict[str, dict] = {}  # pc_id -> {"name", "ip", "port", "last_seen"}, cualquier PC de la LAN
 _ultimo_ts: dict[str, float] = {}  # pc_id -> ts firmado del ultimo beacon aceptado (ver _recibir)
 DISCOVERED_TTL_S = 3 * INTERVAL_S + 5  # tres anuncios perdidos seguidos: se da por apagada
@@ -60,9 +66,10 @@ def _peers_path() -> str:
 
 
 def seen() -> dict[str, dict]:
-    """Ultimo beacon valido recibido de cada peer, por pc_id."""
+    """Ultimo beacon valido recibido de cada peer, por pc_id: `ip` es la del ultimo, `ips` cuando se
+    lo vio por ultima vez en cada direccion (la LAN y Tailscale, si llega por las dos)."""
     with _lock:
-        return {k: dict(v) for k, v in _seen.items()}
+        return {k: {**v, "ips": dict(v.get("ips") or {})} for k, v in _seen.items()}
 
 
 def discovered(max_age_s: float = DISCOVERED_TTL_S) -> list[dict]:
@@ -75,13 +82,16 @@ def discovered(max_age_s: float = DISCOVERED_TTL_S) -> list[dict]:
 
 
 def _ipv4_propias() -> list[str]:
-    """Las IPv4 de esta PC, sin loopback ni link-local. Sin psutil: las que resuelve el propio
-    nombre, que en Windows son las de todos los adaptadores, fisicos y virtuales."""
+    """Las IPv4 de esta PC, sin loopback, link-local ni la de Tailscale (su /24 no es una LAN: ni
+    broadcast ni barrido por ahi). Sin psutil: las que resuelve el propio nombre, que en Windows son
+    las de todos los adaptadores, fisicos y virtuales."""
     try:
         infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
     except OSError:
         return []
-    return sorted({i[4][0] for i in infos if not i[4][0].startswith(("127.", "169.254."))})
+    return sorted(
+        {i[4][0] for i in infos if not i[4][0].startswith(("127.", "169.254.")) and not red.es_tailscale(i[4][0])}
+    )
 
 
 def _prefijo24(ip: str) -> str:
@@ -131,7 +141,10 @@ def _firmado(peer: dict, mi_puerto_tcp: int) -> bytes:
     return fed.encode_signed_beacon(bytes.fromhex(peer["key"]), info["pc_id"], info["name"], mi_puerto_tcp)
 
 
-def _enviar(sock: socket.socket, udp_port: int, mi_puerto_tcp: int, broadcast_addr: str) -> None:
+def _enviar(
+    sock: socket.socket, udp_port: int, mi_puerto_tcp: int, broadcast_addr: str, tailnet: list[str] | None = None
+) -> None:
+    """Cada anuncio, a cada destino de broadcast y por unicast a cada equipo de la tailnet."""
     info = identity.pc_info()
     pc_id, nombre = info["pc_id"], info["name"]
     anuncio = fed.encode_beacon(pc_id, nombre, mi_puerto_tcp)
@@ -143,7 +156,9 @@ def _enviar(sock: socket.socket, udp_port: int, mi_puerto_tcp: int, broadcast_ad
             firmados.append(_firmado(peer, mi_puerto_tcp))
         except ValueError:
             pass  # peer con la key corrupta: se sigue con el resto
-    for destino in destinos(broadcast_addr):
+    if tailnet is None:
+        tailnet = red.tailnet_ips() if broadcast_addr == BROADCAST_LIMITADO else []
+    for destino in [*destinos(broadcast_addr), *tailnet]:
         for paquete in (anuncio, *firmados):
             try:
                 sock.sendto(paquete, (destino, udp_port))
@@ -203,10 +218,12 @@ def _recibir(sock: socket.socket, responder: Callable[[dict, tuple], None] | Non
             if ts <= _ultimo_ts.get(peer["pc_id"], 0.0):
                 return
             _ultimo_ts[peer["pc_id"]] = ts
-            previo = _seen.get(peer["pc_id"])
-            reaparece = previo is None or previo["ip"] != addr[0] or ahora - previo["last_seen"] > DISCOVERED_TTL_S
-            _seen[peer["pc_id"]] = {"ip": addr[0], "last_seen": ahora}
-        fed.update_peer_ip(_peers_path(), peer["pc_id"], addr[0])
+            previo = _seen.get(peer["pc_id"]) or {}
+            ips = previo.get("ips") or {}
+            reaparece = ahora - ips.get(addr[0], 0.0) > DISCOVERED_TTL_S
+            _seen[peer["pc_id"]] = {"ip": addr[0], "last_seen": ahora, "ips": {**ips, addr[0]: ahora}}
+        # la direccion se anota en peers.json (`ips`); cual usa el espejo (`ip`) lo decide server.py
+        fed.note_peer_address(_peers_path(), peer["pc_id"], addr[0])
         if reaparece and responder is not None:
             responder(peer, addr)
         return
@@ -252,6 +269,7 @@ def _run(
     try:
         ultimo_envio = 0.0
         ultimo_barrido = time.time()  # el primer barrido, despues de dar tiempo a los anuncios normales
+        barrido_avisado = False
         while not stop_event.is_set():
             ahora = time.time()
             if ahora - ultimo_envio >= interval_s:
@@ -263,8 +281,9 @@ def _run(
             if broadcast_addr == BROADCAST_LIMITADO and ahora - ultimo_barrido >= sweep_s:
                 try:
                     n = _barrer(sock, udp_port, mi_puerto_tcp)
-                    if n:
+                    if n and not barrido_avisado:  # se avisa una vez al arrancar; despues barre callado
                         state.log(f"beacon: barrido unicast por peers sin anuncio, {n} paquetes")
+                        barrido_avisado = True
                 except Exception as e:
                     state.log(f"beacon: fallo el barrido: {e}")
                 ultimo_barrido = ahora

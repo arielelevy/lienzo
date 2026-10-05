@@ -316,6 +316,29 @@ def update_peer_ip(path: str, pc_id: str, ip: str) -> bool:
     return True
 
 
+MAX_PEER_IPS = 4
+
+
+def note_peer_address(path: str, pc_id: str, ip: str) -> bool:
+    """Suma `ip` a las direcciones conocidas del peer (`ips`: la de la LAN, la de Tailscale) sin
+    tocar `ip`, que es la que usa el espejo y la elige server.py entre las que el beacon ve vivas
+    (antes una sola `ip` que cada beacon pisaba: con la LAN y Tailscale a la vez, el espejo saltaba
+    de una a otra). Solo escribe si la direccion es nueva; se guardan las ultimas MAX_PEER_IPS.
+    True si el peer esta emparejado."""
+    with _peers_write_lock:
+        peers = _cargar_peers(path, para_escribir=True)
+        if pc_id not in peers:
+            return False
+        ips = [x for x in peers[pc_id].get("ips") or [] if isinstance(x, str)]
+        if ip in ips:
+            return True
+        peers[pc_id]["ips"] = [*ips, ip][-MAX_PEER_IPS:]
+        if not peers[pc_id].get("ip"):
+            peers[pc_id]["ip"] = ip  # la que ofrecio la frase guarda ip "": que haya una para arrancar
+        _guardar_peers(path, peers)
+    return True
+
+
 # --- beacon UDP ------------------------------------------------------------------------------
 
 

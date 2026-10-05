@@ -261,6 +261,21 @@ def test_poll_health_que_falla_lo_avisa_una_vez_y_avisa_cuando_vuelve():
     assert avisos[1:] == ["→ oficina GET /health: responde de nuevo"]
 
 
+def test_el_diagnostico_de_red_va_al_log_y_al_tablero_y_se_borra_cuando_vuelve():
+    t = FakeTransport(raise_on_health=True)
+    m = _mirror(t)
+    avisos: list[str] = []
+    m.log = avisos.append
+    m.diagnosticar = lambda host, e: "sin ARP: la red aísla a los equipos"
+    _connect(m, t, pc_id="p1", name="oficina")
+    m._poll_health("p1")
+    assert avisos == ["→ oficina GET /health: OSError: peer caido (sin ARP: la red aísla a los equipos)"]
+    assert m.peers_status()[0]["diagnostico"] == "sin ARP: la red aísla a los equipos"
+    t.raise_on_health = False
+    m._poll_health("p1")
+    assert m.peers_status()[0]["diagnostico"] is None
+
+
 def test_peers_status_recien_conectado_sin_salud_previa_no_esta_vivo():
     t = FakeTransport()
     m = _mirror(t)
@@ -275,6 +290,7 @@ def test_peers_status_recien_conectado_sin_salud_previa_no_esta_vivo():
             "last_seen": None,
             "local": False,
             "health": None,
+            "diagnostico": None,
             "latencia_ms": None,
         }
     ]
