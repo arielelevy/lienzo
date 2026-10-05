@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ago, api } from "../api";
+import { ago, api, ApiError } from "../api";
 import { toggled } from "../names";
 import type { Peer, Session } from "../types";
 
@@ -169,7 +169,12 @@ export function PcStrip({
         });
         res.push(`${host}: pasada`);
       } catch (e) {
-        res.push(`${host}: ${e instanceof Error ? e.message : String(e)}`);
+        // un 503 sin `no_llego` (timeout, corte a mitad) pudo haberse guardado igual: el violeta lo confirma
+        const quizas =
+          e instanceof ApiError && e.status === 503 && !e.body.no_llego;
+        res.push(
+          `${host}: ${e instanceof Error ? e.message : String(e)}${quizas ? " (pudo haber llegado igual: si el violeta se va, quedó)" : ""}`,
+        );
       }
     }
     avisar(

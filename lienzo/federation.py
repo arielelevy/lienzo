@@ -627,7 +627,9 @@ def causa_401(peer: PeerConn) -> str:
     return causa
 
 
-SLOW_ACTIONS = ("/send", "/launch", "/attach")
+# /secrets: guardar una credencial de git corre `git credential approve` en la PC duena; con el
+# timeout normal (5 s) el click del violeta decia «sin conexion» aunque se hubiera guardado (2026-10-04)
+SLOW_ACTIONS = ("/send", "/launch", "/attach", "/secrets")
 SLOW_TIMEOUT_S = 70.0  # un send tipea en la consola con un subproceso de hasta 60 s en la PC dueña
 # /restaurar con `all` relanza N sesiones con 2 s de pausa entre cada una: necesita mucho mas
 RESTORE_ACTION = "/restaurar"
