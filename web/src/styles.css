@@ -196,7 +196,10 @@ details.fold > summary,
 .pcstrip button.alerta { border-color: var(--err); }
 .pcstrip button.alerta .health { color: var(--err); }
 /* credencial de git: violeta propio, que no se confunda con el rojo/naranja de recursos ni con --pi */
-.pcstrip .git { color: var(--git); border-left: 1px solid var(--git); padding-left: 5px; margin-left: 1px; }
+.pcstrip .pcwrap { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+/* el violeta es su propio boton (click: le pasa la credencial de git de esta PC), pegado al chip */
+.pcstrip button.pcgit { color: var(--git); border-color: var(--git); }
+.pcstrip .pcgitmsg { color: var(--git); font-size: 11px; }
 @media (max-width: 390px) { .pcstrip button { padding: 4px 7px; font-size: 11px; } }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; position: relative; }
