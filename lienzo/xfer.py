@@ -171,6 +171,81 @@ def prioridad_baja() -> None:
         return
 
 
+# --- cache de WSL ----------------------------------------------------------------------------
+#
+# Medido el 2026-10-04 copiando 2 GB de WSL a WSL: lo que se lee o escribe por 9p queda en la cache
+# de paginas de la VM de WSL, que Windows ve como memoria de vmmemWSL. A mitad de la copia la PC que
+# recibia bajo de 2,6 a 0,5 GB libres y la propia copia quedo frenada por la reserva. `dd
+# iflag=nocache count=0` le pide al kernel de WSL que suelte las paginas de ESE archivo (2 GB en 2 s,
+# y Windows recupera la memoria por page reporting): se hace cada SOLTAR_CADA bytes y al cerrar.
+
+SOLTAR_CADA = 256 * MIB
+_WSL_PREFIJOS = ("\\\\wsl.localhost\\", "\\\\wsl$\\")
+
+
+def ruta_wsl(path: str) -> tuple[str, str] | None:
+    """(distro, ruta de Linux) de una ruta `\\\\wsl.localhost\\<distro>\\...`; None si no es de WSL."""
+    p = os.path.normpath(path)
+    for pref in _WSL_PREFIJOS:
+        if p.lower().startswith(pref.lower()):
+            distro, _, resto = p[len(pref) :].partition("\\")
+            if distro and resto:
+                return distro, "/" + resto.replace("\\", "/")
+    return None
+
+
+def soltar_cache(path: str) -> None:
+    """Le pide a WSL que suelte la cache de ese archivo, en un hilo aparte (wsl.exe tarda unos
+    cientos de ms y no puede frenar un bloque). Fuera de WSL, nada. Un fallo solo se loguea: es un
+    alivio de memoria, no parte de la copia."""
+    w = ruta_wsl(path)
+    if w is None:
+        return
+
+    def correr() -> None:
+        try:
+            try:
+                from . import subproc
+            except ImportError:
+                import subproc
+            code, _, err = subproc.correr(
+                ["wsl.exe", "-d", w[0], "-e", "dd", f"if={w[1]}", "iflag=nocache", "count=0", "status=none"],
+                timeout=60,
+            )
+            if code != 0:
+                log(f"xfer: no pude soltar la cache de WSL de {w[1]} ({code}: {err.strip()[:120]})")
+        except Exception as e:
+            log(f"xfer: no pude soltar la cache de WSL de {w[1]} ({type(e).__name__}: {e})")
+
+    threading.Thread(target=correr, name="xfer-cache-wsl", daemon=True).start()
+
+
+class Soltador:
+    """Cuenta bytes por archivo y suelta su cache de WSL cada SOLTAR_CADA."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._bytes: dict[str, int] = {}
+
+    def sumar(self, path: str, n: int) -> None:
+        if ruta_wsl(path) is None:
+            return
+        with self._lock:
+            total = self._bytes.get(path, 0) + n
+            soltar = total >= SOLTAR_CADA
+            self._bytes[path] = 0 if soltar else total
+        if soltar:
+            soltar_cache(path)
+
+    def cerrar(self, path: str) -> None:
+        with self._lock:
+            self._bytes.pop(path, None)
+        soltar_cache(path)
+
+
+SOLTADOR = Soltador()
+
+
 def _partir(raw: bytes) -> tuple[dict, bytes]:
     """Cuerpo binario de bloque y paquete: una linea de JSON y despues los bytes."""
     i = raw.find(b"\n")
@@ -402,6 +477,7 @@ def r_bloque(raw: bytes) -> dict:
         os.fsync(f.fileno())
     with _lock_de(path):
         _anotar(path, [f"{i} {h}"])
+    SOLTADOR.sumar(path + PARTE, len(datos))
     return {"ok": True}
 
 
@@ -428,8 +504,10 @@ def r_cerrar(d: dict) -> tuple[int, dict]:
             faltan = []
             for i, h in enumerate(hashes):
                 f.seek(i * bs)
-                if hash_bytes(f.read(bs)) != h:
+                b = f.read(bs)
+                if hash_bytes(b) != h:
                     faltan.append(i)
+                SOLTADOR.sumar(path + PARTE, len(b))
             f.flush()
             os.fsync(f.fileno())
         if faltan:
@@ -442,6 +520,7 @@ def r_cerrar(d: dict) -> tuple[int, dict]:
         except FileNotFoundError:
             pass
         CACHE.put(path, bs, hashes)
+    SOLTADOR.cerrar(path)
     return 200, {"ok": True, "hash": hash_total(hashes)}
 
 
@@ -1035,6 +1114,7 @@ class Trabajo:
         def bloque(i: int) -> None:
             self._chequear()
             datos = self._leer(path, i * bs, min(bs, size - i * bs))
+            SOLTADOR.sumar(path, len(datos))
             h = hash_bytes(datos)
             hashes[i] = h
             if remotos.get(str(i)) != h:
@@ -1043,8 +1123,11 @@ class Trabajo:
                 hecho[0] += len(datos)
                 self._en_curso[rel] = hecho[0]
 
-        with ThreadPoolExecutor(self.hilos, thread_name_prefix=f"xfer-{self.id}") as ex:
-            list(ex.map(bloque, range(len(hashes))))
+        try:
+            with ThreadPoolExecutor(self.hilos, thread_name_prefix=f"xfer-{self.id}") as ex:
+                list(ex.map(bloque, range(len(hashes))))
+        finally:
+            SOLTADOR.cerrar(path)
         return hashes
 
     def _mandar_bloque(self, rel: str, size: int, i: int, datos: bytes, h: str) -> None:

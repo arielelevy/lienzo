@@ -91,6 +91,9 @@ def canal(tmp_path, monkeypatch):
     monkeypatch.setattr(xfer, "log", lambda msg: None)
     monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [str(origen), str(destino)]})
     monkeypatch.setattr(xfer, "REINTENTO_MAX_S", 0.3)
+    # la memoria real de la PC no entra en las pruebas: con la PC bajo la reserva, el freno dejaba
+    # cada copia esperando para siempre (medido el 2026-10-04)
+    monkeypatch.setattr(xfer, "mem_libre_gb", lambda: None)
     key = secrets.token_bytes(32)
     peers = str(home / "peers.json")
     monkeypatch.setattr(server, "PEERS_FILE", peers)
@@ -157,7 +160,10 @@ def _igual(canal, datos: dict[str, bytes]) -> None:
             assert f.read() == b, rel
         assert os.stat(p).st_mtime_ns == os.stat(os.path.join(canal["origen"], *rel.split("/"))).st_mtime_ns
     sobras = [
-        os.path.join(r, n) for r, _, ns in os.walk(canal["destino"]) for n in ns if n.endswith((xfer.PARTE, xfer.DIARIO))
+        os.path.join(r, n)
+        for r, _, ns in os.walk(canal["destino"])
+        for n in ns
+        if n.endswith((xfer.PARTE, xfer.DIARIO))
     ]
     assert sobras == []
 
@@ -339,7 +345,11 @@ def test_fuera_de_copy_roots_no_se_copia_ni_se_escribe(canal, tmp_path):
     body = json.dumps({"destino": str(canal["destino"]), "bs": MIB, "archivos": ["../afuera/x.txt"]}).encode()
     status, res = _firmado(canal, "/peer/xfer/estado", body)
     assert status == 400
-    cab = {"destino": str(canal["destino"]), "bs": MIB, "archivos": [{"rel": "../../x", "size": 1, "mtime_ns": 1, "hash": xfer.hash_bytes(b"a")}]}
+    cab = {
+        "destino": str(canal["destino"]),
+        "bs": MIB,
+        "archivos": [{"rel": "../../x", "size": 1, "mtime_ns": 1, "hash": xfer.hash_bytes(b"a")}],
+    }
     status, res = _firmado(canal, "/peer/xfer/paquete", xfer._armar(cab, b"a"))
     assert status == 400
     assert not os.path.exists(tmp_path / "x")
@@ -351,7 +361,11 @@ def _firmado(canal, path, body, ts=None):
     if ts is not None:
         nonce = secrets.token_hex(16)
         headers.update(
-            {"X-Lienzo-Ts": repr(ts), "X-Lienzo-Nonce": nonce, "X-Lienzo-Sig": fed.sign(conn.key, "POST", path, body, ts, nonce)}
+            {
+                "X-Lienzo-Ts": repr(ts),
+                "X-Lienzo-Nonce": nonce,
+                "X-Lienzo-Sig": fed.sign(conn.key, "POST", path, body, ts, nonce),
+            }
         )
     c = http.client.HTTPConnection("127.0.0.1", conn.port, timeout=10)
     try:
@@ -364,7 +378,11 @@ def _firmado(canal, path, body, ts=None):
 
 def test_firma_vieja_o_sin_firma_no_escribe(canal):
     data = b"z" * 1000
-    cab = {"destino": str(canal["destino"]), "bs": MIB, "archivos": [{"rel": "z.txt", "size": len(data), "mtime_ns": 1, "hash": xfer.hash_bytes(data)}]}
+    cab = {
+        "destino": str(canal["destino"]),
+        "bs": MIB,
+        "archivos": [{"rel": "z.txt", "size": len(data), "mtime_ns": 1, "hash": xfer.hash_bytes(data)}],
+    }
     body = xfer._armar(cab, data)
     status, _ = _firmado(canal, "/peer/xfer/paquete", body, ts=time.time() - 120)
     assert status == 401
@@ -402,3 +420,23 @@ def test_sin_espejo_nunca_borra(canal):
 def test_hash_del_archivo_es_el_de_la_lista_de_bloques():
     hs = [hashlib.sha256(b"a").hexdigest(), hashlib.sha256(b"b").hexdigest()]
     assert xfer.hash_total(hs) == hashlib.sha256("\n".join(hs).encode()).hexdigest()
+
+
+def test_ruta_wsl_y_soltar_la_cache_cada_tanto(monkeypatch):
+    """Copiar GB por 9p llenaba la cache de la VM de WSL y la PC que recibia bajaba de 2,6 a 0,5 GB
+    libres (medido el 2026-10-04): cada SOLTAR_CADA bytes y al cerrar se le pide a WSL que la suelte."""
+    assert xfer.ruta_wsl("//wsl.localhost/Ubuntu-24.04/home/ariel/x.bin") == ("Ubuntu-24.04", "/home/ariel/x.bin")
+    assert xfer.ruta_wsl("//wsl$/Ubuntu/home/a/b") == ("Ubuntu", "/home/a/b")
+    assert xfer.ruta_wsl("C:/datos/x.bin") is None
+    sueltos = []
+    monkeypatch.setattr(xfer, "soltar_cache", sueltos.append)
+    sol = xfer.Soltador()
+    p = "//wsl.localhost/Ubuntu/home/a/grande.bin"
+    for _ in range(xfer.SOLTAR_CADA // MIB - 1):
+        sol.sumar(p, MIB)
+    assert sueltos == []
+    sol.sumar(p, MIB)
+    assert sueltos == [p]
+    sol.sumar("C:/datos/x.bin", xfer.SOLTAR_CADA)  # fuera de WSL no cuenta
+    sol.cerrar(p)
+    assert sueltos == [p, p]
