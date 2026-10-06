@@ -26,3 +26,6 @@ docs/video/
 web/test-results/
 web/playwright-report/
 node_modules/
+
+# evidencia regenerada por pruebas-agenticas (las propuestas requieren revisión)
+pruebas-agenticas/resultados/
