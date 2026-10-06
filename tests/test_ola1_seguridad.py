@@ -489,15 +489,21 @@ def test_restaurar_que_revienta_no_devuelve_el_texto_de_la_excepcion(aislado, mo
     assert any(eid in x and "secreto" in x for x in aislado["logs"])
 
 
-def test_lan_ip_avisa_cuando_cae_a_localhost(aislado, monkeypatch):
-    """S17: sin red, el listener de peers quedaba en 127.0.0.1 sin ninguna línea que lo dijera."""
+def test_lan_ip_avisa_cuando_no_hay_red(aislado, monkeypatch):
+    """S17: sin red, el listener de peers quedaba en 127.0.0.1 sin ninguna línea que lo dijera.
+    Desde el 2026-10-05 no se liga a localhost (no le sirve a ningún par): _lan_ip da None, lo
+    dice una vez con el motivo, y ListenersDePares lo abre cuando aparece la red."""
 
     def sin_red(*a, **k):
         raise OSError("red inalcanzable")
 
+    monkeypatch.setattr(st, "log", aislado["logs"].append)
+    monkeypatch.setattr(st, "_avisos", {})
     monkeypatch.setattr(server.socket, "socket", sin_red)
-    assert server._lan_ip() == "127.0.0.1"
-    assert any("127.0.0.1" in x and "red inalcanzable" in x for x in aislado["logs"])
+    assert server._lan_ip() is None
+    assert server._lan_ip() is None
+    avisos = [x for x in aislado["logs"] if "sin IP de LAN" in x]
+    assert len(avisos) == 1 and "red inalcanzable" in avisos[0]
 
 
 def test_excepcion_en_cualquier_hilo_llega_al_log(aislado, monkeypatch):

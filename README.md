@@ -403,6 +403,18 @@ cd web; npm run test:ui            # interfaz en el navegador (Playwright, con e
   lienzo.log                  una línea por hecho
 ```
 
+## Si el server no contesta
+
+`GET /salud` contesta aunque el resto esté trabado, porque no toma el lock de las tarjetas. Dice
+qué hilo tiene ese lock y desde hace cuánto, si la consola está trabada, y cómo están los pares:
+si están vivos, cuándo se supo de ellos por última vez y por qué no llegan. También muestra a qué
+IP está ligado cada listener de pares y el último cambio de red. Si el lock pasa más de 10 s tomado,
+el vigía deja en `lienzo.log` la pila del hilo que lo retiene.
+
+La consola ya no puede colgar el server. Sí puede quedar quieta, por ejemplo con una selección
+abierta en la ventana de conhost (un click alcanza; `Esc` la suelta): mientras tanto el log sigue
+entero en `lienzo.log`.
+
 ## Limitaciones conocidas
 
 - La inyección escribe en la misma caja que tu teclado: si estás tipeando en esa terminal, los textos

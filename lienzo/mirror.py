@@ -53,6 +53,7 @@ class _PeerMirror:
         self.last_seen: float = 0.0
         self.client: federation.SSEClient | None = None
         self.synced = False  # ya llego su snapshot completo en esta conexion
+        self.vivo_avisado: bool | None = None  # el ultimo estado vivo/caida que se dejo en el log
         self.evento_raro: str | None = None  # el ultimo tipo de evento no-objeto avisado
 
 
@@ -204,6 +205,43 @@ class Mirror:
                     if motivo != self._health_loop_error:
                         self._health_loop_error = motivo
                         self.log(f"salud de {pc_id}: falla ({motivo})\n{traceback.format_exc()}")
+            try:
+                self.revisar_vivos()
+            except Exception:
+                self.log(f"revisar pares vivos: falla\n{traceback.format_exc()}")
+
+    def revisar_vivos(self) -> None:
+        """Deja en el log cada par que pasa a caido (con cuanto hace que no se sabe nada y el
+        diagnostico de red, si lo hay) y cada uno que vuelve. Antes la caida solo se veia en el
+        tablero (`alive` calculado al pedir /peers) y en el log quedaba, a lo sumo, el error de
+        un pedido suelto: un par que dejaba de contestar no era un hecho registrado."""
+        ahora = time.time()
+        cambios = []
+        with self._lock:
+            for pm in self._peers.values():
+                vivo = bool(pm.last_seen) and (ahora - pm.last_seen) < PEER_TIMEOUT_S
+                if vivo == pm.vivo_avisado or (vivo and pm.vivo_avisado is None):
+                    pm.vivo_avisado = vivo
+                    continue
+                pm.vivo_avisado = vivo
+                cambios.append((pm.info.get("name") or pm.pc_id, vivo, pm.last_seen, pm.diagnostico))
+        for nombre, vivo, visto, diagnostico in cambios:
+            if vivo:
+                self.log(f"par {nombre}: de vuelta")
+            else:
+                hace = f"sin noticias hace {ahora - visto:.0f} s" if visto else "no contestó desde que se conectó"
+                self.log(f"par {nombre}: caída ({hace}" + (f"; {diagnostico}" if diagnostico else "") + ")")
+        if cambios:
+            self.on_change()
+
+    def reconectar_todos(self) -> None:
+        """Corta el SSE de cada par para que reconecte ya: despues de un cambio de red el socket
+        viejo puede quedar colgado de una interfaz que no existe hasta que venza su timeout de
+        lectura. El snapshot llega entero de nuevo al reconectar."""
+        with self._lock:
+            clientes = [pm.client for pm in self._peers.values() if pm.client is not None]
+        for c in clientes:
+            c.reconnect()
 
     def _poll_health(self, pc_id: str) -> None:
         pm = self._get(pc_id)

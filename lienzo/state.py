@@ -5,6 +5,7 @@ a ninguno de ellos."""
 
 from __future__ import annotations
 
+import atexit
 import datetime as dt
 import json
 import os
@@ -68,7 +69,58 @@ UI_CONFIG_KEYS = ("auto_continue", "auto_retry", "auto_aprobar")  # lo unico que
 # transcripcion (22 ms de mediana, 48 ms el peor caso sobre 2 MB de cola). Al volver a tomarlo hay
 # que revalidar que la tarjeta siga siendo la misma (`sessions.get(sid) is s`): entre medio pudo
 # borrarse, y un touch() sobre una tarjeta ya borrada le rehacia el archivo en disco.
-lock = threading.RLock()
+#
+# Nada que pueda esperar sin limite va con el lock tomado: ni la red, ni la consola (incidente del
+# 2026-10-05: un log con el lock tomado se quedo en el print de una consola trabada y el server
+# entero dejo de contestar). Por eso es un LockVigilado: sabe quien lo tiene y desde cuando, y
+# server.vigilar_lock deja en el log la pila de quien lo retiene mas de LOCK_LENTO_S.
+LOCK_LENTO_S = 10.0
+
+
+class LockVigilado:
+    """Un RLock que ademas anota que hilo lo tiene y desde cuando. `tenencia()` lo lee sin tomar
+    nada (lo usan /salud y el vigia: si el lock esta trabado, preguntar por el no puede trabarse)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._profundidad = 0
+        self._hilo: threading.Thread | None = None
+        self._desde: float | None = None
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        ok = self._lock.acquire(blocking, timeout)
+        if ok:
+            if self._profundidad == 0:
+                self._hilo, self._desde = threading.current_thread(), time.monotonic()
+            self._profundidad += 1
+        return ok
+
+    def release(self) -> None:
+        self._profundidad -= 1
+        if self._profundidad == 0:
+            self._hilo = self._desde = None
+        self._lock.release()
+
+    def __enter__(self) -> bool:
+        return self.acquire()
+
+    def __exit__(self, *exc) -> None:
+        self.release()
+
+    def tenencia(self) -> dict | None:
+        """{hilo, ident, desde, tomado_hace_s} de quien lo tiene ahora, o None si esta libre."""
+        hilo, desde = self._hilo, self._desde  # una foto: puede soltarse entre medio, no importa
+        if hilo is None or desde is None:
+            return None
+        return {
+            "hilo": hilo.name,
+            "ident": hilo.ident,
+            "desde": desde,
+            "tomado_hace_s": round(time.monotonic() - desde, 2),
+        }
+
+
+lock = LockVigilado()
 sessions: dict[str, dict] = {}
 pending: dict[str, dict] = {}
 clients: list[queue.Queue] = []
@@ -168,12 +220,103 @@ def log(msg: str) -> None:
     day = t.strftime("%Y-%m-%d")
     if day != _last_day[0]:
         _last_day[0] = day
-        print(f"── {day} ──", flush=True)
+        _a_consola(f"── {day} ──")
     if _tty[0]:
         c = _COLORS.get(tag, "\x1b[90m")
-        print(f"\x1b[90m{t.strftime('%H:%M:%S')}\x1b[0m  {c}{tag:<8}\x1b[0m {msg}", flush=True)
+        _a_consola(f"\x1b[90m{t.strftime('%H:%M:%S')}\x1b[0m  {c}{tag:<8}\x1b[0m {msg}")
     else:
-        print(f"{t.strftime('%H:%M:%S')}  {tag:<8} {msg}", flush=True)
+        _a_consola(f"{t.strftime('%H:%M:%S')}  {tag:<8} {msg}")
+
+
+# --- la consola, en su propio hilo -------------------------------------------------------------
+# Incidente del 2026-10-05: el print iba en el hilo de quien logueaba. Una consola de Windows con
+# una seleccion abierta (QuickEdit: alcanza un click en la ventana) o un pipe que nadie lee frenan
+# toda escritura, y el primer log hecho con `lock` tomado (un hook, 14:57) se quedo en el print con
+# el lock en la mano: GET /sessions, la liveness y el espejo esperaron horas. Ahora log() escribe
+# el archivo y deja la linea en una cola; la saca un hilo aparte, el unico que puede trabarse. Con
+# la cola llena se descarta (el archivo tiene todo) y se avisa cuantas no salieron.
+CONSOLA_MAX = 2000
+_consola_mx = threading.Lock()
+_consola_cola: queue.Queue | None = None
+_consola_perdidas = 0
+_consola_escribiendo_desde: float | None = None  # monotonic del print en curso; None si no hay
+
+
+def consola_reiniciar() -> queue.Queue:
+    """Cola y hilo nuevos (al arrancar, y en las pruebas para cambiar CONSOLA_MAX). Un hilo viejo
+    trabado se queda con su cola vieja: no se lo puede destrabar desde aca."""
+    global _consola_cola, _consola_perdidas
+    with _consola_mx:
+        cola: queue.Queue = queue.Queue(maxsize=CONSOLA_MAX)
+        _consola_cola, _consola_perdidas = cola, 0
+    threading.Thread(target=_escritor_de_consola, args=(cola,), name="consola", daemon=True).start()
+    return cola
+
+
+def _a_consola(linea: str) -> None:
+    global _consola_perdidas
+    cola = _consola_cola or consola_reiniciar()
+    try:
+        cola.put_nowait(linea)
+    except queue.Full:
+        with _consola_mx:
+            _consola_perdidas += 1
+
+
+def _imprimir(linea: str) -> None:
+    global _consola_escribiendo_desde
+    _consola_escribiendo_desde = time.monotonic()
+    try:
+        print(linea, flush=True)
+    except OSError, ValueError:
+        pass  # consola cerrada: el archivo sigue
+    finally:
+        _consola_escribiendo_desde = None
+
+
+def _escritor_de_consola(cola: queue.Queue) -> None:
+    global _consola_perdidas
+    while True:
+        linea = cola.get()
+        _imprimir(linea)
+        # las descartadas eran posteriores a todo lo que estaba en la cola: el aviso va al vaciarla
+        perdidas = 0
+        if cola.empty():
+            with _consola_mx:
+                if cola is _consola_cola:
+                    perdidas, _consola_perdidas = _consola_perdidas, 0
+        if perdidas:
+            _imprimir(f"… {perdidas} líneas no salieron por consola (estaba trabada); están en {LOG}")
+        cola.task_done()
+
+
+def consola_estado() -> dict:
+    """Para /salud y el vigia: cuantas lineas esperan, cuantas se descartaron y si el print en
+    curso lleva trabado un rato."""
+    desde = _consola_escribiendo_desde
+    cola = _consola_cola
+    return {
+        "cola": cola.qsize() if cola is not None else 0,
+        "perdidas": _consola_perdidas,
+        "trabada_hace_s": round(time.monotonic() - desde, 1) if desde is not None else None,
+    }
+
+
+def consola_trabada_desde() -> float | None:
+    """monotonic() del print en curso, o None si la consola no esta escribiendo nada ahora."""
+    return _consola_escribiendo_desde
+
+
+def consola_vaciar(espera_s: float = 1.0) -> None:
+    """Al salir: le da a la consola hasta `espera_s` para mostrar lo que quedo en la cola (el
+    «no se pudo tomar el puerto» del arranque tiene que verse). Si esta trabada, no espera mas."""
+    limite = time.monotonic() + espera_s
+    cola = _consola_cola
+    while cola is not None and cola.unfinished_tasks and time.monotonic() < limite:
+        time.sleep(0.02)
+
+
+atexit.register(consola_vaciar)
 
 
 _avisos: dict[str, str] = {}

@@ -43,6 +43,7 @@ import red
 import restore
 import rules as rl
 import secretos
+import state
 import transcripts
 import xfer
 from beacon import DISCOVERED_TTL_S as BEACON_TTL_S
@@ -110,6 +111,8 @@ from state import (
 # --- federacion entre PCs (plan-multi-pc-2026-09-26.md, ronda 2) ----------------------------
 
 PEERS_FILE = os.path.join(LIENZO, "peers.json")
+PEER_SOCKET_TIMEOUT_S = 60.0  # una conexion de un par que no lee ni escribe en este tiempo se corta
+RED_CADA_S = 10.0  # cada cuanto se mira si cambio la IP de LAN o la de Tailscale
 _peer_nonces = federation.NonceCache()
 # solo el tablero (navegador): recibe ademas de lo local (via `clients`) el espejo de los peers.
 # Un peer que se conecta a /peer/events NO se registra aca: solo ve la verdad local de esta PC, ni
@@ -1296,6 +1299,8 @@ class Handler(JsonHandler):
                 return self._json(200, {"secrets": secretos.BOVEDA.pendientes()})
             if len(parts) == 2 and parts[0] == "secrets":
                 return self._secret_take(parts[1])
+            if parts == ["salud"]:
+                return self._json(200, salud())
             if parts == ["sessions"]:
                 # serializar con el lock (es CPU pura) y escribir afuera: es el cuerpo mas grande
                 # que manda el server, y antes se escribia al socket con el lock tomado. El espejo
@@ -1763,6 +1768,10 @@ class PeerHandler(JsonHandler):
 
     server_version = "lienzo-peer/0.1"
     LOG_PREFIJO = "peer "
+    # timeout de cada lectura y escritura del socket (StreamRequestHandler.setup): un par que se
+    # fue a mitad de un pedido, o que dejo de leer su /peer/events por un cambio de red, no deja un
+    # hilo esperando para siempre. El SSE manda un ping cada 15 s, asi que esto sobra para el vivo.
+    timeout = PEER_SOCKET_TIMEOUT_S
 
     def _parts_and_body(self, method: str) -> tuple[list[str], bytes] | None:
         """Ruta partida y cuerpo leido, con los mismos limites que Handler._route (Content-Length
@@ -1999,23 +2008,209 @@ class PeerHandler(JsonHandler):
         _stream_sse(self, snapshot_json(con_espejo=False), [])
 
 
-def _lan_ip() -> str:
-    """La IP de LAN de esta PC (nunca localhost, para que --peer-host tenga un default util): abre
-    un socket UDP hacia una IP publica sin mandar nada (no hace falta que responda) y lee con que
-    IP local hubiera salido. Con cualquier error, 127.0.0.1: el listener de peers no serviria de
-    mucho asi, pero no revienta el arranque."""
+def _lan_ip() -> str | None:
+    """La IP de LAN de esta PC: abre un socket UDP hacia una IP publica sin mandar nada (no hace
+    falta que responda) y lee con que IP local hubiera salido. None sin red (o sin ruta por
+    defecto): el listener de pares de la LAN se abre cuando aparezca (ListenersDePares). Que no hay
+    IP de LAN queda en el log una vez, con el motivo, y otra cuando vuelve (revision 2026-10-04, S17:
+    antes caia callado a 127.0.0.1)."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+            ip = s.getsockname()[0]
         finally:
             s.close()
     except OSError as e:
-        # sin esta linea el listener de peers quedaba en localhost en silencio, y desde la otra PC
-        # solo se veia «sin conexion» (revision 2026-10-04, S17)
-        log(f"no se pudo averiguar la IP de LAN ({type(e).__name__}: {e}): el listener de peers usa 127.0.0.1")
-        return "127.0.0.1"
+        ip, motivo = None, f"{type(e).__name__}: {e}"
+    else:
+        motivo = None if ip and not ip.startswith(("0.", "127.")) else f"la salida por defecto es {ip}"
+    state.avisar_si_cambia(
+        "red: IP de LAN",
+        f"red: sin IP de LAN ({motivo}): el listener de pares de la LAN se abre cuando aparezca" if motivo else None,
+    )
+    return None if motivo else ip
+
+
+def _nombre_red(clave: str) -> str:
+    return {"lan": "la LAN", "tailscale": "Tailscale"}.get(clave, clave)
+
+
+class ListenersDePares:
+    """Los listeners de pares (7322), uno por direccion propia: la de la LAN y, si esta prendido,
+    la de Tailscale. `reconciliar` los deja ligados exactamente a las direcciones que se le pasan:
+    abre los que faltan, cierra los de una IP que ya no es la propia y registra el motivo.
+
+    Antes se ligaban una sola vez al arrancar: despues de cambiar de red el de la LAN quedaba
+    escuchando en una IP que ya no existia, y el de Tailscale no se volvia a abrir si Tailscale se
+    apagaba y prendia (incidente del 2026-10-05). Corre en su propio hilo (red_loop), nunca en el
+    camino del HTTP local: abrir y cerrar un listener no toma `lock`."""
+
+    def __init__(self, port: int, handler=None) -> None:
+        self.port = port
+        self.handler = handler or PeerHandler
+        self._mx = threading.Lock()
+        self._srv: dict[str, tuple[str, QuietServer]] = {}  # clave -> (ip, server abierto)
+        self._vista: dict[str, str] = {}  # clave -> la ultima IP deseada, abra o no
+        self._fallo: dict[str, str] = {}  # clave -> el ultimo error de bind avisado
+        self.ultimo_cambio: dict | None = None  # {ts, motivo}, para /salud
+
+    def reconciliar(self, deseadas: dict[str, str | None]) -> list[str]:
+        """Devuelve los motivos de lo que cambio (vacio si nada): red_loop reconecta el espejo
+        cuando la lista no esta vacia."""
+        motivos: list[str] = []
+        with self._mx:
+            for clave in sorted(set(self._vista) | set(deseadas)):
+                antes, ahora = self._vista.get(clave), deseadas.get(clave) or None
+                nombre = _nombre_red(clave)
+                if antes != ahora:
+                    if antes and ahora:
+                        motivos.append(f"la IP de {nombre} cambió de {antes} a {ahora}")
+                    elif antes:
+                        motivos.append(f"{nombre} sin red (era {antes})")
+                    self._cerrar(clave)
+                    self._fallo.pop(clave, None)
+                    if ahora:
+                        self._vista[clave] = ahora
+                    else:
+                        self._vista.pop(clave, None)
+                if ahora and clave not in self._srv:
+                    self._abrir(clave, ahora)
+        for m in motivos:
+            log(f"red: {m}; los listeners de pares quedan en {self._resumen()}")
+        if motivos:
+            self.ultimo_cambio = {"ts": now(), "motivo": "; ".join(motivos)}
+        return motivos
+
+    def _abrir(self, clave: str, ip: str) -> None:
+        try:
+            srv = QuietServer((ip, self.port), self.handler)
+        except OSError as e:
+            error = f"{ip}: {e}"
+            if self._fallo.get(clave) != error:  # una vez por motivo, no cada RED_CADA_S
+                self._fallo[clave] = error
+                log(f"listener de peers ({_nombre_red(clave)}): no se pudo tomar {ip}:{self.port} ({e}); se reintenta")
+            return
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, name=f"pares-{clave}", daemon=True).start()
+        self._srv[clave] = (ip, srv)
+        self._fallo.pop(clave, None)
+        log(f"listener de peers ({_nombre_red(clave)}) en http://{ip}:{self.port}")
+
+    def _cerrar(self, clave: str) -> None:
+        got = self._srv.pop(clave, None)
+        if got is None:
+            return
+        # shutdown espera a que serve_forever salga (medio segundo como mucho); las conexiones ya
+        # abiertas siguen en sus hilos hasta que el par corte o venza PEER_SOCKET_TIMEOUT_S
+        got[1].shutdown()
+        got[1].server_close()
+
+    def _resumen(self) -> str:
+        with_ips = [f"{_nombre_red(k)} {ip}" for k, (ip, _s) in sorted(self._srv.items())]
+        return ", ".join(with_ips) or "ninguno"
+
+    def estado(self) -> dict[str, str]:
+        """{clave: ip} de los listeners abiertos ahora."""
+        return {k: ip for k, (ip, _s) in self._srv.items()}
+
+    def cerrar_todo(self) -> None:
+        with self._mx:
+            for clave in list(self._srv):
+                self._cerrar(clave)
+            self._vista.clear()
+
+
+LISTENERS: ListenersDePares | None = None  # el de main(), para /salud
+
+
+def direcciones_propias(peer_host_fijo: str | None) -> dict[str, str | None]:
+    """A que IPs ligar los listeners de pares ahora: la de LAN (o la fija de --peer-host) y la de
+    Tailscale si esta prendido y es otra."""
+    lan = peer_host_fijo or _lan_ip()
+    ts = red.tailscale_propia()
+    return {"lan": lan, "tailscale": ts if ts and ts != lan else None}
+
+
+def red_loop(listeners: ListenersDePares, peer_host_fijo: str | None, stop_event: threading.Event) -> None:
+    """Cada RED_CADA_S: si cambio la IP de LAN o la de Tailscale (otra red, Tailscale prendido o
+    apagado, DHCP), vuelve a ligar los listeners, lo registra con el motivo y corta el SSE de cada
+    par para que el espejo reconecte ya por la red nueva."""
+    while not stop_event.wait(RED_CADA_S):
+        try:
+            if listeners.reconciliar(direcciones_propias(peer_host_fijo)):
+                mirror.MIRROR.reconectar_todos()
+        except Exception:
+            log(f"red: fallo al revisar las direcciones propias\n{traceback.format_exc()}")
+
+
+# --- vigia: que el HTTP local no quede colgado sin que se sepa por que -------------------------
+
+_vigia_avisado: set[tuple] = set()
+SALUD_LOCK_S = 1.0  # /salud da ok=false con el lock tomado mas que esto (lo normal son milisegundos)
+SALUD_CONSOLA_S = 5.0
+
+
+def vigilar_lock_una_vez(avisar: Callable[[str], None] | None = None) -> None:
+    """Si el lock de las tarjetas lleva tomado mas de LOCK_LENTO_S, deja en el log la pila del hilo
+    que lo tiene (una vez por episodio): el 2026-10-05 el server quedo colgado horas y no hubo forma
+    de saber, despues, donde. Con la consola trabada avisa una vez tambien, para que se sepa por que
+    no aparece nada en la ventana."""
+    avisar = avisar or log
+    t = lock.tenencia()
+    if t and t["tomado_hace_s"] >= state.LOCK_LENTO_S:
+        clave = ("lock", t["ident"], t["desde"])
+        if clave not in _vigia_avisado:
+            _vigia_avisado.add(clave)
+            frame = sys._current_frames().get(t["ident"])
+            pila = "".join(traceback.format_stack(frame)) if frame is not None else "(sin pila)"
+            avisar(
+                f"vigia: el lock de las tarjetas lleva {t['tomado_hace_s']:.0f} s tomado por el hilo "
+                f"{t['hilo']}; GET /sessions y la liveness esperan. Esta parado en:\n{pila}"
+            )
+    desde = state.consola_trabada_desde()
+    if desde is not None and time.monotonic() - desde >= SALUD_CONSOLA_S:
+        clave = ("consola", desde)
+        if clave not in _vigia_avisado:
+            _vigia_avisado.add(clave)
+            c = state.consola_estado()
+            avisar(
+                f"vigia: la consola no acepta texto hace {c['trabada_hace_s']:.0f} s (¿una selección abierta en la "
+                f"ventana? Esc la suelta); el log sigue entero en {state.LOG}"
+            )
+
+
+def vigia_loop(cada_s: float = 2.0) -> None:
+    while True:
+        time.sleep(cada_s)
+        try:
+            vigilar_lock_una_vez()
+        except Exception:
+            log(f"vigia: fallo\n{traceback.format_exc()}")
+
+
+_ARRANQUE = time.time()
+
+
+def salud() -> dict:
+    """GET /salud: el estado del server sin tomar `lock` (si esta trabado, esto lo dice en vez de
+    trabarse tambien): quien tiene el lock y desde cuando, la consola, los pares (alive, cuanto
+    hace que se supo de cada uno y el diagnostico de red) y a que IPs estan ligados los listeners."""
+    t = lock.tenencia()
+    c = state.consola_estado()
+    lento = bool(t and t["tomado_hace_s"] >= SALUD_LOCK_S)
+    trabada = c["trabada_hace_s"] is not None and c["trabada_hace_s"] >= SALUD_CONSOLA_S
+    return {
+        "ok": not lento and not trabada,
+        "ts": now(),
+        "arriba_s": round(time.time() - _ARRANQUE),
+        "lock": None if t is None else {"hilo": t["hilo"], "tomado_hace_s": t["tomado_hace_s"]},
+        "consola": c,
+        "pares": mirror.MIRROR.peers_status(),
+        "listeners": LISTENERS.estado() if LISTENERS is not None else {},
+        "ultimo_cambio_de_red": LISTENERS.ultimo_cambio if LISTENERS is not None else None,
+        "hilos": threading.active_count(),
+    }
 
 
 def build_id() -> str:
@@ -2178,29 +2373,6 @@ def _beacon_sync_loop(stop_event: threading.Event, beacon) -> None:
             log(f"beacon: fallo al sincronizar las IP:\n{traceback.format_exc()}")
 
 
-def _tailscale_listener_loop(stop_event: threading.Event, lan_host: str, port: int) -> None:
-    """El listener de peers escucha en la IP de LAN; por Tailscale el pedido llega a la IP 100.x,
-    asi que hace falta otro en esa. Tailscale puede prenderse despues del lienzo: se mira cada
-    minuto hasta que aparece, y se abre una sola vez."""
-    avisado = None
-    while True:
-        ip = red.tailscale_propia()
-        if ip and ip != lan_host:
-            try:
-                srv = QuietServer((ip, port), PeerHandler)
-            except OSError as e:
-                if avisado != str(e):  # una vez por motivo, no cada minuto
-                    avisado = str(e)
-                    log(f"listener de peers por Tailscale: no se pudo tomar {ip}:{port} ({e})")
-            else:
-                srv.daemon_threads = True
-                threading.Thread(target=srv.serve_forever, daemon=True).start()
-                log(f"listener de peers por Tailscale en http://{ip}:{port}")
-                return
-        if stop_event.wait(60.0):
-            return
-
-
 def elegir_direccion(info: dict, conectada: str | None, ahora: float, ttl_s: float) -> str | None:
     """Con cual de las direcciones vivas de un peer (las que mandaron un beacon firmado hace menos de
     `ttl_s`) conectar el espejo: la que ya usa mientras siga viva, para no saltar entre la LAN y
@@ -2261,6 +2433,7 @@ def instalar_excepthook() -> None:
 
 
 def main() -> int:
+    global LISTENERS
     instalar_excepthook()
     ap = argparse.ArgumentParser(prog="lienzo-server")
     ap.add_argument("--port", type=int, default=7321)
@@ -2315,17 +2488,12 @@ def main() -> int:
     xfer.conn_de = mirror.MIRROR.conn_of
     health.xfer_resumen = xfer.resumen
     peers_guardados = federation.list_peers(PEERS_FILE)
-    peer_srv = None
-    if a.peers or peers_guardados:
-        peer_host = a.peer_host or _lan_ip()
-        try:
-            peer_srv = QuietServer((peer_host, a.peer_port), PeerHandler)
-        except OSError as e:
-            log(f"listener de peers: no se pudo tomar {peer_host}:{a.peer_port} ({e})")
-        else:
-            peer_srv.daemon_threads = True
-            threading.Thread(target=peer_srv.serve_forever, daemon=True).start()
-            log(f"listener de peers en http://{peer_host}:{a.peer_port}")
+    modo_pares = a.peers or bool(peers_guardados)
+    if modo_pares:
+        # los listeners de pares se ligan a la IP de LAN y a la de Tailscale de AHORA, y red_loop
+        # los vuelve a ligar cuando cambian (otra red, Tailscale prendido o apagado)
+        LISTENERS = ListenersDePares(a.peer_port)
+        LISTENERS.reconciliar(direcciones_propias(a.peer_host))
     for peer in peers_guardados:
         _connect_peer_from_record(peer)
     if peers_guardados:
@@ -2333,13 +2501,12 @@ def main() -> int:
     xfer.arrancar()  # los trabajos de copia que estaban andando antes del reinicio siguen solos
     # siempre, no solo con peers guardados: uno emparejado despues tambien puede quedar pendiente
     threading.Thread(target=config_peers_loop, daemon=True).start()
-    if peer_srv is not None:
+    threading.Thread(target=vigia_loop, name="vigia", daemon=True).start()
+    if modo_pares:
         stop_beacon = threading.Event()
         beacon.start(a.peer_port, stop_beacon)
         threading.Thread(target=_beacon_sync_loop, args=(stop_beacon, beacon), daemon=True).start()
-        threading.Thread(
-            target=_tailscale_listener_loop, args=(stop_beacon, peer_host, a.peer_port), daemon=True
-        ).start()
+        threading.Thread(target=red_loop, args=(LISTENERS, a.peer_host, stop_beacon), name="red", daemon=True).start()
 
     srv.daemon_threads = True
     with lock:
