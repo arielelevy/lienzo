@@ -81,6 +81,8 @@ k32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, wt.LPVOID, wt.DWORD,
 k32.CreateFileW.restype = wt.HANDLE
 k32.WriteConsoleInputW.argtypes = [wt.HANDLE, ctypes.POINTER(INPUT_RECORD), wt.DWORD, ctypes.POINTER(wt.DWORD)]
 k32.WriteConsoleInputW.restype = wt.BOOL
+k32.GetNumberOfConsoleInputEvents.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
+k32.GetNumberOfConsoleInputEvents.restype = wt.BOOL
 k32.CloseHandle.argtypes = [wt.HANDLE]
 u32.VkKeyScanW.argtypes = [wt.WCHAR]
 u32.VkKeyScanW.restype = ctypes.c_short
@@ -193,7 +195,22 @@ def inject(
                     return {"ok": False, "pid": pid, "error": err}
                 time.sleep(chunk_delay)
             if enter_presses > 0:
-                time.sleep(key_delay)
+                if text and procs.agent_of(procs.image_path(pid)) == "codex":
+                    # No juntar Enter con el burst de texto: Codex lo puede interpretar
+                    # como un salto de linea del pegado. Esperar consumo y luego reposo.
+                    deadline = time.monotonic() + 10
+                    while True:
+                        pending = wt.DWORD(0)
+                        if not k32.GetNumberOfConsoleInputEvents(hin, ctypes.byref(pending)):
+                            return {"ok": False, "pid": pid, "error": "no pude verificar el consumo del texto"}
+                        if pending.value == 0:
+                            break
+                        if time.monotonic() >= deadline:
+                            return {"ok": False, "pid": pid, "error": "Codex no consumio el texto; Enter no enviado"}
+                        time.sleep(0.05)
+                    time.sleep(max(key_delay, 1.0))
+                else:
+                    time.sleep(key_delay)
                 for _ in range(enter_presses):
                     err = write(key_records("\r"))
                     if err:
