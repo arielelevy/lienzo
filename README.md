@@ -96,6 +96,8 @@ TUI («Switch model?») se muestran con sus opciones y se eligen desde ahí.
 
 - **Contestar**: la caja del panel; se escribe en su terminal aunque esté oculta. Tab escribe la
   sugerencia que muestra la terminal.
+  En Codex CLI sobre Windows, el envío espera a que la consola consuma el texto y deja una pausa
+  antes del Enter para que el mensaje se publique. Si la cola no se vacía en 10 s, informa el error.
 - **Permisos**: Permitir o Denegar desde la tarjeta (nunca «permitir siempre»; vence a los 60 s).
 - **Denegados**: lo que una regla, política o clasificador le niega al agente aparece como
   «Denegado: herramienta» con un botón «Autorizar y que reintente». Una denegación anterior al
@@ -370,6 +372,7 @@ lienzo/
 web/               interfaz (Vite + React + TypeScript); npm run build deja web/dist
 skills/lienzo/     skill para coordinar agentes; coordinar.py es el cliente de la API
 tests/             pytest
+pruebas-agenticas/ configuración del plugin; resultados locales ignorados por Git
 install.py         hooks y regla de firewall (--peer)
 lienzo-server.cmd / .sh   arranque
 lienzo-new.sh      abre un agente adentro de tmux
@@ -379,11 +382,22 @@ lienzo-new.sh      abre un agente adentro de tmux
 misma PC como si fueran dos PCs.
 
 ```powershell
-py -3.14 -m pytest tests -q        # ~900 pruebas
+py -3.14 -m pytest tests -q        # backend y regresiones de envío
 py -3.14 -m ruff check .           # lint
 cd web; npm run build; npm run lint
 cd web; npm run test:ui            # interfaz en el navegador (Playwright, con el server andando)
 ```
+
+La configuración de [pruebas agénticas](pruebas-agenticas/README.md) ejecuta las suites existentes
+con el runner del plugin instalado: pytest, ESLint, build, tests TypeScript y Playwright. Guarda
+logs e historial SQLite en `pruebas-agenticas/resultados/`. Excluye las capturas de documentación
+para no sobrescribirlas. Los tests de interfaz bloquean escrituras reales y usan fixtures de API
+y SSE; el test de humo consulta el tablero real por GET.
+
+Medido el 2026-10-06: 936 tests backend, 117 de interfaz y tres suites TypeScript pasaron; además
+pasaron cuatro regresiones nuevas de Enter con Win32 mockeado. Se verificó un envío corto en una
+Codex CLI Windows libre: publicó el mensaje, respondió y dejó el editor vacío. La compuerta del
+plugin sigue sin certificar: falta baseline aprobado y no se ejecutaron las mutaciones propuestas.
 
 ## Qué es cada archivo de estado
 
@@ -419,6 +433,15 @@ entero en `lienzo.log`.
 
 - La inyección escribe en la misma caja que tu teclado: si estás tipeando en esa terminal, los textos
   se mezclan.
+- Dos envíos simultáneos del lienzo a la misma consola también pueden mezclarse: falta exclusión
+  por destino. Los caracteres fuera del plano Unicode básico, como algunos emojis, pueden romper
+  la inyección Windows. El ajuste del Enter no resuelve esas dos limitaciones.
+- Un adjunto que todavía está subiendo puede quedar fuera del mensaje. Reintentar un envío masivo
+  parcialmente fallido vuelve a incluir a las sesiones exitosas; editar el borrador durante ese
+  envío puede perder los cambios. Son hallazgos pendientes de regresión y corrección.
+- El modo espejo de copias limita a 20.000 la lista de sobrantes, sin verificar que esté completa.
+  El diagnóstico `git: error` tampoco conserva el motivo de Git: no demuestra por sí solo que una
+  credencial esté vencida.
 - El SSE no pasa por el túnel rápido: desde el celular el tablero se actualiza cada 4 s.
 - Una sesión cuya terminal se cerró se ve pero no recibe mensajes.
 - Las flechas no se dibujan en pantallas de menos de 900 px.
