@@ -1585,10 +1585,15 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
             return  # la borraron mientras buscabamos su transcripcion: no revivirla
         if sid and sid != s["session_id"] and sid not in sessions:
             viejo = s["session_id"]  # la tarjeta cambia de id: la de antes se olvida entera
+            n_rules, n_links = repoint_refs(viejo, sid)
             forget_session(viejo)
             state.broadcast({"type": "removed", "session_id": viejo})
             s["session_id"] = sid
             sessions[sid] = s
+            if n_rules:
+                rules.publish()
+            if n_links:
+                links.publish()
         s["transcript_path"] = tpath
         s["cwd"] = s.get("cwd") or cwd
         apply_repo(s, s["cwd"])

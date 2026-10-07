@@ -2,6 +2,7 @@
 
 import io
 import json
+from pathlib import Path
 from email.message import Message
 from types import SimpleNamespace
 
@@ -177,11 +178,16 @@ def test_pi_sweep_binds_child_log_without_claiming_hook_or_firing_rules(tmp_path
     s = ses.new_session("pid-42", "pi", "sweep")
     s.update(pid=42, state="corriendo")
     st.sessions["pid-42"] = s
+    st.links.add({"id": "coordinacion", "from": "coordinadora", "to": "pid-42"})
+    st.rules.add({"id": "aviso", "from": "pid-42", "to": "coordinadora"})
     ses.attach_transcript(s, ("pi-session", path))
     assert st.sessions["pi-session"] is s and "pid-42" not in st.sessions
     assert not s["hooked"] and s["source"] == "sweep"
     assert s["last_prompt"] == "Trabajo existente" and s["last_reply"] == "Respuesta completa"
     assert not completed
+    assert st.links.items[0]["to"] == "pi-session"
+    assert st.rules.items[0]["from"] == "pi-session"
+    assert "pi-session" in Path(st.links.path).read_text(encoding="utf-8")
     # Un shell viejo no puede pisar lo que ya identifico la extension.
     s["hooked"] = True
     ses.attach_transcript(s, ("stale-session", path))

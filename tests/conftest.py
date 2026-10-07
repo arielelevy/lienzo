@@ -40,6 +40,11 @@ def _sin_estado_real(tmp_path, monkeypatch):
     monkeypatch.setenv("CODA_HOME", str(tmp_path / "coda-home"))
     monkeypatch.setenv("LIENZO_HOME", str(tmp_path / "lienzo-home"))
     monkeypatch.setattr(state, "LOG", str(tmp_path / "lienzo.log"))
+    monkeypatch.setattr(state, "SESSIONS", str(tmp_path / "sessions"))
+    monkeypatch.setattr(state.links, "path", str(tmp_path / "links.json"))
+    monkeypatch.setattr(state.rules, "path", str(tmp_path / "rules.json"))
+    monkeypatch.setattr(state.links, "items", [])
+    monkeypatch.setattr(state.rules, "items", [])
     for cache in ("_cuota", "_git", "_temp"):
         c = getattr(health, cache, None)
         if c is not None and hasattr(c, "limpiar"):
