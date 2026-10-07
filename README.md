@@ -226,7 +226,7 @@ Por qué no llega una PC: el chip de la tira dice el motivo cuando una PC está 
 
 | En la tira | Qué pasa | Qué hacer |
 |---|---|---|
-| sin ARP: la red aísla a los equipos | Wi-Fi público con aislamiento de clientes | Tailscale o un hotspot del celular |
+| sin ARP: la PC no aparece en la red | apagada, dormida, en otra red, o un Wi-Fi público que aísla a los equipos | prenderla o despertarla; si está en la misma red y prendida, Tailscale o un hotspot del celular |
 | la PC está en la red pero no contesta el puerto | el firewall la frena (perfil Público) o el lienzo está colgado | `install.py --peer`, o marcar la red como Privada |
 | el puerto está cerrado | la PC contesta, pero no corre el lienzo con `--peers` | arrancar el lienzo en esa PC |
 | la última IP conocida es de otra red | la PC cambió de red | Tailscale la encuentra en cualquiera |

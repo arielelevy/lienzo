@@ -72,9 +72,12 @@ def _timeout():
     return TimeoutError("timed out")
 
 
-def test_sin_arp_en_la_misma_red_es_aislamiento_de_clientes():
+def test_sin_arp_no_afirma_aislamiento_ni_manda_a_tailscale():
+    """2026-10-07: la tira decia «Wi-Fi público, usá Tailscale» con las dos PCs en la red de casa.
+    Sin ARP tambien es una PC apagada o dormida."""
     d = red.diagnosticar("192.168.50.193", _timeout(), propias=["192.168.50.64"], arp=lambda ip: False)
-    assert d is not None and d.startswith("sin ARP") and "Tailscale" in d
+    assert d is not None and d.startswith("sin ARP") and "apagada" in d
+    assert "Tailscale" not in d and "público" not in d
 
 
 def test_con_arp_y_sin_respuesta_es_el_firewall():

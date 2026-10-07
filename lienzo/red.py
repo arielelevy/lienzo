@@ -161,7 +161,9 @@ def diagnosticar(host: str, error: BaseException, propias: list[str] | None = No
         return f"la última IP conocida ({host}) es de otra red: la PC cambió de red; con Tailscale se encuentran en cualquiera"
     hay = arp(host)
     if hay is False:
-        return "sin ARP: la red aísla a los equipos (Wi-Fi público); usá Tailscale o un hotspot"
+        # no prueba aislamiento: una PC apagada o dormida tampoco contesta ARP. El 2026-10-07 la tira
+        # mandaba a Tailscale con las dos PCs en la misma red de casa y la otra en la tabla ARP
+        return "sin ARP: la PC no aparece en la red (apagada, dormida u otra red); si las dos están prendidas en la misma, el Wi-Fi aísla a los equipos"
     if hay is True:
         return "la PC está en la red pero no contesta el puerto: firewall (install.py --peer abre solo el perfil Privado) o el lienzo colgado"
     return None

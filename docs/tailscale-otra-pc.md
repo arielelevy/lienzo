@@ -62,5 +62,5 @@ El chip caído de la otra PC dice el motivo:
 | no llega por Tailscale | Tailscale apagado o con otra cuenta en alguna de las dos: `tailscale status` |
 | la PC está en la red pero no contesta el puerto | faltó el paso 3 (como administrador) en esa PC |
 | el puerto está cerrado | el lienzo no corre en esa PC (paso 4) |
-| sin ARP: la red aísla a los equipos | todavía no pasó a Tailscale: esperar un minuto o revisar el paso 1 |
+| sin ARP: la PC no aparece en la red | todavía no pasó a Tailscale: esperar un minuto o revisar el paso 1 |
 | la última IP conocida es de otra red | idem: todavía no llegó ningún anuncio por Tailscale |

@@ -453,10 +453,12 @@ Cuando la memoria se termina, en este orden y sin matar el trabajo de nadie:
 - Un peer caído no avisa activamente: se nota porque su chip en la tira pasa a ○ (sin memoria ni
   temperatura, sería un dato viejo) y sus tarjetas quedan grises con los controles deshabilitados a
   los 45 s sin novedades de esa PC. No hay push de "se cayó fulano": hay que mirar la tira.
-  El chip caído dice por qué (`diagnostico` en `GET /peers`): «sin ARP: la red aísla a los
-  equipos» es un Wi-Fi público con aislamiento de clientes (medido el 2026-10-05 en «YPF Clientes
-  2»: ni el broadcast ni el barrido unicast lo saltan). No reintentar ni tocar el firewall: decirle
-  al usuario que use Tailscale en las dos PCs (misma cuenta) o un hotspot. Con Tailscale el
+  El chip caído dice por qué (`diagnostico` en `GET /peers`): «sin ARP» es que la PC no aparece en
+  la red: apagada, dormida, en otra red, o un Wi-Fi público con aislamiento de clientes (medido el
+  2026-10-05 en «YPF Clientes 2»: ni el broadcast ni el barrido unicast lo saltan). Primero
+  preguntar si la otra PC está prendida y en la misma red (el 2026-10-07 lo era: casa, sin
+  aislamiento). Solo si lo está, el aislamiento: Tailscale en las dos PCs (misma cuenta) o un
+  hotspot. Si las dos están en la misma LAN, Tailscale sobra: el espejo prefiere la LAN. Con Tailscale el
   lienzo encuentra la IP 100.x solo y cambia de dirección sin hacer nada; hace falta
   `install.py --peer` de nuevo, como administrador, para la regla de firewall de la tailnet.
   «el puerto está cerrado» es que no corre el lienzo allá; «no contesta el puerto» es el firewall.
