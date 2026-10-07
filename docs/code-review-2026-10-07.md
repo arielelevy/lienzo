@@ -86,3 +86,13 @@ fuera de la imagen sí se transmite con coordenadas limitadas. Explorer identifi
 estiramiento CSS; Analyser localizó el mapeo asociado; Designer definió escala uniforme
 y márgenes; Executor omite pruebas por instrucción del usuario; Detective mantiene
 pendiente la verificación visual. Se compila para publicar la corrección de interfaz.
+
+Vista de solapa completa: controles de Lienzo ocultos por defecto y disponibles en ⋮,
+superpuestos sin reservar altura. El pedido de captura incluye el tamaño visible; el worker
+ajusta solamente la ventana validada de chrome.exe, con límites 320–3840 por 200–2160,
+sin moverla ni alterar el orden de ventanas. La captura y el mouse mantienen la misma
+geometría. Revisión estática de los tres archivos: parámetros Win32 de 64 bits, límites,
+selección explícita de PC/ventana y error visible si Windows rechaza el ajuste.
+Explorer: barras ocupaban superficie; Analyser: proporciones remotas distintas; Designer:
+menú superpuesto y ajuste de ventana; Executor: build de despliegue, sin nuevas pruebas
+por instrucción vigente; Detective: funcionamiento visual y desconexiones aún no certificados.

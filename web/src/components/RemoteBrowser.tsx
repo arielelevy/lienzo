@@ -19,6 +19,8 @@ const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(ma
 
 export function RemoteBrowser() {
   const peers = usePeers();
+  const [native, setNative] = useState(true);
+  const [controls, setControls] = useState(false);
   const [selected, setSelected] = useState(() => new URLSearchParams(location.search).get("pc") ?? "");
   if (!selected && peers.length) {
     const initial = peers.find(p => !p.local) ?? peers.find(p => p.local);
@@ -30,7 +32,8 @@ export function RemoteBrowser() {
     setSelected(id);
     history.replaceState(null, "", `/chrome?pc=${encodeURIComponent(id)}`);
   };
-  return <main className="remote-browser">
+  return <main className={`remote-browser${native ? ' remote-browser-native' : ''}${controls ? ' remote-controls-open' : ''}`}>
+    {native && <button className="remote-controls-toggle" aria-label="Controles de Chrome remoto" aria-expanded={controls} onClick={()=>setControls(!controls)}>⋮</button>}
     <div className="remote-top">
       <a href="/" className="remote-home" title="Volver al tablero">Lienzo</a>
       <span className="remote-brand">Chrome remoto</span>
@@ -41,12 +44,11 @@ export function RemoteBrowser() {
         </select>
       </label>
     </div>
-    {peer ? <ChromeMode key={peer.pc_id} peer={peer} /> : <div className="remote-empty">No se encuentra la PC. Revisá la conexión desde el tablero.</div>}
+    {peer ? <ChromeMode key={peer.pc_id} peer={peer} native={native} setNative={setNative} /> : <div className="remote-empty">No se encuentra la PC. Revisá la conexión desde el tablero.</div>}
   </main>;
 }
 
-function ChromeMode({peer}: {peer: Peer}) {
-  const [native, setNative] = useState(true);
+function ChromeMode({peer, native, setNative}: {peer: Peer; native: boolean; setNative: (value: boolean)=>void}) {
   return <><div className="remote-mode"><button aria-pressed={native} onClick={() => setNative(true)}>Chrome real · ventana completa</button><button aria-pressed={!native} onClick={() => setNative(false)}>Vista por pestañas</button></div>{native ? <ChromeWindow peer={peer} /> : <BrowserDesktop peer={peer} />}</>;
 }
 
@@ -58,6 +60,7 @@ function ChromeWindow({peer}: {peer: Peer}) {
   const [frame, setFrame] = useState<Reply & {window?: string}>({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const viewport = useRef<HTMLDivElement>(null);
   const chain = useRef<Promise<unknown>>(Promise.resolve());
   const live = useRef(false);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
@@ -92,7 +95,10 @@ function ChromeWindow({peer}: {peer: Peer}) {
     const poll = async () => {
       if (document.hidden) { timer = setTimeout(poll, 1000); return; }
       try {
-        const r = await call({action: 'window-frame', window});
+        const box = viewport.current?.getBoundingClientRect();
+        const scale = box ? Math.min(1, 3840 / box.width, 2160 / box.height) : 1;
+        const r = await call({action: 'window-frame', window,
+          ...(box && box.width >= 320 && box.height >= 200 ? {width: Math.round(box.width * scale), height: Math.round(box.height * scale)} : {})});
         if (!cancelled) { setFrame({...r, window}); timer = setTimeout(poll, 250); }
       } catch (e) { if (!cancelled) report(e); }
     };
@@ -123,7 +129,7 @@ function ChromeWindow({peer}: {peer: Peer}) {
     <label>Ventana <select aria-label="Ventana de Chrome" value={window} onChange={e=>{setWindow(e.target.value);setError('');}}>{windows.map(w=><option key={w.id} value={w.id}>{w.title}</option>)}</select></label>
     <button disabled={!peer.alive || busy} onClick={()=>void refresh().catch(report)}>Actualizar ventanas</button>
     <button aria-label="Pantalla completa" onClick={()=>{void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(report);}}>⛶</button>
-  </div><div className="remote-viewport">
+  </div><div className="remote-viewport" ref={viewport}>
     {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1></div>
       : error ? <div className="remote-empty" role="alert"><h1>No se pudo mostrar Chrome</h1><p>{error}</p><button onClick={()=>void refresh().catch(report)}>Reconectar</button></div>
       : !window ? <div className="remote-empty"><h1>Chrome en {peer.name}</h1><p>Elegí tu perfil y tocá Abrir perfil. Acá vas a ver la ventana completa, con sus pestañas, menús y avisos.</p></div>

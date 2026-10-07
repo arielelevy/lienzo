@@ -31,6 +31,12 @@
 .remote-screen img { display: block; width: 100%; height: 100%; pointer-events: none; user-select: none; }
 .remote-screen-native { background: #202124; }
 .remote-screen-native img { object-fit: contain; }
+.remote-controls-toggle { position: absolute; top: 6px; right: 8px; z-index: 25; background: #eef1f6 !important; box-shadow: 0 1px 5px #0004; }
+.remote-browser-native > .remote-top, .remote-browser-native > .remote-mode, .remote-browser-native > .remote-native-toolbar, .remote-browser-native > .remote-status { display: none; }
+.remote-browser-native.remote-controls-open > .remote-top, .remote-browser-native.remote-controls-open > .remote-mode, .remote-browser-native.remote-controls-open > .remote-native-toolbar { display: flex; position: absolute; right: 8px; z-index: 20; background: #eef1f6; border: 1px solid #dadce0; border-radius: 8px; box-shadow: 0 2px 8px #0002; max-width: calc(100% - 16px); }
+.remote-browser-native.remote-controls-open > .remote-top { top: 44px; }
+.remote-browser-native.remote-controls-open > .remote-mode { top: 90px; }
+.remote-browser-native.remote-controls-open > .remote-native-toolbar { top: 138px; }
 .remote-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px; text-align: center; gap: 12px; background: #fff; }
 .remote-empty h1 { margin: 0; font-size: 26px; font-weight: 500; letter-spacing: -.5px; }
 .remote-empty p { max-width: 530px; margin: 0; color: var(--rb-muted); font-size: 14px; }

@@ -43,6 +43,8 @@ class Windows:
             (self.user, "GetClassNameW", [w.HWND, w.LPWSTR, c.c_int]),
             (self.user, "IsWindowVisible", [w.HWND]), (self.user, "IsIconic", [w.HWND]),
             (self.user, "ShowWindow", [w.HWND, c.c_int]), (self.user, "SetForegroundWindow", [w.HWND]),
+            (self.user, "IsZoomed", [w.HWND]),
+            (self.user, "SetWindowPos", [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]),
             (self.user, "GetWindowThreadProcessId", [w.HWND, c.POINTER(w.DWORD)]),
             (self.gdi, "CreateCompatibleDC", [w.HDC]),
             (self.gdi, "CreateCompatibleBitmap", [w.HDC, c.c_int, c.c_int]),
@@ -101,7 +103,16 @@ class Windows:
             fail("No se pudo medir la ventana de Chrome")
         return rect
 
-    def frame(self, hwnd):
+    def frame(self, hwnd, width=None, height=None):
+        if width is not None or height is not None:
+            bounded(width, 320, 3840)
+            bounded(height, 200, 2160)
+            if self.user.IsZoomed(hwnd):
+                self.user.ShowWindow(hwnd, 9)
+            rect = self.rect(hwnd)
+            if (rect.right - rect.left, rect.bottom - rect.top) != (width, height):
+                if not self.user.SetWindowPos(hwnd, None, 0, 0, width, height, 0x16):
+                    fail("Windows no permitió ajustar el tamaño de Chrome")
         if self.user.IsIconic(hwnd):
             self.user.ShowWindow(hwnd, 9)
         rect = self.rect(hwnd)
@@ -222,7 +233,7 @@ def main():
             if action == "windows":
                 result = {"windows": windows.windows()}
             elif action == "window-frame":
-                result = windows.frame(windows.target(data.get("window")))
+                result = windows.frame(windows.target(data.get("window")), data.get("width"), data.get("height"))
             elif action == "window-input":
                 result = windows.input(windows.target(data.get("window")), data.get("events"))
             elif action == "window-release":
