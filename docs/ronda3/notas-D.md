@@ -1,6 +1,8 @@
 # Notas del frente D (ronda 3) — fuera de mis archivos
 
-- **Resuelto en la segunda vuelta:** las dos cosas que había anotado acá (renombrar esta PC y que
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
+- Resuelto en la segunda vuelta: las dos cosas que había anotado acá (renombrar esta PC y que
   el selector de destino descartara una PC caída) las pidió la coordinadora después de verificar,
   con `PUT /peers/self` ya agregado por el frente C en `server.py`. Quedaron en `Pairing.tsx` y
   `App.tsx`, ver `informe-D.md`.

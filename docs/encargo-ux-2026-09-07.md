@@ -6,20 +6,20 @@ archivo. Otra sesión está en el Python y otra en el pentest: no pises esos arc
 
 ## Qué hacer
 
-1. **Pasada de UX por el navegador, no por el código.** El server está corriendo en
+1. Pasada de UX por el navegador, no por el código. El server está corriendo en
    `http://127.0.0.1:7321`. Abrí un browser con Playwright (Python, `PYTHONIOENCODING=utf-8`)
    y recorré el tablero como un usuario: tablero a 1680/1280/900/390 px, abrir el panel de una
    tarjeta con contenido, las cuatro pestañas (Destacados, Conversación, Pantalla, Conexiones),
    el grupo "sesiones libres", el buscador con `/`, el diálogo Conectar, el menú de la tarjeta y
    el de la cabecera. Sacá capturas al scratchpad y miralas.
 
-2. **Anotá lo que esté flojo** y arreglalo en `web/src/`: jerarquía visual, densidad, estados
+2. Anotá lo que esté flojo y arreglalo en `web/src/`: jerarquía visual, densidad, estados
    vacíos, foco de teclado, contraste, textos que cortan mal, cosas que no se entienden sin
    contexto. Cambios quirúrgicos, no un rediseño. Respetá las decisiones que ya manda Ariel
    (React; columnas vacías colapsadas; diálogo de conectar flotante; la Pantalla se lee solo
    para las sugerencias; nada automático sin tope).
 
-3. **Simplificá el código del front** mientras estás: componentes largos que se puedan partir,
+3. Simplificá el código del front mientras estás: componentes largos que se puedan partir,
    lógica repetida que salga a un helper, props o estado muerto, condiciones ilegibles. Sin
    cambiar el comportamiento observable ni romper contratos de `types.ts`.
 

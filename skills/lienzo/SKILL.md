@@ -8,7 +8,7 @@ description: Coordinar terminales de Claude Code y Codex en paralelo mediante el
 El lienzo es el tablero de las sesiones de Claude Code y Codex que corren en terminales de
 Windows. Server local en `127.0.0.1:7321`, se levanta con `lienzo-server.cmd`. Una tarjeta por
 sesión, con su conversación, una caja para contestarle, y aprobación de permisos sin ir a la
-terminal. **El README del repo es la referencia completa y está actualizado**: leerlo cuando algo de
+terminal. El README del repo es la referencia completa y está actualizado: leerlo cuando algo de
 acá no alcance.
 
 **`coda` no es Claude Code.** Es un agente aparte (`coda.exe`, con su propia base en `~/.coda`), uno de
@@ -16,7 +16,7 @@ los cuatro que el lienzo conoce: `claude`, `codex`, `pi` y `coda`. Si el usuario
 "N CLI coda", se lanza con `agent: coda`; nunca se lo reemplaza por `claude` ni se lo interpreta como
 "Claude Code". Si el pedido es ambiguo, se pregunta el agente antes de lanzar.
 
-Cuando el usuario pide **"lanzá N sub CLI"** pide **terminales reales**, que son las que el tablero ve.
+Cuando el usuario pide "lanzá N sub CLI" pide terminales reales, que son las que el tablero ve.
 Los subagentes de la herramienta Agent no aparecen en el tablero: sirven para una consulta acotada,
 no para repartir trabajo.
 
@@ -24,12 +24,12 @@ no para repartir trabajo.
 
 Con dos a cuatro PCs de la misma LAN emparejadas (`peers.json`), un solo tablero ve las tarjetas de
 todas: `GET /sessions` mezcla lo local con lo espejado, sin que haga falta saber desde qué PC se
-mira. La regla de fondo es **cada PC es dueña de lo suyo**: teclear en una consola, leer su
+mira. La regla de fondo es cada PC es dueña de lo suyo: teclear en una consola, leer su
 pantalla, sus hooks y sus recursos (memoria, CPU, temperatura) son siempre de la máquina donde
-corre el proceso. Nunca se replican — se le piden a esa PC por la red (`/peer/*`, firmado), y
+corre el proceso. Nunca se replican, se le piden a esa PC por la red (`/peer/*`, firmado), y
 `server.py` lo hace transparente: `/sessions/<sid>/send` funciona igual sea local o remota.
 
-**Buscar PCs en la LAN**: `coordinar.lan()` (o `GET /peers/lan`) devuelve las PCs con el lienzo
+Buscar PCs en la LAN: `coordinar.lan()` (o `GET /peers/lan`) devuelve las PCs con el lienzo
 andando que todavía no están emparejadas, con su IP y puerto. `lienzo-server.cmd` ya arranca con
 `--peers`, así que cada PC se anuncia sola; si una no aparece, falta `install.py --peer` en esa PC
 (firewall) o no está en la misma red. Para emparejar hace falta la frase: eso lo hace el usuario en la
@@ -37,17 +37,17 @@ pantalla "🖥 Varias PCs", no la coordinadora.
 
 Qué cambia para coordinar: la tira de PCs arriba del tablero (con menos de dos PCs no aparece), el
 título de una tarjeta lleva `@<pc>` cuando hay más de una en el tablero, y el canal nativo Claude a
-Claude **cruza PCs solo con Remote Control** (ver «El canal nativo», más abajo). El resto de este skill (nombres, no pid; el patrón coordinadora/frentes;
+Claude cruza PCs solo con Remote Control (ver «El canal nativo», más abajo). El resto de este skill (nombres, no pid; el patrón coordinadora/frentes;
 las trampas) vale igual entre PCs, con los agregados que siguen en cada sección.
 
 ## La regla que más cuesta aprender: por nombre, nunca por pid
 
-El lienzo tiene **copiar y pegar trabajo entre tarjetas** (Ctrl+C / Ctrl+V, o el menú ⋯). Al pegar,
-la tarjeta destino **hereda el título con la marca copycat** y la de origen **queda detenida**
-(`stopped_by`), salvo que se marque Duplicar. Y una sesión detenida **no recibe nada**: los envíos
+El lienzo tiene copiar y pegar trabajo entre tarjetas (Ctrl+C / Ctrl+V, o el menú ⋯). Al pegar,
+la tarjeta destino hereda el título con la marca copycat y la de origen queda detenida
+(`stopped_by`), salvo que se marque Duplicar. Y una sesión detenida no recibe nada: los envíos
 rebotan con 409 y las reglas que la apuntan se saltean sin gastar el disparo.
 
-O sea que **el tablero resuelve solo la ambigüedad**: si dos tarjetas comparten el nombre de un
+O sea que el tablero resuelve solo la ambigüedad: si dos tarjetas comparten el nombre de un
 frente, la que trabaja es la que no está detenida. El pid, en cambio, deja de servir apenas el usuario
 mueve un encargo de una tarjeta a otra, porque apunta al proceso que ya no lo tiene.
 
@@ -56,7 +56,7 @@ es la que se puso a trabajar último. Eso es lo que hace `coordinar.py`, al lado
 
 ## Cómo se lanzan
 
-**No se lanzan directo desde una sesión de Claude Code.** La sesión exporta `CLAUDECODE`,
+No se lanzan directo desde una sesión de Claude Code. La sesión exporta `CLAUDECODE`,
 `CLAUDE_CODE_CHILD_SESSION` y compañía, y un `claude` hijo hereda esas variables, se cree una sesión
 anidada y se apaga sola sin decir nada. Verificado, y `claude --version` anda igual, así que el
 síntoma engaña.
@@ -69,7 +69,7 @@ Start-Process explorer.exe -ArgumentList "C:\ruta\lanzar-1.cmd"
 
 con un `.cmd` que hace `cd /d <repo>`, pone el título con `title`, y llama a `claude.exe` **por ruta
 absoluta** (`%USERPROFILE%\.local\bin\claude.exe`; el PATH tampoco se hereda entero). El `.cmd` se
-escribe en **cp1252 y con CRLF**, o los acentos salen rotos en la consola.
+escribe en cp1252 y con CRLF, o los acentos salen rotos en la consola.
 
 **El título de la tarjeta de un encargo es `<proyecto> - encargo <letra> - <descripción>`**, por
 ejemplo `miapp - encargo A - describir la mitad 1 de las medidas del modelo`. El proyecto
@@ -78,16 +78,16 @@ primero, porque el tablero junta sesiones de varios repos; después `encargo A`,
 el estado. La coordinadora lleva `<proyecto> - coordinadora - <descripción>`. Se pone con
 `PUT /sessions/<sid>/title` apenas aparece la tarjeta, y el mismo texto va en el `title` del
 `.cmd`. Si a una sesión viva se le da un encargo nuevo, se renombra con la descripción nueva y
-conserva la letra. **Con más de una PC en el tablero**, el título suma la PC:
+conserva la letra. Con más de una PC en el tablero, el título suma la PC:
 `<proyecto> - encargo A @notebook - <descripción>`, para no confundir dos encargos A de PCs
-distintas de un vistazo. Mejor todavía: **no repetir letra entre PCs**. Si se repite,
+distintas de un vistazo. Mejor todavía: no repetir letra entre PCs. Si se repite,
 `coordinar.frentes()` no adivina cuál es: devuelve las dos como `A@<pc_id>` y no hay clave `A`
 (el `pc_id` de `GET /peers`, no el `@` del título). Con `frentes(proyecto, pc=…)` se ve una sola PC
 y vuelve a haber `A`.
 
 ### Lanzar en otra PC
 
-Para una PC remota (ya emparejada) no se usa `explorer.exe` desde acá — eso sólo sirve en la propia
+Para una PC remota (ya emparejada) no se usa `explorer.exe` desde acá, eso sólo sirve en la propia
 máquina. Se pide `POST /sessions/launch {pc: "<pc_id>", cwd, agent, title}`: la PC dueña escribe su
 `.cmd` y lo lanza, igual que el mecanismo de arriba pero del otro lado. `cwd` tiene que caer dentro
 de `launch_roots` de esa PC (`config.json`; vacía o ausente es *ninguna* carpeta, no todas) y el
@@ -103,7 +103,7 @@ carpeta vacía y, si hace falta, sumarla a `launch_roots` sin tocar otra clave�
 al terminar. `launch.py` relee `config.json` en cada lanzamiento: no hace falta reiniciar el server.
 El primer frente clona adentro (`git clone … .`).
 
-**Una carpeta nueva abre el diálogo de confianza de Claude antes que cualquier hook.** Antes de
+Una carpeta nueva abre el diálogo de confianza de Claude antes que cualquier hook. Antes de
 mandarle el encargo a una tarjeta recién lanzada, mirar `GET /sessions/<sid>/screen`: si muestra el
 diálogo y `dialog` vino vacío, el lienzo no lo reconoció y el Enter del encargo elige la opción
 marcada, que es «No, exit»: la sesión muere como `pid-N`, sin `session_id` ni nada que restaurar
@@ -139,7 +139,7 @@ devuelve `{ok, code, motivo, sid}` y hace lo que a mano se olvida:
   Windows en un string de Python sin escapar (`"D:\apps"` lleva un `\a`, que es BEL). Rutas con `/`
   o en *raw string*.
 
-Si `ok` es falso, **no seguir como si el frente trabajara**: mirar `motivo`. El server deja el
+Si `ok` es falso, no seguir como si el frente trabajara: mirar `motivo`. El server deja el
 rastro en `~/.lienzo/lienzo.log` (líneas `→ <pc> POST /sessions/…`); si no hay nada, el pedido no
 salió de esta PC. Un envío a otra PC puede tardar hasta ~60 s (el timeout del reenvío ya lo
 contempla).
@@ -151,51 +151,51 @@ contempla).
   abrir menos y decírselo al usuario; no lanzar «a ver qué pasa».
 - **Lanzar con `coordinar.lanzar_y_titular(pc, cwd, titulo, agent)`**: devuelve *la* tarjeta nueva y
   ya titulada. `lanzar` solo da el 200 y después hay que adivinar cuál de las tarjetas de esa carpeta
-  es. **No lanzar una sesión de prueba**: queda abierta en la PC del usuario ocupando memoria.
-- **Todo frente sale cableado, siempre.** Sin una regla `on_stop` hacia la coordinadora, el aviso de que
+  es. No lanzar una sesión de prueba: queda abierta en la PC del usuario ocupando memoria.
+- Todo frente sale cableado, siempre. Sin una regla `on_stop` hacia la coordinadora, el aviso de que
   un frente terminó (o se colgó) no llega solo y hay que consultarlo a mano. `lanzar_y_titular` ya crea
   esa regla por defecto (con `YO` fijado); para lo que ya estaba abierto, `coordinar.cablear(filtro=…)`.
   Al terminar la ronda, `borrar_reglas_hacia_mi()`. Antes de dar por andando un frente, comprobar que
   tiene su regla (`GET /rules` incluye las de otras PCs). Una tarjeta nace como `pid-N` y cambia a su id
   real al llegar el primer hook: el lienzo le traslada la regla solo.
-- **Una sesión sin hooks (coda, o recién barrida) cambia de id**: nace `pid-NNNN` y al engancharse los
+- Una sesión sin hooks (coda, o recién barrida) cambia de id: nace `pid-NNNN` y al engancharse los
   hooks pasa a su UUID. Se la sigue con `coordinar.reubicar(s, sesiones())` (por pc + pid + cwd);
   `enviar_seguro` ya lo hace, y devuelve el `sid` vigente.
-- **Un agente puede colgarse sin decir nada** (coda con el modelo del DGX quedó 5 min en «Waiting for
+- Un agente puede colgarse sin decir nada (coda con el modelo del DGX quedó 5 min en «Waiting for
   model»). Mientras espera un encargo, `coordinar.estancada(s, minutos=5)` avisa si dice `corriendo`
   pero la pantalla no cambió. Entonces: interrumpir (`POST …/interrupt`) y reintentar, o pasar el
   trabajo a otro agente; no esperar indefinido.
-- **A un coda no se le manda un mensaje largo.** Más de 500 caracteres o con saltos de línea el lienzo
+- A un coda no se le manda un mensaje largo. Más de 500 caracteres o con saltos de línea el lienzo
   lo vuelve adjunto y el coda tiene que leerlo con su herramienta `read`, que se traba (medido: 4 codas,
   Qwen y GLM, más de una hora en «usando read»; uno ni respondía al `/exit`). Con un mensaje corto
   responde en 5 a 10 s y su herramienta de shell anda. Entonces: mensajes de menos de 500 caracteres y
   sin saltos de línea, y en el mismo mensaje «NO uses la herramienta read; leé con el shell (`type`),
   de a partes de 150 líneas». Un coda colgado que no responde al `/exit` se cierra pidiéndole a otro
   agente de esa PC un `taskkill /F /PID <pid>` de ese PID.
-- **El modelo se elige al lanzar**: `coordinar.lanzar(pc, cwd, titulo, "coda", model="globant_dgx/GLM-5.3-Flash")`
+- El modelo se elige al lanzar: `coordinar.lanzar(pc, cwd, titulo, "coda", model="globant_dgx/GLM-5.3-Flash")`
   (también `lanzar_y_titular`). **Ojo: en coda el `--model` no vale solo para esa sesión: cambia el modelo
   por defecto de esa PC** (lo escribe en su `config.json`; medido el 2026-10-02: al lanzar un coda con
   GLM 5.3 Flash el default pasó de `Qwen3.8-27B` a GLM a las 00:52:18, y las sesiones lanzadas después
   «sin modelo» ya corrían GLM). Por eso no hay comparación de velocidad entre modelos que valga: si se
   quiere comparar, cada coda se lanza con su `model` explícito, y al terminar se vuelve a poner el
   default que tenía el usuario. Avisarle antes de cambiarlo.
-- **El encargo largo a otra PC va por mensaje: el server lo vuelve adjunto solo.** Tecleado en una
+- El encargo largo a otra PC va por mensaje: el server lo vuelve adjunto solo. Tecleado en una
   consola, un mensaje con saltos de línea o de más de 500 caracteres sería un Enter por línea; por eso
   el server lo guarda como `mensaje.md` en `~/.lienzo/adjuntos/<id>/` de la PC dueña y teclea una sola
   línea que apunta a él. Viaja por el lienzo, **sin git ni `pull`**. No hay límite de POST que lo
   impida (el cuerpo admite hasta 8 MB). Un archivo en el repo solo para lo que el agente de esa PC
   produce él mismo en su carpeta (p. ej. el `tasks.md` que escribió ahí): los demás lo leen sin pull.
   Un agente lento (coda) puede tardar en leer el adjunto: eso es el modelo, no la entrega.
-- **Metodología SDD** (spec → clarificar → plan → tareas → análisis → código): un commit local por
+- Metodología SDD (spec → clarificar → plan → tareas → análisis → código): un commit local por
   paso, y los módulos se reparten recién con `tasks.md` commiteado, cada uno en su carpeta.
 
-**Los dos lienzos tienen que correr el mismo código.** Con `lienzo-server.cmd` el server se
+Los dos lienzos tienen que correr el mismo código. Con `lienzo-server.cmd` el server se
 reinicia solo cuando cambia un `.py` (un `git pull`), pero hay que haberlo levantado así una vez
 en cada PC; un server viejo de la otra PC responde distinto y los envíos fallan sin explicación.
 
 ## Los dos canales, que son distintos
 
-**El lienzo**, por su API JSON. Las escrituras piden el header `X-Lienzo: 1` y el JSON en **UTF-8
+El lienzo, por su API JSON. Las escrituras piden el header `X-Lienzo: 1` y el JSON en **UTF-8
 explícito**, o los acentos se rompen. Lo que se usa para repartir:
 
 | | |
@@ -210,34 +210,34 @@ explícito**, o los acentos se rompen. Lo que se usa para repartir:
 | `GET /peers` | las PCs de la federación, la propia primero (`local: true`), con `alive` y `health` (memoria, CPU, temperatura) |
 | `POST /sessions/launch` | `{pc?, cwd, agent, title}`: lanza una sesión nueva, local o en la PC `pc` |
 
-**El canal nativo Claude a Claude** va por afuera: `ListAgents` lista las sesiones vivas y
+El canal nativo Claude a Claude va por afuera: `ListAgents` lista las sesiones vivas y
 `SendMessage` les habla. El lienzo lo dibuja como flecha doble pero no lo intermedia. Ve las de
-**esta máquina** y, de las otras PCs, solo las que tienen **Remote Control** prendido con la misma
+esta máquina y, de las otras PCs, solo las que tienen Remote Control prendido con la misma
 cuenta de claude.ai (verificado el 2026-10-05: `chesstudia-I`, en otra PC, recibió y contestó).
 
-- **El lienzo las deja visibles y con nombre al lanzarlas**: un Claude lanzado por el lienzo arranca
+- El lienzo las deja visibles y con nombre al lanzarlas: un Claude lanzado por el lienzo arranca
   con `-n <nombre> --remote-control <nombre>`, y el nombre sale del título (`chesstudia - encargo I
   - ...` da `chesstudia-I`; la coordinadora, `chesstudia-coordinadora`). La respuesta del launch lo
   trae en `native_name`.
-- **Una sesión que ya corre** se nombra con `POST /sessions/<sid>/native` (`{name?}`; sin `name`
+- Una sesión que ya corre se nombra con `POST /sessions/<sid>/native` (`{name?}`; sin `name`
   sale del título): teclea `/rename` y `/remote-control` y contesta solo el diálogo de Remote
   Control. Solo con la sesión quieta (409 si está corriendo). Renombrar la tarjeta con ✎ en el
   tablero hace lo mismo.
-- **Sin eso**, `ListAgents` muestra nombres automáticos (`chess-f6`) y no ve las sesiones de otra PC.
+- Sin eso, `ListAgents` muestra nombres automáticos (`chess-f6`) y no ve las sesiones de otra PC.
   En cada PC conviene `"remoteControlAtStartup": true` en `~/.claude/settings.json`, para que
   también las sesiones abiertas a mano queden publicadas; eso lo prende el usuario.
 
-**La coordinadora usa el lienzo para todo, también entre dos sesiones de Claude.** Medido el
+La coordinadora usa el lienzo para todo, también entre dos sesiones de Claude. Medido el
 2026-09-26 con seis sesiones de un mismo repo:
 
-- **Los nombres nativos no decían qué frente era cada uno.** `ListAgents` devolvió `app-77`,
+- Los nombres nativos no decían qué frente era cada uno. `ListAgents` devolvió `app-77`,
   `app-48`, `app-37`, `app-3e`, sin título. Desde el 2026-10-05 el lienzo las nombra (ver arriba),
   pero una sesión abierta a mano sigue saliendo así hasta que se la nombra. El lienzo direcciona por
   `session_id` con el título a la vista.
-- **Hablarle a una sesión ocupada no necesita el canal nativo.** Un `POST /sessions/<sid>/send` a una
+- Hablarle a una sesión ocupada no necesita el canal nativo. Un `POST /sessions/<sid>/send` a una
   sesión que está trabajando le llega igual en el turno en curso, como mensaje intercalado (salvo un
   comando con barra, ver trampas). Es lo mismo que daría `SendMessage`.
-- **El lienzo deja rastro y el nativo no:** la flecha con `from` y `link_to`, el historial en
+- El lienzo deja rastro y el nativo no: la flecha con `from` y `link_to`, el historial en
   `GET /links` y las reglas `on_stop` que traen los informes solos.
 
 El canal nativo queda para cuando no hay lienzo (el server caído) o para una sesión que no está en el
@@ -246,46 +246,46 @@ evita los bucles.
 
 ## El patrón que funciona
 
-Una sesión **coordinadora** (la ★ del repo) reparte, cablea una regla `on_stop` de cada frente hacia
+Una sesión coordinadora (la ★ del repo) reparte, cablea una regla `on_stop` de cada frente hacia
 sí misma, recibe los informes al cierre de cada turno, verifica y arma la ronda siguiente. El reparto
 es manual a propósito: dos agentes vinculados en los dos sentidos se contestan hasta quemar los
 créditos, y por eso el server rechaza el bucle A↔B y toda regla lleva tope.
 
 Tres reglas que evitan el desastre con varias sesiones en un solo working tree:
 
-- **Cada sesión toca un conjunto de archivos disjunto**, y lo que encuentra fuera lo anota en un
+- Cada sesión toca un conjunto de archivos disjunto, y lo que encuentra fuera lo anota en un
   archivo propio en vez de editarlo. Incluido el formateo: `ruff format` se corre **con la ruta
   propia, no con la del paquete compartido**, o le reformatea el código a la vecina.
 - **Nadie hace `git commit` ni `git add` salvo la coordinadora.** Cuatro sesiones commiteando en un
   solo árbol es un conflicto de índice garantizado, y ramas separadas no sirven: hay un solo árbol.
-  **Con varias PCs, la regla es un commiter por árbol**, no necesariamente la misma persona en cada
+  Con varias PCs, la regla es un commiter por árbol, no necesariamente la misma persona en cada
   una: en la PC remota los frentes tampoco commitean, y al cerrar la ronda la coordinadora le pide a
-  una de esas sesiones, la **delegada de esa PC**, que commitee todo y haga push;
+  una de esas sesiones, la delegada de esa PC, que commitee todo y haga push;
   la coordinadora hace `fetch`, verifica en un `git worktree` local (contra el árbol, nunca contra el
   informe) y mergea.
-- **Entre PCs se sincroniza por una sola rama temporal de la ronda** (`ronda-<fecha>`), la misma
+- Entre PCs se sincroniza por una sola rama temporal de la ronda (`ronda-<fecha>`), la misma
   para todas: cada commiter hace `pull --rebase` y `push` sobre ella, nunca `--force`. Al cerrar, la
   coordinadora la mergea en la rama principal local y la borra de `origin`. **Nunca se pushea la rama
   que despliega** ni se abre un PR (hay workflows que corren en `pull_request`): antes del primer
   push, leer los `on:` de `.github/workflows/`, y después comprobar con `gh run list --branch …` que
   la rama no disparó nada. Worktrees por frente, no: los guiones del repo suelen tener la ruta del
   árbol fija y cada worktree necesitaría sus propias dependencias.
-- **Las bases de datos de prueba llevan el número del frente y el pid en el nombre.** Dos suites que
+- Las bases de datos de prueba llevan el número del frente y el pid en el nombre. Dos suites que
   crean y destruyen la misma base se pisan, y produce fallas que después pasan solas y confunden.
 
 ## Cómo se arma una ronda
 
-Un **encargo común** con las reglas del entorno, y **un encargo por frente** en archivos `.md` en el
+Un encargo común con las reglas del entorno, y un encargo por frente en archivos `.md` en el
 scratchpad. El mensaje que se manda es corto y apunta a los dos archivos: los encargos largos por la
 caja se cortan.
 
-Un encargo bueno tiene, en este orden: **tu carpeta y solo esta**; **el insumo**, con los documentos
-y las secciones exactas; **qué hacer**, numerado, con el orden cuando importa; **qué medir**, con el
-número que se espera; **lo que no es tuyo**, nombrando de quién es. Y cierra pidiendo un informe con
+Un encargo bueno tiene, en este orden: tu carpeta y solo esta; el insumo, con los documentos
+y las secciones exactas; qué hacer, numerado, con el orden cuando importa; qué medir, con el
+número que se espera; lo que no es tuyo, nombrando de quién es. Y cierra pidiendo un informe con
 qué quedó archivo por archivo con su prueba, qué se midió, qué se dejó afuera y por qué, y qué se vio
 fuera de la carpeta propia.
 
-Lo que más mejora el resultado: **escribir el criterio antes que el código** —"el reporte de tasa se
+Lo que más mejora el resultado: escribir el criterio antes que el código —"el reporte de tasa se
 escribe antes que el parser"—, y pedir que cada número diga en qué condición se tomó. Con doce
 sesiones en la máquina, la misma consulta puede medir 0,81 ms o 7,25 ms.
 
@@ -296,7 +296,7 @@ al usuario:
 
 | Situación | Qué se hace | Por qué |
 |---|---|---|
-| Encargo que sigue directo lo que acaba de hacer, transcript chico | **reusar tal cual** | arranca sabiendo |
+| Encargo que sigue directo lo que acaba de hacer, transcript chico | reusar tal cual | arranca sabiendo |
 | Mismo tema, transcript cargado (varios megas) | **`/compact`** | conserva `session_id`, título y reglas; libera contexto |
 | Tema nuevo, o transcript cerca de diez megas | **`/clear`** | arranca limpia; lo que necesita está en disco (su informe) |
 | Terminó y no hay encargo para ella | **`/exit`** | cada sesión ocupa ~0,7 GB de RAM |
@@ -310,7 +310,7 @@ la tarjeta vieja desaparece:
 2. Esperar unos segundos, `POST /rescan`, y buscar la tarjeta nueva **por el mismo `pid`**.
 3. Reponerle el título, el mismo con la letra del encargo.
 4. Recablear su regla `on_stop` hacia la coordinadora (`repeat: true`), y borrar la vieja.
-5. Recién entonces mandarle el encargo, **al id nuevo**, empezando por «leé `AGENTS.md`
+5. Recién entonces mandarle el encargo, al id nuevo, empezando por «leé `AGENTS.md`
    y tu informe anterior; contestá en español». El `/clear` le saca el `AGENTS.md` del contexto y
    vuelve contestando en inglés. (No hay `CLAUDE.md`: ni de usuario ni en los repos, sólo `AGENTS.md`.)
 
@@ -346,19 +346,19 @@ Con seis sesiones en una máquina de 15 GB la memoria se termina antes que la CP
 2026-09-26 en un proyecto con base de datos en WSL: Windows bajó dos veces a menos de 50 MB libres, WSL se reinició solo de
 noche y se cortaron mediciones a mitad. Las sesiones de Claude solas ocupaban 4,3 GB.
 
-**Reglas que van en el encargo común de cada ronda:**
+Reglas que van en el encargo común de cada ronda:
 
-- **Una sola tarea pesada a la vez en toda la máquina**: una batería de pruebas, una consulta o un
+- Una sola tarea pesada a la vez en toda la máquina: una batería de pruebas, una consulta o un
   índice grande, un navegador con Playwright, o la API con el dev server levantados. Antes de
-  lanzar, el frente mira que no haya otra corriendo y la memoria **del lado donde corre**:
+  lanzar, el frente mira que no haya otra corriendo y la memoria del lado donde corre:
   - adentro de WSL (pruebas, índices, consultas, API): `available` de `free -m` en WSL con al
     menos 3 GB, y Windows con al menos 1 GB;
   - del lado de Windows (Edge, Playwright): Windows con al menos 2 GB.
 
-  **Un piso único de 2 GB en Windows traba la ronda entera**, medido el 2026-09-26: WSL tenía 8 GB
+  Un piso único de 2 GB en Windows traba la ronda entera, medido el 2026-09-26: WSL tenía 8 GB
   libres adentro y Windows veía 1,8, porque WSL no devuelve enseguida lo que libera, y cinco
   frentes quedaron esperando una memoria que no necesitaban.
-- **Con cinco o más frentes, el cupo lo cuenta la máquina, no cada frente.** Si cada uno mira
+- Con cinco o más frentes, el cupo lo cuenta la máquina, no cada frente. Si cada uno mira
   `pgrep` antes de lanzar, dos miran a la vez, ven lugar y lanzan los dos: el 2026-09-26 con el cupo
   de dos la carga llegó a 19 sobre 12 procesadores y 95 °C. La salida es un semáforo con `flock` en
   WSL (por ejemplo `~/.cache/<proyecto>/pesada.sh`): dos archivos de turno, cada tarea pesada se
@@ -368,7 +368,7 @@ noche y se cortaron mediciones a mitad. Las sesiones de Claude solas ocupaban 4,
   `SET max_parallel_workers_per_gather = 0`) y con `nice 19`.
 - Al terminar, cada frente cierra lo que levantó: servidores, navegadores, motores.
 
-**Lo que mide la coordinadora**, antes de lanzar algo pesado y cada vez que llega un informe:
+Lo que mide la coordinadora, antes de lanzar algo pesado y cada vez que llega un informe:
 
 ```powershell
 # memoria libre de Windows, en GB
@@ -390,7 +390,7 @@ PC (mismos tres números que arriba, medidos del lado de allá); no hay forma de
 PowerShell de arriba contra una máquina que no es la propia. Mismo semáforo y mismos pisos que en
 una sola PC: la memoria justa de una no se compensa con que sobre en la otra.
 
-**Un monitor permanente mientras dure la ronda**: un `.ps1`
+Un monitor permanente mientras dure la ronda: un `.ps1`
 lanzado oculto (`Start-Process pwsh -WindowStyle Hidden -File monitor.ps1`) que cada minuto anota
 temperatura, CPU, memoria libre de Windows y carga y memoria de WSL en un CSV, y que cuando algo
 pasa su umbral le escribe a la coordinadora por `POST /sessions/<coordinadora>/send`, con 10
@@ -398,15 +398,15 @@ minutos de pausa entre avisos del mismo tipo. Umbrales: 96 °C (no menos: el 794
 por diseño y avisar antes es avisar siempre), Windows con menos de 0,5 GB, carga de WSL de 14 o más.
 Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
 
-**Cuando la memoria se termina**, en este orden y sin matar el trabajo de nadie:
+Cuando la memoria se termina, en este orden y sin matar el trabajo de nadie:
 
 1. Liberar la caché de disco de WSL, que se queda con lo que leyó y no lo devuelve sola:
    `sync; echo 1 | sudo -n tee /proc/sys/vm/drop_caches`. Windows lo recupera en unos 30 s.
-   Con seis o más frentes conviene dejarlo **automático**: un lazo en WSL que cada 60 s mira
+   Con seis o más frentes conviene dejarlo automático: un lazo en WSL que cada 60 s mira
    `Buffers + Cached` de `/proc/meminfo` y, si pasa de 3 GB, hace ese mismo `drop_caches`. Se lanza
    una vez con `setsid nohup ... & disown` desde un `.sh`, y se busca con `pgrep -f "[v]igia"`: el
    nombre del guion no puede aparecer literal en la línea que lo busca, o `pgrep` se encuentra a sí
-   mismo. **Y compactar**: `echo 1 | sudo -n tee /proc/sys/vm/compact_memory`, cada 5 minutos en
+   mismo. Y compactar: `echo 1 | sudo -n tee /proc/sys/vm/compact_memory`, cada 5 minutos en
    el mismo lazo. WSL devuelve las páginas libres en bloques grandes, y con la memoria fragmentada
    no hay bloques que devolver: el 2026-09-26 Windows estaba en 0,06 GB con 7 GB disponibles
    adentro de WSL, y compactar lo llevó a 1,93 GB en segundos. `autoMemoryReclaim=gradual` en el `.wslconfig` ayuda, pero devuelve la caché más lento de
@@ -434,29 +434,29 @@ Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
   borraron y no. Para listarlas: `(Invoke-WebRequest <url> -UseBasicParsing).Content |
   ConvertFrom-Json | ForEach-Object { $_ }`.
 
-- **Un comando con barra inyectado en una consola ocupada no se ejecuta.** Queda como texto encolado
+- Un comando con barra inyectado en una consola ocupada no se ejecuta. Queda como texto encolado
   y se pierde. Mandar `/model` o `/clear` solo a sesiones que no están corriendo, y **verificar el
   efecto**, no el envío: para `/model`, el campo `model` de la última respuesta en el transcript.
 - **Después de un `/clear` la sesión cambia de `session_id`** y la tarjeta vieja desaparece. Hay que
   volver a buscarla, esperando unos segundos y con un `/rescan` en el medio.
 - **Las reglas `on_stop` necesitan `repeat: true`.** Sin eso disparan una vez y quedan apagadas, y
   los frentes que cierran dos veces avisan solo la primera.
-- **Los ecos.** Cada vez que un frente cierra un turno la regla dispara, aunque no haya terminado su
+- Los ecos. Cada vez que un frente cierra un turno la regla dispara, aunque no haya terminado su
   trabajo: muchos avisos son "cerré un turno", no "cerré el frente". Se distingue mirando si escribió
-  su informe. Durante una pausa larga conviene **apagar las reglas** y volver a armarlas después.
-- **El auto-continuar del tablero reactiva las sesiones detenidas** y les escribe "Continuar" en la
+  su informe. Durante una pausa larga conviene apagar las reglas y volver a armarlas después.
+- El auto-continuar del tablero reactiva las sesiones detenidas y les escribe "Continuar" en la
   caja. Si el usuario está tipeando en su terminal en ese momento, la palabra se le mete adentro de la
   frase. Está en `GET /config`.
-- **Una pausa hay que pedirla explícita**: "terminá lo que tenés, no empieces nada, y si te llega
+- Una pausa hay que pedirla explícita: "terminá lo que tenés, no empieces nada, y si te llega
   Continuar respondé una línea". Sin eso siguen trabajando.
-- Los permisos pendientes **vencen a los 60 segundos** y después el prompt aparece en la terminal.
-- **Un peer caído no avisa activamente**: se nota porque su chip en la tira pasa a ○ (sin memoria ni
+- Los permisos pendientes vencen a los 60 segundos y después el prompt aparece en la terminal.
+- Un peer caído no avisa activamente: se nota porque su chip en la tira pasa a ○ (sin memoria ni
   temperatura, sería un dato viejo) y sus tarjetas quedan grises con los controles deshabilitados a
   los 45 s sin novedades de esa PC. No hay push de "se cayó fulano": hay que mirar la tira.
-  **El chip caído dice por qué** (`diagnostico` en `GET /peers`): «sin ARP: la red aísla a los
+  El chip caído dice por qué (`diagnostico` en `GET /peers`): «sin ARP: la red aísla a los
   equipos» es un Wi-Fi público con aislamiento de clientes (medido el 2026-10-05 en «YPF Clientes
   2»: ni el broadcast ni el barrido unicast lo saltan). No reintentar ni tocar el firewall: decirle
-  al usuario que use **Tailscale** en las dos PCs (misma cuenta) o un hotspot. Con Tailscale el
+  al usuario que use Tailscale en las dos PCs (misma cuenta) o un hotspot. Con Tailscale el
   lienzo encuentra la IP 100.x solo y cambia de dirección sin hacer nada; hace falta
   `install.py --peer` de nuevo, como administrador, para la regla de firewall de la tailnet.
   «el puerto está cerrado» es que no corre el lienzo allá; «no contesta el puerto» es el firewall.
@@ -482,6 +482,40 @@ Conviene dejarlo en el scratchpad de la coordinadora como `monitor.ps1`.
   de contestar**: el 2026-10-04 un frente pidió así `rm -rf /d/Users` en la PC esclava (desde Git
   Bash, `D:\Users` entero) para limpiar una carpeta que había creado por error; la respuesta fue «No» y
   un mensaje con la ruta exacta a borrar después de listarla.
+
+## Cuenta de GitHub por repo
+
+Ariel usa cuentas personales y de trabajo. Elegí la cuenta por repo antes de consultar un repo
+privado, pasar una credencial a otra PC o pushear. Para `arielelevy/chesstudia` y
+`arielelevy/lienzo`, la cuenta indicada por Ariel es `arielelevy`. En otros repos, mirá el remote
+y las instrucciones del proyecto; el dueño del repo puede ser una organización y no alcanza para
+deducir la cuenta. `git user.name` y `git user.email` son la firma del commit, no el login.
+
+```powershell
+git remote get-url origin
+gh auth status
+gh auth switch --hostname github.com --user arielelevy
+gh api user --jq .login
+gh api repos/arielelevy/chesstudia --jq .permissions.push
+```
+
+Git y `gh` pueden usar almacenes distintos. Si Git sigue tomando otra cuenta, configurá el helper
+solo en ese repo para usar la cuenta activa de `gh`. Revisá primero los helpers locales existentes;
+el valor vacío corta los helpers heredados. No cambies el helper global de los demás proyectos.
+
+```powershell
+git config --local --get-all credential.helper
+git config --local credential.helper ""
+git config --local --add credential.helper "!gh auth git-credential"
+git -c credential.interactive=false ls-remote --heads origin
+```
+
+El switch de `gh` cambia la cuenta activa para ese host en toda la PC. Revalidá `gh api user`
+antes de operar otro repo; coordiná el cambio si hay sesiones trabajando con otra cuenta.
+Un `Repository not found` puede ser falta de acceso con la cuenta actual o un remote incorrecto.
+Un `ls-remote` exitoso prueba lectura; verificá `.permissions.push` para escritura.
+Si falta la cuenta o el acceso, frená y pedí el login correspondiente. No borres otras cuentas ni
+imprimas tokens. Cambiar de cuenta no autoriza un push: hace falta el pedido de Ariel para ese repo.
 
 ## Secretos entre PCs (un token de git)
 
@@ -509,7 +543,7 @@ v = c.copiar(pc, origen, destino, esperar=True)   # vuelve cuando termina, ya ve
 c.pausar_copia(xid); c.retomar_copia(xid)
 ```
 
-- `destino` es siempre una **carpeta**: un archivo de origen cae como `destino/<nombre>`; una carpeta
+- `destino` es siempre una carpeta: un archivo de origen cae como `destino/<nombre>`; una carpeta
   copia su contenido adentro.
 - Origen y destino tienen que caer en **`copy_roots`** del `config.json` de cada PC (vacía es
   ninguna). Si da 403, la carpeta no está ahí: agregarla en esa PC y reiniciar no hace falta, se lee en
@@ -537,7 +571,7 @@ Si te autorizan a aprobar permisos de una coda, usá `aprobador.py` (en esta car
 pasa la lista, frena lo truncado y lo peligroso, y cada freno te lo informa para que decidas vos.
 Corre en segundo plano con `vigilar(...)` y se detiene cuando la tarea termina.
 
-**Por defecto solo aprueba git de lectura** (`GIT_LECTURA`: `status`, `log`, `diff`, `show`…): ni
+Por defecto solo aprueba git de lectura (`GIT_LECTURA`: `status`, `log`, `diff`, `show`…): ni
 `add`, `commit`, `pull`, `checkout`, `switch`, `fetch` ni `push`. En un árbol compartido solo
 commitea la coordinadora, y un `checkout` le cambia la rama a todas las sesiones. Una coda que
 trabaja sola en su árbol (y commitea ella) los habilita explícitamente:

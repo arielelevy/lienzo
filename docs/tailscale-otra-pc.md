@@ -4,15 +4,15 @@ Para cuando las dos PCs están en una red que no las deja verse (un Wi-Fi públi
 de clientes: la otra PC no responde ni ARP). Con Tailscale cada PC tiene una IP 100.x.y.z que llega
 desde la otra en cualquier red, y el lienzo la encuentra solo (commit `9fc9f4a`, 2026-10-05).
 
-Hacer esto **en las dos PCs**:
+Hacer esto en las dos PCs:
 
-0. **Si es la PC del trabajo:** preguntarle antes a IT. Tailscale es un túnel hacia equipos de una
+0. Si es la PC del trabajo: preguntarle antes a IT. Tailscale es un túnel hacia equipos de una
    cuenta personal, y puede ir contra la política o hacer saltar al antivirus corporativo. Si lo
-   instalás, en esa PC apagá **Use Tailscale DNS** (ícono de la bandeja → Preferences) para no pisar
+   instalás, en esa PC apagá Use Tailscale DNS (ícono de la bandeja → Preferences) para no pisar
    el DNS de la VPN de la empresa, y no actives *exit node* ni *subnet routes*. Por Tailscale solo va
    el tráfico a las IP 100.x; el resto sigue por donde iba.
 
-1. **Instalar Tailscale** desde <https://tailscale.com/download> y entrar con **la misma cuenta** en
+1. Instalar Tailscale desde <https://tailscale.com/download> y entrar con la misma cuenta en
    las dos. Comprobar que se ven:
 
    ```powershell
@@ -24,14 +24,14 @@ Hacer esto **en las dos PCs**:
    nodekey:… already exists»*, correr `tailscale logout` y después `tailscale up`, y entrar con el
    link que muestra.
 
-2. **Traer el código**:
+2. Traer el código:
 
    ```powershell
    cd D:\Apps\lienzo
    git pull
    ```
 
-3. **Instalar de nuevo, con la regla de firewall de Tailscale.** Abrir PowerShell **como
+3. Instalar de nuevo, con la regla de firewall de Tailscale. Abrir PowerShell **como
    administrador**:
 
    ```powershell
@@ -42,7 +42,7 @@ Hacer esto **en las dos PCs**:
    Tiene que decir `agregada regla de firewall Lienzo Peer TCP Tailscale` y `... Beacon UDP
    Tailscale`. Sin administrador no toca el firewall y avisa.
 
-4. **Reiniciar el lienzo**: cerrar la ventana `lienzo` y abrir `lienzo-server.cmd` de nuevo.
+4. Reiniciar el lienzo: cerrar la ventana `lienzo` y abrir `lienzo-server.cmd` de nuevo.
 
 ## Cómo saber que anduvo
 

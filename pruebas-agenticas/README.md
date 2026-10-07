@@ -2,7 +2,7 @@
 
 La configuración ejecuta suites existentes con el runner del plugin instalado. Requiere Node 24+, Python 3.14, dependencias de `web`, Chromium de Playwright y el lienzo real en `127.0.0.1:7321`.
 
-No copia el runner al proyecto. Para la instalación usada en esta revisión, desde la raíz del repo:
+Usa el runner del plugin instalado. Esta revisión se ejecutó desde la raíz del repo:
 
 ```powershell
 $pluginRoot = 'C:/Users/ArielLevy/.codex/plugins/cache/pruebas-agenticas/pruebas-agenticas/0.5.18'

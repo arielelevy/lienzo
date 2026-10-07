@@ -1,15 +1,17 @@
 # Informe del frente A · ronda 3: documentación y skill (F4 docs y F5 entera)
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## Que queda
 
 - **`README.md`**: sección nueva "Varias PCs" (después de "Acceso desde el celular", antes de
-  "API") con emparejar (frase de seis palabras, tope 4, revocar — verificado contra
+  "API") con emparejar (frase de seis palabras, tope 4, revocar, verificado contra
   `web/src/components/Pairing.tsx`, que ya existe y usa `/peers/offer`, `/peers/join`,
-  `DELETE /peers/<pc_id>`; el gesto real es el ítem **🖥 Varias PCs** del menú ⋯, no "Emparejar PC"
+  `DELETE /peers/<pc_id>`; el gesto real es el ítem 🖥 Varias PCs del menú ⋯, no "Emparejar PC"
   como pensé al principio, corregido tras leer `Header.tsx`), red y firewall (`install.py --peer`,
   con y sin `--dry-run`, verificado contra el código: `--dry-run` no pide admin), lanzar en otra PC
   (`POST /sessions/launch`, `launch_roots`), la tira de PCs y los chips de proyecto (el click
-  **elige** proyectos, no oculta; ★ Coordinadoras se combina con lo elegido), la coordinadora entre
+  elige proyectos, no oculta; ★ Coordinadoras se combina con lo elegido), la coordinadora entre
   PCs (`scope: "pc"`), el canal nativo que no cruza PCs, y seguridad en criollo. Tabla de API con
   las filas nuevas (`GET /peers`, `POST /peers/offer`, `POST /peers/join`,
   `DELETE /peers/<pc_id>`, `POST /sessions/launch`, `PUT .../coordinator` con `scope`) y una nota
@@ -17,8 +19,8 @@
   con los siete módulos nuevos (`identity`, `federation`, `pairing`, `beacon`, `health`, `mirror`,
   `launch`) y los dos componentes del front (`PcStrip`, `ProjectStrip`), `LIENZO_HOME`, los
   archivos de estado nuevos (`peer.json`, `peers.json`, `launch/`), una limitación nueva (peer
-  caído no avisa activo) y el conteo de tests actualizado (**380**, corrido al final de la ronda).
-- **`DISENO.es.md`**: §15 "Decisiones del 2026-09-26: varias PCs" — por qué P2P y no Redis, cada PC
+  caído no avisa activo) y el conteo de tests actualizado (380, corrido al final de la ronda).
+- **`DISENO.es.md`**: §15 "Decisiones del 2026-09-26: varias PCs", por qué P2P y no Redis, cada PC
   dueña de lo suyo (con el mecanismo real: `mirror.forward`/503, no el genérico del plan), la
   coordinadora federada y `scope: "pc"` (con el matiz real: la separada gana siempre en su propia
   PC, la federada vale en el resto), un commiter por árbol, el incidente del `git stash` de la
@@ -35,7 +37,7 @@
   commiter por árbol" (la delegada por PC, `fetch` + `worktree` + merge); "CPU, memoria y
   temperatura" sumó cómo se ve la salud de una PC remota (`GET /peers` para el resumen,
   `/peer/health` para el detalle); "Trampas medidas" sumó tres: peer caído (se nota por la tira, no
-  hay aviso activo), `/clear` en otra PC (buscar por `pid` **y** `pc`), y la trampa medida hoy: no
+  hay aviso activo), `/clear` en otra PC (buscar por `pid` y `pc`), y la trampa medida hoy: no
   correr `git stash` en un árbol compartido, ni para comparar contra HEAD (`git show HEAD:<archivo>`
   en su lugar).
 - **`coordinar.py`** (mismo directorio, junto al SKILL.md): `frentes(ronda, prefijo, todas, pc=None)`
@@ -45,7 +47,7 @@
   disco que no es el nuestro, así que el `stat`/lectura local de antes sólo puede seguir siendo el
   respaldo para una sesión local en un server viejo sin esos campos. `lanzar(pc, cwd, titulo,
   agent="claude")` y `salud()` (`GET /peers`), nuevas. Sintaxis verificada con `py_compile`;
-  probado contra el server real de 7321 **sólo con lecturas** (`salud()`, `sesiones()`,
+  probado contra el server real de 7321 sólo con lecturas (`salud()`, `sesiones()`,
   `modelo_de()`, `tamano_contexto_mb()`, `tablero()` con un prefijo inexistente para no imprimir
   nada real): las cuatro funciones devolvieron lo esperado (9 sesiones reales detectadas, `salud()`
   vacía porque esta PC no tiene peers emparejados).
@@ -56,7 +58,7 @@
   lo de esta ronda.
 - **`~\.codex\AGENTS.md`**: no es un link (archivo regular, `Links: 1`, contenido
   casi idéntico a `CLAUDE.md` salvo el auto-referencia `AGENTS.md`/`CLAUDE.md` invertida) y **nunca
-  había tenido** la sección "Trabajar en equipo: el lienzo" — quedó desactualizado desde antes de
+  había tenido** la sección "Trabajar en equipo: el lienzo", quedó desactualizado desde antes de
   que esa sección existiera en `CLAUDE.md`. Le agregué el mismo texto compacto, en el mismo lugar
   (el mismo que en `CLAUDE.md`), para que las dos puntas dejen de
   divergir en esto.
@@ -97,11 +99,11 @@ Todo en `docs/ronda3/notas-A.md`:
   No la usé para nada de lo que escribí esta ronda (no dependía de eso), pero lo anoto para quien
   actualice `federation.py` o su informe.
 - `server.py` no lee todavía la variable `LIENZO_PEER_PORT` que documenté en la ronda 2 para
-  `pairing._my_port()`: el listener real usa sólo `--peer-port` (argparse). No es un bug — son dos
+  `pairing._my_port()`: el listener real usa sólo `--peer-port` (argparse). No es un bug, son dos
   mecanismos de override para dos cosas ligeramente distintas (el listener real vs. dos instancias
-  de prueba en una sola PC) — pero si alguna vez hace falta que el listener real también respete la
+  de prueba en una sola PC), pero si alguna vez hace falta que el listener real también respete la
   variable de entorno, falta enchufarla.
-- `set_coordinator(s, on, scope=None)` y `rules.loop_conflict` **ya están implementados** en
+- `set_coordinator(s, on, scope=None)` y `rules.loop_conflict` ya están implementados en
   `sessions.py`/`rules.py` al momento de escribir esto (los vi con `grep`, no lo tenía confirmado
   al empezar): el `except TypeError` de compatibilidad que tiene `server.py` para el caso de que
   `scope` no existiera todavía es código defensivo que ya no hace falta, no un indicio de que algo

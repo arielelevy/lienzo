@@ -1,5 +1,7 @@
 # Informe del frente B · la PC y el repo en cada sesion, regla y pendiente
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## Que queda
 
 - **`lienzo/sessions.py`**:
@@ -43,7 +45,7 @@
   `server.create_rule` (la via manual desde la API) no la toque: es `server.py`, de nadie en esta
   ronda (ver "que deje afuera"). Cubierto por `test_schedule_continue_lleva_pc`.
 
-- **Pendientes**: no hizo falta cambiar nada en `sessions.py` — `read_pending()`/`public_pending()`
+- Pendientes: no hizo falta cambiar nada en `sessions.py`, `read_pending()`/`public_pending()`
   ya pasan cualquier clave extra del archivo tal cual (solo filtran `nonce`), asi que cuando
   `hook.py` (frente A) le agregue `pc` al pedido de permiso, se va a ver solo. Verificado con
   `test_pendiente_con_pc_no_se_lo_saca_public_pending` (arma el pendiente con `pc` a mano,
@@ -52,26 +54,26 @@
 - **`tests/test_pc_fields.py`** (nuevo): las 13 pruebas de arriba, contra el `lienzo/identity.py`
   real del frente A (ya estaba escrito cuando arranque: uso `pc_id()`/`repo_key()` de verdad, no un
   stub), con `peer.json` y el cache de remotes aislados en `tmp_path` via `state.LIENZO`
-  monkeypatcheado — nunca tocan el `~/.lienzo` real, que otra ronda de otro proyecto esta usando.
+  monkeypatcheado, nunca tocan el `~/.lienzo` real, que otra ronda de otro proyecto esta usando.
 
 ## Que medi
 
-- **`tests/test_pc_fields.py` solo**: 13 tests nuevos, **1,10 s**.
-- **Suite completa**, `python -m pytest tests -q`: **275 pasan, 1 falla, 13,05 s** (maquina sin
+- **`tests/test_pc_fields.py` solo: 13 tests nuevos, 1,10 s**.
+- Suite completa, `python -m pytest tests -q`: 275 pasan, 1 falla, 13,05 s (maquina sin
   Playwright ni `npm run build` corriendo: `Get-Process node` antes de medir, nada). La que falla es
-  `tests/test_server.py::test_coordinadora_una_por_repo`, ajena — ver "que vi fuera de mis
+  `tests/test_server.py::test_coordinadora_una_por_repo`, ajena, ver "que vi fuera de mis
   archivos".
 - `python -m ruff check` y `python -m black --check --diff` sobre mis tres archivos exactos
   (`lienzo/sessions.py`, `lienzo/rules.py`, `tests/test_pc_fields.py`): limpios, sin
   reformateos.
 - **`GET /sessions`, con campos nuevos vs. sin ellos**: no arranque un server de prueba en
-  7341+ — con la maquina en **0,54 GB libres** (`[math]::Round((Get-CimInstance
+  7341+, con la maquina en 0,54 GB libres (`[math]::Round((Get-CimInstance
   Win32_OperatingSystem).FreePhysicalMemory/1MB,2)`), muy por debajo del piso de 1,5 GB de la
   regla 6, levantar un proceso nuevo no correspondia. En cambio medi lo que de verdad pesa en ese
   endpoint: la serializacion (`server.py` linea ~928, "serializar aca adentro"). En proceso, 60
   tarjetas con forma realista (titulo y ultima respuesta largos, los cuatro campos nuevos
   poblados), `json.dumps` con y sin las cuatro claves nuevas, 500 corridas:
-  **0,7700 ms con vs. 0,6808 ms sin** (delta **0,09 ms**, +7,7 KB de 60 tarjetas, ~130 B/tarjeta).
+  0,7700 ms con vs. 0,6808 ms sin (delta 0,09 ms, +7,7 KB de 60 tarjetas, ~130 B/tarjeta).
   Es una cota superior optimista (no incluye la lectura de disco de `transcript_bytes`, que ya
   corre aparte en `check_liveness` cada 2 s reusando un `stat` que ya se hacia): el costo marginal
   de agregar estos cuatro campos a `/sessions` es chico frente al resto del handler.
@@ -81,12 +83,12 @@
 - **`model` de CODA**: su base sqlite no guarda el modelo en ningun lado que `coda.py` ya exponga
   (busque en su esquema: `sessions`/`messages` no tienen esa columna). Antes que inventar un acceso
   nuevo a su sqlite desde `sessions.py` (que no era mi encargo y duplicaria conocimiento de su
-  esquema fuera de `coda.py`), lo dejo en `None` — el encargo lo permitia explicitamente.
+  esquema fuera de `coda.py`), lo dejo en `None`, el encargo lo permitia explicitamente.
 - **`server.create_rule` sin `pc`**: la creacion manual de reglas desde la API (`server.py`) no
   lleva `pc` todavia; solo la automatica `schedule_continue` (rules.py, mia). Anotado en
   `notas-B.md` para quien toque `server.py`.
 - **`scope: "pc"` de la coordinadora**: solo el lugar preparado en el docstring de
-  `set_coordinator`, sin API nueva — depende de la federacion (ronda 2), tal como decia el encargo.
+  `set_coordinator`, sin API nueva, depende de la federacion (ronda 2), tal como decia el encargo.
 - **Medicion de `GET /sessions` contra un server real**: reemplazada por la medicion en proceso de
   arriba, por el piso de memoria (0,54 GB libres < 1,5 GB). Si la coordinadora quiere el numero
   real de punta a punta, se puede correr despues con la maquina mas despejada.

@@ -1,12 +1,14 @@
 # Informe — frente D, ronda 3 (emparejar PCs y los límites entre PCs)
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## Qué quedó, archivo por archivo
 
 - **`web/src/components/Pairing.tsx` (nuevo).** Pantalla "Varias PCs": nombre de esta PC (editable
   con ✎, ver "Segunda vuelta" más abajo), lista de PCs emparejadas con su
-  estado ("conectada" / "sin conexión hace X") y **Quitar** con `confirm()` + `DELETE /peers/<pc_id>`,
-  **"Mostrar frase"** (`POST /peers/offer`, palabras grandes + cuenta atrás de la vigencia) y
-  **"Unirme a otra PC"** (host, puerto 7322 por defecto, frase; `POST /peers/join`, error del server
+  estado ("conectada" / "sin conexión hace X") y Quitar con `confirm()` + `DELETE /peers/<pc_id>`,
+  "Mostrar frase" (`POST /peers/offer`, palabras grandes + cuenta atrás de la vigencia) y
+  "Unirme a otra PC" (host, puerto 7322 por defecto, frase; `POST /peers/join`, error del server
   mostrado tal cual). Sin nada emparejado, explica en dos líneas qué es y qué hace falta
   (`install.py --peer`). Sin `GET /peers` (server viejo, array vacío) lo dice en vez de mostrar una
   lista vacía sin contexto. Cubierto por `pairing.spec.ts`, describe `pantalla "Varias PCs"` (6
@@ -32,7 +34,7 @@
   existía). Cubierto por `pairing.spec.ts`, describe `canal nativo entre PCs distintas` (2 pruebas:
   deshabilitado entre PCs distintas, sigue ofrecido entre sesiones de la misma PC).
 - **`web/src/types.ts`.** Sumé `coordinator_scope?: "pc" | null` a `Session` (ya lo manda
-  `sessions.py` — `set_coordinator`/frente B —, faltaba en el tipo del front).
+  `sessions.py`, `set_coordinator`/frente B —, faltaba en el tipo del front).
 - **`web/src/styles.css`.** Reglas para `.pairing` (el `.pcdot` de la lista de peers, `.pairing-list`,
   `.pairing-join`, `.pairing-phrase`); todo lo demás (`.gate-box`, `.row`, `.k`, `.pass`, `.small`,
   `.dim`, `.sp`) ya existía y lo reusé tal cual.
@@ -48,9 +50,9 @@
 - `npm run build` (tsc + vite): OK, `dist/assets/index-*.js` 479 kB (158 kB gzip), 2.2 s.
 - `npx playwright test tests-ui/pairing.spec.ts`: 10/10 OK, 7.8 s, un solo worker.
 - `npx playwright test` (batería completa, 75 pruebas + las de `arrows-geometry.test.ts`/`nl.test.ts`
-  que corre el mismo comando antes): **73 passed, 2 failed**. Las 2 que fallan son
+  que corre el mismo comando antes): 73 passed, 2 failed. Las 2 que fallan son
   `humo.spec.ts` y `salud.spec.ts` ("cero errores de consola"), por el 404 de `/peers` contra el
-  server viejo del 7321 — exactamente lo que el encargo avisaba que iba a pasar y que no hay que
+  server viejo del 7321, exactamente lo que el encargo avisaba que iba a pasar y que no hay que
   tocar. Ninguna prueba de otro frente se rompió con mis cambios (`pcs.spec.ts`, `mover.spec.ts`,
   `trabajo.spec.ts`, etc., las 63 restantes, todas en verde).
 - Memoria libre de Windows antes de cada corrida pesada: 2.06–2.6 GB (arriba del piso de 1,5 GB);
@@ -58,7 +60,7 @@
 
 ## Qué dejé afuera y por qué
 
-- **Refrescar la lista de peers al toque tras Quitar/Unirme/Renombrar.** `usePeers()` (de
+- Refrescar la lista de peers al toque tras Quitar/Unirme/Renombrar. `usePeers()` (de
   `PcStrip.tsx`, no es mío) sondea cada 15 s; no le agregué un `refetch` porque tocar ese archivo se
   sale de mi lote de archivos. Para el nombre propio lo compensé con un estado optimista
   (`nameOverride` en `Pairing.tsx`, ver más abajo); para Quitar/Unirme la UI queda consistente en
@@ -85,7 +87,7 @@
 
 - `npx tsc -b --noEmit`, `npm run lint`: sin errores, antes y después de los dos cambios.
 - `npm run build`: OK, 2,28 s.
-- `npx playwright test`: **79/79 OK** (16,2 s) contra el server ya reiniciado con `/peers` — con el
+- `npx playwright test`: 79/79 OK (16,2 s) contra el server ya reiniciado con `/peers`, con el
   server nuevo, `humo.spec.ts` y `salud.spec.ts` pasan también (ya no son el fallo esperado de la
   primera vuelta). 14 pruebas nuevas en `pairing.spec.ts` (10 de la primera vuelta + 4 de esta),
   todas en verde.

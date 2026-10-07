@@ -1,9 +1,11 @@
 # Informe del frente B, ronda 2 (F3: coordinar entre PCs)
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## Qué quedó, archivo por archivo
 
 - **`lienzo/sessions.py`**
-  - `_repo_identity(s)`: identidad de repo para comparar coordinadoras — `repo_key` con respaldo en
+  - `_repo_identity(s)`: identidad de repo para comparar coordinadoras, `repo_key` con respaldo en
     `repo`, y nunca hace matchear dos `None` (el bug de fondo que pedía el encargo). Cubierto por
     `test_repo_identity_*` y `test_set_coordinator_no_confunde_repo_key_none_con_repo_distinto` /
     `test_stopped_recipients_no_confunde_repo_key_none_con_repo_distinto` en
@@ -11,10 +13,10 @@
   - `mirror`, `_mirror_owner`, `_mirror_forward`, `_mirror_sessions`, `_mirror_rules`,
     `_mirror_session`, `find_session`: acceso perezoso a `mirror.MIRROR` (frente C). Sin
     `mirror.py` en el árbol (o en un test que no lo necesita), se comportan como si no hubiera
-    peers — exactamente el comportamiento de antes de esta ronda. Con el `mirror.py` real de C
+    peers, exactamente el comportamiento de antes de esta ronda. Con el `mirror.py` real de C
     (ya en el árbol), la interfaz coincide sin ajustes.
   - `repo_coordinator(repo, pc, local, remote)`: la coordinadora de un repo tal como la ve una
-    sesión de una PC dada — primero la `scope: "pc"` de esa misma PC, si no la federada, esté
+    sesión de una PC dada, primero la `scope: "pc"` de esa misma PC, si no la federada, esté
     donde esté. Cubierto por `test_repo_coordinator_*`.
   - `set_coordinator(s, on, scope=None)`: gana el parámetro `scope`; con `scope: "pc"` apaga solo
     a otra `"pc"` del mismo repo en esta PC y convive con la federada; por defecto (federada) apaga
@@ -58,13 +60,13 @@
 
 ## Qué medí
 
-- **Suite de este frente**: `test_launch.py` + `test_rules_federadas.py` + `test_pc_fields.py` →
-  **54 pruebas, 0.4-1.0 s**.
-- **Suite completa** (`python -m pytest tests -q`, sobre el árbol ya recuperado del incidente de
-  abajo): **374 passed, 3 failed en 37.7 s**; los 3 fallos son ajenos (ver "qué vi fuera de mis
+- Suite de este frente: `test_launch.py` + `test_rules_federadas.py` + `test_pc_fields.py` →
+  54 pruebas, 0.4-1.0 s.
+- Suite completa (`python -m pytest tests -q`, sobre el árbol ya recuperado del incidente de
+  abajo): 374 passed, 3 failed en 37.7 s; los 3 fallos son ajenos (ver "qué vi fuera de mis
   archivos").
 - **Costo de `loop_conflict` con 50 reglas locales + 50 remotas** (peor caso, sin conflicto,
-  recorre las 100): **~13 µs por llamada** (20000 corridas con `timeit`) — no mide en la práctica
+  recorre las 100): ~13 µs por llamada (20000 corridas con `timeit`), no mide en la práctica
   frente al costo de red de un `POST /rules`.
 
 ## Qué dejé afuera y por qué
@@ -80,17 +82,17 @@
 
 Todo en `docs/ronda2/notas-B.md`:
 
-- Un **incidente propio**: corrí `git stash` (prohibido) para comparar contra HEAD en un test
+- Un incidente propio: corrí `git stash` (prohibido) para comparar contra HEAD en un test
   ajeno; el `stash pop` chocó con una edición concurrente de `server.py` y quedó sin aplicar.
   Ariel lo recuperó. Registrado con el detalle completo y la forma correcta de comparar contra HEAD
   (`git show HEAD:<archivo>`) para no repetirlo.
 - `server.py` llama a `self._get_peers()` en `GET /peers` pero no encontré esa definición en el
-  archivo — puede ser trabajo en curso de frente C.
+  archivo, puede ser trabajo en curso de frente C.
 - Los 2 fallos de `test_integration_guards.py::test_pi_missing_log_is_not_reported_as_empty_conversation`
   (ambos parámetros) son porque `server.py::_session_view` ya llama a un `_route_session(sid)` que
   el mock del test no contempla (sigue apuntando al viejo `self._session`). Ajeno a mis archivos.
 - El fallo de `test_server.py::test_las_claves_de_una_regla_nueva_no_cambian_de_orden` (la lista de
   claves de una regla nueva incluye ahora `pc`, que el test no esperaba) es previo a esta ronda y
-  ajeno a `server.py`/`rules.py` en lo que a mí me toca — no lo edité.
+  ajeno a `server.py`/`rules.py` en lo que a mí me toca, no lo edité.
 - La interfaz real de `mirror.py` (frente C) coincide exactamente con la que pactó el encargo
   común: no hizo falta pedirle nada nuevo.

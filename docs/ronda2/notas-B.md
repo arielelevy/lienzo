@@ -1,9 +1,11 @@
 # Notas del frente B, ronda 2
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## El incidente del `git stash` a las 20:31
 
 Corrí `git stash && pytest ... && git stash pop` para comparar contra HEAD en un test ajeno
-(`test_las_claves_de_una_regla_nueva_no_cambian_de_orden`, de `test_server.py`) — una violación
+(`test_las_claves_de_una_regla_nueva_no_cambian_de_orden`, de `test_server.py`), una violación
 directa de la regla "nadie hace `git stash`". El `stash pop` chocó contra `lienzo/server.py`
 (alguien lo habia tocado en el medio) y quedo sin aplicar. Ariel lo recupero el mismo. Para la
 proxima: comparar contra HEAD se hace con `git show HEAD:<archivo> > <scratchpad>/tmp` (instruccion
@@ -14,7 +16,7 @@ de Ariel), nunca con stash/checkout/reset.
 Al momento de escribir esto, `server.py` (frente C) tiene `if parts == ["peers"]: return
 self._get_peers()` en el dispatch de `do_GET`, pero no encuentro ningun `def _get_peers` en el
 archivo: llamarlo daria `AttributeError`. Puede ser trabajo de C en curso (para el proximo guardado)
-o algo que se perdio en el incidente de arriba antes de que Ariel recuperara — no lo toco (no es mi
+o algo que se perdio en el incidente de arriba antes de que Ariel recuperara, no lo toco (no es mi
 archivo) pero lo anoto para que C lo revise si no lo tenia previsto.
 
 ## Interfaz de `mirror.py` (frente C): confirmada, sin sorpresas

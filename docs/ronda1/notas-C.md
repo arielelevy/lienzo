@@ -1,5 +1,7 @@
 # Notas del frente C (fuera de mis archivos)
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 - `tests/test_server.py::test_coordinadora_una_por_repo` fallo en mi ultima corrida completa
   (`python -m pytest tests -q`), comparando `session_id` en un orden que no coincidio. Es del area
   de `sessions.py`/`rules.py` (frente B, que sigue trabajando en el mismo arbol). No lo toque ni

@@ -1,5 +1,7 @@
 # Informe del frente C · federacion, sin enchufar
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## Que queda
 
 - **`lienzo/federation.py`** (nuevo, ~340 lineas): todo el modulo del plan §1, §3.1, §3.2, §3.3 y
@@ -34,7 +36,7 @@
 
 ## Ajustes pedidos por la coordinadora (verificacion), con test primero
 
-1. **Beacon firmado sin ts, replay desde otra IP.** `encode_signed_beacon`/`decode_signed_beacon`
+1. Beacon firmado sin ts, replay desde otra IP. `encode_signed_beacon`/`decode_signed_beacon`
    ahora meten el `ts` adentro de lo firmado (no solo al lado) y `decode_signed_beacon` rechaza
    uno fuera de +-`SIGN_WINDOW_S` (30 s), con `now` inyectable para el test. Escribi primero
    `test_anuncio_firmado_viejo_se_rechaza` (dentro de la ventana pasa, 31 s despues no) y
@@ -51,14 +53,14 @@
 
 ## Que medi
 
-- `python -m pytest tests/test_federation.py -q --durations=5`: **28 tests, 2.58 s** en total (el
+- `python -m pytest tests/test_federation.py -q --durations=5`: 28 tests, 2.58 s en total (el
   mas lento sigue siendo el del cliente SSE, por los dos sockets TCP reales; el resto son
   milisegundos). Sin `sleep` largos: el backoff en los tests es instantaneo (0.0 s) y el UDP y el
   SSE usan `127.0.0.1` con puertos altos (`bind(("127.0.0.1", 0))`).
 - Costo de `verify` por request (`test_verify_es_rapido`, 500 iteraciones sobre HMAC-SHA256 de
-  stdlib): **muy por debajo del umbral de 5 ms/request** que puse como piso de regresion (en la
+  stdlib): muy por debajo del umbral de 5 ms/request que puse como piso de regresion (en la
   practica, microsegundos).
-- Corrida completa: `python -m pytest tests -q` → **262 pasan, 1 falla** (`test_server.py::
+- Corrida completa: `python -m pytest tests -q` → 262 pasan, 1 falla (`test_server.py::
   test_coordinadora_una_por_repo`, ajeno; ver mas abajo). `tests/test_home.py` (frente A), que en
   mi corrida anterior fallaba 7/7, ahora pasa entero: era del frente A, que seguia trabajando,
   tal como aviso la coordinadora.

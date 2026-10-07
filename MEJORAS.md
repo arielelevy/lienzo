@@ -1,73 +1,73 @@
 # Mejoras del lienzo, anotadas a medida que se usa
 
-Registro vivo: cada vez que repartir trabajo con el lienzo (sobre todo entre PCs) muestra un
-tropiezo o una idea, se anota acá con la evidencia, y cuando se arregla pasa a «Hecho». La fuente
-de cada punto es una sesión real, no una suposición. Última actualización: 2026-10-03.
+Registro de problemas y mejoras encontrados al usar Lienzo, sobre todo entre PCs.
+Cada punto lleva evidencia de una sesión real. Los puntos nuevos quedan pendientes;
+se pasan a «Hecho» cuando Ariel lo pide. Última actualización: 2026-10-03.
 
 ## Hecho
 
 | Fecha | Mejora | Evidencia / motivo |
 |---|---|---|
-| 2026-10-01 | **Recarga automática del server**: `lienzo-server.cmd` lo relanza (salida 75) cuando cambia un `.py`; no relanza sobre código que no compila | había que parar y levantar el `.cmd` a mano tras cada `git pull`; la otra PC quedaba con código viejo |
-| 2026-10-01 | **Timeout de 70 s** para `send`/`launch`/`attach` entre PCs (antes 5 s) | un envío tarda hasta 60 s en teclear; con 5 s aparecía como «sin conexión» aunque se hubiera tecleado |
-| 2026-10-01 | **Tarjeta fantasma**: si la otra PC dice «sesion desconocida», el server la saca del tablero y pide el estado de nuevo | los envíos a una tarjeta que ya no existía rebotaban para siempre |
-| 2026-10-01 | **Reintento solo si el pedido no llegó** (conexión rechazada); un timeout NO se reintenta | reintentar tras un corte a mitad podría teclear el texto dos veces |
-| 2026-10-01 | **Log de reenvíos que fallan** (`→ <pc> POST …`) | no quedaba rastro de nada en el origen; no se podía saber si el pedido había salido |
+| 2026-10-01 | Recarga automática del server: `lienzo-server.cmd` lo relanza (salida 75) cuando cambia un `.py`; no relanza sobre código que no compila | había que parar y levantar el `.cmd` a mano tras cada `git pull`; la otra PC quedaba con código viejo |
+| 2026-10-01 | Timeout de 70 s para `send`/`launch`/`attach` entre PCs (antes 5 s) | un envío tarda hasta 60 s en teclear; con 5 s aparecía como «sin conexión» aunque se hubiera tecleado |
+| 2026-10-01 | Tarjeta fantasma: si la otra PC dice «sesion desconocida», el server la saca del tablero y pide el estado de nuevo | los envíos a una tarjeta que ya no existía rebotaban para siempre |
+| 2026-10-01 | Reintento solo si el pedido no llegó (conexión rechazada); un timeout NO se reintenta | reintentar tras un corte a mitad podría teclear el texto dos veces |
+| 2026-10-01 | Log de reenvíos que fallan (`→ <pc> POST …`) | no quedaba rastro de nada en el origen; no se podía saber si el pedido había salido |
 | 2026-10-01 | `coordinar.enviar_seguro`: verifica que la tarjeta tomó el encargo y se recupera de 404/503 | un `200` solo dice que el server aceptó, no que se tecleó |
-| 2026-10-02 | `enviar_seguro` **rechaza caracteres de control** en el texto | una ruta `D:\apps` sin escapar llegó como `D:<BEL>pps` y el server borró el carácter sin avisar: 4 codas buscaron rutas que no existían |
+| 2026-10-02 | `enviar_seguro` rechaza caracteres de control en el texto | una ruta `D:\apps` sin escapar llegó como `D:<BEL>pps` y el server borró el carácter sin avisar: 4 codas buscaron rutas que no existían |
 | 2026-10-01 | `coordinar.reubicar`: sigue a una tarjeta cuando cambia de id (`pid-NNN` → UUID) | `enviar_seguro` dio un falso negativo con el coda, que cambió de id al engancharse los hooks |
 | 2026-10-01 | `coordinar.estancada(s, minutos)`: detecta un agente colgado (pantalla sin cambios y `corriendo`) | el coda quedó 5 min en «Waiting for model» y nadie lo vio |
 | 2026-10-01 | `coordinar.capacidad(pc, n)`: mira la memoria libre antes de abrir sesiones | la otra PC tenía 0,76 GB libres con 6 codas abiertos |
 | 2026-10-01 | `coordinar.lanzar_y_titular`: devuelve la tarjeta nueva, ya titulada | `lanzar` solo da el 200; hay que adivinar cuál tarjeta es la nueva |
-| 2026-10-02 | **Cableado entre PCs**: reglas `on_stop` de los frentes de la otra PC hacia la coordinadora (5 reglas, cruzan PC) | no había nada cableado: la coordinadora tenía que consultar cada frente a mano |
+| 2026-10-02 | Cableado entre PCs: reglas `on_stop` de los frentes de la otra PC hacia la coordinadora (5 reglas, cruzan PC) | no había nada cableado: la coordinadora tenía que consultar cada frente a mano |
 | 2026-10-01 | `SKILL.md`: secciones «Mandar un encargo a otra PC…» y «Repartir en otra PC: lo que ya salió mal una vez» | todo lo anterior, para que la próxima ronda no repita los tropiezos |
-| 2026-10-02 | **Selección múltiple con Ctrl** en el tablero: Ctrl+click suma o saca tarjetas; en los chips de proyecto y de PC suma o saca del filtro (varios a la vez); barra con «Marcar las visibles», «Enviar a todas», «Interrumpir» y «Limpiar»; Esc pela una capa por vez | pedido del usuario; 20 pruebas Playwright nuevas |
-| 2026-10-02 | Las pruebas de interfaz **ya no dependen del server real**: sin `peers` simulados, `/peers` devuelve lista vacía (antes caía al server, que ahora tiene un peer emparejado) | `pcs.spec.ts:58` fallaba solo porque la PC tiene un peer; la de emparejamiento esperaba la frase vieja de 6 palabras |
-| 2026-10-02 | **A un coda, el adjunto se lee con el shell**: el aviso del mensaje largo le pide leerlo con `type` y no con `read` (que se traba en coda) | 4 codas colgados más de una hora en «usando read»; con mensajes cortos y lectura por shell las mismas revisiones terminaron en 2 min |
+| 2026-10-02 | Selección múltiple con Ctrl en el tablero: Ctrl+click suma o saca tarjetas; en los chips de proyecto y de PC suma o saca del filtro (varios a la vez); barra con «Marcar las visibles», «Enviar a todas», «Interrumpir» y «Limpiar»; Esc pela una capa por vez | pedido del usuario; 20 pruebas Playwright nuevas |
+| 2026-10-02 | Las pruebas de interfaz ya no dependen del server real: sin `peers` simulados, `/peers` devuelve lista vacía (antes caía al server, que ahora tiene un peer emparejado) | `pcs.spec.ts:58` fallaba solo porque la PC tiene un peer; la de emparejamiento esperaba la frase vieja de 6 palabras |
+| 2026-10-02 | A un coda, el adjunto se lee con el shell: el aviso del mensaje largo le pide leerlo con `type` y no con `read` (que se traba en coda) | 4 codas colgados más de una hora en «usando read»; con mensajes cortos y lectura por shell las mismas revisiones terminaron en 2 min |
 | 2026-10-02 | **Las reglas pasan de la tarjeta provisional `pid-N` a la real**: antes solo se trasladaban en `continue_session` | un agente recién lanzado y cableado perdía su regla al llegar su primer hook |
 | 2026-10-02 | **`lanzar_y_titular` cablea por defecto** la tarjeta nueva a la coordinadora | tres codas lanzados sin regla: no avisaban al terminar |
 | 2026-10-02 | Elegir el modelo al lanzar (`--model`, coda, claude y codex) | usar GLM 5.3 Flash en la otra PC (ojo: en coda el `--model` cambia el modelo por defecto de esa PC, ver Pendiente) |
-| 2026-10-02 | **Firma sin query**: `signed_headers` firma la ruta sin `?…`, como la verifica el receptor | `/turns` y `/digest` de una tarjeta de otra PC daban 401 «firma invalida» porque el emisor firmaba `?n=…` |
+| 2026-10-02 | Firma sin query: `signed_headers` firma la ruta sin `?…`, como la verifica el receptor | `/turns` y `/digest` de una tarjeta de otra PC daban 401 «firma invalida» porque el emisor firmaba `?n=…` |
 | 2026-10-02 | **El aviso `on_stop` de coda espera 15 s y se cancela si la tarjeta volvió a trabajar** (la coda sí manda hooks: el Stop llega en medio de un turno) (`ON_STOP_SETTLE_S` en `lienzo/rules.py`) | la regla avisó «terminó» de B y de E cuando seguían trabajando (Stop intermedio: compactación o hueco entre herramientas; causa exacta sin confirmar) y la coordinadora leyó un `last_reply` viejo |
-| 2026-10-02 | **Compactación de coda**: `install.py` registra `PreCompact` y `PostCompact`; la tarjeta queda marcada «compactando» (vence a los 10 min) y ni el `Stop` ni `on_stop` cuentan como fin de turno | B y E mostraron «terminó» mientras compactaban; el doc de coda (`hooks.md`) lista esos dos eventos |
-| 2026-10-03 | **Los botones Permitir/Denegar de coda vuelven** si el permiso sigue abierto 20 s después de contestar (`CODA_SENT_RETRY_S`): la marca `where: "enviado"` los escondía para siempre | la tarjeta de D tuvo un permiso real abierto horas sin botones; el usuario: «no me aparecen los yes en lienzo» |
+| 2026-10-02 | Compactación de coda: `install.py` registra `PreCompact` y `PostCompact`; la tarjeta queda marcada «compactando» (vence a los 10 min) y ni el `Stop` ni `on_stop` cuentan como fin de turno | B y E mostraron «terminó» mientras compactaban; el doc de coda (`hooks.md`) lista esos dos eventos |
+| 2026-10-03 | Los botones Permitir/Denegar de coda vuelven si el permiso sigue abierto 20 s después de contestar (`CODA_SENT_RETRY_S`): la marca `where: "enviado"` los escondía para siempre | la tarjeta de D tuvo un permiso real abierto horas sin botones; el usuario: «no me aparecen los yes en lienzo» |
 | 2026-10-03 | `coordinar.cablear` y `regla_informe` **fallan claro si `YO` está vacío** | con `YO` vacío el server contestaba 404 «sesion destino desconocida» y parecía que la tarjeta nueva no existía |
-| 2026-10-03 | **Un 401 entre PCs dice el motivo y qué hacer**: `federation.causa_401` mide el reloj contra el `Date` de `/peer/hello` y el error queda «la otra PC no acepta mi firma (…). Reiniciá su lienzo; si sigue, reemparejá» | a las 20:02 todo dio «firma invalida» pelado y el tablero quedó mudo |
-| 2026-10-03 | **El encargo largo a una coda se ejecuta**: el aviso del adjunto le pide ejecutar sin resumir ni pedir confirmación | las codas de las sesiones 3 y 4 resumieron el encargo y esperaron un segundo «arrancá» |
+| 2026-10-03 | Un 401 entre PCs dice el motivo y qué hacer: `federation.causa_401` mide el reloj contra el `Date` de `/peer/hello` y el error queda «la otra PC no acepta mi firma (…). Reiniciá su lienzo; si sigue, reemparejá» | a las 20:02 todo dio «firma invalida» pelado y el tablero quedó mudo |
+| 2026-10-03 | El encargo largo a una coda se ejecuta: el aviso del adjunto le pide ejecutar sin resumir ni pedir confirmación | las codas de las sesiones 3 y 4 resumieron el encargo y esperaron un segundo «arrancá» |
 | 2026-10-03 | `coordinar.informe(s)`: el `last_reply` solo si es un informe (None con «usando bash» o mientras corre) | la coordinadora confundía el estado de herramienta con el informe |
-| 2026-10-03 | **Aprobador oficial con lista permitida** (`skills/lienzo/aprobador.py`, `Politica` + `vigilar`): frena lo truncado, lo peligroso, rutas, `rm` y pushes no autorizados | los permisos largos se revisaban a mano y dos aprobadores sueltos en Temp tuvieron bugs (tramo vacío, `rm` de varios destinos) |
-| 2026-10-03 | **Temperatura en cualquier PC**: `health` lee todas las zonas térmicas (y `MSAcpi` si hay permisos) y elige `\_TZ.THRM` o, si no está, la zona plausible más caliente (25–120 °C) | la otra PC no tiene `\_TZ.THRM` y su `temp_c` quedaba siempre en None; esta PC marcó 95 °C |
-| 2026-10-03 | **Temperatura desde LibreHardwareMonitor**: `health` lee primero `http://127.0.0.1:8085/data.json` (paquete del CPU, o el sensor real más caliente sin contar límites ni umbrales) y si no contesta sigue con WMI; URL en `LIENZO_LHM_URL`. Cada fuente es una `FuenteTemperatura` (clase abstracta: `leer` + `elegir`) en la cadena `FUENTES`; una fuente rota da None sin cortar la cadena y su motivo va al log al cambiar de estado, igual que el pedido de salud a otra PC (`mirror._poll_health`), que antes fallaba en silencio | el Dell Pro 14 no tiene zonas térmicas y MSAcpi da «no soportado» (0x8004100c); LHM 0.9.6 no lee el CPU de esa PC y por ahora da la RAM (~47 °C) |
-| 2026-10-03 | **Una sola regla de capacidad**: `health.agentes_que_entran` (reserva 1,5 GB + 0,7 GB por agente); el server la usa en `/restaurar` y la publica como `agentes_libres` en la salud de cada PC, y `coordinar.capacidad` la lee de ahí | las constantes estaban repetidas en `server.py` y `coordinar.py` (punto pendiente «Capacidad de memoria duplicada») |
-| 2026-10-03 | **`drop_session(..., muerta=True)`** en vez de leer el texto de la razón, y **`ended_on_purpose` por lista blanca** (`restore.ON_PURPOSE`): una razón nueva de SessionEnd cuenta como muerte a restaurar | dos puntos pendientes: el texto usado como protocolo y la lista negra que perdía sesiones con razones nuevas |
-| 2026-10-03 | **Latencia por PC**: cada reenvío suma su latencia y `/peers` muestra `latencia_ms` (mediana de los últimos 50); las acciones que salen bien quedan en el log con sus ms y las lecturas solo si pasan de 2 s | antes solo se logueaban los reenvíos que fallaban y no había cómo ver una PC que se vuelve lenta |
-| 2026-10-03 | **Tira de PCs con CPU, latencia y alerta**: cada chip muestra memoria, CPU, temperatura y latencia, y se pone en rojo (con el motivo en el título) si la PC pasa de 85 °C o no le entra otro agente | pedido de Ariel: ver la salud de todas las PCs; esta PC marcó 95 °C y nadie lo veía |
-| 2026-10-03 | **Plan NUC, punto 1: secretos entre PCs** (`lienzo/secretos.py`, `POST/GET /secrets`): cifrados con la clave del par (keystream HMAC-SHA256 y encrypt-then-MAC), de un solo uso, vencen a los 10 min, se leen desde cualquier PC de la LAN (`?pc=` para los de otra PC) y nunca van a un log, un adjunto ni una respuesta. Destino `git` los guarda con `git credential approve`; `coordinar.pasar_credencial_git` copia la credencial de esta PC sin que el agente la vea | la otra PC perdió el login de git y no había forma segura de pasarle un token |
-| 2026-10-03 | **Plan NUC, punto 2: credenciales de git en la salud** (`git_auth` por cada url de `git_check` en `~/.lienzo/config.json`, `git ls-remote` cada 5 min sin ventana de login); la tira de PCs se pone en rojo con «credencial de git vencida» | detectar el login vencido antes de que la coda llegue al push |
-| 2026-10-03 | **Plan NUC, punto 3: aviso de sesión que murió con un encargo a medias**: si el proceso desaparece estando `corriendo` o `te_necesita`, se avisa a los destinos de sus reglas con el `coordinar.restaurar(...)` listo para pegar | una coda de la sesión 4 murió sin contestar y nadie se enteró |
-| 2026-10-04 | **Los avisos siguen a la coordinadora que se reabre**: si muere la destinataria de reglas, quedan en espera 24 h (`parked_to`) en vez de borrarse, y una sesión nueva del mismo agente en la misma carpeta las hereda, acá y en las otras PCs (`POST /rules/retarget`, también a mano) | la coordinadora del gestor se cerró y se reabrió con otro id y se borraron los avisos de todas las codas del curso |
-| 2026-10-04 | **Los permisos DENEGADOS llegan al lienzo** (coda por su log, `decision: deny`; Claude, Codex y Pi por la transcripción): la tarjeta muestra «Denegado: herramienta», el comando y el motivo, con «Autorizar y que reintente»; lo que rechaza el humano no cuenta | en la otra PC había denegaciones que nunca llegaban |
-| 2026-10-04 | **Auto-aprobar TODO (peligroso, a pedido)**: check en negro en el menú ⋯, con confirmación y barra negra arriba mientras está prendido; vale para todas las PCs emparejadas y solo se prende desde la LAN. Patrón de proveedores (`lienzo/autoaprobar.py`): `PendientesDeHook` (Claude, Codex, Pi) y `DialogoDeCoda`; no contesta preguntas con opciones y cada aprobación queda en el log como AUTO-APROBADO | pedido de Ariel |
+| 2026-10-03 | Aprobador oficial con lista permitida (`skills/lienzo/aprobador.py`, `Politica` + `vigilar`): frena lo truncado, lo peligroso, rutas, `rm` y pushes no autorizados | los permisos largos se revisaban a mano y dos aprobadores sueltos en Temp tuvieron bugs (tramo vacío, `rm` de varios destinos) |
+| 2026-10-03 | Temperatura en cualquier PC: `health` lee todas las zonas térmicas (y `MSAcpi` si hay permisos) y elige `\_TZ.THRM` o, si no está, la zona plausible más caliente (25–120 °C) | la otra PC no tiene `\_TZ.THRM` y su `temp_c` quedaba siempre en None; esta PC marcó 95 °C |
+| 2026-10-03 | Temperatura desde LibreHardwareMonitor: `health` lee primero `http://127.0.0.1:8085/data.json` (paquete del CPU, o el sensor real más caliente sin contar límites ni umbrales) y si no contesta sigue con WMI; URL en `LIENZO_LHM_URL`. Cada fuente es una `FuenteTemperatura` (clase abstracta: `leer` + `elegir`) en la cadena `FUENTES`; una fuente rota da None sin cortar la cadena y su motivo va al log al cambiar de estado, igual que el pedido de salud a otra PC (`mirror._poll_health`), que antes fallaba en silencio | el Dell Pro 14 no tiene zonas térmicas y MSAcpi da «no soportado» (0x8004100c); LHM 0.9.6 no lee el CPU de esa PC y por ahora da la RAM (~47 °C) |
+| 2026-10-03 | Una sola regla de capacidad: `health.agentes_que_entran` (reserva 1,5 GB + 0,7 GB por agente); el server la usa en `/restaurar` y la publica como `agentes_libres` en la salud de cada PC, y `coordinar.capacidad` la lee de ahí | las constantes estaban repetidas en `server.py` y `coordinar.py` (punto pendiente «Capacidad de memoria duplicada») |
+| 2026-10-03 | **`drop_session(..., muerta=True)` en vez de leer el texto de la razón, y `ended_on_purpose` por lista blanca** (`restore.ON_PURPOSE`): una razón nueva de SessionEnd cuenta como muerte a restaurar | dos puntos pendientes: el texto usado como protocolo y la lista negra que perdía sesiones con razones nuevas |
+| 2026-10-03 | Latencia por PC: cada reenvío suma su latencia y `/peers` muestra `latencia_ms` (mediana de los últimos 50); las acciones que salen bien quedan en el log con sus ms y las lecturas solo si pasan de 2 s | antes solo se logueaban los reenvíos que fallaban y no había cómo ver una PC que se vuelve lenta |
+| 2026-10-03 | Tira de PCs con CPU, latencia y alerta: cada chip muestra memoria, CPU, temperatura y latencia, y se pone en rojo (con el motivo en el título) si la PC pasa de 85 °C o no le entra otro agente | pedido de Ariel: ver la salud de todas las PCs; esta PC marcó 95 °C y nadie lo veía |
+| 2026-10-03 | Plan NUC, punto 1: secretos entre PCs (`lienzo/secretos.py`, `POST/GET /secrets`): cifrados con la clave del par (keystream HMAC-SHA256 y encrypt-then-MAC), de un solo uso, vencen a los 10 min, se leen desde cualquier PC de la LAN (`?pc=` para los de otra PC) y nunca van a un log, un adjunto ni una respuesta. Destino `git` los guarda con `git credential approve`; `coordinar.pasar_credencial_git` copia la credencial de esta PC sin que el agente la vea | la otra PC perdió el login de git y no había forma segura de pasarle un token |
+| 2026-10-03 | Plan NUC, punto 2: credenciales de git en la salud (`git_auth` por cada url de `git_check` en `~/.lienzo/config.json`, `git ls-remote` cada 5 min sin ventana de login); la tira de PCs se pone en rojo con «credencial de git vencida» | detectar el login vencido antes de que la coda llegue al push |
+| 2026-10-03 | Plan NUC, punto 3: aviso de sesión que murió con un encargo a medias: si el proceso desaparece estando `corriendo` o `te_necesita`, se avisa a los destinos de sus reglas con el `coordinar.restaurar(...)` listo para pegar | una coda de la sesión 4 murió sin contestar y nadie se enteró |
+| 2026-10-04 | Los avisos siguen a la coordinadora que se reabre: si muere la destinataria de reglas, quedan en espera 24 h (`parked_to`) en vez de borrarse, y una sesión nueva del mismo agente en la misma carpeta las hereda, acá y en las otras PCs (`POST /rules/retarget`, también a mano) | la coordinadora del gestor se cerró y se reabrió con otro id y se borraron los avisos de todas las codas del curso |
+| 2026-10-04 | Los permisos DENEGADOS llegan al lienzo (coda por su log, `decision: deny`; Claude, Codex y Pi por la transcripción): la tarjeta muestra «Denegado: herramienta», el comando y el motivo, con «Autorizar y que reintente»; lo que rechaza el humano no cuenta | en la otra PC había denegaciones que nunca llegaban |
+| 2026-10-04 | Auto-aprobar TODO (peligroso, a pedido): check en negro en el menú ⋯, con confirmación y barra negra arriba mientras está prendido; vale para todas las PCs emparejadas y solo se prende desde la LAN. Patrón de proveedores (`lienzo/autoaprobar.py`): `PendientesDeHook` (Claude, Codex, Pi) y `DialogoDeCoda`; no contesta preguntas con opciones y cada aprobación queda en el log como AUTO-APROBADO | pedido de Ariel |
 | 2026-10-04 | **`propose_policy` de coda se ve como permiso**: esa herramienta abre «Approval Required» sin dejar un `ask` en el log; ahora el `PreToolUse` pone la tarjeta en «te necesita» con Permitir/Denegar (y el auto-aprobar la toma), y la próxima herramienta la libera | reporte de la coordinadora: una coda de la otra PC quedó esperando la aprobación de una regla y la tarjeta seguía en «corriendo» |
-| 2026-10-04 | **Refactor, ola 1** (plan del 2026-10-04, ahora en esta bitácora): 4 revisiones de diseño, 2 adversariales y 50 commits de 4 agentes: sin errores silenciados en hilos y archivos, concurrencia bajo el lock, aprobador endurecido, `subproc.correr`, cuerpo sin leer antes del login, espejo que no se congela, SPAKE2 en el emparejamiento | pedido de Ariel: código refactorizado, sin errores silenciados, con patrones que apliquen |
-| 2026-10-04 | **Permisos de coda que nadie veía**: (1) con auto-aprobar prendido, el hook `PreToolUse` de coda (ahora sincrónico) contesta `allow` y el cartel ni aparece; (2) si igual aparece, una coda «corriendo» quieta 8 s tiene su pantalla mirada (cada 10 s como mucho) y, con el cartel, pasa a «te necesita» con el comando; (3) el `ask` del log se ve aunque el inicio del turno quede fuera de la ventana | dos codas de la otra PC esperaron una hora un `npm run build` sin que el tablero ni el auto-aprobar lo vieran |
-| 2026-10-04 | **Refactor, ola 2**: acciones de tarjeta en una tabla compartida por `Handler` y `PeerHandler` (con prueba de paridad antes), registro de agentes en `agentes.py`, `CacheEnSegundoPlano` y una sola escritura atómica (`atomico.py`), cliente de API tipado, `<CardNeeds>` y `useCardActions`, `rules_api.py`, `JsonHandler` y `tarjeta_texto.py`; además `hook.py` anota un `config.json` corrupto en vez de callarse | el plan del 2026-10-04 completo; la suite sigue verde |
-| 2026-10-04 | **Reinicio explícito**: `POST /restart` y `coordinar.reiniciar(pc)`; el server ya no se reinicia solo al cambiar un `.py` (salvo `auto_reload: true`) | se reiniciaba en medio del trabajo de los agentes: 503, capturas y pruebas cortadas (pedido de Ariel) |
-| 2026-10-04 | **Bugs 1 a 4 del gestor**: la tarjeta real hereda el título de la provisoria; el 503 entre PCs dice el motivo (timeout, corte, reiniciando); `lanzar_y_titular` arreglado; el diálogo de confianza de Claude se reconoce, pasa la tarjeta a «te necesita» y `/send` contesta 409 `dialog_open` (lo decide el humano, nadie lo acepta solo) | informes del gestor en nombre de Ariel |
-| 2026-10-04 | **Cuota de agentes en la salud** (mejora 5): `cuotas` por agente; coda por el último error 154 de su log contra el último consumo de `coda.db` (sin gastar tokens), Claude/Codex/Pi por el `limit_until` de sus tarjetas; lanzar una coda sin cuota da 409 y la tarjeta dice «sin cuota» en vez de «terminó» | en una PC toda corrida de coda daba «Quota exceeded» y el tablero no lo mostraba |
+| 2026-10-04 | Refactor, ola 1 (plan del 2026-10-04, ahora en esta bitácora): 4 revisiones de diseño, 2 adversariales y 50 commits de 4 agentes: sin errores silenciados en hilos y archivos, concurrencia bajo el lock, aprobador endurecido, `subproc.correr`, cuerpo sin leer antes del login, espejo que no se congela, SPAKE2 en el emparejamiento | pedido de Ariel: código refactorizado, sin errores silenciados, con patrones que apliquen |
+| 2026-10-04 | Permisos de coda que nadie veía: (1) con auto-aprobar prendido, el hook `PreToolUse` de coda (ahora sincrónico) contesta `allow` y el cartel ni aparece; (2) si igual aparece, una coda «corriendo» quieta 8 s tiene su pantalla mirada (cada 10 s como mucho) y, con el cartel, pasa a «te necesita» con el comando; (3) el `ask` del log se ve aunque el inicio del turno quede fuera de la ventana | dos codas de la otra PC esperaron una hora un `npm run build` sin que el tablero ni el auto-aprobar lo vieran |
+| 2026-10-04 | Refactor, ola 2: acciones de tarjeta en una tabla compartida por `Handler` y `PeerHandler` (con prueba de paridad antes), registro de agentes en `agentes.py`, `CacheEnSegundoPlano` y una sola escritura atómica (`atomico.py`), cliente de API tipado, `<CardNeeds>` y `useCardActions`, `rules_api.py`, `JsonHandler` y `tarjeta_texto.py`; además `hook.py` anota un `config.json` corrupto en vez de callarse | el plan del 2026-10-04 completo; la suite sigue verde |
+| 2026-10-04 | Reinicio explícito: `POST /restart` y `coordinar.reiniciar(pc)`; el server ya no se reinicia solo al cambiar un `.py` (salvo `auto_reload: true`) | se reiniciaba en medio del trabajo de los agentes: 503, capturas y pruebas cortadas (pedido de Ariel) |
+| 2026-10-04 | Bugs 1 a 4 del gestor: la tarjeta real hereda el título de la provisoria; el 503 entre PCs dice el motivo (timeout, corte, reiniciando); `lanzar_y_titular` arreglado; el diálogo de confianza de Claude se reconoce, pasa la tarjeta a «te necesita» y `/send` contesta 409 `dialog_open` (lo decide el humano, nadie lo acepta solo) | informes del gestor en nombre de Ariel |
+| 2026-10-04 | Cuota de agentes en la salud (mejora 5): `cuotas` por agente; coda por el último error 154 de su log contra el último consumo de `coda.db` (sin gastar tokens), Claude/Codex/Pi por el `limit_until` de sus tarjetas; lanzar una coda sin cuota da 409 y la tarjeta dice «sin cuota» en vez de «terminó» | en una PC toda corrida de coda daba «Quota exceeded» y el tablero no lo mostraba |
 | 2026-10-04 | **`pasar_credencial_git` vuelve a andar** (bug 6): `git credential fill` prueba con `path=` antes que solo el host | el GCM con OAuth genérico quería abrir una ventana de login y el pedido daba 404 |
-| 2026-10-04 | **Credencial de git aparte en la tira, en violeta**: el chequeo distingue `vencida` (401/403), `sin_red`, `timeout` y `error`, y la tira muestra cada motivo con su host fuera de la alerta roja | el aviso de git en rojo se confundía con memoria y temperatura, y «error» para todo no decía si había que pasar otra credencial o mirar la red (pedido de Ariel, mejora 7) |
-| 2026-10-04 | **La credencial de git se prueba solo de los repos en uso** (bug 9): las urls salen del remote `origin` https de cada repo con una sesión viva en la PC (hasta 1 h después de la última) más las fijas de `git_check`; la tira muestra host y repo | la tira seguía diciendo «vencida» por un proyecto que Ariel ya no usaba, porque la lista era solo `git_check`, a mano |
-| 2026-10-04 | **El diálogo de confianza sin números se reconoce** (pedido de la coordinadora de chesstudia): `screen.dialog` lee también la lista sin número, con el cursor y el pie «Enter to confirm», y la marca `teclas: flechas`; `answer_dialog` la contesta con flechas, relee la pantalla y recién ahí Enter; `send.py` y `tmux.py` suman `--key up/down/enter` | en ar-it33940 `dialog` daba None, el encargo + Enter eligió «No, exit» y la sesión murió como `pid-6844` |
-| 2026-10-04 | **Un chip por proyecto aunque esté en varias PCs**: la tira de proyectos junta las sesiones que comparten `repo_key` o el nombre del repo (sin mayúsculas), suma el conteo y el chip filtra las de todas las PCs | «chess» salía dos veces en el menú, una por PC: en una la carpeta tenía remote y en la otra no (pedido de Ariel) |
-| 2026-10-04 | **La cuota de coda solo se muestra con coda en uso** (bug 10): `cuotas()` y `coda_cuota` del snapshot la traen si hay una tarjeta viva de coda en la PC (hasta 1 h después de la última); el 409 de lanzar una coda sin cuota sigue mirando la cuota real | la tira ponía la PC en rojo con «sin cuota: coda» sin que nadie usara coda, por un error viejo de su log |
+| 2026-10-04 | Credencial de git aparte en la tira, en violeta: el chequeo distingue `vencida` (401/403), `sin_red`, `timeout` y `error`, y la tira muestra cada motivo con su host fuera de la alerta roja | el aviso de git en rojo se confundía con memoria y temperatura, y «error» para todo no decía si había que pasar otra credencial o mirar la red (pedido de Ariel, mejora 7) |
+| 2026-10-04 | La credencial de git se prueba solo de los repos en uso (bug 9): las urls salen del remote `origin` https de cada repo con una sesión viva en la PC (hasta 1 h después de la última) más las fijas de `git_check`; la tira muestra host y repo | la tira seguía diciendo «vencida» por un proyecto que Ariel ya no usaba, porque la lista era solo `git_check`, a mano |
+| 2026-10-04 | El diálogo de confianza sin números se reconoce (pedido de la coordinadora de chesstudia): `screen.dialog` lee también la lista sin número, con el cursor y el pie «Enter to confirm», y la marca `teclas: flechas`; `answer_dialog` la contesta con flechas, relee la pantalla y recién ahí Enter; `send.py` y `tmux.py` suman `--key up/down/enter` | en ar-it33940 `dialog` daba None, el encargo + Enter eligió «No, exit» y la sesión murió como `pid-6844` |
+| 2026-10-04 | Un chip por proyecto aunque esté en varias PCs: la tira de proyectos junta las sesiones que comparten `repo_key` o el nombre del repo (sin mayúsculas), suma el conteo y el chip filtra las de todas las PCs | «chess» salía dos veces en el menú, una por PC: en una la carpeta tenía remote y en la otra no (pedido de Ariel) |
+| 2026-10-04 | La cuota de coda solo se muestra con coda en uso (bug 10): `cuotas()` y `coda_cuota` del snapshot la traen si hay una tarjeta viva de coda en la PC (hasta 1 h después de la última); el 409 de lanzar una coda sin cuota sigue mirando la cuota real | la tira ponía la PC en rojo con «sin cuota: coda» sin que nadie usara coda, por un error viejo de su log |
 
 ## Pendiente (con evidencia)
 
-- **Pruebas que conviene escribir** (salieron de la revisión adversarial): matriz de autenticación
+- Pruebas que conviene escribir (salieron de la revisión adversarial): matriz de autenticación
   por ruta para el túnel, paridad entre `Handler` y `PeerHandler`, el contrato de los 404
   (`unknown_session` contra ruta desconocida) y referencias (golden) por agente en los parsers.
-- **La tarjeta se queda en «Te necesita» con un permiso que ya no existe** (medido el 2026-10-02): la tarjeta del Claude del gestor
+- La tarjeta se queda en «Te necesita» con un permiso que ya no existe (medido el 2026-10-02): la tarjeta del Claude del gestor
   mostró durante unas 16 horas «Pide permiso» con el comando de un ruff de un subagente, desde un aviso (Notification) de las 05:06,
   aunque en su terminal no había ningún cartel. Ese permiso lo había aprobado yo hacía horas y la marca no se limpió. Confunde a
   quien mira el tablero y a la coordinadora, que gasta consultas en revisar. Los permisos de los subagentes (forks) de Claude Code
@@ -79,7 +79,7 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   `install.py` en las dos PCs para que coda los mande (toca `~/.coda/config.json`).
 - **`--coda-home DIR` aísla la configuración de coda** (está en `coda --help`): sirve para lanzar con `--model` sin pisar el
   modelo por defecto de la PC (ver el punto de `--model`). Falta ver cómo conserva el login.
-- **Reiniciar lienzo en la otra PC cierra las codas que corren** (medido el 2026-10-03; la recarga automática por `git pull` NO las cerró: la coda de la sesión 4 siguió viva; la hipótesis de pestañas de Windows Terminal en la misma ventana del server tampoco, según la coda A cada coda abre en su propia consola, aunque lo dijo leyendo el código y no la configuración): la coda de la sesión 3 quedó
+- Reiniciar lienzo en la otra PC cierra las codas que corren (medido el 2026-10-03; la recarga automática por `git pull` NO las cerró: la coda de la sesión 4 siguió viva; la hipótesis de pestañas de Windows Terminal en la misma ventana del server tampoco, según la coda A cada coda abre en su propia consola, aunque lo dijo leyendo el código y no la configuración): la coda de la sesión 3 quedó
   `ended_at` en el mismo segundo del reinicio y hubo que restaurarla (`restaurar`, con contexto). Además, con la causa sin
   resolver, todo lo que sale hacia esa PC dio `401 firma invalida` de repente (sin cambios de reloj ni de claves) y solo se
   arregló reiniciando su lienzo. Ideas: que las codas no cuelguen del proceso del server, y que ante un 401 el lienzo
@@ -94,45 +94,45 @@ de cada punto es una sesión real, no una suposición. Última actualización: 2
   GLM). Ideas: que `lanzar` con `model` avise si el agente es coda, que el lienzo lea el default antes
   y lo restaure al terminar el lote, o lanzar con un `--coda-home` propio para aislar la configuración
   (hay que ver cómo conserva el login).
-- **El lienzo no puede cerrar un agente colgado de otra PC**: `/exit` queda en cola y `interrupt` no
+- El lienzo no puede cerrar un agente colgado de otra PC: `/exit` queda en cola y `interrupt` no
   alcanza si el proceso está clavado. Hoy hubo que pedirle a otro coda un `taskkill` por PID. Idea:
   `POST /sessions/<sid>/kill` que la PC dueña ejecute sobre su propio PID (con la misma
   confirmación que las demás acciones destructivas).
-- **Latencia entre PCs**: un pedido mínimo a la otra PC tarda ~86 ms (mediana, p95 136 ms) contra 2,5 ms
+- Latencia entre PCs: un pedido mínimo a la otra PC tarda ~86 ms (mediana, p95 136 ms) contra 2,5 ms
   local; la pantalla de una tarjeta remota, ~470 ms. Cada pedido abre una conexión TCP nueva y firma
   con HMAC. Idea: conexión persistente (keep-alive) por peer y cachear `screen` unos 500 ms.
-- **El SSE del peer se corta y reconecta cada ~15 s** (`peer GET /peer/events` en el log cada 15 s).
+- El SSE del peer se corta y reconecta cada ~15 s (`peer GET /peer/events` en el log cada 15 s).
   Funciona, porque cada reconexión trae el snapshot entero, pero es tráfico de más y una ventana en
   la que el espejo se reemplaza. Hay que ver si el server corta el stream a propósito.
 - **`launch_roots` no se ve desde la otra PC**: `peers.json` no lo trae y no hay forma de saber qué
   carpetas permite un peer sin intentar lanzar. Mostrarlo en `GET /peers`.
-- **(Revisar: desactualizado) «Coda no tiene hooks»**: el 2026-10-02 las codas figuran `hooked=True`; antes nacía como tarjeta de barrido (`pid-NNNN`, sin título ni
+- (Revisar: desactualizado) «Coda no tiene hooks»: el 2026-10-02 las codas figuran `hooked=True`; antes nacía como tarjeta de barrido (`pid-NNNN`, sin título ni
   transcripción), cambia de id, y su estado no refleja que está trabajando. Un hook de coda daría
   título, estado y `last_reply` confiables.
-- **Un solo modelo para todos los codas**: Qwen en el DGX atiende de a poco; con 5 codas a la vez
+- Un solo modelo para todos los codas: Qwen en el DGX atiende de a poco; con 5 codas a la vez
   todos quedan en «Waiting for model». El coordinador tiene que escalonar el trabajo, no repartirlo
   en paralelo sin límite. `capacidad` mide RAM, no el cupo del modelo.
-- **Traspasar un encargo entre PCs**: copiar y pegar trabajo entre tarjetas funciona dentro de una
+- Traspasar un encargo entre PCs: copiar y pegar trabajo entre tarjetas funciona dentro de una
   PC; entre PCs no hay forma de mover un encargo a una tarjeta de la otra.
-- **Persistir las reglas cruzadas si la otra PC reinicia**: una regla vive en la PC del `from`; si
+- Persistir las reglas cruzadas si la otra PC reinicia: una regla vive en la PC del `from`; si
   esa PC reinicia el lienzo, hay que ver que sobreviva (hoy se guardan en `~/.lienzo`, falta probarlo
   con un reinicio real).
-- **Pruebas reales pendientes** (solo se probaron con transportes simulados): recuperación cuando una
+- Pruebas reales pendientes (solo se probaron con transportes simulados): recuperación cuando una
   tarjeta remota ya no existe, y el reintento ante conexión rechazada.
-- **Detectar el lienzo viejo de la otra PC por capacidades**: hoy se reconoce por el texto «ruta
+- Detectar el lienzo viejo de la otra PC por capacidades: hoy se reconoce por el texto «ruta
   desconocida» de la respuesta (`cablear` y el reenvío). Un campo de capacidades en el handshake
   (`/peer/health` o el emparejado) sería un contrato; el texto cambia sin avisar.
 - **`xpc` + `purge_stale_xpc` con hilo y reloj fijo**: la purga corre en un hilo con un reloj fijo y
   una regla hacia otra PC solo guarda el flag `xpc`. Guardar `to_pc` en la regla y conciliar por peer
   al aplicar su snapshot: hoy un peer apagado frena la purga de las reglas hacia los demás.
-- **El espejo se reconcilia por rebote**: una tarjeta fantasma se detecta cuando un envío vuelve con
+- El espejo se reconcilia por rebote: una tarjeta fantasma se detecta cuando un envío vuelve con
   `unknown_session` (`mirror.forward` → `_tarjeta_fantasma`). Debería reconciliarse con un snapshot
   periódico o una secuencia en el SSE, no esperar a que alguien escriba.
 - **El enrutado owner→forward está repetido en ~10 handlers de `lienzo/server.py`** (`_route_session`
   + `mirror.MIRROR.forward` en cada ruta de `/sessions/<id>/...`): una sola función `route_or_local`.
 - **`restorables_all` y `cablear` consultan en serie**: una PC lenta o caída suma su timeout al de las
   demás. Paralelizar las consultas por peer.
-- **Timeout de acciones lentas por sufijo de ruta** (`SLOW_ACTIONS`, `RESTORE_ACTION` y
+- Timeout de acciones lentas por sufijo de ruta (`SLOW_ACTIONS`, `RESTORE_ACTION` y
   `_timeout_para` en `lienzo/federation.py`): una ruta nueva lenta se olvida y cae en los 5 s.
   Pasar el timeout como parámetro de `forward`.
 
@@ -142,15 +142,15 @@ Objetivo: coordinar una o varias NUC sin pantalla desde una sola PC, con control
 PC perdio las credenciales de git, la sesion 4 del curso quedo sin publicar y no habia forma segura de
 arreglarlo desde aca.
 
-1. ✅ (hecho, ver arriba) **Canal cifrado para secretos** (ver Ideas): `POST /secrets`, vence en 10 min, un solo uso, solo en
+1. ✅ (hecho, ver arriba) Canal cifrado para secretos (ver Ideas): `POST /secrets`, vence en 10 min, un solo uso, solo en
    memoria o en el almacen de credenciales de Windows de la PC destino, nunca en adjuntos ni en logs.
-2. ✅ (hecho) **Chequeo de credenciales de git**: `GET /peers` muestra `git_auth: ok|vencida` probando `git ls-remote`
+2. ✅ (hecho) Chequeo de credenciales de git: `GET /peers` muestra `git_auth: ok|vencida` probando `git ls-remote`
    con timeout corto, para detectar el problema antes de que la coda llegue al push.
-3. ✅ (hecho) **Aviso de sesion que murio sin contestar**: una tarjeta que pasa a `muerta` con un encargo pendiente
+3. ✅ (hecho) Aviso de sesion que murio sin contestar: una tarjeta que pasa a `muerta` con un encargo pendiente
    dispara aviso a la coordinadora (paso con la sesion de integracion de la sesion 4 del curso).
-4. **Acceso de emergencia**: documentar Tailscale o RDP y mostrar en la tira de PCs si la NUC no responde.
+4. Acceso de emergencia: documentar Tailscale o RDP y mostrar en la tira de PCs si la NUC no responde.
 
-5. **Arranque autonomo de la NUC** (pedido por el usuario, 2026-10-03; sin implementar): `install.py --headless`
+5. Arranque autonomo de la NUC (pedido por el usuario, 2026-10-03; sin implementar): `install.py --headless`
    que deja auto-login, una tarea al iniciar sesion que levanta `lienzo-server.cmd`, plan de energia sin
    suspension y reinicio tras corte de luz. Las codas necesitan consola abierta: tiene que haber una sesion
    de usuario iniciada, un servicio no alcanza. Opt-in, y `install.py --headless --quitar` lo deshace.
@@ -168,7 +168,7 @@ usuario, no se delegan sin que lo diga.
 
 ## Ideas
 
-- **Canal cifrado para secretos entre PCs** (pedido del usuario, 2026-10-03): hoy un token de Forgejo solo
+- Canal cifrado para secretos entre PCs (pedido del usuario, 2026-10-03): hoy un token de Forgejo solo
   puede viajar como mensaje y queda en claro en `~/.lienzo/adjuntos/<id>/` de la PC dueña y en el
   transcript de las dos sesiones. Evidencia: la otra PC (ar-it33940) perdio las credenciales de git, el
   push de la sesion 4 no salio y no habia forma segura de pasarle un token. Propuesta: `POST /secrets` firmado

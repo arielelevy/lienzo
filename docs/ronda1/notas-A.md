@@ -1,5 +1,7 @@
 # Notas del frente A · lo que vi fuera de mis archivos
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## `tests/test_server.py::test_coordinadora_una_por_repo` falla (ajeno)
 
 Con la suite completa (`python -m pytest tests -q`) queda 1 test rojo, y no es mio:

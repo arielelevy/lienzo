@@ -1,12 +1,14 @@
 # Notas del frente B, ronda 3
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## Punto 4 del encargo: los 2 tests de `test_integration_guards.py`
 
 El encargo suponía que el culpable era `sessions.py`. Investigué a fondo (bisección de archivos,
-varias corridas repetidas) y **no es así**: en el árbol actual (después de tu commit 4c111ce y de
+varias corridas repetidas) y no es así: en el árbol actual (después de tu commit 4c111ce y de
 lo que siguió agregando C) los 2 tests
 (`test_pi_missing_log_is_not_reported_as_empty_conversation[False-/reload]` y
-`[True-primer turno]`) **ya pasan**, de forma consistente — corrí la suite completa 7 veces
+`[True-primer turno]`) ya pasan, de forma consistente, corrí la suite completa 7 veces
 seguidas y las 7 en verde para esos dos. La causa original (antes de tu commit) era
 `server.py::_session_view` llamando a un `_route_session(sid)` nuevo mientras el test todavía
 mockeaba el viejo `self._session`; ya está resuelto (el test que vi en el árbol actual ya usa
@@ -15,7 +17,7 @@ completo). No toqué nada para esto.
 
 ## Un `FAILED` real, pero ajeno y flaky: `test_peer_server.py`
 
-Corriendo la suite completa varias veces seguidas, entre 1 y 3 de cada 5 corridas me dio **un**
+Corriendo la suite completa varias veces seguidas, entre 1 y 3 de cada 5 corridas me dio un
 fallo distinto cada vez dentro de `tests/test_peer_server.py` (no es mío):
 `test_peer_caido_da_503_a_traves_del_forward` (esperaba 503 y dio 401) una vez,
 `test_peer_handler_solo_atiende_peer_y_exige_firma` (`ConnectionResetError`) otra. Ese archivo
@@ -36,7 +38,7 @@ Como pactaba el encargo, dejo listas las funciones puras/de negocio en `rules.py
   candidata)` y `rules.check_at_destination(candidata)` antes de `rules.add(...)`. `mi_pc_id` es
   `identity.pc_id()`; `pc_de(sid)` es el `pc` de la sesión (local o espejada).
 - El candidato `rule` que se les pasa a estas cuatro funciones es un dict con al menos `kind`,
-  `from`, `to`, `text` (y `at` para las `at`) — no hace falta que tenga `id` todavía (se genera
+  `from`, `to`, `text` (y `at` para las `at`), no hace falta que tenga `id` todavía (se genera
   después, si no hay choque).
 
 ## Interfaz de `mirror.py`: sin cambios, sigue coincidiendo

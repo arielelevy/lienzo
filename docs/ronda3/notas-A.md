@@ -1,5 +1,7 @@
 # Notas del frente A, ronda 3 (documentación y skill)
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## `federation.Transport`: la interfaz real ya no es la que documenté en la ronda 2
 
 En mi informe de ronda 2 (`docs/ronda2/informe-A.md`) documenté `Transport`/`HTTPTransport` con
@@ -15,9 +17,9 @@ informe, que no se guíe por lo que yo describí en la ronda 2: relea el módulo
 En la ronda 2 agregué esa variable de entorno a `pairing._my_port()` (mismo patrón que
 `LIENZO_HOME`), pensando que sería el mecanismo para correr dos "PCs" de prueba en una sola
 máquina sin pisar puertos. `server.py` terminó resolviendo eso mismo con su propio flag
-`--peer-port` (argparse), sin leer la variable de entorno. No es una inconsistencia grave — son
+`--peer-port` (argparse), sin leer la variable de entorno. No es una inconsistencia grave, son
 dos mecanismos para dos casos ligeramente distintos, y `--peer-port` alcanza para todo lo que
-`server.py` necesita — pero si algún día hace falta que el listener real también respete
+`server.py` necesita, pero si algún día hace falta que el listener real también respete
 `LIENZO_PEER_PORT` (por ejemplo, para no tener que pasar el flag en cada arranque), falta
 enchufarla ahí.
 
@@ -25,7 +27,7 @@ enchufarla ahí.
 
 Al arrancar esta ronda tenía la sospecha (de una corrida de tests de la ronda 2, antes del commit)
 de que `sessions.set_coordinator` todavía no aceptaba `scope=` y que `rules.loop_conflict` no
-existía. Los busqué con `grep` en el árbol actual y **los dos están**: `set_coordinator(s: dict,
+existía. Los busqué con `grep` en el árbol actual y los dos están: `set_coordinator(s: dict,
 on: bool, scope: str | None = None)` en `sessions.py` línea 910, y `loop_conflict(rule,
 local_rules, remote_rules)` en `rules.py` línea 193. El `except TypeError` que tiene `server.py`
 alrededor de `set_coordinator(scope=...)` es código defensivo por si alguna vez corre contra una
@@ -43,7 +45,7 @@ del tablero. Si alguien arma esa pantalla, revisar que el README/skill sigan des
 
 El plan (`docs/plan-multi-pc-2026-09-26.md`, checklist F4) todavía marca sin tildar "Pantalla de
 emparejamiento (mostrar frase, pegar frase, lista de peers, revocar)". Ya existe: `Pairing.tsx`,
-enganchado desde el ítem **🖥 Varias PCs** del menú ⋯ (`Header.tsx`), con `POST /peers/offer`,
+enganchado desde el ítem 🖥 Varias PCs del menú ⋯ (`Header.tsx`), con `POST /peers/offer`,
 `POST /peers/join` y `DELETE /peers/<pc_id>`. Lo verifiqué leyendo el componente antes de escribir
 el README para no documentar un botón que no existe (ni, al revés, describir como pendiente algo
 que ya está). No toqué el checklist: eso es de la coordinadora.

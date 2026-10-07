@@ -1,11 +1,13 @@
 # Informe del frente B, ronda 3 (lo que faltaba de F3 en reglas y hook)
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## Qué quedó, archivo por archivo
 
 - **`lienzo/hook.py`**
   - `read_pc_id()`: `pc_id` leído directo de `<LIENZO_HOME>/peer.json` (sin pasar por
     `identity.py`/`state.py`, que hook.py evita a propósito por arranque rápido); `None` si el
-    archivo no existe, está corrupto o no trae `pc_id`, **sin crearlo**. Cubierto por
+    archivo no existe, está corrupto o no trae `pc_id`, sin crearlo. Cubierto por
     `test_read_pc_id_*` (4 pruebas) en `tests/test_hook_pc.py`.
   - `wait_for_answer`: el pendiente que se escribe en `PENDING/<request_id>.json` ahora lleva
     `"pc": read_pc_id()`. Cubierto por `test_pendiente_lleva_pc` y
@@ -22,7 +24,7 @@
     para siempre (nadie hace `unlock` explícito; expira sola). Cubierto por 9 pruebas, incluida
     `test_loop_lock_carrera_entre_dos_pcs_con_hilos` (dos hilos, cada uno creando una punta del
     bucle, uno de ellos "delegando" via un `mirror.forward` que en el test llama a
-    `handle_peer_lock` en el mismo proceso — corrida 8 veces seguidas en la verificación, siempre
+    `handle_peer_lock` en el mismo proceso, corrida 8 veces seguidas en la verificación, siempre
     exactamente una gana).
   - `_rule_clash(rule, existing)`, `check_at_destination(rule)`, `handle_peer_check(req)`: la
     regla repetida (on_stop, "ya existe esa conexión") y la programada a menos de `AT_NEAR_S`
@@ -40,10 +42,10 @@
 ## Qué medí
 
 - Suite de este frente: `test_rules_federadas.py` + `test_pc_fields.py` + `test_hook_pc.py` +
-  `test_launch.py` → **81 pruebas, 0.6 s**.
+  `test_launch.py` → 81 pruebas, 0.6 s.
 - `test_loop_lock_carrera_entre_dos_pcs_con_hilos` corrida 8 veces seguidas por separado: **8/8
   en verde**, siempre exactamente una de las dos puntas gana la reserva.
-- Suite completa (`python -m pytest tests -q`): **409 passed** en la corrida final. Antes de esa
+- Suite completa (`python -m pytest tests -q`): 409 passed en la corrida final. Antes de esa
   corrida repetí la suite completa 7 veces seguidas puntualmente por el punto 4 del encargo (ver
   "qué vi fuera de mis archivos"): 1 sola vez apareció un fallo, y fue en `test_peer_server.py`
   (ajeno, no en nada de lo que reporta este frente).
@@ -63,7 +65,7 @@
 Todo en `docs/ronda3/notas-B.md`:
 
 - El punto 4 del encargo (arreglar el código detrás de los 2 tests de
-  `test_integration_guards.py`) **ya no aplica**: en el árbol actual esos 2 tests pasan de forma
+  `test_integration_guards.py`) ya no aplica: en el árbol actual esos 2 tests pasan de forma
   consistente (7/7 corridas completas). El diagnóstico original (server.py, `_route_session` vs.
   el mock del test) ya está resuelto por otro frente.
 - Un fallo real pero flaky y ajeno en `tests/test_peer_server.py` (servers HTTP de verdad en

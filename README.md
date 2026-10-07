@@ -1,15 +1,18 @@
 # Lienzo
 
-Tablero para las sesiones de **Claude Code**, **Codex CLI**, **Pi CLI** y **CODA** que corren en
-terminales: una tarjeta por sesión, la conversación a un click, una caja para contestarles,
-**aprobación de permisos sin ir a la terminal**, capturas con Ctrl+V y conexiones entre sesiones.
-Hasta 4 PCs de la misma LAN se ven y se manejan desde cualquier tablero.
+Lienzo muestra las sesiones de Claude Code, Codex CLI, Pi CLI y CODA que corren en terminales.
+Cada sesión tiene su tarjeta. Desde ahí podés leer la conversación, mandar mensajes y aprobar
+permisos. También pegar capturas con Ctrl+V y conectar sesiones.
+Hasta 4 PCs de la misma LAN comparten el tablero.
 
-Corre local, en `127.0.0.1:7321`. No hospeda terminales ni guarda historial propio: es un monitor
-con derecho a contestar. La arquitectura, con los recorridos de cada pedido dibujados, está en
-[la página de arquitectura](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/) (pública); el
-diseño completo, en [`DISENO.es.md`](DISENO.es.md), y lo que falta, con su evidencia, en
-[`MEJORAS.md`](MEJORAS.md).
+Corre en `127.0.0.1:7321`. Lee el historial de cada agente y escribe en su terminal.
+Las terminales y las transcripciones siguen a cargo de los agentes.
+
+[Arquitectura y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/)
+
+[Diseño completo](DISENO.es.md)
+
+[Mejoras pendientes y evidencia](MEJORAS.md)
 
 ![Tablero](docs/img/tablero.png)
 
@@ -17,7 +20,7 @@ diseño completo, en [`DISENO.es.md`](DISENO.es.md), y lo que falta, con su evid
 
 Cada 30 s el server recorre los procesos de la PC y arma una tarjeta por cada agente que encuentra,
 aunque se haya abierto antes de instalar nada (descarta las apps de escritorio y las extensiones de
-VS Code). Después, cada cosa por su canal:
+VS Code). El estado, el contenido y los envíos usan estos canales:
 
 | Qué | Cómo |
 |---|---|
@@ -64,7 +67,7 @@ Lo atado a Win32 son dos piezas: escribir en la consola de otro proceso y leer s
 Windows van por tmux (`send-keys`, `capture-pane`). Un tablero en Windows ve también los agentes de
 WSL y les escribe por `wsl.exe`.
 
-**Para escribirle a un agente, tiene que haber nacido adentro de tmux** (en Unix un PTY es de quien lo
+Para escribirle a un agente, tiene que haber nacido adentro de tmux (en Unix un PTY es de quien lo
 creó). Leerlo no lo necesita: uno abierto suelto aparece en solo lectura. `./lienzo-new.sh claude`
 abre uno en tmux, y `POST /sessions/launch` en Mac/Linux/WSL siempre usa tmux. El server arranca con
 `./lienzo-server.sh`. Probado: un tablero de Windows manejando agentes en tmux de WSL. Sin probar:
@@ -75,14 +78,14 @@ seguridad).
 
 ### Tablero
 
-Tres columnas: **Trabajo** (corriendo y terminó), **Te necesita** (pide permiso, pregunta o está
-libre) y **Muerta**. `/` busca; los chips filtran por agente, PC y proyecto (Ctrl+click suma varios).
+Tres columnas: Trabajo (corriendo y terminó), Te necesita (pide permiso, pregunta o está
+libre) y Muerta. `/` busca; los chips filtran por agente, PC y proyecto (Ctrl+click suma varios).
 Click en una tarjeta la elige y resalta sus conexiones; doble click abre el panel (pestañas *Chat*,
 *Pantalla* y *Conexiones*); Esc cierra de a una capa. Las tarjetas se pueden arrastrar a otro lugar
-(**⤢ Ordenar** las devuelve); las posiciones y los filtros viven en el navegador.
+(⤢ Ordenar las devuelve); las posiciones y los filtros viven en el navegador.
 
-**Ctrl+click** arma una selección múltiple: **Enviar a todas**, **Interrumpir** (un Esc a cada una) o
-**Marcar las visibles**.
+Ctrl+click arma una selección múltiple: Enviar a todas, Interrumpir (un Esc a cada una) o
+Marcar las visibles.
 
 ### La tarjeta
 
@@ -94,27 +97,27 @@ TUI («Switch model?») se muestran con sus opciones y se eligen desde ahí.
 
 ### Contestar, aprobar, adjuntar
 
-- **Contestar**: la caja del panel; se escribe en su terminal aunque esté oculta. Tab escribe la
+- Contestar: la caja del panel; se escribe en su terminal aunque esté oculta. Tab escribe la
   sugerencia que muestra la terminal.
   En Codex CLI sobre Windows, el envío espera a que la consola consuma el texto y deja una pausa
   antes del Enter para que el mensaje se publique. Si la cola no se vacía en 10 s, informa el error.
-- **Permisos**: Permitir o Denegar desde la tarjeta (nunca «permitir siempre»; vence a los 60 s).
-- **Denegados**: lo que una regla, política o clasificador le niega al agente aparece como
+- Permisos: Permitir o Denegar desde la tarjeta (nunca «permitir siempre»; vence a los 60 s).
+- Denegados: lo que una regla, política o clasificador le niega al agente aparece como
   «Denegado: herramienta» con un botón «Autorizar y que reintente». Una denegación anterior al
   pedido en curso no vuelve a aparecer.
-- **Preguntas con opciones**: se elige en la tarjeta, sin pasar por la terminal.
-- **Adjuntos**: arrastrar a la caja o pegar una captura con Ctrl+V.
-- **«avisarme cuando termine»**: manda el texto y crea la regla hacia la coordinadora.
-- **Copiar y pegar trabajo**: Ctrl+C en una tarjeta arma un encargo con su último pedido, respuesta y
+- Preguntas con opciones: se elige en la tarjeta, sin pasar por la terminal.
+- Adjuntos: arrastrar a la caja o pegar una captura con Ctrl+V.
+- «avisarme cuando termine»: manda el texto y crea la regla hacia la coordinadora.
+- Copiar y pegar trabajo: Ctrl+C en una tarjeta arma un encargo con su último pedido, respuesta y
   destacados; Ctrl+V en otra lo manda. La destino hereda el título (⧉ copycat) y la de origen recibe
-  un Esc y queda **stopped**, salvo con **Duplicar**.
-- **Stopped**: la etiqueta roja. Mientras está prendida la sesión no recibe nada (envíos, reglas,
+  un Esc y queda stopped, salvo con Duplicar.
+- Stopped: la etiqueta roja. Mientras está prendida la sesión no recibe nada (envíos, reglas,
   pegados) y el lienzo avisa a la coordinadora y a sus conexiones. Se apaga con un click o sola con un
   pedido nuevo por su terminal.
 
 ### Conectar sesiones
 
-Arrastrar una tarjeta desde ⇢ (o con **Alt**) y soltarla sobre otra; se escribe en una frase que se
+Arrastrar una tarjeta desde ⇢ (o con Alt) y soltarla sobre otra; se escribe en una frase que se
 interpreta al tipear: «continuá a las 16:00», «cada 30 min continuá hasta 6 veces», «cuando termine
 mandale a demo». Modos: *Ahora*, *Cuando termine*, *Programar* (a una hora o cada tanto, con tope) y
 *Canal nativo* (Claude a Claude, `SendMessage`). Toda regla tiene tope; el server rechaza el bucle
@@ -127,9 +130,9 @@ dibuja como flecha (las de envío viven 10 minutos).
 
 En el menú ⋯, apagadas por defecto:
 
-- **Continuar solo tras límite de uso**: programa «Continuar» un minuto después de la hora de vuelta.
-- **Reintentar solo tras un error de API**: «Continuar» diez segundos después.
-- **☠ Auto-aprobar TODO**: aprueba sin mirar cada permiso de cualquier agente, **en todas las PCs
+- Continuar solo tras límite de uso: programa «Continuar» un minuto después de la hora de vuelta.
+- Reintentar solo tras un error de API: «Continuar» diez segundos después.
+- ☠ Auto-aprobar TODO: aprueba sin mirar cada permiso de cualquier agente, **en todas las PCs
   emparejadas**. Barra negra arriba mientras está prendido; cada aprobación queda en `lienzo.log`.
   Sólo desde la LAN. No cubre lo que el agente se deniega solo (por ejemplo, los «comandos que piden
   confirmación» de coda).
@@ -145,34 +148,34 @@ enlazando esa carpeta en `~/.agents/skills/`.
 
 ## Acceso desde el celular
 
-Opcional: `.\lienzo-server.cmd --remote`. En la PC, **Acceso remoto** genera una clave TOTP y dos QR
+Opcional: `.\lienzo-server.cmd --remote`. En la PC, Acceso remoto genera una clave TOTP y dos QR
 (uno para Authenticator, otro para abrir el tablero). Desde afuera se entra con el código de 6
 dígitos; en la PC no se pide login. Túnel `cloudflared` con TLS, sin abrir puertos; cookie de 7
 días; cinco intentos fallidos bloquean 15 minutos. La URL del túnel rápido cambia en cada arranque.
 
 ## Varias PCs
 
-Opcional, hasta 4 PCs de la misma LAN. **Cada PC es dueña de lo suyo**: teclas, pantalla, hooks,
+Opcional, hasta 4 PCs de la misma LAN. Cada PC es dueña de lo suyo: teclas, pantalla, hooks,
 permisos y recursos son de la máquina donde corre el proceso y se le piden por la red. `GET /sessions`
 mezcla lo local con lo de las demás PCs, y las acciones sobre una tarjeta ajena se reenvían solas.
-Si la otra PC no contesta: **503**, con `"no_llego": true` sólo cuando el pedido no salió (se puede
+Si la otra PC no contesta: 503, con `"no_llego": true` sólo cuando el pedido no salió (se puede
 reintentar); sin esa marca pudo haberse ejecutado allá.
 
 ### Emparejar y red
 
-**🖥 Varias PCs**, en el menú ⋯: una PC ofrece una palabra, la otra la pega dentro de 5 minutos. La
+🖥 Varias PCs, en el menú ⋯: una PC ofrece una palabra, la otra la pega dentro de 5 minutos. La
 clave del par sale de un intercambio SPAKE2, no de la palabra: escuchar la red no sirve y un
 impostor tiene un solo intento. Las PCs con el lienzo andando se descubren solas por un beacon UDP
 (7323), que también actualiza la IP si el DHCP la cambia.
 
-Un **listener aparte** (7322) atiende sólo `/peer/*`, en la IP de LAN (nunca `0.0.0.0`), y cada
+Un listener aparte (7322) atiende sólo `/peer/*`, en la IP de LAN (nunca `0.0.0.0`), y cada
 pedido va firmado con HMAC de la clave del par, ventana de ±30 s y nonce.
 `py -3.14 install.py --peer` abre 7322 TCP y 7323 UDP sólo en el perfil Privado del firewall, y en
 cualquier perfil sólo entre IP de Tailscale (100.64.0.0/10 de los dos lados).
 
 ### Cuando la red no deja verse a las PCs: Tailscale
 
-Un Wi-Fi público (un bar, una estación de servicio) suele **aislar a los clientes**: la puerta de
+Un Wi-Fi público (un bar, una estación de servicio) suele aislar a los clientes: la puerta de
 enlace contesta, pero la otra PC no responde ni ARP y ningún paquete de la LAN pasa entre las dos.
 Ni el broadcast ni el barrido unicast del beacon lo saltan. Medido el 2026-10-05 en «YPF Clientes 2».
 
@@ -194,7 +197,7 @@ Hace falta volver a correr `install.py --peer` (como administrador) para la regl
 PC no emparejada que está en la tailnet aparece igual en «PCs de la LAN» y se empareja con la
 palabra de siempre. Los pasos para cada PC están en [docs/tailscale-otra-pc.md](docs/tailscale-otra-pc.md).
 
-**Qué va por Tailscale:** solo lo que va a una IP 100.x (los otros equipos de la tailnet). Internet,
+Qué va por Tailscale: solo lo que va a una IP 100.x (los otros equipos de la tailnet). Internet,
 el mail y una VPN corporativa siguen por su camino, salvo que se elija un *exit node*.
 
 Lo que se aprendió al instalarlo (2026-10-05):
@@ -207,12 +210,12 @@ Lo que se aprendió al instalarlo (2026-10-05):
 - Las dos PCs tienen que tener este código: una PC con el lienzo viejo acepta a la otra por
   Tailscale (la conexión entra), pero no anuncia la suya ni escucha en su 100.x, y desde acá se ve
   caída.
-- **En una PC del trabajo**, antes de instalarlo, preguntarle a IT: es un túnel que la conecta con
+- En una PC del trabajo, antes de instalarlo, preguntarle a IT: es un túnel que la conecta con
   equipos de una cuenta personal y puede chocar con la política o con el antivirus corporativo. Si
   se instala, apagar *Use Tailscale DNS* (MagicDNS) en esa PC para no pisar el DNS de la VPN de la
   empresa, y no usar *exit node* ni *subnet routes*.
 
-**Por qué no llega una PC**: el chip de la tira dice el motivo cuando una PC está caída:
+Por qué no llega una PC: el chip de la tira dice el motivo cuando una PC está caída:
 
 | En la tira | Qué pasa | Qué hacer |
 |---|---|---|
@@ -224,22 +227,22 @@ Lo que se aprendió al instalarlo (2026-10-05):
 
 ### Lanzar, cablear y restaurar en otra PC
 
-- **Lanzar**: `POST /sessions/launch {pc, cwd, agent, title, model?}`. Sólo dentro de `launch_roots`
-  (en `config.json` de esa PC; vacía es ninguna) y con los cuatro ejecutables conocidos. **Ojo:** el
+- Lanzar: `POST /sessions/launch {pc, cwd, agent, title, model?}`. Sólo dentro de `launch_roots`
+  (en `config.json` de esa PC; vacía es ninguna) y con los cuatro ejecutables conocidos. Ojo: el
   `--model` de coda cambia el modelo por defecto de esa PC.
-- **Cablear**: una regla «cuando termine» puede unir PCs; vive en la PC del origen y sobrevive a los
+- Cablear: una regla «cuando termine» puede unir PCs; vive en la PC del origen y sobrevive a los
   reinicios. `coordinar.cablear()` cablea cada frente vivo hacia la coordinadora.
-- **Restaurar**: cada PC guarda en `~/.lienzo/restaurar.json` cómo relanzar sus agentes tras un
+- Restaurar: cada PC guarda en `~/.lienzo/restaurar.json` cómo relanzar sus agentes tras un
   reinicio (no lo que se cerró a propósito). `POST /restaurar {session_id | all: true, pc?}` los
   relanza retomando la conversación, de a uno, mirando la memoria libre.
 
 ### La tira de PCs
 
 Arriba del tablero, un chip por PC con sus tarjetas, memoria libre, CPU, temperatura y latencia. En
-**rojo** si pasa de 85 °C, si no le entra otro agente sin bajar de 1,5 GB libres o si un agente se
-quedó sin cuota. En **violeta**, la credencial de git: cada PC prueba con `git ls-remote` el
+rojo si pasa de 85 °C, si no le entra otro agente sin bajar de 1,5 GB libres o si un agente se
+quedó sin cuota. En violeta, la credencial de git: cada PC prueba con `git ls-remote` el
 `origin` de los repos con sesión viva (y los de `git_check`) y distingue `vencida`, `no verificable`,
-`sin red` y `timeout`. **Click en el violeta** le pasa a esa PC la credencial que tiene esta, cifrada
+`sin red` y `timeout`. Click en el violeta le pasa a esa PC la credencial que tiene esta, cifrada
 (lo mismo que `coordinar.pasar_credencial_git`); con «sin red» o «timeout» avisa que otra credencial
 no lo arregla. Una PC caída se ve en ○ y sus tarjetas quedan grises.
 
@@ -262,37 +265,37 @@ secreto 10 minutos en memoria para leerlo una sola vez con `coordinar.leer_secre
 la carpeta `destino` de otra, por el mismo listener de peers: sin SMB, sin puerto nuevo, sin otra
 credencial. Un `robocopy /Z /MT` hecho en casa:
 
-- **Por bloques y retomable.** Bloques de 8 MiB, cada uno su propio pedido firmado. El que recibe
+- Por bloques y retomable. Bloques de 8 MiB, cada uno su propio pedido firmado. El que recibe
   escribe a `<archivo>.parte` y anota cada bloque verificado en `<archivo>.parte.diario`; el que manda
   guarda su avance en `~/.lienzo/xfer/trabajos/`. Un corte o un reinicio de cualquiera de las dos
   puntas retoma desde ahí.
-- **Paralelo.** 6 bloques en vuelo (`hilos`); los archivos de menos de 1 MiB viajan en paquetes de
+- Paralelo. 6 bloques en vuelo (`hilos`); los archivos de menos de 1 MiB viajan en paquetes de
   hasta 256.
-- **Verificado.** sha256 por bloque al llegar (1,5 GB/s con SHA-NI, contra 0,56 de blake2b). Al
+- Verificado. sha256 por bloque al llegar (1,5 GB/s con SHA-NI, contra 0,56 de blake2b). Al
   cerrar se relee el `.parte` entero contra la lista del que manda y recién ahí se renombra. Un bloque
   distinto se rechaza y se vuelve a mandar; un archivo que cambia en el origen mientras viaja se
   vuelve a pasar.
-- **Sólo lo que cambió**, comparando hashes por bloque (tamaño y fecha no alcanzan).
-- **Nunca borra en el destino**, salvo `espejo: true`, que primero lista lo que borraría y espera
+- Sólo lo que cambió, comparando hashes por bloque (tamaño y fecha no alcanzan).
+- Nunca borra en el destino, salvo `espejo: true`, que primero lista lo que borraría y espera
   `POST /xfer/<id>/confirmar`.
-- **No mata la máquina.** Topes `mbps` y `disco_mbps`, prioridad baja de CPU y disco, y se frena si
+- No mata la máquina. Topes `mbps` y `disco_mbps`, prioridad baja de CPU y disco, y se frena si
   cualquiera de las dos PCs baja de 1,5 GB libres (sigue sola cuando se libera).
-- **Rutas permitidas.** Origen y destino tienen que caer en `copy_roots` del `config.json` de su PC
+- Rutas permitidas. Origen y destino tienen que caer en `copy_roots` del `config.json` de su PC
   (vacía es ninguna). Las de WSL, como `\\wsl.localhost\<distro>\...`.
 
 Lo medido entre dos PCs el 2026-10-04:
 
-- **Corte provocado**: con el lienzo del que recibe reiniciado al 40 % de un archivo de 2 GB, la
+- Corte provocado: con el lienzo del que recibe reiniciado al 40 % de un archivo de 2 GB, la
   copia retomó sola a los 12 s, desde el diario.
-- **WSL por 9p**: lee un archivo grande a 149 MB/s (más que una LAN gigabit) pero sólo ~600
+- WSL por 9p: lee un archivo grande a 149 MB/s (más que una LAN gigabit) pero sólo ~600
   archivos/s chicos con 16 hilos. Sirve para un volcado de pocos archivos grandes.
-- **La caché de WSL se come la memoria.** Lo que pasa por 9p queda en la caché de la VM de WSL, que
+- La caché de WSL se come la memoria. Lo que pasa por 9p queda en la caché de la VM de WSL, que
   Windows cuenta como memoria de `vmmemWSL`: copiando 2 GB, la PC que recibía bajó de 2,6 a 0,5 GB
   libres y la copia se frenó sola. El canal ahora le pide a WSL que suelte la caché de cada archivo
   cada 256 MB y al cerrarlo (`dd iflag=nocache count=0`, 2 GB en 2 s). Lo que cachean otros
   procesos de WSL (una base de datos, por ejemplo) sigue ocupando: para eso, `autoMemoryReclaim` en
   `.wslconfig`.
-- **Velocidad sostenida**: sin medir todavía. Con las dos PCs cargadas de agentes la memoria libre
+- Velocidad sostenida: sin medir todavía. Con las dos PCs cargadas de agentes la memoria libre
   no pasó de la reserva el tiempo suficiente.
 
 ### Seguridad, en criollo
@@ -446,7 +449,7 @@ entero en `lienzo.log`.
 - Una sesión cuya terminal se cerró se ve pero no recibe mensajes.
 - Las flechas no se dibujan en pantallas de menos de 900 px.
 - Una PC caída se nota a los 45 s sin novedades; revocar un peer no le avisa al otro lado.
-- **A un coda no se le manda un mensaje largo**: lo que viaja como adjunto lo lee con `read`, que en
+- A un coda no se le manda un mensaje largo: lo que viaja como adjunto lo lee con `read`, que en
   coda se traba. Mensajes de menos de 500 caracteres, sin saltos de línea.
 - El lienzo no puede cerrar un agente colgado de otra PC: hace falta un `taskkill` por PID allá.
 

@@ -6,7 +6,7 @@ salvo este archivo. Otra sesión está en el front y otra en el pentest: no pise
 
 ## Qué hacer
 
-Una pasada de **simplificación** sobre el Python, sin cambiar el comportamiento. El objetivo es
+Una pasada de simplificación sobre el Python, sin cambiar el comportamiento. El objetivo es
 menos código y más legible, no features. Buscá:
 
 - Funciones largas que se puedan partir en piezas con nombre.
@@ -31,7 +31,7 @@ próximo. Si algo está largo pero es claro y tiene una razón escrita, dejalo.
   - `python -m black --check lienzo tests install.py`
 - Solo biblioteca estándar: no agregues dependencias. Sin `psutil`, sin frameworks.
 - Si un cambio toca la forma de un dato que el front consume (`/sessions`, reglas, links),
-  **no lo hagas**: eso lo coordino yo con la sesión del front. Quedate en lo interno.
+  no lo hagas: eso lo coordino yo con la sesión del front. Quedate en lo interno.
 
 ## Cuando termines
 

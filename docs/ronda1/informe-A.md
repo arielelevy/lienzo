@@ -1,5 +1,7 @@
 # Informe del frente A · carpeta de estado configurable e identidad de la PC
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## Que queda
 
 - **`lienzo/identity.py`** (nuevo, ~195 lineas): `pc_id()`, `pc_info()` y `repo_key(cwd)`, las tres
@@ -36,7 +38,7 @@
   `test_auth_sin_la_variable_sigue_en_home_lienzo`.
 
 - **`lienzo/hook.py`**: sigue sin importar `state` (vi por que: corre como subproceso en cada
-  evento — tiene que arrancar rapido — y en `PermissionRequest` su stdout es el JSON que Claude Code
+  evento, tiene que arrancar rapido, y en `PermissionRequest` su stdout es el JSON que Claude Code
   parsea como decision, asi que no puede arrastrar el import mas pesado de `state.py` ni el riesgo
   de que algo de ese modulo imprima algo). Duplique la lectura de `LIENZO_HOME` con un comentario
   que explica por que, mas un `--lienzo-home <ruta>` en el propio `argv` (prioridad sobre la
@@ -60,18 +62,18 @@
 
 ## Que medi
 
-- `tests/test_home.py` + `tests/test_identity.py`: **24 tests nuevos, 4,76 s** en total (los mas
+- `tests/test_home.py` + `tests/test_identity.py`: 24 tests nuevos, 4,76 s en total (los mas
   lentos son los que arrancan un proceso `python -c` de verdad para probar la estabilidad entre
   procesos: 1,38 s y 1,00 s; el resto son milisegundos). Maquina sin otra tarea pesada corriendo
   (`Get-Process node` antes de medir no mostro nada).
-- `repo_key` sobre `D:\Apps\lienzo` (su propio `.git/config`, real): **en frio 1,27 ms**, **con
+- `repo_key` sobre `D:\Apps\lienzo` (su propio `.git/config`, real): en frio 1,27 ms, **con
   cache 0,037 ms de promedio** (1000 llamadas).
-- Corrida completa, `python -m pytest tests -q`: **259 pasan, 1 falla** (259 antes hoy eran ~236 en
+- Corrida completa, `python -m pytest tests -q`: 259 pasan, 1 falla (259 antes hoy eran ~236 en
   el README + lo que sumaron B/C/D en esta misma ronda). El que falla es
-  `test_coordinadora_una_por_repo`, ajeno (ver `notas-A.md`) — no lo arregle.
+  `test_coordinadora_una_por_repo`, ajeno (ver `notas-A.md`), no lo arregle.
 - `python -m ruff check` y `python -m black --check` sobre mis archivos exactos: limpios. `black`
   reformateo `identity.py` y `hook.py` solo (convirtio `except (X, Y):` a `except X, Y:`, que es el
-  estilo del resto del proyecto en Python 3.14 — ver `notas-A.md`).
+  estilo del resto del proyecto en Python 3.14, ver `notas-A.md`).
 
 ## Que deje afuera y por que
 

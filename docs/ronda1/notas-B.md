@@ -1,5 +1,7 @@
 # Notas del frente B · lo que vi fuera de mis archivos
 
+Registro histórico de esta ronda. Los resultados corresponden al código revisado en ese momento.
+
 ## `tests/test_server.py::test_coordinadora_una_por_repo` queda roto (ajeno, pero con arreglo a mano)
 
 Es consecuencia directa de mi cambio (`set_coordinator` y `stopped_recipients` ahora comparan

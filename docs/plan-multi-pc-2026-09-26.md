@@ -6,10 +6,10 @@ se aprueba, se conecta y se coordina. En el front, una tira de PCs arriba del ta
 
 Decisiones de Ariel (2026-09-26):
 
-- **Red: LAN.** Sin Tailscale ni nada hospedado.
-- **Coordinadora: una por repo en toda la federación**, salvo que se la separe explícitamente
+- Red: LAN. Sin Tailscale ni nada hospedado.
+- Coordinadora: una por repo en toda la federación, salvo que se la separe explícitamente
   por PC.
-- **Escala: 2 a 4 PCs como máximo.**
+- Escala: 2 a 4 PCs como máximo.
 - **El skill `lienzo` se actualiza** como parte del trabajo.
 
 ---
@@ -22,11 +22,11 @@ suscriba al stream del otro y le reenvíe los comandos.
 
 Redis no aporta:
 
-- **No tiene server nativo en Windows** (Memurai, WSL o Docker). Rompe el "solo stdlib, sin
+- No tiene server nativo en Windows (Memurai, WSL o Docker). Rompe el "solo stdlib, sin
   instalar nada" del proyecto.
-- **Pone un punto central**: si se cae Redis, o la PC que lo corre, se cae la federación. Con P2P,
+- Pone un punto central: si se cae Redis, o la PC que lo corre, se cae la federación. Con P2P,
   si se apaga la notebook, la otra PC sigue exactamente como hoy.
-- **No hay nada que persistir en el medio**: el estado de cada PC vive en su `~/.lienzo`; lo que
+- No hay nada que persistir en el medio: el estado de cada PC vive en su `~/.lienzo`; lo que
   viaja son eventos y comandos, sin cola.
 - `DISENO.es.md` §7.6.3 ya llegó a lo mismo: "Redis no hace falta".
 
@@ -50,9 +50,9 @@ PC-A lienzo :7321 (UI, solo 127.0.0.1)            PC-B lienzo :7321
       └─ enruta send/pending/attach/launch → B      └─ ídem
 ```
 
-- **Con una sola PC no cambia nada**: sin peers emparejados no se abre el 7322 ni aparece la
+- Con una sola PC no cambia nada: sin peers emparejados no se abre el 7322 ni aparece la
   tira de PCs.
-- **Con dos o más**, cada tablero muestra todas las tarjetas, y todo se opera desde cualquiera.
+- Con dos o más, cada tablero muestra todas las tarjetas, y todo se opera desde cualquiera.
 
 ## 3. Piezas
 
@@ -72,10 +72,10 @@ PC-A lienzo :7321 (UI, solo 127.0.0.1)            PC-B lienzo :7321
 - La UI sigue en `127.0.0.1:7321`, sin cambios.
 - Se suma un segundo listener en `:7322`, bind a la IP de LAN (nunca `0.0.0.0`), que solo
   atiende `/peer/*`.
-- **Descubrimiento por beacon UDP** en la LAN (stdlib `socket`, cada 10 s): cada PC anuncia
+- Descubrimiento por beacon UDP en la LAN (stdlib `socket`, cada 10 s): cada PC anuncia
   `pc_id`, nombre y puerto. Solo se aceptan peers ya emparejados. Como se identifican por
   `pc_id` y no por IP, si el DHCP cambia la IP el beacon la actualiza sola.
-- **Firewall**: `install.py --peer` agrega la regla de Windows para el 7322 **solo en el perfil
+- Firewall: `install.py --peer` agrega la regla de Windows para el 7322 **solo en el perfil
   Privado** (pide admin una vez). En una red pública el puerto no escucha.
 
 ### 3.3 Espejo (lo de solo lectura)
@@ -94,30 +94,30 @@ PC-A lienzo :7321 (UI, solo 127.0.0.1)            PC-B lienzo :7321
 - Los `session_id` son UUID globales. El server mantiene `sid → pc` y reenvía
   transparentemente: `send`, `interrupt`, `dialog`, `title`, `stopped`, `DELETE`,
   `POST /pending/<id>`, `attach`. El front sigue llamando a `/sessions/<sid>/...`.
-- **Adjuntos**: tienen que quedar en el disco de la PC dueña, porque el agente los lee por ruta.
+- Adjuntos: tienen que quedar en el disco de la PC dueña, porque el agente los lee por ruta.
   Los bytes viajan proxeados y la ruta que se inserta es la de destino.
-- **Permisos**: el pedido vence a los 60 s; la latencia de LAN no cambia nada.
+- Permisos: el pedido vence a los 60 s; la latencia de LAN no cambia nada.
 
 ### 3.5 Reglas y conexiones entre PCs
 
 - Una regla `on_stop` vive en la PC del `from` (donde ocurre el Stop). `fire_rule` ya llama a
   `send_to_session`, que pasa a enrutar.
-- **El chequeo de bucle A↔B pasa a ser global**: antes de guardar, se le pregunta a la PC del
+- El chequeo de bucle A↔B pasa a ser global: antes de guardar, se le pregunta a la PC del
   `to` si tiene la inversa. La carrera de crear las dos a la vez en PCs distintas se resuelve con
   un lock liviano en la PC de menor `pc_id`.
 - Regla repetida y "dos programadas al mismo minuto hacia la misma sesión": el chequeo lo hace la
   PC dueña del destino.
-- **El canal nativo Claude a Claude no cruza PCs** (`ListAgents` es de la máquina). La UI no
+- El canal nativo Claude a Claude no cruza PCs (`ListAgents` es de la máquina). La UI no
   ofrece la flecha doble entre tarjetas de PCs distintas.
 
 ### 3.6 Coordinadora federada
 
-- **Por defecto, una ★ por repo en toda la federación**: los informes de los frentes de cualquier
+- Por defecto, una ★ por repo en toda la federación: los informes de los frentes de cualquier
   PC le llegan a ella. Prender una apaga la anterior en cualquier PC.
-- **Separarla, explícito**: `PUT /sessions/<sid>/coordinator {on: true, scope: "pc"}`. Ese repo,
+- Separarla, explícito: `PUT /sessions/<sid>/coordinator {on: true, scope: "pc"}`. Ese repo,
   en esa PC, pasa a tener su propia ★ y las reglas de esa PC apuntan a ella. En la UI: menú ⋯ →
   "Coordinadora solo de esta PC".
-- **Identidad del repo**: el remote `origin` normalizado (sin `.git`, sin credenciales,
+- Identidad del repo: el remote `origin` normalizado (sin `.git`, sin credenciales,
   minúsculas en el host). Si no hay remote, el nombre de la carpeta. El mismo repo puede estar
   en rutas distintas en cada PC, y dos carpetas con el mismo nombre pueden ser repos distintos.
 
@@ -178,20 +178,20 @@ La regla actual ("nadie commitea salvo la coordinadora: hay un solo árbol") se 
 commiter por árbol**:
 
 - En la PC remota los frentes no commitean. Al cerrar la ronda, la coordinadora le pide a uno de
-  ellos, la **delegada de esa PC**, que commitee todo en la rama `ronda-<N>/<pc>` y haga push.
+  ellos, la delegada de esa PC, que commitee todo en la rama `ronda-<N>/<pc>` y haga push.
 - La coordinadora hace fetch, verifica en un `git worktree` local (ruff, pruebas, archivos fuera
   de cada frente) y mergea. "Verificar contra el árbol, no contra el informe" sigue valiendo.
 - El repo tiene que estar clonado en la otra PC; el encargo común arranca con `git pull`.
 
 ## 6. Pruebas
 
-- **Dos instancias en la misma PC**, con `LIENZO_HOME` distinto y puertos distintos (7321/7322 y
+- Dos instancias en la misma PC, con `LIENZO_HOME` distinto y puertos distintos (7321/7322 y
   7331/7332), simulan dos PCs: espejo, enrutado, reglas, bucle global, coordinadora, salud.
 - pytest para: firma HMAC y replay, espejo con reconexión, enrutado de cada comando, bucle global
   con carrera, identidad de repo por remote, `launch_roots`, tope de 4.
 - Playwright para la tira de PCs, el filtro, las tarjetas grises y las flechas entre PCs, contra
   un tablero fijo interceptado.
-- **Prueba real con la notebook**, con terminales de prueba, nunca sesiones de trabajo: inyección,
+- Prueba real con la notebook, con terminales de prueba, nunca sesiones de trabajo: inyección,
   permiso, adjunto, launch y una regla `on_stop` cruzada.
 
 ---
@@ -221,7 +221,7 @@ commiter por árbol**:
 - [x] `digest`, `turns`, `screen`, `connections` remotos bajo demanda
 - [x] `GET /peer/health` (memoria, CPU, temperatura, sesiones)
 - [x] Tope de 4 peers
-- [ ] **Cierre:** desde A se ven en vivo las tarjetas y la salud de B  *(probado entre dos procesos en esta PC; falta con la notebook)*
+- [ ] Cierre: desde A se ven en vivo las tarjetas y la salud de B  *(probado entre dos procesos en esta PC; falta con la notebook)*
 
 ### F2 · Operar la otra PC
 
@@ -231,7 +231,7 @@ commiter por árbol**:
 - [x] `attach` con bytes proxeados y ruta de destino
 - [x] Errores del peer (409, 404, caído) devueltos tal cual al front
 - [x] Log `peer` de cada request recibida
-- [ ] **Cierre:** se aprueba un permiso de B desde el tablero de A  *(probado entre dos procesos en esta PC; falta con la notebook)*
+- [ ] Cierre: se aprueba un permiso de B desde el tablero de A  *(probado entre dos procesos en esta PC; falta con la notebook)*
 
 ### F3 · Coordinar entre PCs
 
@@ -242,7 +242,7 @@ commiter por árbol**:
 - [x] `scope: "pc"` para separarla, en API y en el menú ⋯
 - [x] Sin flecha doble (canal nativo) entre PCs distintas
 - [x] `POST /sessions/launch` con `launch_roots` y ejecutable fijo por agente
-- [ ] **Cierre:** desde la ★ en A se lanza un frente en B y su informe vuelve solo
+- [ ] Cierre: desde la ★ en A se lanza un frente en B y su informe vuelve solo
 
 ### F4 · Front y documentación
 
@@ -256,7 +256,7 @@ commiter por árbol**:
 - [x] Pruebas Playwright de la tira y las flechas entre PCs
 - [x] README: sección "Varias PCs", API nueva, archivos de estado nuevos
 - [x] `DISENO.es.md` §15 con las decisiones de este plan  *(el archivo está en `.gitignore`: queda en disco, no en el repo)*
-- [ ] **Cierre:** prueba real con la notebook, con terminales de prueba
+- [ ] Cierre: prueba real con la notebook, con terminales de prueba
 
 ### F5 · Skill `lienzo`
 
@@ -281,5 +281,5 @@ commiter por árbol**:
 
 - [x] La sección del lienzo queda en dos líneas y un puntero al skill, para no duplicarlo
 
-- [ ] **Cierre:** una ronda real repartida entre dos PCs usando solo el skill, y el skill
+- [ ] Cierre: una ronda real repartida entre dos PCs usando solo el skill, y el skill
       corregido contra lo medido
