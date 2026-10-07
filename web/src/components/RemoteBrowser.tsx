@@ -338,8 +338,14 @@ function RemoteScreen({image, format = 'jpeg', native = false, width, height, se
   };
   const mouse = (e: React.MouseEvent, type: string) => {
     const box = element.current!.getBoundingClientRect();
-    enqueue({kind: "mouse", type, x: clamp((e.clientX - box.left) * width / box.width, 0, native ? width-1 : width),
-      y: clamp((e.clientY - box.top) * height / box.height, 0, native ? height-1 : height),
+    const scale = Math.min(box.width / width, box.height / height);
+    const shownWidth = native ? width * scale : box.width;
+    const shownHeight = native ? height * scale : box.height;
+    const x = e.clientX - box.left - (box.width - shownWidth) / 2;
+    const y = e.clientY - box.top - (box.height - shownHeight) / 2;
+    if (native && type !== 'mouseReleased' && (x < 0 || y < 0 || x >= shownWidth || y >= shownHeight)) return;
+    enqueue({kind: "mouse", type, x: clamp(x * width / shownWidth, 0, native ? width-1 : width),
+      y: clamp(y * height / shownHeight, 0, native ? height-1 : height),
       button: type === "mouseMoved" ? "none" : ["left", "middle", "right"][e.button],
       buttons: e.buttons, modifiers: modifiers(e), clickCount: clamp(e.detail, 0, 3),
       ...(type === "mouseWheel" ? {deltaX: clamp((e as React.WheelEvent).deltaX, -4000, 4000), deltaY: clamp((e as React.WheelEvent).deltaY, -4000, 4000)} : {}),
@@ -352,7 +358,7 @@ function RemoteScreen({image, format = 'jpeg', native = false, width, height, se
     if (!native && e.ctrlKey && e.key.toLowerCase() === "c") { if (type === "keyDown") onCopy(); return; }
     enqueue({kind: "key", type, key: e.key, code: e.code, keyCode: e.keyCode, modifiers: modifiers(e)});
   };
-  return <div ref={element} className="remote-screen" tabIndex={0} role="application" aria-label="Página remota: mouse y teclado"
+  return <div ref={element} className={`remote-screen${native ? ' remote-screen-native' : ''}`} tabIndex={0} role="application" aria-label="Página remota: mouse y teclado"
     onKeyDown={e => key(e, "keyDown")} onKeyUp={e => key(e, "keyUp")}
     onPointerDown={e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus(); mouse(e, "mousePressed"); }}
     onPointerUp={e => { e.preventDefault(); mouse(e, "mouseReleased"); e.currentTarget.releasePointerCapture(e.pointerId); }} onPointerMove={e => mouse(e, "mouseMoved")}

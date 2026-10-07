@@ -78,3 +78,11 @@ el permiso CDP de la captura nativa; Designer agregó el caso de ventana complet
 registró la evidencia anterior y dejó las restantes pruebas sin ejecutar por el pedido
 explícito «sin probar»; Detective conserva esos pendientes. No se aceptaron baselines
 ni se declara PASS de aceptación. Build e instalación se ejecutan como parte del despliegue.
+
+Corrección de proporciones: la captura nativa conserva su relación de aspecto con
+object-fit: contain. La revisión estática verificó que el mapeo del mouse descuenta las
+franjas y usa la misma escala; los clics en franjas no se envían. La liberación de un botón
+fuera de la imagen sí se transmite con coordenadas limitadas. Explorer identificó el
+estiramiento CSS; Analyser localizó el mapeo asociado; Designer definió escala uniforme
+y márgenes; Executor omite pruebas por instrucción del usuario; Detective mantiene
+pendiente la verificación visual. Se compila para publicar la corrección de interfaz.
