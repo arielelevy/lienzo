@@ -59,3 +59,22 @@ Las capturas y teclas no se escriben al log de peer. No se copiaron credenciales
 No se identificaron otros bloqueos de seguridad en la revisión estática dentro de este alcance.
 Queda pendiente verificar en vivo el Chrome habitual con permiso del usuario. El informe se
 conserva en docs por ese pendiente, según el pedido de Ariel.
+
+## Ventana real de Chrome — e137db1
+
+Revisión estática de los diez archivos del cambio: destino explícito, transporte cifrado,
+validación del ejecutable chrome.exe y de la ventana activa antes de enviar entrada,
+límites de coordenadas, teclas y texto. La vista completa es ahora la opción predeterminada;
+no requiere activar remote debugging. El modo por pestañas conserva sus requisitos anteriores.
+
+Evidencia previa al pedido de detener pruebas: 61 casos Python pasaron y se observó una
+captura local de la ventana completa de Chrome (1295 × 767). No se verificó la interacción
+nativa en ar-it33940 ni el funcionamiento sin monitor. Windows debe mantener la sesión
+abierta y desbloqueada. La liberación al salir cubre teclas; queda pendiente cubrir también
+un botón del mouse mantenido al desconectarse. No se sincroniza el portapapeles remoto.
+
+Recorrido agéntico secuencial: Explorer identificó las ventanas existentes; Analyser separó
+el permiso CDP de la captura nativa; Designer agregó el caso de ventana completa; Executor
+registró la evidencia anterior y dejó las restantes pruebas sin ejecutar por el pedido
+explícito «sin probar»; Detective conserva esos pendientes. No se aceptaron baselines
+ni se declara PASS de aceptación. Build e instalación se ejecutan como parte del despliegue.
