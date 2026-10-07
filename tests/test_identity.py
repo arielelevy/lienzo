@@ -226,3 +226,5 @@ def test_remotes_de_sesiones_solo_de_las_tarjetas_vivas(hogar, monkeypatch):
         },
     )
     assert ses.remotes_de_sesiones() == ["https://git.ejemplo.com/a.git"]
+    assert ses.repo_de_remote("https://git.ejemplo.com/a.git") in (str(a), str(a / "sub"))
+    assert ses.repo_de_remote("https://git.ejemplo.com/b.git") is None  # solo de una tarjeta cerrada

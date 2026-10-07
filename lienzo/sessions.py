@@ -302,6 +302,14 @@ def remotes_de_sesiones() -> list[str]:
     return sorted({u for u in map(identity.origin_url, cwds) if u})
 
 
+def repo_de_remote(url: str) -> str | None:
+    """La carpeta de una tarjeta viva de ESTA PC cuyo `origin` es `url`, o None. health corre ahi el
+    `git ls-remote`: el config local del repo puede cambiar el credential helper (bug 2026-10-07)."""
+    with lock:
+        cwds = sorted({s.get("cwd") for s in sessions.values() if s.get("alive") and s.get("cwd")})
+    return next((c for c in cwds if identity.origin_url(c) == url), None)
+
+
 def limit_until_of(turn: dict) -> str | None:
     """Si el turno termino con un aviso de limite de uso con hora ("try again at 7:57 PM"),
     esa hora en ISO local; la referencia es cuando se escribio el aviso, no ahora."""

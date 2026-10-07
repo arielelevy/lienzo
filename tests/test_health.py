@@ -372,6 +372,25 @@ def test_ls_remote_prueba_con_la_ruta_si_por_host_no_puede(monkeypatch):
     assert health._ls_remote("https://h/r.git") == "vencida"
 
 
+def test_ls_remote_corre_en_el_repo_de_la_sesion_o_en_carpeta_neutra(tmp_path, monkeypatch):
+    """Medido el 2026-10-07: sin cwd, git corria en la carpeta del server y el .git/config del lienzo
+    cambiaba el helper a `gh`: Azure DevOps daba «no verificable» con la credencial guardada."""
+    cwds = []
+    monkeypatch.setattr(health.subproc, "correr", lambda argv, **k: (cwds.append(k.get("cwd")), (0, "", ""))[1])
+    monkeypatch.setattr(health, "repo_de_remote", lambda url: str(tmp_path) if url == "https://h/a.git" else None)
+    assert health._medir_git(["https://h/a.git", "https://h/b.git"]) == {"https://h/a.git": "ok", "https://h/b.git": "ok"}
+    assert cwds == [str(tmp_path), health.tempfile.gettempdir()]
+    # un repo que ya no existe, o una consulta que rompe, tampoco cae en la carpeta del server
+    monkeypatch.setattr(health, "repo_de_remote", lambda url: str(tmp_path / "borrado"))
+    assert health._carpeta_para("https://h/a.git") == health.tempfile.gettempdir()
+
+    def rompe(url):
+        raise RuntimeError("lock")
+
+    monkeypatch.setattr(health, "repo_de_remote", rompe)
+    assert health._carpeta_para("https://h/a.git") == health.tempfile.gettempdir()
+
+
 def test_clasificar_git_distingue_red_de_credencial():
     assert health.clasificar_git(128, "fatal: unable to access 'https://h/': Could not resolve host: h") == "sin_red"
     assert (

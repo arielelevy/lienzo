@@ -24,6 +24,7 @@ import datetime as dt
 import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -377,6 +378,8 @@ GIT_GRACIA_S = 3600
 # remotes `origin` de los repos con una sesion viva de esta PC: lo enchufa server.py (igual que
 # cuotas_de_sesiones, health no ve sesiones)
 remotes_de_sesiones: Callable[[], list] = list
+# carpeta de una sesion viva con ese remote, para correr ahi el ls-remote; tambien la enchufa server.py
+repo_de_remote: Callable[[str], str | None] = lambda url: None
 _remotes_vistos: dict[str, float] = {}  # url -> ultima vez que una sesion viva la tenia
 _remotes_lock = threading.Lock()
 
@@ -469,11 +472,24 @@ def _medir_git(urls: list[str] | None = None) -> dict | None:
     urls = _git_urls() if urls is None else urls
     if not urls:
         return None
-    out = {url: _ls_remote(url) for url in urls}
+    out = {url: _ls_remote(url, cwd=_carpeta_para(url)) for url in urls}
     return out
 
 
-def _ls_remote(url: str, timeout_s: float = 20) -> str:
+def _carpeta_para(url: str) -> str:
+    """Donde correr el ls-remote de `url`: el repo de una sesion viva con ese remote (su config local
+    manda, como en el push) o, si no hay, una carpeta neutra. Nunca la del server: medido el
+    2026-10-07, el .git/config del lienzo cambia el helper a `gh auth git-credential` y toda url de
+    Azure DevOps daba «no verificable» con la credencial guardada y el push andando."""
+    try:
+        repo = repo_de_remote(url)
+    except Exception as e:  # la salud nunca levanta
+        log(f"repo del remote {url}: {type(e).__name__}: {e}")
+        repo = None
+    return repo if repo and os.path.isdir(repo) else tempfile.gettempdir()
+
+
+def _ls_remote(url: str, timeout_s: float = 20, cwd: str | None = None) -> str:
     """ok, vencida o error para una url. Va por subproc.correr: salida a un ARCHIVO y no a una
     tuberia (con la credencial vencida el Git Credential Manager queda vivo como nieto de git y
     retiene la tuberia; medido el 2026-10-03, el server de la otra PC nunca termino de medir y
@@ -483,7 +499,7 @@ def _ls_remote(url: str, timeout_s: float = 20) -> str:
     vistos = []
     for extra in ([], ["-c", "credential.useHttpPath=true"]):
         argv = ["git", "-c", "credential.interactive=false", *extra, "ls-remote", "--heads", url]
-        rc, _out, err = subproc.correr(argv, timeout=timeout_s, sin_prompts=True)
+        rc, _out, err = subproc.correr(argv, timeout=timeout_s, sin_prompts=True, cwd=cwd)
         if rc == subproc.VENCIDO:
             estado = "timeout"  # git no termino: red muy lenta, o el credential manager esperando un login
         elif rc == subproc.NO_ARRANCO:
