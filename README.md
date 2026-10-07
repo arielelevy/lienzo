@@ -97,22 +97,33 @@ Marcar las visibles.
 ### Chrome remoto
 
 El enlace **Chrome remoto** del encabezado abre `/chrome` en una pestaña nueva del navegador.
-Elegí una PC y tocá **Abrir Chrome**. La vista tiene pestañas, dirección/búsqueda, atrás, adelante,
+Elegí una PC. La vista tiene pestañas, dirección/búsqueda, atrás, adelante,
 recarga y pantalla completa (también F11). Las páginas, el teclado y el mouse se ejecutan en la PC
-elegida. Chrome corre en modo headless: no necesita monitor. La PC debe estar encendida y con
+elegida. La PC debe estar encendida y con
 Lienzo abierto; perder la conexión no abre un Chrome sustituto en otra máquina.
 
 Las dos PCs necesitan esta versión de Lienzo; la que ejecuta Chrome necesita **Chrome instalado y
-Node.js 24 o posterior**. Usa un perfil propio persistente en `~/.lienzo/chrome-remoto`, separado
-del Chrome personal. Volver al tablero o cerrar la pestaña local conserva el navegador remoto;
-**Cerrar Chrome** cierra su proceso. Se admiten hasta doce pestañas. El acceso se realiza desde el
+Node.js 24 o posterior**. Para usar sus perfiles existentes (por ejemplo Globant), elegí uno y
+tocá **Abrir perfil en esa PC**. En el Chrome de destino, versión 144 o posterior, habilitá
+`chrome://inspect/#remote-debugging`. Tocá **Conectar Chrome abierto** en Lienzo y aceptá el aviso
+de Chrome en el destino. Chrome decide qué perfil comparte; con varios abiertos usa su perfil
+predeterminado. Abrir un perfil desde Lienzo no garantiza que Chrome comparta ese perfil.
+**Desconectar** deja Chrome y sus pestañas abiertos. No se copian cookies ni se modifican sus
+preferencias para habilitar la conexión. La autorización inicial requiere interacción en el
+Chrome de destino; no se promete que este modo funcione sin monitor o sesión gráfica activa.
+
+La alternativa **Usar un perfil separado de Lienzo → Abrir Chrome** usa un perfil persistente en
+`~/.lienzo/chrome-remoto`, en modo headless, sin monitor. **Cerrar Chrome** cierra sólo ese proceso.
+Volver al tablero o cerrar la pestaña local conserva el navegador remoto. Se admite abrir hasta
+doce pestañas desde Lienzo. El acceso se realiza desde el
 tablero local de una PC emparejada, no desde el túnel público del celular.
 
 El canal de peers autentica los pedidos y cifra el contenido y las entradas del navegador. El
 puerto de control de Chrome queda en loopback, sin abrir otro puerto en la LAN. No acepta comandos
 CDP arbitrarios ni navegación directa a `file:` o `javascript:`. Ctrl+C copia texto seleccionado y
 Ctrl+V pega texto; los diálogos JavaScript se contestan dentro de la vista. La imagen se actualiza
-por capturas: no transmite audio. Las descargas están deshabilitadas; carga de archivos, ventanas
+por capturas: no transmite audio. Las descargas se deshabilitan sólo en el perfil separado;
+en Chrome habitual se conserva su configuración y los archivos quedan en la PC remota. Carga de archivos, ventanas
 del sistema y extensiones no están integradas en esta versión.
 
 Prueba aislada propuesta: `py tests/browser_smoke.py` (Chrome real, perfil temporal y web local,

@@ -3,11 +3,16 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { profiles, existingEndpoint } from './browser_profiles.mjs';
 
 const profile = process.argv[2];
 let chrome = null;
 let endpoint = '';
 let browser = null;
+let connecting = false;
+let connectionError = '';
+let generation = 0;
+let pendingSocket = null;
 const pages = new Map();
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 
@@ -28,10 +33,12 @@ class CDP {
     this.pending = new Map();
     this.id = 0;
     this.dialog = null;
+    this.sessions = new Map();
     socket.addEventListener('message', e => {
       const msg = JSON.parse(e.data);
-      if (msg.method === 'Page.javascriptDialogOpening') this.dialog = msg.params;
-      if (msg.method === 'Page.javascriptDialogClosed') this.dialog = null;
+      const target = msg.sessionId ? this.sessions.get(msg.sessionId) : this;
+      if (target && msg.method === 'Page.javascriptDialogOpening') target.dialog = msg.params;
+      if (target && msg.method === 'Page.javascriptDialogClosed') target.dialog = null;
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
@@ -51,18 +58,20 @@ class CDP {
     this.pending.clear();
   }
 
-  static async open(url) {
+  static async open(url, timeout = 5000, onSocket = () => {}) {
     const socket = new WebSocket(url);
+    onSocket(socket);
     const cdp = new CDP(socket);
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { socket.close(); reject(new Error('Chrome no abrió la conexión')); }, 5000);
+      const timer = setTimeout(() => { socket.close(); reject(new Error('Chrome no autorizó la conexión a tiempo. Revisá el aviso en esa PC y volvé a conectar.')); }, timeout);
       socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, {once: true});
       socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('No se pudo conectar con Chrome')); }, {once: true});
+      socket.addEventListener('close', () => { clearTimeout(timer); reject(new Error('Chrome cerró la solicitud de conexión')); }, {once: true});
     });
     return cdp;
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, sessionId) {
     return new Promise((resolve, reject) => {
       if (this.socket.readyState !== WebSocket.OPEN) return reject(new Error('La pestaña está desconectada'));
       const id = ++this.id;
@@ -71,13 +80,13 @@ class CDP {
         reject(Object.assign(new Error('Chrome tardó demasiado en responder'), {status: 504}));
       }, 8000);
       this.pending.set(id, {resolve, reject, timer});
-      this.socket.send(JSON.stringify({id, method, params}));
+      this.socket.send(JSON.stringify({id, method, params, sessionId}));
     });
   }
 }
 
 async function start() {
-  if (chrome && chrome.exitCode === null) return;
+  if (browser || connecting) fail('Desconectá la sesión actual antes de abrir otra', 409);
   mkdirSync(profile, {recursive: true});
   const child = spawn(executable(), [
     '--headless', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
@@ -85,7 +94,9 @@ async function start() {
     '--window-size=1280,800', 'about:blank',
   ], {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe']});
   chrome = child;
-  child.once('exit', () => { if (chrome === child) { chrome = null; endpoint = ''; } });
+  child.once('exit', () => {
+    if (chrome === child) { chrome = null; endpoint = ''; browser?.socket.close(); browser = null; pages.clear(); }
+  });
   endpoint = await new Promise((resolve, reject) => {
     let tail = '';
     const timer = setTimeout(() => { child.kill(); reject(new Error('Chrome no arrancó en 10 segundos')); }, 10000);
@@ -103,11 +114,11 @@ async function start() {
 }
 
 async function tabs() {
-  if (!chrome) return [];
+  if (!browser) return [];
   const {targetInfos} = await browser.send('Target.getTargets');
   const list = targetInfos.filter(t => t.type === 'page').map(t => ({id: t.targetId, title: t.title, url: t.url}));
   for (const [id, cdp] of pages) {
-    if (!list.some(t => t.id === id)) { cdp.socket.close(); pages.delete(id); }
+    if (!list.some(t => t.id === id)) { browser.sessions.delete(cdp.sessionId); pages.delete(id); }
   }
   return list;
 }
@@ -115,7 +126,11 @@ async function tabs() {
 async function page(id) {
   if (typeof id !== 'string' || !(await tabs()).some(t => t.id === id)) fail('La pestaña ya no existe', 404);
   if (!pages.has(id)) {
-    const cdp = await CDP.open(`${endpoint.slice(0, endpoint.indexOf('/devtools/'))}/devtools/page/${id}`);
+    // Una sola conexión autorizada por Chrome; las páginas usan sesiones CDP.
+    const root = browser;
+    const {sessionId} = await root.send('Target.attachToTarget', {targetId: id, flatten: true});
+    const cdp = {sessionId, dialog: null, send: (method, params) => root.send(method, params, sessionId)};
+    root.sessions.set(sessionId, cdp);
     await cdp.send('Page.enable');
     pages.set(id, cdp);
   }
@@ -170,12 +185,17 @@ async function input(cdp, events) {
 }
 
 async function stop() {
-  for (const cdp of pages.values()) cdp.socket.close();
+  generation++;
+  connecting = false;
+  connectionError = '';
+  pendingSocket?.close();
+  pendingSocket = null;
   pages.clear();
   const child = chrome;
   if (browser) {
     // Browser.close puede cerrar el socket antes de contestar: la salida del proceso es la prueba.
-    void browser.send('Browser.close').catch(e => process.stderr.write(`Chrome al cerrar: ${e.message}\n`));
+    if (child) void browser.send('Browser.close').catch(e => process.stderr.write(`Chrome al cerrar: ${e.message}\n`));
+    else browser.socket.close(); // El Chrome habitual pertenece al usuario, no a Lienzo.
     browser = null;
   }
   if (child && child.exitCode === null) {
@@ -188,15 +208,54 @@ async function stop() {
   endpoint = '';
 }
 
+async function prepareProfile(id) {
+  if (!profiles().some(p => p.id === id)) fail('Elegí un perfil existente de esa PC');
+  const child = spawn(executable(), [`--profile-directory=${id}`, '--new-window', 'chrome://inspect/#remote-debugging'],
+    {detached: true, windowsHide: false, stdio: 'ignore'});
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+  child.unref();
+  return {prepared: true};
+}
+
+function connectExisting() {
+  if (browser || connecting) fail('Desconectá la sesión actual antes de conectar otra', 409);
+  const address = existingEndpoint();
+  const attempt = ++generation;
+  connecting = true;
+  connectionError = '';
+  void CDP.open(address, 60000, socket => { pendingSocket = socket; }).then(cdp => {
+    if (attempt !== generation) { cdp.socket.close(); return; }
+    pendingSocket = null;
+    browser = cdp;
+    connecting = false;
+    cdp.socket.addEventListener('close', () => {
+      if (browser !== cdp) return;
+      browser = null;
+      pages.clear();
+      connectionError = 'Chrome cerró la conexión. Volvé a conectar y aceptá su aviso.';
+    });
+  }).catch(e => {
+    if (attempt !== generation) return;
+    pendingSocket = null;
+    connecting = false;
+    connectionError = e.message;
+  });
+  return {connecting: true, running: false, mode: 'existing', tabs: []};
+}
+
 async function handle(d) {
   if (!d || typeof d !== 'object') fail('Pedido inválido');
+  if (d.action === 'profiles') return {profiles: profiles()};
+  if (d.action === 'prepare') return prepareProfile(d.profile);
+  if (d.action === 'connect') return connectExisting();
   if (d.action === 'start') {
-    try { await start(); return {running: true, tabs: await tabs()}; }
+    if (browser || connecting) fail('Desconectá la sesión actual antes de abrir otra', 409);
+    try { await start(); return {running: true, mode: 'lienzo', tabs: await tabs()}; }
     catch (e) { await stop(); throw e; }
   }
-  if (d.action === 'state') return {running: !!chrome, tabs: await tabs()};
-  if (d.action === 'stop') { await stop(); return {running: false, tabs: []}; }
-  if (!chrome) fail('Chrome está cerrado. Abrilo nuevamente', 409);
+  if (d.action === 'state') return {running: !!browser, connecting, connectionError, mode: chrome ? 'lienzo' : 'existing', tabs: await tabs()};
+  if (d.action === 'stop') { await stop(); return {running: false, connecting: false, tabs: []}; }
+  if (!browser) fail('Chrome está desconectado. Conectalo nuevamente', 409);
   if (d.action === 'new') {
     if ((await tabs()).length >= 12) fail('Cerrá alguna pestaña antes de abrir otra (máximo 12)', 409);
     const {targetId} = await browser.send('Target.createTarget', {url: url(d.url)});

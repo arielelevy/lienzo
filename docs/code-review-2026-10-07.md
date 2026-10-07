@@ -1,7 +1,7 @@
-# Revisión: Chrome remoto en Lienzo (verificación de navegador pendiente)
+# Revisión: Chrome remoto en Lienzo (perfil habitual pendiente de autorización)
 
 Alcance: los cambios de esta sesión en `lienzo/browser_api.py`, `browser_remote.py`,
-`browser_host.mjs`, `server.py`, `mirror.py`, `protocol.py`, `secretos.py`, la vista
+`browser_host.mjs`, `browser_profiles.mjs`, `server.py`, `mirror.py`, `protocol.py`, `secretos.py`, la vista
 `RemoteBrowser.tsx`, su CSS, integración en App/Header/Vite, mensaje de Git en PcStrip y sus pruebas.
 No es una auditoría completa del repositorio. Revisión estática secuencial en la misma sesión.
 
@@ -26,7 +26,12 @@ No es una auditoría completa del repositorio. Revisión estática secuencial en
 La ruta de acciones requiere autenticación/CSRF y acceso local sin túnel. El listener de peers
 valida firma antes del descifrado. CDP no se publica ni acepta métodos del cliente. No hay shell
 al iniciar Node o Chrome, ni argumentos ejecutables controlados por la URL. Chrome usa perfil
-propio, sandbox normal y loopback. El cierre afecta exclusivamente al proceso que creó el worker.
+propio, sandbox normal y loopback; alternativamente conecta al Chrome habitual autorizado por
+su propio aviso. Se lee sólo nombre e ID de los perfiles. El endpoint se toma de una ruta fija
+del usuario y se valida puerto/ruta; nunca admite un host enviado por el cliente. El cierre mata
+exclusivamente al Chrome creado por el worker; en el habitual sólo desconecta el socket. Las páginas
+usan sesiones multiplexadas sobre una conexión autorizada. Cancelar cierra también la solicitud
+pendiente y una respuesta tardía no puede reconectar después de cancelar.
 Las capturas y teclas no se escriben al log de peer. No se copiaron credenciales del Chrome personal.
 
 ## Evidencia y pendientes reales
@@ -39,11 +44,18 @@ Las capturas y teclas no se escriben al log de peer. No se copiaron credenciales
   en `pruebas-agenticas/resultados/chrome` (ignorado en Git).
 - `npm audit --omit=dev`: cero vulnerabilidades. `npm ci` informó dos de severidad alta en
   dependencias de desarrollo ya existentes; no se hizo un cambio de versiones fuera de alcance.
-- No hay validación visual ni prueba real de Chrome en esta PC todavía: menos de 2 GB libres y
-  CUA devolvió timeout. No se afirma funcionamiento de punta a punta basándose en el build.
+- En 570f4ac: runner backend **1006 passed**, lint/build/unitarios sin fallas, dos pruebas de UI
+  con fixtures pasaron. El frente S ejecutó Chrome real aislado en ar-it33940: nueve controles
+  pasaron y revisó la captura (teclado, mouse, navegación, historia, pestañas y cierre).
+- Cambio de perfiles: dos pruebas Node de catálogo/endpoint y doce de backend pasaron; lint y
+  build pasaron por el runner. Primer intento dentro del sandbox falló por permisos de entorno.
+- Falta probar el permiso de conexión en el Chrome habitual de Globant. No se afirma que se
+  haya conectado a ese perfil. Abrir un perfil y compartirlo son acciones distintas: Chrome
+  elige el perfil predeterminado cuando hay varios activos. La UI informa esa limitación.
 - Los requisitos, casos de navegador y mutación son propuestas; no se aprobaron ni fijaron baselines.
 - Audio, descargas, selector de archivos, extensiones e IME no están certificados para esta vista.
   La transmisión usa capturas periódicas; no tiene la fluidez de video de un escritorio remoto.
 
 No se identificaron otros bloqueos de seguridad en la revisión estática dentro de este alcance.
-Queda pendiente ejecutar la prueba con Chrome real y el recorrido visual en una PC con memoria.
+Queda pendiente verificar en vivo el Chrome habitual con permiso del usuario. El informe se
+conserva en docs por ese pendiente, según el pedido de Ariel.

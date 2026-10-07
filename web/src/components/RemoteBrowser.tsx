@@ -6,6 +6,8 @@ import "../remote-browser.css";
 
 type Tab = { id: string; title: string; url: string };
 type Reply = {
+  profiles?: {id: string; name: string}[]; prepared?: boolean;
+  connecting?: boolean; connectionError?: string; mode?: 'existing' | 'lienzo';
   running?: boolean; tabs?: Tab[]; id?: string; image?: string; width?: number; height?: number;
   back?: boolean; forward?: boolean; text?: string; dialog?: {type: string; message: string; defaultPrompt?: string} | null;
 };
@@ -46,6 +48,11 @@ function BrowserDesktop({peer}: {peer: Peer}) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [tab, setTab] = useState("");
   const [running, setRunning] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [mode, setMode] = useState<Reply['mode']>('existing');
+  const [profiles, setProfiles] = useState<NonNullable<Reply['profiles']>>([]);
+  const [profile, setProfile] = useState('');
+  const [prepared, setPrepared] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [draft, setDraft] = useState("");
@@ -74,6 +81,11 @@ function BrowserDesktop({peer}: {peer: Peer}) {
   const update = useCallback((result: Reply) => {
     if (!mounted.current) return;
     if (result.running !== undefined) setRunning(result.running);
+    if (result.connecting !== undefined) setConnecting(result.connecting);
+    if (result.mode) setMode(result.mode);
+    if (result.profiles) { setProfiles(result.profiles); setProfile(p => p || result.profiles?.[0]?.id || ''); }
+    if (result.prepared) setPrepared(true);
+    if (result.connectionError) setError(result.connectionError);
     if (result.tabs) {
       const next = result.tabs;
       setTabs(next);
@@ -83,6 +95,7 @@ function BrowserDesktop({peer}: {peer: Peer}) {
   useEffect(() => {
     let cancelled = false;
     if (peer.alive) call({action: "state"}).then(r => { if (!cancelled) update(r); }).catch(e => { if (!cancelled) report(e); });
+    if (peer.alive) call({action: "profiles"}).then(r => { if (!cancelled) update(r); }).catch(e => { if (!cancelled) report(e); });
     return () => { cancelled = true; };
   }, [call, peer.alive, update, report]);
 
@@ -93,10 +106,23 @@ function BrowserDesktop({peer}: {peer: Peer}) {
       if (!mounted.current) return;
       update(r);
       if (r.id) setTab(r.id);
-      setError("");
+      setError(r.connectionError ?? "");
     } catch (e) { report(e); }
     finally { if (mounted.current) setBusy(false); }
   }, [call, update, report]);
+
+  useEffect(() => {
+    if (!connecting || !peer.alive) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try { const r = await call({action: "state"}); if (!cancelled) update(r); }
+      catch (e) { if (!cancelled) { setConnecting(false); report(e); } }
+      if (!cancelled) timer = setTimeout(poll, 1000);
+    };
+    timer = setTimeout(poll, 1000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [call, connecting, peer.alive, update, report]);
 
   useEffect(() => {
     if (!running || !tab || !peer.alive || error) return;
@@ -162,15 +188,24 @@ function BrowserDesktop({peer}: {peer: Peer}) {
         const promise = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
         void promise.catch(report);
       }}>⛶</button>
-      {running && <button className="remote-stop" disabled={busy || !peer.alive} onClick={() => void action({action: "stop"})}>Cerrar Chrome</button>}
+      {running && <button className="remote-stop" disabled={busy || !peer.alive} onClick={() => void action({action: "stop"})}>{mode === 'existing' ? 'Desconectar' : 'Cerrar Chrome'}</button>}
     </div>
     <div className="remote-viewport" ref={viewport}>
       {ready && !frame.dialog && frame.tab === tab && frame.image && <RemoteScreen key={tab} image={frame.image} width={frame.width ?? 1280} height={frame.height ?? 800}
         send={events => call({action: "input", tab, events})} onError={report} onAddress={() => address.current?.focus()}
         onCopy={() => { void call({action: "copy", tab}).then(r => navigator.clipboard.writeText(r.text ?? "")).catch(report); }} />}
       {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1><p>{peer.diagnostico || "La PC no responde. Revisá que esté encendida y con Lienzo abierto."}</p><p>Cuando vuelva a conectarse, podés abrir Chrome desde acá.</p></div>
-        : error ? <div className="remote-empty" role="alert"><h1>No se pudo conectar con Chrome</h1><p>{error}</p><button onClick={() => void action({action: "state"})} disabled={busy}>Reconectar</button></div>
-        : !running ? <div className="remote-empty"><span className="remote-chrome-mark" aria-hidden="true">◉</span><h1>Chrome en {peer.name}</h1><p>Navegá desde acá. Las páginas se abren en esa PC, incluso sin monitor.</p><button className="remote-launch" disabled={busy} onClick={() => void action({action: "start"})}>{busy ? "Abriendo Chrome…" : "Abrir Chrome"}</button><small>Perfil propio de Lienzo · Los inicios de sesión se guardan en esa PC.</small></div>
+        : error ? <div className="remote-empty" role="alert"><h1>No se pudo conectar con Chrome</h1><p>{error}</p><button onClick={() => { setError(''); void action({action: "state"}); }} disabled={busy}>Revisar conexión</button><button onClick={() => void action({action: "stop"})} disabled={busy}>Volver a elegir</button></div>
+        : connecting ? <div className="remote-empty"><h1>Aceptá la conexión en Chrome</h1><p>Chrome muestra un aviso en {peer.name}. Elegí Permitir para compartir esa sesión con Lienzo.</p><button onClick={() => void action({action: "stop"})} disabled={busy}>Cancelar conexión</button></div>
+        : !running ? <div className="remote-empty remote-setup"><span className="remote-chrome-mark" aria-hidden="true">◉</span><h1>Chrome en {peer.name}</h1>
+          <p>Usá el Chrome de esa PC con tus sesiones abiertas.</p>
+          {profiles.length > 0 && <div className="remote-profile"><label>Perfil para abrir <select aria-label="Perfil de Chrome" value={profile} onChange={e => { setProfile(e.target.value); setPrepared(false); }}>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><button disabled={busy} onClick={() => void action({action: 'prepare', profile})}>Abrir perfil en esa PC</button></div>}
+          {prepared && <p role="status">Se pidió abrir el perfil en {peer.name}. Habilitá la conexión en la página que muestra Chrome.</p>}
+          <p>En ese Chrome, habilitá <code>chrome://inspect/#remote-debugging</code>. Al conectar, aceptá su aviso.</p>
+          <button className="remote-launch" disabled={busy} onClick={() => void action({action: "connect"})}>Conectar Chrome abierto</button>
+          <small>Chrome decide qué perfil comparte. Con varios abiertos usa su perfil predeterminado; abrir uno desde acá no cambia esa selección.</small>
+          <details><summary>Usar un perfil separado de Lienzo</summary><p>Funciona sin monitor y conserva sus propios inicios de sesión.</p><button disabled={busy} onClick={() => void action({action: 'start'})}>Abrir Chrome</button></details>
+        </div>
         : !tab ? <div className="remote-empty"><h1>No hay pestañas abiertas</h1><button disabled={busy} onClick={() => void action({action: "new", url: "about:blank"})}>Nueva pestaña</button></div>
         : frame.tab !== tab || !frame.image ? <div className="remote-empty">Cargando página…</div> : null}
       {ready && frame.tab === tab && frame.dialog && <BrowserDialog dialog={frame.dialog} onAnswer={(accept, text) => void action({action: "dialog", tab, accept, text})} />}

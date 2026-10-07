@@ -5,6 +5,7 @@ Ejecutar desde la raíz: py tests/browser_smoke.py
 
 import base64
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -98,6 +99,36 @@ def main():
                 call("close", tab=second)
                 assert len(call("state")["tabs"]) == 1
                 assert host.request({"action": "navigate", "tab": tab, "url": "file:///C:/Windows/win.ini"})[0] == 400
+                if sys.platform == "win32":
+                    # Sólo se comparte el Chrome de prueba, sin perfiles/cuentas del usuario.
+                    port = (Path(folder) / "chrome-remoto/DevToolsActivePort").read_text()
+                    mock_local = Path(folder) / "localappdata"
+                    mock_data = mock_local / "Google/Chrome/User Data"
+                    mock_data.mkdir(parents=True)
+                    (mock_data / "DevToolsActivePort").write_text(port)
+                    saved_local = os.environ.get("LOCALAPPDATA")
+                    attached = browser_remote.BrowserHost()
+                    try:
+                        os.environ["LOCALAPPDATA"] = str(mock_local)
+                        assert attached.request({"action": "connect"})[0] == 200
+                        for _ in range(40):
+                            code, result = attached.request({"action": "state"})
+                            assert code == 200, result
+                            if result.get("running"):
+                                break
+                            time.sleep(0.1)
+                        assert result.get("running"), result
+                        assert result["mode"] == "existing"
+                        assert attached.request({"action": "frame", "tab": tab, "width": 1280, "height": 800})[0] == 200
+                        assert attached.request({"action": "stop"})[0] == 200
+                        assert call("state")["running"], "Desconectar no debe cerrar el Chrome compartido"
+                        assert call("frame", tab=tab, width=1280, height=800)["image"]
+                    finally:
+                        attached.close()
+                        if saved_local is None:
+                            os.environ.pop("LOCALAPPDATA", None)
+                        else:
+                            os.environ["LOCALAPPDATA"] = saved_local
                 call("stop")
                 assert call("state")["running"] is False
                 print(
@@ -113,6 +144,7 @@ def main():
                                 "history",
                                 "tabs",
                                 "reject-file",
+                                "attach-and-detach-without-closing" if sys.platform == "win32" else "attach-not-tested",
                                 "stop",
                             ],
                         }

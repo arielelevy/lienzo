@@ -67,7 +67,7 @@ class BrowserHost:
                 self.close()
                 if data.get("action") == "state":
                     return 200, {"running": False, "tabs": []}
-                if data.get("action") != "start":
+                if data.get("action") not in ("start", "profiles", "prepare", "connect"):
                     return 409, {"error": "Chrome está cerrado. Abrilo desde Chrome remoto"}
                 self._start()
             self.process.stdin.write(json.dumps(data, ensure_ascii=True) + "\n")
