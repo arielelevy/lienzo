@@ -99,15 +99,22 @@ function ChromeWindow({peer}: {peer: Peer}) {
       if (document.hidden) { timer = setTimeout(poll, 1000); return; }
       try {
         const box = viewport.current?.getBoundingClientRect();
-        const scale = box ? Math.min(1, 3840 / box.width, 2160 / box.height) : 1;
+        const scale = box ? Math.min(globalThis.devicePixelRatio || 1, 3840 / box.width, 2160 / box.height) : 1;
         const r = await call({action: 'window-frame', window,
           ...(box && box.width >= 320 && box.height >= 200 ? {width: Math.round(box.width * scale), height: Math.round(box.height * scale)} : {})});
         if (!cancelled) { setFrame({...r, window}); timer = setTimeout(poll, 250); }
-      } catch (e) { if (!cancelled) report(e); }
+      } catch (e) {
+        if (cancelled) return;
+        const message = (e as Error).message;
+        if (message.includes('Esa ventana de Chrome ya no está disponible') || message.includes('Chrome está cerrado.')) {
+          try { await refresh(); if (!cancelled) timer = setTimeout(poll, 500); }
+          catch (refreshError) { if (!cancelled) report(refreshError); }
+        } else report(e);
+      }
     };
     void poll();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [call, window, peer.alive, error, report]);
+  }, [call, window, peer.alive, error, report, refresh]);
   const open = async () => {
     setBusy(true);
     try {

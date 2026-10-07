@@ -108,3 +108,14 @@ de la ventana remota. Revisión estática: no se envía entrada si el foco no co
 aceptan ventanas de otro ejecutable, no se alteran permisos ni configuración de Chrome.
 Explorer y Analyser usan capturas reales; Designer conserva controles mínimos; Executor
 registra capturas y build de despliegue; Detective no certifica interacción hasta observarla.
+
+La observación DOM midió devicePixelRatio=1.5: dimensionar Chrome en píxeles CSS producía
+otra ampliación al presentar la captura. Ahora se solicita tamaño físico según esa relación,
+con los límites anteriores. Si la ventana desaparece o el worker se reinicia, se vuelve a leer
+el catálogo sin repetir clics ni teclas. Se conserva el socket CDP hasta desconexión explícita,
+cierre de Chrome o reinicio del servidor. No existe en Chrome la opción de persistir el
+consentimiento de auto-connect: https://github.com/ChromeDevTools/chrome-devtools-mcp/issues/825.
+No se implementa aprobación automática del aviso ni se modifica seguridad de Chrome.
+Revisión estática: escala de imagen y coordenadas comparten píxeles de origen; refresco
+sólo de lecturas, detenido al cambiar/desmontar vista. Grabación y observación solicitadas
+por Ariel constituyen la evidencia de Executor; sin certificación global ni baseline aceptado.
