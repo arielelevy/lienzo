@@ -505,11 +505,12 @@ el valor vacío corta los helpers heredados. No cambies el helper global de los 
 
 ```powershell
 git config --local --get-all credential.helper
-git config --local credential.helper ""
+git --% config --local credential.helper ""
 git config --local --add credential.helper "!gh auth git-credential"
 git -c credential.interactive=false ls-remote --heads origin
 ```
 
+En PowerShell, `--%` conserva el argumento vacío. En bash, usá `git config --local credential.helper ''`.
 El switch de `gh` cambia la cuenta activa para ese host en toda la PC. Revalidá `gh api user`
 antes de operar otro repo; coordiná el cambio si hay sesiones trabajando con otra cuenta.
 Un `Repository not found` puede ser falta de acceso con la cuenta actual o un remote incorrecto.
