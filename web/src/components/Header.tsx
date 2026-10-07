@@ -74,6 +74,7 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
   return (
     <header>
       <h1>Lienzo</h1>
+      <a className="chrome-link" href="/chrome" target="_blank" rel="noopener noreferrer" title="Abrir el navegador de otra PC en una pestaña nueva">Chrome remoto</a>
       <span className={`dot ${connected ? "on" : ""}`} title={status} aria-label={status} />
       <div className="search" role="search">
         <input

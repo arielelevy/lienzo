@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 // En desarrollo, Vite sirve la UI en 5173 y reenvia la API al lienzo-server (7321).
 // En produccion, `npm run build` deja web/dist y lienzo-server lo sirve directo.
 const api = "http://127.0.0.1:7321";
-const paths = ["/sessions", "/pending", "/events", "/rescan", "/health"];
+const paths = ["/sessions", "/pending", "/events", "/rescan", "/health", "/auth", "/peers", "/browser"];
 
 export default defineConfig({
   plugins: [react()],

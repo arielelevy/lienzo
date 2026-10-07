@@ -126,7 +126,12 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
    *  hay que hacer click desde el tablero de la PC que la tiene. */
   const pasarGit = async (p: Peer) => {
     const malas = Object.entries(p.health?.git_auth ?? {}).filter(([, v]) => v === "vencida" || v === "no_verificable");
-    if (!malas.length) return avisar(p, "es la red o git colgado, no la credencial: pasar otra no lo arregla");
+    if (!malas.length) {
+      const desconocido = Object.values(p.health?.git_auth ?? {}).includes("error");
+      return avisar(p, desconocido
+        ? "Git devolvió un error sin clasificar. Revisá el repositorio y la cuenta activa; este aviso no prueba que sea la red ni que haya vencido la credencial."
+        : "es la red o git colgado, no la credencial: pasar otra no lo arregla");
+    }
     if (p.local) return avisar(p, "es esta PC: hacé click desde el tablero de la PC que tiene la credencial");
     avisar(p, "pasando la credencial…");
     const res: string[] = [];

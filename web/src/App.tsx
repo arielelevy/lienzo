@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, isMissingRoute, pendingApi, rulesApi, sessionsApi, type AuthInfo } from "./api";
 import { Board, colOf, norm, passesFilters } from "./components/Board";
+import { RemoteBrowser } from "./components/RemoteBrowser";
 import { allAgents } from "./agents";
 import { canWrite, hasConsole, shortName, toggled } from "./names";
 import { Enroll } from "./components/Enroll";
@@ -97,6 +98,7 @@ export default function App() {
     );
   }
   if (authInfo.configured && !authInfo.authenticated) return <Login onDone={refreshAuth} mode={authInfo.mode} initialPassphrase={prefill} />;
+  if (window.location.pathname.replace(/\/+$/, "") === "/chrome") return <RemoteBrowser />;
   return <Dashboard authInfo={authInfo} refreshAuth={refreshAuth} onSetup={() => setShowSetup(true)} />;
 }
 

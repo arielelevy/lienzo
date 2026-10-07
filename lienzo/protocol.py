@@ -3,7 +3,17 @@
 import state
 
 VERSION = 1
-CAPABILITIES = ("rules.create", "rules.retarget", "sessions.actions", "snapshot", "restore", "secrets", "xfer", "run.named")
+CAPABILITIES = (
+    "rules.create",
+    "rules.retarget",
+    "sessions.actions",
+    "snapshot",
+    "restore",
+    "secrets",
+    "xfer",
+    "run.named",
+    "browser.remote",
+)
 
 
 def info() -> dict:

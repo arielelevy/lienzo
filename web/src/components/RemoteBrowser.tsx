@@ -1,0 +1,240 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, isMissingRoute } from "../api";
+import type { Peer } from "../types";
+import { usePeers } from "./PcStrip";
+import "../remote-browser.css";
+
+type Tab = { id: string; title: string; url: string };
+type Reply = {
+  running?: boolean; tabs?: Tab[]; id?: string; image?: string; width?: number; height?: number;
+  back?: boolean; forward?: boolean; text?: string; dialog?: {type: string; message: string; defaultPrompt?: string} | null;
+};
+type Command = Record<string, unknown>;
+const modifiers = (e: {altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean}) =>
+  Number(e.altKey) + Number(e.ctrlKey) * 2 + Number(e.metaKey) * 4 + Number(e.shiftKey) * 8;
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(n)));
+
+export function RemoteBrowser() {
+  const peers = usePeers();
+  const [selected, setSelected] = useState(() => new URLSearchParams(location.search).get("pc") ?? "");
+  if (!selected && peers.length) {
+    const initial = peers.find(p => !p.local) ?? peers.find(p => p.local);
+    if (initial) setSelected(initial.pc_id);
+  }
+  const pc = selected;
+  const peer = peers.find(p => p.pc_id === pc);
+  const choose = (id: string) => {
+    setSelected(id);
+    history.replaceState(null, "", `/chrome?pc=${encodeURIComponent(id)}`);
+  };
+  return <main className="remote-browser">
+    <div className="remote-top">
+      <a href="/" className="remote-home" title="Volver al tablero">Lienzo</a>
+      <span className="remote-brand">Chrome remoto</span>
+      <label className="remote-pc">PC
+        <select aria-label="PC del navegador" value={pc} onChange={e => choose(e.target.value)}>
+          {!peers.length && <option value="">Buscando PCs…</option>}
+          {peers.map(p => <option key={p.pc_id} value={p.pc_id}>{p.name}{p.local ? " (esta PC)" : ""}{p.alive ? "" : " · desconectada"}</option>)}
+        </select>
+      </label>
+    </div>
+    {peer ? <BrowserDesktop key={peer.pc_id} peer={peer} /> : <div className="remote-empty">No se encuentra la PC. Revisá la conexión desde el tablero.</div>}
+  </main>;
+}
+
+function BrowserDesktop({peer}: {peer: Peer}) {
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [tab, setTab] = useState("");
+  const [running, setRunning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [frame, setFrame] = useState<Reply & {tab?: string}>({});
+  const address = useRef<HTMLInputElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { document.title = `Chrome · ${peer.name} · Lienzo`; }, [peer.name]);
+
+  const call = useCallback((command: Command): Promise<Reply> => {
+    const request = chain.current.then(() => {
+      if (!mounted.current) throw new Error("La vista se cerró");
+      return api.post<Reply>("/browser", {pc: peer.pc_id, ...command});
+    });
+    chain.current = request.catch(() => undefined); // la cola sigue; el consumidor informa cada error.
+    return request;
+  }, [peer.pc_id]);
+  const report = useCallback((e: unknown) => {
+    if (mounted.current) setError(isMissingRoute(e)
+      ? "Actualizá y reiniciá Lienzo en esta PC para usar Chrome remoto."
+      : (e as Error).message);
+  }, []);
+  const update = useCallback((result: Reply) => {
+    if (!mounted.current) return;
+    if (result.running !== undefined) setRunning(result.running);
+    if (result.tabs) {
+      const next = result.tabs;
+      setTabs(next);
+      setTab(current => next.some(t => t.id === current) ? current : (next[0]?.id ?? ""));
+    }
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    if (peer.alive) call({action: "state"}).then(r => { if (!cancelled) update(r); }).catch(e => { if (!cancelled) report(e); });
+    return () => { cancelled = true; };
+  }, [call, peer.alive, update, report]);
+
+  const action = useCallback(async (command: Command) => {
+    setBusy(true);
+    try {
+      const r = await call(command);
+      if (!mounted.current) return;
+      update(r);
+      if (r.id) setTab(r.id);
+      setError("");
+    } catch (e) { report(e); }
+    finally { if (mounted.current) setBusy(false); }
+  }, [call, update, report]);
+
+  useEffect(() => {
+    if (!running || !tab || !peer.alive || error) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (document.hidden) { timer = setTimeout(poll, 1000); return; }
+      const rect = viewport.current?.getBoundingClientRect();
+      try {
+        const r = await call({action: "frame", tab, width: clamp(rect?.width ?? 1280, 320, 1920), height: clamp(rect?.height ?? 800, 240, 1080)});
+        if (cancelled) return;
+        setFrame(previous => ({...previous, ...r, tab, image: r.image ?? (previous.tab === tab ? previous.image : undefined)}));
+        update(r);
+        timer = setTimeout(poll, 220);
+      } catch (e) { if (!cancelled) report(e); }
+    };
+    void poll();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [call, running, tab, peer.alive, error, update, report]);
+
+  const active = tabs.find(t => t.id === tab);
+  const shownUrl = active?.url === "about:blank" ? "" : (active?.url ?? "");
+  const ready = running && peer.alive && !!tab && !error;
+  const navigate = () => {
+    const text = draft.trim();
+    if (!text) { setEditing(false); return; }
+    const url = /^(localhost|[\w.-]+\.\w+|\d+(?:\.\d+){3}):\d+(?:\/|$)/i.test(text) ? `http://${text}`
+      : /^[a-z][a-z\d+.-]*:/i.test(text) ? text
+      : /\s/.test(text) || (!text.includes(".") && !text.startsWith("localhost"))
+        ? `https://www.google.com/search?q=${encodeURIComponent(text)}` : `https://${text}`;
+    setEditing(false);
+    void action({action: "navigate", tab, url});
+    address.current?.blur();
+    viewport.current?.querySelector<HTMLElement>(".remote-screen")?.focus();
+  };
+  const selectTab = (id: string) => {
+    setTab(id); setEditing(false); setError("");
+    void action({action: "activate", tab: id});
+  };
+  return <>
+    <div className="remote-tabs" role="tablist" aria-label="Pestañas remotas">
+      {tabs.map(t => <div className={`remote-tab ${t.id === tab ? "selected" : ""}`} key={t.id}>
+        <button role="tab" aria-selected={t.id === tab} onClick={() => selectTab(t.id)} disabled={!peer.alive || busy} title={t.url}>
+          <span aria-hidden="true">◉</span><span>{t.title || "Nueva pestaña"}</span>
+        </button>
+        <button className="remote-close-tab" aria-label={`Cerrar ${t.title || "pestaña"}`} disabled={!peer.alive || busy} onClick={() => {
+          void action({action: "close", tab: t.id}).then(() => call({action: "state"}).then(update).catch(report));
+        }}>×</button>
+      </div>)}
+      {running && <button className="remote-new" aria-label="Nueva pestaña remota" disabled={busy || !peer.alive} onClick={() => void action({action: "new", url: "about:blank"})}>+</button>}
+    </div>
+    <div className="remote-toolbar">
+      <button aria-label="Atrás" title="Atrás" disabled={!ready || !frame.back || busy} onClick={() => void action({action: "history", tab, direction: -1})}>←</button>
+      <button aria-label="Adelante" title="Adelante" disabled={!ready || !frame.forward || busy} onClick={() => void action({action: "history", tab, direction: 1})}>→</button>
+      <button aria-label="Recargar página remota" title="Recargar" disabled={!ready || busy} onClick={() => void action({action: "reload", tab})}>↻</button>
+      <form onSubmit={e => { e.preventDefault(); navigate(); }}>
+        <span aria-hidden="true">◎</span>
+        <input ref={address} aria-label="Dirección o búsqueda" placeholder="Buscar en Google o escribir una URL" value={editing ? draft : shownUrl} disabled={!running || !tab || !peer.alive}
+          onFocus={e => { setDraft(shownUrl); setEditing(true); e.target.select(); }} onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === "Escape") { setEditing(false); e.currentTarget.blur(); } }} />
+      </form>
+      <button title="Pantalla completa (también podés usar F11)" aria-label="Pantalla completa" onClick={() => {
+        const promise = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+        void promise.catch(report);
+      }}>⛶</button>
+      {running && <button className="remote-stop" disabled={busy || !peer.alive} onClick={() => void action({action: "stop"})}>Cerrar Chrome</button>}
+    </div>
+    <div className="remote-viewport" ref={viewport}>
+      {ready && !frame.dialog && frame.tab === tab && frame.image && <RemoteScreen key={tab} image={frame.image} width={frame.width ?? 1280} height={frame.height ?? 800}
+        send={events => call({action: "input", tab, events})} onError={report} onAddress={() => address.current?.focus()}
+        onCopy={() => { void call({action: "copy", tab}).then(r => navigator.clipboard.writeText(r.text ?? "")).catch(report); }} />}
+      {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1><p>{peer.diagnostico || "La PC no responde. Revisá que esté encendida y con Lienzo abierto."}</p><p>Cuando vuelva a conectarse, podés abrir Chrome desde acá.</p></div>
+        : error ? <div className="remote-empty" role="alert"><h1>No se pudo conectar con Chrome</h1><p>{error}</p><button onClick={() => void action({action: "state"})} disabled={busy}>Reconectar</button></div>
+        : !running ? <div className="remote-empty"><span className="remote-chrome-mark" aria-hidden="true">◉</span><h1>Chrome en {peer.name}</h1><p>Navegá desde acá. Las páginas se abren en esa PC, incluso sin monitor.</p><button className="remote-launch" disabled={busy} onClick={() => void action({action: "start"})}>{busy ? "Abriendo Chrome…" : "Abrir Chrome"}</button><small>Perfil propio de Lienzo · Los inicios de sesión se guardan en esa PC.</small></div>
+        : !tab ? <div className="remote-empty"><h1>No hay pestañas abiertas</h1><button disabled={busy} onClick={() => void action({action: "new", url: "about:blank"})}>Nueva pestaña</button></div>
+        : frame.tab !== tab || !frame.image ? <div className="remote-empty">Cargando página…</div> : null}
+      {ready && frame.tab === tab && frame.dialog && <BrowserDialog dialog={frame.dialog} onAnswer={(accept, text) => void action({action: "dialog", tab, accept, text})} />}
+    </div>
+    <div className="remote-status"><span className={peer.alive ? "remote-online" : ""}>●</span> {peer.name}<span>{busy ? "Procesando…" : running ? "Chrome remoto" : "Chrome cerrado"}</span><small>F11 · Pantalla completa</small></div>
+  </>;
+}
+
+function BrowserDialog({dialog, onAnswer}: {dialog: NonNullable<Reply["dialog"]>; onAnswer: (accept: boolean, text: string) => void}) {
+  const [text, setText] = useState(dialog.defaultPrompt ?? "");
+  return <div className="remote-dialog" role="dialog" aria-label="Mensaje de la página"><div>
+    <p>{dialog.message}</p>
+    {dialog.type === "prompt" && <input aria-label="Respuesta a la página" value={text} onChange={e => setText(e.target.value)} />}
+    <button onClick={() => onAnswer(false, "")}>Cancelar</button><button onClick={() => onAnswer(true, text)}>Aceptar</button>
+  </div></div>;
+}
+
+function RemoteScreen({image, width, height, send, onError, onAddress, onCopy}: {
+  image: string; width: number; height: number; send: (events: Command[]) => Promise<unknown>; onError: (e: unknown) => void; onAddress: () => void; onCopy: () => void;
+}) {
+  const element = useRef<HTMLDivElement>(null);
+  const pending = useRef<Command[]>([]);
+  const sending = useRef(false);
+  const live = useRef(false);
+  const sender = useRef(send);
+  useEffect(() => { sender.current = send; }, [send]);
+  useEffect(() => {
+    live.current = true;
+    const timer = setInterval(() => {
+      if (sending.current || !pending.current.length) return;
+      const batch = pending.current.splice(0, 64);
+      sending.current = true;
+      void sender.current(batch).catch(e => { pending.current = []; onError(e); }).finally(() => { sending.current = false; });
+    }, 30);
+    return () => { live.current = false; clearInterval(timer); pending.current = []; };
+  }, [onError]);
+  const enqueue = (event: Command) => {
+    if (!live.current) return;
+    if (pending.current.length >= 128) { pending.current = []; onError(new Error("La conexión no sigue el ritmo del teclado. Reconectá antes de continuar.")); return; }
+    if (event.type === "mouseMoved" && pending.current.at(-1)?.type === "mouseMoved") pending.current.pop();
+    pending.current.push(event);
+  };
+  const mouse = (e: React.MouseEvent, type: string) => {
+    const box = element.current!.getBoundingClientRect();
+    enqueue({kind: "mouse", type, x: clamp((e.clientX - box.left) * width / box.width, 0, width),
+      y: clamp((e.clientY - box.top) * height / box.height, 0, height),
+      button: type === "mouseMoved" ? "none" : ["left", "middle", "right"][e.button],
+      buttons: e.buttons, modifiers: modifiers(e), clickCount: clamp(e.detail, 0, 3),
+      ...(type === "mouseWheel" ? {deltaX: clamp((e as React.WheelEvent).deltaX, -4000, 4000), deltaY: clamp((e as React.WheelEvent).deltaY, -4000, 4000)} : {}),
+    });
+  };
+  const key = (e: React.KeyboardEvent, type: string) => {
+    if (e.key === "F11" || (e.ctrlKey && e.key.toLowerCase() === "v")) return;
+    e.preventDefault(); e.stopPropagation();
+    if (e.ctrlKey && e.key.toLowerCase() === "l") { if (type === "keyDown") onAddress(); return; }
+    if (e.ctrlKey && e.key.toLowerCase() === "c") { if (type === "keyDown") onCopy(); return; }
+    enqueue({kind: "key", type, key: e.key, code: e.code, keyCode: e.keyCode, modifiers: modifiers(e)});
+  };
+  return <div ref={element} className="remote-screen" tabIndex={0} role="application" aria-label="Página remota: mouse y teclado"
+    onKeyDown={e => key(e, "keyDown")} onKeyUp={e => key(e, "keyUp")}
+    onPointerDown={e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus(); mouse(e, "mousePressed"); }}
+    onPointerUp={e => { e.preventDefault(); mouse(e, "mouseReleased"); e.currentTarget.releasePointerCapture(e.pointerId); }} onPointerMove={e => mouse(e, "mouseMoved")}
+    onWheel={e => mouse(e, "mouseWheel")} onContextMenu={e => e.preventDefault()}
+    onPaste={e => { e.preventDefault(); enqueue({kind: "text", text: e.clipboardData.getData("text/plain")}); }}>
+    <img src={`data:image/jpeg;base64,${image}`} alt="Contenido de la pestaña remota" draggable={false} />
+  </div>;
+}

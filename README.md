@@ -94,6 +94,31 @@ Click en una tarjeta la elige y resalta sus conexiones; doble click abre el pane
 Ctrl+click arma una selección múltiple: Enviar a todas, Interrumpir (un Esc a cada una) o
 Marcar las visibles.
 
+### Chrome remoto
+
+El enlace **Chrome remoto** del encabezado abre `/chrome` en una pestaña nueva del navegador.
+Elegí una PC y tocá **Abrir Chrome**. La vista tiene pestañas, dirección/búsqueda, atrás, adelante,
+recarga y pantalla completa (también F11). Las páginas, el teclado y el mouse se ejecutan en la PC
+elegida. Chrome corre en modo headless: no necesita monitor. La PC debe estar encendida y con
+Lienzo abierto; perder la conexión no abre un Chrome sustituto en otra máquina.
+
+Las dos PCs necesitan esta versión de Lienzo; la que ejecuta Chrome necesita **Chrome instalado y
+Node.js 24 o posterior**. Usa un perfil propio persistente en `~/.lienzo/chrome-remoto`, separado
+del Chrome personal. Volver al tablero o cerrar la pestaña local conserva el navegador remoto;
+**Cerrar Chrome** cierra su proceso. Se admiten hasta doce pestañas. El acceso se realiza desde el
+tablero local de una PC emparejada, no desde el túnel público del celular.
+
+El canal de peers autentica los pedidos y cifra el contenido y las entradas del navegador. El
+puerto de control de Chrome queda en loopback, sin abrir otro puerto en la LAN. No acepta comandos
+CDP arbitrarios ni navegación directa a `file:` o `javascript:`. Ctrl+C copia texto seleccionado y
+Ctrl+V pega texto; los diálogos JavaScript se contestan dentro de la vista. La imagen se actualiza
+por capturas: no transmite audio. Las descargas están deshabilitadas; carga de archivos, ventanas
+del sistema y extensiones no están integradas en esta versión.
+
+Prueba aislada propuesta: `py tests/browser_smoke.py` (Chrome real, perfil temporal y web local,
+sin cuentas ni sitios externos). UI con fixtures: `chrome.spec.ts`. Su ejecución y las limitaciones
+de la corrida se registran con `pruebas-agenticas`; no se fijan baselines automáticamente.
+
 ### La tarjeta
 
 Título (✎ para renombrar), último pedido, lo que el agente viene escribiendo en este turno, pasos,

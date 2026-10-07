@@ -32,6 +32,7 @@ sys.path.insert(0, HERE)
 import auth
 import autoaprobar
 import beacon
+import browser_api
 import federation
 import health
 import identity
@@ -144,6 +145,7 @@ MAX_ATTACH = 64 * 1024 * 1024
 RUTAS_PUBLICAS = {
     ("GET", ()),  # la pagina
     ("GET", ("docs",)),  # la misma pagina, el front muestra la referencia
+    ("GET", ("chrome",)),  # la vista remota conserva el login de App
     ("GET", ("favicon.svg",)),
     ("GET", ("health",)),
     ("GET", ("auth",)),
@@ -1314,7 +1316,7 @@ class Handler(JsonHandler):
         if parts is None:
             return
         try:
-            if not parts or parts == ["docs"]:
+            if not parts or parts in (["docs"], ["chrome"]):
                 # /docs es la misma pagina: el front mira la ruta y muestra la referencia
                 index = os.path.join(DIST, "index.html")
                 if not os.path.exists(index):
@@ -1478,6 +1480,11 @@ class Handler(JsonHandler):
                 return self._setup()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
+            if parts == ["browser"]:
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "Chrome remoto se maneja desde la PC de Lienzo"})
+                code, res = browser_api.dispatch(self._json_body())
+                return self._json(code, res)
             if parts == ["rescan"]:
                 threading.Thread(target=sweep_once, daemon=True).start()
                 return self._json(202, {"ok": True})
@@ -1917,6 +1924,9 @@ class PeerHandler(JsonHandler):
         self._dispatch("DELETE")
 
     def _route(self, method: str, rest: list[str], raw: bytes, pc_id: str | None) -> None:
+        if method == "POST" and rest == ["browser"]:
+            code, res = browser_api.from_peer(self._body_json(raw), _peer_key(pc_id))
+            return self._json(code, res)
         if method == "POST" and rest[:1] == ["xfer"]:
             # copia entre PCs (xfer.py): miles de pedidos por trabajo, no van uno por uno al log
             code, res = xfer.atender_peer(rest[1:], raw)

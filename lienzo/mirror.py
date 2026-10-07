@@ -412,7 +412,7 @@ class Mirror:
             pm.latencias_ms.append(ms)
         if code >= 400:
             self.log(f"→ {nombre} {method} {path}: {code} {(res or {}).get('error')}")
-        elif method != "GET" or ms > LENTO_MS:
+        elif path != "/browser" and (method != "GET" or ms > LENTO_MS):
             # las acciones (enviar, aprobar, lanzar) quedan en el log con su latencia; las lecturas
             # (pantalla cada pocos segundos) solo si fueron lentas, para no llenarlo
             self.log(f"→ {nombre} {method} {path}: {code} ({ms:.0f} ms)")

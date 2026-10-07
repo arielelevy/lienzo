@@ -45,10 +45,9 @@ def _subclave(clave: bytes, etiqueta: bytes) -> bytes:
 
 
 def _keystream(k: bytes, nonce: bytes, n: int) -> bytes:
-    bloques, i = [], 0
-    while sum(len(b) for b in bloques) < n:
+    bloques = []
+    for i in range((n + 31) // 32):
         bloques.append(hmac.new(k, nonce + i.to_bytes(8, "big"), hashlib.sha256).digest())
-        i += 1
     return b"".join(bloques)[:n]
 
 
