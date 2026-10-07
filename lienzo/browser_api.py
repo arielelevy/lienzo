@@ -23,12 +23,14 @@ def dispatch(data):
     if len(json.dumps(command)) > 65536:
         return 400, {"error": "Pedido demasiado grande"}
     if pc == identity.pc_id():
-        return browser_remote.HOST.request(command)
+        return browser_remote.request(command)
     conn = mirror.MIRROR.conn_of(pc)
     if conn is None:
         return 404, {"error": "La PC elegida no está emparejada"}
     if mirror.MIRROR.supports(pc, "browser.remote") is False:
         return 409, {"error": "Actualizá y reiniciá Lienzo en la otra PC para usar Chrome remoto"}
+    if command.get("action") in ("windows", "window-frame", "window-input", "window-release") and mirror.MIRROR.supports(pc, "browser.window") is False:
+        return 409, {"error": "Actualizá y reiniciá Lienzo en la otra PC para ver su ventana real de Chrome"}
     key = channel_key(conn.key)
     request_id = secrets.token_hex(16)
     body = secretos.cifrar(key, json.dumps({"id": request_id, "command": command}))
@@ -50,7 +52,7 @@ def from_peer(data, pair_key):
         request = json.loads(secretos.descifrar(key, data))
         if not isinstance(request["id"], str) or len(request["id"]) != 32:
             raise ValueError("id invalido")
-        code, result = browser_remote.HOST.request(request["command"])
+        code, result = browser_remote.request(request["command"])
         return 200, secretos.cifrar(key, json.dumps({"id": request["id"], "status": code, "result": result}))
     except ValueError, KeyError, TypeError:
         return 400, {"error": "Pedido de Chrome remoto inválido"}

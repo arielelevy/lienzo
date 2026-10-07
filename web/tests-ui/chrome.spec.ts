@@ -19,6 +19,7 @@ test("abre una pestaña de Chrome remoto, navega y mantiene el destino", async (
     await r.fulfill({json: {running, mode: 'lienzo', profiles: [], tabs: running ? [{id: "test-tab", title: "Prueba remota", url}] : [], image: "/9j/2Q==", width: 1280, height: 800, back: false, forward: false}});
   });
   await page.goto("/chrome");
+  await page.getByRole('button', {name: 'Vista por pestañas', exact: true}).click();
   await expect(page.getByRole("heading", {name: "Chrome en PC sin monitor"})).toBeVisible();
   await page.getByText('Usar un perfil separado de Lienzo', {exact: true}).click();
   await page.getByRole("button", {name: "Abrir Chrome", exact: true}).click();
@@ -62,6 +63,7 @@ test('ofrece perfiles reales, espera permiso y desconecta sin cerrar Chrome', as
       tabs: running ? [{id: 'one', title: 'Sesión habitual', url: 'about:blank'}] : [], image: '/9j/2Q=='}});
   });
   await page.goto('/chrome');
+  await page.getByRole('button', {name: 'Vista por pestañas', exact: true}).click();
   await expect(page.getByRole('combobox', {name: 'Perfil de Chrome'})).toHaveValue('Default');
   await page.getByRole('button', {name: 'Abrir perfil en esa PC'}).click();
   expect(calls.find(d => d.action === 'prepare')).toEqual({pc: 'remote', action: 'prepare', profile: 'Default'});
@@ -73,4 +75,25 @@ test('ofrece perfiles reales, espera permiso y desconecta sin cerrar Chrome', as
   await page.getByRole('button', {name: 'Desconectar', exact: true}).click();
   await expect(page.getByRole('button', {name: 'Conectar Chrome abierto'})).toBeVisible();
   expect(calls.some(d => d.action === 'start')).toBeFalsy();
+});
+
+test('muestra la ventana completa sin pedir depuración remota', async ({page}) => {
+  const calls: Record<string, unknown>[] = [];
+  await page.route('**/auth', r => r.fulfill({json: {configured: false, authenticated: true, local: true}}));
+  await page.route('**/peers', r => r.fulfill({json: [{pc_id: 'native-peer', name: 'Globant PC', alive: true, local: false}]}));
+  await page.route('**/browser', r => {
+    const d = r.request().postDataJSON(); calls.push(d);
+    const response = d.action === 'windows' ? {windows: [{id: '123', title: 'Chrome Globant'}]}
+      : d.action === 'profiles' ? {profiles: [{id: 'Default', name: 'globant.com'}]}
+      : d.action === 'window-frame' ? {image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=', format: 'png', width: 1280, height: 800} : {ok: true};
+    return r.fulfill({json: response});
+  });
+  await page.goto('/chrome');
+  await expect(page.getByRole('combobox', {name: 'Perfil del Chrome real'})).toHaveValue('Default');
+  await expect(page.getByRole('combobox', {name: 'Ventana de Chrome'})).toHaveValue('123');
+  await expect(page.getByRole('application', {name: 'Página remota: mouse y teclado'})).toBeVisible();
+  await page.getByRole('application', {name: 'Página remota: mouse y teclado'}).click({position: {x: 50, y: 50}});
+  await expect.poll(()=>calls.filter(d=>d.action === 'window-input').length).toBeGreaterThan(0);
+  expect(calls.some(d=>d.action === 'connect' || d.action === 'start')).toBeFalsy();
+  expect(calls.every(d=>d.pc === 'native-peer')).toBeTruthy();
 });

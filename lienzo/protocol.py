@@ -13,6 +13,7 @@ CAPABILITIES = (
     "xfer",
     "run.named",
     "browser.remote",
+    "browser.window",
 )
 
 

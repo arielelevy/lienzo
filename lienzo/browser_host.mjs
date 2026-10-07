@@ -208,9 +208,9 @@ async function stop() {
   endpoint = '';
 }
 
-async function prepareProfile(id) {
+async function prepareProfile(id, setup = true) {
   if (!profiles().some(p => p.id === id)) fail('Elegí un perfil existente de esa PC');
-  const child = spawn(executable(), [`--profile-directory=${id}`, '--new-window', 'chrome://inspect/#remote-debugging'],
+  const child = spawn(executable(), [`--profile-directory=${id}`, '--new-window', setup ? 'chrome://inspect/#remote-debugging' : 'about:blank'],
     {detached: true, windowsHide: false, stdio: 'ignore'});
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
   child.unref();
@@ -246,7 +246,10 @@ function connectExisting() {
 async function handle(d) {
   if (!d || typeof d !== 'object') fail('Pedido inválido');
   if (d.action === 'profiles') return {profiles: profiles()};
-  if (d.action === 'prepare') return prepareProfile(d.profile);
+  if (d.action === 'prepare') {
+    if (d.setup !== undefined && typeof d.setup !== 'boolean') fail('Modo de apertura inválido');
+    return prepareProfile(d.profile, d.setup);
+  }
   if (d.action === 'connect') return connectExisting();
   if (d.action === 'start') {
     if (browser || connecting) fail('Desconectá la sesión actual antes de abrir otra', 409);

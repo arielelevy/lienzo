@@ -6,6 +6,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -13,18 +14,25 @@ import state
 
 
 class BrowserHost:
-    def __init__(self):
+    def __init__(self, window=False):
+        self.window = window
         self.lock = threading.Lock()
         self.process = None
         self.responses = queue.Queue()
 
     def _start(self):
-        node = shutil.which("node")
-        if not node:
-            raise RuntimeError("Instalá Node.js 24 o posterior en esta PC para usar Chrome remoto")
+        if self.window:
+            if os.name != "nt":
+                raise RuntimeError("La vista de ventana real requiere Windows en esa PC")
+            command = [sys.executable, str(Path(__file__).with_name("browser_window.py"))]
+        else:
+            node = shutil.which("node")
+            if not node:
+                raise RuntimeError("Instalá Node.js 24 o posterior en esta PC para usar Chrome remoto")
+            command = [node, str(Path(__file__).with_name("browser_host.mjs")), str(Path(state.LIENZO) / "chrome-remoto")]
         self.responses = queue.Queue()
         self.process = subprocess.Popen(
-            [node, str(Path(__file__).with_name("browser_host.mjs")), str(Path(state.LIENZO) / "chrome-remoto")],
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -67,7 +75,7 @@ class BrowserHost:
                 self.close()
                 if data.get("action") == "state":
                     return 200, {"running": False, "tabs": []}
-                if data.get("action") not in ("start", "profiles", "prepare", "connect"):
+                if data.get("action") not in ("start", "profiles", "prepare", "connect", "windows"):
                     return 409, {"error": "Chrome está cerrado. Abrilo desde Chrome remoto"}
                 self._start()
             self.process.stdin.write(json.dumps(data, ensure_ascii=True) + "\n")
@@ -86,4 +94,12 @@ class BrowserHost:
 
 
 HOST = BrowserHost()
+WINDOW = BrowserHost(window=True)
 atexit.register(HOST.close)
+atexit.register(WINDOW.close)
+
+
+def request(data):
+    if isinstance(data, dict) and data.get("action") in ("windows", "window-frame", "window-input", "window-release"):
+        return WINDOW.request(data)
+    return HOST.request(data)
