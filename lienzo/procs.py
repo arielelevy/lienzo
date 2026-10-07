@@ -13,9 +13,11 @@ import json
 import os
 
 try:
-    from . import coda, procinfo, subproc
+    from . import agentes, coda, kiro, procinfo, subproc
 except ImportError:  # corriendo como script (python lienzo/hook.py) o con lienzo/ en sys.path
+    import agentes
     import coda
+    import kiro
     import procinfo
     import subproc
 
@@ -95,7 +97,7 @@ $ErrorActionPreference='SilentlyContinue'
 $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate
 $byId = @{}; foreach ($p in $all) { $byId[$p.ProcessId] = $p }
 $out = @()
-foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' -or $_.Name -eq 'node.exe' -or $_.Name -eq 'pi.exe' -or $_.Name -eq 'coda.exe' })) {
+foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' -or $_.Name -eq 'node.exe' -or $_.Name -eq 'pi.exe' -or $_.Name -eq 'coda.exe' -or $_.Name -eq 'kiro-cli.exe' })) {
   $par = $byId[$a.ParentProcessId]; $gp = if ($par) { $byId[$par.ParentProcessId] } else { $null }
   $out += [pscustomobject]@{
     pid = $a.ProcessId; exe = $a.ExecutablePath; cmd = $a.CommandLine
@@ -163,8 +165,15 @@ def sweep() -> list[dict]:
                 "grandparent": p.get("grandparent"),
                 "in_vscode": in_vscode,
                 "orphan": p.get("parent") is None,
-                "pi_session": pi_session_from_children(p["pid"], p.get("children") or []) if agent == "pi" else None,
-                "coda_session": coda.identity(p["pid"]) if agent == "coda" else None,
+                **(
+                    {
+                        agentes.perfil(agent).identity_key: agentes.perfil(agent).identity(
+                            p, {"pi": pi_session_from_children, "coda": coda.identity, "kiro": kiro.identity}
+                        )
+                    }
+                    if agentes.perfil(agent).identity_key
+                    else {}
+                ),
             }
         )
     return found

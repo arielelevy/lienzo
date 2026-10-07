@@ -35,11 +35,13 @@ import beacon
 import federation
 import health
 import identity
+import kill_agent
 import launch
 import mirror
 import pairing
 import pantalla_coda
 import red
+import remote_run
 import restore
 import rules as rl
 import secretos
@@ -544,6 +546,23 @@ def broadcast_mirror_snapshot() -> None:
     _push_to_ui_clients(snapshot_json(con_espejo=True))
 
 
+def reconcile_peer_rules(pc: str, remote_ids: set[str]) -> None:
+    """Un peer sincronizado alcanza para conciliar sus reglas; otro apagado no lo frena."""
+    with lock:
+        changed = False
+        for rule in rules.items:
+            if rule.get("xpc") and rule.get("to") in remote_ids and rule.get("to_pc") != pc:
+                rule["to_pc"] = pc
+                changed = True
+        if changed:
+            rules.save()
+        rl.purge_stale_xpc(
+            known_remote=lambda sid: sid in remote_ids,
+            known_local=lambda sid: sid in sessions,
+            peer_id=pc,
+        )
+
+
 def _stream_sse(handler: BaseHTTPRequestHandler, initial_json: str, extra_client_lists: list[list]) -> None:
     """Bucle SSE compartido por `/events` (tablero) y `/peer/events` (otro PC): un chunk inicial con
     el snapshot que ya arma cada llamador, despues cada mensaje que llegue a la cola propia (que se
@@ -872,6 +891,10 @@ def accion_interrupt(s: dict, d: dict) -> tuple[int, dict]:
     return interrupt_session(s)
 
 
+def accion_kill(s: dict, d: dict) -> tuple[int, dict]:
+    return kill_agent.close(s, d.get("confirm"))
+
+
 def accion_approve(s: dict, d: dict) -> tuple[int, dict]:
     return aprobar_coda(s, d)
 
@@ -898,16 +921,50 @@ def reenvio_attach(d: dict) -> dict:
     return {"filename": d["filename"], "data_b64": base64.b64encode(d["data"]).decode("ascii")}
 
 
-
-
 def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
     """Despues de un envio del tablero que entro (200), local o reenviado: la flecha la deja la PC
     que envia, porque la duena no sabe de from/link_to (revision 2026-10-04, 0.11). Pegar trabajo
-    (copycat) solo con las dos tarjetas aca: hand_over necesita la de destino local."""
+    (copycat) usa hand_over local o acciones reenviadas a la PC de cada tarjeta."""
     src_s = registrar_envio(sid, d)
     if s is not None and src_s is not None and d.get("copycat") is True:
         # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
         res.update(hand_over(s, src_s, stop=d.get("stop_origin") is not False))
+    elif d.get("copycat") is True:
+        remote_hand_over(sid, src_s, d, res)
+
+
+def remote_hand_over(sid: str, origin: dict | None, d: dict, res: dict) -> None:
+    """El texto ya llego: un fallo de metadatos se informa sin volver a enviarlo."""
+    origin = origin or next((s for s in mirror.MIRROR.sessions() if s["session_id"] == d.get("from")), None)
+    if origin is None:
+        res["handover_error"] = "el origen desaparecio; no se pudo terminar el traspaso"
+        return
+    payload = {"from": origin["session_id"], "title": origin.get("title") or origin.get("repo") or ""}
+    code, out = atender_accion("PUT", sid, "copycat", payload, desde_tablero=True)
+    if code != 200:
+        res["handover_error"] = out.get("error") or "no se pudo titular el destino"
+        return
+    if d.get("stop_origin") is not False:
+        code, out = atender_accion("PUT", origin["session_id"], "stopped", {"on": True}, desde_tablero=True)
+        if code != 200:
+            res["handover_error"] = out.get("error") or "no se pudo detener el origen"
+            return
+        res.update(out)
+
+
+def validar_copycat(d: dict) -> tuple[int, dict] | None:
+    if not isinstance(d.get("from"), str) or not d["from"] or not isinstance(d.get("title"), str):
+        return _rechazo("copycat requiere from y title como texto")
+    return None
+
+
+def accion_copycat(s: dict, d: dict) -> tuple[int, dict]:
+    with lock:
+        s["copycat_of"] = d["from"]
+        title = d["title"]
+        set_title(s, title if title.endswith(" · copycat") else title + " · copycat")
+        touch(s)
+    return 200, {"ok": True}
 
 
 @dataclass(frozen=True)
@@ -932,9 +989,9 @@ class AccionSesion:
 
 
 ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
-    ("POST", "send"): AccionSesion(
-        validar_send, accion_send, despues_tablero=envio_del_tablero
-    ),
+    ("PUT", "copycat"): AccionSesion(validar_copycat, accion_copycat),
+    ("POST", "kill"): AccionSesion(sin_validar, accion_kill),
+    ("POST", "send"): AccionSesion(validar_send, accion_send, despues_tablero=envio_del_tablero),
     ("POST", "native"): AccionSesion(validar_native, accion_native),
     ("POST", "interrupt"): AccionSesion(sin_validar, accion_interrupt, reenvio=lambda d: {}, cuerpo="nada"),
     ("POST", "approve"): AccionSesion(validar_approve, accion_approve),
@@ -1453,6 +1510,13 @@ class Handler(JsonHandler):
                 return self._json(code, res)
             if parts == ["restaurar"]:
                 return self._restaurar()
+            if parts == ["run"]:
+                d = self._json_body()
+                pc = d.pop("pc", None)
+                if not isinstance(pc, str) or pc not in mirror.MIRROR.peer_ids():
+                    return self._json(400, {"error": "run requiere una PC emparejada como destino"})
+                code, res = mirror.MIRROR.forward(pc, "POST", "/run", d, timeout=60)
+                return self._json(code, res)
             if len(parts) == 2 and parts[0] == "pending":
                 code, res = accion_pending(parts[1], self._json_body(), desde_tablero=True)
                 return self._json(code, res)
@@ -1863,6 +1927,9 @@ class PeerHandler(JsonHandler):
             return self._json(200, _local_state())
         if method == "GET" and rest == ["health"]:
             return self._json(200, health.snapshot())
+        if method == "POST" and rest == ["run"]:
+            code, res = remote_run.run(self._body_json(raw), pc_id)
+            return self._json(code, res)
         if method == "GET" and rest == ["events"]:
             return self._events()
         if method == "POST" and rest == ["launch"]:
@@ -2478,6 +2545,7 @@ def main() -> int:
 
     # --- federacion (plan multi-PC, ronda 2): listener de peers, espejo y beacon ----------------
     mirror.MIRROR.on_change = broadcast_mirror_snapshot
+    mirror.MIRROR.on_snapshot = reconcile_peer_rules
     mirror.MIRROR.log = log
     health.log = log
     health.cuotas_de_sesiones = cuotas_de_sesiones

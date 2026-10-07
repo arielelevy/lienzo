@@ -1,13 +1,9 @@
-"""Lo que cambia de un agente a otro (claude, codex, pi, coda), en un modulo hoja: no importa sessions
-ni nada que lo importe, asi que launch, restore, transcripts y sessions lo pueden leer sin ciclos.
+"""Proveedores de CLI: contrato comun de identidad, transcripcion, modelo, dialogo y reanudacion.
 
-Dos cosas:
-- `AGENTES`, el registro con los DATOS de cada agente (`Perfil`): ejecutable, como se retoma, si
-  acepta --model y que parser lee su transcripcion. Lo leen launch.py, restore.py y
-  transcripts.parse. Las ramas de COMPORTAMIENTO (lo que Pi o CODA hacen distinto en sessions.py,
-  cada una con su comentario) no son datos y no viven aca.
-- adivinar la transcripcion de un agente que encontro el barrido (las `guess_*`, que antes vivian
-  en sessions.py; sessions las reexporta con el mismo nombre)."""
+No importa sessions. Los lectores de procesos y parsers se reciben al llamar para evitar ciclos
+y conservar los formatos propios. agent-capabilities.json tambien lo consume el frontend.
+Las guess_* siguen siendo publicas para los consumidores y sus pruebas.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +12,8 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
+from typing import ClassVar
 
 try:
     import tmux
@@ -25,6 +23,8 @@ except ImportError:  # importado como lienzo.agentes, sin lienzo/ en sys.path
     from .state import HOME, claude_slug, parse_ts
 
 # --- registro de agentes ----------------------------------------------------------------------
+CAPACIDADES = json.loads(Path(__file__).with_name("agent-capabilities.json").read_text(encoding="utf-8"))
+UUID_PATTERN = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 
 
 @dataclass(frozen=True)
@@ -44,9 +44,157 @@ class Perfil:
     retomar_ultima: tuple[str, ...] = ()
     acepta_modelo: bool = False
     nombrar: tuple[str, ...] = ()
+    iniciar: tuple[str, ...] = ()
+
+    identity_key: ClassVar[str | None] = None
+    persist_unhooked: ClassVar[bool] = False
+    after_dialog: ClassVar[str] = "termino"
+    live_dialog_with_hooks: ClassVar[bool] = False
+    supported_platforms: ClassVar[tuple[str, ...]] = ("win32", "linux", "darwin")
+
+    @property
+    def capabilities(self) -> dict:
+        return CAPACIDADES[self.parser.removeprefix("parse_")]
+
+    def valid_id(self, sid, *, strict: bool = True) -> bool:
+        if not isinstance(sid, str) or not sid:
+            return False
+        pattern = UUID_PATTERN if strict else r"[0-9a-fA-F-]{8,40}"
+        return not self.retomar_por_id or bool(re.fullmatch(pattern, sid))
+
+    def resume_args(self, sid) -> list[str]:
+        if not sid:
+            return []
+        if self.retomar_ultima:
+            return list(self.retomar_ultima)
+        return [*self.retomar_por_id, sid] if self.valid_id(sid, strict=False) else []
+
+    def identity(self, process: dict, readers: dict):
+        return None
+
+    def guess(self, cwd: str, born, home: str):
+        return guess_claude(cwd, born.timestamp() - BIRTH_MARGIN_S if born else 0, home)
+
+    def parse(self, path: str, parsers: dict, **args) -> dict:
+        return parsers[self.parser](path, *(args[a] for a in self.parser_args))
+
+    def model(self, path: str, transcripts) -> str | None:
+        if not path:
+            return None
+        try:
+            lines, _ = transcripts.tail_lines(path)
+        except OSError:
+            return None
+        model = None
+        for row in transcripts.iter_json(lines):
+            model = self.row_model(row) or model
+        return model
+
+    def row_model(self, row: dict) -> str | None:
+        msg = row.get("message")
+        return msg.get("model") if isinstance(msg, dict) and msg.get("role") == "assistant" else None
+
+    def waiting_text(self, turn: dict) -> str | None:
+        return None
+
+    def stop_is_final(self, reason: str | None) -> bool:
+        return True
+
+    def decorate_dialog(self, dialog: dict, transcript: dict) -> None:
+        pass
+
+    def same_dialog(self, current: dict, previous: dict, read_transcript) -> bool:
+        return True
+
+
+class Codex(Perfil):
+    after_dialog = "corriendo"
+    live_dialog_with_hooks = True
+
+    def guess(self, cwd: str, born, home: str):
+        return guess_codex(cwd, born.timestamp() - BIRTH_MARGIN_S if born else 0, home)
+
+    def row_model(self, row: dict) -> str | None:
+        payload = row.get("payload")
+        return payload.get("model") if row.get("type") == "turn_context" and isinstance(payload, dict) else None
+
+
+class Pi(Perfil):
+    identity_key = "pi_session"
+
+    def guess(self, cwd: str, born, home: str):
+        return guess_pi(cwd, born.timestamp()) if born else (None, None)
+
+    def identity(self, process: dict, readers: dict):
+        return readers["pi"](process["pid"], process.get("children") or [])
+
+
+class Coda(Perfil):
+    identity_key = "coda_session"
+
+    def guess(self, cwd: str, born, home: str):
+        return None, None
+
+    def identity(self, process: dict, readers: dict):
+        return readers["coda"](process["pid"])
+
+    def model(self, path: str, transcripts) -> str | None:
+        return None
+
+    def stop_is_final(self, reason: str | None) -> bool:
+        # hooks.md de CODA solo documenta turn_complete. No inventar otros finales.
+        return reason in (None, "", "turn_complete")
+
+
+class Kiro(Perfil):
+    identity_key = "kiro_session"
+    persist_unhooked = True
+    after_dialog = "corriendo"
+    live_dialog_with_hooks = True
+    supported_platforms = ("win32",)  # identidad verificada con el motor de V3 en Windows
+
+    def guess(self, cwd: str, born, home: str):
+        return None, None
+
+    def identity(self, process: dict, readers: dict):
+        return readers["kiro"](process["pid"])
+
+    def valid_id(self, sid, *, strict: bool = True) -> bool:
+        return isinstance(sid, str) and bool(re.fullmatch("sess_" + UUID_PATTERN, sid))
+
+    def model(self, path: str, transcripts) -> str | None:
+        try:
+            from . import kiro
+        except ImportError:
+            import kiro
+        return kiro.read_metadata(path).get("modelId") if path else None
+
+    def waiting_text(self, turn: dict) -> str | None:
+        return "Pensando…" if not turn.get("ended") else None
+
+    def decorate_dialog(self, dialog: dict, transcript: dict) -> None:
+        turns = transcript.get("turns") or []
+        if turns:
+            dialog["kiro_tool_call_id"] = (turns[-1].get("kiro_pending") or {}).get("toolCallId")
+
+    def same_dialog(self, current: dict, previous: dict, read_transcript) -> bool:
+        if (current.get("question"), current.get("detail")) != (previous.get("question"), previous.get("detail")):
+            return False
+        if previous.get("kiro_tool_call_id"):
+            turns = (read_transcript() or {}).get("turns") or []
+            pending = (turns[-1].get("kiro_pending") or {}) if turns else {}
+            return pending.get("toolCallId") == previous["kiro_tool_call_id"]
+        return True
 
 
 AGENTES: dict[str, Perfil] = {
+    "kiro": Kiro(
+        exe="kiro-cli.exe",
+        parser="parse_kiro",
+        parser_args=("max_bytes",),
+        retomar_por_id=("--resume-id",),
+        iniciar=("--v3",),
+    ),
     "claude": Perfil(
         exe="claude.exe",
         parser="parse_claude",
@@ -57,7 +205,7 @@ AGENTES: dict[str, Perfil] = {
         # --remote-control la publica en la cuenta: sin eso el canal nativo no cruza PCs
         nombrar=("-n", "{nombre}", "--remote-control", "{nombre}"),
     ),
-    "codex": Perfil(
+    "codex": Codex(
         exe="codex.exe",
         parser="parse_codex",
         parser_args=("max_bytes",),
@@ -65,9 +213,9 @@ AGENTES: dict[str, Perfil] = {
         acepta_modelo=True,
     ),
     # Pi elige la rama activa con leaf_id; no recibe --model
-    "pi": Perfil(exe="pi.exe", parser="parse_pi", parser_args=("max_bytes", "leaf_id"), retomar_ultima=("--resume",)),
+    "pi": Pi(exe="pi.exe", parser="parse_pi", parser_args=("max_bytes", "leaf_id"), retomar_ultima=("--resume",)),
     # CODA guarda todas las sesiones en una misma base: leaf_id es la sesion, y se lee por filas, no por bytes
-    "coda": Perfil(
+    "coda": Coda(
         exe="coda.exe",
         parser="parse_coda",
         parser_args=("leaf_id",),
@@ -192,12 +340,8 @@ def guess_transcript(
     nacimiento del proceso, con BIRTH_MARGIN_S de margen porque las dos fechas no son la misma
     (el rollout se crea un rato despues de abrir la TUI). `home` es la base de las transcripciones
     (la home de WSL por UNC para los agentes de WSL)."""
+    provider = perfil(agent)
     if not cwd:
         return None, None
     born = parse_ts(created)
-    if agent == "pi":
-        return guess_pi(cwd, born.timestamp()) if born else (None, None)
-    if agent == "coda":
-        return None, None  # la identidad de CODA viene exacta del log (coda.identity), no se adivina
-    t0 = born.timestamp() - BIRTH_MARGIN_S if born else 0
-    return guess_claude(cwd, t0, home) if agent == "claude" else guess_codex(cwd, t0, home)
+    return provider.guess(cwd, born, home)

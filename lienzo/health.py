@@ -30,6 +30,8 @@ import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
+import protocol
+
 try:
     from . import subproc
 except ImportError:  # con lienzo/ en sys.path (server.py, las pruebas)
@@ -683,6 +685,7 @@ def snapshot() -> dict:
     except OSError:
         temp_c = None
     return {
+        **protocol.info(),
         "mem_free_gb": round(mem_free_gb, 2) if mem_free_gb is not None else None,
         "mem_total_gb": round(mem_total_gb, 2) if mem_total_gb is not None else None,
         "cpu_pct": cpu_pct,

@@ -103,6 +103,7 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
           </button>
         ))}
       </div>
+      <span className="agent-project-separator" aria-hidden="true" />
       {projects}
       <span className="sp" />
       {authInfo.remote_url && authInfo.local && (

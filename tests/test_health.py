@@ -21,6 +21,9 @@ def test_snapshot_trae_las_cinco_claves():
     _reset()
     s = health.snapshot()
     assert set(s) == {
+        "protocol_version",
+        "capabilities",
+        "launch_roots",
         "mem_free_gb",
         "mem_total_gb",
         "cpu_pct",
@@ -62,6 +65,18 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
     monkeypatch.setattr(health, "_temp_c", lambda: (_ for _ in ()).throw(OSError("simulado")))
     s = health.snapshot()
     assert s == {
+        "protocol_version": 1,
+        "capabilities": [
+            "rules.create",
+            "rules.retarget",
+            "sessions.actions",
+            "snapshot",
+            "restore",
+            "secrets",
+            "xfer",
+            "run.named",
+        ],
+        "launch_roots": [],
         "mem_free_gb": None,
         "mem_total_gb": None,
         "cpu_pct": None,

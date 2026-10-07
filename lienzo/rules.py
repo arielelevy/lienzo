@@ -542,7 +542,7 @@ def rules_loop() -> None:
         time.sleep(5)
 
 
-def purge_stale_xpc(known_remote, known_local) -> int:
+def purge_stale_xpc(known_remote, known_local, *, peer_id: str | None = None) -> int:
     """Saca las reglas con destino en otra PC cuyo destino ya no existe en ningun lado. Solo se llama
     con los peers sincronizados (mirror.all_synced): antes, una tarjeta ajena que no se ve es una que
     todavia no llego. `known_local(sid)` y `known_remote(sid)` dicen si la tarjeta existe."""
@@ -551,7 +551,11 @@ def purge_stale_xpc(known_remote, known_local) -> int:
         rotas = [
             r
             for r in rules.items
-            if r.get("xpc") and not r.get("parked_to") and not known_local(r["to"]) and not known_remote(r["to"])
+            if r.get("xpc")
+            and (peer_id is None or r.get("to_pc") == peer_id)
+            and not r.get("parked_to")
+            and not known_local(r["to"])
+            and not known_remote(r["to"])
         ]
         # el destino desaparecio: en vez de borrarlas se estacionan, por si la PC del destino avisa
         # que hay una sucesora (POST /peer/rules/retarget); las que nadie heredo en 24 h se van

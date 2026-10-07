@@ -37,9 +37,44 @@ except ImportError:  # importado como lienzo.transcripts, sin lienzo/ en sys.pat
     from . import agentes
 
 TAIL_BYTES = 2 * 1024 * 1024
-FILE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "edit", "write"}
-SHELL_TOOLS = {"Bash", "PowerShell", "shell", "exec", "exec_command", "bash", "powershell"}
-READ_TOOLS = {"Read", "Glob", "Grep", "WebFetch", "WebSearch", "read", "grep", "glob", "find", "ls"}
+FILE_TOOLS = {
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "apply_patch",
+    "edit",
+    "write",
+    "write_file",
+    "replace_in_file",
+}
+SHELL_TOOLS = {
+    "Bash",
+    "PowerShell",
+    "shell",
+    "exec",
+    "exec_command",
+    "bash",
+    "powershell",
+    "run_command",
+    "execute_pwsh",
+}
+READ_TOOLS = {
+    "Read",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "read",
+    "grep",
+    "glob",
+    "find",
+    "ls",
+    "read_file",
+    "read_files",
+    "list_directory",
+    "search_files",
+}
 
 
 # --- utilidades --------------------------------------------------------------
@@ -788,6 +823,93 @@ def parse_coda(path: str, session_id: str | None, max_rows: int = CODA_ROWS) -> 
 # --- API comun -----------------------------------------------------------------
 
 
+def parse_kiro(path: str, max_bytes: int = TAIL_BYTES) -> dict:
+    """Formato V3 observado: user, turn_start/end, tool_call/result y pending_interaction."""
+    lines, truncated = tail_lines(path, max_bytes)
+    meta = {"agent": "kiro", "truncated": truncated, "title": None, "cwd": None, "branch": None}
+    try:
+        from . import kiro
+    except ImportError:
+        import kiro
+    session = kiro.read_metadata(path)
+    workspaces = session.get("workspacePaths")
+    meta.update(
+        title=session.get("title"),
+        cwd=workspaces[0] if isinstance(workspaces, list) and workspaces else None,
+        model=session.get("modelId"),
+    )
+    turns, by_execution, tools = [], {}, {}
+    current = None
+    for row in iter_json(lines):
+        p = row.get("payload") or {}
+        if not isinstance(p, dict):
+            continue
+        kind, ts, execution = p.get("type"), row.get("timestamp"), p.get("executionId")
+        if kind == "user":
+            if (p.get("_meta") or {}).get("kiro", {}).get("syntheticUserMessageReason"):
+                continue
+            content = _content_text(p.get("content"))
+            if p.get("source") == "steer" and current and not current["ended"]:
+                current["blocks"].append({"kind": "user_text", "text": content})
+            else:
+                current = _new_turn("kiro", row.get("id") or "partial", ts, content)
+                turns.append(current)
+            continue
+        if kind in ("agent_note", "session_start"):
+            continue
+        if kind == "turn_start":
+            if current is None or current["ended"]:
+                current = _new_turn("kiro", execution or row.get("id"), ts, "(turno anterior al corte)")
+                turns.append(current)
+            current["id"] = execution or current["id"]
+            by_execution[execution] = current
+        turn = by_execution.get(execution, current)
+        if turn is None:
+            if kind not in ("assistant", "tool_call", "tool_result", "pending_interaction", "turn_end"):
+                continue
+            current = _new_turn("kiro", execution or "partial", ts, "(turno anterior al corte)")
+            turns.append(current)
+            if execution:
+                by_execution[execution] = current
+            turn = current
+        turn["ts_end"] = ts
+        if kind == "assistant":
+            if p.get("operationType") == "Reasoning":
+                continue
+            add_text(turn, _content_text(p.get("content")))
+        elif kind == "tool_call":
+            tool = {
+                "kind": "tool",
+                "id": p.get("toolCallId"),
+                "name": p.get("toolName"),
+                "input": p.get("args") or {},
+                "result": None,
+            }
+            tools[tool["id"]] = tool
+            turn["blocks"].append(tool)
+        elif kind == "tool_result":
+            tool = tools.get(p.get("toolCallId"))
+            if tool:
+                tool["result"] = {"text": _content_text(p.get("content")), "is_error": p.get("success") is False}
+        elif kind == "pending_interaction":
+            turn["kiro_pending"] = {**p, "timestamp": ts}
+        elif kind == "interaction_resolved":
+            if (turn.get("kiro_pending") or {}).get("toolCallId") == p.get("toolCallId"):
+                turn.pop("kiro_pending", None)
+        elif kind == "sub_agent_start":
+            turn["blocks"].append({"kind": "subagent", "n": 1})
+        elif kind == "usage_summary":
+            turn["usage"] = {
+                "credits": sum(x.get("usage", 0) for x in p.get("promptTurnSummaries", []) if x.get("unit") == "credit")
+            }
+        elif kind == "turn_end":
+            turn["ended"] = True
+            turn.pop("kiro_pending", None)
+        elif kind == "session_metadata" and p.get("key") == "contextUsage":
+            turn["context_usage"] = (p.get("value") or {}).get("usagePercentage")
+    return {"meta": meta, "turns": turns}
+
+
 def leaf_of(s: dict) -> str | None:
     """Lo que elige, dentro de la transcripcion de una tarjeta, que parte es suya: la rama activa
     en Pi y la sesion en CODA, que guarda todas en la misma base. El resto, nada."""
@@ -802,7 +924,7 @@ def parse(agent: str, path: str, max_bytes: int = TAIL_BYTES, leaf_id: str | Non
     sin avisar. La funcion se busca por nombre recien aca, asi un monkeypatch de parse_* vale."""
     p = agentes.perfil(agent)
     args = {"max_bytes": max_bytes, "leaf_id": leaf_id}
-    return globals()[p.parser](path, *(args[a] for a in p.parser_args))
+    return p.parse(path, globals(), **args)
 
 
 def turns(

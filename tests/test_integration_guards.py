@@ -187,11 +187,36 @@ def test_pi_sweep_binds_child_log_without_claiming_hook_or_firing_rules(tmp_path
     assert not completed
     assert st.links.items[0]["to"] == "pi-session"
     assert st.rules.items[0]["from"] == "pi-session"
-    assert "pi-session" in Path(st.links.path).read_text(encoding="utf-8")
+    assert json.loads(Path(st.links.path).read_text(encoding="utf-8"))[0]["to"] == "pi-session"
+    assert json.loads(Path(st.rules.path).read_text(encoding="utf-8"))[0]["from"] == "pi-session"
     # Un shell viejo no puede pisar lo que ya identifico la extension.
     s["hooked"] = True
     ses.attach_transcript(s, ("stale-session", path))
     assert s["session_id"] == "pi-session"
+
+
+def test_repoint_refs_falla_y_revierte_si_no_puede_guardar_links(tmp_path, monkeypatch):
+    st.rules.path = str(tmp_path / "rules.json")
+    st.links.path = str(tmp_path / "links.json")
+    st.rules.items[:] = [{"id": "aviso", "from": "pid-42", "to": "coordinadora"}]
+    st.links.items[:] = [{"id": "conexion", "from": "coordinadora", "to": "pid-42"}]
+    Path(st.rules.path).write_text(json.dumps(st.rules.items), encoding="utf-8")
+    Path(st.links.path).write_text(json.dumps(st.links.items), encoding="utf-8")
+    atomic_write = st.atomic_write
+
+    def fail_links(path, text):
+        if path == st.links.path:
+            raise OSError("fallo de escritura simulado")
+        atomic_write(path, text)
+
+    monkeypatch.setattr(st, "atomic_write", fail_links)
+    with pytest.raises(OSError, match="fallo de escritura simulado"):
+        ses.repoint_refs("pid-42", "pi-session")
+
+    assert st.rules.items[0]["from"] == "pid-42"
+    assert st.links.items[0]["to"] == "pid-42"
+    assert json.loads(Path(st.rules.path).read_text(encoding="utf-8"))[0]["from"] == "pid-42"
+    assert json.loads(Path(st.links.path).read_text(encoding="utf-8"))[0]["to"] == "pid-42"
 
 
 def test_pi_activity_discovery_finds_resumed_log_without_shell(tmp_path, monkeypatch):

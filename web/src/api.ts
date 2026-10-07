@@ -78,6 +78,7 @@ export interface SendResult {
   chars: number;
   /** pegar trabajo: el origen estaba corriendo y recibio el Esc */
   interrupted?: boolean;
+  handover_error?: string;
 }
 
 export type Decision = "allow" | "deny";
@@ -102,6 +103,7 @@ const ses = (sid: string, rest: string) => `/sessions/${sid}/${rest}`;
 export const sessionsApi = {
   send: (sid: string, body: SendBody) => api.post<SendResult>(ses(sid, "send"), body),
   interrupt: (sid: string) => api.post(ses(sid, "interrupt"), {}),
+  kill: (sid: string) => api.post(ses(sid, "kill"), { confirm: sid }),
   /** el permiso que CODA pide en su terminal; `expect` es el sha256 del comando que se juzgo */
   approve: (sid: string, decision: Decision, expect?: string) =>
     api.post(ses(sid, "approve"), expect === undefined ? { decision } : { decision, expect }),

@@ -99,6 +99,9 @@ export interface Session {
 
 /** Salud de una PC, tal como la mide `lienzo/health.py` (memoria, CPU y temperatura de Windows). */
 export interface PeerHealth {
+  protocol_version?: number;
+  capabilities?: string[];
+  launch_roots?: string[];
   mem_free_gb: number | null;
   mem_total_gb?: number | null;
   cpu_pct: number | null;

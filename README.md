@@ -1,12 +1,19 @@
 # Lienzo
 
-Lienzo muestra las sesiones de Claude Code, Codex CLI, Pi CLI y CODA que corren en terminales.
+Lienzo muestra las sesiones de Claude Code, Codex CLI, Pi CLI, CODA y Kiro V3 que corren en terminales.
 Cada sesión tiene su tarjeta. Desde ahí podés leer la conversación, mandar mensajes y aprobar
 permisos. También pegar capturas con Ctrl+V y conectar sesiones.
 Hasta 4 PCs de la misma LAN comparten el tablero.
 
 Corre en `127.0.0.1:7321`. Lee el historial de cada agente y escribe en su terminal.
 Las terminales y las transcripciones siguen a cargo de los agentes.
+
+Kiro V3 en Windows usa su historial `~/.kiro/sessions/*/sess_*/messages.jsonl`,
+vinculado al PID de su motor mediante el lock de sesión y el proceso CLI padre.
+Sus permisos y los de Codex se muestran como diálogos en las tarjetas; se responden
+con flechas y Enter, verificando antes que el pedido siga abierto. Kiro se lanza
+por su ruta instalada en `%LOCALAPPDATA%/Kiro-Cli` con `--v3` y retoma por `--resume-id`.
+Todas las CLI pueden marcarse como coordinadora mediante las conexiones del tablero.
 
 [Arquitectura y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/)
 

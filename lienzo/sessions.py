@@ -34,6 +34,7 @@ from agentes import (  # noqa: F401
     guess_codex,
     guess_pi,
     guess_transcript,
+    perfil,
     transcript_home,
 )
 from state import (
@@ -401,6 +402,7 @@ def retarget_rules(old: str, new: str) -> int:
         suyas = [r for r in rules.items if old in (r.get("to"), r.get("parked_to"))]
         for r in suyas:
             r["to"], r["enabled"] = new, True
+            r.pop("to_pc", None)  # se vuelve a identificar con el snapshot del destino nuevo
             r.pop("parked_to", None)
             r.pop("parked_since", None)
         if suyas:
@@ -493,7 +495,9 @@ def repoint_refs(old_sid: str, new_sid: str) -> tuple[int, int]:
     """Las dos puntas de cada regla y de cada link que nombraban a `old_sid` pasan a `new_sid`.
     Devuelve (reglas, links) re-apuntados. Se llama con el lock tomado."""
 
-    def repoint(coll) -> int:
+    cambios = []
+    for coll in (rules, links):
+        anterior = [dict(item) for item in coll.items]
         n = 0
         for x in coll.items:
             for k in ("from", "to"):
@@ -501,19 +505,40 @@ def repoint_refs(old_sid: str, new_sid: str) -> tuple[int, int]:
                     x[k] = new_sid
                     n += 1
         if n:
-            coll.save()
-        return n
+            cambios.append((coll, anterior, n))
 
-    return repoint(rules), repoint(links)
+    guardados = []
+    try:
+        for coll, _, _ in cambios:
+            coll.save(strict=True)
+            guardados.append(coll)
+    except OSError:
+        # Si falla la segunda lista, la primera ya pudo quedar en disco. Revertimos ambas en
+        # memoria y compensamos la lista que alcanzó a guardarse para no dejar IDs mezclados.
+        for coll, anterior, _ in cambios:
+            coll.items[:] = anterior
+        for coll in reversed(guardados):
+            try:
+                coll.save(strict=True)
+            except OSError as e:
+                state.log(f"no se pudo revertir {os.path.basename(coll.path)} tras fallo al re-apuntar: {e}")
+        raise
+
+    counts = {id(coll): n for coll, _, n in cambios}
+    return counts.get(id(rules), 0), counts.get(id(links), 0)
 
 
-def continue_session(old: dict, new: dict) -> None:
+def continue_session(old: dict, new: dict) -> bool:
     """La sesion nueva hereda el pid de la vieja y todo lo que la apuntaba: reglas y links donde la
     vieja era origen o destino pasan al sid nuevo, y la vieja se da de baja."""
     old_sid, new_sid = old["session_id"], new["session_id"]
 
     with lock:
-        n_rules, n_links = repoint_refs(old_sid, new_sid)
+        try:
+            n_rules, n_links = repoint_refs(old_sid, new_sid)
+        except OSError as e:
+            state.log(f"sesion {old_sid[:8]} no continua como {new_sid[:8]}: no se guardaron reglas/enlaces: {e}")
+            return False
         for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator", "coordinator_scope", "pc"):
             if old.get(k) is not None:
                 new[k] = old[k]
@@ -530,6 +555,7 @@ def continue_session(old: dict, new: dict) -> None:
         rules.publish()
     if n_links:
         links.publish()
+    return True
 
 
 def new_session(sid: str, agent: str, source: str) -> dict:
@@ -809,6 +835,8 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
         set_last_prompt(s, p)
     if t.get("final") or not t.get("ended"):
         s["last_reply"] = turn_say(t) or s["last_reply"]
+    if not turn_say(t) and (waiting := perfil(s["agent"]).waiting_text(t)):
+        s["last_reply"] = waiting
     if s["state"] != "muerta" and not s.get("needs"):
         set_state(s, "termino" if t.get("ended") else "corriendo")
 
@@ -816,7 +844,13 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
 def set_denied(s: dict, d: dict) -> None:
     """Marca en la tarjeta el ultimo permiso DENEGADO (por regla, politica o clasificador). Solo si
     es nuevo: la misma denegacion releida de la transcripcion no se vuelve a anunciar."""
-    clave = (d.get("tool"), d.get("motivo") or d.get("cause"), d.get("detalle"), d.get("turno") or d.get("at"), d.get("n"))
+    clave = (
+        d.get("tool"),
+        d.get("motivo") or d.get("cause"),
+        d.get("detalle"),
+        d.get("turno") or d.get("at"),
+        d.get("n"),
+    )
     prev = s.get("last_denied") or {}
     if (
         prev.get("tool"),
@@ -883,28 +917,7 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
 
 
 def model_of(agent: str, path: str) -> str | None:
-    """Modelo de la ultima respuesta del asistente, leido de la cola de la transcripcion con las
-    utilidades ya publicas de transcripts.py (tail_lines, iter_json): no duplica su parser (que no
-    expone este campo, y unificar los dos formatos ya se probo y no vale la pena, ver el comentario
-    de transcripts.py sobre parse_claude/parse_codex). Claude y Pi lo traen en message.model de
-    cada linea de asistente; Codex lo trae en turn_context.payload.model, vigente hasta el proximo
-    turn_context. CODA no lo guarda en su base: None."""
-    if agent == "coda" or not path:
-        return None
-    try:
-        lines, _ = transcripts.tail_lines(path)
-    except OSError:
-        return None
-    model = None
-    for d in transcripts.iter_json(lines):
-        if agent == "codex":
-            if d.get("type") == "turn_context":
-                model = (d.get("payload") or {}).get("model") or model
-            continue
-        msg = d.get("message")
-        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("model"):
-            model = msg["model"]
-    return model
+    return perfil(agent).model(path, transcripts)
 
 
 def read_transcript(s: dict) -> dict | None:
@@ -1075,12 +1088,23 @@ def claim_pid(s: dict, ev: dict) -> None:
                 if other.get("source") == "sweep" or other_sid.startswith("pid-"):
                     # el placeholder del barrido es la misma sesion: lo que lo nombraba (una regla de
                     # cableado hecha al lanzarla, un link) pasa al sid real antes de darlo de baja
-                    if any(repoint_refs(other_sid, sid)):
-                        rules.publish()
-                    heredar_de_provisoria(other, s)
-                    drop_session(other_sid, "duplicada por barrido")
+                    try:
+                        n_rules, n_links = repoint_refs(other_sid, sid)
+                    except OSError as e:
+                        owner = other_sid
+                        state.log(
+                            f"pid {pid}: no reemplazo {other_sid[:8]} por {sid[:8]}: no se guardaron reglas/enlaces: {e}"
+                        )
+                    else:
+                        if n_rules:
+                            rules.publish()
+                        if n_links:
+                            links.publish()
+                        heredar_de_provisoria(other, s)
+                        drop_session(other_sid, "duplicada por barrido")
                 elif continues_session(other, ev):
-                    continue_session(other, s)
+                    if not continue_session(other, s):
+                        owner = other_sid
                 else:
                     owner = other_sid
         if owner:
@@ -1122,6 +1146,8 @@ def compacting(s: dict) -> bool:
 
 
 def hook_stop(s: dict, ev: dict) -> None:
+    reason = ev.get("stop_reason")
+    s["stop_reason"] = reason
     if stale_stop(s, ev):
         state.log(
             f"Stop tardio de {s['session_id'][:8]} (pedido {str(ev.get('prompt_id'))[:8]}, ya corre "
@@ -1129,6 +1155,8 @@ def hook_stop(s: dict, ev: dict) -> None:
         )
     elif compacting(s):
         state.log(f"Stop de {s['session_id'][:8]} durante una compactacion: la tarjeta sigue corriendo")
+    elif not perfil(s["agent"]).stop_is_final(reason):
+        state.log(f"Stop de {s['session_id'][:8]} con motivo {reason!r}: se espera el final de la transcripcion")
     else:
         set_state(s, "termino")
         if ev.get("last_assistant_message"):
@@ -1566,12 +1594,12 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
     primer turno, no al abrir): buscarla y, si aparece, tomar tambien el session_id real que trae,
     con lo que la tarjeta deja de llamarse `pid-N`. La busqueda va sin el lock; lo que escribe, con
     el lock y revalidando que la tarjeta siga siendo la misma."""
-    if s["agent"] in ("pi", "coda") and not pi_session and not pi_guess:
+    if perfil(s["agent"]).identity_key is not None and not pi_session and not pi_guess:
         return
     cwd = s.get("cwd") or backend.cwd_of(s)
     sid, tpath = (
         pi_session
-        if s["agent"] in ("pi", "coda") and pi_session
+        if perfil(s["agent"]).identity_key is not None and pi_session
         else guess_transcript(s["agent"], cwd, s.get("started"), transcript_home(s))
     )
     if not tpath:
@@ -1585,7 +1613,11 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
             return  # la borraron mientras buscabamos su transcripcion: no revivirla
         if sid and sid != s["session_id"] and sid not in sessions:
             viejo = s["session_id"]  # la tarjeta cambia de id: la de antes se olvida entera
-            n_rules, n_links = repoint_refs(viejo, sid)
+            try:
+                n_rules, n_links = repoint_refs(viejo, sid)
+            except OSError as e:
+                state.log(f"barrido: no cambio {viejo[:8]} a {sid[:8]}: no se guardaron reglas/enlaces: {e}")
+                return
             forget_session(viejo)
             state.broadcast({"type": "removed", "session_id": viejo})
             s["session_id"] = sid
@@ -1614,6 +1646,7 @@ def adopt_process(p: dict) -> None:
         sid, tpath = (
             p.get("pi_session")
             or p.get("coda_session")
+            or p.get("kiro_session")
             or guess_transcript(p["agent"], cwd, p.get("created"), transcript_home(p))
         )
     with lock:
@@ -1677,7 +1710,7 @@ def sweep_once() -> None:
             for s in sessions.values()
             if s.get("source") == "sweep"
             and s.get("pid")
-            and (not s.get("transcript_path") or s["agent"] in ("pi", "coda"))
+            and (not s.get("transcript_path") or perfil(s["agent"]).identity_key is not None)
         ]
     found_by_key = {backend.proc_key(p): p for p in found}
     for s in sin_transcripcion:
@@ -1689,9 +1722,9 @@ def sweep_once() -> None:
                     attach_transcript(s, identity)
             elif not s.get("transcript_path") and observed.get("pi_guess_allowed"):
                 attach_transcript(s, pi_guess=True)
-        elif s["agent"] == "coda":
+        elif perfil(s["agent"]).identity_key is not None:
             # un /new o un resume en la TUI cambian la sesion del mismo proceso
-            identity = observed.get("coda_session")
+            identity = observed.get(perfil(s["agent"]).identity_key)
             if identity and identity != (s["session_id"], s.get("transcript_path")):
                 attach_transcript(s, identity)
         else:
@@ -2041,6 +2074,8 @@ def _dialogo_en_pantalla(s: dict, visto: dict) -> tuple[dict | None, str | None]
     d = screen.dialog(r.get("lines") or [])
     if not d or [o["text"] for o in d["options"]] != [o.get("text") for o in visto.get("options") or []]:
         return None, "el dialogo ya no esta en la pantalla (¿se contesto en la terminal?)"
+    if not perfil(s["agent"]).same_dialog(d, visto, lambda: read_transcript(s)):
+        return None, "el permiso ya cambio o se resolvio; relee la tarjeta antes de elegir"
     return d, None
 
 
@@ -2142,7 +2177,9 @@ def dialogo_abierto(s: dict) -> tuple[int, dict] | None:
     lanzada (sin hooks todavia) se mira en el momento, porque el dialogo de confianza aparece antes
     que cualquier hook y el barrido de pantalla pasa cada 5 s."""
     d = s.get("dialog")
-    if d is None and s.get("agent") == "claude" and not s.get("hooked"):
+    if d is None and (
+        perfil(s["agent"]).capabilities["screen"] and (perfil(s["agent"]).live_dialog_with_hooks or not s.get("hooked"))
+    ):
         r = read_screen(s)
         d = screen.dialog(r.get("lines") or []) if r.get("ok") else None
         if d:
@@ -2172,7 +2209,7 @@ def _opcion_remote_control(d: dict) -> int | None:
         return None
     ops = [(o.get("n"), (o.get("text") or "").lower()) for o in d.get("options") or []]
     for n, t in ops:
-        if t.startswith("enable") or t.startswith("connect"):
+        if t.startswith(("enable", "connect")):
             return n
     for n, t in ops:
         if not any(p in t for p in ("disconnect", "disable", "stop", "turn off")):
@@ -2438,12 +2475,16 @@ def screen_once() -> None:
         items = [
             s
             for s in sessions.values()
-            if s.get("agent") == "claude" and s.get("pid") and s.get("alive") and not s.get("orphan")
+            if perfil(s["agent"]).capabilities["screen"] and s.get("pid") and s.get("alive") and not s.get("orphan")
         ]
     for s in items:
         r = read_screen(s)
+        if not r.get("ok"):
+            continue  # no leer la consola no demuestra que el permiso se haya cerrado
         area = r.get("area") if r.get("ok") else None
         dlg = r.get("dialog") if r.get("ok") else None
+        if dlg and perfil(s["agent"]).persist_unhooked:
+            perfil(s["agent"]).decorate_dialog(dlg, read_transcript(s) or {})
         escrito = bool(area and not area["placeholder"])
         with lock:
             if sessions.get(s["session_id"]) is not s:
@@ -2471,6 +2512,19 @@ def screen_once() -> None:
                 set_needs(s, {"kind": "dialog", "detail": short(d.get("question") or "", 300), "where": "terminal"})
                 touch(s)
             elif not d and needs.get("kind") == "dialog":
+                set_state(s, perfil(s["agent"]).after_dialog)
+                touch(s)
+            elif (
+                not d
+                and area
+                and needs.get("kind") == "permission"
+                and needs.get("where") == "terminal"
+                and not s.get("pending_id")
+                and (since := parse_ts(needs.get("since")))
+                and (dt.datetime.now().astimezone() - since).total_seconds() > 10
+            ):
+                # Una caja de entrada reconocida prueba que volvio al prompt. La ausencia
+                # de un dialogo, sola, tambien puede ser una pantalla truncada o una lectura rota.
                 set_state(s, "termino")
                 touch(s)
 

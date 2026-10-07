@@ -54,7 +54,7 @@ if _WIN:
     _shell32.CommandLineToArgvW.restype = ctypes.POINTER(wt.LPWSTR)
     _k32.LocalFree.argtypes = [wt.HLOCAL]
 
-AGENTS = {"claude.exe": "claude", "codex.exe": "codex", "pi.exe": "pi", "coda.exe": "coda"}
+AGENTS = {"claude.exe": "claude", "codex.exe": "codex", "pi.exe": "pi", "coda.exe": "coda", "kiro-cli.exe": "kiro"}
 
 
 def command_args(command: str) -> list[str]:

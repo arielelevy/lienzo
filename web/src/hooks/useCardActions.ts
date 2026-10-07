@@ -100,6 +100,14 @@ export function useCardActions(s: Session, toast: ToastFn) {
     }, failMsg());
   };
 
+  const kill = () => {
+    if (!confirm(`¿Cerrar a la fuerza ${shortName(s)} y sus procesos hijos? Se perderá el trabajo que no haya guardado.`)) return;
+    return act(async () => {
+      await sessionsApi.kill(s.session_id);
+      return `${shortName(s)} cerrada`;
+    }, failMsg("cerrar el proceso"));
+  };
+
   return {
     busy,
     act,
@@ -112,6 +120,7 @@ export function useCardActions(s: Session, toast: ToastFn) {
     toggleCoordinator,
     togglePcCoordinator,
     toggleStopped,
+    kill,
   };
 }
 

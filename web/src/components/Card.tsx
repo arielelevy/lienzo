@@ -659,6 +659,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               {s.coordinator ? "★ Quitarle el rol de coordinadora" : "☆ Coordinadora del repo"}
             </button>
           )}
+          {s.alive && s.pid && s.backend !== "tmux" && (
+            <button type="button" role="menuitem" disabled={busy}
+              onClick={() => { closeMenu(); void actions.kill(); }}>
+              Cerrar proceso a la fuerza…
+            </button>
+          )}
           {multiPc && can(s.agent, "coordinable") && writable && (
             <button
               type="button"

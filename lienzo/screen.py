@@ -130,6 +130,16 @@ def input_area(lines: list[str]) -> dict:
     Devuelve el texto de la caja y las lineas '❯ ...' encoladas arriba de ella.
     Las sugerencias de prompt aparecen en esa zona; el server decide si son sugerencia o
     placeholder con PLACEHOLDERS."""
+    kiro = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].strip().startswith("› ")), None)
+    if kiro is not None and any("/sessions to resume" in l or "Kiro is working" in l for l in lines[kiro:]):
+        text = sin_cursor(lines[kiro])
+        placeholder = text.startswith(("ask a question or describe a task", "Kiro is working"))
+        return {
+            "input": "" if placeholder else text,
+            "placeholder": placeholder or not text,
+            "queued": [],
+            "status": text if text.startswith("Kiro is working") else "",
+        }
     rules = [i for i, l in enumerate(lines) if l.strip() and set(l.strip()) <= set(RULE_CHARS)]
     box, queued = [], []
     if len(rules) >= 2:
@@ -173,6 +183,8 @@ def dialog(lines: list[str]) -> dict | None:
     Devuelve {"question", "options": [{"n", "text"}], "selected"} o None. Para no confundirlo con
     una lista numerada cualquiera de la salida se piden tres cosas: dos opciones o mas, numeradas
     1..n corridas, y exactamente una con el cursor (❯ o >) adelante."""
+    if kiro := _dialog_kiro(lines):
+        return kiro
     run: list[tuple[int, dict]] = []
     best: list[tuple[int, dict]] = []
     for i, raw in enumerate(lines):
@@ -191,7 +203,35 @@ def dialog(lines: list[str]) -> dict | None:
         best = run
     if len(best) < 2 or sum(1 for _, o in best if o["cursor"]) != 1:
         return _dialog_de_flechas(lines)
-    return _armar(lines, best)
+    result = _armar(lines, best)
+    if result["question"] == "Would you like to run the following command?" and any(
+        "Press enter to confirm" in l for l in lines
+    ):
+        result["teclas"] = "flechas"
+    return result
+
+
+def _dialog_kiro(lines: list[str]) -> dict | None:
+    """Permiso observado en Kiro V3: opciones sin numero y pie con flechas."""
+    if not any("esc to close" in l and "to navigate" in l and "to select" in l for l in lines):
+        return None
+    question = next((i for i in range(len(lines) - 1, -1, -1) if "requires approval" in lines[i]), None)
+    best = []
+    for i in range(question + 1 if question is not None else 0, len(lines)):
+        raw = lines[i].strip()
+        selected = raw.startswith(("❯", "›", ">"))
+        label = sin_cursor(raw)
+        if label in ("Allow", "Always allow", "Deny", "Always deny"):
+            best.append((i, {"n": len(best) + 1, "text": label, "cursor": selected}))
+    if [o["text"] for _, o in best] != ["Allow", "Always allow", "Deny", "Always deny"]:
+        return None
+    if sum(o["cursor"] for _, o in best) != 1:
+        return None
+    result = _armar(lines, best, teclas="flechas")
+    if question is None:
+        result["question"] = "Kiro requiere permiso (comando parcialmente visible)"
+        result["truncated"] = True
+    return result
 
 
 def _armar(lines: list[str], best: list[tuple[int, dict]], **extra) -> dict:

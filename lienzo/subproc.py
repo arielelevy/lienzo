@@ -83,6 +83,8 @@ def correr(
     timeout: float,
     sin_prompts: bool = False,
     env: dict | None = None,
+    cwd: str | None = None,
+    max_output: int | None = None,
 ) -> tuple[int, str, str]:
     """(código de salida, stdout, stderr) como texto UTF-8 (lo ilegible se reemplaza).
 
@@ -103,6 +105,7 @@ def correr(
                 stdout=out,
                 stderr=err,
                 env=entorno,
+                cwd=cwd,
                 **extra,
             )
         except OSError as e:
@@ -118,7 +121,7 @@ def correr(
 
         def leer(f) -> str:
             f.seek(0)
-            return f.read().decode("utf-8", errors="replace")
+            return f.read(max_output if max_output is not None else -1).decode("utf-8", errors="replace")
 
         stdout, stderr = leer(out), leer(err)
     if motivo:

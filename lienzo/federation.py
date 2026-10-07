@@ -675,6 +675,43 @@ class HTTPTransport:
 
     def __init__(self, *, timeout: float = 5.0):
         self.timeout = timeout
+        self._pool_lock = threading.Lock()
+        self._closed = False
+        self._idle: list[tuple[float, tuple, http.client.HTTPConnection]] = []
+
+    def _connection(self, peer: PeerConn, timeout: float) -> http.client.HTTPConnection:
+        key = (peer.host, peer.port, peer.self_pc_id, peer.key)
+        found = None
+        with self._pool_lock:
+            valid = []
+            for stamp, previous, conn in self._idle:
+                if time.monotonic() - stamp >= 20:
+                    conn.close()
+                elif previous == key and found is None:
+                    found = conn
+                else:
+                    valid.append((stamp, previous, conn))
+            self._idle = valid
+        if found is None:
+            return http.client.HTTPConnection(peer.host, peer.port, timeout=timeout)
+        found.timeout = timeout
+        if found.sock is not None:
+            found.sock.settimeout(timeout)
+        return found
+
+    def _release(self, peer: PeerConn, conn, reusable: bool) -> None:
+        with self._pool_lock:
+            if reusable and not self._closed and len(self._idle) < MAX_PEERS * 2:
+                self._idle.append((time.monotonic(), (peer.host, peer.port, peer.self_pc_id, peer.key), conn))
+                return
+        conn.close()
+
+    def close(self) -> None:
+        with self._pool_lock:
+            self._closed = True
+            for _, _, conn in self._idle:
+                conn.close()
+            self._idle.clear()
 
     def _headers_firmados(self, peer: PeerConn, method: str, path: str, body: bytes) -> dict:
         return {**signed_headers(peer, method, path, body), "Content-Type": "application/json"}
@@ -686,17 +723,19 @@ class HTTPTransport:
         el cuerpo, como antes; `request` (reenviar una accion a la PC duena, /peer/health) devuelve las dos
         cosas, porque ahi hace falta reenviar el codigo tal cual lo dio el peer."""
         headers = self._headers_firmados(peer, method, path, body)
-        conn = http.client.HTTPConnection(peer.host, peer.port, timeout=timeout or self.timeout)
+        conn = self._connection(peer, timeout or self.timeout)
+        reusable = False
         try:
             conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
             data = resp.read()
             status = resp.status
+            reusable = not getattr(resp, "will_close", True) and status != 401
         except http.client.HTTPException as e:
             # RemoteDisconnected ya es OSError; IncompleteRead y BadStatusLine no lo son
             raise PeerError(f"{method} {path}: respuesta HTTP rota ({type(e).__name__}: {e})") from e
         finally:
-            conn.close()
+            self._release(peer, conn, reusable)
         try:
             cuerpo = json.loads(data.decode("utf-8")) if data else {}
         except ValueError as e:  # incluye UnicodeDecodeError
@@ -722,11 +761,19 @@ class HTTPTransport:
     def delete(self, peer: PeerConn, path: str) -> dict:
         return self._pedir(peer, "DELETE", path)[1]
 
-    def request(self, peer: PeerConn, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    def request(
+        self, peer: PeerConn, method: str, path: str, body: dict | None = None, *, timeout: float | None = None
+    ) -> tuple[int, dict]:
         """Para el enrutado de comandos (plan §3.4): devuelve (status, cuerpo) tal como los dio el
         peer, para que el server local se los pase al front sin tocarlos."""
         raw = json.dumps(body).encode("utf-8") if body is not None else b""
-        return self._pedir(peer, method.upper(), path, raw, timeout=_timeout_para(method, path, self.timeout))
+        return self._pedir(
+            peer,
+            method.upper(),
+            path,
+            raw,
+            timeout=timeout if timeout is not None else _timeout_para(method, path, self.timeout),
+        )
 
     def subscribe(
         self,

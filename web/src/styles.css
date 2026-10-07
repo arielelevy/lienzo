@@ -1,6 +1,6 @@
 :root {
   --bg: #0f1115; --panel: #171a21; --card: #1d212b; --line: #2a2f3b; --fg: #e6e8ee; --dim: #8b93a7; --acc: #5b9cff;
-  --run: #3fb950; --need: #f0b429; --dead: #f05b5b; --claude: #d97757; --codex: #10a37f; --pi: #9b7fe8; --coda: #43a2ca; --coda-bg: #0a1016; --err: #f05b5b; --git: #d946ef;
+  --run: #3fb950; --need: #f0b429; --dead: #f05b5b; --claude: #d97757; --codex: #10a37f; --pi: #c49a45; --kiro: #9b7fe8; --coda: #43a2ca; --coda-bg: #0a1016; --err: #f05b5b; --git: #d946ef;
   /* texto sobre un fondo lleno de color (boton principal, badges, chips prendidos, toast de la
      tarjeta): el blanco no llega al minimo de WCAG AA sobre ninguno de esos colores --2,75 sobre el
      azul, 3,12 sobre el naranja de Claude, 3,20 sobre el verde de Codex-- y la tinta oscura da de
@@ -210,8 +210,8 @@ details.fold > summary,
    "hace X" de la derecha no se encogen, asi la fecha siempre queda visible */
 .card .top > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .top .badge, .card .top .right { flex: 0 0 auto; overflow: visible; }
-.badge { padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--ink); }
-.badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); } .badge.pi { background: var(--pi); } .badge.coda { background: var(--coda-bg); color: var(--coda); box-shadow: inset 0 0 0 1px #43a2ca66; }
+.badge { display: inline-flex; align-items: center; justify-content: center; height: 18px; line-height: 16px; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--ink); }
+.badge.kiro { background: var(--kiro); } .badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); } .badge.pi { background: var(--pi); } .badge.coda { background: var(--coda-bg); color: var(--coda); }
 .card .repo { font-weight: 600; color: var(--fg); }
 /* De los dos que ceden ancho, cede primero la rama: el repo dice de qué es la tarjeta y la rama
    casi siempre es "main". Y los dos se cortan al ras, sin elipsis, porque acá los tres puntos
@@ -499,13 +499,15 @@ header .search { display: flex; flex-wrap: wrap; min-width: 0; align-items: cent
 header .search:focus-within { border-color: var(--line); }
 header .search input { background: transparent; color: var(--fg); border: 0; padding: 4px 6px; font: inherit; font-size: 12px; width: 170px; }
 header .search input:focus { outline: none; }
-header .search .chip { padding: 2px 8px; font-size: 11px; font-weight: 600; border-radius: 10px; opacity: .45; border-color: transparent; background: transparent; }
+header .search .chip { display: inline-flex; align-items: center; justify-content: center; height: 24px; padding: 3px 9px; font-size: 11px; font-weight: 600; border-radius: 10px; opacity: .45; border: 0; background: transparent; }
 header .search .chip.on { opacity: 1; color: var(--ink); }
 header .search .chip.claude.on { background: var(--claude); }
 header .search .chip.codex.on { background: var(--codex); }
 header .search .chip.pi.on { background: var(--pi); }
-header .search .chip.coda.on { background: var(--coda-bg); color: var(--coda); border-color: #43a2ca66; }
+header .search .chip.kiro.on { background: var(--kiro); }
+header .search .chip.coda.on { background: var(--coda-bg); color: var(--coda); }
 header .search .chip:not(.on) { text-decoration: line-through; }
+header .agent-project-separator { width: 1px; height: 20px; flex: 0 0 1px; background: var(--line); margin: 0 3px; }
 /* chips de proyecto: al lado del buscador y afuera de su fondo, como un grupo propio. Un solo
    estado a la vista, el elegido; sin elegir se leen enteros, sin tachar */
 header .pjstrip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
@@ -551,7 +553,7 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
   header h1 { font-size: 14px; }
   header .search { flex: 1; min-width: 0; }
   header .search input { width: 100%; min-width: 0; }
-  header .search .chip, header .pjstrip { display: none; }
+  header .search .chip, header .pjstrip, header .agent-project-separator { display: none; }
   header .dropdown { min-width: 190px; }
   .filters { padding: 8px 10px 0; gap: 6px; }
   .filters button { flex: 1 1 auto; padding: 8px 6px; font-size: 12px; }

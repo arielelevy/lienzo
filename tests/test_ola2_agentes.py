@@ -20,6 +20,17 @@ PI_HEADER = {"type": "session", "id": "pi-session", "version": 3, "cwd": "D:/App
 CODA_SID = "11111111-2222-4333-8444-555555555555"
 
 
+@pytest.fixture(autouse=True)
+def isolated_sessions(tmp_path, monkeypatch):
+    import state
+
+    (tmp_path / "sessions").mkdir(exist_ok=True)
+    monkeypatch.setattr(state, "sessions", {})
+    import sessions
+
+    monkeypatch.setattr(sessions, "sessions", state.sessions)
+
+
 def _jsonl(tmp_path, nombre, filas):
     p = tmp_path / nombre
     p.write_text("\n".join(json.dumps(f, ensure_ascii=False) for f in filas) + "\n", encoding="utf-8")
@@ -447,9 +458,15 @@ def test_el_registro_tiene_los_cuatro_agentes_y_sus_datos_de_siempre():
     import launch
     import restore
 
-    assert set(agentes.AGENTES) == {"claude", "codex", "pi", "coda"}
-    assert launch.AGENT_EXES == {"claude": "claude.exe", "codex": "codex.exe", "pi": "pi.exe", "coda": "coda.exe"}
-    assert set(restore._BY_ID) == {"claude", "codex"}
+    assert set(agentes.AGENTES) == {"claude", "codex", "pi", "coda", "kiro"}
+    assert launch.AGENT_EXES == {
+        "claude": "claude.exe",
+        "codex": "codex.exe",
+        "pi": "pi.exe",
+        "coda": "coda.exe",
+        "kiro": "kiro-cli.exe",
+    }
+    assert set(restore._BY_ID) == {"claude", "codex", "kiro"}
     uid = "0123abcd-0000-4000-8000-000000000000"
     assert launch._resume_args("claude", uid) == ["--resume", uid]
     assert launch._resume_args("codex", uid) == ["resume", uid]

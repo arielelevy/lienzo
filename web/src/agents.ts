@@ -1,3 +1,4 @@
+import capabilities from "../../lienzo/agent-capabilities.json";
 /** Lo que el lienzo sabe hacer con cada CLI, como dato: antes eran `s.agent === "claude"` sueltos
  *  en Card, Panel y Forward, y sumar un agente era buscarlos a todos.
  *  - coordinable: puede ser la coordinadora del repo (estrella del menu ⋯; la que se elige sola si
@@ -15,12 +16,7 @@ interface Caps {
 }
 
 /** Catalogo de CLI: los filtros, tipos, textos y capacidades salen de la misma lista. */
-export const AGENTS = {
-  claude: { label: "Claude Code", resume: "claude --resume", coordinable: true, nativeChannel: true, screen: true },
-  codex: { label: "Codex", resume: "codex resume", coordinable: false, nativeChannel: false, screen: false },
-  pi: { label: "Pi", resume: "pi --resume", coordinable: false, nativeChannel: false, screen: false },
-  coda: { label: "CODA", resume: "coda --lastsession", coordinable: false, nativeChannel: false, screen: false },
-} as const satisfies Record<string, Caps>;
+export const AGENTS = capabilities satisfies Record<string, Caps>;
 export type Agent = keyof typeof AGENTS;
 export type Capability = "coordinable" | "nativeChannel" | "screen";
 

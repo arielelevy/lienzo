@@ -53,6 +53,8 @@ class _PeerMirror:
         self.last_seen: float = 0.0
         self.client: federation.SSEClient | None = None
         self.synced = False  # ya llego su snapshot completo en esta conexion
+        self.event_generation = 0
+        self.last_snapshot = time.monotonic()
         self.vivo_avisado: bool | None = None  # el ultimo estado vivo/caida que se dejo en el log
         self.evento_raro: str | None = None  # el ultimo tipo de evento no-objeto avisado
 
@@ -70,6 +72,7 @@ class Mirror:
     def __init__(self, transport: federation.Transport | None = None, on_change: Callable[[], None] | None = None):
         self.transport = transport or federation.HTTPTransport()
         self.on_change = on_change or (lambda: None)
+        self.on_snapshot: Callable[[str, set[str]], None] = lambda pc, ids: None
         self.log: Callable[[str], None] = lambda msg: None  # server.py lo cambia por su log
         self.diagnosticar: Callable[[str, BaseException], str | None] = red.diagnosticar  # inyectable
         self._lock = threading.RLock()
@@ -127,6 +130,8 @@ class Mirror:
         for pm in pares:
             if pm.client is not None:
                 pm.client.stop()
+        if isinstance(self.transport, federation.HTTPTransport):
+            self.transport.close()
 
     # --- eventos y snapshot ----------------------------------------------------------------
 
@@ -140,7 +145,14 @@ class Mirror:
         pm = self._get(pc_id)
         return pm.conn if pm is not None else None
 
-    def _apply_event(self, pm: _PeerMirror, ev: dict) -> None:
+    def supports(self, pc_id: str, capability: str) -> bool | None:
+        """None si el peer todavia no publico contrato; False si explicita que no lo soporta."""
+        with self._lock:
+            pm = self._peers.get(pc_id)
+            caps = (pm.health or {}).get("capabilities") if pm else None
+            return capability in caps if isinstance(caps, list) else None
+
+    def _apply_event(self, pm: _PeerMirror, ev: dict, *, expected_generation: int | None = None) -> None:
         """Un evento del SSE del peer (el mismo formato que /events: snapshot, session, removed,
         pending, links, rules, ping). pending/links/rules viajan como lista completa cada vez, no
         como delta: se reemplazan enteros, igual que hace el propio front con /events local."""
@@ -157,9 +169,15 @@ class Mirror:
                 pm.last_seen = time.time()
             return
         with self._lock:
+            if expected_generation is not None and (
+                self._peers.get(pm.pc_id) is not pm or pm.event_generation != expected_generation
+            ):
+                return
             pm.last_seen = time.time()
+            pm.event_generation += 1
             if t == "snapshot":
                 pm.synced = True
+                pm.last_snapshot = time.monotonic()
                 pm.sessions = {s["session_id"]: s for s in ev.get("sessions", []) if s.get("session_id")}
                 pm.pending = {p["request_id"]: p for p in ev.get("pending", []) if p.get("request_id")}
                 pm.links = list(ev.get("links", []))
@@ -178,7 +196,10 @@ class Mirror:
                 pm.rules = list(ev.get("rules", []))
             else:
                 return  # tipo desconocido: no hay nada que aplicar, pero last_seen ya se toco
+            snapshot_ids = set(pm.sessions) if t == "snapshot" else None
         self.on_change()
+        if t == "snapshot":
+            self.on_snapshot(pm.pc_id, snapshot_ids)
 
     # --- salud, cada HEALTH_EVERY_S ---------------------------------------------------------
 
@@ -279,6 +300,23 @@ class Mirror:
             pm.last_seen = time.time()
         self.on_change()
 
+        if time.monotonic() - pm.last_snapshot >= 60:
+            self._poll_snapshot(pm)
+
+    def _poll_snapshot(self, pm: _PeerMirror) -> None:
+        """Reconcilia aun si se perdio un evento; no pisa eventos posteriores a la consulta."""
+        with self._lock:
+            generation = pm.event_generation
+        try:
+            code, snapshot = self.transport.request(pm.conn, "GET", "/peer/snapshot")
+        except OSError as exc:
+            self.log(f"snapshot de {pm.pc_id}: {type(exc).__name__}")
+            return
+        if code != 200 or not isinstance(snapshot, dict) or not isinstance(snapshot.get("sessions"), list):
+            self.log(f"snapshot de {pm.pc_id}: respuesta invalida ({code})")
+            return
+        self._apply_event(pm, {**snapshot, "type": "snapshot"}, expected_generation=generation)
+
     # --- lo que consume server.py (y, ronda 3, sessions.py/rules.py) ------------------------
 
     def owner_of(self, sid: str) -> str | None:
@@ -339,7 +377,7 @@ class Mirror:
                 )
         return out
 
-    def forward(self, pc_id: str, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    def forward(self, pc_id: str, method: str, path: str, body: dict | None = None, *, timeout: float | None = None) -> tuple[int, dict]:
         """Reenvia un comando a la PC dueña (`path` sin el prefijo `/peer`, que se agrega aca) y
         devuelve su respuesta tal cual: codigo y cuerpo. Peer caido, o desconocido: 503, para que
         el front lo muestre igual que "no hay consola donde escribir". El 503 lleva `no_llego` solo
@@ -353,7 +391,8 @@ class Mirror:
         t0 = time.monotonic()
         for intento in (1, 2):
             try:
-                code, res = self.transport.request(pm.conn, method, f"/peer{path}", body)
+                options = {"timeout": timeout} if timeout is not None else {}
+                code, res = self.transport.request(pm.conn, method, f"/peer{path}", body, **options)
                 break
             except ConnectionRefusedError:
                 # el pedido no llego a ningun lado: reintentar una vez no puede duplicar nada

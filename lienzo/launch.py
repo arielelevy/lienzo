@@ -32,23 +32,11 @@ _CLAUDE_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSIO
 # la comilla del titulo antes de tiempo; fuera, el titulo nunca se interpreta como comando
 _UNSAFE_TITLE_RE = re.compile(r'[&|<>^%"\r\n]')
 
-# retomar una sesion (restore.py): claude y codex por id, pi y coda "la ultima de esta carpeta" (sin
-# id), segun el registro de agentes. El id se interpola en la linea del .cmd, asi que solo entra si
-# es [0-9a-fA-F-]{8,40}
-_RESUME_ID_RE = re.compile(r"[0-9a-fA-F-]{8,40}")
-
-
 def _resume_args(agent: str, resume: str | None) -> list[str]:
     """Argumentos para retomar, o [] si no se puede (sin pedido, o un id que no es de verdad para
     un agente que retoma por id). Cada elemento es seguro de escribir tal cual en el .cmd."""
     p = AGENTES.get(agent)
-    if not resume or p is None:
-        return []
-    if p.retomar_ultima:
-        return list(p.retomar_ultima)
-    if p.retomar_por_id and isinstance(resume, str) and _RESUME_ID_RE.fullmatch(resume):
-        return [*p.retomar_por_id, resume]
-    return []
+    return p.resume_args(resume) if p else []
 
 
 # elegir el modelo al lanzar: los que el registro marca con acepta_modelo (coda, claude y codex) lo
@@ -78,7 +66,7 @@ def nombre_corto(title: str) -> str:
     plano = unicodedata.normalize("NFKD", title or "").encode("ascii", "ignore").decode()
     partes = [p.strip() for p in plano.split(" - ") if p.strip()]
     if len(partes) >= 2:
-        rol = re.sub(r"^encargo\s+", "", partes[1], flags=re.I)
+        rol = re.sub(r"^encargo\s+", "", partes[1], flags=re.IGNORECASE)
         base = f"{partes[0]}-{rol}"
     else:
         base = partes[0] if partes else ""
@@ -125,6 +113,12 @@ def _exe_path(exe_name: str) -> str | None:
     """Por ruta absoluta, porque el PATH no se hereda entero por explorer.exe: primero donde lo deja
     el instalador de Claude Code (~/.local/bin), despues el PATH de este server."""
     propio = os.path.join(state.HOME, ".local", "bin", exe_name)
+    if exe_name == "kiro-cli.exe":
+        kiro = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.join(state.HOME, "AppData", "Local")), "Kiro-Cli", exe_name
+        )
+        if os.path.isfile(kiro):
+            return kiro
     return propio if os.path.isfile(propio) else shutil.which(exe_name)
 
 
@@ -146,6 +140,8 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: s
     exe_name = AGENT_EXES.get(agent)
     if exe_name is None:
         return {"ok": False, "error": f"agente desconocido: {agent!r}"}
+    if ("win32" if WINDOWS else sys.platform) not in AGENTES[agent].supported_platforms:
+        return {"ok": False, "error": f"integracion de {agent} no soportada en esta plataforma"}
     if agent == "coda" and _cuota_coda() == "agotada":
         # abriria una terminal que falla en el primer turno (medido el 2026-10-04)
         return {
@@ -163,7 +159,7 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: s
     resume_args = _resume_args(agent, resume)
     model_args = _model_args(agent, model)
     nombre_args = _nombre_args(agent, title)
-    extra = [*resume_args, *model_args, *nombre_args]
+    extra = [*AGENTES[agent].iniciar, *resume_args, *model_args, *nombre_args]
     res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
     if nombre_args and res.get("ok"):
         res["native_name"] = nombre_corto(title)

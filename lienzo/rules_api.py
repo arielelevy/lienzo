@@ -150,7 +150,7 @@ def new_rule(d: dict, text: str, **extra) -> dict:
         "pc": identity.pc_id(),
         # destino en otra PC: al reiniciar, esa tarjeta todavia no esta en el espejo y la regla se
         # descartaba por "destino desconocido"; esta marca la salva hasta que el espejo se asiente
-        **({"xpc": True} if _rule_target_pc(d.get("to")) else {}),
+        **({"xpc": True, "to_pc": pc} if (pc := _rule_target_pc(d.get("to"))) else {}),
         **extra,
     }
 
@@ -267,6 +267,11 @@ def create_rule(d: dict) -> tuple[int, dict]:
     if d["kind"] == "on_stop":
         origen = _rule_target_pc(d.get("from"))
         if origen is not None:
+            if mirror.MIRROR.supports(origen, "rules.create") is False:
+                return 502, {
+                    "code": "unsupported_capability",
+                    "error": "la otra PC no soporta rules.create; actualiza su lienzo",
+                }
             # el Stop ocurre en la PC del origen, y es esa PC la que dispara la regla (plan §3.5):
             # guardarla aca no la dispararia nunca. Se crea alla, y aca se ve por el espejo.
             code, res = mirror.MIRROR.forward(origen, "POST", "/rules", d)

@@ -457,19 +457,25 @@ class JsonList:
             log(f"{os.path.basename(self.path)} existe y no se pudo leer: se arranca vacio y no se guarda encima")
         self.items = [x for x in datos if keep(x)] if isinstance(datos, list) else []
 
-    def save(self) -> None:
+    def save(self, *, strict: bool = False) -> bool:
         if self.no_pisar:
             avisar_si_cambia(
                 f"guardar {self.path}",
                 f"no se guarda {os.path.basename(self.path)}: no se pudo leer al arrancar y se pisaria con lo que hay en memoria",
             )
-            return
+            if strict:
+                raise OSError(f"no se pudo leer {os.path.basename(self.path)} al arrancar")
+            return False
         try:
             atomic_write(self.path, json.dumps(self.items, ensure_ascii=False, indent=1))
+            return True
         except OSError as e:
             # antes se tragaba: si rules.json o links.json no se podian escribir (disco lleno, archivo
             # bloqueado), las reglas seguian en memoria y se perdian en el proximo arranque sin aviso
             log(f"no se pudo guardar {os.path.basename(self.path)}: {e}")
+            if strict:
+                raise
+            return False
 
     def snapshot(self) -> list[dict]:
         with lock:

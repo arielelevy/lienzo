@@ -60,6 +60,11 @@ export function useWorkClipboard(s: Session, pending: boolean, toast: (text: str
       const r = await sessionsApi.send(s.session_id, {
         text: draft.text, from: draft.from, attachments: [], copycat: true, stop_origin: !duplicate,
       });
+      if (r.handover_error) {
+        setDraft(null);
+        toast(`El mensaje llegó, pero el traspaso quedó pendiente: ${r.handover_error}. No reenvíes el texto.`, true);
+        return;
+      }
       let extra = "";
       if (duplicate) {
         try {

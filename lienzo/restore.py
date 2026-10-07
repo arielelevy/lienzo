@@ -18,7 +18,6 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
-import re
 import threading
 import time
 
@@ -34,7 +33,6 @@ REFRESH_SAVED_S = 300.0  # una entrada sin cambios no se reescribe antes de esto
 # claude y codex retoman por id: tiene que ser un UUID de verdad (el `pid-NNN` de una tarjeta del
 # barrido no sirve). pi y coda retoman "la ultima de esta carpeta": alcanza con el cwd. Quien retoma
 # por id lo dice el registro de agentes (agentes.py)
-_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 _BY_ID = tuple(nombre for nombre, p in AGENTES.items() if p.retomar_por_id)
 
 # razones de SessionEnd que NO son una salida a proposito: "other" es lo que deja cerrar la
@@ -65,9 +63,8 @@ def _iso(d: dt.datetime) -> str:
 
 
 def valid_id(agent: str, sid) -> bool:
-    if not isinstance(sid, str) or not sid:
-        return False
-    return bool(_UUID_RE.fullmatch(sid)) if agent in _BY_ID else True
+    p = AGENTES.get(agent)
+    return bool(p and p.valid_id(sid))
 
 
 def ended_on_purpose(card: dict) -> bool:
@@ -200,7 +197,9 @@ def remember_live(cards) -> int:
     listas = []
     for c in cards:
         sid = c.get("session_id")
-        if not c.get("hooked") or not c.get("alive") or c.get("state") == "muerta":
+        p = AGENTES.get(c.get("agent"))
+        identified = p and p.persist_unhooked and c.get("transcript_path")
+        if not (c.get("hooked") or identified) or not c.get("alive") or c.get("state") == "muerta":
             continue
         # el debounce va antes de `eligible` (que toca el disco): una tarjeta que casi siempre se
         # descarta no tiene que costar un isdir cada 2 s
