@@ -27,7 +27,11 @@ class Windows:
         self.user = c.WinDLL("user32", use_last_error=True)
         self.gdi = c.WinDLL("gdi32", use_last_error=True)
         self.kernel = c.WinDLL("kernel32", use_last_error=True)
+        self.user.SetProcessDpiAwarenessContext.argtypes = [w.HANDLE]
+        if not self.user.SetProcessDpiAwarenessContext(c.c_void_p(-4)):
+            fail("No se pudo usar la resolución real de Windows para capturar Chrome")
         self.pressed = set()
+        self.mouse_pressed = set()
         self.user.GetWindowDC.restype = w.HDC
         self.user.GetForegroundWindow.restype = w.HWND
         self.gdi.CreateCompatibleDC.restype = w.HDC
@@ -45,6 +49,8 @@ class Windows:
             (self.user, "ShowWindow", [w.HWND, c.c_int]), (self.user, "SetForegroundWindow", [w.HWND]),
             (self.user, "IsZoomed", [w.HWND]),
             (self.user, "SetWindowPos", [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]),
+            (self.user, "AttachThreadInput", [w.DWORD, w.DWORD, w.BOOL]),
+            (self.user, "BringWindowToTop", [w.HWND]),
             (self.user, "GetWindowThreadProcessId", [w.HWND, c.POINTER(w.DWORD)]),
             (self.gdi, "CreateCompatibleDC", [w.HDC]),
             (self.gdi, "CreateCompatibleBitmap", [w.HDC, c.c_int, c.c_int]),
@@ -152,6 +158,18 @@ class Windows:
             self.user.ShowWindow(hwnd, 9)
         self.user.SetForegroundWindow(hwnd)
         if self.user.GetForegroundWindow() != hwnd:
+            foreground = self.user.GetForegroundWindow()
+            foreground_thread = self.user.GetWindowThreadProcessId(foreground, None)
+            current_thread = self.kernel.GetCurrentThreadId()
+            attached = foreground_thread != current_thread and self.user.AttachThreadInput(current_thread, foreground_thread, True)
+            try:
+                if attached:
+                    self.user.BringWindowToTop(hwnd)
+                    self.user.SetForegroundWindow(hwnd)
+            finally:
+                if attached:
+                    self.user.AttachThreadInput(current_thread, foreground_thread, False)
+        if self.user.GetForegroundWindow() != hwnd:
             fail("Windows no permitió activar Chrome; no se envió la entrada")
         rect = self.rect(hwnd)
         for event in events:
@@ -173,6 +191,10 @@ class Windows:
                     if not flag:
                         fail("Botón de mouse inválido")
                     self.user.mouse_event(flag, 0, 0, 0, 0)
+                    if event["type"] == "mousePressed":
+                        self.mouse_pressed.add(event["button"])
+                    else:
+                        self.mouse_pressed.discard(event["button"])
             elif kind == "key":
                 key = bounded(event.get("keyCode"), 1, 255)
                 modifiers = bounded(event.get("modifiers"), 0, 15)
@@ -221,6 +243,9 @@ class Windows:
         for key in self.pressed:
             self.user.keybd_event(key, 0, 2, 0)
         self.pressed.clear()
+        for button in self.mouse_pressed:
+            self.user.mouse_event({"left": 4, "right": 16, "middle": 64}[button], 0, 0, 0, 0)
+        self.mouse_pressed.clear()
         return {"ok": True}
 
 

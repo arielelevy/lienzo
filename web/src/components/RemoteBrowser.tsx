@@ -59,6 +59,7 @@ function ChromeWindow({peer}: {peer: Peer}) {
   const [profile, setProfile] = useState('');
   const [frame, setFrame] = useState<Reply & {window?: string}>({});
   const [error, setError] = useState('');
+  const [inputError, setInputError] = useState('');
   const [busy, setBusy] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
   const chain = useRef<Promise<unknown>>(Promise.resolve());
@@ -74,6 +75,8 @@ function ChromeWindow({peer}: {peer: Peer}) {
     return request;
   }, [peer.pc_id]);
   const report = useCallback((e: unknown) => { if (live.current) setError((e as Error).message); }, []);
+  const reportInput = useCallback((e: unknown) => { if (live.current) setInputError((e as Error).message); }, []);
+  useEffect(() => { document.title = windows.find(w=>w.id === window)?.title.replace(/ - Google Chrome$/, '') || `Chrome · ${peer.name}`; }, [windows, window, peer.name]);
   const refresh = useCallback(async () => {
     const r = await call({action: 'windows'});
     if (!live.current) return;
@@ -133,8 +136,9 @@ function ChromeWindow({peer}: {peer: Peer}) {
     {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1></div>
       : error ? <div className="remote-empty" role="alert"><h1>No se pudo mostrar Chrome</h1><p>{error}</p><button onClick={()=>void refresh().catch(report)}>Reconectar</button></div>
       : !window ? <div className="remote-empty"><h1>Chrome en {peer.name}</h1><p>Elegí tu perfil y tocá Abrir perfil. Acá vas a ver la ventana completa, con sus pestañas, menús y avisos.</p></div>
-      : frame.window === window && frame.image ? <RemoteScreen key={window} native image={frame.image} format={frame.format} width={frame.width ?? 1280} height={frame.height ?? 800} send={events=>call({action:'window-input',window,events})} onError={report} onAddress={()=>{}} onCopy={()=>{}} />
+      : frame.window === window && frame.image ? <RemoteScreen key={window} native image={frame.image} format={frame.format} width={frame.width ?? 1280} height={frame.height ?? 800} send={async events=>{const r=await call({action:'window-input',window,events});setInputError('');return r;}} onError={reportInput} onAddress={()=>{}} onCopy={()=>{}} />
       : <div className="remote-empty">Cargando ventana de Chrome…</div>}
+    {inputError && <div className="remote-input-warning" role="alert">{inputError}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
   </div><div className="remote-status">{peer.name} · Chrome real · Usás el mouse y teclado de esa PC. Cerrar esta vista deja Chrome abierto.</div></>;
 }
 

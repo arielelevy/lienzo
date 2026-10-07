@@ -96,3 +96,15 @@ selección explícita de PC/ventana y error visible si Windows rechaza el ajuste
 Explorer: barras ocupaban superficie; Analyser: proporciones remotas distintas; Designer:
 menú superpuesto y ajuste de ventana; Executor: build de despliegue, sin nuevas pruebas
 por instrucción vigente; Detective: funcionamiento visual y desconexiones aún no certificados.
+
+Observación solicitada de la sesión real: CUA capturó el rechazo de foco de Windows y,
+tras recargar, una imagen de 1270 × 609 en una superficie idéntica: ya no hay escalado CSS.
+El Chrome capturado seguía sobredimensionado; el worker no declaraba DPI awareness.
+Se agrega contexto DPI por monitor, intercambio temporal de foco Win32 con detach en
+finally y comprobación posterior de que la ventana activa sigue siendo Chrome.
+El error de entrada se informa sobre la captura sin detenerla. Se liberan también botones
+de mouse mantenidos. Se elimina el gutter heredado del tablero y la solapa usa el título
+de la ventana remota. Revisión estática: no se envía entrada si el foco no coincide, no se
+aceptan ventanas de otro ejecutable, no se alteran permisos ni configuración de Chrome.
+Explorer y Analyser usan capturas reales; Designer conserva controles mínimos; Executor
+registra capturas y build de despliegue; Detective no certifica interacción hasta observarla.

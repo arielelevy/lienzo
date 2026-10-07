@@ -28,7 +28,9 @@ def test_non_chrome_window_cannot_be_targeted():
 
 def test_no_keyboard_or_mouse_if_foreground_changed():
     windows = module.Windows.__new__(module.Windows)
-    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 456)
+    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 456,
+                                   GetWindowThreadProcessId=lambda hwnd, pid: 2, AttachThreadInput=lambda source, target, attach: False)
+    windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
     with pytest.raises(ValueError, match="no se envió la entrada"):
         windows.input(123, [{"kind": "key", "keyCode": 65, "modifiers": 0, "type": "keyDown"}])
 
