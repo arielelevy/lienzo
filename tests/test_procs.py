@@ -1,7 +1,10 @@
 """Tests minimos de lienzo/procinfo.py y lienzo/procs.py (Windows, ctypes)."""
 
+import json
 import os
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -58,3 +61,42 @@ def test_cwd_of_propio_proceso():
     assert got is not None
     assert os.path.normcase(got) == os.path.normcase(os.getcwd())
     assert procs.cwd_of(999999) is None
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        "sandbox windows node_repl",
+        "--codex-run-as-as-helper",
+        "--codex-run-as-fs-helper",
+        "--codex-run-as-apply-patch",
+        "app-server --listen stdio://",
+        "--config model=test sandbox windows node_repl",
+    ],
+)
+def test_codex_helpers_are_not_cli_in_sweep_or_liveness(monkeypatch, args):
+    exe = r"C:\Users\x\.local\bin\codex.exe"
+    cmd = f'"{exe}" {args}'
+    monkeypatch.setattr(procinfo, "image_path", lambda pid: exe)
+    monkeypatch.setattr(procs, "image_path", lambda pid: exe)
+    monkeypatch.setattr(procinfo, "command_line", lambda pid: cmd)
+    monkeypatch.setattr(procs, "alive", lambda pid: True)
+    rows = [{"pid": 42, "exe": exe, "cmd": cmd, "parent": "codex.exe"}]
+    monkeypatch.setattr(procs.subproc, "correr", lambda *a, **kw: (0, json.dumps(rows), ""))
+    assert procs.agent_of(exe, cmd) is None
+    assert procs.sweep() == []
+    assert not procs.agent_alive(42)
+    assert not procs.is_tui(42)
+
+
+@pytest.mark.parametrize(
+    "args", ["", "resume --last", "fork --last", "--model test resume --last", '"Revisar sandbox y app-server"']
+)
+def test_codex_interactive_cli_still_counts(args):
+    assert procinfo.agent_of("codex.exe", f"codex.exe {args}") == "codex"
+
+
+def test_codex_unreadable_command_is_not_assumed_interactive(monkeypatch):
+    monkeypatch.setattr(procinfo, "image_path", lambda pid: "codex.exe")
+    monkeypatch.setattr(procinfo, "command_line", lambda pid: None)
+    assert procinfo.process_agent(42) is None

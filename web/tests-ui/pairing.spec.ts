@@ -194,7 +194,7 @@ test.describe('pantalla "Varias PCs" (menú ⋯ del header, plan §3.1 y §3.9)'
   });
 });
 
-test.describe('"Coordinadora solo de esta PC" (menú ⋯ de la tarjeta, plan §3.6)', () => {
+test.describe('Coordinadora del repo (menú ⋯ de la tarjeta)', () => {
   test("no aparece con una sola PC", async ({ page }) => {
     await abrirTablero(page, sesiones(), [PEER_LOCAL]);
     const card = page.locator(`.card[data-sid="${SID.reglas}"]`);
@@ -202,7 +202,7 @@ test.describe('"Coordinadora solo de esta PC" (menú ⋯ de la tarjeta, plan §3
     await expect(card.getByRole("menuitem", { name: /Coordinadora solo de esta PC/ })).toHaveCount(0);
   });
 
-  test("con más de una PC, aparece al lado de la coordinadora federada y manda scope: pc", async ({ page }) => {
+  test("con más de una PC, sólo ofrece la coordinadora del repo y manda on", async ({ page }) => {
     await abrirTablero(page, conDosPc(), [PEER_LOCAL, PEER_NOTEBOOK]);
     const card = page.locator(`.card[data-sid="${SID.reglas}"]`);
     let body: Record<string, unknown> | null = null;
@@ -212,8 +212,9 @@ test.describe('"Coordinadora solo de esta PC" (menú ⋯ de la tarjeta, plan §3
     });
     await card.locator(".kebab").click();
     await expect(card.getByRole("menuitem", { name: /☆ Coordinadora del repo/ })).toBeVisible();
-    await card.getByRole("menuitem", { name: /Coordinadora solo de esta PC/ }).click();
-    await expect.poll(() => body).toMatchObject({ on: true, scope: "pc" });
+    await expect(card.getByRole("menuitem", { name: /Coordinadora solo de esta PC/ })).toHaveCount(0);
+    await card.getByRole("menuitem", { name: /☆ Coordinadora del repo/ }).click();
+    await expect.poll(() => body).toEqual({ on: true });
   });
 });
 

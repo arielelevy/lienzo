@@ -202,7 +202,7 @@ explícito**, o los acentos se rompen. Lo que se usa para repartir:
 |---|---|
 | `GET /sessions` | las tarjetas: `session_id`, `pid`, `title`, `state`, `alive`, `stopped_by`, `copycat_of`, `transcript_path`, y con más de una PC también `pc`, `repo_key`, `transcript_bytes`, `model` |
 | `PUT /sessions/<sid>/title` | renombrarla |
-| `PUT /sessions/<sid>/coordinator` | `{on: true, scope?: "pc"}`. Una coordinadora por repo en toda la federación; `scope: "pc"` la separa sólo para esta PC |
+| `PUT /sessions/<sid>/coordinator` | `{on: true}`. Una coordinadora por repo en toda la federación, independientemente de la PC |
 | `POST /sessions/<sid>/send` | escribirle, aunque esté oculta (local o remota, transparente). Con `from` y `link_to` dibuja la flecha |
 | `POST /rules` | `{kind:"on_stop", from, to, text, repeat:true, max_fires:N}`: el informe viaja solo al cerrar cada turno |
 | `GET /pending`, `POST /pending/<id>` | permisos, `{decision:"allow"\|"deny"}` |

@@ -114,9 +114,8 @@ PC-A lienzo :7321 (UI, solo 127.0.0.1)            PC-B lienzo :7321
 
 - Por defecto, una ★ por repo en toda la federación: los informes de los frentes de cualquier
   PC le llegan a ella. Prender una apaga la anterior en cualquier PC.
-- Separarla, explícito: `PUT /sessions/<sid>/coordinator {on: true, scope: "pc"}`. Ese repo,
-  en esa PC, pasa a tener su propia ★ y las reglas de esa PC apuntan a ella. En la UI: menú ⋯ →
-  "Coordinadora solo de esta PC".
+- Cambio del 2026-10-07: eliminada la alternativa por PC. `PUT /sessions/<sid>/coordinator
+  {on: true}` selecciona la coordinadora del repo para todas las PCs conectadas.
 - Identidad del repo: el remote `origin` normalizado (sin `.git`, sin credenciales,
   minúsculas en el host). Si no hay remote, el nombre de la carpeta. El mismo repo puede estar
   en rutas distintas en cada PC, y dos carpetas con el mismo nombre pueden ser repos distintos.
@@ -239,7 +238,7 @@ commiter por árbol**:
 - [x] Chequeo de bucle A↔B global, con lock en la PC de menor `pc_id`
 - [x] Regla repetida y programadas a ±2 min chequeadas en la PC del destino
 - [x] Coordinadora federada por repo
-- [x] `scope: "pc"` para separarla, en API y en el menú ⋯
+- Alternativa histórica `scope: "pc"`: retirada el 2026-10-07 por pedido del usuario.
 - [x] Sin flecha doble (canal nativo) entre PCs distintas
 - [x] `POST /sessions/launch` con `launch_roots` y ejecutable fijo por agente
 - [ ] Cierre: desde la ★ en A se lanza un frente en B y su informe vuelve solo

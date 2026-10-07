@@ -64,6 +64,21 @@ se pasan a «Hecho» cuando Ariel lo pide. Última actualización: 2026-10-07.
 
 ## Pendiente (con evidencia)
 
+- [ ] Coordinadora sólo del repo (pedido del 2026-10-07): eliminado el rol por PC del menú,
+  cliente y API. Las marcas guardadas se migran al cargar; se conserva una marca local por repo,
+  prefiriendo la general existente. Seleccionar una coordinadora desmarca las del mismo repo
+  en las demás PCs visibles. Las PCs desconectadas requieren reconciliarse al volver.
+  Prueba focal: 134 casos pasan. Corrida agéntica `2026-10-07T06-12-22.146Z-27252`:
+  cinco suites sin fallas, 981 backend y 117 UI; menú real verificado con captura.
+- [ ] Identidad de Codex en el barrido (hallazgo del cierre, 2026-10-07): `codex.exe` de
+  sandbox/helpers podía ocupar una tarjeta con transcripción de una CLI ya cerrada. Se filtran
+  subcomandos no interactivos y flags internos `--codex-run-as-*`, y la comprobación de vida
+  también lee el comando. Si no se puede leer, no se supone una TUI. Focal: 51 pruebas pasan;
+  no se mataron helpers ni procesos de aplicaciones. El PID 26924 ya no existía al verificar.
+  Corrida backend posterior `2026-10-07T06-16-42.580Z-16520`: 993 pruebas pasan.
+  Revisión y cinco roles en resultados; baseline sin aprobar, compuerta exit 2. Estas notas
+  documentales se agregan después de medir; el código probado no cambia.
+
 ### Cierre de implementación del 2026-10-07
 
 Las casillas se conservan pendientes de aceptación. Implementado en esta ronda:

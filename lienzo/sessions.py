@@ -197,31 +197,15 @@ def _repo_identity(s: dict) -> str | None:
     return s.get("repo_key") or s.get("repo") or None
 
 
-def repo_coordinator(repo: str | None, pc: str | None, local: list[dict], remote: list[dict]) -> dict | None:
-    """La coordinadora de `repo` tal como la ve una sesion de la PC `pc` (plan multi-PC §3.6):
-    primero la separada (`coordinator_scope` "pc") de esa misma PC si existe, si no la federada
-    (cualquier otro scope), este en `local` o en `remote` (mirror.py, frente C). None si `repo` no
-    se pudo resolver, o si no hay ninguna coordinadora de ese repo en ningun lado."""
+def repo_coordinator(repo: str | None, local: list[dict], remote: list[dict]) -> dict | None:
+    """La coordinadora del repo, independientemente de la PC donde corre."""
     if repo is None:
         return None
-    scoped = next(
-        (
-            o
-            for o in local
-            if o.get("coordinator")
-            and o.get("coordinator_scope") == "pc"
-            and o.get("pc") == pc
-            and _repo_identity(o) == repo
-        ),
-        None,
-    )
-    if scoped:
-        return scoped
     return next(
         (
             o
             for o in (*local, *remote)
-            if o.get("coordinator") and o.get("coordinator_scope") != "pc" and _repo_identity(o) == repo
+            if o.get("coordinator") and _repo_identity(o) == repo
         ),
         None,
     )
@@ -539,7 +523,7 @@ def continue_session(old: dict, new: dict) -> bool:
         except OSError as e:
             state.log(f"sesion {old_sid[:8]} no continua como {new_sid[:8]}: no se guardaron reglas/enlaces: {e}")
             return False
-        for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator", "coordinator_scope", "pc"):
+        for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator", "pc"):
             if old.get(k) is not None:
                 new[k] = old[k]
         if not new.get("cwd") and old.get("cwd"):
@@ -603,7 +587,6 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "pending_id": None,
         "typing": False,
         "coordinator": False,
-        "coordinator_scope": None,
         "orphan": False,
         "in_vscode": False,
         "no_console": False,
@@ -994,17 +977,9 @@ def set_title(s: dict, title: str) -> None:
             choose_title(s, None)
 
 
-def set_coordinator(s: dict, on: bool, scope: str | None = None) -> list[dict]:
-    """Marca (o desmarca) la coordinadora del repo (plan multi-PC §3.6). Por defecto (`scope`
-    None: federada), a lo sumo una **en toda la federacion**: prender una apaga las demas del
-    mismo repo, sean de esta PC o de otra (via mirror.forward a su `/sessions/<sid>/coordinator
-    {on: false}`, frente C). Con `scope: "pc"` la ★ vale solo para esta PC: apaga solo a otra
-    "pc" del mismo repo en esta PC, y convive con la federada (ninguna de las dos apaga a la
-    otra). La identidad de repo es `_repo_identity` (repo_key con respaldo en `repo`, sin
-    matchear dos sin resolver): dos carpetas con el mismo nombre pero remotes distintos son repos
-    distintos, y el mismo remote clonado en carpetas o PCs distintas comparte coordinadora.
-    Devuelve las sesiones LOCALES que cambiaron (ya guardadas y publicadas); lo apagado por
-    forward en otra PC lo publica su propio server, no esta."""
+def set_coordinator(s: dict, on: bool) -> list[dict]:
+    """Una coordinadora por repo: al elegirla se desmarcan las demas, incluso en otras PCs.
+    Devuelve las tarjetas locales modificadas; cada peer publica sus propios cambios."""
     changed = []
     my_repo = _repo_identity(s)
     with lock:
@@ -1012,22 +987,18 @@ def set_coordinator(s: dict, on: bool, scope: str | None = None) -> list[dict]:
             for other in sessions.values():
                 if other is s or not other.get("coordinator") or _repo_identity(other) != my_repo:
                     continue
-                if scope == "pc":
-                    if other.get("coordinator_scope") != "pc":
-                        continue  # la federada convive con la nueva separada de esta PC
-                elif other.get("coordinator_scope") == "pc":
-                    continue  # la separada de otra PC convive con la nueva federada
-                other["coordinator"], other["coordinator_scope"] = False, None
+                other["coordinator"] = False
+                other.pop("coordinator_scope", None)
                 changed.append(other)
-        want_scope = scope if on else None
-        if bool(s.get("coordinator")) != on or s.get("coordinator_scope") != want_scope:
-            s["coordinator"], s["coordinator_scope"] = on, want_scope
+        if bool(s.get("coordinator")) != on or "coordinator_scope" in s:
+            s["coordinator"] = on
+            s.pop("coordinator_scope", None)
             changed.append(s)
         for x in changed:
             touch(x)
-    if on and scope != "pc" and my_repo is not None:
+    if on and my_repo is not None:
         for other in _mirror_sessions():
-            if other.get("coordinator") and other.get("coordinator_scope") != "pc" and _repo_identity(other) == my_repo:
+            if other.get("coordinator") and _repo_identity(other) == my_repo:
                 code, res = _mirror_forward(
                     other["pc"], "PUT", f"/sessions/{other['session_id']}/coordinator", {"on": False}
                 )
@@ -1067,7 +1038,7 @@ def heredar_de_provisoria(prov: dict, s: dict) -> None:
     salia del primer mensaje («Bien el diagnostico. Reintenta…» en vez de «encargo F»)."""
     if prov.get("title_source") == "user" and s.get("title_source") != "user":
         s["title"], s["title_source"] = prov.get("title"), "user"
-    for k in ("coordinator", "coordinator_scope", "copycat_of"):
+    for k in ("coordinator", "copycat_of"):
         if prov.get(k) and not s.get(k):
             s[k] = prov[k]
 
@@ -2343,7 +2314,7 @@ def stopped_recipients(s: dict) -> list[dict]:
     local_by_id = {o["session_id"]: o for o in locales}
     remote_by_id = {o["session_id"]: o for o in remotas}
     out: dict[str, dict] = {}
-    if coord := repo_coordinator(my_repo, s.get("pc"), locales, remotas):
+    if coord := repo_coordinator(my_repo, locales, remotas):
         out[coord["session_id"]] = coord
     for r in reglas + _mirror_rules():
         if not r.get("enabled") or sid not in (r.get("from"), r.get("to")):
@@ -2564,6 +2535,23 @@ def restore_on_start(cards: list[dict]) -> None:
     restore_guard(work)
 
 
+def normalize_coordinators() -> None:
+    """Migra marcas por PC y conserva una por repo, prefiriendo la marca general existente."""
+    seen = set()
+    for s in sorted(sessions.values(), key=lambda s: (s.get("coordinator_scope") == "pc", s["session_id"])):
+        changed = "coordinator_scope" in s
+        s.pop("coordinator_scope", None)
+        repo = _repo_identity(s)
+        if s.get("coordinator") and repo is not None:
+            if repo in seen:
+                s["coordinator"] = False
+                changed = True
+            else:
+                seen.add(repo)
+        if changed:
+            save_session(s)
+
+
 def load_sessions() -> tuple[int, int]:
     """Carga sessions/*.json. Devuelve (purgadas, retituladas): purga las sin proceso vivo y sin
     eventos (o arranque) hace mas de STALE_SESSION_H horas (las demas sin proceso quedan 'muerta'
@@ -2608,6 +2596,7 @@ def load_sessions() -> tuple[int, int]:
         except OSError, ValueError, KeyError:
             state.log(f"tarjeta {os.path.basename(p)} no se pudo cargar:\n{traceback.format_exc()}")
             continue
+    normalize_coordinators()
     restore_on_start(sin_proceso)
     remember_live_cards()
     retitled = 0

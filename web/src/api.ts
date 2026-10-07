@@ -113,9 +113,7 @@ export const sessionsApi = {
   /** la deja en el canal nativo (ListAgents de esta PC y de las otras): /rename + /remote-control */
   native: (sid: string) => api.post<{ ok: boolean; native_name: string }>(ses(sid, "native"), {}),
   stopped: (sid: string, on: boolean) => api.put<StoppedResult>(ses(sid, "stopped"), { on }),
-  /** `scope: "pc"` la hace coordinadora solo de esta PC; apagarla no lleva scope */
-  coordinator: (sid: string, on: boolean, scope?: "pc") =>
-    api.put(ses(sid, "coordinator"), on && scope ? { on, scope } : { on }),
+  coordinator: (sid: string, on: boolean) => api.put(ses(sid, "coordinator"), { on }),
   remove: (sid: string) => api.del(`/sessions/${sid}`),
   digest: (sid: string, n: number) => api.get<DigestResponse>(ses(sid, `digest?n=${n}`)),
   screen: (sid: string) => api.get<ScreenResponse>(ses(sid, "screen")),

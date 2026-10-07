@@ -1,7 +1,7 @@
 """Plan multi-PC, ronda 2, encargo B (F3): el arreglo de fondo de repo_key/repo en set_coordinator
 y stopped_recipients, el enrutado por mirror.forward de send_to_session (y lo que usan fire_rule y
-los avisos de stopped), el bucle A<->B global (loop_conflict, pura) y la coordinadora federada con
-scope "pc". mirror.py (frente C) todavia no existe en este arbol: se stubea con un mirror falso
+los avisos de stopped), el bucle A<->B global (loop_conflict, pura) y la coordinadora por repo.
+Se prueba el enrutado con un mirror falso
 inyectado en sessions.mirror via monkeypatch, con la forma exacta que pacta el encargo comun
 (owner_of, forward, rules, sessions). Ver docs/ronda2/encargo-B.md."""
 
@@ -146,33 +146,33 @@ def test_stopped_recipients_no_confunde_repo_key_none_con_repo_distinto(aislado)
     assert ses.stopped_recipients(a) == []
 
 
-# --- 2. repo_coordinator: prioridad scope "pc" de la propia PC, si no la federada ---------------
+# --- 2. repo_coordinator: una coordinadora del repo, independiente de la PC --------------------
 
 
-def test_repo_coordinator_prioriza_scope_pc_de_su_pc():
+def test_repo_coordinator_no_prioriza_scope_pc():
     local = [
         {"session_id": "a", "pc": "pc-1", "coordinator": True, "coordinator_scope": "pc", "repo_key": "r"},
         {"session_id": "b", "pc": "pc-1", "coordinator": True, "coordinator_scope": None, "repo_key": "r"},
     ]
-    assert ses.repo_coordinator("r", "pc-1", local, [])["session_id"] == "a"
+    assert ses.repo_coordinator("r", local, [])["session_id"] == "a"
 
 
-def test_repo_coordinator_scope_pc_de_otra_pc_no_cuenta():
+def test_repo_coordinator_marca_vieja_de_otra_pc_cuenta_para_el_repo():
     local = [
         {"session_id": "a", "pc": "pc-2", "coordinator": True, "coordinator_scope": "pc", "repo_key": "r"},
         {"session_id": "b", "pc": "pc-1", "coordinator": True, "coordinator_scope": None, "repo_key": "r"},
     ]
-    assert ses.repo_coordinator("r", "pc-1", local, [])["session_id"] == "b"
+    assert ses.repo_coordinator("r", local, [])["session_id"] == "a"
 
 
 def test_repo_coordinator_cae_a_la_federada_remota():
     remote = [{"session_id": "c", "pc": "pc-2", "coordinator": True, "coordinator_scope": None, "repo_key": "r"}]
-    assert ses.repo_coordinator("r", "pc-1", [], remote)["session_id"] == "c"
+    assert ses.repo_coordinator("r", [], remote)["session_id"] == "c"
 
 
 def test_repo_coordinator_sin_repo_no_matchea_nada():
     local = [{"session_id": "a", "pc": "pc-1", "coordinator": True, "coordinator_scope": None, "repo_key": None}]
-    assert ses.repo_coordinator(None, "pc-1", local, []) is None
+    assert ses.repo_coordinator(None, local, []) is None
 
 
 # --- 3. send_to_session enruta por mirror.forward cuando la sesion es de otra PC ----------------
@@ -295,7 +295,7 @@ def test_stopped_recipients_incluye_sesion_remota_con_regla_vigente(aislado, mir
     assert [r["session_id"] for r in recipients] == [OTHER]
 
 
-# --- 6. coordinadora federada: apaga la remota, salvo scope "pc" --------------------------------
+# --- 6. coordinadora del repo: reemplaza marcas locales y remotas, incluidas las antiguas -------
 
 
 def test_set_coordinator_federada_apaga_la_remota_del_mismo_repo(aislado, mirror_fake):
@@ -313,7 +313,7 @@ def test_set_coordinator_federada_apaga_la_remota_del_mismo_repo(aislado, mirror
     assert mirror_fake.forward_calls == [("pc-b", "PUT", f"/sessions/{OTHER}/coordinator", {"on": False})]
 
 
-def test_set_coordinator_scope_pc_no_apaga_la_federada_remota(aislado, mirror_fake):
+def test_set_coordinator_no_modifica_otro_repo_remoto(aislado, mirror_fake):
     cwd = make_repo(aislado, "x", "git@github.com:foo/bar.git")
     s = sess(SID, cwd)
     remota = {
@@ -321,15 +321,15 @@ def test_set_coordinator_scope_pc_no_apaga_la_federada_remota(aislado, mirror_fa
         "pc": "pc-b",
         "coordinator": True,
         "coordinator_scope": None,
-        "repo_key": identity.repo_key(cwd),
+        "repo_key": "otro-repo",
     }
     mirror_fake.session_list = [remota]
-    ses.set_coordinator(s, True, scope="pc")
+    ses.set_coordinator(s, True)
     assert mirror_fake.forward_calls == []
-    assert s["coordinator"] is True and s["coordinator_scope"] == "pc"
+    assert s["coordinator"] is True and "coordinator_scope" not in s
 
 
-def test_set_coordinator_federada_no_apaga_una_remota_scope_pc(aislado, mirror_fake):
+def test_set_coordinator_apaga_una_remota_con_marca_vieja_pc(aislado, mirror_fake):
     cwd = make_repo(aislado, "x", "git@github.com:foo/bar.git")
     s = sess(SID, cwd)
     remota_pc = {
@@ -341,35 +341,39 @@ def test_set_coordinator_federada_no_apaga_una_remota_scope_pc(aislado, mirror_f
     }
     mirror_fake.session_list = [remota_pc]
     ses.set_coordinator(s, True)
-    assert mirror_fake.forward_calls == [], "la separada de otra PC convive con la nueva federada"
+    assert mirror_fake.forward_calls == [("pc-b", "PUT", f"/sessions/{OTHER}/coordinator", {"on": False})]
 
 
-def test_set_coordinator_scope_pc_convive_con_la_federada_local(aislado):
+def test_set_coordinator_reemplaza_marca_pc_local(aislado):
     cwd_a = make_repo(aislado, "x", "git@github.com:foo/bar.git")
     cwd_b = make_repo(aislado / "otra", "y", "git@github.com:foo/bar.git")
     fed = sess(SID, cwd_a)
     otra = sess(OTHER, cwd_b)
     ses.set_coordinator(fed, True)
-    changed = ses.set_coordinator(otra, True, scope="pc")
-    assert fed["coordinator"] is True, "la federada no se toca"
-    assert otra["coordinator"] is True and otra["coordinator_scope"] == "pc"
-    assert changed == [otra]
+    fed["coordinator_scope"] = "pc"
+    changed = ses.set_coordinator(otra, True)
+    assert fed["coordinator"] is False
+    assert otra["coordinator"] is True and "coordinator_scope" not in otra
+    assert changed == [fed, otra]
 
 
-def test_set_coordinator_scope_pc_apaga_solo_a_otra_scope_pc(aislado):
+def test_normalizar_coordinadoras_conserva_general_y_guarda_migracion(aislado, monkeypatch):
     cwd_a = make_repo(aislado, "x", "git@github.com:foo/bar.git")
     cwd_b = make_repo(aislado / "otra", "y", "git@github.com:foo/bar.git")
     cwd_c = make_repo(aislado / "otra2", "z", "git@github.com:foo/bar.git")
     fed = sess(SID, cwd_a)
     p1 = sess(OTHER, cwd_b)
     p2 = sess(THIRD, cwd_c)
-    ses.set_coordinator(fed, True)
-    ses.set_coordinator(p1, True, scope="pc")
-    changed = ses.set_coordinator(p2, True, scope="pc")
-    assert {x["session_id"] for x in changed} == {OTHER, THIRD}
+    fed["coordinator"] = p1["coordinator"] = p2["coordinator"] = True
+    p1["coordinator_scope"] = p2["coordinator_scope"] = "pc"
+    saved = []
+    monkeypatch.setattr(ses, "save_session", lambda s: saved.append(dict(s)))
+    ses.normalize_coordinators()
     assert p1["coordinator"] is False
-    assert p2["coordinator"] is True and p2["coordinator_scope"] == "pc"
-    assert fed["coordinator"] is True, "sigue conviviendo"
+    assert p2["coordinator"] is False
+    assert fed["coordinator"] is True
+    assert {s["session_id"] for s in saved} == {OTHER, THIRD}
+    assert all("coordinator_scope" not in s for s in saved)
 
 
 # --- 7. loop_conflict: pura, mira lo local y lo espejado ----------------------------------------

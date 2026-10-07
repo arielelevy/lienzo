@@ -77,17 +77,6 @@ export function useCardActions(s: Session, toast: ToastFn) {
     }, failMsg());
   };
 
-  // coordinadora separada solo para esta PC (plan §3.6): no apaga ni la reemplaza la federada de
-  // otra PC del mismo repo. Apagarla no necesita mandar el scope, `set_coordinator` lo limpia solo
-  const pcCoordinator = s.coordinator && s.coordinator_scope === "pc";
-  const togglePcCoordinator = () => {
-    const on = !pcCoordinator;
-    return act(async () => {
-      await sessionsApi.coordinator(s.session_id, on, "pc");
-      return on ? `${shortName(s)} es la coordinadora de ${s.repo} en esta PC` : `${shortName(s)} ya no es la coordinadora de esta PC`;
-    }, failMsg());
-  };
-
   // la llave stopped: prendida no recibe mensajes ni reglas (el server avisa a sus conectadas),
   // apagada vuelve a recibir. La prende el pegado de su trabajo en otra tarjeta, o el menu
   const toggleStopped = () => {
@@ -111,14 +100,12 @@ export function useCardActions(s: Session, toast: ToastFn) {
   return {
     busy,
     act,
-    pcCoordinator,
     scheduleContinue,
     pickDialog,
     codaDecide,
     quickSend,
     autorizarDenegado,
     toggleCoordinator,
-    togglePcCoordinator,
     toggleStopped,
     kill,
   };

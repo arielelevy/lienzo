@@ -108,7 +108,7 @@ def entorno(tmp_path, monkeypatch):
         s["stopped_by"] = "user" if on else None
         return {"stopped": on}
 
-    def coordinar(s, on, scope=None):
+    def coordinar(s, on):
         s["coordinator"] = on
         return []
 
@@ -233,7 +233,7 @@ CASOS = [
     ("POST", "attach", [ADJUNTO], [{"filename": "vacio.txt", "data": b""}]),
     ("PUT", "title", [{"title": "nuevo"}, {"title": None}, {}], [{"title": 5}, b"{"]),
     ("PUT", "stopped", [{"on": True}, {"on": False}], [{"on": "si"}, {}, {"on": 1}]),
-    ("PUT", "coordinator", [{"on": True}, {"on": False, "scope": "pc"}], [{"on": 1}, {}]),
+    ("PUT", "coordinator", [{"on": True}, {"on": False}], [{"on": 1}, {}, {"on": True, "scope": "pc"}]),
     ("POST", "pending", [{"decision": "allow"}, {"decision": "deny", "reason": "no"}], [{"decision": "x"}, {}]),
 ]
 
@@ -330,7 +330,7 @@ REENVIOS = [
     ),
     ("PUT", "title", {"title": "x", "otro": 1}, {"title": "x"}),
     ("PUT", "stopped", {"on": True, "otro": 1}, {"on": True}),
-    ("PUT", "coordinator", {"on": True, "scope": "pc"}, {"on": True, "scope": "pc"}),
+    ("PUT", "coordinator", {"on": True}, {"on": True}),
 ]
 
 

@@ -818,14 +818,19 @@ def accion_stopped(s: dict, d: dict) -> tuple[int, dict]:
 
 
 def accion_coordinator(s: dict, d: dict) -> tuple[int, dict]:
-    """PUT /sessions/<id>/coordinator: marca la coordinadora del repo (a lo sumo una en toda la
-    federacion). `scope: "pc"` la separa solo para esta PC (plan §3.6)."""
-    changed = set_coordinator(s, d["on"], scope=d.get("scope"))
+    """PUT /sessions/<id>/coordinator: una coordinadora del repo en toda la federacion."""
+    changed = set_coordinator(s, d["on"])
     log(
         f"coordinadora de {s.get('repo')}: {s['session_id'][:8]} -> {d['on']} "
         f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"
     )
     return 200, {"ok": True, "coordinator": bool(s.get("coordinator"))}
+
+
+def validar_coordinator(d: dict) -> tuple[int, dict] | None:
+    if "scope" in d:
+        return _rechazo("la coordinadora es del repo; no admite scope por PC")
+    return validar_on(d)
 
 
 def validar_send(d: dict) -> tuple[int, dict] | None:
@@ -999,7 +1004,7 @@ ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
     ("POST", "attach"): AccionSesion(validar_attach, accion_attach, reenvio=reenvio_attach, cuerpo="adjunto"),
     ("PUT", "title"): AccionSesion(validar_title, accion_title, reenvio=lambda d: {"title": d.get("title")}),
     ("PUT", "stopped"): AccionSesion(validar_on, accion_stopped, reenvio=lambda d: {"on": d["on"]}),
-    ("PUT", "coordinator"): AccionSesion(validar_on, accion_coordinator),
+    ("PUT", "coordinator"): AccionSesion(validar_coordinator, accion_coordinator),
 }
 
 

@@ -255,7 +255,7 @@ no lo arregla. Una PC caída se ve en ○ y sus tarjetas quedan grises.
 
 ![tira de PCs](docs/img/tira-pcs.png)
 
-La ★ coordinadora es una por repo en toda la federación; `scope: "pc"` la separa para una PC. El
+La ★ coordinadora es una por repo en toda la federación, independientemente de la PC. El
 canal nativo (`ListAgents` / `SendMessage`) cruza PCs con Remote Control y la misma cuenta: el
 lienzo lanza cada Claude con `-n <nombre> --remote-control`, y `POST /sessions/<sid>/native` (o ✎
 Renombrar en la tarjeta) nombra y publica una que ya corre.
@@ -328,7 +328,7 @@ además la cookie de sesión.
 | POST | `/sessions/<sid>/dialog` | `{choice: n}`; elige una opción del diálogo de la TUI |
 | POST | `/sessions/<sid>/approve` | `{decision: allow\|deny, expect?}`; contesta el permiso de coda en su terminal |
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
-| PUT | `/sessions/<sid>/title`, `/stopped`, `/coordinator` | título; la llave stopped (`{on}`); coordinadora (`{on, scope?: "pc"}`) |
+| PUT | `/sessions/<sid>/title`, `/stopped`, `/coordinator` | título; la llave stopped (`{on}`); coordinadora del repo (`{on}`) |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
 | POST | `/sessions/launch` | `{pc?, cwd, agent, title?, model?}`; lanza una sesión, local o en otra PC |
 | GET | `/peers`, `/peers/lan` | las PCs emparejadas con su salud; las de la LAN sin emparejar |

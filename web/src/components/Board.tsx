@@ -910,7 +910,6 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                         freeGroup={grupos.get(s.session_id)}
                         peerDown={peerDownOf(s)}
                         pcColor={pcColorOf(s)}
-                        multiPc={peers.length > 1}
                         marked={marked.has(s.session_id)}
                         onMark={
                           onMark && !peerDownOf(s)

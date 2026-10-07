@@ -50,8 +50,8 @@ function tableroDeHoy(): Session[] {
         last_denied: { tool: "bash", detalle: "git push --force origin main", motivo: "comando que pide confirmación", fuente: "coda" },
       };
     if (s.session_id === SID.capas) return { ...s, pc, agent: "pi" };
-    // una coordinadora por PC: la general (★, en el escritorio) y la de la notebook solo para su PC
-    if (s.session_id === SID.flechas) return { ...s, pc, coordinator: true, coordinator_scope: "pc" };
+    // La coordinadora pertenece al repo, aunque corra en la notebook.
+    if (s.session_id === SID.flechas) return { ...s, pc, coordinator: true };
     return { ...s, pc };
   });
 }

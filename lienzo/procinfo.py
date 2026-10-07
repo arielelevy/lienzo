@@ -247,6 +247,69 @@ def pi_session_environment(pid: int, parent_pid: int) -> dict[str, str]:
         close_handle(h)
 
 
+def codex_interactive(args: list[str]) -> bool:
+    """Los helpers reutilizan codex.exe: el nombre del binario no prueba que sea una TUI."""
+    options = args[: args.index("--")] if "--" in args else args
+    if any(a.startswith("--codex-run-as-") or a in ("--help", "-h", "--version", "-V") for a in options):
+        return False
+    noninteractive = {
+        "app-server",
+        "exec-server",
+        "sandbox",
+        "debug",
+        "exec",
+        "e",
+        "review",
+        "login",
+        "logout",
+        "mcp",
+        "plugin",
+        "completion",
+        "update",
+        "doctor",
+        "help",
+        "apply",
+        "a",
+        "queue",
+        "archive",
+        "delete",
+        "unarchive",
+        "migrate-rollouts",
+        "features",
+        "remote-control",
+        "app",
+    }
+    valued = {
+        "-c",
+        "--config",
+        "-m",
+        "--model",
+        "-p",
+        "--profile",
+        "-s",
+        "--sandbox",
+        "-a",
+        "--ask-for-approval",
+        "-C",
+        "--cd",
+        "--add-dir",
+        "--enable",
+        "--disable",
+        "-i",
+        "--image",
+    }
+    index = 0
+    while index < len(options):
+        arg = options[index]
+        if arg in valued:
+            index += 2
+        elif arg.startswith("-"):
+            index += 1
+        else:
+            return arg not in noninteractive
+    return True
+
+
 def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
     """Claude / Codex / Pi / CODA. Node solo cuenta si ejecuta la CLI interactiva de Pi.
     Tolera el binario renombrado por el auto-update
@@ -264,6 +327,8 @@ def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
         return None
     for k, v in AGENTS.items():
         if name == k or name.startswith(k + "."):
+            if v == "codex" and cmdline and not codex_interactive(command_args(cmdline)[1:]):
+                return None
             if v == "pi" and cmdline and not pi_interactive(command_args(cmdline)[1:]):
                 return None
             if v == "coda" and cmdline and not coda_interactive(command_args(cmdline)[1:]):
@@ -274,5 +339,9 @@ def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
 
 def process_agent(pid: int) -> str | None:
     exe = image_path(pid)
-    cmdline = command_line(pid) if os.path.basename(exe or "").lower() in ("node.exe", "pi.exe", "coda.exe") else None
+    name = os.path.basename(exe or "").lower()
+    codex = name == "codex.exe" or name.startswith("codex.exe.")
+    cmdline = command_line(pid) if codex or name in ("node.exe", "pi.exe", "coda.exe") else None
+    if codex and not cmdline:
+        return None  # sin poder leer el comando no se puede distinguir el helper de la TUI
     return agent_of(exe, cmdline)
