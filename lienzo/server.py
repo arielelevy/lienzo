@@ -1109,6 +1109,8 @@ class JsonHandler(BaseHTTPRequestHandler):
     separado: el 500 de PeerHandler no traia `error_id` ni se callaba ante una desconexion."""
 
     protocol_version = "HTTP/1.1"
+    # Mouse y teclado necesitan respuestas pequeñas sin esperar a juntar paquetes TCP.
+    disable_nagle_algorithm = True
     # cierra un socket que no manda nada en 30 s (slow-loris, hallazgo A3 del pentest): un cuerpo
     # declarado y no enviado retenia el hilo para siempre. El SSE escribe un latido cada 15 s, asi
     # que las conexiones /events largas no lo alcanzan.

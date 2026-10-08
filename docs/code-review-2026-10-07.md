@@ -157,3 +157,17 @@ Executor: build de despliegue y validación sintáctica; suites omitidas por «s
 Detective: no hay todavía evidencia de conexión automática exitosa en ar-it33940.
 Code review estático: limpieza de socket ante fallo, límite temporal y aislamiento por PID;
 SetCursorPos deja de ignorar errores de Windows. Pendiente comprobar UIA en Chrome real.
+
+Ariel solicita experiencia tipo escritorio remoto en modo ventana y consulta RDP.
+Explorer: documentación primaria Microsoft de entrada fast-path, cursor y gráficos.
+Analyser: Lienzo usa HTTP/TCP y PNG completos; captura y transferencia siguen separadas
+de la entrada. No se atribuye toda la demora a la LAN sin medición.
+Designer: referencia de cuadro, comparación de regiones de 64 píxeles y canvas local.
+Executor: build de despliegue; suites no ejecutadas por instrucción anterior de Ariel.
+Detective: reducción real de bytes y latencia todavía pendiente de observación remota.
+Code review: caché limitada a un cuadro por worker; ventana, tamaño e ID deben coincidir
+para producir un parche. Sin cambios se devuelve sólo metadato; referencia perdida,
+cambio de ventana/tamaño o error producen cuadro completo. El receptor decodifica y
+dibuja antes de pedir el siguiente cuadro; ID sólo avanza tras dibujarlo. No hay pérdida
+de resolución ni reintento de entrada. Se desactiva Nagle en servidor y transporte entre
+peers para evitar espera de paquetes pequeños. Sigue siendo HTTP/TCP, no RDP ni UDP.

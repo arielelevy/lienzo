@@ -3,6 +3,7 @@ import base64
 import ctypes as c
 import json
 import os
+import secrets
 import struct
 import sys
 import zlib
@@ -32,6 +33,7 @@ class Windows:
             fail("No se pudo usar la resolución real de Windows para capturar Chrome")
         self.pressed = set()
         self.mouse_pressed = set()
+        self.previous_frame = None
         self.user.GetWindowDC.restype = w.HDC
         self.user.GetForegroundWindow.restype = w.HWND
         self.gdi.CreateCompatibleDC.restype = w.HDC
@@ -110,7 +112,9 @@ class Windows:
             fail("No se pudo medir la ventana de Chrome")
         return rect
 
-    def frame(self, hwnd, width=None, height=None):
+    def frame(self, hwnd, width=None, height=None, delta=False, base=None):
+        if type(delta) is not bool or (base is not None and (not isinstance(base, str) or len(base) > 32)):
+            fail("Referencia de imagen inválida")
         if width is not None or height is not None:
             bounded(width, 320, 3840)
             bounded(height, 200, 2160)
@@ -141,11 +145,38 @@ class Windows:
             rgb = bytearray(width * height * 3)
             bgra = pixels.raw
             rgb[0::3], rgb[1::3], rgb[2::3] = bgra[2::4], bgra[1::4], bgra[0::4]
-            rows = b"".join(b"\0" + rgb[i:i + width * 3] for i in range(0, len(rgb), width * 3))
+            rgb = bytes(rgb)
+            left, top, right, bottom = 0, 0, width, height
+            previous = self.previous_frame
+            patch_base = None
+            if delta and previous and previous[:3] == (hwnd, width, height) and base == previous[3]:
+                old = previous[4]
+                changed = [y for y in range(height) if rgb[y*width*3:(y+1)*width*3] != old[y*width*3:(y+1)*width*3]]
+                if not changed:
+                    return {"unchanged": True, "frameId": base, "width": width, "height": height}
+                top, bottom = changed[0], changed[-1] + 1
+                left, right = width, 0
+                for y in changed:
+                    offset = y * width * 3
+                    for x in range(0, width, 64):
+                        end = min(width, x + 64)
+                        if rgb[offset+x*3:offset+end*3] != old[offset+x*3:offset+end*3]:
+                            left, right = min(left, x), max(right, end)
+                if (right-left)*(bottom-top) < width*height*0.7:
+                    patch_base = base
+                else:
+                    left, top, right, bottom = 0, 0, width, height
+            patch_width, patch_height = right-left, bottom-top
+            rows = b"".join(b"\0" + rgb[(y*width+left)*3:(y*width+right)*3] for y in range(top, bottom))
             def chunk(kind, data):
                 return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-            png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b"")
-            return {"image": base64.b64encode(png).decode(), "format": "png", "width": width, "height": height}
+            png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", patch_width, patch_height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b"")
+            frame_id = secrets.token_hex(16)
+            self.previous_frame = (hwnd, width, height, frame_id, rgb)
+            result = {"image": base64.b64encode(png).decode(), "format": "png", "width": width, "height": height, "frameId": frame_id}
+            if patch_base:
+                result["patch"] = {"base": patch_base, "x": left, "y": top, "width": patch_width, "height": patch_height}
+            return result
         finally:
             self.gdi.SelectObject(memory, previous)
             self.gdi.DeleteObject(bitmap)
@@ -260,7 +291,7 @@ def main():
             if action == "windows":
                 result = {"windows": windows.windows()}
             elif action == "window-frame":
-                result = windows.frame(windows.target(data.get("window")), data.get("width"), data.get("height"))
+                result = windows.frame(windows.target(data.get("window")), data.get("width"), data.get("height"), data.get("delta", False), data.get("base"))
             elif action == "window-input":
                 result = windows.input(windows.target(data.get("window")), data.get("events"))
             elif action == "window-release":

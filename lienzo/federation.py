@@ -32,6 +32,7 @@ import http.client
 import json
 import os
 import secrets
+import socket
 import threading
 import time
 import traceback
@@ -726,6 +727,9 @@ class HTTPTransport:
         conn = self._connection(peer, timeout or self.timeout)
         reusable = False
         try:
+            if conn.sock is None:
+                conn.connect()
+            conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
             data = resp.read()
