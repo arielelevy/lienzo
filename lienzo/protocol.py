@@ -14,6 +14,7 @@ CAPABILITIES = (
     "run.named",
     "browser.remote",
     "browser.window",
+    "browser.stream",
 )
 
 

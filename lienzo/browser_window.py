@@ -1,4 +1,10 @@
-"""Ventanas reales de Chrome. Worker aislado; no controla otras aplicaciones."""
+"""Ventanas reales de Chrome. Worker aislado; no controla otras aplicaciones.
+
+Dos modos sobre el mismo codigo Win32:
+- pedido/respuesta por lineas JSON (`windows`, `window-frame`, `window-input`, `window-release`);
+- `--stream`: captura continua con acuse por cuadro y entrada por el mismo canal. stdout pasa a
+  ser binario: registros `>IB` (largo, tipo) con J = JSON y F = cuadro (FRAME_HEADER + PNG).
+"""
 import base64
 import ctypes as c
 import json
@@ -6,9 +12,20 @@ import os
 import secrets
 import struct
 import sys
+import threading
+import time
 import zlib
 from ctypes import wintypes as w
 from pathlib import Path
+
+FRAME_HEADER = struct.Struct(">IHHHHHHB")  # seq, x, y, ancho, alto, ancho total, alto total, flags
+FRAME_FULL = 1  # flags: el cuadro es completo (reemplaza todo), no un parche
+RECORD = struct.Struct(">IB")
+MAX_IN_FLIGHT = 2  # cuadros sin acusar antes de frenar la captura: acota la cola, no la pierde
+MIN_INTERVAL_S = 1 / 60
+IDLE_INTERVAL_S = 0.04  # sin cambios se mira 25 veces por segundo durante IDLE_FAST_STEPS lecturas...
+IDLE_SLOW_S = 0.15  # ...y despues 6 veces por segundo; la entrada del visor vuelve al ritmo rapido
+IDLE_FAST_STEPS = 50
 
 
 def fail(message):
@@ -19,6 +36,42 @@ def bounded(value, low, high):
     if type(value) is not int or not low <= value <= high:
         fail("Valor de entrada fuera de rango")
     return value
+
+
+def dirty_box(old, new, width, height, step=64):
+    """(left, top, right, bottom) de lo que cambio entre dos cuadros RGB del mismo tamano, o None.
+    Las filas se comparan enteras (memcmp); las columnas de a `step` pixeles y solo en las filas
+    que cambiaron; si cambio mas de la mitad de las filas (scroll) va el ancho entero sin mirar."""
+    stride = width * 3
+    o, n = memoryview(old), memoryview(new)
+    changed = [y for y in range(height) if n[y * stride:(y + 1) * stride] != o[y * stride:(y + 1) * stride]]
+    if not changed:
+        return None
+    top, bottom = changed[0], changed[-1] + 1
+    if len(changed) > height // 2:
+        return 0, top, width, bottom
+    left, right = width, 0
+    for y in changed:
+        offset = y * stride
+        for x in range(0, width, step):
+            end = min(width, x + step)
+            if left <= x and end <= right:
+                continue  # ya adentro de la caja
+            if n[offset + x * 3:offset + end * 3] != o[offset + x * 3:offset + end * 3]:
+                left, right = min(left, x), max(right, end)
+    return left, top, right, bottom
+
+
+def png(rgb, width, box):
+    """PNG RGB de 8 bits de la caja (left, top, right, bottom) de un cuadro de `width` pixeles."""
+    left, top, right, bottom = box
+    rows = b"".join(b"\0" + rgb[(y * width + left) * 3:(y * width + right) * 3] for y in range(top, bottom))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", right - left, bottom - top, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b"")
 
 
 class Windows:
@@ -69,14 +122,17 @@ class Windows:
         ]:
             getattr(dll, name).argtypes = args
 
+    def owner(self, hwnd):
+        pid = w.DWORD()
+        self.user.GetWindowThreadProcessId(hwnd, c.byref(pid))
+        return pid.value
+
     def chrome(self, hwnd):
         name = c.create_unicode_buffer(128)
         self.user.GetClassNameW(hwnd, name, len(name))
         if name.value != "Chrome_WidgetWin_1" or not self.user.IsWindowVisible(hwnd):
             return False
-        pid = w.DWORD()
-        self.user.GetWindowThreadProcessId(hwnd, c.byref(pid))
-        process = self.kernel.OpenProcess(0x1000, False, pid.value)
+        process = self.kernel.OpenProcess(0x1000, False, self.owner(hwnd))
         if not process:
             return False
         try:
@@ -115,29 +171,35 @@ class Windows:
             fail("No se pudo medir la ventana de Chrome")
         return rect
 
-    def frame(self, hwnd, width=None, height=None, delta=False, base=None):
-        if type(delta) is not bool or (base is not None and (not isinstance(base, str) or len(base) > 32)):
-            fail("Referencia de imagen inválida")
+    def fit(self, hwnd, width, height):
+        """Deja la ventana del tamano pedido, dentro del area util de su monitor, sin moverla si
+        ya entra. Solo toca la ventana validada de chrome.exe."""
+        bounded(width, 320, 3840)
+        bounded(height, 200, 2160)
+        if self.user.IsZoomed(hwnd):
+            self.user.ShowWindow(hwnd, 9)
+
+        class MonitorInfo(c.Structure):
+            _fields_ = [("size", w.DWORD), ("monitor", w.RECT), ("work", w.RECT), ("flags", w.DWORD)]
+
+        self.user.GetMonitorInfoW.argtypes = [w.HANDLE, c.POINTER(MonitorInfo)]
+        info = MonitorInfo()
+        info.size = c.sizeof(info)
+        if not self.user.GetMonitorInfoW(self.user.MonitorFromWindow(hwnd, 2), c.byref(info)):
+            fail("Windows no pudo medir el escritorio de Chrome")
+        width = min(width, info.work.right - info.work.left)
+        height = min(height, info.work.bottom - info.work.top)
+        rect = self.rect(hwnd)
+        left = max(info.work.left, min(rect.left, info.work.right - width))
+        top = max(info.work.top, min(rect.top, info.work.bottom - height))
+        current = (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
+        if current != (left, top, width, height) and not self.user.SetWindowPos(hwnd, None, left, top, width, height, 0x14):
+            fail("Windows no permitió ajustar el tamaño de Chrome")
+
+    def capture(self, hwnd, width=None, height=None):
+        """(rgb, ancho, alto) de la ventana; si se pide tamano, primero la ajusta."""
         if width is not None or height is not None:
-            bounded(width, 320, 3840)
-            bounded(height, 200, 2160)
-            if self.user.IsZoomed(hwnd):
-                self.user.ShowWindow(hwnd, 9)
-            class MonitorInfo(c.Structure):
-                _fields_ = [("size", w.DWORD), ("monitor", w.RECT), ("work", w.RECT), ("flags", w.DWORD)]
-            self.user.GetMonitorInfoW.argtypes = [w.HANDLE, c.POINTER(MonitorInfo)]
-            info = MonitorInfo()
-            info.size = c.sizeof(info)
-            if not self.user.GetMonitorInfoW(self.user.MonitorFromWindow(hwnd, 2), c.byref(info)):
-                fail("Windows no pudo medir el escritorio de Chrome")
-            width = min(width, info.work.right - info.work.left)
-            height = min(height, info.work.bottom - info.work.top)
-            rect = self.rect(hwnd)
-            left = max(info.work.left, min(rect.left, info.work.right - width))
-            top = max(info.work.top, min(rect.top, info.work.bottom - height))
-            if (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top) != (left, top, width, height):
-                if not self.user.SetWindowPos(hwnd, None, left, top, width, height, 0x14):
-                    fail("Windows no permitió ajustar el tamaño de Chrome")
+            self.fit(hwnd, width, height)
         if self.user.IsIconic(hwnd):
             self.user.ShowWindow(hwnd, 9)
         rect = self.rect(hwnd)
@@ -147,61 +209,62 @@ class Windows:
         dc = self.user.GetWindowDC(hwnd)
         memory = self.gdi.CreateCompatibleDC(dc)
         bitmap = self.gdi.CreateCompatibleBitmap(dc, width, height)
-        previous = self.gdi.SelectObject(memory, bitmap)
+        old_bitmap = self.gdi.SelectObject(memory, bitmap)
         try:
             if not dc or not memory or not bitmap or not self.user.PrintWindow(hwnd, memory, 2):
                 fail("Windows no pudo capturar Chrome. La sesión debe estar abierta y desbloqueada")
             info = c.create_string_buffer(struct.pack("<IiiHHIIiiII", 40, width, -height, 1, 32, 0, 0, 0, 0, 0, 0))
             pixels = c.create_string_buffer(width * height * 4)
-            self.gdi.SelectObject(memory, previous)
+            self.gdi.SelectObject(memory, old_bitmap)
             if self.gdi.GetDIBits(memory, bitmap, 0, height, pixels, info, 0) != height:
                 fail("Windows no pudo leer la imagen de Chrome")
             rgb = bytearray(width * height * 3)
             bgra = pixels.raw
             rgb[0::3], rgb[1::3], rgb[2::3] = bgra[2::4], bgra[1::4], bgra[0::4]
-            rgb = bytes(rgb)
-            left, top, right, bottom = 0, 0, width, height
-            previous = self.previous_frame
-            patch_base = None
-            if delta and previous and previous[:3] == (hwnd, width, height) and base == previous[3]:
-                old = previous[4]
-                changed = [y for y in range(height) if rgb[y*width*3:(y+1)*width*3] != old[y*width*3:(y+1)*width*3]]
-                if not changed:
-                    return {"unchanged": True, "frameId": base, "width": width, "height": height}
-                top, bottom = changed[0], changed[-1] + 1
-                left, right = width, 0
-                for y in changed:
-                    offset = y * width * 3
-                    for x in range(0, width, 64):
-                        end = min(width, x + 64)
-                        if rgb[offset+x*3:offset+end*3] != old[offset+x*3:offset+end*3]:
-                            left, right = min(left, x), max(right, end)
-                if (right-left)*(bottom-top) < width*height*0.7:
-                    patch_base = base
-                else:
-                    left, top, right, bottom = 0, 0, width, height
-            patch_width, patch_height = right-left, bottom-top
-            rows = b"".join(b"\0" + rgb[(y*width+left)*3:(y*width+right)*3] for y in range(top, bottom))
-            def chunk(kind, data):
-                return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
-            png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", patch_width, patch_height, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b"")
-            frame_id = secrets.token_hex(16)
-            self.previous_frame = (hwnd, width, height, frame_id, rgb)
-            result = {"image": base64.b64encode(png).decode(), "format": "png", "width": width, "height": height, "frameId": frame_id}
-            if patch_base:
-                result["patch"] = {"base": patch_base, "x": left, "y": top, "width": patch_width, "height": patch_height}
-            return result
+            return bytes(rgb), width, height
         finally:
-            self.gdi.SelectObject(memory, previous)
+            self.gdi.SelectObject(memory, old_bitmap)
             self.gdi.DeleteObject(bitmap)
             self.gdi.DeleteDC(memory)
             self.user.ReleaseDC(hwnd, dc)
 
-    def input(self, hwnd, events):
-        if not isinstance(events, list) or len(events) > 64:
-            fail("Demasiados eventos de entrada")
+    def frame(self, hwnd, width=None, height=None, delta=False, base=None):
+        """Modo pedido/respuesta: un cuadro (o un parche sobre `base`) en base64."""
+        if type(delta) is not bool or (base is not None and (not isinstance(base, str) or len(base) > 32)):
+            fail("Referencia de imagen inválida")
+        if width is not None or height is not None:
+            bounded(width, 320, 3840)
+            bounded(height, 200, 2160)
+        rgb, width, height = self.capture(hwnd, width, height)
+        box = (0, 0, width, height)
+        previous = self.previous_frame
+        patch_base = None
+        if delta and previous and previous[:3] == (hwnd, width, height) and base == previous[3]:
+            box = dirty_box(previous[4], rgb, width, height)
+            if box is None:
+                return {"unchanged": True, "frameId": base, "width": width, "height": height}
+            if (box[2] - box[0]) * (box[3] - box[1]) < width * height * 0.7:
+                patch_base = base
+            else:
+                box = (0, 0, width, height)
+        frame_id = secrets.token_hex(16)
+        self.previous_frame = (hwnd, width, height, frame_id, rgb)
+        result = {"image": base64.b64encode(png(rgb, width, box)).decode(), "format": "png", "width": width, "height": height, "frameId": frame_id}
+        if patch_base:
+            result["patch"] = {"base": patch_base, "x": box[0], "y": box[1], "width": box[2] - box[0], "height": box[3] - box[1]}
+        return result
+
+    def active(self, hwnd):
+        """Chrome recibe la entrada si su ventana esta al frente o si lo esta uno de sus menus o
+        desplegables (ventanas del mismo proceso): traerla al frente ahi cerraria el menu."""
+        foreground = self.user.GetForegroundWindow()
+        return foreground == hwnd or (bool(foreground) and self.owner(foreground) == self.owner(hwnd))
+
+    def focus(self, hwnd):
         if self.user.IsIconic(hwnd):
             self.user.ShowWindow(hwnd, 9)
+        if self.active(hwnd):
+            return
         self.user.SetForegroundWindow(hwnd)
         if self.user.GetForegroundWindow() != hwnd:
             foreground = self.user.GetForegroundWindow()
@@ -217,9 +280,14 @@ class Windows:
                     self.user.AttachThreadInput(current_thread, foreground_thread, False)
         if self.user.GetForegroundWindow() != hwnd:
             fail("Windows no permitió activar Chrome; no se envió la entrada")
+
+    def input(self, hwnd, events):
+        if not isinstance(events, list) or len(events) > 64:
+            fail("Demasiados eventos de entrada")
+        self.focus(hwnd)
         rect = self.rect(hwnd)
         for event in events:
-            if self.user.GetForegroundWindow() != hwnd or not self.chrome(hwnd):
+            if not self.active(hwnd) or not self.chrome(hwnd):
                 fail("Cambió la ventana activa; la entrada se detuvo")
             kind = event.get("kind")
             if kind == "mouse":
@@ -299,8 +367,167 @@ class Windows:
         return {"ok": True}
 
 
+class Streamer:
+    """Captura continua de una ventana con acuse por cuadro; la entrada llega por stdin y sale por
+    el mismo stdout binario. `capture(hwnd, width, height)` se inyecta en las pruebas."""
+
+    def __init__(self, windows, out, capture=None, clock=time.monotonic, sleep=time.sleep):
+        self.windows = windows
+        self.out = out
+        self.capture = capture or windows.capture
+        self.clock = clock
+        self.sleep = sleep
+        self.out_lock = threading.Lock()
+        self.cv = threading.Condition()
+        self.hwnd = None
+        self.size = None
+        self.in_flight = 0
+        self.seq = 0
+        self.idle = 0  # lecturas seguidas sin cambios
+        self.last = None  # (hwnd, ancho, alto, rgb) del ultimo cuadro enviado
+        self.closed = False
+
+    def emit(self, kind, payload):
+        with self.out_lock:
+            self.out.write(RECORD.pack(len(payload) + 1, ord(kind)) + payload)
+            self.out.flush()
+
+    def json(self, data):
+        self.emit("J", json.dumps(data, ensure_ascii=False).encode("utf-8"))
+
+    def handle(self, data):
+        kind = data.get("t")
+        if kind == "open":
+            hwnd = self.windows.target(data.get("window"))
+            size = None
+            if data.get("width") is not None or data.get("height") is not None:
+                size = (bounded(data.get("width"), 320, 3840), bounded(data.get("height"), 200, 2160))
+            with self.cv:
+                self.hwnd, self.size, self.last, self.in_flight = hwnd, size, None, 0
+                self.cv.notify_all()
+            self.json({"t": "opened", "window": str(hwnd)})
+        elif kind == "size":
+            size = (bounded(data.get("width"), 320, 3840), bounded(data.get("height"), 200, 2160))
+            with self.cv:
+                self.size = size
+                self.cv.notify_all()
+        elif kind == "input":
+            if self.hwnd is None:
+                fail("Todavía no hay una ventana abierta")
+            with self.cv:
+                self.idle = 0  # algo va a cambiar en pantalla: mirar seguido otra vez
+                self.cv.notify_all()
+            try:
+                self.windows.input(self.hwnd, data.get("events"))
+            except ValueError as exc:
+                self.json({"t": "error", "input": True, "n": data.get("n"), "message": str(exc)})
+                return
+            self.json({"t": "input", "n": data.get("n")})
+        elif kind == "ack":
+            with self.cv:
+                self.in_flight = max(0, self.in_flight - 1)
+                self.cv.notify_all()
+        elif kind == "release":
+            self.windows.release()
+        elif kind == "windows":
+            self.json({"t": "windows", "windows": self.windows.windows()})
+        else:
+            fail("Pedido de ventana desconocido")
+
+    def rest(self, seconds):
+        """Pausa en reposo que la entrada del visor interrumpe (handle("input") avisa por `cv`)."""
+        if seconds <= 0:
+            return
+        with self.cv:
+            self.cv.wait(seconds)
+
+    def step(self):
+        """Una vuelta de captura: devuelve el cuadro emitido (cabecera, PNG) o None. Espera si hay
+        demasiados cuadros sin acusar o no hay ventana."""
+        with self.cv:
+            while not self.closed and (self.hwnd is None or self.in_flight >= MAX_IN_FLIGHT):
+                self.cv.wait(1)
+            if self.closed:
+                return None
+            hwnd, size = self.hwnd, self.size
+        started = self.clock()
+        try:
+            rgb, width, height = self.capture(hwnd, *(size or (None, None)))
+        except ValueError as exc:
+            self.json({"t": "error", "message": str(exc)})
+            with self.cv:
+                if self.hwnd == hwnd:
+                    self.hwnd = None
+            return None
+        last = self.last
+        box = (0, 0, width, height)
+        full = True
+        if last and last[:3] == (hwnd, width, height):
+            box = dirty_box(last[3], rgb, width, height)
+            if box is None:
+                self.idle += 1
+                pause = IDLE_INTERVAL_S if self.idle < IDLE_FAST_STEPS else IDLE_SLOW_S
+                self.rest(max(0, pause - (self.clock() - started)))
+                return None
+            if (box[2] - box[0]) * (box[3] - box[1]) < width * height * 0.7:
+                full = False
+            else:
+                box = (0, 0, width, height)
+        self.idle = 0
+        self.seq += 1
+        header = FRAME_HEADER.pack(self.seq, box[0], box[1], box[2] - box[0], box[3] - box[1], width, height, FRAME_FULL if full else 0)
+        payload = header + png(rgb, width, box)
+        with self.cv:
+            if self.hwnd != hwnd:
+                return None  # cambio la ventana mientras se capturaba: el cuadro ya no vale
+            self.last = (hwnd, width, height, rgb)
+            self.in_flight += 1
+        self.emit("F", payload)
+        self.sleep(max(0, MIN_INTERVAL_S - (self.clock() - started)))
+        return payload
+
+    def run_capture(self):
+        try:
+            while not self.closed:
+                self.step()
+        except (OSError, ValueError) as exc:
+            try:
+                self.json({"t": "error", "message": f"Se detuvo la captura: {exc}"})
+            except OSError:
+                pass
+        finally:
+            with self.cv:
+                self.closed = True
+
+    def run(self, lines):
+        thread = threading.Thread(target=self.run_capture, daemon=True)
+        thread.start()
+        try:
+            for line in lines:
+                try:
+                    data = json.loads(line)
+                    if not isinstance(data, dict):
+                        fail("Pedido inválido")
+                    self.handle(data)
+                except (OSError, ValueError, TypeError, KeyError) as exc:
+                    if isinstance(exc, OSError):
+                        raise
+                    self.json({"t": "error", "message": str(exc)})
+        except OSError:
+            pass  # stdout cerrado: el server se fue
+        finally:
+            with self.cv:
+                self.closed = True
+                self.cv.notify_all()
+            self.windows.release()
+
+
 def main():
     windows = Windows()
+    if "--stream" in sys.argv[1:]:
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        Streamer(windows, sys.stdout.buffer).run(sys.stdin)
+        return
     for line in sys.stdin:
         try:
             data = json.loads(line)

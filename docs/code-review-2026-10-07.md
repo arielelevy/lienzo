@@ -217,3 +217,55 @@ El stderr del worker, antes descartado, se drena en un hilo y registra como máx
 por proceso para poder diagnosticar su caída original. Sólo stderr, nunca JSON de pedidos
 ni capturas de stdout; se sigue drenando sin registrar al alcanzar el límite. Streams
 incluido stderr se cierran después de terminar el worker. Veredicto de recuperación pendiente.
+
+## Canal vivo de Chrome remoto (WebSocket de punta a punta)
+
+Pedido de Ariel: revisar los dos modos, que clics, mouse e imagen anden con la mejor latencia
+posible, investigar qué hace RDP, probar primero por LAN (Tailscale a lo sumo).
+
+Explorer (medido contra ar-it33940 por LAN, antes del cambio): la entrada por la API tardaba
+15 ms de mediana, pero un cuadro completo de 1920 × 914 (757 KB) tardaba 1639 ms y el segundo
+pedido con `delta` devolvía 502 «Se cerró el proceso de Chrome remoto». Reproducido en local:
+`frame()` pisaba la variable `previous` (handle GDI) con la tupla del cuadro anterior y el `finally`
+llamaba a `SelectObject` con la tupla (`ctypes.ArgumentError`). Cada cuadro delta mataba el worker
+y el siguiente pedido lo relanzaba (medio segundo de arranque de Python): de ahí los 1,6 s y el
+«Imagen 1016 ms» de la captura del 22:32. Además, `secretos.cifrar` hacía un HMAC por cada 32 bytes
+y un XOR byte a byte en Python: 1 MB costaba cientos de ms en cada salto.
+
+Analyser, qué hace RDP que acá no se hacía: un canal persistente (nada de un pedido HTTP por
+cuadro), el servidor empuja los cuadros apenas cambian, el cliente acusa cada cuadro y el
+servidor nunca acumula más de un par en vuelo (RDPGFX frame acknowledge), regiones sucias en
+vez de pantallas enteras, y la entrada va por el mismo canal sin esperar a la imagen. Lo que RDP
+hace y acá no: codecs lossy por región y UDP; no hacen falta en LAN.
+
+Designer: `lienzo/ws.py` (RFC 6455 con la stdlib: handshake servidor y cliente, máscara, ping/pong,
+fragmentos, límite de 32 MB), `lienzo/browser_stream.py` (visor ↔ worker local, o visor ↔ relay ↔
+PC dueña con cada mensaje sellado con `secretos.sellar`: clave derivada del par y del id del canal,
+contador por sentido en la MAC, así ni replay ni reorden), y `browser_window.py --stream`
+(`Streamer`: hilo de captura continua, `dirty_box` con comparación de filas en C y columnas de a
+64 píxeles, parche PNG si cambió menos del 70 %, como mucho 2 cuadros sin acusar, reposo escalonado
+40 ms → 150 ms que la entrada despierta). `secretos._keystream` pasa a SHAKE-256 en una llamada y
+el XOR a enteros grandes: 1 MB sella en 14 ms y abre en 11 ms (antes cientos). El visor dibuja cada
+cuadro con `createImageBitmap` en orden, acusa y mide la ida y vuelta real del mouse. La entrada
+ya no espera un timer de 8 ms: clics y teclas salen al instante y los movimientos se juntan por
+cuadro de animación. La entrada además tolera que el frente sea un menú o desplegable de Chrome
+(misma PID): antes traer la ventana principal al frente cerraba el menú. El modo por pestañas
+(CDP) sigue por HTTP pero pide el siguiente cuadro sin esperar al dibujo y sin bloquear la cola
+del teclado, y se beneficia del cifrado rápido.
+
+Seguridad: `/browser/stream` exige la misma condición local sin túnel que `/browser` y un `Origin`
+propio (un WebSocket no puede mandar `X-Lienzo`); `/peer/browser/stream/<sid>` va firmado como
+todo lo de pares, con el id del canal dentro de la ruta firmada; hasta 4 workers por PC.
+
+Executor: 125 pruebas focales de backend pasan (ws, stream, ventana, secretos, ruteo, salud),
+lint, tsc y build del frontend pasan, 4 pruebas de interfaz de Chrome pasan (la de ventana
+completa simula el WebSocket con `routeWebSocket`; las tres anteriores fallaban desde a725624
+porque el menú ⋮ está cerrado al entrar, y el PNG de ejemplo estaba corrupto: `<img>` lo toleraba,
+`createImageBitmap` no). Una prueba de federación fallaba desde f91fdce (el fake de conexión no
+tenía `sock` para apagar Nagle): corregida. En vivo contra el Chrome de esta PC: canal abierto en
+4 ms, primer cuadro a 346 ms (arranque del worker), 135 cuadros en 5 s (27 por segundo sobre una
+ventana de Meet con video) con parches de 120 a 230 KB.
+
+Detective: la medida por LAN contra ar-it33940 quedó pendiente porque esa PC desapareció de la red
+(«sin ARP») mientras se terminaba el cambio; se registra abajo cuando vuelva. No se certifica
+teclado sostenido ni uso sin monitor.

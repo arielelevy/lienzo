@@ -12,7 +12,12 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     // /docs es la pagina de Vite; solo sus .md y sus imagenes los sirve el lienzo
-    proxy: { ...Object.fromEntries(paths.map((p) => [p, { target: api, changeOrigin: true }])), "^/docs/.+": { target: api, changeOrigin: true } },
+    proxy: {
+      ...Object.fromEntries(paths.map((p) => [p, { target: api, changeOrigin: true }])),
+      // el canal vivo de Chrome remoto es un WebSocket: ws: true lo deja pasar al lienzo
+      "/browser/stream": { target: api, changeOrigin: true, ws: true },
+      "^/docs/.+": { target: api, changeOrigin: true },
+    },
   },
   build: { outDir: "dist", emptyOutDir: true },
 });

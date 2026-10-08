@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import sys
+import types
 import threading
 import time
 
@@ -438,7 +439,8 @@ def test_401_del_peer_explica_el_motivo_y_que_hacer(monkeypatch):
 
     class Conn:
         def __init__(self, *a, **k):
-            pass
+            # el transporte apaga Nagle sobre el socket real (f91fdce): el falso necesita uno
+            self.sock = types.SimpleNamespace(setsockopt=lambda *a: None)
 
         def request(self, *a, **k):
             pass

@@ -33,6 +33,7 @@ import auth
 import autoaprobar
 import beacon
 import browser_api
+import browser_stream
 import federation
 import health
 import identity
@@ -1313,11 +1314,29 @@ class Handler(JsonHandler):
         # 5173, no cualquier puerto de localhost)
         return ohost == host or ohost in ("localhost:5173", "127.0.0.1:5173")
 
+    def _origin_ok(self) -> bool:
+        """Para un WebSocket (no puede mandar X-Lienzo): el Origin tiene que venir y ser el propio."""
+        origin = self.headers.get("Origin")
+        if not origin:
+            return False
+        ohost = origin.split("//", 1)[-1].lower()
+        host = (self.headers.get("Host") or "").lower()
+        return ohost == host or ohost in ("localhost:5173", "127.0.0.1:5173")
+
     def do_GET(self):
         parts = self._prepare()
         if parts is None:
             return
         try:
+            if parts == ["browser", "stream"]:
+                # canal vivo de Chrome remoto (browser_stream.py): el socket queda tomado hasta que el visor cierra
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "Chrome remoto se maneja desde la PC de Lienzo"})
+                if not self._origin_ok():
+                    return self._json(403, {"error": "el Origin no es propio"})
+                browser_stream.serve_viewer(self, (self.query.get("pc") or [""])[0])
+                self.close_connection = True
+                return
             if not parts or parts in (["docs"], ["chrome"]):
                 # /docs es la misma pagina: el front mira la ruta y muestra la referencia
                 index = os.path.join(DIST, "index.html")
@@ -1929,6 +1948,11 @@ class PeerHandler(JsonHandler):
         if method == "POST" and rest == ["browser"]:
             code, res = browser_api.from_peer(self._body_json(raw), _peer_key(pc_id))
             return self._json(code, res)
+        if method == "GET" and len(rest) == 3 and rest[:2] == ["browser", "stream"]:
+            log(f"peer GET /peer/browser/stream de {pc_id}")
+            browser_stream.serve_peer(self, _peer_key(pc_id), rest[2])
+            self.close_connection = True
+            return
         if method == "POST" and rest[:1] == ["xfer"]:
             # copia entre PCs (xfer.py): miles de pedidos por trabajo, no van uno por uno al log
             code, res = xfer.atender_peer(rest[1:], raw)

@@ -45,17 +45,25 @@ def _subclave(clave: bytes, etiqueta: bytes) -> bytes:
 
 
 def _keystream(k: bytes, nonce: bytes, n: int) -> bytes:
-    bloques = []
-    for i in range((n + 31) // 32):
-        bloques.append(hmac.new(k, nonce + i.to_bytes(8, "big"), hashlib.sha256).digest())
-    return b"".join(bloques)[:n]
+    """n bytes de keystream en una sola llamada nativa: SHAKE-256 con la subclave y el nonce como
+    prefijo secreto (esponja con clave: la misma construccion de KMAC). Antes era un HMAC por cada
+    32 bytes y un generador de Python por byte: una captura de Chrome de 1 MB tardaba cientos de ms
+    en cada salto (medido el 2026-10-07)."""
+    return hashlib.shake_256(k + nonce).digest(n)
+
+
+def _xor(a: bytes, b: bytes) -> bytes:
+    """a ^ b byte a byte, con enteros grandes: C puro, sin bucle de Python."""
+    if len(a) != len(b):
+        raise ValueError("largos distintos")
+    return (int.from_bytes(a, "little") ^ int.from_bytes(b, "little")).to_bytes(len(a), "little")
 
 
 def cifrar(clave: bytes, texto: str) -> dict:
     """{"nonce", "ct", "tag"} en hex. El nonce es nuevo en cada llamada."""
     datos = texto.encode("utf-8")
     nonce = secrets.token_bytes(NONCE_BYTES)
-    ct = bytes(a ^ b for a, b in zip(datos, _keystream(_subclave(clave, b"cifrado"), nonce, len(datos)), strict=True))
+    ct = _xor(datos, _keystream(_subclave(clave, b"cifrado"), nonce, len(datos)))
     tag = hmac.new(_subclave(clave, b"mac"), nonce + ct, hashlib.sha256).hexdigest()
     return {"nonce": nonce.hex(), "ct": ct.hex(), "tag": tag}
 
@@ -70,8 +78,32 @@ def descifrar(clave: bytes, cifrado: dict) -> str:
     esperado = hmac.new(_subclave(clave, b"mac"), nonce + ct, hashlib.sha256).hexdigest()
     if len(nonce) != NONCE_BYTES or not tag.isascii() or not hmac.compare_digest(esperado, tag):
         raise ValueError("secreto alterado o cifrado con otra clave")
-    datos = bytes(a ^ b for a, b in zip(ct, _keystream(_subclave(clave, b"cifrado"), nonce, len(ct)), strict=True))
-    return datos.decode("utf-8")
+    return _xor(ct, _keystream(_subclave(clave, b"cifrado"), nonce, len(ct))).decode("utf-8")
+
+
+TAG_BYTES = 32
+
+
+def sellar(clave: bytes, datos: bytes, aad: bytes = b"") -> bytes:
+    """Version binaria para el canal de Chrome remoto: nonce(16) || cifrado || tag(32), sin hex ni
+    JSON. `aad` (direccion y numero de secuencia del canal) entra en la MAC pero no viaja: un
+    mensaje repetido o cambiado de orden no verifica."""
+    nonce = secrets.token_bytes(NONCE_BYTES)
+    ct = _xor(datos, _keystream(_subclave(clave, b"cifrado"), nonce, len(datos)))
+    tag = hmac.new(_subclave(clave, b"mac"), aad + nonce + ct, hashlib.sha256).digest()
+    return nonce + ct + tag
+
+
+def abrir(clave: bytes, blob: bytes, aad: bytes = b"") -> bytes:
+    """Lo inverso de `sellar`; ValueError si la MAC no cierra. Se verifica antes de descifrar."""
+    if not isinstance(blob, bytes | bytearray | memoryview) or len(blob) < NONCE_BYTES + TAG_BYTES:
+        raise ValueError("mensaje cifrado incompleto")
+    blob = bytes(blob)
+    nonce, ct, tag = blob[:NONCE_BYTES], blob[NONCE_BYTES:-TAG_BYTES], blob[-TAG_BYTES:]
+    esperado = hmac.new(_subclave(clave, b"mac"), aad + nonce + ct, hashlib.sha256).digest()
+    if not hmac.compare_digest(esperado, tag):
+        raise ValueError("mensaje alterado o cifrado con otra clave")
+    return _xor(ct, _keystream(_subclave(clave, b"cifrado"), nonce, len(ct)))
 
 
 class Boveda:

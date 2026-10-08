@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError, isMissingRoute } from "../api";
+import { api, isMissingRoute } from "../api";
 import type { Peer } from "../types";
 import { usePeers } from "./PcStrip";
 import "../remote-browser.css";
 
 type Tab = { id: string; title: string; url: string };
 type Reply = {
-  frameId?: string; unchanged?: boolean; patch?: {base: string; x: number; y: number; width: number; height: number};
-  windows?: {id: string; title: string}[]; format?: 'png' | 'jpeg';
+  windows?: {id: string; title: string}[];
   profiles?: {id: string; name: string}[]; prepared?: boolean;
   connecting?: boolean; autoApproving?: boolean; connectionError?: string; mode?: 'existing' | 'lienzo';
   running?: boolean; tabs?: Tab[]; id?: string; image?: string; width?: number; height?: number;
   back?: boolean; forward?: boolean; text?: string; dialog?: {type: string; message: string; defaultPrompt?: string} | null;
 };
 type Command = Record<string, unknown>;
+/** Lo que manda el worker por el canal vivo (browser_window.py --stream): texto JSON o un cuadro binario. */
+type StreamMessage = { t: string; n?: number; message?: string; input?: boolean; window?: string; windows?: {id: string; title: string}[] };
+const FRAME_HEADER = 17; // >IHHHHHHB: seq, x, y, ancho, alto, ancho total, alto total, flags
 const modifiers = (e: {altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean}) =>
   Number(e.altKey) + Number(e.ctrlKey) * 2 + Number(e.metaKey) * 4 + Number(e.shiftKey) * 8;
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(n)));
@@ -73,40 +75,34 @@ function ChromeMode({peer, native, toolbarSlot}: {peer: Peer; native: boolean; t
   return native ? <ChromeWindow peer={peer} toolbarSlot={toolbarSlot} /> : <BrowserDesktop peer={peer} />;
 }
 
+/** Tamaño físico que se le pide a la ventana remota: el área visible por la escala de pantalla. */
+function physicalSize(box: DOMRect | undefined): {width: number; height: number} | undefined {
+  if (!box || box.width < 320 || box.height < 200) return undefined;
+  const scale = Math.min(globalThis.devicePixelRatio || 1, 3840 / box.width, 2160 / box.height);
+  return {width: Math.round(box.width * scale), height: Math.round(box.height * scale)};
+}
+
+/** Ventana completa de Chrome por el canal vivo: la PC dueña empuja cada cuadro apenas cambia y el
+ *  mouse sale por el mismo socket, sin esperar la imagen. */
 function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElement | null}) {
   const [windows, setWindows] = useState<NonNullable<Reply['windows']>>([]);
   const [window, setWindow] = useState('');
   const [profiles, setProfiles] = useState<NonNullable<Reply['profiles']>>([]);
   const [profile, setProfile] = useState('');
-  const [frame, setFrame] = useState<Reply & {window?: string; canvas?: HTMLCanvasElement}>({});
   const [error, setError] = useState('');
   const [inputError, setInputError] = useState('');
-  const [latency, setLatency] = useState({frame: 0, input: 0});
-  const [captureNotice, setCaptureNotice] = useState('');
+  const [stats, setStats] = useState({input: 0, fps: 0, kbps: 0});
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [size, setSize] = useState<{width: number; height: number} | null>(null);
+  const [canvas] = useState(() => document.createElement('canvas'));
   const viewport = useRef<HTMLDivElement>(null);
-  const chain = useRef<Promise<unknown>>(Promise.resolve());
+  const socket = useRef<WebSocket | null>(null);
+  const sender = useRef<((events: Command[]) => Promise<unknown>) | null>(null);
   const live = useRef(false);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
-  useEffect(() => () => { void api.post('/browser', {pc: peer.pc_id, action: 'window-release'}).catch(e => console.error('No se pudo liberar el teclado remoto', e)); }, [peer.pc_id]);
-  const call = useCallback((command: Command): Promise<Reply> => {
-    const started = performance.now();
-    const execute = async () => {
-      if (!live.current) throw new Error('La vista se cerró');
-      const result = await api.post<Reply>('/browser', {pc: peer.pc_id, ...command});
-      if (live.current && (command.action === 'window-frame' || command.action === 'window-input')) {
-        const field = command.action === 'window-frame' ? 'frame' : 'input';
-        setLatency(current=>({...current,[field]:Math.round(performance.now()-started)}));
-      }
-      return result;
-    };
-    if (command.action === 'window-frame') return execute();
-    const request = chain.current.then(execute);
-    chain.current = request.catch(() => undefined);
-    return request;
-  }, [peer.pc_id]);
+  const call = useCallback((command: Command): Promise<Reply> => api.post<Reply>('/browser', {pc: peer.pc_id, ...command}), [peer.pc_id]);
   const report = useCallback((e: unknown) => { if (live.current) setError((e as Error).message); }, []);
-  const reportInput = useCallback((e: unknown) => { if (live.current) setInputError((e as Error).message); }, []);
   useEffect(() => { document.title = windows.find(w=>w.id === window)?.title.replace(/ - Google Chrome$/, '') || `Chrome · ${peer.name}`; }, [windows, window, peer.name]);
   const refresh = useCallback(async () => {
     const r = await call({action: 'windows'});
@@ -125,48 +121,97 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   useEffect(() => {
     if (!window || !peer.alive || error) return;
     let cancelled = false;
-    let failures = 0;
-    let base: string | undefined;
-    const canvas = document.createElement('canvas');
-    let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      if (document.hidden) { timer = setTimeout(poll, 1000); return; }
-      try {
-        const box = viewport.current?.getBoundingClientRect();
-        const scale = box ? Math.min(globalThis.devicePixelRatio || 1, 3840 / box.width, 2160 / box.height) : 1;
-        const r = await call({action: 'window-frame', window, delta: true, base,
-          ...(box && box.width >= 320 && box.height >= 200 ? {width: Math.round(box.width * scale), height: Math.round(box.height * scale)} : {})});
+    let attempts = 0;
+    let retry: ReturnType<typeof setTimeout>;
+    let resize: ReturnType<typeof setTimeout>;
+    const sentAt = new Map<number, number>();
+    let frames = 0, bytes = 0, since = performance.now();
+    let drawing: Promise<void> = Promise.resolve();
+    const connect = () => {
+      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/browser/stream?pc=${encodeURIComponent(peer.pc_id)}`);
+      ws.binaryType = 'arraybuffer';
+      socket.current = ws;
+      let opened = false;
+      ws.onopen = () => {
+        opened = true;
+        ws.send(JSON.stringify({t: 'open', window, ...physicalSize(viewport.current?.getBoundingClientRect())}));
+      };
+      ws.onmessage = event => {
         if (cancelled) return;
-        if (!r.unchanged && r.image) {
-          if (r.patch && r.patch.base !== base) throw new Error('La imagen remota perdió su referencia');
-          const image = new Image();
-          image.src = `data:image/${r.format ?? 'png'};base64,${r.image}`;
-          await image.decode();
-          if (cancelled) return;
-          if (!r.patch) { canvas.width = r.width!; canvas.height = r.height!; }
-          const context = canvas.getContext('2d');
-          if (!context) throw new Error('No se pudo dibujar Chrome remoto');
-          context.drawImage(image, r.patch?.x ?? 0, r.patch?.y ?? 0);
-          base = r.frameId;
-          setFrame({...r, window, canvas});
+        if (typeof event.data === 'string') {
+          const m = JSON.parse(event.data) as StreamMessage;
+          if (m.t === 'opened') { attempts = 0; setNotice(''); }
+          else if (m.t === 'input') {
+            const started = sentAt.get(m.n ?? -1);
+            sentAt.delete(m.n ?? -1);
+            if (started !== undefined) setStats(s => ({...s, input: Math.round(performance.now() - started)}));
+          } else if (m.t === 'error') {
+            if (m.input) { setInputError(m.message ?? ''); return; }
+            if (m.message?.includes('ya no está disponible')) { void refresh().catch(report); return; }
+            setNotice('');
+            report(new Error(m.message ?? 'Chrome remoto falló'));
+          }
+          return;
         }
-        if (!cancelled) { failures = 0; setCaptureNotice(''); timer = setTimeout(poll, 30); }
-      } catch (e) {
-        base = undefined;
-        if (cancelled) return;
-        const message = (e as Error).message;
-        if (message.includes('Esa ventana de Chrome ya no está disponible') || message.includes('Chrome está cerrado.')) {
-          try { await refresh(); if (!cancelled) timer = setTimeout(poll, 500); }
-          catch (refreshError) { if (!cancelled) report(refreshError); }
-        } else if ((e instanceof TypeError || (e instanceof ApiError && (e.status >= 500 || e.status === 409))) && ++failures <= 3) {
-          setCaptureNotice('Reconectando la imagen…');
-          timer = setTimeout(poll, failures * 500);
-        } else { setCaptureNotice(''); report(e); }
-      }
+        const data = new DataView(event.data as ArrayBuffer);
+        const seq = data.getUint32(0), x = data.getUint16(4), y = data.getUint16(6);
+        const fullWidth = data.getUint16(12), fullHeight = data.getUint16(14), full = data.getUint8(16) & 1;
+        const blob = new Blob([new Uint8Array(event.data as ArrayBuffer, FRAME_HEADER)], {type: 'image/png'});
+        bytes += blob.size;
+        drawing = drawing.then(async () => {
+          const bitmap = await createImageBitmap(blob);
+          if (cancelled) return;
+          if (full || canvas.width !== fullWidth || canvas.height !== fullHeight) { canvas.width = fullWidth; canvas.height = fullHeight; }
+          canvas.getContext('2d')?.drawImage(bitmap, x, y);
+          bitmap.close();
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({t: 'ack', n: seq}));
+          setSize(s => s && s.width === fullWidth && s.height === fullHeight ? s : {width: fullWidth, height: fullHeight});
+          frames += 1;
+          const elapsed = performance.now() - since;
+          if (elapsed >= 1000) {
+            setStats(s => ({...s, fps: Math.round(frames * 1000 / elapsed), kbps: Math.round(bytes / elapsed)}));
+            frames = 0; bytes = 0; since = performance.now();
+          }
+        }).catch(e => { if (!cancelled) report(e); });
+      };
+      ws.onclose = () => {
+        if (cancelled || socket.current !== ws) return;
+        socket.current = null;
+        if (!opened && attempts === 0) { report(new Error('Esta PC no abrió el canal de Chrome remoto. Reiniciá Lienzo y volvé a probar.')); return; }
+        if (++attempts > 5) { setNotice(''); report(new Error('Se perdió la conexión con Chrome remoto')); return; }
+        setNotice('Reconectando…');
+        retry = setTimeout(connect, Math.min(4000, 500 * 2 ** attempts));
+      };
     };
-    void poll();
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [call, window, peer.alive, error, report, refresh]);
+    connect();
+    const observer = new ResizeObserver(() => {
+      clearTimeout(resize);
+      resize = setTimeout(() => {
+        const next = physicalSize(viewport.current?.getBoundingClientRect());
+        if (next && socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({t: 'size', ...next}));
+      }, 150);
+    });
+    if (viewport.current) observer.observe(viewport.current);
+    const send = (events: Command[]) => {
+      const ws = socket.current;
+      if (ws?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Chrome remoto está reconectando'));
+      const n = sentAt.size ? Math.max(...sentAt.keys()) + 1 : 1;
+      sentAt.set(n, performance.now());
+      if (sentAt.size > 200) sentAt.delete(Math.min(...sentAt.keys()));
+      ws.send(JSON.stringify({t: 'input', n, events}));
+      return Promise.resolve();
+    };
+    sender.current = send;
+    return () => {
+      cancelled = true;
+      clearTimeout(retry); clearTimeout(resize);
+      observer.disconnect();
+      sender.current = null;
+      const ws = socket.current;
+      socket.current = null;
+      if (ws && ws.readyState <= WebSocket.OPEN) { try { ws.send(JSON.stringify({t: 'release'})); } catch { /* ya cerrado */ } ws.close(); }
+    };
+  }, [window, peer.alive, peer.pc_id, error, canvas, refresh, report]);
   const open = async () => {
     setBusy(true);
     try {
@@ -191,16 +236,18 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
     <label>Ventana <select aria-label="Ventana de Chrome" value={window} onChange={e=>{setWindow(e.target.value);setError('');}}>{windows.map(w=><option key={w.id} value={w.id}>{w.title}</option>)}</select></label>
     <button disabled={!peer.alive || busy} onClick={()=>void refresh().catch(report)}>Actualizar ventanas</button>
     <button aria-label="Pantalla completa" onClick={()=>{void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(report);}}>⛶</button>
-    <small aria-label="Demora de Chrome remoto">Mouse {latency.input ? `${latency.input} ms` : '—'} · Imagen {latency.frame ? `${latency.frame} ms` : '—'}</small>
+    <small aria-label="Demora de Chrome remoto">Mouse {stats.input ? `${stats.input} ms` : '—'} · Imagen {stats.fps ? `${stats.fps} cuadros/s · ${stats.kbps} kB/s` : '—'}</small>
   </div>;
   return <>{toolbarSlot && createPortal(toolbar, toolbarSlot)}<div className="remote-viewport" ref={viewport}>
     {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1></div>
       : error ? <div className="remote-empty" role="alert"><h1>No se pudo mostrar Chrome</h1><p>{error}</p><button onClick={()=>void refresh().catch(report)}>Reconectar</button></div>
       : !window ? <div className="remote-empty"><h1>Chrome en {peer.name}</h1><p>Elegí tu perfil y tocá Abrir perfil. Acá vas a ver la ventana completa, con sus pestañas, menús y avisos.</p></div>
-      : frame.window === window && frame.image ? <RemoteScreen key={window} native image={frame.image} canvas={frame.canvas} frameId={frame.frameId} format={frame.format} width={frame.width ?? 1280} height={frame.height ?? 800} send={async events=>{const r=await call({action:'window-input',window,events});setInputError('');return r;}} onError={reportInput} onAddress={()=>{}} onCopy={()=>{}} />
+      : size ? <RemoteScreen key={window} native canvas={canvas} width={size.width} height={size.height}
+          send={events => { const r = sender.current?.(events) ?? Promise.reject(new Error('Chrome remoto está reconectando')); setInputError(''); return r; }}
+          onError={e => { if (live.current) setInputError((e as Error).message); }} onAddress={()=>{}} onCopy={()=>{}} />
       : <div className="remote-empty">Cargando ventana de Chrome…</div>}
     {inputError && <div className="remote-input-warning" role="alert">{inputError}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
-    {captureNotice && <div className="remote-capture-notice" role="status">{captureNotice}</div>}
+    {notice && <div className="remote-capture-notice" role="status">{notice}</div>}
   </div><div className="remote-status">{peer.name} · Chrome real · Usás el mouse y teclado de esa PC. Cerrar esta vista deja Chrome abierto.</div></>;
 }
 
@@ -227,10 +274,12 @@ function BrowserDesktop({peer}: {peer: Peer}) {
   useEffect(() => { document.title = `Chrome · ${peer.name} · Lienzo`; }, [peer.name]);
 
   const call = useCallback((command: Command): Promise<Reply> => {
-    const request = chain.current.then(() => {
+    const execute = () => {
       if (!mounted.current) throw new Error("La vista se cerró");
       return api.post<Reply>("/browser", {pc: peer.pc_id, ...command});
-    });
+    };
+    if (command.action === "frame") return Promise.resolve().then(execute); // la imagen no hace esperar al teclado
+    const request = chain.current.then(execute);
     chain.current = request.catch(() => undefined); // la cola sigue; el consumidor informa cada error.
     return request;
   }, [peer.pc_id]);
@@ -293,12 +342,14 @@ function BrowserDesktop({peer}: {peer: Peer}) {
     const poll = async () => {
       if (document.hidden) { timer = setTimeout(poll, 1000); return; }
       const rect = viewport.current?.getBoundingClientRect();
+      const started = performance.now();
       try {
         const r = await call({action: "frame", tab, width: clamp(rect?.width ?? 1280, 320, 1920), height: clamp(rect?.height ?? 800, 240, 1080)});
         if (cancelled) return;
         setFrame(previous => ({...previous, ...r, tab, image: r.image ?? (previous.tab === tab ? previous.image : undefined)}));
         update(r);
-        timer = setTimeout(poll, 220);
+        // el proximo pedido sale enseguida; el minimo evita martillar una pagina quieta
+        timer = setTimeout(poll, Math.max(0, 60 - (performance.now() - started)));
       } catch (e) { if (!cancelled) report(e); }
     };
     void poll();
@@ -385,38 +436,46 @@ function BrowserDialog({dialog, onAnswer}: {dialog: NonNullable<Reply["dialog"]>
   </div></div>;
 }
 
-function RemoteScreen({image, canvas, frameId, format = 'jpeg', native = false, width, height, send, onError, onAddress, onCopy}: {
-  canvas?: HTMLCanvasElement; frameId?: string;
-  image: string; format?: 'png' | 'jpeg'; native?: boolean; width: number; height: number; send: (events: Command[]) => Promise<unknown>; onError: (e: unknown) => void; onAddress: () => void; onCopy: () => void;
+/** Superficie con mouse y teclado. En modo nativo (`canvas`) la imagen la dibuja el dueño del canvas y
+ *  cada evento sale enseguida; los movimientos se juntan por cuadro de animación. En modo pestaña
+ *  (`image`) se agrupan en lotes cada 30 ms sobre HTTP. */
+function RemoteScreen({image, canvas, format = 'jpeg', native = false, width, height, send, onError, onAddress, onCopy}: {
+  canvas?: HTMLCanvasElement;
+  image?: string; format?: 'png' | 'jpeg'; native?: boolean; width: number; height: number; send: (events: Command[]) => Promise<unknown>; onError: (e: unknown) => void; onAddress: () => void; onCopy: () => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
-  const surface = useRef<HTMLCanvasElement>(null);
+  const holder = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (!canvas || !surface.current) return;
-    const target = surface.current;
-    if (target.width !== canvas.width || target.height !== canvas.height) { target.width = canvas.width; target.height = canvas.height; }
-    target.getContext('2d')?.drawImage(canvas, 0, 0);
-  }, [canvas, frameId, image]);
+    if (!canvas || !holder.current) return;
+    canvas.setAttribute('aria-label', 'Contenido de la ventana remota');
+    holder.current.replaceChildren(canvas);
+  }, [canvas]);
   const pending = useRef<Command[]>([]);
   const sending = useRef(false);
   const live = useRef(false);
+  const scheduled = useRef(0);
   const sender = useRef(send);
   useEffect(() => { sender.current = send; }, [send]);
+  const flush = useCallback(() => {
+    scheduled.current = 0;
+    if (!live.current || !pending.current.length || (!native && sending.current)) return;
+    const batch = pending.current.splice(0, 64);
+    sending.current = true;
+    void sender.current(batch).catch(e => { pending.current = []; onError(e); }).finally(() => { sending.current = false; });
+  }, [native, onError]);
   useEffect(() => {
     live.current = true;
-    const timer = setInterval(() => {
-      if (sending.current || !pending.current.length) return;
-      const batch = pending.current.splice(0, 64);
-      sending.current = true;
-      void sender.current(batch).catch(e => { pending.current = []; onError(e); }).finally(() => { sending.current = false; });
-    }, native ? 8 : 30);
-    return () => { live.current = false; clearInterval(timer); pending.current = []; };
-  }, [onError, native]);
+    const timer = native ? undefined : setInterval(flush, 30);
+    return () => { live.current = false; if (timer) clearInterval(timer); if (scheduled.current) cancelAnimationFrame(scheduled.current); pending.current = []; };
+  }, [flush, native]);
   const enqueue = (event: Command) => {
     if (!live.current) return;
     if (pending.current.length >= 128) { pending.current = []; onError(new Error("La conexión no sigue el ritmo del teclado. Reconectá antes de continuar.")); return; }
     if (event.type === "mouseMoved" && pending.current.at(-1)?.type === "mouseMoved") pending.current.pop();
     pending.current.push(event);
+    if (!native) return;
+    if (event.type === "mouseMoved") { if (!scheduled.current) scheduled.current = requestAnimationFrame(flush); }
+    else flush();
   };
   const mouse = (e: React.MouseEvent, type: string) => {
     const box = element.current!.getBoundingClientRect();
@@ -446,6 +505,6 @@ function RemoteScreen({image, canvas, frameId, format = 'jpeg', native = false, 
     onPointerUp={e => { e.preventDefault(); mouse(e, "mouseReleased"); e.currentTarget.releasePointerCapture(e.pointerId); }} onPointerMove={e => mouse(e, "mouseMoved")}
     onWheel={e => mouse(e, "mouseWheel")} onContextMenu={e => e.preventDefault()}
     onPaste={e => { e.preventDefault(); enqueue({kind: "text", text: e.clipboardData.getData("text/plain")}); }}>
-    {canvas ? <canvas ref={surface} aria-label="Contenido de la ventana remota" /> : <img src={`data:image/${format};base64,${image}`} alt="Contenido de la pestaña remota" draggable={false} />}
+    {canvas ? <div ref={holder} className="remote-canvas-holder" /> : <img src={`data:image/${format};base64,${image}`} alt="Contenido de la pestaña remota" draggable={false} />}
   </div>;
 }
