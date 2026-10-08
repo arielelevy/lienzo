@@ -212,3 +212,8 @@ lectura puede crear un worker nuevo; resultado real de captura pendiente de veri
 El instalador confirmó pull/build f5d1003. Su clasificador rechazó un POST /restart con
 etiqueta Auto-Mode Bypass; informó un reintento aceptado anterior al aviso de no repetir.
 No se reproduce ni se cambia configuración para eludir el rechazo.
+
+El stderr del worker, antes descartado, se drena en un hilo y registra como máximo 8 KiB
+por proceso para poder diagnosticar su caída original. Sólo stderr, nunca JSON de pedidos
+ni capturas de stdout; se sigue drenando sin registrar al alcanzar el límite. Streams
+incluido stderr se cierran después de terminar el worker. Veredicto de recuperación pendiente.

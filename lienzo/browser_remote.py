@@ -35,13 +35,26 @@ class BrowserHost:
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             bufsize=1,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         threading.Thread(target=self._read, args=(self.process, self.responses), daemon=True).start()
+        threading.Thread(target=self._errors, args=(self.process,), daemon=True).start()
+
+    @staticmethod
+    def _errors(process):
+        remaining = 8192
+        try:
+            while line := process.stderr.readline(1024):
+                if remaining > 0:
+                    excerpt = line[:remaining]
+                    remaining -= len(excerpt)
+                    state.log(f"Chrome worker: {excerpt.rstrip()}")
+        except (OSError, ValueError):
+            pass  # El cierre del proceso también cierra el lector de diagnóstico.
 
     @staticmethod
     def _read(process, responses):
@@ -67,7 +80,7 @@ class BrowserHost:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
-            for stream in (process.stdin, process.stdout):
+            for stream in (process.stdin, process.stdout, process.stderr):
                 try:
                     stream.close()
                 except OSError:
