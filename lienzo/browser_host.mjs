@@ -177,7 +177,7 @@ async function input(cdp, events) {
       const params = {
         type: e.type, x: integer(e.x, 0, 1920), y: integer(e.y, 0, 1080),
         button: e.button, buttons: integer(e.buttons, 0, 7), modifiers: integer(e.modifiers, 0, 15),
-        clickCount: integer(e.clickCount, 0, 3),
+        clickCount: ['mousePressed', 'mouseReleased'].includes(e.type) ? Math.max(1, integer(e.clickCount, 0, 3)) : integer(e.clickCount, 0, 3),
       };
       if (e.type === 'mouseWheel') {
         params.deltaX = integer(e.deltaX, -4000, 4000);

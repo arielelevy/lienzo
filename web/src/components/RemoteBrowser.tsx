@@ -429,7 +429,7 @@ function RemoteScreen({image, canvas, frameId, format = 'jpeg', native = false, 
     enqueue({kind: "mouse", type, x: clamp(x * width / shownWidth, 0, native ? width-1 : width),
       y: clamp(y * height / shownHeight, 0, native ? height-1 : height),
       button: type === "mouseMoved" ? "none" : ["left", "middle", "right"][e.button],
-      buttons: e.buttons, modifiers: modifiers(e), clickCount: clamp(e.detail, 0, 3),
+      buttons: e.buttons, modifiers: modifiers(e), clickCount: clamp(e.detail, type === 'mousePressed' || type === 'mouseReleased' ? 1 : 0, 3),
       ...(type === "mouseWheel" ? {deltaX: clamp((e as React.WheelEvent).deltaX, -4000, 4000), deltaY: clamp((e as React.WheelEvent).deltaY, -4000, 4000)} : {}),
     });
   };

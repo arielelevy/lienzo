@@ -198,3 +198,8 @@ ventana se agrupan en un único panel desde ⋮ arriba a la derecha; se retiran 
 permanentes de PC/modo también de CDP. El toolbar nativo usa portal al panel, sin cambiar
 destino de entrada ni remontar la ventana al abrirlo. Revisión estática de montaje, timer y
 CSS; build de despliegue válido, interacción real con el menú aún pendiente de observar.
+
+Ariel reporta clic también fallido en CDP. Revisión del flujo muestra pointer.detail=0
+enviado como clickCount=0. Frontend y worker normalizan a mínimo 1 sólo en pressed/released;
+movimiento conserva 0, clicks con cuenta positiva se conservan y valores inválidos se rechazan.
+Esto corrige el dato enviado; el resultado real del clic sigue pendiente de observación.
