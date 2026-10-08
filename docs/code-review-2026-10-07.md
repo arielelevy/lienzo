@@ -186,3 +186,9 @@ Es una observación aportada, sin atribuir mejora a un commit ni convertirla en 
 Los controles flotantes se cierran al pulsar la superficie remota o tras cinco segundos sin
 acciones. Code review: listeners y timer se retiran al cerrar controles o desmontar; sólo
 afecta modo ventana. Build de despliegue realizado, suites no ejecutadas.
+
+Observación real de connect autoApprove en ar-it33940: timeout sin identificar diálogo,
+por lo que no se certifica conexión automática. La identificación de ventana pasa a Win32
+por HWND, título exacto, clase y PID del listener; UIA se usa después para el botón. Se
+excluyen botones bajo Document para no autorizar contenido web que imite el aviso.
+El error aporta sólo recuentos de diálogos y botones, sin títulos de páginas ni datos.

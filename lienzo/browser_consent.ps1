@@ -5,6 +5,19 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class ChromeConsentWindows {
+    public delegate bool Callback(IntPtr window, IntPtr data);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(Callback callback, IntPtr data);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr window, StringBuilder text, int size);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr window, StringBuilder text, int size);
+}
+'@
 
 function Normalize-Label([string]$Label) {
     return ($Label.Normalize([Text.NormalizationForm]::FormD) -replace '\p{Mn}', '' -replace '[^a-zA-Z ]', '').Trim().ToLowerInvariant()
@@ -18,25 +31,45 @@ try {
     $chromeProcessId = [int]$owners[0]
     $process = Get-Process -Id $chromeProcessId
     if ([IO.Path]::GetFileName($process.Path) -ine 'chrome.exe') { throw 'The listener does not belong to Chrome' }
-    $condition = [Windows.Automation.PropertyCondition]::new(
-        [Windows.Automation.AutomationElement]::ProcessIdProperty, $chromeProcessId)
     $titles = @('allow remote debugging', 'permitir la depuracion remota', 'permitir depuracion remota')
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $nativeDialogs = 0
+    $nativeButtons = 0
     while ([DateTime]::UtcNow -lt $deadline) {
-        $windows = [Windows.Automation.AutomationElement]::RootElement.FindAll(
-            [Windows.Automation.TreeScope]::Children, $condition)
+        $handles = [Collections.Generic.List[IntPtr]]::new()
+        $callback = [ChromeConsentWindows+Callback] {
+            param([IntPtr]$handle, [IntPtr]$data)
+            [uint32]$owner = 0
+            [void][ChromeConsentWindows]::GetWindowThreadProcessId($handle, [ref]$owner)
+            if ($owner -ne $chromeProcessId -or -not [ChromeConsentWindows]::IsWindowVisible($handle)) { return $true }
+            $title = [Text.StringBuilder]::new(512)
+            $class = [Text.StringBuilder]::new(128)
+            [void][ChromeConsentWindows]::GetWindowText($handle, $title, 512)
+            [void][ChromeConsentWindows]::GetClassName($handle, $class, 128)
+            if ($class.ToString() -in @('Chrome_WidgetWin_1', 'Chrome_WidgetWin_2') -and (Normalize-Label $title.ToString()) -in $titles) { $handles.Add($handle) }
+            return $true
+        }
+        [void][ChromeConsentWindows]::EnumWindows($callback, [IntPtr]::Zero)
+        $nativeDialogs = $handles.Count
         $matches = @()
-        foreach ($window in $windows) {
-            if ($window.Current.ClassName -notin @('Chrome_WidgetWin_1', 'Chrome_WidgetWin_2')) { continue }
-            if ($window.Current.NativeWindowHandle -eq 0 -or $window.Current.IsOffscreen) { continue }
-            if ((Normalize-Label $window.Current.Name) -notin $titles) { continue }
+        $nativeButtons = 0
+        foreach ($handle in $handles) {
+            $window = [Windows.Automation.AutomationElement]::FromHandle($handle)
             $buttonCondition = [Windows.Automation.PropertyCondition]::new(
                 [Windows.Automation.AutomationElement]::ControlTypeProperty,
                 [Windows.Automation.ControlType]::Button)
             $buttons = $window.FindAll([Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+            $nativeButtons += $buttons.Count
             foreach ($button in $buttons) {
                 if ($button.Current.ProcessId -ne $chromeProcessId -or $button.Current.IsOffscreen -or -not $button.Current.IsEnabled) { continue }
                 if ((Normalize-Label $button.Current.Name) -notin @('allow', 'permitir')) { continue }
+                $ancestor = $button
+                $isWebContent = $false
+                while ($ancestor -and $ancestor -ne $window) {
+                    if ($ancestor.Current.ControlType -eq [Windows.Automation.ControlType]::Document) { $isWebContent = $true; break }
+                    $ancestor = [Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($ancestor)
+                }
+                if ($isWebContent) { continue }
                 $matches += $button
             }
         }
@@ -48,7 +81,7 @@ try {
         }
         Start-Sleep -Milliseconds 350
     }
-    throw 'Chrome debugging dialog was not identified within the time limit'
+    throw "Chrome debugging dialog was not identified within the time limit (native dialogs: $nativeDialogs; buttons: $nativeButtons)"
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1
