@@ -171,3 +171,12 @@ cambio de ventana/tamaño o error producen cuadro completo. El receptor decodifi
 dibuja antes de pedir el siguiente cuadro; ID sólo avanza tras dibujarlo. No hay pérdida
 de resolución ni reintento de entrada. Se desactiva Nagle en servidor y transporte entre
 peers para evitar espera de paquetes pequeños. Sigue siendo HTTP/TCP, no RDP ni UDP.
+
+Investigación de clic: Microsoft documenta que SetCursorPos ajusta silenciosamente la
+posición al área de ClipCursor aunque devuelva éxito. Es una hipótesis, no una causa
+medida en ar-it33940. La captura ahora limita tamaño y posición de Chrome al área útil
+del monitor correspondiente; la entrada compara GetCursorPos con el destino pedido y
+rechaza un clic que Windows haya desplazado. Handles de monitor y estructuras tipados
+para 64 bits. Pendiente medir en vivo; no se afirma arreglado el clic sólo por revisar código.
+UDP: WebRTC permite canales no ordenados sin reintentos para movimiento y canales
+fiables para clic/teclado. Todavía no implementado; transporte actual HTTP/TCP optimizado.

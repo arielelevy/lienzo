@@ -36,6 +36,7 @@ class Windows:
         self.previous_frame = None
         self.user.GetWindowDC.restype = w.HDC
         self.user.GetForegroundWindow.restype = w.HWND
+        self.user.MonitorFromWindow.restype = w.HANDLE
         self.gdi.CreateCompatibleDC.restype = w.HDC
         self.gdi.CreateCompatibleBitmap.restype = w.HBITMAP
         self.gdi.SelectObject.restype = w.HANDLE
@@ -54,6 +55,8 @@ class Windows:
             (self.user, "AttachThreadInput", [w.DWORD, w.DWORD, w.BOOL]),
             (self.user, "BringWindowToTop", [w.HWND]),
             (self.user, "SetCursorPos", [c.c_int, c.c_int]),
+            (self.user, "GetCursorPos", [c.POINTER(w.POINT)]),
+            (self.user, "MonitorFromWindow", [w.HWND, w.DWORD]),
             (self.user, "GetWindowThreadProcessId", [w.HWND, c.POINTER(w.DWORD)]),
             (self.gdi, "CreateCompatibleDC", [w.HDC]),
             (self.gdi, "CreateCompatibleBitmap", [w.HDC, c.c_int, c.c_int]),
@@ -120,9 +123,20 @@ class Windows:
             bounded(height, 200, 2160)
             if self.user.IsZoomed(hwnd):
                 self.user.ShowWindow(hwnd, 9)
+            class MonitorInfo(c.Structure):
+                _fields_ = [("size", w.DWORD), ("monitor", w.RECT), ("work", w.RECT), ("flags", w.DWORD)]
+            self.user.GetMonitorInfoW.argtypes = [w.HANDLE, c.POINTER(MonitorInfo)]
+            info = MonitorInfo()
+            info.size = c.sizeof(info)
+            if not self.user.GetMonitorInfoW(self.user.MonitorFromWindow(hwnd, 2), c.byref(info)):
+                fail("Windows no pudo medir el escritorio de Chrome")
+            width = min(width, info.work.right - info.work.left)
+            height = min(height, info.work.bottom - info.work.top)
             rect = self.rect(hwnd)
-            if (rect.right - rect.left, rect.bottom - rect.top) != (width, height):
-                if not self.user.SetWindowPos(hwnd, None, 0, 0, width, height, 0x16):
+            left = max(info.work.left, min(rect.left, info.work.right - width))
+            top = max(info.work.top, min(rect.top, info.work.bottom - height))
+            if (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top) != (left, top, width, height):
+                if not self.user.SetWindowPos(hwnd, None, left, top, width, height, 0x14):
                     fail("Windows no permitió ajustar el tamaño de Chrome")
         if self.user.IsIconic(hwnd):
             self.user.ShowWindow(hwnd, 9)
@@ -213,6 +227,9 @@ class Windows:
                 y = bounded(event.get("y"), 0, rect.bottom - rect.top - 1)
                 if not self.user.SetCursorPos(rect.left + x, rect.top + y):
                     fail("Windows no permitió mover el mouse de Chrome; no se envió el clic")
+                actual = w.POINT()
+                if not self.user.GetCursorPos(c.byref(actual)) or (actual.x, actual.y) != (rect.left + x, rect.top + y):
+                    fail("Windows limitó la posición del mouse; no se envió el clic fuera de lugar")
                 flags = {("mousePressed", "left"): 2, ("mouseReleased", "left"): 4,
                          ("mousePressed", "right"): 8, ("mouseReleased", "right"): 16,
                          ("mousePressed", "middle"): 32, ("mouseReleased", "middle"): 64}
