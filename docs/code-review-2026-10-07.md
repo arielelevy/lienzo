@@ -133,3 +133,12 @@ lectura con aviso visible, sin reconectar CDP ni aprobar permisos de Chrome.
 Explorer y Analyser localizaron colas; Designer separó canales; Executor guardó diez
 capturas reales y una grabación GIF de 14,588 s; Detective deja pendiente la medida
 del mouse después de instalar. No se afirma todavía una reducción medida de latencia.
+
+Observación posterior en ar-it33940, e9000fb: clic sobre zona sin acciones de Nueva pestaña
+respondió sin aviso de error; el menú mostró Mouse 92 ms e Imagen 172 ms. Una lectura
+posterior conservó Mouse 92 ms y mostró Imagen 199 ms. Son tiempos de pedidos propios,
+no medida de latencia física ni comparación antes/después. Captura 1920 × 914 presentada
+en 1280 × 609 con devicePixelRatio 1.5, controles cerrados y perfil gestionado por globant.com.
+Evidencia local ignorada: sesion/latencia.json, 04-latencia.png, 05-final.png y sesion-lienzo.gif.
+Detective confirma esa observación puntual y deja pendientes teclado, latencia sostenida,
+fluidez con carga y uso sin monitor. No se ejecutaron suites nuevas ni se aprobaron baselines.
