@@ -331,6 +331,14 @@ quedó sin cuota. En violeta, la credencial de git: cada PC prueba con `git ls-r
 (lo mismo que `coordinar.pasar_credencial_git`); con «sin red» o «timeout» avisa que otra credencial
 no lo arregla. Una PC caída se ve en ○ y sus tarjetas quedan grises.
 
+Con varias cuentas de GitHub en `gh`, cada repo elige la suya (`cuenta_github.py`, 2026-10-08): el
+helper de `gh` sólo sirve la cuenta activa, y cambiarla es global a la PC. Antes de probar el
+`origin` de un repo vivo en github.com, la PC deja en su `.git/config` (sólo para github.com) un
+helper que saca el token de la cuenta con permiso de push (`gh auth token --user`, que sí sirve
+cuentas inactivas) en el momento del push; primero prueba la cuenta que se llama como el dueño del
+repo, después la activa, después el resto. Si igual da «vencida» (un 403 por cuenta equivocada),
+vuelve a elegir y mide de nuevo. El token no se guarda en ningún lado ni pasa por el lienzo.
+
 ![tira de PCs](docs/img/tira-pcs.png)
 
 La ★ coordinadora es una por repo en toda la federación, independientemente de la PC. El
@@ -453,6 +461,7 @@ lienzo/
   beacon.py        beacon UDP (7323)
   red.py           Tailscale (tailnet, IP propia) y el diagnóstico de un peer que no llega
   health.py        memoria, CPU, temperatura, capacidad, credenciales de git
+  cuenta_github.py cuenta de gh con push para cada repo de github.com
   launch.py        lanzar sesiones (.cmd en Windows, tmux fuera)
   restore.py       restaurar sesiones tras un reinicio
   secretos.py      secretos entre PCs

@@ -34,8 +34,9 @@ from collections.abc import Callable
 import protocol
 
 try:
-    from . import subproc
+    from . import cuenta_github, subproc
 except ImportError:  # con lienzo/ en sys.path (server.py, las pruebas)
+    import cuenta_github
     import subproc
 
 WINDOWS = sys.platform == "win32"
@@ -378,8 +379,9 @@ GIT_GRACIA_S = 3600
 # remotes `origin` de los repos con una sesion viva de esta PC: lo enchufa server.py (igual que
 # cuotas_de_sesiones, health no ve sesiones)
 remotes_de_sesiones: Callable[[], list] = list
-# carpeta de una sesion viva con ese remote, para correr ahi el ls-remote; tambien la enchufa server.py
-repo_de_remote: Callable[[str], str | None] = lambda url: None
+# carpetas de las sesiones vivas con ese remote (el ls-remote corre en la primera, y cuenta_github
+# fija todas); tambien la enchufa server.py
+repos_de_remote: Callable[[str], list[str]] = lambda url: []
 _remotes_vistos: dict[str, float] = {}  # url -> ultima vez que una sesion viva la tenia
 _remotes_lock = threading.Lock()
 
@@ -472,21 +474,44 @@ def _medir_git(urls: list[str] | None = None) -> dict | None:
     urls = _git_urls() if urls is None else urls
     if not urls:
         return None
-    out = {url: _ls_remote(url, cwd=_carpeta_para(url)) for url in urls}
-    return out
+    return {url: _medir_una(url) for url in urls}
 
 
-def _carpeta_para(url: str) -> str:
-    """Donde correr el ls-remote de `url`: el repo de una sesion viva con ese remote (su config local
-    manda, como en el push) o, si no hay, una carpeta neutra. Nunca la del server: medido el
-    2026-10-07, el .git/config del lienzo cambia el helper a `gh auth git-credential` y toda url de
-    Azure DevOps daba «no verificable» con la credencial guardada y el push andando."""
+def _medir_una(url: str) -> str:
+    """El estado de una url. Antes de probar, cada repo vivo de github.com con ese origin queda
+    fijado a la cuenta de gh con push (cuenta_github, 2026-10-08); si igual da «vencida», se vuelve a
+    elegir y se prueba otra vez: un 403 por cuenta equivocada se arregla solo. Se mide en el primer
+    repo vivo (su config local manda, como en el push) o, sin ninguno, en una carpeta neutra: nunca
+    la del server (medido el 2026-10-07, el .git/config del lienzo cambiaba el helper a `gh auth
+    git-credential` y toda url de Azure DevOps daba «no verificable» con el push andando)."""
+    repos = _repos_vivos(url)
+    for repo in repos:
+        cuenta_github.asegurar(repo, url)
+    estado = _ls_remote(url, cwd=_carpeta_para(url, repos))
+    if estado == "vencida" and repos:
+        antes = cuenta_github.cuenta_fijada(repos[0])
+        cambio = False
+        for repo in repos:
+            cambio = cuenta_github.asegurar(repo, url, forzar=True) not in (None, antes) or cambio
+        if cambio:
+            estado = _ls_remote(url, cwd=repos[0])
+    return estado
+
+
+def _repos_vivos(url: str) -> list[str]:
+    """Las carpetas (que existen) de las sesiones vivas con ese remote, sin repetir."""
     try:
-        repo = repo_de_remote(url)
+        repos = repos_de_remote(url) or []
     except Exception as e:  # la salud nunca levanta
-        log(f"repo del remote {url}: {type(e).__name__}: {e}")
-        repo = None
-    return repo if repo and os.path.isdir(repo) else tempfile.gettempdir()
+        log(f"repos del remote {url}: {type(e).__name__}: {e}")
+        repos = []
+    return [r for r in dict.fromkeys(repos) if r and os.path.isdir(r)]
+
+
+def _carpeta_para(url: str, repos: list[str] | None = None) -> str:
+    """Donde correr el ls-remote de `url`: el primer repo vivo o, si no hay, una carpeta neutra."""
+    repos = _repos_vivos(url) if repos is None else repos
+    return repos[0] if repos else tempfile.gettempdir()
 
 
 def _ls_remote(url: str, timeout_s: float = 20, cwd: str | None = None) -> str:

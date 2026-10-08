@@ -34,6 +34,7 @@ import autoaprobar
 import beacon
 import browser_api
 import browser_stream
+import cuenta_github
 import federation
 import health
 import identity
@@ -74,7 +75,7 @@ from sessions import (
     public_pending,
     read_screen,
     remotes_de_sesiones,
-    repo_de_remote,
+    repos_de_remote,
     save_attachment,
     scan_pending,
     screen_loop,
@@ -2587,9 +2588,10 @@ def main() -> int:
     mirror.MIRROR.on_snapshot = reconcile_peer_rules
     mirror.MIRROR.log = log
     health.log = log
+    cuenta_github.log = log
     health.cuotas_de_sesiones = cuotas_de_sesiones
     health.remotes_de_sesiones = remotes_de_sesiones
-    health.repo_de_remote = repo_de_remote
+    health.repos_de_remote = repos_de_remote
     health.coda_viva = coda_viva
     secretos.al_guardar_git = health.renovar_git
     xfer.log = log

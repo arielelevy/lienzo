@@ -195,6 +195,7 @@ def test_repo_key_del_propio_lienzo(hogar):
 
 # --- origin_url: la credencial de git se prueba solo de los repos en uso (bug 9) --------------
 
+
 def test_origin_url_tal_cual_desde_una_subcarpeta(hogar):
     repo = _repo(hogar / "con-remote", remote="https://git.ejemplo.com/a/b.git")
     sub = repo / "src"
@@ -226,5 +227,6 @@ def test_remotes_de_sesiones_solo_de_las_tarjetas_vivas(hogar, monkeypatch):
         },
     )
     assert ses.remotes_de_sesiones() == ["https://git.ejemplo.com/a.git"]
-    assert ses.repo_de_remote("https://git.ejemplo.com/a.git") in (str(a), str(a / "sub"))
-    assert ses.repo_de_remote("https://git.ejemplo.com/b.git") is None  # solo de una tarjeta cerrada
+    assert set(ses.repos_de_remote("https://git.ejemplo.com/a.git")) <= {str(a), str(a / "sub")}
+    assert ses.repos_de_remote("https://git.ejemplo.com/a.git")  # al menos una carpeta viva con ese origin
+    assert ses.repos_de_remote("https://git.ejemplo.com/b.git") == []  # solo de una tarjeta cerrada

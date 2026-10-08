@@ -302,12 +302,14 @@ def remotes_de_sesiones() -> list[str]:
     return sorted({u for u in map(identity.origin_url, cwds) if u})
 
 
-def repo_de_remote(url: str) -> str | None:
-    """La carpeta de una tarjeta viva de ESTA PC cuyo `origin` es `url`, o None. health corre ahi el
-    `git ls-remote`: el config local del repo puede cambiar el credential helper (bug 2026-10-07)."""
+def repos_de_remote(url: str) -> list[str]:
+    """Las carpetas de las tarjetas vivas de ESTA PC cuyo `origin` es `url`, ordenadas. health corre
+    el `git ls-remote` en la primera (el config local del repo puede cambiar el credential helper,
+    bug 2026-10-07) y fija la cuenta de GitHub en todas (una segunda copia o worktree del mismo repo
+    tambien pushea)."""
     with lock:
         cwds = sorted({s.get("cwd") for s in sessions.values() if s.get("alive") and s.get("cwd")})
-    return next((c for c in cwds if identity.origin_url(c) == url), None)
+    return [c for c in cwds if identity.origin_url(c) == url]
 
 
 def limit_until_of(turn: dict) -> str | None:

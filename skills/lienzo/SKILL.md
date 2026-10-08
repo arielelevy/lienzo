@@ -529,6 +529,9 @@ otro secreto: `c.enviar_secreto(pc, nombre, valor)` (queda 10 min) y `c.leer_sec
 sola vez, desde cualquier PC de la LAN). `git_auth` en `/peers` dice por qué falla: `vencida` (la credencial: pasala con
 `pasar_credencial_git`), `sin_red` (no llega al host) o `timeout` (git no terminó): en esos dos, pasar
 otra credencial no arregla nada. Arreglalo antes de mandar un encargo que termine en push.
+Con varias cuentas de GitHub en `gh`, no hace falta `gh auth switch`: la PC fija cada repo vivo de
+github.com a la cuenta con push en su `.git/config` (`cuenta_github.py`), y un 403 por cuenta
+equivocada se vuelve a elegir solo en la próxima medición.
 
 La salud también trae `cuotas` por agente (`ok`, `agotada`, «agotada hasta HH:MM»). Lanzar una coda en
 una PC con la cuota agotada da 409: lanzala en otra PC o usá otro agente.
