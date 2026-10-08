@@ -544,7 +544,15 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, w
     e.preventDefault(); e.stopPropagation();
     if (!native && e.ctrlKey && e.key.toLowerCase() === "l") { if (type === "keyDown") onAddress(); return; }
     if (!native && e.ctrlKey && e.key.toLowerCase() === "c") { if (type === "keyDown") onCopy(); return; }
-    enqueue({kind: "key", type, key: e.key, code: e.code, keyCode: e.keyCode, modifiers: modifiers(e)});
+    // Teclados virtuales y herramientas de accesibilidad pueden enviar keyCode=0.
+    if (native && !e.keyCode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (type === 'keyDown') enqueue({kind: 'text', text: e.key});
+      return;
+    }
+    const special: Record<string, number> = {Control: 17, Shift: 16, Alt: 18, Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34};
+    const code = e.keyCode || special[e.key] || (/^[a-z0-9]$/i.test(e.key) ? e.key.toUpperCase().charCodeAt(0) : 0);
+    if (native && !code) { if (type === 'keyDown') onError(new Error(`Tecla no admitida: ${e.key}`)); return; }
+    enqueue({kind: "key", type, key: e.key, code: e.code, keyCode: code, modifiers: modifiers(e)});
   };
   return <div ref={element} className={`remote-screen${native ? ' remote-screen-native' : ''}`} tabIndex={0} role="application" aria-label="Página remota: mouse y teclado"
     style={native ? {cursor} : undefined}

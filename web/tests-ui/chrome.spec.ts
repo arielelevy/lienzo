@@ -161,4 +161,14 @@ test('muestra la ventana completa por el canal vivo y manda el mouse sin pedir d
   await expect.poll(() => stream.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]).filter(e => e.type === 'mouseWheel').length).toBeGreaterThan(0);
   expect(stream.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]).some(e => e.type === 'mousePressed')).toBeFalsy();
   await touch.detach();
+  stream.length = 0;
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await screen.dispatchEvent('keydown', {key: 'a', code: 'KeyA', keyCode: 0, ctrlKey: true});
+  await screen.dispatchEvent('keyup', {key: 'a', code: 'KeyA', keyCode: 0, ctrlKey: true});
+  await screen.dispatchEvent('keydown', {key: 'ñ', keyCode: 0});
+  await expect.poll(() => stream.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[])).toEqual([
+    expect.objectContaining({kind: 'key', type: 'keyDown', keyCode: 65, modifiers: 2}),
+    expect.objectContaining({kind: 'key', type: 'keyUp', keyCode: 65, modifiers: 2}),
+    {kind: 'text', text: 'ñ'},
+  ]);
 });

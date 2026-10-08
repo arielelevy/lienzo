@@ -21,4 +21,8 @@ Alcance: cambios en `browser_window.py`, `RemoteBrowser.tsx`, sus pruebas y uso 
 
 ## Límites y pendientes
 
-Falta comprobar la composición de popups con Chrome real después del despliegue. El parpadeo informado en el modo por pestañas no tiene una causa reproducida. La reparación del runtime de Codex permitió ejecutar comandos nuevamente, pero no modifica el binario de Codex ni garantiza que su bug de permisos no reaparezca.
+Se comprobó el menú de Chrome real en ar-it33940 después del despliegue, con el perfil globant.com visible. Evidencia ignorada por Git: `pruebas-agenticas/resultados/chrome-popup-real.png`. El popup se compone dentro de la ventana compartida; su sombra conserva un fondo oscuro en PrintWindow.
+
+La verificación con entrada de accesibilidad detectó keyCode=0: se deriva el código para combinaciones conocidas y se envía texto Unicode para caracteres sin modificadores. No se envían teclas desconocidas al worker.
+
+El parpadeo informado en el modo por pestañas no tiene una causa reproducida. La reparación del runtime de Codex permitió ejecutar comandos nuevamente, pero no modifica el binario de Codex ni garantiza que su bug de permisos no reaparezca.
