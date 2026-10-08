@@ -20,6 +20,9 @@ from pathlib import Path
 
 FRAME_HEADER = struct.Struct(">IHHHHHHB")  # seq, x, y, ancho, alto, ancho total, alto total, flags
 FRAME_FULL = 1  # flags: el cuadro es completo (reemplaza todo), no un parche
+SYSTEM_CURSORS = {32512: "default", 32513: "text", 32514: "wait", 32515: "crosshair", 32642: "nwse-resize",
+                  32643: "nesw-resize", 32644: "ew-resize", 32645: "ns-resize", 32646: "move", 32648: "not-allowed",
+                  32649: "pointer", 32650: "progress", 32651: "help"}
 RECORD = struct.Struct(">IB")
 MAX_IN_FLIGHT = 2  # cuadros sin acusar antes de frenar la captura: acota la cola, no la pierde
 MIN_INTERVAL_S = 1 / 60
@@ -89,6 +92,10 @@ class Windows:
         self.previous_frame = None
         self.user.GetWindowDC.restype = w.HDC
         self.user.GetForegroundWindow.restype = w.HWND
+        self.user.GetAncestor.restype = w.HWND
+        self.user.LoadCursorW.restype = w.HANDLE
+        self.user.LoadCursorW.argtypes = [w.HINSTANCE, c.c_void_p]
+        self.cursor_shapes = {self.user.LoadCursorW(None, c.c_void_p(number)): shape for number, shape in SYSTEM_CURSORS.items()}
         self.user.MonitorFromWindow.restype = w.HANDLE
         self.gdi.CreateCompatibleDC.restype = w.HDC
         self.gdi.CreateCompatibleBitmap.restype = w.HBITMAP
@@ -99,6 +106,7 @@ class Windows:
             (self.user, "GetWindowDC", [w.HWND]), (self.user, "ReleaseDC", [w.HWND, w.HDC]),
             (self.user, "PrintWindow", [w.HWND, w.HDC, w.UINT]),
             (self.user, "GetWindowRect", [w.HWND, c.POINTER(w.RECT)]),
+            (self.user, "GetAncestor", [w.HWND, w.UINT]),
             (self.user, "GetWindowTextW", [w.HWND, w.LPWSTR, c.c_int]),
             (self.user, "GetClassNameW", [w.HWND, w.LPWSTR, c.c_int]),
             (self.user, "IsWindowVisible", [w.HWND]), (self.user, "IsIconic", [w.HWND]),
@@ -114,6 +122,7 @@ class Windows:
             (self.gdi, "CreateCompatibleDC", [w.HDC]),
             (self.gdi, "CreateCompatibleBitmap", [w.HDC, c.c_int, c.c_int]),
             (self.gdi, "SelectObject", [w.HDC, w.HANDLE]),
+            (self.gdi, "BitBlt", [w.HDC, c.c_int, c.c_int, c.c_int, c.c_int, w.HDC, c.c_int, c.c_int, w.DWORD]),
             (self.gdi, "DeleteObject", [w.HANDLE]), (self.gdi, "DeleteDC", [w.HDC]),
             (self.gdi, "GetDIBits", [w.HDC, w.HBITMAP, w.UINT, w.UINT, c.c_void_p, c.c_void_p, w.UINT]),
             (self.kernel, "OpenProcess", [w.DWORD, w.BOOL, w.DWORD]),
@@ -196,6 +205,53 @@ class Windows:
         if current != (left, top, width, height) and not self.user.SetWindowPos(hwnd, None, left, top, width, height, 0x14):
             fail("Windows no permitió ajustar el tamaño de Chrome")
 
+    def popups(self, hwnd):
+        """Ventanas visibles propiedad de esta ventana de Chrome, en orden de abajo a arriba."""
+        result = []
+        pid = self.owner(hwnd)
+        callback_type = c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
+
+        def collect(candidate, _):
+            if candidate != hwnd and self.user.IsWindowVisible(candidate) and self.owner(candidate) == pid and self.user.GetAncestor(candidate, 3) == hwnd:
+                result.append(candidate)
+            return True
+
+        self.user.EnumWindows(callback_type(collect), 0)
+        return list(reversed(result))
+
+    def cursor(self):
+        class CursorInfo(c.Structure):
+            _fields_ = [("size", w.DWORD), ("flags", w.DWORD), ("handle", w.HANDLE), ("position", w.POINT)]
+
+        info = CursorInfo()
+        info.size = c.sizeof(info)
+        self.user.GetCursorInfo.argtypes = [c.POINTER(CursorInfo)]
+        if not self.user.GetCursorInfo(c.byref(info)):
+            fail("Windows no pudo leer el cursor de Chrome")
+        return self.cursor_shapes.get(info.handle, "default")
+
+    def paint_popup(self, hwnd, target, base):
+        rect = self.rect(hwnd)
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        if rect.right <= base.left or rect.left >= base.right or rect.bottom <= base.top or rect.top >= base.bottom:
+            return
+        bounded(width, 1, 3840)
+        bounded(height, 1, 2160)
+        memory = self.gdi.CreateCompatibleDC(target)
+        bitmap = self.gdi.CreateCompatibleBitmap(target, width, height)
+        old = self.gdi.SelectObject(memory, bitmap)
+        try:
+            if not memory or not bitmap or not self.user.PrintWindow(hwnd, memory, 2):
+                if not self.user.IsWindowVisible(hwnd):
+                    return  # se cerró durante la captura
+                fail("Windows no pudo capturar el aviso o menú de Chrome")
+            if not self.gdi.BitBlt(target, rect.left - base.left, rect.top - base.top, width, height, memory, 0, 0, 0x00CC0020):
+                fail("Windows no pudo mostrar el aviso o menú de Chrome")
+        finally:
+            self.gdi.SelectObject(memory, old)
+            self.gdi.DeleteObject(bitmap)
+            self.gdi.DeleteDC(memory)
+
     def capture(self, hwnd, width=None, height=None):
         """(rgb, ancho, alto) de la ventana; si se pide tamano, primero la ajusta."""
         if width is not None or height is not None:
@@ -213,6 +269,8 @@ class Windows:
         try:
             if not dc or not memory or not bitmap or not self.user.PrintWindow(hwnd, memory, 2):
                 fail("Windows no pudo capturar Chrome. La sesión debe estar abierta y desbloqueada")
+            for popup in self.popups(hwnd):
+                self.paint_popup(popup, memory, rect)
             info = c.create_string_buffer(struct.pack("<IiiHHIIiiII", 40, width, -height, 1, 32, 0, 0, 0, 0, 0, 0))
             pixels = c.create_string_buffer(width * height * 4)
             self.gdi.SelectObject(memory, old_bitmap)
@@ -303,12 +361,12 @@ class Windows:
                          ("mousePressed", "middle"): 32, ("mouseReleased", "middle"): 64}
                 if event.get("type") == "mouseWheel":
                     delta = -bounded(event.get("deltaY"), -4000, 4000)
-                    self.user.mouse_event(0x800, 0, 0, delta, 0)
+                    self.send_mouse(0x800, delta)
                 elif event.get("type") != "mouseMoved":
                     flag = flags.get((event.get("type"), event.get("button")))
                     if not flag:
                         fail("Botón de mouse inválido")
-                    self.user.mouse_event(flag, 0, 0, 0, 0)
+                    self.send_mouse(flag)
                     if event["type"] == "mousePressed":
                         self.mouse_pressed.add(event["button"])
                     else:
@@ -320,6 +378,15 @@ class Windows:
                     fail("Ese atajo de Windows no se admite en Chrome remoto")
                 if event.get("type") not in ("keyDown", "keyUp"):
                     fail("Tipo de tecla inválido")
+                if key not in (16, 17, 18):
+                    for bit, modifier in ((1, 18), (2, 17), (8, 16)):
+                        desired = bool(modifiers & bit)
+                        if desired != (modifier in self.pressed):
+                            self.user.keybd_event(modifier, 0, 0 if desired else 2, 0)
+                            if desired:
+                                self.pressed.add(modifier)
+                            else:
+                                self.pressed.discard(modifier)
                 self.user.keybd_event(key, 0, 2 if event["type"] == "keyUp" else 0, 0)
                 if event["type"] == "keyDown":
                     self.pressed.add(key)
@@ -330,6 +397,22 @@ class Windows:
             else:
                 fail("Entrada de ventana desconocida")
         return {"ok": True}
+
+    def send_mouse(self, flags, delta=0):
+        """Entrada Win32 con resultado verificable; mouse_event no informa si se insertó."""
+        class Mouse(c.Structure):
+            _fields_ = [("dx", w.LONG), ("dy", w.LONG), ("data", w.DWORD), ("flags", w.DWORD), ("time", w.DWORD), ("extra", c.c_size_t)]
+
+        class Payload(c.Union):
+            _fields_ = [("mouse", Mouse)]
+
+        class Input(c.Structure):
+            _fields_ = [("type", w.DWORD), ("payload", Payload)]
+
+        entry = Input(0, Payload(mouse=Mouse(0, 0, delta & 0xFFFFFFFF, flags, 0, 0)))
+        self.user.SendInput.argtypes = [w.UINT, c.c_void_p, c.c_int]
+        if self.user.SendInput(1, c.byref(entry), c.sizeof(Input)) != 1:
+            fail("Windows no aceptó el clic o la rueda de Chrome; revisá que Chrome no esté ejecutándose como administrador")
 
     def text(self, text):
         if not isinstance(text, str) or len(text) > 16000:
@@ -362,7 +445,7 @@ class Windows:
             self.user.keybd_event(key, 0, 2, 0)
         self.pressed.clear()
         for button in self.mouse_pressed:
-            self.user.mouse_event({"left": 4, "right": 16, "middle": 64}[button], 0, 0, 0, 0)
+            self.send_mouse({"left": 4, "right": 16, "middle": 64}[button])
         self.mouse_pressed.clear()
         return {"ok": True}
 
@@ -382,6 +465,7 @@ class Streamer:
         self.hwnd = None
         self.size = None
         self.refit = False  # ajustar la ventana al tamano pedido en la proxima captura (open/size)
+        self.last_cursor = None
         self.paused = False  # el visor esta en una solapa oculta: no capturar hasta que vuelva
         self.in_flight = 0
         self.seq = 0
@@ -468,6 +552,10 @@ class Streamer:
                 # solo al abrir o cambiar de tamano: cuadro a cuadro pelearia con quien maximiza alla
                 self.windows.fit(hwnd, *size)
             rgb, width, height = self.capture(hwnd)
+            cursor = self.windows.cursor()
+            if cursor != self.last_cursor:
+                self.json({"t": "cursor", "cursor": cursor})
+                self.last_cursor = cursor
         except ValueError as exc:
             self.json({"t": "error", "message": str(exc)})
             with self.cv:

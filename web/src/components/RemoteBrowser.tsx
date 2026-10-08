@@ -15,7 +15,7 @@ type Reply = {
 };
 type Command = Record<string, unknown>;
 /** Lo que manda el worker por el canal vivo (browser_window.py --stream): texto JSON o un cuadro binario. */
-type StreamMessage = { t: string; n?: number; message?: string; input?: boolean; window?: string; windows?: {id: string; title: string}[] };
+type StreamMessage = { t: string; n?: number; message?: string; input?: boolean; cursor?: string; window?: string; windows?: {id: string; title: string}[] };
 const FRAME_HEADER = 17; // >IHHHHHHB: seq, x, y, ancho, alto, ancho total, alto total, flags
 const modifiers = (e: {altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean}) =>
   Number(e.altKey) + Number(e.ctrlKey) * 2 + Number(e.metaKey) * 4 + Number(e.shiftKey) * 8;
@@ -93,6 +93,7 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   const [inputError, setInputError] = useState('');
   const [stats, setStats] = useState({input: 0, fps: 0, kbps: 0});
   const [notice, setNotice] = useState('');
+  const [cursor, setCursor] = useState('default');
   const [busy, setBusy] = useState(false);
   const [size, setSize] = useState<{width: number; height: number} | null>(null);
   const [canvas] = useState(() => document.createElement('canvas'));
@@ -106,18 +107,47 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   useEffect(() => { document.title = windows.find(w=>w.id === window)?.title.replace(/ - Google Chrome$/, '') || `Chrome · ${peer.name}`; }, [windows, window, peer.name]);
   const refresh = useCallback(async () => {
     const r = await call({action: 'windows'});
-    if (!live.current) return;
+    if (!live.current) return [];
     setWindows(r.windows ?? []);
     setWindow(current => r.windows?.some(w => w.id === current) ? current : r.windows?.[0]?.id ?? '');
     setError('');
+    return r.windows ?? [];
   }, [call]);
+  const openProfile = useCallback(async (chosen: string, previousWindows: NonNullable<Reply['windows']>, cancelled = () => !live.current) => {
+    setBusy(true);
+    try {
+      const previous = new Set(previousWindows.map(w => w.id));
+      await call({action: 'prepare', profile: chosen, setup: false});
+      for (let i = 0; i < 8; i++) {
+        if (cancelled()) return;
+        const r = await call({action: 'windows'});
+        if (cancelled()) return;
+        setWindows(r.windows ?? []);
+        const opened = r.windows?.find(w => !previous.has(w.id));
+        if (opened) { setWindow(opened.id); setError(''); return; }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      if (!cancelled() && !(await refresh()).length) throw new Error('Chrome no mostró una ventana. Volvé a intentar abrir el perfil.');
+    } catch (e) { if (!cancelled()) report(e); }
+    finally { if (!cancelled()) setBusy(false); }
+  }, [call, refresh, report]);
   useEffect(() => {
     if (!peer.alive) return;
-    void refresh().catch(report);
-    void call({action: 'profiles'}).then(r => {
-      if (live.current) { setProfiles(r.profiles ?? []); setProfile(r.profiles?.[0]?.id ?? ''); }
-    }).catch(report);
-  }, [call, peer.alive, refresh, report]);
+    let cancelled = false;
+    void Promise.all([call({action: 'profiles'}), call({action: 'windows'})]).then(async ([p, w]) => {
+      if (cancelled || !live.current) return;
+      const available = p.profiles ?? [];
+      let saved = '';
+      try { saved = localStorage.getItem(`chrome-profile:${peer.pc_id}`) ?? ''; }
+      catch (e) { console.warn('No se pudo leer el perfil recordado de Chrome', e); }
+      const chosen = available.find(p => p.id === saved)?.id ?? available[0]?.id ?? '';
+      setProfiles(available); setProfile(chosen);
+      setWindows(w.windows ?? []); setWindow(w.windows?.[0]?.id ?? '');
+      setError('');
+      if (w.windows && !w.windows.length && chosen) await openProfile(chosen, [], () => cancelled || !live.current);
+    }).catch(e => { if (!cancelled) report(e); });
+    return () => { cancelled = true; };
+  }, [call, peer.alive, peer.pc_id, openProfile, report]);
   const windowRef = useRef(window);
   useEffect(() => { windowRef.current = window; }, [window]);
   const openWindow = useCallback((ws: WebSocket | null) => {
@@ -150,6 +180,7 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
         if (typeof event.data === 'string') {
           const m = JSON.parse(event.data) as StreamMessage;
           if (m.t === 'opened') { attempts = 0; setNotice(''); }
+          else if (m.t === 'cursor' && m.cursor && ['default', 'pointer', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'progress', 'help'].includes(m.cursor)) setCursor(m.cursor);
           else if (m.t === 'input') {
             const started = sentAt.get(m.n ?? -1);
             sentAt.delete(m.n ?? -1);
@@ -232,27 +263,14 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       if (ws && ws.readyState <= WebSocket.OPEN) { try { ws.send(JSON.stringify({t: 'release'})); } catch { /* ya cerrado */ } ws.close(); }
     };
   }, [peer.alive, peer.pc_id, error, canvas, refresh, report, openWindow]);
-  const open = async () => {
-    setBusy(true);
-    try {
-      const previous = new Set(windows.map(w=>w.id));
-      await call({action: 'prepare', profile, setup: false});
-      for (let i=0; i<8; i++) {
-        const r = await call({action: 'windows'});
-        if (!live.current) return;
-        setWindows(r.windows ?? []);
-        const opened = r.windows?.find(w=>!previous.has(w.id));
-        if (opened) { setWindow(opened.id); setError(''); return; }
-        await new Promise(resolve=>setTimeout(resolve, 500));
-      }
-      await refresh();
-    }
-    catch (e) { report(e); }
-    finally { if (live.current) setBusy(false); }
+  const chooseProfile = (id: string) => {
+    setProfile(id);
+    try { localStorage.setItem(`chrome-profile:${peer.pc_id}`, id); }
+    catch (e) { report(new Error(`No se pudo recordar el perfil: ${(e as Error).message}`)); }
   };
   const toolbar = <div className="remote-native-toolbar">
-    <label>Perfil <select aria-label="Perfil del Chrome real" value={profile} onChange={e=>setProfile(e.target.value)}>{profiles.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-    <button disabled={busy || !peer.alive || !profile} onClick={()=>void open()}>Abrir perfil</button>
+    <label>Perfil <select aria-label="Perfil del Chrome real" value={profile} onChange={e=>chooseProfile(e.target.value)}>{profiles.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+    <button disabled={busy || !peer.alive || !profile} onClick={()=>void openProfile(profile, windows)}>Abrir perfil</button>
     <label>Ventana <select aria-label="Ventana de Chrome" value={window} onChange={e=>{setWindow(e.target.value);setError('');}}>{windows.map(w=><option key={w.id} value={w.id}>{w.title}</option>)}</select></label>
     <button disabled={!peer.alive || busy} onClick={()=>void refresh().catch(report)}>Actualizar ventanas</button>
     <button aria-label="Pantalla completa" onClick={()=>{void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(report);}}>⛶</button>
@@ -261,8 +279,8 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   return <>{toolbarSlot && createPortal(toolbar, toolbarSlot)}<div className="remote-viewport" ref={viewport}>
     {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1></div>
       : error ? <div className="remote-empty" role="alert"><h1>No se pudo mostrar Chrome</h1><p>{error}</p><button onClick={()=>void refresh().catch(report)}>Reconectar</button></div>
-      : !window ? <div className="remote-empty"><h1>Chrome en {peer.name}</h1><p>Elegí tu perfil y tocá Abrir perfil. Acá vas a ver la ventana completa, con sus pestañas, menús y avisos.</p></div>
-      : size ? <RemoteScreen key={window} native canvas={canvas} width={size.width} height={size.height}
+      : !window ? <div className="remote-empty"><h1>Chrome en {peer.name}</h1><p>{busy ? 'Abriendo tu perfil de Chrome…' : 'Buscando tu ventana de Chrome…'}</p></div>
+      : size ? <RemoteScreen key={window} native cursor={cursor} canvas={canvas} width={size.width} height={size.height}
           send={events => { const r = sender.current?.(events) ?? Promise.reject(new Error('Chrome remoto está reconectando')); setInputError(''); return r; }}
           onError={e => { if (live.current) setInputError((e as Error).message); }} onAddress={()=>{}} onCopy={()=>{}} />
       : <div className="remote-empty">Cargando ventana de Chrome…</div>}
@@ -464,9 +482,9 @@ function BrowserDialog({dialog, onAnswer}: {dialog: NonNullable<Reply["dialog"]>
 /** Superficie con mouse y teclado. En modo nativo (`canvas`) la imagen la dibuja el dueño del canvas y
  *  cada evento sale enseguida; los movimientos se juntan por cuadro de animación. En modo pestaña
  *  (`image`) se agrupan en lotes cada 30 ms sobre HTTP. */
-function RemoteScreen({image, canvas, format = 'jpeg', native = false, width, height, send, onError, onAddress, onCopy}: {
+function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, width, height, send, onError, onAddress, onCopy}: {
   canvas?: HTMLCanvasElement;
-  image?: string; format?: 'png' | 'jpeg'; native?: boolean; width: number; height: number; send: (events: Command[]) => Promise<unknown>; onError: (e: unknown) => void; onAddress: () => void; onCopy: () => void;
+  image?: string; cursor?: string; format?: 'png' | 'jpeg'; native?: boolean; width: number; height: number; send: (events: Command[]) => Promise<unknown>; onError: (e: unknown) => void; onAddress: () => void; onCopy: () => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const holder = useRef<HTMLDivElement>(null);
@@ -480,14 +498,18 @@ function RemoteScreen({image, canvas, format = 'jpeg', native = false, width, he
   const live = useRef(false);
   const scheduled = useRef(0);
   const sender = useRef(send);
+  const errorHandler = useRef(onError);
+  const touch = useRef<{id: number; x: number; y: number; lastX: number; lastY: number; scrolling: boolean} | null>(null);
+  const pressedButton = useRef<number | null>(null);
   useEffect(() => { sender.current = send; }, [send]);
+  useEffect(() => { errorHandler.current = onError; }, [onError]);
   const flush = useCallback(() => {
     scheduled.current = 0;
     if (!live.current || !pending.current.length || (!native && sending.current)) return;
     const batch = pending.current.splice(0, 64);
     sending.current = true;
-    void sender.current(batch).catch(e => { pending.current = []; onError(e); }).finally(() => { sending.current = false; });
-  }, [native, onError]);
+    void sender.current(batch).catch(e => { pending.current = []; errorHandler.current(e); }).finally(() => { sending.current = false; });
+  }, [native]);
   useEffect(() => {
     live.current = true;
     const timer = native ? undefined : setInterval(flush, 30);
@@ -502,7 +524,7 @@ function RemoteScreen({image, canvas, format = 'jpeg', native = false, width, he
     if (event.type === "mouseMoved") { if (!scheduled.current) scheduled.current = requestAnimationFrame(flush); }
     else flush();
   };
-  const mouse = (e: React.MouseEvent, type: string) => {
+  const mouse = (e: React.MouseEvent, type: string, options?: {deltaX?: number; deltaY?: number; button?: number}) => {
     const box = element.current!.getBoundingClientRect();
     const scale = Math.min(box.width / width, box.height / height);
     const shownWidth = native ? width * scale : box.width;
@@ -512,9 +534,9 @@ function RemoteScreen({image, canvas, format = 'jpeg', native = false, width, he
     if (native && type !== 'mouseReleased' && (x < 0 || y < 0 || x >= shownWidth || y >= shownHeight)) return;
     enqueue({kind: "mouse", type, x: clamp(x * width / shownWidth, 0, native ? width-1 : width),
       y: clamp(y * height / shownHeight, 0, native ? height-1 : height),
-      button: type === "mouseMoved" ? "none" : ["left", "middle", "right"][e.button],
+      button: type === "mouseMoved" ? "none" : ["left", "middle", "right"][options?.button ?? e.button],
       buttons: e.buttons, modifiers: modifiers(e), clickCount: clamp(e.detail, type === 'mousePressed' || type === 'mouseReleased' ? 1 : 0, 3),
-      ...(type === "mouseWheel" ? {deltaX: clamp((e as React.WheelEvent).deltaX, -4000, 4000), deltaY: clamp((e as React.WheelEvent).deltaY, -4000, 4000)} : {}),
+      ...(type === "mouseWheel" ? {deltaX: clamp(options?.deltaX ?? (e as React.WheelEvent).deltaX, -4000, 4000), deltaY: clamp(options?.deltaY ?? (e as React.WheelEvent).deltaY, -4000, 4000)} : {}),
     });
   };
   const key = (e: React.KeyboardEvent, type: string) => {
@@ -525,9 +547,36 @@ function RemoteScreen({image, canvas, format = 'jpeg', native = false, width, he
     enqueue({kind: "key", type, key: e.key, code: e.code, keyCode: e.keyCode, modifiers: modifiers(e)});
   };
   return <div ref={element} className={`remote-screen${native ? ' remote-screen-native' : ''}`} tabIndex={0} role="application" aria-label="Página remota: mouse y teclado"
+    style={native ? {cursor} : undefined}
     onKeyDown={e => key(e, "keyDown")} onKeyUp={e => key(e, "keyUp")}
-    onPointerDown={e => { e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus(); mouse(e, "mousePressed"); }}
-    onPointerUp={e => { e.preventDefault(); mouse(e, "mouseReleased"); e.currentTarget.releasePointerCapture(e.pointerId); }} onPointerMove={e => mouse(e, "mouseMoved")}
+    onPointerDown={e => {
+      e.preventDefault();
+      if (!e.isPrimary) return;
+      e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus();
+      if (e.pointerType === 'touch') touch.current = {id: e.pointerId, x: e.clientX, y: e.clientY, lastX: e.clientX, lastY: e.clientY, scrolling: false};
+      else { pressedButton.current = e.button; mouse(e, 'mousePressed'); }
+    }}
+    onPointerUp={e => {
+      e.preventDefault();
+      if (!e.isPrimary) return;
+      if (e.pointerType === 'touch') {
+        if (touch.current?.id === e.pointerId && !touch.current.scrolling) { mouse(e, 'mousePressed', {button: 0}); mouse(e, 'mouseReleased', {button: 0}); }
+        touch.current = null;
+      } else if (pressedButton.current !== null) { mouse(e, 'mouseReleased', {button: pressedButton.current}); pressedButton.current = null; }
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    }}
+    onPointerCancel={e => {
+      touch.current = null;
+      if (pressedButton.current !== null) { mouse(e, 'mouseReleased', {button: pressedButton.current}); pressedButton.current = null; }
+    }}
+    onPointerMove={e => {
+      if (e.pointerType !== 'touch') { mouse(e, 'mouseMoved'); return; }
+      const gesture = touch.current;
+      if (!gesture || gesture.id !== e.pointerId) return;
+      if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) > 8) gesture.scrolling = true;
+      if (gesture.scrolling) mouse(e, 'mouseWheel', {deltaX: gesture.lastX - e.clientX, deltaY: gesture.lastY - e.clientY});
+      gesture.lastX = e.clientX; gesture.lastY = e.clientY;
+    }}
     onWheel={e => mouse(e, "mouseWheel")} onContextMenu={e => e.preventDefault()}
     onPaste={e => { e.preventDefault(); enqueue({kind: "text", text: e.clipboardData.getData("text/plain")}); }}>
     {canvas ? <div ref={holder} className="remote-canvas-holder" /> : <img src={`data:image/${format};base64,${image}`} alt="Contenido de la pestaña remota" draggable={false} />}

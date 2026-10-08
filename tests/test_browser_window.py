@@ -67,8 +67,48 @@ def test_input_allows_chrome_popup_of_same_process():
                                    SetForegroundWindow=lambda hwnd: calls.append("foreground"),
                                    SetCursorPos=lambda x, y: True, mouse_event=lambda *a: calls.append(a), GetCursorPos=cursor)
     windows.mouse_pressed = set()
+    windows.send_mouse = lambda flag: calls.append((flag, 0, 0, 0, 0))
     windows.input(123, [{"kind": "mouse", "type": "mousePressed", "x": 5, "y": 6, "button": "left"}])
     assert "foreground" not in calls and calls == [(2, 0, 0, 0, 0)]
+
+
+def test_mouse_injection_reports_windows_rejection():
+    class SendInput:
+        def __call__(self, count, entry, size):
+            return 0
+
+    windows = module.Windows.__new__(module.Windows)
+    windows.user = SimpleNamespace(SendInput=SendInput())
+    with pytest.raises(ValueError, match="no aceptó el clic"):
+        windows.send_mouse(2)
+
+
+def test_control_a_restores_modifier_before_key_and_releases_it():
+    windows = module.Windows.__new__(module.Windows)
+    windows.focus = lambda hwnd: None
+    windows.active = windows.chrome = lambda hwnd: True
+    windows.rect = lambda hwnd: SimpleNamespace(left=0, top=0, right=1280, bottom=800)
+    calls = []
+    windows.user = SimpleNamespace(keybd_event=lambda *args: calls.append(args))
+    windows.pressed = set()
+    windows.input(1, [{"kind": "key", "keyCode": 65, "modifiers": 2, "type": "keyDown"},
+                      {"kind": "key", "keyCode": 65, "modifiers": 2, "type": "keyUp"},
+                      {"kind": "key", "keyCode": 17, "modifiers": 0, "type": "keyUp"}])
+    assert calls == [(17, 0, 0, 0), (65, 0, 0, 0), (65, 0, 2, 0), (17, 0, 2, 0)]
+    assert windows.pressed == set()
+
+
+def test_popups_are_owned_by_selected_chrome_only_in_paint_order(monkeypatch):
+    monkeypatch.setattr(module.c, "WINFUNCTYPE", module.c.CFUNCTYPE, raising=False)
+    windows = module.Windows.__new__(module.Windows)
+    windows.owner = lambda hwnd: 10 if hwnd != 4 else 20
+    def enumerate_windows(callback, data):
+        for hwnd in [1, 2, 3, 4, 5]:
+            callback(hwnd, data)
+        return True
+    windows.user = SimpleNamespace(EnumWindows=enumerate_windows, IsWindowVisible=lambda hwnd: hwnd != 5,
+                                   GetAncestor=lambda hwnd, flag: 1 if hwnd in [2, 4, 5] else hwnd)
+    assert windows.popups(1) == [2]  # no otra ventana principal ni otro proceso ni un menú oculto
 
 
 # --- captura continua (Streamer) y caja de cambios, sin Win32 ---------------------------------
@@ -131,6 +171,9 @@ class FakeWindows:
     def windows(self):
         return [{"id": "7", "title": "Chrome"}]
 
+    def cursor(self):
+        return "default"
+
 
 def make_streamer(frames):
     out = io.BytesIO()
@@ -172,6 +215,16 @@ def test_streamer_sends_full_then_patch_then_nothing_and_waits_for_acks():
     streamer.handle({"t": "ack", "n": 1})
     assert streamer.in_flight == 1
     assert streamer.step() is None and streamer.in_flight == 1  # igual al último enviado
+
+
+def test_cursor_changes_are_sent_even_when_image_is_unchanged():
+    base = rgb(8, 4)
+    streamer, out, windows, _ = make_streamer([base, base])
+    streamer.handle({"t": "open", "window": "7"})
+    assert streamer.step() is not None
+    windows.cursor = lambda: "pointer"
+    assert streamer.step() is None
+    assert json.loads(records(out)[-1][1]) == {"t": "cursor", "cursor": "pointer"}
 
 
 def test_streamer_input_acks_and_reports_failures():

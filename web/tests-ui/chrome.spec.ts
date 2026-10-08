@@ -1,5 +1,34 @@
 /** Propuesta de aceptación: UI real, peer y Chrome simulados explícitamente. */
 import { test, expect } from "@playwright/test";
+test.use({hasTouch: true});
+
+for (const saved of ['', 'Profile 1']) {
+  test(`abre Chrome automáticamente sin ventanas y recuerda el perfil ${saved || 'predeterminado'}`, async ({page}) => {
+    const calls: Record<string, unknown>[] = [];
+    let opened = false;
+    await page.route('**/auth', r => r.fulfill({json: {configured: false, authenticated: true, local: true}}));
+    await page.route('**/peers', r => r.fulfill({json: [{pc_id: 'auto-peer', name: 'PC automática', alive: true, local: false}]}));
+    if (saved) await page.addInitScript(profile => localStorage.setItem('chrome-profile:auto-peer', profile), saved);
+    await page.route('**/browser', r => {
+      const d = r.request().postDataJSON(); calls.push(d);
+      if (d.action === 'prepare') opened = true;
+      return r.fulfill({json: d.action === 'profiles'
+        ? {profiles: [{id: 'Default', name: 'globant.com'}, {id: 'Profile 1', name: 'Ariel'}]}
+        : d.action === 'windows' ? {windows: opened ? [{id: '456', title: 'Chrome automático'}] : []} : {prepared: true}});
+    });
+    await page.routeWebSocket('**/browser/stream*', ws => ws.onMessage(() => {}));
+    await page.goto('/chrome');
+    await expect.poll(() => calls.filter(d => d.action === 'prepare')).toEqual([
+      {pc: 'auto-peer', action: 'prepare', profile: saved || 'Default', setup: false},
+    ]);
+    await page.getByRole('button', {name: 'Controles de Chrome remoto'}).click();
+    await expect(page.getByRole('combobox', {name: 'Ventana de Chrome'})).toHaveValue('456');
+    await page.reload();
+    await expect.poll(() => calls.filter(d => d.action === 'windows').length).toBeGreaterThanOrEqual(3);
+    expect(calls.filter(d => d.action === 'prepare')).toHaveLength(1);
+    expect(calls.every(d => d.pc === 'auto-peer')).toBeTruthy();
+  });
+}
 
 test("abre una pestaña de Chrome remoto, navega y mantiene el destino", async ({page}) => {
   const calls: Record<string, unknown>[] = [];
@@ -102,7 +131,7 @@ test('muestra la ventana completa por el canal vivo y manda el mouse sin pedir d
       const d = JSON.parse(String(message)) as Record<string, unknown>;
       stream.push(d);
       if (d.t === 'open') { ws.send(JSON.stringify({t: 'opened', window: d.window})); ws.send(frame); }
-      if (d.t === 'input') ws.send(JSON.stringify({t: 'input', n: d.n}));
+      if (d.t === 'input') { ws.send(JSON.stringify({t: 'input', n: d.n})); ws.send(JSON.stringify({t: 'cursor', cursor: 'pointer'})); }
     });
   });
   await page.goto('/chrome');
@@ -113,10 +142,23 @@ test('muestra la ventana completa por el canal vivo y manda el mouse sin pedir d
   await expect.poll(() => stream.some(d => d.t === 'ack' && d.n === 1)).toBeTruthy();
   await page.getByRole('application', {name: 'Página remota: mouse y teclado'}).click({position: {x: 50, y: 50}});
   await expect.poll(() => stream.filter(d => d.t === 'input').length).toBeGreaterThan(0);
+  await expect(page.getByRole('application', {name: 'Página remota: mouse y teclado'})).toHaveCSS('cursor', 'pointer');
   const open = stream.find(d => d.t === 'open') as {window: string; width: number; height: number};
   expect(open.window).toBe('123');
   expect(open.width).toBeGreaterThanOrEqual(320);
   expect(urls[0]).toContain('pc=native-peer');
   expect(calls.some(d => d.action === 'connect' || d.action === 'start' || d.action === 'window-frame')).toBeFalsy();
   expect(calls.every(d => d.pc === 'native-peer')).toBeTruthy();
+  stream.length = 0;
+  await page.touchscreen.tap(500, 400);
+  await expect.poll(() => stream.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]).map(e => e.type)).toEqual(['mousePressed', 'mouseReleased']);
+  stream.length = 0;
+  const touch = await page.context().newCDPSession(page);
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: [{x: 500, y: 400}]});
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x: 500, y: 300}]});
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x: 500, y: 200}]});
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
+  await expect.poll(() => stream.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]).filter(e => e.type === 'mouseWheel').length).toBeGreaterThan(0);
+  expect(stream.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]).some(e => e.type === 'mousePressed')).toBeFalsy();
+  await touch.detach();
 });
