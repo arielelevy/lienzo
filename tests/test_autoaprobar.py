@@ -135,3 +135,112 @@ def test_un_pedido_que_ya_no_esta_no_se_reintenta(monkeypatch, code):
     for t in (100, 100 + au.REINTENTO_S + 1, 100 + 10 * au.REINTENTO_S):
         au.ronda(ahora=t)
     assert intentos == ["r1"]
+
+
+def _dialogo(question, options, **extra):
+    return {
+        "question": question,
+        "options": [{"n": i + 1, "text": t} for i, t in enumerate(options)],
+        "selected": 1,
+        **extra,
+    }
+
+
+# tal cual lo leyo screen.dialog en Teorema el 2026-10-08: la opcion «No, ...» no entro en la pantalla
+CODEX = _dialogo(
+    "Would you like to run the following command?",
+    ["Yes, proceed (y)", "Yes, and don't ask again for commands that start with `python -c`"],
+    teclas="flechas",
+)
+CLAUDE = _dialogo(
+    "Do you want to proceed?",
+    ["Yes", "Yes, and don't ask again for similar commands", "No, and tell Claude what to do differently (esc)"],
+)
+
+
+def test_opcion_de_permiso_reconoce_los_dialogos_de_permiso_y_nada_mas():
+    assert au.opcion_de_permiso(CODEX) == 1
+    assert au.opcion_de_permiso(CLAUDE) == 1
+    assert au.opcion_de_permiso(_dialogo("Do you want to make this edit to x.py?", ["Yes", "No"])) == 1
+    # una pregunta de verdad, el cambio de modelo o la confianza en una carpeta no son permisos
+    assert au.opcion_de_permiso(_dialogo("Which library?", ["Yes, requests", "No, httpx"])) is None
+    assert au.opcion_de_permiso(_dialogo("Switch model?", ["Default", "Opus"])) is None
+    assert (
+        au.opcion_de_permiso(_dialogo("Do you trust the files in this folder?", ["Yes, proceed", "No, exit"])) is None
+    )
+    assert au.opcion_de_permiso(_dialogo("Would you like to run the following command?", ["Proceed", "Cancel"])) is None
+    assert au.opcion_de_permiso(_dialogo("Do you want to use this API key?", ["Yes", "No (recommended)"])) is None
+    assert au.opcion_de_permiso(None) is None
+
+
+def _armar_dialogo(monkeypatch, dialog, **tarjeta):
+    monkeypatch.setattr(st, "load_config", lambda: {"auto_aprobar": True})
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(au, "_intentados", {})
+    monkeypatch.setattr(st, "pending", {})
+    monkeypatch.setattr(
+        st,
+        "sessions",
+        {
+            "d1": {
+                "session_id": "d1",
+                "agent": "codex",
+                "state": "te_necesita",
+                "needs": {"kind": "dialog", "detail": dialog["question"], "where": "terminal", "since": "t1"},
+                "dialog": dialog,
+                **tarjeta,
+            }
+        },
+    )
+    hechos = []
+    monkeypatch.setattr(
+        ses, "answer_dialog", lambda s, n: (hechos.append((s["session_id"], n)), (200, {"ok": True}))[1]
+    )
+    return hechos
+
+
+def test_aprueba_el_dialogo_de_permiso_de_codex_eligiendo_si_y_reintenta(monkeypatch):
+    """Medido el 2026-10-08: la tarjeta de Teorema (Codex) quedaba en «Espera que elijas en la
+    terminal» con el auto-aprobar prendido: el permiso de Codex es un dialogo de la TUI, sin hook."""
+    hechos = _armar_dialogo(monkeypatch, CODEX)
+    assert [(p.agente, p.que.startswith("Would you like to run")) for p, _ in au.ronda(ahora=100)] == [("codex", True)]
+    assert hechos == [("d1", 1)]
+    au.ronda(ahora=105)
+    assert len(hechos) == 1  # el numero tecleado todavia puede estar haciendo efecto
+    au.ronda(ahora=100 + au.REINTENTO_S + 1)
+    assert len(hechos) == 2  # sigue abierto: se vuelve a teclear
+
+
+def test_el_mismo_dialogo_redibujado_no_se_vuelve_a_contestar_antes_del_reintento(monkeypatch):
+    """Code review 2026-10-08: con el detalle en el id, otra linea envuelta en la pantalla hacia un
+    pedido nuevo y se tecleaba otra vez a los 2 s (en Claude caia como texto en la caja de entrada)."""
+    hechos = _armar_dialogo(monkeypatch, CODEX)
+    au.ronda(ahora=100)
+    st.sessions["d1"]["dialog"] = {**CODEX, "detail": "la misma orden, envuelta distinto"}
+    au.ronda(ahora=103)
+    assert hechos == [("d1", 1)]
+
+
+def test_el_permiso_de_kiro_con_allow_y_deny_tambien_es_un_permiso():
+    kiro = _dialogo(
+        "Tool requires approval: run command", ["Allow", "Always allow", "Deny", "Always deny"], teclas="flechas"
+    )
+    assert au.opcion_de_permiso(kiro) == 1
+    truncado = _dialogo(
+        "Kiro requiere permiso (comando parcialmente visible)", ["Allow", "Always allow", "Deny", "Always deny"]
+    )
+    assert au.opcion_de_permiso(truncado) == 1
+    assert au.opcion_de_permiso(_dialogo("Which one?", ["Allow", "Deny"])) == 1  # Allow/Deny solo lo tiene un permiso
+    assert au.opcion_de_permiso(_dialogo("Which one?", ["Allow", "Reject"])) is None
+
+
+def test_no_contesta_un_dialogo_que_no_es_permiso_ni_uno_con_pendiente_de_hook(monkeypatch):
+    hechos = _armar_dialogo(monkeypatch, _dialogo("Switch model?", ["Default", "Opus"]))
+    au.ronda(ahora=100)
+    assert hechos == []
+    hechos = _armar_dialogo(monkeypatch, CLAUDE, pending_id="r9")  # el permiso de verdad va por el hook
+    au.ronda(ahora=100)
+    assert hechos == []
+    hechos = _armar_dialogo(monkeypatch, CLAUDE, state="corriendo")  # ya se cerro
+    au.ronda(ahora=100)
+    assert hechos == []

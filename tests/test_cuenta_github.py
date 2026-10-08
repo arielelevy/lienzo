@@ -180,7 +180,9 @@ def test_fijar_deja_helper_vacio_mas_el_de_la_cuenta_solo_para_github_y_es_idemp
     out = subprocess.run(
         ["git", "config", "--local", "--get-all", cg.CLAVE_HELPER], cwd=repo, capture_output=True, text=True
     ).stdout.splitlines()
-    assert len(out) == 2 and out[0] == "" and "ariel-levy_globant" in out[1]
+    # vacio (resetea la lista global), el de la cuenta, y los de sistema/global que no sean el de gh
+    assert out[0] == "" and "ariel-levy_globant" in out[1] and out[2:] == cg._helpers_globales()
+    assert all(cg.GH_HELPER not in h for h in out)
     # lo global no se toca y no queda nada fuera del alcance github.com
     assert (
         subprocess.run(
@@ -230,7 +232,7 @@ def test_una_forzada_que_no_encontro_nada_mejor_no_se_repite_hasta_el_ttl(tmp_pa
     assert probadas == ["a", "b"]
     assert cg.asegurar(repo, url, forzar=True) == "a"
     assert probadas == ["a", "b"]  # hace poco se volvio a elegir: no se insiste
-    monkeypatch.setattr(cg, "REELECCION_TTL_S", 0)
+    monkeypatch.setattr(cg, "ELECCION_TTL_S", 0)
     assert cg.asegurar(repo, url, forzar=True) == "a"
     assert probadas == ["a", "b", "a", "b"]
 
@@ -329,8 +331,142 @@ def test_health_no_reintenta_si_forzar_no_cambio_la_cuenta(tmp_path, monkeypatch
     assert veces == [repo]
 
 
-def test_health_sin_repo_vivo_mide_en_carpeta_neutra_y_no_llama_a_gh(monkeypatch):
+def test_health_sin_repo_vivo_mide_en_carpeta_neutra_con_el_helper_de_la_cuenta_elegida(monkeypatch):
+    """Code review 2026-10-08: una sesion cerrada hace menos de una hora (o una url de git_check) se
+    media con la cuenta activa de gh y la tira decia «vencida» aunque el repo estuviera bien fijado."""
     monkeypatch.setattr(health, "repos_de_remote", lambda u: [])
     monkeypatch.setattr(cg, "asegurar", lambda *a, **k: 1 / 0)
-    monkeypatch.setattr(health, "_ls_remote", lambda u, timeout_s=20, cwd=None: "ok")
+    monkeypatch.setattr(cg, "cuenta_para", lambda u, forzar=False: "arielelevy")
+    vistos = []
+    monkeypatch.setattr(
+        health, "_ls_remote", lambda u, timeout_s=20, cwd=None, config=None: vistos.append((cwd, config)) or "ok"
+    )
     assert health._medir_git(["https://github.com/o/r"]) == {"https://github.com/o/r": "ok"}
+    assert vistos[0][0] == health.tempfile.gettempdir() and "--user arielelevy" in vistos[0][1][3]
+    # sin cuenta elegible (o fuera de github) se mide como siempre, y «vencida» no reintenta
+    monkeypatch.setattr(cg, "cuenta_para", lambda u, forzar=False: None)
+    monkeypatch.setattr(
+        health, "_ls_remote", lambda u, timeout_s=20, cwd=None, config=None: vistos.append((cwd, config)) or "vencida"
+    )
+    assert health._medir_git(["https://h/r"]) == {"https://h/r": "vencida"}
+    assert vistos[1:] == [(health.tempfile.gettempdir(), None)]
+
+
+def test_health_sin_repo_vivo_y_vencida_vuelve_a_elegir_y_mide_otra_vez(monkeypatch):
+    monkeypatch.setattr(health, "repos_de_remote", lambda u: [])
+    llamadas = []
+    monkeypatch.setattr(cg, "cuenta_para", lambda u, forzar=False: llamadas.append(forzar) or ("b" if forzar else "a"))
+    medidas = iter(["vencida", "ok"])
+    monkeypatch.setattr(health, "_ls_remote", lambda u, timeout_s=20, cwd=None, config=None: next(medidas))
+    assert health._medir_git(["https://github.com/o/r"]) == {"https://github.com/o/r": "ok"}
+    assert llamadas == [False, True]
+
+
+def test_lo_que_no_se_pudo_decidir_no_se_guarda_y_se_vuelve_a_probar(tmp_path, monkeypatch):
+    """Code review 2026-10-08 (tercera pasada): sin red, el None de `elegir` quedaba guardado una
+    hora y el repo seguia sin fijar cuando volvia la red."""
+    repo = _repo(tmp_path)
+    url = "https://github.com/o/r.git"
+    monkeypatch.setattr(cg, "cuentas", lambda: (["a", "b"], "a"))
+    respuestas = {"a": None, "b": False}  # a: sin red; b: sin permiso
+    probadas = []
+    monkeypatch.setattr(cg, "tiene_push", lambda c, d, r: probadas.append(c) or respuestas[c])
+    assert cg.asegurar(repo, url) is None and probadas == ["a", "b"]
+    respuestas["a"] = True  # volvio la red
+    assert cg.asegurar(repo, url) == "a" and probadas == ["a", "b", "a"]
+    # con todas en «no», si se guarda
+    cg.olvidar()
+    respuestas.update(a=False, b=False)
+    assert cg.cuenta_para(url) is None and cg.cuenta_para(url) is None
+    assert probadas == ["a", "b", "a", "a", "b"]
+
+
+def test_el_helper_de_gh_no_vuelve_a_entrar_por_los_globales_ni_en_su_forma_de_windows(monkeypatch):
+    salidas = {
+        ("--system", "credential.helper"): "manager\n",
+        ("--global", "credential.helper"): "!'C:/Program Files/GitHub CLI/gh.exe' auth git-credential\n",
+        ("--global", cg.CLAVE_HELPER): "!gh auth git-credential\nstore\n",
+    }
+
+    def git_config(repo, args):
+        return (0, salidas.get((args[0], args[2]), ""), "") if args[1] == "--get-all" else (0, "", "")
+
+    monkeypatch.setattr(cg, "_git_config", git_config)
+    assert cg._helpers_globales() == ["manager", "store"]
+
+
+def test_health_sin_repo_vivo_no_vuelve_a_medir_si_la_forzada_da_la_misma_cuenta(monkeypatch):
+    monkeypatch.setattr(health, "repos_de_remote", lambda u: [])
+    monkeypatch.setattr(cg, "cuenta_para", lambda u, forzar=False: "a")
+    veces = []
+    monkeypatch.setattr(
+        health, "_ls_remote", lambda u, timeout_s=20, cwd=None, config=None: veces.append(1) or "vencida"
+    )
+    assert health._medir_git(["https://github.com/o/r"]) == {"https://github.com/o/r": "vencida"}
+    assert len(veces) == 1
+
+
+def test_la_memoria_no_devuelve_una_cuenta_que_gh_ya_no_tiene(tmp_path, monkeypatch):
+    """Code review 2026-10-08 (cuarta pasada): tras `gh auth logout a`, asegurar volvia a fijar `a`
+    desde la memoria en cada vuelta."""
+    repo = _repo(tmp_path)
+    url = "https://github.com/o/r.git"
+    logins = [["a", "b"]]
+    monkeypatch.setattr(cg, "cuentas", lambda: (logins[0], logins[0][0]))
+    monkeypatch.setattr(cg, "tiene_push", lambda c, d, r: c in logins[0])
+    assert cg.asegurar(repo, url) == "a"
+    logins[0] = ["b"]
+    assert cg.asegurar(repo, url) == "b"
+    assert cg.cuenta_fijada(repo) == "b"
+
+
+def test_si_cambian_los_helpers_globales_el_repo_fijado_se_renueva(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    url = "https://github.com/o/r.git"
+    monkeypatch.setattr(cg, "cuentas", lambda: (["a"], "a"))
+    monkeypatch.setattr(cg, "tiene_push", lambda c, d, r: True)
+    globales = [["manager"]]
+    monkeypatch.setattr(cg, "_helpers_globales", lambda ahora=None: list(globales[0]))
+    assert cg.asegurar(repo, url) == "a"
+    assert cg._lista_fijada(repo)[2:] == ["manager"]
+    globales[0] = ["store"]
+    assert cg.asegurar(repo, url) == "a"
+    assert cg._lista_fijada(repo)[2:] == ["store"]
+    assert cg.config_de("a")[-1].endswith("=store")  # medir sin repo usa la misma cadena
+
+
+def test_tiene_push_rate_limit_no_es_falta_de_permiso(monkeypatch):
+    """Code review 2026-10-08: el 403 de «API rate limit exceeded» se leia como «sin push»."""
+    monkeypatch.setattr(
+        cg,
+        "_gh",
+        lambda args, env=None, timeout=0: (
+            (0, "tok", "") if args[0] == "auth" else (1, "", "gh: API rate limit exceeded for user (HTTP 403)")
+        ),
+    )
+    assert cg.tiene_push("a", "o", "r") is None
+
+
+def test_cuentas_entiende_el_gh_viejo(monkeypatch):
+    salida = "github.com\n  ✓ Logged in to github.com as viejo (keyring)\n"
+    monkeypatch.setattr(cg, "_gh", lambda args, env=None, timeout=0: (0, salida, ""))
+    assert cg.cuentas() == (["viejo"], "viejo")
+
+
+def test_helper_no_contesta_sin_token_y_git_sigue_con_el_siguiente():
+    h = cg.helper_de("a")
+    assert 'if [ -n "$t" ]' in h and "2>/dev/null" in h
+
+
+def test_la_eleccion_de_una_url_vale_una_hora_tambien_sin_forzar_y_una_forzada_la_renueva(monkeypatch):
+    """Code review 2026-10-08: una url que ninguna cuenta puede pushear volvia a preguntar a la API
+    en cada vuelta de health."""
+    url = "https://github.com/o/r.git"
+    monkeypatch.setattr(cg, "cuentas", lambda: (["a", "b"], "a"))
+    probadas = []
+    monkeypatch.setattr(cg, "tiene_push", lambda c, d, r: probadas.append(c) or False)
+    assert cg.cuenta_para(url) is None and probadas == ["a", "b"]
+    assert cg.cuenta_para(url) is None and probadas == ["a", "b"]  # memoria: sin API
+    assert cg.cuenta_para(url, forzar=True) is None and probadas == ["a", "b", "a", "b"]  # forzada renueva
+    assert cg.cuenta_para(url, forzar=True) is None and len(probadas) == 4  # pero no se repite
+    assert cg.cuenta_para("https://dev.azure.com/o/p/_git/r") is None

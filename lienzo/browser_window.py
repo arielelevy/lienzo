@@ -319,11 +319,25 @@ class Windows:
         return foreground == hwnd or (bool(foreground) and self.owner(foreground) == self.owner(hwnd))
 
     def focus(self, hwnd):
+        """Trae la ventana de Chrome al frente para mandarle la entrada. Windows solo le deja cambiar
+        la ventana activa al proceso que recibio la ultima entrada del usuario (el worker nunca la
+        recibe): primero se pide derecho; despues con un toque de Shift sintetico (keybd_event: baja
+        y sube, solo no hace nada en ninguna ventana) que convierte al worker en ese proceso; y al
+        final enganchando la cola de entrada del hilo que tiene el frente (AttachThreadInput). Sin
+        ventana al frente no hay escritorio activo (PC bloqueada o protector de pantalla) y ningun
+        truco sirve: se dice eso. Medido el 2026-10-08: el aviso «no permitio activar Chrome» salia
+        con el escritorio abierto y otra ventana al frente."""
         if self.user.IsIconic(hwnd):
             self.user.ShowWindow(hwnd, 9)
         if self.active(hwnd):
             return
         self.user.SetForegroundWindow(hwnd)
+        if self.user.GetForegroundWindow() != hwnd:
+            # Shift y no Alt: un Alt solo deja a la ventana que lo recibe (una consola, Explorer, el
+            # mismo Chrome) con la barra de menu enfocada y se traga la tecla siguiente
+            self.user.keybd_event(16, 0, 0, 0)  # Shift abajo
+            self.user.keybd_event(16, 0, 2, 0)  # Shift arriba
+            self.user.SetForegroundWindow(hwnd)
         if self.user.GetForegroundWindow() != hwnd:
             foreground = self.user.GetForegroundWindow()
             foreground_thread = self.user.GetWindowThreadProcessId(foreground, None)
@@ -337,6 +351,8 @@ class Windows:
                 if attached:
                     self.user.AttachThreadInput(current_thread, foreground_thread, False)
         if self.user.GetForegroundWindow() != hwnd:
+            if not self.user.GetForegroundWindow():
+                fail("La PC está bloqueada o sin escritorio activo: Chrome no puede recibir la entrada")
             fail("Windows no permitió activar Chrome; no se envió la entrada")
 
     def input(self, hwnd, events):

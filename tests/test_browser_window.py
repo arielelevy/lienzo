@@ -34,10 +34,54 @@ def test_no_keyboard_or_mouse_if_foreground_changed():
     windows = module.Windows.__new__(module.Windows)
     windows.owner = lambda hwnd: hwnd  # procesos distintos: la ventana activa no es de Chrome
     windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 456,
-                                   GetWindowThreadProcessId=lambda hwnd, pid: 2, AttachThreadInput=lambda source, target, attach: False)
+                                   GetWindowThreadProcessId=lambda hwnd, pid: 2, AttachThreadInput=lambda source, target, attach: False,
+                                   keybd_event=lambda *a: None)
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
     with pytest.raises(ValueError, match="no se envió la entrada"):
         windows.input(123, [{"kind": "key", "keyCode": 65, "modifiers": 0, "type": "keyDown"}])
+
+
+def test_focus_taps_shift_before_the_second_try_and_then_attaches_the_foreground_thread():
+    """Windows solo deja cambiar la ventana activa al proceso que recibio la ultima entrada: el toque
+    de Shift sintetico convierte al worker en ese proceso (medido el 2026-10-08: con el escritorio
+    abierto y otra ventana al frente, el aviso «no permitio activar Chrome» salia siempre)."""
+    windows = module.Windows.__new__(module.Windows)
+    windows.owner = lambda hwnd: hwnd
+    calls = []
+    foreground = [456]
+
+    def set_foreground(hwnd):
+        calls.append("foreground")
+        if "shift" in calls:  # recien despues del Shift, Windows acepta
+            foreground[0] = hwnd
+
+    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=set_foreground,
+                                   GetForegroundWindow=lambda: foreground[0],
+                                   keybd_event=lambda vk, scan, flags, extra: calls.append("shift" if vk == 16 and flags == 0 else "shift-up"),
+                                   GetWindowThreadProcessId=lambda hwnd, pid: 2,
+                                   AttachThreadInput=lambda source, target, attach: calls.append("attach") or True,
+                                   BringWindowToTop=lambda hwnd: calls.append("top"))
+    windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
+    windows.focus(123)
+    assert calls == ["foreground", "shift", "shift-up", "foreground"]  # sin llegar al AttachThreadInput
+    # si tampoco alcanza, se engancha el hilo que tiene el frente y se intenta una vez mas
+    calls.clear()
+    foreground[0] = 456
+    windows.user.SetForegroundWindow = lambda hwnd: calls.append("foreground")
+    with pytest.raises(ValueError, match="no se envió la entrada"):
+        windows.focus(123)
+    assert calls == ["foreground", "shift", "shift-up", "foreground", "attach", "top", "foreground", "attach"]
+
+
+def test_focus_says_when_the_pc_is_locked():
+    windows = module.Windows.__new__(module.Windows)
+    windows.owner = lambda hwnd: hwnd
+    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 0,
+                                   keybd_event=lambda *a: None, GetWindowThreadProcessId=lambda hwnd, pid: 0,
+                                   AttachThreadInput=lambda source, target, attach: False)
+    windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
+    with pytest.raises(ValueError, match="bloqueada"):
+        windows.focus(123)
 
 
 @pytest.mark.parametrize("key,modifiers", [(91, 0), (9, 1), (27, 10), (115, 1)])

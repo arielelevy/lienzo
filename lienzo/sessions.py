@@ -2486,8 +2486,9 @@ def screen_once() -> None:
                 s["dialog"] = d
                 touch(s)
             # el dialogo espera una eleccion: la tarjeta va a «te necesita» (se ve en la columna y
-            # avisa), y vuelve cuando se cierra. Nadie lo contesta solo: ni el auto-aprobar, que
-            # solo atiende permisos (la confianza en una carpeta la decide el humano)
+            # avisa), y vuelve cuando se cierra. Solo el auto-aprobar lo contesta, y solo si es un
+            # permiso (autoaprobar.DialogoDePermiso, 2026-10-08); la confianza en una carpeta, el
+            # cambio de modelo o una pregunta de verdad los decide el humano
             needs = s.get("needs") or {}
             if d and not needs and s["state"] in ("termino", "corriendo"):
                 set_needs(s, {"kind": "dialog", "detail": short(d.get("question") or "", 300), "where": "terminal"})

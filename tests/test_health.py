@@ -388,13 +388,13 @@ def test_ls_remote_corre_en_el_repo_de_la_sesion_o_en_carpeta_neutra(tmp_path, m
     assert cwds == [str(tmp_path), health.tempfile.gettempdir()]
     # un repo que ya no existe, o una consulta que rompe, tampoco cae en la carpeta del server
     monkeypatch.setattr(health, "repos_de_remote", lambda url: [str(tmp_path / "borrado")])
-    assert health._carpeta_para("https://h/a.git") == health.tempfile.gettempdir()
+    assert health._repos_vivos("https://h/a.git") == []
 
     def rompe(url):
         raise RuntimeError("lock")
 
     monkeypatch.setattr(health, "repos_de_remote", rompe)
-    assert health._carpeta_para("https://h/a.git") == health.tempfile.gettempdir()
+    assert health._repos_vivos("https://h/a.git") == []
 
 
 def test_clasificar_git_distingue_red_de_credencial():

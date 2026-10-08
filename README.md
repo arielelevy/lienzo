@@ -219,8 +219,12 @@ En el menú ⋯, apagadas por defecto:
 - Reintentar solo tras un error de API: «Continuar» diez segundos después.
 - ☠ Auto-aprobar TODO: aprueba sin mirar cada permiso de cualquier agente, **en todas las PCs
   emparejadas**. Barra negra arriba mientras está prendido; cada aprobación queda en `lienzo.log`.
-  Sólo desde la LAN. No cubre lo que el agente se deniega solo (por ejemplo, los «comandos que piden
-  confirmación» de coda).
+  Sólo desde la LAN. Contesta los permisos que llegan por hook (Claude Code, Codex, Pi), el cartel
+  de coda y, desde el 2026-10-08, el permiso que la TUI dibuja como diálogo de opciones sin hook
+  («Would you like to run the following command?» de Codex, «Do you want to proceed?» de Claude):
+  elige la primera opción «Yes». No contesta una pregunta de verdad, el cambio de modelo ni la
+  confianza en una carpeta. No cubre lo que el agente se deniega solo (por ejemplo, los «comandos
+  que piden confirmación» de coda, o lo que frena el clasificador del auto mode de Claude Code).
 
 ## Delegar trabajo a varias sesiones
 

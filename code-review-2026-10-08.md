@@ -50,12 +50,49 @@ Alcance: `cuenta_github.py` (nuevo), `health.py` (medición de `git_auth`), `ses
 - `_carpeta_para` quedaba sin uso en producción: vuelve a ser quien decide dónde corre el `ls-remote`, sobre la lista de repos vivos.
 - Un `GH_TOKEN`/`GITHUB_TOKEN` heredado del entorno hacía que `gh auth token --user X` devolviera ese token para cualquier X: se vacían al consultar a gh y adentro del helper.
 
+### Segunda pasada (sobre las correcciones)
+
+- La elección de una url no tenía memoria fuera de `forzar`: una url que ninguna cuenta puede pushear (o un repo de una organización) volvía a preguntar a la API en cada vuelta de health. Ahora toda elección vale `ELECCION_TTL_S`; una forzada renueva una guardada sin forzar, y no se repite.
+- `tiene_push` leía el 403 de «API rate limit exceeded» como «sin push»: ahora es «no se pudo saber».
+- `fijar` borraba la lista de helpers y una credencial pasada con `pasar_credencial_git` (al Git Credential Manager) no se consultaba nunca: el helper de la cuenta no contesta si gh no tiene token, y detrás quedan los helpers de sistema y global (sin el de gh).
+- Una url sin repo vivo (sesión cerrada hace menos de una hora, o `git_check`) se medía con la cuenta activa de gh y decía «vencida»: ahora se mide con el helper de la cuenta elegida (`cuenta_para`, `config_de`).
+- `gh auth status` de un gh viejo («Logged in to github.com as X») no se entendía: se aceptan las dos formas.
+- En el reintento por «vencida» con varias copias del repo, `antes` se leía sólo de la primera: ahora se compara por copia.
+- `_carpeta_para` quedó como envoltorio sin uso: se eliminó.
+
+### Tercera pasada (sobre la segunda)
+
+- La elección de una url guardaba el «ninguna» aunque viniera de no poder probar (sin red, rate limit): ahora sólo se guarda una cuenta o un «no» de todas; lo que no se pudo decidir se vuelve a probar en la próxima vuelta.
+- Sin repo vivo, «vencida» volvía a medir aunque la elección forzada diera la misma cuenta: sólo se mide otra vez si cambió.
+- El comodín «do you want to» del auto-aprobar contestaba cualquier diálogo que empezara así: la lista queda cerrada a las preguntas de permiso conocidas («proceed», «make», «create», «run», «read», «write», «edit», «fetch», «allow»).
+- El helper de gh en su forma de Windows (`!'C:/Program Files/GitHub CLI/gh.exe' auth git-credential`) volvía a entrar por los globales: se reconoce por `auth git-credential`, y también se leen los helpers globales de `credential.https://github.com.helper`.
+- Dos permisos seguidos con la misma pregunta y otro comando contaban como un reintento del primero: el id del pedido lleva el detalle.
+
+Aceptado sin cambio: `_eleccion` corre `elegir` fuera del lock; health mide en un solo hilo y las urls son pocas, así que no hay dos elecciones a la vez.
+
+### Cuarta pasada (auto-aprobar, tercera pasada y foco de Chrome)
+
+- La memoria de elección devolvía una cuenta que gh ya no tenía (`gh auth logout`) y el repo se volvía a fijar a ella en cada vuelta: la memoria sólo vale si la cuenta sigue en gh.
+- El id del pedido del auto-aprobar llevaba el detalle de la pantalla: con otra línea envuelta en el redibujo, el mismo diálogo abierto se volvía a contestar a los 2 s (en Claude caía como texto en la caja). Vuelve a ser sesión + momento + pregunta; dos permisos iguales seguidos quedan cubiertos por el reintento a los 20 s.
+- El toque de Alt dejaba a la ventana que lo recibía (una consola, Explorer, el mismo Chrome) con la barra de menú enfocada y se tragaba la tecla siguiente: es un toque de Shift, que solo no hace nada.
+- Medir una url sin repo vivo usaba sólo el helper de gh, distinto de la cadena del repo (que sigue con el Git Credential Manager): `config_de` arma la misma lista que `fijar`.
+- La lista de helpers globales copiada al repo no se renovaba: `asegurar` la compara con la esperada y la reescribe si cambió; los globales se leen con una hora de cache.
+- Comentario viejo en el barrido de pantalla de `sessions.py` («nadie lo contesta solo: ni el auto-aprobar»): actualizado.
+- `_medir_una` tenía dos copias de «medir, si vencida re-elegir, medir otra vez» (con y sin repo vivo): queda una.
+- La lista de preguntas de permiso dejaba afuera el «requires approval» de Kiro con Allow/Deny: `opcion_de_permiso` también reconoce Allow/Deny y «Would you like to proceed».
+
+Aceptado sin cambio: `_eleccion` lee la memoria bajo el lock y corre `elegir` afuera; health mide en un solo hilo y las urls son pocas.
+
 ## Aceptado sin cambio
 
-- `fijar` escribe dos valores con dos `git config` (la clave lleva un helper vacío que resetea la lista global y el de la cuenta): entre uno y otro el repo queda unos milisegundos sin helper y un push justo ahí falla sin pedir nada, no con 403. Hacerlo atómico pediría un archivo incluido desde `.git/config`; no vale la complejidad para esa ventana.
+- `fijar` escribe varios valores con varios `git config` (la clave lleva un helper vacío que resetea la lista global, el de la cuenta y los globales): entre uno y otro el repo queda unos milisegundos sin helper y un push justo ahí falla sin pedir nada, no con 403. Hacerlo atómico pediría un archivo incluido desde `.git/config`; no vale la complejidad para esa ventana.
+
+## Auto-aprobar los permisos dibujados como diálogo (`autoaprobar.DialogoDePermiso`)
+
+Alcance: proveedor nuevo en `lienzo/autoaprobar.py` y sus pruebas en `tests/test_autoaprobar.py`. Sólo contesta un diálogo cuya pregunta empieza como un permiso («Would you like to run», «Do you want to proceed/make/...») eligiendo la primera opción «Yes» que no sea «don't ask again»; una pregunta de verdad, «Switch model?» o la confianza en una carpeta no se tocan, y una tarjeta con pendiente de hook tampoco (ese permiso va por el hook). Evidencia en vivo: `AUTO-APROBADO (dialogo) codex Teorema/01a11bac` en `lienzo.log` y la tarjeta pasó de «te necesita» a «corriendo». Medido: el parser de pantalla no vio la opción «No, ...» de Codex, así que no se la exige.
 
 ## Evidencia
 
-- `tests/test_cuenta_github.py` (23 casos) y `tests/test_health.py`, `tests/test_identity.py` en verde; suite completa de backend en verde.
+- `tests/test_cuenta_github.py`, `tests/test_health.py`, `tests/test_identity.py`, `tests/test_autoaprobar.py` y `tests/test_browser_window.py` en verde; suite completa de backend en verde (1111 casos antes de la cuarta pasada; se vuelve a correr al cierre).
+- Runner de `pruebas-agenticas`: backend, lint, build y unitarias del front en verde; Playwright 116 en verde y 1 rojo en la prueba de humo contra el tablero real (scroll horizontal de 3 px con las tarjetas de ese momento), que no toca nada de este cambio y queda pendiente. Sin baseline, el runner sale con 1 (no es un PASS).
 - En vivo: con la cuenta activa de `gh` en `ariel-levy_globant`, `git credential fill` en `D:/Apps/lienzo` responde `username=arielelevy` y `git push --dry-run` pasa; al reiniciar el server, health fijó solo `D:/Apps/Teorema` (origin `erdos-82`) a `arielelevy` y su push en seco pasa.
-

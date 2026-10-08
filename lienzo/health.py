@@ -481,21 +481,34 @@ def _medir_una(url: str) -> str:
     """El estado de una url. Antes de probar, cada repo vivo de github.com con ese origin queda
     fijado a la cuenta de gh con push (cuenta_github, 2026-10-08); si igual da «vencida», se vuelve a
     elegir y se prueba otra vez: un 403 por cuenta equivocada se arregla solo. Se mide en el primer
-    repo vivo (su config local manda, como en el push) o, sin ninguno, en una carpeta neutra: nunca
-    la del server (medido el 2026-10-07, el .git/config del lienzo cambiaba el helper a `gh auth
+    repo vivo (su config local manda, como en el push) o, sin ninguno, en una carpeta neutra con la
+    misma cadena de helpers que tendria un repo fijado a la cuenta elegida (si no, la activa de gh
+    daba 403 y la tira decia «vencida» hasta una hora despues de cerrar la sesion). Nunca en la
+    carpeta del server (medido el 2026-10-07, el .git/config del lienzo cambiaba el helper a `gh auth
     git-credential` y toda url de Azure DevOps daba «no verificable» con el push andando)."""
     repos = _repos_vivos(url)
-    for repo in repos:
-        cuenta_github.asegurar(repo, url)
-    estado = _ls_remote(url, cwd=_carpeta_para(url, repos))
-    if estado == "vencida" and repos:
-        antes = cuenta_github.cuenta_fijada(repos[0])
-        cambio = False
-        for repo in repos:
-            cambio = cuenta_github.asegurar(repo, url, forzar=True) not in (None, antes) or cambio
-        if cambio:
-            estado = _ls_remote(url, cwd=repos[0])
-    return estado
+
+    def medir(cuenta: str | None) -> str:
+        if repos:
+            return _ls_remote(url, cwd=repos[0])
+        return _ls_remote(url, cwd=tempfile.gettempdir(), config=cuenta_github.config_de(cuenta) if cuenta else None)
+
+    def elegir(forzar: bool, previa: str | None = None) -> tuple[str | None, bool]:
+        """(cuenta para medir, si algo cambio respecto de `previa` o de lo fijado): en los repos
+        vivos los fija; sin repo, solo elige."""
+        if not repos:
+            cuenta = cuenta_github.cuenta_para(url, forzar=forzar)
+            return cuenta, cuenta not in (None, previa)
+        antes = {r: cuenta_github.cuenta_fijada(r) for r in repos} if forzar else {}
+        despues = [cuenta_github.asegurar(r, url, forzar=forzar) for r in repos]
+        return None, any(d not in (None, antes.get(r)) for r, d in zip(repos, despues))
+
+    cuenta, _ = elegir(forzar=False)
+    estado = medir(cuenta)
+    if estado != "vencida":
+        return estado
+    nueva, cambio = elegir(forzar=True, previa=cuenta)
+    return medir(nueva) if cambio else estado
 
 
 def _repos_vivos(url: str) -> list[str]:
@@ -508,13 +521,7 @@ def _repos_vivos(url: str) -> list[str]:
     return [r for r in dict.fromkeys(repos) if r and os.path.isdir(r)]
 
 
-def _carpeta_para(url: str, repos: list[str] | None = None) -> str:
-    """Donde correr el ls-remote de `url`: el primer repo vivo o, si no hay, una carpeta neutra."""
-    repos = _repos_vivos(url) if repos is None else repos
-    return repos[0] if repos else tempfile.gettempdir()
-
-
-def _ls_remote(url: str, timeout_s: float = 20, cwd: str | None = None) -> str:
+def _ls_remote(url: str, timeout_s: float = 20, cwd: str | None = None, config: list[str] | None = None) -> str:
     """ok, vencida o error para una url. Va por subproc.correr: salida a un ARCHIVO y no a una
     tuberia (con la credencial vencida el Git Credential Manager queda vivo como nieto de git y
     retiene la tuberia; medido el 2026-10-03, el server de la otra PC nunca termino de medir y
@@ -523,7 +530,7 @@ def _ls_remote(url: str, timeout_s: float = 20, cwd: str | None = None) -> str:
     # generico guarda a veces de una forma y a veces de la otra (bug 8). Con que una ande, es ok
     vistos = []
     for extra in ([], ["-c", "credential.useHttpPath=true"]):
-        argv = ["git", "-c", "credential.interactive=false", *extra, "ls-remote", "--heads", url]
+        argv = ["git", "-c", "credential.interactive=false", *(config or []), *extra, "ls-remote", "--heads", url]
         rc, _out, err = subproc.correr(argv, timeout=timeout_s, sin_prompts=True, cwd=cwd)
         if rc == subproc.VENCIDO:
             estado = "timeout"  # git no termino: red muy lenta, o el credential manager esperando un login
