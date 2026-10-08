@@ -97,12 +97,28 @@ Marcar las visibles.
 ### Chrome remoto
 
 El enlace **Chrome remoto** del encabezado abre `/chrome` en una pestaña nueva del navegador.
-Elegí una PC. La vista tiene pestañas, dirección/búsqueda, atrás, adelante,
-recarga y pantalla completa (también F11). Las páginas, el teclado y el mouse se ejecutan en la PC
-elegida. La PC debe estar encendida y con
+Elegí una PC. **Chrome real · ventana completa** muestra su ventana de Chrome dentro de esa
+pestaña: sus pestañas, barra de direcciones, menús y avisos. Los controles de Lienzo quedan en
+el menú **⋮**, para dejar espacio al navegador; también podés usar pantalla completa.
+Las páginas, el teclado y el mouse se ejecutan en la PC elegida. La PC debe estar encendida y con
 Lienzo abierto; perder la conexión no abre un Chrome sustituto en otra máquina.
 
-Las dos PCs necesitan esta versión de Lienzo; la que ejecuta Chrome necesita **Chrome instalado y
+En Windows, la vista de ventana completa recuerda el perfil elegido para cada PC. Al entrar,
+conecta con una ventana existente; si no hay ninguna, abre automáticamente el perfil recordado
+o el primero disponible. **Abrir perfil** permite elegir otro, como Globant. Este modo controla
+la sesión gráfica de esa PC y no requiere habilitar la depuración remota de Chrome.
+Cerrar la vista deja Chrome abierto.
+
+Los menús y popups propios de Chrome se incluyen dentro del área de la ventana compartida;
+los que sobresalen de ese borde quedan recortados. El cursor remoto transmite las formas
+habituales, como mano sobre enlaces y cursor de texto. En pantalla táctil, tocar hace clic y
+arrastrar desplaza la página. El mouse y el teclado físicos también permiten controlar la ventana.
+La imagen y las entradas usan un canal persistente; los movimientos se agrupan para enviar la
+posición más reciente y las actualizaciones de imagen omiten regiones que no cambiaron.
+
+**Vista por pestañas** ofrece otra forma de navegar, con pestañas, dirección/búsqueda,
+atrás, adelante y recarga propios de Lienzo. Usa la depuración remota de Chrome. Las dos PCs
+necesitan esta versión de Lienzo; la que ejecuta Chrome necesita **Chrome instalado y
 Node.js 24 o posterior**. Para usar sus perfiles existentes (por ejemplo Globant), elegí uno y
 tocá **Abrir perfil en esa PC**. En el Chrome de destino, versión 144 o posterior, habilitá
 `chrome://inspect/#remote-debugging`. Tocá **Conectar Chrome abierto** en Lienzo y aceptá el aviso
@@ -120,11 +136,12 @@ tablero local de una PC emparejada, no desde el túnel público del celular.
 
 El canal de peers autentica los pedidos y cifra el contenido y las entradas del navegador. El
 puerto de control de Chrome queda en loopback, sin abrir otro puerto en la LAN. No acepta comandos
-CDP arbitrarios ni navegación directa a `file:` o `javascript:`. Ctrl+C copia texto seleccionado y
+CDP arbitrarios ni navegación directa a `file:` o `javascript:` en la vista por pestañas. En esa vista,
+Ctrl+C copia texto seleccionado y
 Ctrl+V pega texto; los diálogos JavaScript se contestan dentro de la vista. La imagen se actualiza
 por capturas: no transmite audio. Las descargas se deshabilitan sólo en el perfil separado;
 en Chrome habitual se conserva su configuración y los archivos quedan en la PC remota. Carga de archivos, ventanas
-del sistema y extensiones no están integradas en esta versión.
+del sistema y extensiones no están integradas en la vista por pestañas.
 
 Prueba aislada propuesta: `py tests/browser_smoke.py` (Chrome real, perfil temporal y web local,
 sin cuentas ni sitios externos). UI con fixtures: `chrome.spec.ts`. Su ejecución y las limitaciones
