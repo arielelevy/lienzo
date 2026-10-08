@@ -75,7 +75,9 @@ class BrowserHost:
                 self.close()
                 if data.get("action") == "state":
                     return 200, {"running": False, "tabs": []}
-                if data.get("action") not in ("start", "profiles", "prepare", "connect", "windows"):
+                if self.window and data.get("action") == "window-release":
+                    return 200, {"ok": True}
+                if data.get("action") not in ("start", "profiles", "prepare", "connect", "windows") and not (self.window and data.get("action") in ("window-frame", "window-input")):
                     return 409, {"error": "Chrome está cerrado. Abrilo desde Chrome remoto"}
                 self._start()
             self.process.stdin.write(json.dumps(data, ensure_ascii=True) + "\n")
@@ -95,11 +97,15 @@ class BrowserHost:
 
 HOST = BrowserHost()
 WINDOW = BrowserHost(window=True)
+FRAMES = BrowserHost(window=True)
 atexit.register(HOST.close)
 atexit.register(WINDOW.close)
+atexit.register(FRAMES.close)
 
 
 def request(data):
+    if isinstance(data, dict) and data.get("action") == "window-frame":
+        return FRAMES.request(data)
     if isinstance(data, dict) and data.get("action") in ("windows", "window-frame", "window-input", "window-release"):
         return WINDOW.request(data)
     return HOST.request(data)

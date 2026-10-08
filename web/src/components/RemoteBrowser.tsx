@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, isMissingRoute } from "../api";
+import { api, ApiError, isMissingRoute } from "../api";
 import type { Peer } from "../types";
 import { usePeers } from "./PcStrip";
 import "../remote-browser.css";
@@ -60,6 +60,8 @@ function ChromeWindow({peer}: {peer: Peer}) {
   const [frame, setFrame] = useState<Reply & {window?: string}>({});
   const [error, setError] = useState('');
   const [inputError, setInputError] = useState('');
+  const [latency, setLatency] = useState({frame: 0, input: 0});
+  const [captureNotice, setCaptureNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
   const chain = useRef<Promise<unknown>>(Promise.resolve());
@@ -67,10 +69,18 @@ function ChromeWindow({peer}: {peer: Peer}) {
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   useEffect(() => () => { void api.post('/browser', {pc: peer.pc_id, action: 'window-release'}).catch(e => console.error('No se pudo liberar el teclado remoto', e)); }, [peer.pc_id]);
   const call = useCallback((command: Command): Promise<Reply> => {
-    const request = chain.current.then(() => {
+    const started = performance.now();
+    const execute = async () => {
       if (!live.current) throw new Error('La vista se cerró');
-      return api.post<Reply>('/browser', {pc: peer.pc_id, ...command});
-    });
+      const result = await api.post<Reply>('/browser', {pc: peer.pc_id, ...command});
+      if (live.current && (command.action === 'window-frame' || command.action === 'window-input')) {
+        const field = command.action === 'window-frame' ? 'frame' : 'input';
+        setLatency(current=>({...current,[field]:Math.round(performance.now()-started)}));
+      }
+      return result;
+    };
+    if (command.action === 'window-frame') return execute();
+    const request = chain.current.then(execute);
     chain.current = request.catch(() => undefined);
     return request;
   }, [peer.pc_id]);
@@ -94,6 +104,7 @@ function ChromeWindow({peer}: {peer: Peer}) {
   useEffect(() => {
     if (!window || !peer.alive || error) return;
     let cancelled = false;
+    let failures = 0;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       if (document.hidden) { timer = setTimeout(poll, 1000); return; }
@@ -102,14 +113,17 @@ function ChromeWindow({peer}: {peer: Peer}) {
         const scale = box ? Math.min(globalThis.devicePixelRatio || 1, 3840 / box.width, 2160 / box.height) : 1;
         const r = await call({action: 'window-frame', window,
           ...(box && box.width >= 320 && box.height >= 200 ? {width: Math.round(box.width * scale), height: Math.round(box.height * scale)} : {})});
-        if (!cancelled) { setFrame({...r, window}); timer = setTimeout(poll, 250); }
+        if (!cancelled) { failures = 0; setCaptureNotice(''); setFrame({...r, window}); timer = setTimeout(poll, 80); }
       } catch (e) {
         if (cancelled) return;
         const message = (e as Error).message;
         if (message.includes('Esa ventana de Chrome ya no está disponible') || message.includes('Chrome está cerrado.')) {
           try { await refresh(); if (!cancelled) timer = setTimeout(poll, 500); }
           catch (refreshError) { if (!cancelled) report(refreshError); }
-        } else report(e);
+        } else if ((e instanceof TypeError || (e instanceof ApiError && (e.status >= 500 || e.status === 409))) && ++failures <= 3) {
+          setCaptureNotice('Reconectando la imagen…');
+          timer = setTimeout(poll, failures * 500);
+        } else { setCaptureNotice(''); report(e); }
       }
     };
     void poll();
@@ -139,6 +153,7 @@ function ChromeWindow({peer}: {peer: Peer}) {
     <label>Ventana <select aria-label="Ventana de Chrome" value={window} onChange={e=>{setWindow(e.target.value);setError('');}}>{windows.map(w=><option key={w.id} value={w.id}>{w.title}</option>)}</select></label>
     <button disabled={!peer.alive || busy} onClick={()=>void refresh().catch(report)}>Actualizar ventanas</button>
     <button aria-label="Pantalla completa" onClick={()=>{void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(report);}}>⛶</button>
+    <small aria-label="Demora de Chrome remoto">Mouse {latency.input ? `${latency.input} ms` : '—'} · Imagen {latency.frame ? `${latency.frame} ms` : '—'}</small>
   </div><div className="remote-viewport" ref={viewport}>
     {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1></div>
       : error ? <div className="remote-empty" role="alert"><h1>No se pudo mostrar Chrome</h1><p>{error}</p><button onClick={()=>void refresh().catch(report)}>Reconectar</button></div>
@@ -146,6 +161,7 @@ function ChromeWindow({peer}: {peer: Peer}) {
       : frame.window === window && frame.image ? <RemoteScreen key={window} native image={frame.image} format={frame.format} width={frame.width ?? 1280} height={frame.height ?? 800} send={async events=>{const r=await call({action:'window-input',window,events});setInputError('');return r;}} onError={reportInput} onAddress={()=>{}} onCopy={()=>{}} />
       : <div className="remote-empty">Cargando ventana de Chrome…</div>}
     {inputError && <div className="remote-input-warning" role="alert">{inputError}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
+    {captureNotice && <div className="remote-capture-notice" role="status">{captureNotice}</div>}
   </div><div className="remote-status">{peer.name} · Chrome real · Usás el mouse y teclado de esa PC. Cerrar esta vista deja Chrome abierto.</div></>;
 }
 
@@ -344,9 +360,9 @@ function RemoteScreen({image, format = 'jpeg', native = false, width, height, se
       const batch = pending.current.splice(0, 64);
       sending.current = true;
       void sender.current(batch).catch(e => { pending.current = []; onError(e); }).finally(() => { sending.current = false; });
-    }, 30);
+    }, native ? 8 : 30);
     return () => { live.current = false; clearInterval(timer); pending.current = []; };
-  }, [onError]);
+  }, [onError, native]);
   const enqueue = (event: Command) => {
     if (!live.current) return;
     if (pending.current.length >= 128) { pending.current = []; onError(new Error("La conexión no sigue el ritmo del teclado. Reconectá antes de continuar.")); return; }

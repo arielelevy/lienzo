@@ -119,3 +119,17 @@ No se implementa aprobación automática del aviso ni se modifica seguridad de C
 Revisión estática: escala de imagen y coordenadas comparten píxeles de origen; refresco
 sólo de lecturas, detenido al cambiar/desmontar vista. Grabación y observación solicitadas
 por Ariel constituyen la evidencia de Executor; sin certificación global ni baseline aceptado.
+
+Latencia de mouse: se identificaron dos serializaciones, la cola HTTP del frontend y el
+lock del worker que captura. Se separa el worker de capturas del worker de entrada y la
+captura deja de ocupar la cola del teclado/mouse. La entrada mantiene su orden; no se
+reintentan clics ni teclas. El intervalo de envío nativo pasa de 30 a 8 ms y el de lectura
+de imagen de 250 a 80 ms después de cada respuesta, sin solapar capturas de una vista.
+El menú muestra latencias de pedidos propios, sin inspeccionar tráfico del navegador.
+La inspección de red por CDP fue denegada y no se repitió por otra vía.
+Revisión estática: workers y locks independientes, target validado en ambos, liberación
+limitada a las teclas/botones enviados por Lienzo; recuperación acotada a tres intentos de
+lectura con aviso visible, sin reconectar CDP ni aprobar permisos de Chrome.
+Explorer y Analyser localizaron colas; Designer separó canales; Executor guardó diez
+capturas reales y una grabación GIF de 14,588 s; Detective deja pendiente la medida
+del mouse después de instalar. No se afirma todavía una reducción medida de latencia.
