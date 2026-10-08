@@ -120,3 +120,5 @@ Alcance: el reconocimiento del permiso pasa a cada perfil (`permission_option`, 
 
 Desde la otra PC el aviso seguía igual con el toque de Shift. Cambios: tiempo de bloqueo del frente en cero (una vez, sin persistir), y dos intentos más después de AttachThreadInput (`SwitchToThisWindow`, minimizar y restaurar); si todo falla, el error nombra la ventana que tiene el frente (clase, título y proceso) para poder diagnosticar. Pruebas en `tests/test_browser_window.py` (orden de intentos, éxito por switch o por restaurar, PC bloqueada, texto del aviso). Falta verlo en vivo desde la otra PC tras desplegarlo allá.
 
+Cierre del foco de Chrome: el aviso nuevo mostró la causa real desde la otra PC («Al frente está: Windows.UI.Core.CoreWindow · Pantalla de bloqueo predeterminada de Windows · LockApp.exe»): la sesión de Windows estaba bloqueada, y ahí ningún programa recibe entrada. `focus` ahora lo detecta antes de probar nada y pide desbloquearla allá; la prueba `test_focus_detects_the_windows_lock_screen_and_does_not_try_anything` lo cubre.
+

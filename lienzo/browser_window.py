@@ -358,6 +358,12 @@ class Windows:
             self.user.ShowWindow(hwnd, 9)
         if self.active(hwnd):
             return
+        # medido el 2026-10-08 desde la otra PC: al frente estaba «Windows.UI.Core.CoreWindow ·
+        # Pantalla de bloqueo predeterminada de Windows · LockApp.exe». Con la sesion bloqueada la
+        # entrada no llega a ningun programa: no hay truco que probar, hay que desbloquearla alla
+        frente = self.user.GetForegroundWindow()
+        if frente and self.describe(frente).endswith("LockApp.exe"):
+            fail("La PC está bloqueada (pantalla de bloqueo de Windows): desbloqueala allá, mientras tanto Chrome no puede recibir la entrada")
         if not getattr(self, "_sin_bloqueo_de_frente", False):
             self._sin_bloqueo_de_frente = True
             self.user.SystemParametersInfoW(0x2001, 0, None, 0x2)  # SPI_SETFOREGROUNDLOCKTIMEOUT = 0, SPIF_SENDCHANGE
@@ -388,7 +394,7 @@ class Windows:
         if self.user.GetForegroundWindow() != hwnd:
             foreground = self.user.GetForegroundWindow()
             if not foreground:
-                fail("La PC está bloqueada o sin escritorio activo: Chrome no puede recibir la entrada")
+                fail("La PC no tiene escritorio activo (bloqueada o con el protector de pantalla): Chrome no puede recibir la entrada")
             fail(f"Windows no permitió activar Chrome; no se envió la entrada. Al frente está: {self.describe(foreground)}")
 
     def input(self, hwnd, events):

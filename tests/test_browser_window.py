@@ -100,6 +100,22 @@ def test_focus_succeeds_through_switch_or_restore_without_failing():
     windows.focus(123)  # restaurar alcanzo
 
 
+def test_focus_detects_the_windows_lock_screen_and_does_not_try_anything():
+    """Medido el 2026-10-08 desde la otra PC: GetForegroundWindow no da 0 con la sesion bloqueada,
+    da la ventana de LockApp.exe; los trucos de foco no sirven y el aviso tiene que decir eso."""
+    windows = module.Windows.__new__(module.Windows)
+    windows.owner = lambda hwnd: hwnd
+    calls = []
+    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, GetForegroundWindow=lambda: 777,
+                                   SetForegroundWindow=lambda hwnd: calls.append("foreground"), keybd_event=lambda *a: calls.append("key"),
+                                   SystemParametersInfoW=lambda *a: calls.append("lock0") or 1)
+    windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
+    windows.describe = lambda hwnd: "Windows.UI.Core.CoreWindow · Pantalla de bloqueo predeterminada de Windows · LockApp.exe"
+    with pytest.raises(ValueError, match="bloqueada .*desbloqueala allá"):
+        windows.focus(123)
+    assert calls == []
+
+
 def test_focus_says_when_the_pc_is_locked():
     windows = module.Windows.__new__(module.Windows)
     windows.owner = lambda hwnd: hwnd
@@ -108,7 +124,8 @@ def test_focus_says_when_the_pc_is_locked():
                                    AttachThreadInput=lambda source, target, attach: False, SwitchToThisWindow=lambda hwnd, alt: None,
                                    ShowWindow=lambda hwnd, cmd: None, SystemParametersInfoW=lambda *a: 1)
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
-    with pytest.raises(ValueError, match="bloqueada"):
+    windows.describe = lambda hwnd: "?"
+    with pytest.raises(ValueError, match="no tiene escritorio activo"):
         windows.focus(123)
 
 
