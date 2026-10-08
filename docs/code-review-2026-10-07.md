@@ -142,3 +142,18 @@ en 1280 × 609 con devicePixelRatio 1.5, controles cerrados y perfil gestionado 
 Evidencia local ignorada: sesion/latencia.json, 04-latencia.png, 05-final.png y sesion-lienzo.gif.
 Detective confirma esa observación puntual y deja pendientes teclado, latencia sostenida,
 fluidez con carga y uso sin monitor. No se ejecutaron suites nuevas ni se aprobaron baselines.
+
+Nueva instrucción explícita de Ariel: el Lienzo de la PC que ejecuta Chrome debe pulsar
+Permitir automáticamente durante su propio pedido de depuración. Esto reemplaza la
+decisión anterior de no implementar el clic. Se invoca el botón mediante UI Automation,
+sin coordenadas, sólo en el diálogo nativo con título exacto y proceso Chrome dueño del
+listener de loopback. Se exige un único botón visible y habilitado; ante ambigüedad o
+timeout se informa error. Cancelación, reinicio y fin de conexión terminan el controlador.
+No se cambian preferencias de Chrome ni se autorizan otros diálogos.
+Explorer: captura aportada por Ariel y catálogo real confirman el diálogo español.
+Analyser: Ariel informa que Tab/Enter funcionan y el clic no; causa del mouse pendiente.
+Designer: invocación semántica del botón y estado visible de autorización remota.
+Executor: build de despliegue y validación sintáctica; suites omitidas por «sin probar».
+Detective: no hay todavía evidencia de conexión automática exitosa en ar-it33940.
+Code review estático: limpieza de socket ante fallo, límite temporal y aislamiento por PID;
+SetCursorPos deja de ignorar errores de Windows. Pendiente comprobar UIA en Chrome real.

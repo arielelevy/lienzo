@@ -51,6 +51,7 @@ class Windows:
             (self.user, "SetWindowPos", [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]),
             (self.user, "AttachThreadInput", [w.DWORD, w.DWORD, w.BOOL]),
             (self.user, "BringWindowToTop", [w.HWND]),
+            (self.user, "SetCursorPos", [c.c_int, c.c_int]),
             (self.user, "GetWindowThreadProcessId", [w.HWND, c.POINTER(w.DWORD)]),
             (self.gdi, "CreateCompatibleDC", [w.HDC]),
             (self.gdi, "CreateCompatibleBitmap", [w.HDC, c.c_int, c.c_int]),
@@ -179,7 +180,8 @@ class Windows:
             if kind == "mouse":
                 x = bounded(event.get("x"), 0, rect.right - rect.left - 1)
                 y = bounded(event.get("y"), 0, rect.bottom - rect.top - 1)
-                self.user.SetCursorPos(rect.left + x, rect.top + y)
+                if not self.user.SetCursorPos(rect.left + x, rect.top + y):
+                    fail("Windows no permitió mover el mouse de Chrome; no se envió el clic")
                 flags = {("mousePressed", "left"): 2, ("mouseReleased", "left"): 4,
                          ("mousePressed", "right"): 8, ("mouseReleased", "right"): 16,
                          ("mousePressed", "middle"): 32, ("mouseReleased", "middle"): 64}

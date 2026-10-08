@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { profiles, existingEndpoint } from './browser_profiles.mjs';
 
@@ -13,6 +14,9 @@ let connecting = false;
 let connectionError = '';
 let generation = 0;
 let pendingSocket = null;
+let consentProcess = null;
+let autoApproving = false;
+let consentError = '';
 const pages = new Map();
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 
@@ -188,6 +192,10 @@ async function stop() {
   generation++;
   connecting = false;
   connectionError = '';
+  consentError = '';
+  autoApproving = false;
+  consentProcess?.kill();
+  consentProcess = null;
   pendingSocket?.close();
   pendingSocket = null;
   pages.clear();
@@ -217,17 +225,45 @@ async function prepareProfile(id, setup = true) {
   return {prepared: true};
 }
 
-function connectExisting() {
+function approveChrome(address, attempt) {
+  if (process.platform !== 'win32') fail('El clic automático del aviso de Chrome requiere Windows', 409);
+  if (!process.env.SystemRoot) fail('No se encontró SystemRoot para autorizar Chrome');
+  const powershell = join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const child = spawn(powershell, ['-NoProfile', '-NonInteractive', '-File', fileURLToPath(new URL('./browser_consent.ps1', import.meta.url)), '-DebugPort', new URL(address).port],
+    {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe']});
+  consentProcess = child;
+  autoApproving = true;
+  let detail = '';
+  child.stderr.on('data', data => { detail = (detail + data.toString()).slice(-2000); });
+  const failed = message => {
+    if (attempt !== generation || !connecting) return;
+    consentError = `El Lienzo de esta PC no pudo autorizar el aviso de Chrome: ${message}`;
+    autoApproving = false;
+    pendingSocket?.close();
+  };
+  child.once('error', e => failed(e.message));
+  child.once('exit', code => {
+    if (consentProcess === child) consentProcess = null;
+    if (code !== 0) failed(detail.trim() || `el controlador terminó con código ${code}`);
+  });
+}
+
+function connectExisting(autoApprove = false) {
   if (browser || connecting) fail('Desconectá la sesión actual antes de conectar otra', 409);
+  if (autoApprove && process.platform !== 'win32') fail('El clic automático del aviso de Chrome requiere Windows', 409);
   const address = existingEndpoint();
   const attempt = ++generation;
   connecting = true;
   connectionError = '';
-  void CDP.open(address, 60000, socket => { pendingSocket = socket; }).then(cdp => {
+  consentError = '';
+  void CDP.open(address, 60000, socket => { pendingSocket = socket; if (autoApprove) approveChrome(address, attempt); }).then(cdp => {
     if (attempt !== generation) { cdp.socket.close(); return; }
     pendingSocket = null;
     browser = cdp;
     connecting = false;
+    autoApproving = false;
+    consentProcess?.kill();
+    consentProcess = null;
     cdp.socket.addEventListener('close', () => {
       if (browser !== cdp) return;
       browser = null;
@@ -236,11 +272,15 @@ function connectExisting() {
     });
   }).catch(e => {
     if (attempt !== generation) return;
+    pendingSocket?.close();
     pendingSocket = null;
     connecting = false;
-    connectionError = e.message;
+    autoApproving = false;
+    consentProcess?.kill();
+    consentProcess = null;
+    connectionError = consentError || e.message;
   });
-  return {connecting: true, running: false, mode: 'existing', tabs: []};
+  return {connecting: true, autoApproving, running: false, mode: 'existing', tabs: []};
 }
 
 async function handle(d) {
@@ -250,13 +290,16 @@ async function handle(d) {
     if (d.setup !== undefined && typeof d.setup !== 'boolean') fail('Modo de apertura inválido');
     return prepareProfile(d.profile, d.setup);
   }
-  if (d.action === 'connect') return connectExisting();
+  if (d.action === 'connect') {
+    if (d.autoApprove !== undefined && typeof d.autoApprove !== 'boolean') fail('Autoaprobación inválida');
+    return connectExisting(d.autoApprove);
+  }
   if (d.action === 'start') {
     if (browser || connecting) fail('Desconectá la sesión actual antes de abrir otra', 409);
     try { await start(); return {running: true, mode: 'lienzo', tabs: await tabs()}; }
     catch (e) { await stop(); throw e; }
   }
-  if (d.action === 'state') return {running: !!browser, connecting, connectionError, mode: chrome ? 'lienzo' : 'existing', tabs: await tabs()};
+  if (d.action === 'state') return {running: !!browser, connecting, autoApproving, connectionError, mode: chrome ? 'lienzo' : 'existing', tabs: await tabs()};
   if (d.action === 'stop') { await stop(); return {running: false, connecting: false, tabs: []}; }
   if (!browser) fail('Chrome está desconectado. Conectalo nuevamente', 409);
   if (d.action === 'new') {

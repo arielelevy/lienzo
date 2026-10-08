@@ -8,7 +8,7 @@ type Tab = { id: string; title: string; url: string };
 type Reply = {
   windows?: {id: string; title: string}[]; format?: 'png' | 'jpeg';
   profiles?: {id: string; name: string}[]; prepared?: boolean;
-  connecting?: boolean; connectionError?: string; mode?: 'existing' | 'lienzo';
+  connecting?: boolean; autoApproving?: boolean; connectionError?: string; mode?: 'existing' | 'lienzo';
   running?: boolean; tabs?: Tab[]; id?: string; image?: string; width?: number; height?: number;
   back?: boolean; forward?: boolean; text?: string; dialog?: {type: string; message: string; defaultPrompt?: string} | null;
 };
@@ -170,6 +170,7 @@ function BrowserDesktop({peer}: {peer: Peer}) {
   const [tab, setTab] = useState("");
   const [running, setRunning] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [autoApproving, setAutoApproving] = useState(false);
   const [mode, setMode] = useState<Reply['mode']>('existing');
   const [profiles, setProfiles] = useState<NonNullable<Reply['profiles']>>([]);
   const [profile, setProfile] = useState('');
@@ -203,6 +204,7 @@ function BrowserDesktop({peer}: {peer: Peer}) {
     if (!mounted.current) return;
     if (result.running !== undefined) setRunning(result.running);
     if (result.connecting !== undefined) setConnecting(result.connecting);
+    if (result.autoApproving !== undefined) setAutoApproving(result.autoApproving);
     if (result.mode) setMode(result.mode);
     if (result.profiles) { setProfiles(result.profiles); setProfile(p => p || result.profiles?.[0]?.id || ''); }
     if (result.prepared) setPrepared(true);
@@ -317,13 +319,13 @@ function BrowserDesktop({peer}: {peer: Peer}) {
         onCopy={() => { void call({action: "copy", tab}).then(r => navigator.clipboard.writeText(r.text ?? "")).catch(report); }} />}
       {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1><p>{peer.diagnostico || "La PC no responde. Revisá que esté encendida y con Lienzo abierto."}</p><p>Cuando vuelva a conectarse, podés abrir Chrome desde acá.</p></div>
         : error ? <div className="remote-empty" role="alert"><h1>No se pudo conectar con Chrome</h1><p>{error}</p><button onClick={() => { setError(''); void action({action: "state"}); }} disabled={busy}>Revisar conexión</button><button onClick={() => void action({action: "stop"})} disabled={busy}>Volver a elegir</button></div>
-        : connecting ? <div className="remote-empty"><h1>Aceptá la conexión en Chrome</h1><p>Chrome muestra un aviso en {peer.name}. Elegí Permitir para compartir esa sesión con Lienzo.</p><button onClick={() => void action({action: "stop"})} disabled={busy}>Cancelar conexión</button></div>
+        : connecting ? <div className="remote-empty"><h1>{autoApproving ? "Lienzo está autorizando Chrome" : "Aceptá la conexión en Chrome"}</h1><p>{autoApproving ? `El Lienzo de ${peer.name} está buscando el aviso y pulsando Permitir en esa misma PC.` : `Chrome muestra un aviso en ${peer.name}. Elegí Permitir para compartir esa sesión con Lienzo.`}</p><button onClick={() => void action({action: "stop"})} disabled={busy}>Cancelar conexión</button></div>
         : !running ? <div className="remote-empty remote-setup"><span className="remote-chrome-mark" aria-hidden="true">◉</span><h1>Chrome en {peer.name}</h1>
           <p>Usá el Chrome de esa PC con tus sesiones abiertas.</p>
           {profiles.length > 0 && <div className="remote-profile"><label>Perfil para abrir <select aria-label="Perfil de Chrome" value={profile} onChange={e => { setProfile(e.target.value); setPrepared(false); }}>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><button disabled={busy} onClick={() => void action({action: 'prepare', profile})}>Abrir perfil en esa PC</button></div>}
           {prepared && <p role="status">Se pidió abrir el perfil en {peer.name}. Habilitá la conexión en la página que muestra Chrome.</p>}
           <p>En ese Chrome, habilitá <code>chrome://inspect/#remote-debugging</code>. Al conectar, aceptá su aviso.</p>
-          <button className="remote-launch" disabled={busy} onClick={() => void action({action: "connect"})}>Conectar Chrome abierto</button>
+          <button className="remote-launch" disabled={busy} onClick={() => void action({action: "connect", autoApprove: true})}>Conectar Chrome abierto</button>
           <small>Chrome decide qué perfil comparte. Con varios abiertos usa su perfil predeterminado; abrir uno desde acá no cambia esa selección.</small>
           <details><summary>Usar un perfil separado de Lienzo</summary><p>Funciona sin monitor y conserva sus propios inicios de sesión.</p><button disabled={busy} onClick={() => void action({action: 'start'})}>Abrir Chrome</button></details>
         </div>
