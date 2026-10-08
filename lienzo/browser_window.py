@@ -115,6 +115,8 @@ class Windows:
             (self.user, "SetWindowPos", [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]),
             (self.user, "AttachThreadInput", [w.DWORD, w.DWORD, w.BOOL]),
             (self.user, "BringWindowToTop", [w.HWND]),
+            (self.user, "SwitchToThisWindow", [w.HWND, w.BOOL]),
+            (self.user, "SystemParametersInfoW", [w.UINT, w.UINT, c.c_void_p, w.UINT]),
             (self.user, "SetCursorPos", [c.c_int, c.c_int]),
             (self.user, "GetCursorPos", [c.POINTER(w.POINT)]),
             (self.user, "MonitorFromWindow", [w.HWND, w.DWORD]),
@@ -318,19 +320,47 @@ class Windows:
         foreground = self.user.GetForegroundWindow()
         return foreground == hwnd or (bool(foreground) and self.owner(foreground) == self.owner(hwnd))
 
+    def describe(self, hwnd):
+        """«clase · titulo · proceso» de una ventana, para decir que tiene el frente cuando Chrome no
+        lo consigue (sin eso el aviso no daba ninguna pista de por que)."""
+        try:
+            name = c.create_unicode_buffer(128)
+            self.user.GetClassNameW(hwnd, name, len(name))
+            title = c.create_unicode_buffer(256)
+            self.user.GetWindowTextW(hwnd, title, len(title))
+            image = "?"
+            process = self.kernel.OpenProcess(0x1000, False, self.owner(hwnd))
+            if process:
+                try:
+                    path = c.create_unicode_buffer(32768)
+                    size = w.DWORD(len(path))
+                    if self.kernel.QueryFullProcessImageNameW(process, 0, path, c.byref(size)):
+                        image = Path(path.value).name
+                finally:
+                    self.kernel.CloseHandle(process)
+            return f"{name.value or '?'} · {title.value[:80] or 'sin título'} · {image}"
+        except Exception:  # un fake sin esas funciones, o una ventana que ya no esta
+            return "?"
+
     def focus(self, hwnd):
         """Trae la ventana de Chrome al frente para mandarle la entrada. Windows solo le deja cambiar
         la ventana activa al proceso que recibio la ultima entrada del usuario (el worker nunca la
-        recibe): primero se pide derecho; despues con un toque de Shift sintetico (keybd_event: baja
-        y sube, solo no hace nada en ninguna ventana) que convierte al worker en ese proceso; y al
-        final enganchando la cola de entrada del hilo que tiene el frente (AttachThreadInput). Sin
-        ventana al frente no hay escritorio activo (PC bloqueada o protector de pantalla) y ningun
-        truco sirve: se dice eso. Medido el 2026-10-08: el aviso «no permitio activar Chrome» salia
-        con el escritorio abierto y otra ventana al frente."""
+        recibe). Se intenta, en orden: pedirlo derecho; un toque de Shift sintetico (keybd_event:
+        baja y sube, solo no hace nada en ninguna ventana) que convierte al worker en ese proceso;
+        enganchar la cola de entrada del hilo que tiene el frente (AttachThreadInput);
+        SwitchToThisWindow (lo que hace Alt+Tab); y minimizar y restaurar la ventana (restaurar da
+        el foco). Antes, una sola vez, se pone en cero el tiempo de bloqueo del frente de esta
+        sesion (SPI_SETFOREGROUNDLOCKTIMEOUT, sin persistir). Sin ventana al frente no hay
+        escritorio activo (PC bloqueada o protector de pantalla) y ningun truco sirve: se dice eso;
+        si hay una, el aviso dice cual. Medido el 2026-10-08 desde la otra PC: con solo Shift seguia
+        «no permitio activar Chrome»."""
         if self.user.IsIconic(hwnd):
             self.user.ShowWindow(hwnd, 9)
         if self.active(hwnd):
             return
+        if not getattr(self, "_sin_bloqueo_de_frente", False):
+            self._sin_bloqueo_de_frente = True
+            self.user.SystemParametersInfoW(0x2001, 0, None, 0x2)  # SPI_SETFOREGROUNDLOCKTIMEOUT = 0, SPIF_SENDCHANGE
         self.user.SetForegroundWindow(hwnd)
         if self.user.GetForegroundWindow() != hwnd:
             # Shift y no Alt: un Alt solo deja a la ventana que lo recibe (una consola, Explorer, el
@@ -351,9 +381,15 @@ class Windows:
                 if attached:
                     self.user.AttachThreadInput(current_thread, foreground_thread, False)
         if self.user.GetForegroundWindow() != hwnd:
-            if not self.user.GetForegroundWindow():
+            self.user.SwitchToThisWindow(hwnd, True)
+        if self.user.GetForegroundWindow() != hwnd:
+            self.user.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+            self.user.ShowWindow(hwnd, 9)  # SW_RESTORE: al restaurar, Windows le da el foco
+        if self.user.GetForegroundWindow() != hwnd:
+            foreground = self.user.GetForegroundWindow()
+            if not foreground:
                 fail("La PC está bloqueada o sin escritorio activo: Chrome no puede recibir la entrada")
-            fail("Windows no permitió activar Chrome; no se envió la entrada")
+            fail(f"Windows no permitió activar Chrome; no se envió la entrada. Al frente está: {self.describe(foreground)}")
 
     def input(self, hwnd, events):
         if not isinstance(events, list) or len(events) > 64:

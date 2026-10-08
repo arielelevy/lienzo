@@ -116,3 +116,7 @@ Alcance: el reconocimiento del permiso pasa a cada perfil (`permission_option`, 
 - La prueba real mandaba el pedido aunque la TUI no hubiera quedado lista: ahora lo registra (`tui_lista`) y sale con 2 sin probar nada si no llegó.
 - Segunda corrida real tras estos cambios: sesión pid-33608, TUI lista, «AUTO-APROBADO (dialogo) codex» a las 13:16:01, tarjeta en corriendo, cierre 200.
 
+## Foco de Chrome remoto, segunda vuelta (`browser_window.focus`, `describe`)
+
+Desde la otra PC el aviso seguía igual con el toque de Shift. Cambios: tiempo de bloqueo del frente en cero (una vez, sin persistir), y dos intentos más después de AttachThreadInput (`SwitchToThisWindow`, minimizar y restaurar); si todo falla, el error nombra la ventana que tiene el frente (clase, título y proceso) para poder diagnosticar. Pruebas en `tests/test_browser_window.py` (orden de intentos, éxito por switch o por restaurar, PC bloqueada, texto del aviso). Falta verlo en vivo desde la otra PC tras desplegarlo allá.
+

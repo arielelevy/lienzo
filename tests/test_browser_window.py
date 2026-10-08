@@ -35,9 +35,11 @@ def test_no_keyboard_or_mouse_if_foreground_changed():
     windows.owner = lambda hwnd: hwnd  # procesos distintos: la ventana activa no es de Chrome
     windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 456,
                                    GetWindowThreadProcessId=lambda hwnd, pid: 2, AttachThreadInput=lambda source, target, attach: False,
-                                   keybd_event=lambda *a: None)
+                                   keybd_event=lambda *a: None, SwitchToThisWindow=lambda hwnd, alt: None, ShowWindow=lambda hwnd, cmd: None,
+                                   SystemParametersInfoW=lambda *a: 1)
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
-    with pytest.raises(ValueError, match="no se envió la entrada"):
+    windows.describe = lambda hwnd: "ConsoleWindowClass · Teorema · WindowsTerminal.exe"
+    with pytest.raises(ValueError, match="no se envió la entrada. Al frente está: ConsoleWindowClass · Teorema · WindowsTerminal.exe"):
         windows.input(123, [{"kind": "key", "keyCode": 65, "modifiers": 0, "type": "keyDown"}])
 
 
@@ -60,17 +62,42 @@ def test_focus_taps_shift_before_the_second_try_and_then_attaches_the_foreground
                                    keybd_event=lambda vk, scan, flags, extra: calls.append("shift" if vk == 16 and flags == 0 else "shift-up"),
                                    GetWindowThreadProcessId=lambda hwnd, pid: 2,
                                    AttachThreadInput=lambda source, target, attach: calls.append("attach") or True,
-                                   BringWindowToTop=lambda hwnd: calls.append("top"))
+                                   BringWindowToTop=lambda hwnd: calls.append("top"),
+                                   SwitchToThisWindow=lambda hwnd, alt: calls.append("switch"),
+                                   ShowWindow=lambda hwnd, cmd: calls.append({6: "min", 9: "restore"}.get(cmd, cmd)),
+                                   SystemParametersInfoW=lambda *a: calls.append("lock0") or 1)
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
+    windows.describe = lambda hwnd: "ConsoleWindowClass · x · conhost.exe"
     windows.focus(123)
-    assert calls == ["foreground", "shift", "shift-up", "foreground"]  # sin llegar al AttachThreadInput
-    # si tampoco alcanza, se engancha el hilo que tiene el frente y se intenta una vez mas
+    assert calls == ["lock0", "foreground", "shift", "shift-up", "foreground"]  # sin llegar al AttachThreadInput
+    # si tampoco alcanza: enganchar el hilo del frente, SwitchToThisWindow, minimizar y restaurar,
+    # y recien ahi el error, diciendo quien tiene el frente. El tiempo de bloqueo se pone una sola vez
     calls.clear()
     foreground[0] = 456
     windows.user.SetForegroundWindow = lambda hwnd: calls.append("foreground")
-    with pytest.raises(ValueError, match="no se envió la entrada"):
+    with pytest.raises(ValueError, match="Al frente está: ConsoleWindowClass"):
         windows.focus(123)
-    assert calls == ["foreground", "shift", "shift-up", "foreground", "attach", "top", "foreground", "attach"]
+    assert calls == ["foreground", "shift", "shift-up", "foreground", "attach", "top", "foreground", "attach", "switch", "min", "restore"]
+
+
+def test_focus_succeeds_through_switch_or_restore_without_failing():
+    windows = module.Windows.__new__(module.Windows)
+    windows.owner = lambda hwnd: hwnd
+    foreground = [456]
+
+    def switch(hwnd, alt):
+        foreground[0] = hwnd
+
+    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None,
+                                   GetForegroundWindow=lambda: foreground[0], keybd_event=lambda *a: None,
+                                   GetWindowThreadProcessId=lambda hwnd, pid: 2, AttachThreadInput=lambda s_, t, a: False,
+                                   SwitchToThisWindow=switch, ShowWindow=lambda hwnd, cmd: None, SystemParametersInfoW=lambda *a: 1)
+    windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
+    windows.focus(123)  # SwitchToThisWindow alcanzo: no hay error
+    foreground[0] = 456
+    windows.user.SwitchToThisWindow = lambda hwnd, alt: None
+    windows.user.ShowWindow = lambda hwnd, cmd: foreground.__setitem__(0, hwnd) if cmd == 9 else None
+    windows.focus(123)  # restaurar alcanzo
 
 
 def test_focus_says_when_the_pc_is_locked():
@@ -78,7 +105,8 @@ def test_focus_says_when_the_pc_is_locked():
     windows.owner = lambda hwnd: hwnd
     windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 0,
                                    keybd_event=lambda *a: None, GetWindowThreadProcessId=lambda hwnd, pid: 0,
-                                   AttachThreadInput=lambda source, target, attach: False)
+                                   AttachThreadInput=lambda source, target, attach: False, SwitchToThisWindow=lambda hwnd, alt: None,
+                                   ShowWindow=lambda hwnd, cmd: None, SystemParametersInfoW=lambda *a: 1)
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
     with pytest.raises(ValueError, match="bloqueada"):
         windows.focus(123)
