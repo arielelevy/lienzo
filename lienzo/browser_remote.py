@@ -54,16 +54,24 @@ class BrowserHost:
             responses.put({"status": 502, "error": "Se cerró el proceso de Chrome remoto"})
 
     def close(self):
-        if self.process is not None:
-            if self.process.poll() is None:
-                self.process.stdin.close()  # EOF: el worker cierra solamente su Chrome.
+        process = self.process
+        self.process = None
+        if process is not None:
+            if process.poll() is None:
                 try:
-                    self.process.wait(timeout=5)
+                    process.stdin.close()  # Un pipe roto puede fallar también al hacer flush.
+                except OSError:
+                    pass  # Igual se espera y termina sólo este worker propio.
+                try:
+                    process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    self.process.kill()
-                    self.process.wait(timeout=5)
-            self.process.stdout.close()
-            self.process = None
+                    process.kill()
+                    process.wait(timeout=5)
+            for stream in (process.stdin, process.stdout):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
     def request(self, data):
         if not isinstance(data, dict) or len(json.dumps(data)) > 65536:

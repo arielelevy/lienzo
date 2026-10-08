@@ -203,3 +203,12 @@ Ariel reporta clic también fallido en CDP. Revisión del flujo muestra pointer.
 enviado como clickCount=0. Frontend y worker normalizan a mínimo 1 sólo en pressed/released;
 movimiento conserva 0, clicks con cuenta positiva se conservan y valores inválidos se rechazan.
 Esto corrige el dato enviado; el resultado real del clic sigue pendiente de observación.
+
+Error real 0148ae1f en peer/browser: OSError Errno 22 al escribir stdin del worker;
+su close volvió a lanzar OSError y transformó una desconexión recuperable en 500.
+La limpieza desacopla el proceso, tolera únicamente OSError de los streams rotos y conserva
+espera/terminación acotada del worker propio. No repite entrada. El siguiente pedido de
+lectura puede crear un worker nuevo; resultado real de captura pendiente de verificar.
+El instalador confirmó pull/build f5d1003. Su clasificador rechazó un POST /restart con
+etiqueta Auto-Mode Bypass; informó un reintento aceptado anterior al aviso de no repetir.
+No se reproduce ni se cambia configuración para eludir el rechazo.
