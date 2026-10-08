@@ -26,3 +26,11 @@ Se comprobó el menú de Chrome real en ar-it33940 después del despliegue, con 
 La verificación con entrada de accesibilidad detectó keyCode=0: se deriva el código para combinaciones conocidas y se envía texto Unicode para caracteres sin modificadores. No se envían teclas desconocidas al worker.
 
 El parpadeo informado en el modo por pestañas no tiene una causa reproducida. La reparación del runtime de Codex permitió ejecutar comandos nuevamente, pero no modifica el binario de Codex ni garantiza que su bug de permisos no reaparezca.
+
+## Revisión documental del README y arquitectura publicada
+
+Se leyó el README completo y se contrastaron los puntos cambiados contra las fuentes. El enlace a DISENO.es.md devolvía 404 porque .gitignore lo mantiene interno; se reemplaza por la arquitectura pública sin publicar ese archivo. Se añade la captura real y el recorrido del modo ventana: WebSocket/TCP, cifrado entre peers, pipes al worker, captura PrintWindow y entrada Win32. No se atribuye UDP, RDP ni una latencia medida al transporte de Chrome.
+
+Se corrigen afirmaciones desactualizadas: cierre remoto Windows existente en server.py/kill_agent.py; fuentes de estado que incluyen diálogos del buffer; agentes admitidos por el lanzador; flechas deshabilitadas hasta 900 px inclusive. Se documentan las rutas de Chrome y cierre forzado, y los módulos incorporados. SendBox deshabilita su editor al enviar; SelectionBar permite editar durante el envío masivo, que conserva el riesgo documentado. El límite de 20.000 sobrantes y la pérdida del diagnóstico genérico de Git siguen presentes en xfer.py y health.py. Las mediciones históricas conservan su fecha y no se presentan como corridas nuevas.
+
+La revisión de las limitaciones es estática, no una reproducción nueva de cada fallo. No se modificó código funcional de Lienzo. La actualización del sitio agrega HTML/SVG y una imagen, conservando sus interacciones existentes y su audiencia pública. Se revisaron enlaces locales, referencias de imagen, IDs y anclas. Las evidencias de las cinco etapas secuenciales quedan en resultados; no se acepta baseline ni se certifica PASS.

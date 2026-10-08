@@ -17,7 +17,7 @@ Todas las CLI pueden marcarse como coordinadora mediante las conexiones del tabl
 
 [Arquitectura y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/)
 
-[Diseño completo](DISENO.es.md)
+[Diseño y decisiones de arquitectura](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/)
 
 [Mejoras pendientes y evidencia](MEJORAS.md)
 
@@ -31,7 +31,7 @@ VS Code). El estado, el contenido y los envíos usan estos canales:
 
 | Qué | Cómo |
 |---|---|
-| Estado | Hooks de los propios agentes, que escriben en `~/.lienzo/events`. Nunca se raspa la pantalla. |
+| Estado | Hooks en `~/.lienzo/events`, procesos y fuentes propias de cada agente. Algunos diálogos de permisos se reconocen en el buffer de consola. |
 | Contenido | Las transcripciones que los agentes ya escriben (`.jsonl`; en CODA, su base local), leídas por la cola. |
 | Mandar un mensaje | Teclas en la consola del proceso por PID (`AttachConsole` + `WriteConsoleInputW`), sin foco. Lo largo viaja como `.md` adjunto. |
 | Contestar un permiso | El hook `PermissionRequest` espera hasta 60 s la respuesta del tablero; si nadie contesta, el prompt aparece en la terminal como siempre. En CODA, Permitir y Denegar se teclean en su diálogo. |
@@ -115,6 +115,31 @@ habituales, como mano sobre enlaces y cursor de texto. En pantalla táctil, toca
 arrastrar desplaza la página. El mouse y el teclado físicos también permiten controlar la ventana.
 La imagen y las entradas usan un canal persistente; los movimientos se agrupan para enviar la
 posición más reciente y las actualizaciones de imagen omiten regiones que no cambiaron.
+
+![Ventana real de Chrome remoto con su menú abierto](docs/img/chrome-remoto.png)
+
+```mermaid
+flowchart LR
+    V["Pestaña local · canvas y entradas"] <-->|"WebSocket / TCP · :7321"| L["Lienzo local"]
+    L <-->|"WebSocket / TCP · :7322 · mensajes cifrados y autenticados"| R["Lienzo en la PC remota"]
+    R <-->|"Pipes del proceso"| W["Worker de ventana · Windows"]
+    W -->|"Entrada Win32 · mouse y teclado"| C["Chrome real · perfil elegido"]
+    C -->|"PrintWindow · ventana y popups propios"| W
+```
+
+**Transporte y latencia.** La vista de ventana completa usa WebSocket (RFC 6455) sobre **TCP**;
+no usa UDP ni RDP. La conexión se abre con un Upgrade HTTP y permanece abierta: no hace un
+pedido HTTP por cada movimiento o cuadro. Entre PCs, cada mensaje va cifrado y autenticado
+con un contador por sentido. UDP se usa para descubrir PCs en la LAN, no para transmitir Chrome.
+
+El worker compara capturas y envía PNG binario de la región modificada, o un cuadro completo
+cuando corresponde. Si no cambia la imagen, no la reenvía. El visor confirma los cuadros dibujados
+y hay como máximo **dos sin confirmar**, para acotar la cola. Los movimientos consecutivos
+conservan la posición más reciente y se despachan con `requestAnimationFrame`; clics y teclas
+no esperan la siguiente captura. La entrada despierta la captura en reposo y una vista oculta
+pausa las imágenes. Imagen y entrada comparten el transporte TCP: la congestión todavía puede
+agregar demora. No hay una medición publicada de latencia de extremo a extremo ni una garantía
+de equivalencia con RDP.
 
 **Vista por pestañas** ofrece otra forma de navegar, con pestañas, dirección/búsqueda,
 atrás, adelante y recarga propios de Lienzo. Usa la depuración remota de Chrome. Las dos PCs
@@ -288,7 +313,7 @@ Por qué no llega una PC: el chip de la tira dice el motivo cuando una PC está 
 ### Lanzar, cablear y restaurar en otra PC
 
 - Lanzar: `POST /sessions/launch {pc, cwd, agent, title, model?}`. Sólo dentro de `launch_roots`
-  (en `config.json` de esa PC; vacía es ninguna) y con los cuatro ejecutables conocidos. Ojo: el
+  (en `config.json` de esa PC; vacía es ninguna) y con los agentes admitidos por el lanzador. Ojo: el
   `--model` de coda cambia el modelo por defecto de esa PC.
 - Cablear: una regla «cuando termine» puede unir PCs; vive en la PC del origen y sobrevive a los
   reinicios. `coordinar.cablear()` cablea cada frente vivo hacia la coordinadora.
@@ -378,6 +403,7 @@ además la cookie de sesión.
 | GET | `/sessions/<sid>/turns?n=10`, `/digest?n=10`, `/screen`, `/connections` | turnos, destacados por turno, pantalla de la terminal, conexiones |
 | POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío; con `copycat: true` es pegar trabajo |
 | POST | `/sessions/<sid>/interrupt` | un Esc: corta el turno (409 si no está corriendo) |
+| POST | `/sessions/<sid>/kill` | `{confirm: session_id}`; cierre forzado de una CLI Windows identificada, también en otra PC; no cierra agentes tmux |
 | POST | `/sessions/<sid>/dialog` | `{choice: n}`; elige una opción del diálogo de la TUI |
 | POST | `/sessions/<sid>/approve` | `{decision: allow\|deny, expect?}`; contesta el permiso de coda en su terminal |
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
@@ -399,6 +425,8 @@ además la cookie de sesión.
 | GET | `/xfer`, `/xfer/<id>` | las copias; `estado`, `pct`, `mbps`, `eta_s`, `archivos_hechos`, `errores`, `ultimos` |
 | DELETE, POST | `/xfer/<id>`, `/xfer/<id>/retomar`, `/xfer/<id>/confirmar` | pausar, retomar, dejar borrar al espejo |
 | GET | `/events` | SSE con cada cambio |
+| POST | `/browser` | `{pc, action, ...}`; perfiles, ventanas y acciones de Chrome en la PC elegida |
+| GET | `/browser/stream?pc=<pc_id>` | WebSocket persistente del modo ventana: imagen, cursor y entradas |
 | GET | `/docs` | esta referencia y el diseño, con buscador |
 | POST | `/rescan` | barrido de procesos ahora |
 | GET, POST | `/auth`, `/setup`, `/login`, `/logout`, `/enroll` | acceso remoto |
@@ -432,6 +460,9 @@ lienzo/
   autoaprobar.py   auto-aprobar TODO
   coda.py, pantalla_coda.py   lo propio de CODA (su log, su cartel de permiso)
   subproc.py       subprocesos que nunca cuelgan al server
+  browser_api.py, browser_remote.py   rutas y workers de Chrome remoto
+  browser_window.py, browser_stream.py, ws.py   ventana Windows y canal WebSocket
+  kill_agent.py    cierre forzado de CLI Windows con verificación del proceso
 web/               interfaz (Vite + React + TypeScript); npm run build deja web/dist
 skills/lienzo/     skill para coordinar agentes; coordinar.py es el cliente de la API
 tests/             pytest
@@ -494,24 +525,32 @@ entero en `lienzo.log`.
 
 ## Limitaciones conocidas
 
+Revisión documental contra el código: 2026-10-08. Los puntos que describen fallas pendientes
+no implican que se hayan reproducido nuevamente en esta revisión.
+
 - La inyección escribe en la misma caja que tu teclado: si estás tipeando en esa terminal, los textos
   se mezclan.
 - Dos envíos simultáneos del lienzo a la misma consola también pueden mezclarse: falta exclusión
   por destino. Los caracteres fuera del plano Unicode básico, como algunos emojis, pueden romper
   la inyección Windows. El ajuste del Enter no resuelve esas dos limitaciones.
 - Un adjunto que todavía está subiendo puede quedar fuera del mensaje. Reintentar un envío masivo
-  parcialmente fallido vuelve a incluir a las sesiones exitosas; editar el borrador durante ese
-  envío puede perder los cambios. Son hallazgos pendientes de regresión y corrección.
+  parcialmente fallido vuelve a incluir a las sesiones exitosas. En el envío masivo, editar el
+  borrador mientras sale puede perder los cambios; el envío individual sí deshabilita su editor.
+  Son hallazgos pendientes de regresión y corrección.
 - El modo espejo de copias limita a 20.000 la lista de sobrantes, sin verificar que esté completa.
   El diagnóstico `git: error` tampoco conserva el motivo de Git: no demuestra por sí solo que una
   credencial esté vencida.
 - El SSE no pasa por el túnel rápido: desde el celular el tablero se actualiza cada 4 s.
 - Una sesión cuya terminal se cerró se ve pero no recibe mensajes.
-- Las flechas no se dibujan en pantallas de menos de 900 px.
+- Las flechas no se dibujan en pantallas de 900 px o menos.
 - Una PC caída se nota a los 45 s sin novedades; revocar un peer no le avisa al otro lado.
 - A un coda no se le manda un mensaje largo: lo que viaja como adjunto lo lee con `read`, que en
   coda se traba. Mensajes de menos de 500 caracteres, sin saltos de línea.
-- El lienzo no puede cerrar un agente colgado de otra PC: hace falta un `taskkill` por PID allá.
+- El cierre forzado sólo admite CLI Windows cuyo proceso se pueda identificar y confirmar.
+  Funciona también sobre una tarjeta de otra PC; no está disponible para agentes tmux.
+- Chrome en modo ventana requiere una sesión Windows abierta y desbloqueada. Los popups propios
+  se recortan al borde de la ventana compartida y algunas sombras pueden verse con fondo negro.
+  No transmite audio. El parpadeo reportado en la vista por pestañas sigue sin causa confirmada.
 
 ## Licencia
 
