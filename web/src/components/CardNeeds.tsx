@@ -102,6 +102,11 @@ export function CardNeeds({ session: s, pending: p, quick, writable, actions, on
       {!p && s.dialog && writable && (
         <div className="needs ask tui">
           <b>Espera que elijas en la terminal</b>
+          {s.auto_aprobar_omitido && (
+            <div className="dim small auto-omitido" title="el auto-aprobar vio este diálogo y decidió no contestarlo">
+              auto-aprobar no lo contesta: {s.auto_aprobar_omitido}
+            </div>
+          )}
           <div className="q">
             <div className="qtext">{s.dialog.question}</div>
             {s.dialog.detail && <div className="dim small">{s.dialog.detail}</div>}

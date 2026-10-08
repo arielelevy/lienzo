@@ -106,10 +106,70 @@ class Perfil:
     def same_dialog(self, current: dict, previous: dict, read_transcript) -> bool:
         return True
 
+    # Con que arranca la pregunta de un permiso dibujado como dialogo en ESTA TUI (el auto-aprobar
+    # lo contesta; una pregunta de verdad, «Switch model?» o la confianza en una carpeta no empiezan
+    # asi). La base es la de Claude Code, igual que `guess`. Sin comodin «do you want to»: no todo lo
+    # que empieza asi es un permiso («Do you want to use this API key?»)
+    preguntas_de_permiso: ClassVar[tuple[str, ...]] = (
+        "do you want to proceed",
+        "do you want to make",
+        "do you want to create",
+        "do you want to run",
+        "do you want to read",
+        "do you want to write",
+        "do you want to edit",
+        "do you want to fetch",
+        "do you want to allow",
+        "would you like to proceed",  # salir del plan (ExitPlanMode): «Yes» / «No, keep planning»
+    )
+
+    def permission_option(self, dialog: dict | None) -> int | None:
+        """La opcion que permite, si `dialog` (de screen.dialog) es un permiso de esta TUI, o None.
+        Es un permiso si la pregunta arranca como una de `preguntas_de_permiso` o alguna opcion
+        ofrece «don't ask again» (eso solo lo tiene un permiso, y sirve cuando la pregunta se leyo
+        mal: un comando largo la deja lejos de las opciones, medido el 2026-10-08). Permite la
+        primera «Yes» que no sea «don't ask again» (eso ademas lo recordaria)."""
+        q, ops = _dialogo_plano(dialog)
+        if not ops:
+            return None
+        if not q.startswith(self.preguntas_de_permiso) and not any("ask again" in t for _, t in ops):
+            return None
+        return next((n for n, t in ops if t.startswith("yes") and "ask again" not in t), None)
+
+    def permission_reason(self, dialog: dict | None) -> str:
+        """Por que el auto-aprobar NO contesta este dialogo (para la tarjeta). Por como arranca la
+        pregunta, no por una palabra suelta («Which model should the pipeline use?» no es el
+        cambio de modelo)."""
+        q, _ops = _dialogo_plano(dialog)
+        if q.startswith("do you trust") or "accessing workspace" in q:
+            return "la confianza en una carpeta la decide el humano"
+        if q.startswith(("switch model", "select model")):
+            return "el cambio de modelo lo decide el humano"
+        return "no es un permiso: es una pregunta con opciones"
+
+
+def _dialogo_plano(dialog: dict | None) -> tuple[str, list[tuple[int | None, str]]]:
+    """(pregunta, [(n, texto)]) en minusculas y sin bordes, para comparar."""
+    if not dialog:
+        return "", []
+    q = (dialog.get("question") or "").strip().lower()
+    ops = [(o.get("n"), (o.get("text") or "").strip().lower()) for o in dialog.get("options") or []]
+    return q, ops
+
 
 class Codex(Perfil):
     after_dialog = "corriendo"
     live_dialog_with_hooks = True
+    # «Would you like to run the following command?» con «Yes, proceed (y)» / «Yes, and don't ask
+    # again for commands that start with ...» (medido el 2026-10-08 en Teorema y A); el parche de
+    # archivos pregunta «Would you like to make/apply the following edits?» sin «don't ask again»
+    preguntas_de_permiso = (
+        "would you like to run",
+        "would you like to proceed",
+        "would you like to make",
+        "would you like to apply",
+        "would you like to edit",
+    )
 
     def guess(self, cwd: str, born, home: str):
         return guess_codex(cwd, born.timestamp() - BIRTH_MARGIN_S if born else 0, home)
@@ -121,6 +181,10 @@ class Codex(Perfil):
 
 class Pi(Perfil):
     identity_key = "pi_session"
+    preguntas_de_permiso = ()  # Pi pide por la extension (pi_dialog), no con un dialogo numerado
+
+    def permission_option(self, dialog: dict | None) -> int | None:
+        return None
 
     def guess(self, cwd: str, born, home: str):
         return guess_pi(cwd, born.timestamp()) if born else (None, None)
@@ -131,6 +195,10 @@ class Pi(Perfil):
 
 class Coda(Perfil):
     identity_key = "coda_session"
+    preguntas_de_permiso = ()  # coda tiene su cartel «Approval Required» (autoaprobar.DialogoDeCoda)
+
+    def permission_option(self, dialog: dict | None) -> int | None:
+        return None
 
     def guess(self, cwd: str, born, home: str):
         return None, None
@@ -152,6 +220,22 @@ class Kiro(Perfil):
     after_dialog = "corriendo"
     live_dialog_with_hooks = True
     supported_platforms = ("win32",)  # identidad verificada con el motor de V3 en Windows
+    preguntas_de_permiso = ()
+
+    def permission_option(self, dialog: dict | None) -> int | None:
+        """Kiro V3 pide «requires approval» con Allow / Always allow / Deny / Always deny (sin
+        numeros, se elige con flechas): permite «Allow», nunca «Always allow»."""
+        q, ops = _dialogo_plano(dialog)
+        allow_deny = any(t.startswith("allow") for _, t in ops) and any(t.startswith("deny") for _, t in ops)
+        if not ("requires approval" in q or "requiere permiso" in q or allow_deny):
+            return None
+        return next((n for n, t in ops if t == "allow"), None)
+
+    def permission_reason(self, dialog: dict | None) -> str:
+        q, ops = _dialogo_plano(dialog)
+        if "requires approval" in q or "requiere permiso" in q or any(t.startswith("allow") for _, t in ops):
+            return "es un permiso de Kiro pero no se leyo la opcion «Allow»: contestalo en la terminal"
+        return super().permission_reason(dialog)
 
     def guess(self, cwd: str, born, home: str):
         return None, None

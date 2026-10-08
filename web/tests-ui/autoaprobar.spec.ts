@@ -31,3 +31,32 @@ test("un permiso denegado por una regla se ve en la tarjeta con su comando", asy
   await expect(bloque).toContainText("Denegado: Bash");
   await expect(bloque).toContainText("git push --force");
 });
+
+test("si el auto-aprobar vio el diálogo y no lo contesta, la tarjeta dice por qué", async ({ page }) => {
+  const lista = sesiones();
+  lista[0] = {
+    ...lista[0],
+    state: "te_necesita",
+    needs: { kind: "dialog", detail: "Switch model?", where: "terminal", since: "2026-10-08T12:00:00-03:00" },
+    dialog: { question: "Switch model?", detail: "", options: [{ n: 1, text: "Default" }, { n: 2, text: "Opus" }], selected: 1 },
+    auto_aprobar_omitido: "el cambio de modelo lo decide el humano",
+  };
+  await abrirTablero(page, lista);
+  const bloque = page.locator(".card .needs.tui").first();
+  await expect(bloque).toContainText("Espera que elijas en la terminal");
+  await expect(bloque.locator(".auto-omitido")).toContainText("auto-aprobar no lo contesta: el cambio de modelo lo decide el humano");
+});
+
+test("sin motivo, la tarjeta del diálogo no inventa ningún aviso", async ({ page }) => {
+  const lista = sesiones();
+  lista[0] = {
+    ...lista[0],
+    state: "te_necesita",
+    needs: { kind: "dialog", detail: "Switch model?", where: "terminal", since: "2026-10-08T12:00:00-03:00" },
+    dialog: { question: "Switch model?", detail: "", options: [{ n: 1, text: "Default" }, { n: 2, text: "Opus" }], selected: 1 },
+  };
+  await abrirTablero(page, lista);
+  await expect(page.locator(".card .needs.tui").first()).toContainText("Espera que elijas en la terminal");
+  await expect(page.locator(".auto-omitido")).toHaveCount(0);
+});
+

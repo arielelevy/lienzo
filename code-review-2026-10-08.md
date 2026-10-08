@@ -101,3 +101,18 @@ Alcance: proveedor nuevo en `lienzo/autoaprobar.py` y sus pruebas en `tests/test
 
 Alcance: el parser de pantalla y el reconocimiento de permisos del auto-aprobar; pruebas en `tests/test_dialogo_largo.py` (con la pantalla real de Teorema) y `tests/test_autoaprobar.py`. Medido: con un comando largo de Codex, la «pregunta» de la tarjeta era un pedazo del comando («smartBI/claude-skills/lienzo');import coordinar as») y el auto-aprobar no lo contestaba; en la tarjeta A había pasado lo mismo con «Environment: local». Corrección: la pregunta se busca hacia arriba (última línea que arranca como pregunta de la TUI, hasta la regla o 40 líneas) y, por si igual se lee mal, un permiso se reconoce por su opción «don't ask again». Evidencia: al reiniciar el server, las dos tarjetas se aprobaron solas (`AUTO-APROBADO (dialogo)` a las 12:46:10, ya con la pregunta correcta). Review corto final sin hallazgos.
 
+## Perfiles, aviso en la tarjeta y prueba real (`agentes.py`, `autoaprobar.py`, `CardNeeds.tsx`, `pruebas-agenticas/e2e_autoaprobar.py`)
+
+Alcance: el reconocimiento del permiso pasa a cada perfil (`permission_option`, `permission_reason`); el auto-aprobar deja en la tarjeta el motivo cuando ve un diálogo y no lo contesta (`auto_aprobar_omitido`, se borra al cerrarse el diálogo o al apagar); y una prueba de punta a punta real que lanza un Codex desde el lienzo. Pruebas: `tests/test_autoaprobar.py` (perfiles, motivo, apagado), Playwright `autoaprobar.spec.ts` (el aviso se ve y no se inventa). Evidencia real: corrida del 2026-10-08 13:09, sesión pid-20716, «AUTO-APROBADO (dialogo) codex» a las 13:09:38, tarjeta en corriendo, sesión cerrada (kill 200). El caso es pago (un turno de Codex) y queda propuesto en `casos.nuevo.json` sin entrar al runner.
+
+### Quinta pasada (perfiles, aviso y prueba real)
+
+- Al pasar a perfiles se habían perdido «Would you like to proceed?» de Claude (salir del plan) y el parche de Codex («Would you like to make/apply the following edits?», sin «don't ask again»): vuelven a sus listas.
+- `permission_reason` miraba palabras sueltas («model», «trust»): ahora mira cómo arranca la pregunta, y Kiro tiene su propio motivo cuando el permiso no se leyó.
+- `opcion_de_permiso` asumía Claude si no le pasaban el agente: ahora el agente es obligatorio y sin agente no se contesta.
+- Apagado, `ronda` recorría todas las tarjetas cada 2 s para borrar un aviso: se borra una sola vez, al pasar de prendido a apagado.
+- El aviso lo manejaba también el barrido de `sessions.py`: queda sólo en `autoaprobar` (se pone y se saca en la misma pasada de `abiertos`, bajo el lock, sin releer cada tarjeta).
+- `aprobar` leía el diálogo fuera del lock: ahora lo lee bajo el lock, y `answer_dialog` igual relee la pantalla y compara antes de teclear.
+- La prueba real mandaba el pedido aunque la TUI no hubiera quedado lista: ahora lo registra (`tui_lista`) y sale con 2 sin probar nada si no llegó.
+- Segunda corrida real tras estos cambios: sesión pid-33608, TUI lista, «AUTO-APROBADO (dialogo) codex» a las 13:16:01, tarjeta en corriendo, cierre 200.
+

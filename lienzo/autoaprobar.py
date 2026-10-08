@@ -11,9 +11,12 @@ contesta). Sumar un agente nuevo es sumar un proveedor, no tocar el bucle.
   contesta con Enter (answer_coda_ask).
 - DialogoDePermiso (2026-10-08): el permiso que la TUI dibuja como dialogo de opciones, sin hook
   («Would you like to run the following command?» de Codex, «Do you want to proceed?» de Claude,
-  con «Yes, proceed (y)» y «No, ...»): el barrido de pantalla lo deja en `dialog` de la tarjeta y se
-  contesta eligiendo la primera opcion «Yes» (answer_dialog). Medido: la tarjeta de Teorema (Codex)
-  quedaba en «Espera que elijas en la terminal» con el auto-aprobar prendido.
+  «requires approval» de Kiro): el barrido de pantalla lo deja en `dialog` de la tarjeta y se
+  contesta eligiendo la opcion que permite (answer_dialog). Como redacta el permiso cada TUI lo sabe
+  su perfil (agentes.Perfil.permission_option). Medido: la tarjeta de Teorema (Codex) quedaba en
+  «Espera que elijas en la terminal» con el auto-aprobar prendido. Cuando ve un dialogo y decide NO
+  contestarlo, deja el motivo en la tarjeta (`auto_aprobar_omitido`): sin eso no se sabia si fue
+  decision o falla.
 
 Lo que NO aprueba: una pregunta con opciones (AskUserQuestion, o cualquier dialogo que no sea un
 permiso: «Switch model?», la confianza en una carpeta), que pide elegir, no permitir. Cada
@@ -29,6 +32,7 @@ from dataclasses import dataclass
 
 import sessions as ses
 import state
+from agentes import AgenteDesconocido, perfil
 
 CLAVE = "auto_aprobar"
 CADA_S = 2.0
@@ -116,45 +120,24 @@ class DialogoDeCoda(ProveedorPermisos):
         return ses.answer_coda_ask(s, "allow")
 
 
-# como arranca la pregunta de un permiso en la TUI (Codex y Claude Code); una pregunta de verdad
-# («Which library...?», «Switch model?», «Do you want to use this API key?») no empieza asi, y la
-# confianza en una carpeta tampoco. Sin comodin «do you want to»: no todo lo que empieza asi es un permiso
-PREGUNTAS_DE_PERMISO = (
-    "would you like to run",
-    "would you like to proceed",
-    "do you want to proceed",
-    "do you want to make",
-    "do you want to create",
-    "do you want to run",
-    "do you want to read",
-    "do you want to write",
-    "do you want to edit",
-    "do you want to fetch",
-    "do you want to allow",
-)
+OMITIDO = "auto_aprobar_omitido"  # en la tarjeta: por que el auto-aprobar vio el dialogo y no lo contesto
 
 
-def opcion_de_permiso(dialog: dict | None) -> int | None:
-    """La opcion que permite, si `dialog` es un permiso: la primera «Yes» o «Allow» que no sea
-    «don't ask again» ni «Always» (eso ademas lo recordaria). Es un permiso si la pregunta empieza
-    como una (PREGUNTAS_DE_PERMISO), dice «requires approval» (Kiro), las opciones son Allow/Deny o
-    alguna ofrece «don't ask again»."""
-    if not dialog:
+def opcion_de_permiso(dialog: dict | None, agent: str | None) -> int | None:
+    """La opcion que permite, si `dialog` es un permiso de la TUI de `agent` (cada perfil sabe
+    como redacta su TUI: agentes.Perfil.permission_option), o None. Sin agente (una tarjeta
+    adoptada que todavia no se identifico) no se contesta: no se sabe con que reglas leerlo."""
+    try:
+        return perfil(agent).permission_option(dialog)
+    except AgenteDesconocido:
         return None
-    q = (dialog.get("question") or "").strip().lower()
-    # la opcion «No, ...» puede no entrar en la pantalla (medido el 2026-10-08 en Teorema: el
-    # parser vio solo «Yes, proceed (y)» y «Yes, and don't ask again ...»): no se la exige
-    ops = [(o.get("n"), (o.get("text") or "").strip().lower()) for o in dialog.get("options") or []]
-    allow_deny = any(t.startswith("allow") for _, t in ops) and any(t.startswith("deny") for _, t in ops)
-    # «Yes, and don't ask again for ...» solo lo ofrece un permiso: alcanza aunque la pregunta no se
-    # haya leido bien (un comando largo la deja lejos de las opciones, medido el 2026-10-08)
-    ask_again = any("ask again" in t for _, t in ops)
-    if not (q.startswith(PREGUNTAS_DE_PERMISO) or "requires approval" in q or allow_deny or ask_again):
-        return None
-    return next(
-        (n for n, t in ops if t.startswith(("yes", "allow")) and "ask again" not in t and not t.startswith("always")),
-        None,
-    )
+
+
+def motivo_omitido(dialog: dict | None, agent: str | None) -> str:
+    try:
+        return perfil(agent).permission_reason(dialog)
+    except AgenteDesconocido:
+        return "agente desconocido"
 
 
 class DialogoDePermiso(ProveedorPermisos):
@@ -162,36 +145,43 @@ class DialogoDePermiso(ProveedorPermisos):
     reintenta = True  # se teclea en la consola: puede no hacer efecto
 
     def abiertos(self) -> list[Pedido]:
-        with state.lock:
-            tarjetas = [dict(s) for s in state.sessions.values()]
+        """Los dialogos de permiso abiertos. En la misma pasada (con el lock) deja o borra en cada
+        tarjeta el motivo por el que NO se contesta su dialogo (`auto_aprobar_omitido`): antes decia
+        solo «Espera que elijas en la terminal» y no se sabia si fue decision o falla."""
         out = []
-        for s in tarjetas:
-            d = s.get("dialog")
-            n = s.get("needs") or {}
-            if s.get("state") != "te_necesita" or n.get("kind") != "dialog" or s.get("pending_id"):
-                continue
-            if opcion_de_permiso(d) is None:
-                continue
-            out.append(
-                Pedido(
-                    # sin el detalle: la pantalla lo redibuja (otra linea envuelta, el spinner) y con el
-                    # detalle en el id el mismo dialogo abierto se volvia a contestar a los 2 s
-                    f"{s['session_id']}@{n.get('since') or ''}@{d.get('question')}",
-                    s["session_id"],
-                    s.get("agent") or "?",
-                    f"{d.get('question')} {str(d.get('detail') or '')[:160]}",
-                )
-            )
+        with state.lock:
+            for s in state.sessions.values():
+                d = s.get("dialog")
+                n = s.get("needs") or {}
+                motivo = None
+                if s.get("state") == "te_necesita" and n.get("kind") == "dialog" and not s.get("pending_id"):
+                    if opcion_de_permiso(d, s.get("agent")) is None:
+                        motivo = motivo_omitido(d, s.get("agent"))
+                    else:
+                        out.append(
+                            Pedido(
+                                # sin el detalle: la pantalla lo redibuja (otra linea envuelta, el spinner)
+                                # y con el detalle en el id el mismo dialogo abierto se volvia a contestar
+                                f"{s['session_id']}@{n.get('since') or ''}@{d.get('question')}",
+                                s["session_id"],
+                                s.get("agent") or "?",
+                                f"{d.get('question')} {str(d.get('detail') or '')[:160]}",
+                            )
+                        )
+                if s.get(OMITIDO) != motivo:
+                    s[OMITIDO] = motivo
+                    ses.touch(s)
         return out
 
     def aprobar(self, p: Pedido) -> tuple[int, dict]:
-        s = state.sessions.get(p.session_id)
+        with state.lock:  # el barrido de pantalla puede cambiar `dialog` entre abiertos() y aca
+            s = state.sessions.get(p.session_id)
+            n = opcion_de_permiso(s.get("dialog"), s.get("agent")) if s else None
         if s is None:
             return 404, {"error": "la sesion ya no esta"}
-        n = opcion_de_permiso(s.get("dialog"))
         if n is None:
             return 409, {"error": "el dialogo ya no es un permiso"}
-        return ses.answer_dialog(s, n)
+        return ses.answer_dialog(s, n)  # vuelve a leer la pantalla y compara con `dialog` antes de teclear
 
 
 PROVEEDORES: list[ProveedorPermisos] = [PendientesDeHook(), DialogoDeCoda(), DialogoDePermiso()]
@@ -200,6 +190,7 @@ PROVEEDORES: list[ProveedorPermisos] = [PendientesDeHook(), DialogoDeCoda(), Dia
 # (disco lleno al escribir la respuesta) NO lo es: antes se marcaba antes de contestar, y un error
 # de disco dejaba el pendiente de hook sin aprobar para siempre (plan de refactor 1.14, E16)
 _intentados: dict[str, tuple[float, bool]] = {}
+_estaba_prendido = False  # para borrar los avisos de los dialogos una sola vez, al apagar
 
 
 def prendido() -> bool:
@@ -209,8 +200,17 @@ def prendido() -> bool:
 def ronda(ahora: float | None = None) -> list[tuple[Pedido, int]]:
     """Una pasada: si esta prendido, aprueba todo lo abierto de todos los proveedores. Devuelve lo
     que contesto. Un proveedor que falla no corta a los demas."""
+    global _estaba_prendido
     if not prendido():
+        if _estaba_prendido:
+            _estaba_prendido = False
+            with state.lock:  # recien apagado: el aviso de los dialogos no corresponde mas
+                for s in state.sessions.values():
+                    if s.get(OMITIDO):
+                        s[OMITIDO] = None
+                        ses.touch(s)
         return []
+    _estaba_prendido = True
     ahora = time.monotonic() if ahora is None else ahora
     for k in [k for k, (t, _) in _intentados.items() if ahora - t > 3600]:
         del _intentados[k]

@@ -159,21 +159,29 @@ CLAUDE = _dialogo(
 
 
 def test_opcion_de_permiso_reconoce_los_dialogos_de_permiso_y_nada_mas():
-    assert au.opcion_de_permiso(CODEX) == 1
-    assert au.opcion_de_permiso(CLAUDE) == 1
-    assert au.opcion_de_permiso(_dialogo("Do you want to make this edit to x.py?", ["Yes", "No"])) == 1
+    assert au.opcion_de_permiso(CODEX, "codex") == 1
+    assert au.opcion_de_permiso(CLAUDE, "claude") == 1
+    assert au.opcion_de_permiso(_dialogo("Do you want to make this edit to x.py?", ["Yes", "No"]), "claude") == 1
     # una pregunta de verdad, el cambio de modelo o la confianza en una carpeta no son permisos
-    assert au.opcion_de_permiso(_dialogo("Which library?", ["Yes, requests", "No, httpx"])) is None
-    assert au.opcion_de_permiso(_dialogo("Switch model?", ["Default", "Opus"])) is None
+    assert au.opcion_de_permiso(_dialogo("Which library?", ["Yes, requests", "No, httpx"]), "claude") is None
+    assert au.opcion_de_permiso(_dialogo("Switch model?", ["Default", "Opus"]), "claude") is None
     assert (
-        au.opcion_de_permiso(_dialogo("Do you trust the files in this folder?", ["Yes, proceed", "No, exit"])) is None
+        au.opcion_de_permiso(_dialogo("Do you trust the files in this folder?", ["Yes, proceed", "No, exit"]), "claude")
+        is None
     )
-    assert au.opcion_de_permiso(_dialogo("Would you like to run the following command?", ["Proceed", "Cancel"])) is None
-    assert au.opcion_de_permiso(_dialogo("Do you want to use this API key?", ["Yes", "No (recommended)"])) is None
-    assert au.opcion_de_permiso(None) is None
+    assert (
+        au.opcion_de_permiso(_dialogo("Would you like to run the following command?", ["Proceed", "Cancel"]), "claude")
+        is None
+    )
+    assert (
+        au.opcion_de_permiso(_dialogo("Do you want to use this API key?", ["Yes", "No (recommended)"]), "claude")
+        is None
+    )
+    assert au.opcion_de_permiso(None, "claude") is None
 
 
 def _armar_dialogo(monkeypatch, dialog, **tarjeta):
+    monkeypatch.setattr(au, "_estaba_prendido", False)
     monkeypatch.setattr(st, "load_config", lambda: {"auto_aprobar": True})
     monkeypatch.setattr(st, "log", lambda m: None)
     monkeypatch.setattr(au, "_intentados", {})
@@ -229,21 +237,83 @@ def test_un_permiso_con_la_pregunta_mal_leida_se_reconoce_por_el_dont_ask_again(
         ["Yes, proceed (y)", "Yes, and don't ask again for commands that start with `python -u -c`"],
         teclas="flechas",
     )
-    assert au.opcion_de_permiso(roto) == 1
-    assert au.opcion_de_permiso(_dialogo("Environment: local", ["Yes, proceed (y)", "No"])) is None
+    assert au.opcion_de_permiso(roto, "codex") == 1
+    assert au.opcion_de_permiso(_dialogo("Environment: local", ["Yes, proceed (y)", "No"]), "claude") is None
+
+
+def test_el_motivo_de_no_contestar_queda_en_la_tarjeta_y_se_va_con_el_dialogo(monkeypatch):
+    """Antes la tarjeta decia solo «Espera que elijas en la terminal» y no se sabia si el
+    auto-aprobar lo habia mirado y descartado, o si fallaba."""
+    hechos = _armar_dialogo(monkeypatch, _dialogo("Switch model?", ["Default", "Opus"]))
+    tocadas = []
+    monkeypatch.setattr(ses, "touch", lambda s: tocadas.append(s["session_id"]) or True)
+    au.ronda(ahora=100)
+    assert hechos == [] and st.sessions["d1"][au.OMITIDO] == "el cambio de modelo lo decide el humano"
+    assert tocadas == ["d1"]
+    au.ronda(ahora=101)
+    assert tocadas == ["d1"]  # el mismo motivo no se vuelve a publicar
+    st.sessions["d1"]["dialog"] = _dialogo("Do you trust the files in this folder?", ["Yes, proceed", "No, exit"])
+    au.ronda(ahora=102)
+    assert st.sessions["d1"][au.OMITIDO] == "la confianza en una carpeta la decide el humano"
+    st.sessions["d1"]["dialog"] = _dialogo("Which library?", ["requests", "httpx"])
+    au.ronda(ahora=103)
+    assert st.sessions["d1"][au.OMITIDO] == "no es un permiso: es una pregunta con opciones"
+    # un permiso de verdad lo contesta y borra el aviso; apagado, el aviso tampoco corresponde
+    st.sessions["d1"]["dialog"] = CODEX
+    au.ronda(ahora=104)
+    assert hechos == [("d1", 1)] and st.sessions["d1"][au.OMITIDO] is None
+    st.sessions["d1"]["dialog"] = _dialogo("Which library?", ["requests", "httpx"])
+    au.ronda(ahora=105)
+    assert st.sessions["d1"][au.OMITIDO]
+    monkeypatch.setattr(st, "load_config", lambda: {"auto_aprobar": False})
+    au.ronda(ahora=106)
+    assert st.sessions["d1"][au.OMITIDO] is None
+
+
+def test_frases_que_cada_tui_usa_para_un_permiso():
+    """Code review 2026-10-08: al pasar a perfiles se habian perdido «Would you like to proceed?» de
+    Claude (salir del plan) y el parche de Codex («Would you like to make the following edits?»)."""
+    plan = _dialogo("Would you like to proceed?", ["Yes", "Yes, and auto-accept edits", "No, keep planning"])
+    assert au.opcion_de_permiso(plan, "claude") == 1
+    parche = _dialogo(
+        "Would you like to make the following edits?",
+        ["Yes, proceed (y)", "No, and tell Codex what to do differently (esc)"],
+    )
+    assert au.opcion_de_permiso(parche, "codex") == 1
+    assert au.opcion_de_permiso(CODEX, None) is None  # sin agente no se sabe con que reglas leerlo
+
+
+def test_el_motivo_mira_como_arranca_la_pregunta_y_kiro_tiene_el_suyo():
+    assert (
+        au.motivo_omitido(_dialogo("Which model should the pipeline use?", ["Star", "Snowflake"]), "claude")
+        == "no es un permiso: es una pregunta con opciones"
+    )
+    assert (
+        au.motivo_omitido(_dialogo("Switch model?", ["Default", "Opus"]), "codex")
+        == "el cambio de modelo lo decide el humano"
+    )
+    assert au.motivo_omitido(_dialogo("Tool requires approval", ["Allow (a)", "Deny"]), "kiro").startswith(
+        "es un permiso de Kiro"
+    )
+    assert au.motivo_omitido(CODEX, None) == "agente desconocido"
 
 
 def test_el_permiso_de_kiro_con_allow_y_deny_tambien_es_un_permiso():
     kiro = _dialogo(
         "Tool requires approval: run command", ["Allow", "Always allow", "Deny", "Always deny"], teclas="flechas"
     )
-    assert au.opcion_de_permiso(kiro) == 1
+    assert au.opcion_de_permiso(kiro, "kiro") == 1
+    assert au.opcion_de_permiso(kiro, "claude") is None  # cada TUI redacta distinto
     truncado = _dialogo(
         "Kiro requiere permiso (comando parcialmente visible)", ["Allow", "Always allow", "Deny", "Always deny"]
     )
-    assert au.opcion_de_permiso(truncado) == 1
-    assert au.opcion_de_permiso(_dialogo("Which one?", ["Allow", "Deny"])) == 1  # Allow/Deny solo lo tiene un permiso
-    assert au.opcion_de_permiso(_dialogo("Which one?", ["Allow", "Reject"])) is None
+    assert au.opcion_de_permiso(truncado, "kiro") == 1
+    assert (
+        au.opcion_de_permiso(_dialogo("Which one?", ["Allow", "Deny"]), "kiro") == 1
+    )  # Allow/Deny solo lo tiene un permiso
+    assert au.opcion_de_permiso(_dialogo("Which one?", ["Allow", "Reject"]), "kiro") is None
+    assert au.opcion_de_permiso(CODEX, "pi") is None and au.opcion_de_permiso(CODEX, "coda") is None
+    assert au.opcion_de_permiso(CODEX, "desconocido") is None
 
 
 def test_no_contesta_un_dialogo_que_no_es_permiso_ni_uno_con_pendiente_de_hook(monkeypatch):

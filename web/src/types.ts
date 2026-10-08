@@ -52,6 +52,8 @@ export interface Session {
   /** dialogo de opciones de la TUI leido de la pantalla ("Switch model?"): no dispara ningun hook,
    *  asi que sin el lienzo se queda esperando una tecla que nadie aprieta */
   dialog?: TuiDialog | null;
+  /** con auto-aprobar prendido: por que vio este dialogo y NO lo contesto (no es un permiso) */
+  auto_aprobar_omitido?: string | null;
   started: string;
   last_event: string | null;
   alive: boolean;
