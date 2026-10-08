@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, ApiError, isMissingRoute } from "../api";
 import type { Peer } from "../types";
 import { usePeers } from "./PcStrip";
@@ -22,8 +23,9 @@ export function RemoteBrowser() {
   const peers = usePeers();
   const [native, setNative] = useState(true);
   const [controls, setControls] = useState(false);
+  const [toolbarSlot, setToolbarSlot] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (!native || !controls) return;
+    if (!controls) return;
     let timer: ReturnType<typeof setTimeout>;
     const activity = (event?: Event) => {
       const target = event?.target as Element | undefined;
@@ -35,7 +37,7 @@ export function RemoteBrowser() {
     document.addEventListener('pointerdown', activity);
     document.addEventListener('keydown', activity);
     return () => { clearTimeout(timer); document.removeEventListener('pointerdown', activity); document.removeEventListener('keydown', activity); };
-  }, [native, controls]);
+  }, [controls]);
   const [selected, setSelected] = useState(() => new URLSearchParams(location.search).get("pc") ?? "");
   if (!selected && peers.length) {
     const initial = peers.find(p => !p.local) ?? peers.find(p => p.local);
@@ -48,7 +50,8 @@ export function RemoteBrowser() {
     history.replaceState(null, "", `/chrome?pc=${encodeURIComponent(id)}`);
   };
   return <main className={`remote-browser${native ? ' remote-browser-native' : ''}${controls ? ' remote-controls-open' : ''}`}>
-    {native && <button className="remote-controls-toggle" aria-label="Controles de Chrome remoto" aria-expanded={controls} onClick={()=>setControls(!controls)}>⋮</button>}
+    <button className="remote-controls-toggle" aria-label="Controles de Chrome remoto" aria-expanded={controls} onClick={()=>setControls(!controls)}>⋮</button>
+    <div className="remote-controls-menu" aria-label="Opciones de Chrome remoto" onKeyDown={e=>{if(e.key==='Escape')setControls(false);}}>
     <div className="remote-top">
       <a href="/" className="remote-home" title="Volver al tablero">Lienzo</a>
       <span className="remote-brand">Chrome remoto</span>
@@ -59,15 +62,18 @@ export function RemoteBrowser() {
         </select>
       </label>
     </div>
-    {peer ? <ChromeMode key={peer.pc_id} peer={peer} native={native} setNative={setNative} /> : <div className="remote-empty">No se encuentra la PC. Revisá la conexión desde el tablero.</div>}
+    <div className="remote-mode"><button aria-pressed={native} onClick={() => setNative(true)}>Chrome real · ventana completa</button><button aria-pressed={!native} onClick={() => setNative(false)}>Vista por pestañas</button></div>
+    <div ref={setToolbarSlot} />
+    </div>
+    {peer ? <ChromeMode key={peer.pc_id} peer={peer} native={native} toolbarSlot={toolbarSlot} /> : <div className="remote-empty">No se encuentra la PC. Revisá la conexión desde el tablero.</div>}
   </main>;
 }
 
-function ChromeMode({peer, native, setNative}: {peer: Peer; native: boolean; setNative: (value: boolean)=>void}) {
-  return <><div className="remote-mode"><button aria-pressed={native} onClick={() => setNative(true)}>Chrome real · ventana completa</button><button aria-pressed={!native} onClick={() => setNative(false)}>Vista por pestañas</button></div>{native ? <ChromeWindow peer={peer} /> : <BrowserDesktop peer={peer} />}</>;
+function ChromeMode({peer, native, toolbarSlot}: {peer: Peer; native: boolean; toolbarSlot: HTMLDivElement | null}) {
+  return native ? <ChromeWindow peer={peer} toolbarSlot={toolbarSlot} /> : <BrowserDesktop peer={peer} />;
 }
 
-function ChromeWindow({peer}: {peer: Peer}) {
+function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElement | null}) {
   const [windows, setWindows] = useState<NonNullable<Reply['windows']>>([]);
   const [window, setWindow] = useState('');
   const [profiles, setProfiles] = useState<NonNullable<Reply['profiles']>>([]);
@@ -179,14 +185,15 @@ function ChromeWindow({peer}: {peer: Peer}) {
     catch (e) { report(e); }
     finally { if (live.current) setBusy(false); }
   };
-  return <><div className="remote-native-toolbar">
+  const toolbar = <div className="remote-native-toolbar">
     <label>Perfil <select aria-label="Perfil del Chrome real" value={profile} onChange={e=>setProfile(e.target.value)}>{profiles.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     <button disabled={busy || !peer.alive || !profile} onClick={()=>void open()}>Abrir perfil</button>
     <label>Ventana <select aria-label="Ventana de Chrome" value={window} onChange={e=>{setWindow(e.target.value);setError('');}}>{windows.map(w=><option key={w.id} value={w.id}>{w.title}</option>)}</select></label>
     <button disabled={!peer.alive || busy} onClick={()=>void refresh().catch(report)}>Actualizar ventanas</button>
     <button aria-label="Pantalla completa" onClick={()=>{void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(report);}}>⛶</button>
     <small aria-label="Demora de Chrome remoto">Mouse {latency.input ? `${latency.input} ms` : '—'} · Imagen {latency.frame ? `${latency.frame} ms` : '—'}</small>
-  </div><div className="remote-viewport" ref={viewport}>
+  </div>;
+  return <>{toolbarSlot && createPortal(toolbar, toolbarSlot)}<div className="remote-viewport" ref={viewport}>
     {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1></div>
       : error ? <div className="remote-empty" role="alert"><h1>No se pudo mostrar Chrome</h1><p>{error}</p><button onClick={()=>void refresh().catch(report)}>Reconectar</button></div>
       : !window ? <div className="remote-empty"><h1>Chrome en {peer.name}</h1><p>Elegí tu perfil y tocá Abrir perfil. Acá vas a ver la ventana completa, con sus pestañas, menús y avisos.</p></div>

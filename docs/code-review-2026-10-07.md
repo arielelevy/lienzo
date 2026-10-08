@@ -192,3 +192,9 @@ por lo que no se certifica conexión automática. La identificación de ventana 
 por HWND, título exacto, clase y PID del listener; UIA se usa después para el botón. Se
 excluyen botones bajo Document para no autorizar contenido web que imite el aviso.
 El error aporta sólo recuentos de diálogos y botones, sin títulos de páginas ni datos.
+
+Pedido posterior: mismos menús compactos en ambos modos. PC, selector de modo, perfil y
+ventana se agrupan en un único panel desde ⋮ arriba a la derecha; se retiran las barras
+permanentes de PC/modo también de CDP. El toolbar nativo usa portal al panel, sin cambiar
+destino de entrada ni remontar la ventana al abrirlo. Revisión estática de montaje, timer y
+CSS; build de despliegue válido, interacción real con el menú aún pendiente de observar.
