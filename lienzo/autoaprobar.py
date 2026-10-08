@@ -137,7 +137,8 @@ PREGUNTAS_DE_PERMISO = (
 def opcion_de_permiso(dialog: dict | None) -> int | None:
     """La opcion que permite, si `dialog` es un permiso: la primera «Yes» o «Allow» que no sea
     «don't ask again» ni «Always» (eso ademas lo recordaria). Es un permiso si la pregunta empieza
-    como una (PREGUNTAS_DE_PERMISO), dice «requires approval» (Kiro) o las opciones son Allow/Deny."""
+    como una (PREGUNTAS_DE_PERMISO), dice «requires approval» (Kiro), las opciones son Allow/Deny o
+    alguna ofrece «don't ask again»."""
     if not dialog:
         return None
     q = (dialog.get("question") or "").strip().lower()
@@ -145,7 +146,10 @@ def opcion_de_permiso(dialog: dict | None) -> int | None:
     # parser vio solo «Yes, proceed (y)» y «Yes, and don't ask again ...»): no se la exige
     ops = [(o.get("n"), (o.get("text") or "").strip().lower()) for o in dialog.get("options") or []]
     allow_deny = any(t.startswith("allow") for _, t in ops) and any(t.startswith("deny") for _, t in ops)
-    if not (q.startswith(PREGUNTAS_DE_PERMISO) or "requires approval" in q or allow_deny):
+    # «Yes, and don't ask again for ...» solo lo ofrece un permiso: alcanza aunque la pregunta no se
+    # haya leido bien (un comando largo la deja lejos de las opciones, medido el 2026-10-08)
+    ask_again = any("ask again" in t for _, t in ops)
+    if not (q.startswith(PREGUNTAS_DE_PERMISO) or "requires approval" in q or allow_deny or ask_again):
         return None
     return next(
         (n for n, t in ops if t.startswith(("yes", "allow")) and "ask again" not in t and not t.startswith("always")),

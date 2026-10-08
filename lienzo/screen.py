@@ -234,6 +234,10 @@ def _dialog_kiro(lines: list[str]) -> dict | None:
     return result
 
 
+# como arranca la pregunta de un dialogo de la TUI (permiso de Codex o Claude, confianza, modelo)
+PREGUNTA_RE = re.compile(r"^(would you like|do you want|do you trust|switch model)", re.IGNORECASE)
+
+
 def _armar(lines: list[str], best: list[tuple[int, dict]], **extra) -> dict:
     top = best[0][0]
 
@@ -245,6 +249,14 @@ def _armar(lines: list[str], best: list[tuple[int, dict]], **extra) -> dict:
 
     rule = max((i for i, l in enumerate(lines[:top]) if es_regla(l)), default=-1)
     body = [_sin_borde(l) for l in lines[max(rule + 1, top - 12) : top] if _sin_borde(l)]
+    # la pregunta de un permiso puede quedar mucho mas arriba de las opciones: Codex dibuja el
+    # comando entero entre las dos (medido el 2026-10-08: con un `python -c` largo, la «pregunta»
+    # era un pedazo del comando y el auto-aprobar no lo reconocia). Se busca hacia arriba, hasta la
+    # regla o 40 lineas, la ultima linea que arranca como una pregunta de la TUI
+    ventana = [_sin_borde(l) for l in lines[max(rule + 1, top - 40) : top] if _sin_borde(l)]
+    idx = next((i for i in range(len(ventana) - 1, -1, -1) if PREGUNTA_RE.match(ventana[i])), None)
+    if idx is not None:
+        body = ventana[idx:]
     return {
         "question": body[0] if body else "",
         "detail": " ".join(body[1:])[:400],

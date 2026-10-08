@@ -221,6 +221,18 @@ def test_el_mismo_dialogo_redibujado_no_se_vuelve_a_contestar_antes_del_reintent
     assert hechos == [("d1", 1)]
 
 
+def test_un_permiso_con_la_pregunta_mal_leida_se_reconoce_por_el_dont_ask_again():
+    """Medido el 2026-10-08 (tarjetas Teorema y A): con un comando largo, screen.dialog tomaba un
+    pedazo del comando como pregunta y el auto-aprobar no lo contestaba."""
+    roto = _dialogo(
+        "smartBI/claude-skills/lienzo');import coordinar as",
+        ["Yes, proceed (y)", "Yes, and don't ask again for commands that start with `python -u -c`"],
+        teclas="flechas",
+    )
+    assert au.opcion_de_permiso(roto) == 1
+    assert au.opcion_de_permiso(_dialogo("Environment: local", ["Yes, proceed (y)", "No"])) is None
+
+
 def test_el_permiso_de_kiro_con_allow_y_deny_tambien_es_un_permiso():
     kiro = _dialogo(
         "Tool requires approval: run command", ["Allow", "Always allow", "Deny", "Always deny"], teclas="flechas"
