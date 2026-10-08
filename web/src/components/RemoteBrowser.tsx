@@ -22,6 +22,20 @@ export function RemoteBrowser() {
   const peers = usePeers();
   const [native, setNative] = useState(true);
   const [controls, setControls] = useState(false);
+  useEffect(() => {
+    if (!native || !controls) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const activity = (event?: Event) => {
+      const target = event?.target as Element | undefined;
+      if (target?.closest('.remote-screen')) { setControls(false); return; }
+      clearTimeout(timer);
+      timer = setTimeout(() => setControls(false), 5000);
+    };
+    activity();
+    document.addEventListener('pointerdown', activity);
+    document.addEventListener('keydown', activity);
+    return () => { clearTimeout(timer); document.removeEventListener('pointerdown', activity); document.removeEventListener('keydown', activity); };
+  }, [native, controls]);
   const [selected, setSelected] = useState(() => new URLSearchParams(location.search).get("pc") ?? "");
   if (!selected && peers.length) {
     const initial = peers.find(p => !p.local) ?? peers.find(p => p.local);

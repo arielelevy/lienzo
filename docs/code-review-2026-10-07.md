@@ -180,3 +180,9 @@ rechaza un clic que Windows haya desplazado. Handles de monitor y estructuras ti
 para 64 bits. Pendiente medir en vivo; no se afirma arreglado el clic sólo por revisar código.
 UDP: WebRTC permite canales no ordenados sin reintentos para movimiento y canales
 fiables para clic/teclado. Todavía no implementado; transporte actual HTTP/TCP optimizado.
+
+Captura de Ariel 22:32:07 muestra controles abiertos y Mouse 65 ms / Imagen 1016 ms.
+Es una observación aportada, sin atribuir mejora a un commit ni convertirla en promedio.
+Los controles flotantes se cierran al pulsar la superficie remota o tras cinco segundos sin
+acciones. Code review: listeners y timer se retiran al cerrar controles o desmontar; sólo
+afecta modo ventana. Build de despliegue realizado, suites no ejecutadas.
