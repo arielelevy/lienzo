@@ -13,6 +13,42 @@ from pathlib import Path
 import state
 
 
+def drenar_stderr(process, prefijo: str, limite: int = 8192) -> None:
+    """Lee stderr del worker hasta que termina y registra como mucho `limite` caracteres (texto o
+    bytes, segun como se abrio el pipe): el diagnostico de una caida sin llenar el log."""
+    remaining = limite
+    try:
+        while line := process.stderr.readline(1024):
+            if remaining > 0:
+                excerpt = line[:remaining]
+                if isinstance(excerpt, bytes):
+                    excerpt = excerpt.decode("utf-8", "replace")
+                remaining -= len(excerpt)
+                state.log(f"{prefijo}: {excerpt.rstrip()}")
+    except (OSError, ValueError):
+        pass  # El cierre del proceso tambien cierra el lector de diagnostico.
+
+
+def cerrar_worker(process, timeout: float = 5) -> None:
+    """Cierra stdin (el worker termina solo al quedarse sin pedidos), espera, mata si hace falta y
+    cierra los tres pipes. Tolera solo los OSError de un pipe ya roto."""
+    if process.poll() is None:
+        try:
+            process.stdin.close()  # Un pipe roto puede fallar tambien al hacer flush.
+        except OSError:
+            pass  # Igual se espera y termina solo este worker propio.
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=timeout)
+    for stream in (process.stdin, process.stdout, process.stderr):
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
 class BrowserHost:
     def __init__(self, window=False):
         self.window = window
@@ -46,15 +82,7 @@ class BrowserHost:
 
     @staticmethod
     def _errors(process):
-        remaining = 8192
-        try:
-            while line := process.stderr.readline(1024):
-                if remaining > 0:
-                    excerpt = line[:remaining]
-                    remaining -= len(excerpt)
-                    state.log(f"Chrome worker: {excerpt.rstrip()}")
-        except (OSError, ValueError):
-            pass  # El cierre del proceso también cierra el lector de diagnóstico.
+        drenar_stderr(process, "Chrome worker")
 
     @staticmethod
     def _read(process, responses):
@@ -70,21 +98,7 @@ class BrowserHost:
         process = self.process
         self.process = None
         if process is not None:
-            if process.poll() is None:
-                try:
-                    process.stdin.close()  # Un pipe roto puede fallar también al hacer flush.
-                except OSError:
-                    pass  # Igual se espera y termina sólo este worker propio.
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-            for stream in (process.stdin, process.stdout, process.stderr):
-                try:
-                    stream.close()
-                except OSError:
-                    pass
+            cerrar_worker(process)
 
     def request(self, data):
         if not isinstance(data, dict) or len(json.dumps(data)) > 65536:

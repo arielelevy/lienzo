@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, isMissingRoute } from "../api";
+import { api, ApiError, isMissingRoute } from "../api";
 import type { Peer } from "../types";
 import { usePeers } from "./PcStrip";
 import "../remote-browser.css";
@@ -118,8 +118,16 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       if (live.current) { setProfiles(r.profiles ?? []); setProfile(r.profiles?.[0]?.id ?? ''); }
     }).catch(report);
   }, [call, peer.alive, refresh, report]);
+  const windowRef = useRef(window);
+  useEffect(() => { windowRef.current = window; }, [window]);
+  const openWindow = useCallback((ws: WebSocket | null) => {
+    if (ws?.readyState !== WebSocket.OPEN || !windowRef.current) return;
+    ws.send(JSON.stringify({t: 'open', window: windowRef.current, ...physicalSize(viewport.current?.getBoundingClientRect())}));
+  }, []);
+  // cambiar de ventana no abre otro canal ni otro worker: se le pide la nueva al mismo
+  useEffect(() => { openWindow(socket.current); }, [window, openWindow]);
   useEffect(() => {
-    if (!window || !peer.alive || error) return;
+    if (!peer.alive || error) return;
     let cancelled = false;
     let attempts = 0;
     let retry: ReturnType<typeof setTimeout>;
@@ -134,7 +142,8 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       let opened = false;
       ws.onopen = () => {
         opened = true;
-        ws.send(JSON.stringify({t: 'open', window, ...physicalSize(viewport.current?.getBoundingClientRect())}));
+        openWindow(ws);
+        if (document.hidden) ws.send(JSON.stringify({t: 'pause'}));
       };
       ws.onmessage = event => {
         if (cancelled) return;
@@ -147,7 +156,11 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
             if (started !== undefined) setStats(s => ({...s, input: Math.round(performance.now() - started)}));
           } else if (m.t === 'error') {
             if (m.input) { setInputError(m.message ?? ''); return; }
-            if (m.message?.includes('ya no está disponible')) { void refresh().catch(report); return; }
+            if (m.message?.includes('ya no está disponible')) {
+              // la ventana vista se cerró allá: se relee el catálogo y se abre la que quede
+              void refresh().then(() => openWindow(socket.current)).catch(report);
+              return;
+            }
             setNotice('');
             report(new Error(m.message ?? 'Chrome remoto falló'));
           }
@@ -184,6 +197,12 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       };
     };
     connect();
+    // una solapa oculta no hace capturar a la otra PC: se pausa y se retoma al volver
+    const visibility = () => {
+      const ws = socket.current;
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({t: document.hidden ? 'pause' : 'resume'}));
+    };
+    document.addEventListener('visibilitychange', visibility);
     const observer = new ResizeObserver(() => {
       clearTimeout(resize);
       resize = setTimeout(() => {
@@ -206,12 +225,13 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       cancelled = true;
       clearTimeout(retry); clearTimeout(resize);
       observer.disconnect();
+      document.removeEventListener('visibilitychange', visibility);
       sender.current = null;
       const ws = socket.current;
       socket.current = null;
       if (ws && ws.readyState <= WebSocket.OPEN) { try { ws.send(JSON.stringify({t: 'release'})); } catch { /* ya cerrado */ } ws.close(); }
     };
-  }, [window, peer.alive, peer.pc_id, error, canvas, refresh, report]);
+  }, [peer.alive, peer.pc_id, error, canvas, refresh, report, openWindow]);
   const open = async () => {
     setBusy(true);
     try {
@@ -349,8 +369,13 @@ function BrowserDesktop({peer}: {peer: Peer}) {
         setFrame(previous => ({...previous, ...r, tab, image: r.image ?? (previous.tab === tab ? previous.image : undefined)}));
         update(r);
         // el proximo pedido sale enseguida; el minimo evita martillar una pagina quieta
-        timer = setTimeout(poll, Math.max(0, 60 - (performance.now() - started)));
-      } catch (e) { if (!cancelled) report(e); }
+        timer = setTimeout(poll, Math.max(0, 100 - (performance.now() - started)));
+      } catch (e) {
+        if (cancelled) return;
+        // 409: el worker está ocupado con un comando largo (pegado, diálogo); la imagen espera, no falla
+        if (e instanceof ApiError && e.status === 409) timer = setTimeout(poll, 300);
+        else report(e);
+      }
     };
     void poll();
     return () => { cancelled = true; clearTimeout(timer); };

@@ -10,9 +10,9 @@ import json
 import os
 import socket
 import sys
-import types
 import threading
 import time
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lienzo import federation as fed

@@ -381,6 +381,8 @@ class Streamer:
         self.cv = threading.Condition()
         self.hwnd = None
         self.size = None
+        self.refit = False  # ajustar la ventana al tamano pedido en la proxima captura (open/size)
+        self.paused = False  # el visor esta en una solapa oculta: no capturar hasta que vuelva
         self.in_flight = 0
         self.seq = 0
         self.idle = 0  # lecturas seguidas sin cambios
@@ -404,12 +406,19 @@ class Streamer:
                 size = (bounded(data.get("width"), 320, 3840), bounded(data.get("height"), 200, 2160))
             with self.cv:
                 self.hwnd, self.size, self.last, self.in_flight = hwnd, size, None, 0
+                self.refit = size is not None
+                self.paused = False
                 self.cv.notify_all()
             self.json({"t": "opened", "window": str(hwnd)})
         elif kind == "size":
             size = (bounded(data.get("width"), 320, 3840), bounded(data.get("height"), 200, 2160))
             with self.cv:
-                self.size = size
+                if size != self.size:
+                    self.size, self.refit = size, True
+                self.cv.notify_all()
+        elif kind in ("pause", "resume"):
+            with self.cv:
+                self.paused = kind == "pause"
                 self.cv.notify_all()
         elif kind == "input":
             if self.hwnd is None:
@@ -445,14 +454,20 @@ class Streamer:
         """Una vuelta de captura: devuelve el cuadro emitido (cabecera, PNG) o None. Espera si hay
         demasiados cuadros sin acusar o no hay ventana."""
         with self.cv:
-            while not self.closed and (self.hwnd is None or self.in_flight >= MAX_IN_FLIGHT):
+            while not self.closed and (self.hwnd is None or self.paused or self.in_flight >= MAX_IN_FLIGHT):
                 self.cv.wait(1)
             if self.closed:
                 return None
-            hwnd, size = self.hwnd, self.size
+            hwnd, size, refit = self.hwnd, self.size, self.refit
+            self.refit = False
         started = self.clock()
         try:
-            rgb, width, height = self.capture(hwnd, *(size or (None, None)))
+            if not self.windows.chrome(hwnd):
+                fail("Esa ventana de Chrome ya no está disponible")
+            if refit and size:
+                # solo al abrir o cambiar de tamano: cuadro a cuadro pelearia con quien maximiza alla
+                self.windows.fit(hwnd, *size)
+            rgb, width, height = self.capture(hwnd)
         except ValueError as exc:
             self.json({"t": "error", "message": str(exc)})
             with self.cv:
@@ -490,20 +505,23 @@ class Streamer:
         try:
             while not self.closed:
                 self.step()
-        except (OSError, ValueError) as exc:
+        except Exception as exc:  # cualquier falla del hilo de captura se informa y cierra la sesion
             try:
-                self.json({"t": "error", "message": f"Se detuvo la captura: {exc}"})
+                self.json({"t": "error", "message": f"Se detuvo la captura: {type(exc).__name__}: {exc}"})
             except OSError:
                 pass
         finally:
             with self.cv:
                 self.closed = True
+                self.cv.notify_all()
 
     def run(self, lines):
         thread = threading.Thread(target=self.run_capture, daemon=True)
         thread.start()
         try:
             for line in lines:
+                if self.closed:
+                    break  # murio la captura: el proceso termina y el server relanza uno nuevo
                 try:
                     data = json.loads(line)
                     if not isinstance(data, dict):

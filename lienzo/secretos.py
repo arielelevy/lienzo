@@ -8,7 +8,10 @@ cuando la otra PC perdio sus credenciales de git y el push de la sesion 4 no sal
 Cifrado: el canal entre PCs firma (HMAC) pero no cifra, asi que el valor viaja cifrado con la clave
 del emparejamiento. Solo stdlib: keystream HMAC-SHA256(k_cifrado, nonce || contador) y despues
 encrypt-then-MAC con HMAC-SHA256(k_mac, nonce || cifrado). Las dos subclaves salen de la del par,
-con etiquetas distintas: la clave de firma nunca se usa directo para cifrar.
+con etiquetas distintas: la clave de firma nunca se usa directo para cifrar. El XOR va con enteros
+grandes (C puro). `sellar`/`abrir` (canal vivo de Chrome, binario) usan subclaves "-v2" y un
+keystream SHAKE-256 en una llamada: 1 MB en ~14 ms; el formato de `cifrar` no cambia, asi que una
+PC sin actualizar sigue abriendo los secretos y el modo por pestanas.
 
 Destinos en la PC que lo recibe:
 - "git": `git credential approve` (el valor va por stdin), que lo guarda en el almacen de credenciales
@@ -45,10 +48,16 @@ def _subclave(clave: bytes, etiqueta: bytes) -> bytes:
 
 
 def _keystream(k: bytes, nonce: bytes, n: int) -> bytes:
-    """n bytes de keystream en una sola llamada nativa: SHAKE-256 con la subclave y el nonce como
-    prefijo secreto (esponja con clave: la misma construccion de KMAC). Antes era un HMAC por cada
-    32 bytes y un generador de Python por byte: una captura de Chrome de 1 MB tardaba cientos de ms
-    en cada salto (medido el 2026-10-07)."""
+    """Formato de siempre, HMAC-SHA256(k, nonce || contador) por bloque de 32 bytes: lo que una PC
+    sin actualizar sabe abrir (secretos y el modo por pestanas de Chrome entre PCs)."""
+    bloques = [hmac.new(k, nonce + i.to_bytes(8, "big"), hashlib.sha256).digest() for i in range((n + 31) // 32)]
+    return b"".join(bloques)[:n]
+
+
+def _keystream_rapido(k: bytes, nonce: bytes, n: int) -> bytes:
+    """n bytes en una sola llamada nativa: SHAKE-256 con la subclave y el nonce como prefijo secreto
+    (esponja con clave, la construccion de KMAC). Solo para `sellar`/`abrir`, el canal vivo de
+    Chrome, que ya exige la capacidad `browser.stream` en las dos PCs."""
     return hashlib.shake_256(k + nonce).digest(n)
 
 
@@ -89,8 +98,8 @@ def sellar(clave: bytes, datos: bytes, aad: bytes = b"") -> bytes:
     JSON. `aad` (direccion y numero de secuencia del canal) entra en la MAC pero no viaja: un
     mensaje repetido o cambiado de orden no verifica."""
     nonce = secrets.token_bytes(NONCE_BYTES)
-    ct = _xor(datos, _keystream(_subclave(clave, b"cifrado"), nonce, len(datos)))
-    tag = hmac.new(_subclave(clave, b"mac"), aad + nonce + ct, hashlib.sha256).digest()
+    ct = _xor(datos, _keystream_rapido(_subclave(clave, b"cifrado-v2"), nonce, len(datos)))
+    tag = hmac.new(_subclave(clave, b"mac-v2"), aad + nonce + ct, hashlib.sha256).digest()
     return nonce + ct + tag
 
 
@@ -100,10 +109,10 @@ def abrir(clave: bytes, blob: bytes, aad: bytes = b"") -> bytes:
         raise ValueError("mensaje cifrado incompleto")
     blob = bytes(blob)
     nonce, ct, tag = blob[:NONCE_BYTES], blob[NONCE_BYTES:-TAG_BYTES], blob[-TAG_BYTES:]
-    esperado = hmac.new(_subclave(clave, b"mac"), aad + nonce + ct, hashlib.sha256).digest()
+    esperado = hmac.new(_subclave(clave, b"mac-v2"), aad + nonce + ct, hashlib.sha256).digest()
     if not hmac.compare_digest(esperado, tag):
         raise ValueError("mensaje alterado o cifrado con otra clave")
-    return _xor(ct, _keystream(_subclave(clave, b"cifrado"), nonce, len(ct)))
+    return _xor(ct, _keystream_rapido(_subclave(clave, b"cifrado-v2"), nonce, len(ct)))
 
 
 class Boveda:

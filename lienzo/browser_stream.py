@@ -26,6 +26,7 @@ import sys
 import threading
 from pathlib import Path
 
+import browser_remote
 import federation
 import identity
 import mirror
@@ -79,15 +80,7 @@ class Worker:
         threading.Thread(target=self._errors, daemon=True).start()
 
     def _errors(self):
-        remaining = 8192
-        try:
-            while line := self.process.stderr.readline(1024):
-                if remaining > 0:
-                    excerpt = line[:remaining].decode("utf-8", "replace")
-                    remaining -= len(excerpt)
-                    state.log(f"Chrome stream: {excerpt.rstrip()}")
-        except (OSError, ValueError):
-            pass  # el cierre del proceso corta tambien este lector
+        browser_remote.drenar_stderr(self.process, "Chrome stream")
 
     def _read(self):
         out = self.process.stdout
@@ -118,22 +111,8 @@ class Worker:
             self.process.stdin.flush()
 
     def close(self) -> None:
-        process = self.process
         with self.lock:
-            try:
-                process.stdin.close()
-            except OSError:
-                pass
-        try:
-            process.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=3)
-        for stream in (process.stdout, process.stderr):
-            try:
-                stream.close()
-            except OSError:
-                pass
+            browser_remote.cerrar_worker(self.process, timeout=3)
 
 
 def _reserve() -> bool:

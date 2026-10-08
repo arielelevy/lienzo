@@ -1302,26 +1302,23 @@ class Handler(JsonHandler):
         /enroll, /login) sigue saliendo por su lista blanca de rutas, antes de este chequeo."""
         return self._is_local() or auth.check(auth.parse_cookie(self.headers.get("Cookie")))
 
+    def _origin_matches(self, origin: str) -> bool:
+        """El propio host, o el dev server de Vite en la misma maquina (hallazgo A1: puerto fijo
+        5173, no cualquier puerto de localhost)."""
+        ohost = origin.split("//", 1)[-1].lower()
+        host = (self.headers.get("Host") or "").lower()
+        return ohost == host or ohost in ("localhost:5173", "127.0.0.1:5173")
+
     def _csrf_ok(self) -> bool:
         if self.headers.get("X-Lienzo") != "1":
             return False
         origin = self.headers.get("Origin")
-        if not origin:
-            return True
-        ohost = origin.split("//", 1)[-1].lower()
-        host = (self.headers.get("Host") or "").lower()
-        # el propio host, o el dev server de Vite en la misma maquina (hallazgo A1: puerto fijo
-        # 5173, no cualquier puerto de localhost)
-        return ohost == host or ohost in ("localhost:5173", "127.0.0.1:5173")
+        return True if not origin else self._origin_matches(origin)
 
     def _origin_ok(self) -> bool:
         """Para un WebSocket (no puede mandar X-Lienzo): el Origin tiene que venir y ser el propio."""
         origin = self.headers.get("Origin")
-        if not origin:
-            return False
-        ohost = origin.split("//", 1)[-1].lower()
-        host = (self.headers.get("Host") or "").lower()
-        return ohost == host or ohost in ("localhost:5173", "127.0.0.1:5173")
+        return bool(origin) and self._origin_matches(origin)
 
     def do_GET(self):
         parts = self._prepare()

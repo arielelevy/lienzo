@@ -110,9 +110,17 @@ class FakeWindows:
     def __init__(self):
         self.inputs = []
         self.released = 0
+        self.fits = []
+        self.alive = True
 
     def target(self, value):
         return int(value)
+
+    def chrome(self, hwnd):
+        return self.alive
+
+    def fit(self, hwnd, width, height):
+        self.fits.append((hwnd, width, height))
 
     def input(self, hwnd, events):
         self.inputs.append((hwnd, events))
@@ -155,8 +163,9 @@ def test_streamer_sends_full_then_patch_then_nothing_and_waits_for_acks():
     assert json.loads(records(out)[0][1]) == {"t": "opened", "window": "7"}
     first = streamer.step()
     assert module.FRAME_HEADER.unpack(first[:module.FRAME_HEADER.size]) == (1, 0, 0, 8, 4, 8, 4, module.FRAME_FULL)
-    assert captures[0] == (7, 1280, 720)
+    assert captures[0] == (7, None, None) and windows.fits == [(7, 1280, 720)]
     assert streamer.step() is None  # sin cambios: nada viaja
+    assert windows.fits == [(7, 1280, 720)]  # el ajuste de tamano no se repite cuadro a cuadro
     patch = streamer.step()
     assert module.FRAME_HEADER.unpack(patch[:module.FRAME_HEADER.size])[:5] == (2, 0, 1, 8, 1)
     assert streamer.in_flight == module.MAX_IN_FLIGHT
@@ -188,3 +197,30 @@ def test_streamer_capture_error_closes_window_and_release_on_eof():
     assert texts[-3]["windows"] == [{"id": "7", "title": "Chrome"}]
     assert texts[-2]["t"] == "error" and texts[-1]["message"] == "Pedido de ventana desconocido"
     assert streamer.closed and windows.released == 1
+
+
+def test_streamer_reports_a_closed_window_and_pauses_when_hidden():
+    streamer, out, windows, captures = make_streamer([rgb(8, 4)])
+    streamer.handle({"t": "open", "window": "7"})
+    streamer.handle({"t": "pause"})
+    assert streamer.paused
+    streamer.handle({"t": "resume"})
+    assert not streamer.paused
+    windows.alive = False
+    assert streamer.step() is None and streamer.hwnd is None
+    assert json.loads(records(out)[-1][1])["message"] == "Esa ventana de Chrome ya no está disponible"
+    assert captures == []
+
+
+def test_capture_thread_crash_is_reported_and_ends_the_worker():
+    streamer, out, windows, _ = make_streamer([])
+
+    def boom():
+        raise AttributeError("argtypes")
+
+    streamer.step = boom
+    streamer.run_capture()
+    assert streamer.closed
+    assert "AttributeError" in json.loads(records(out)[-1][1])["message"]
+    streamer.run(iter(['{"t": "windows"}']))
+    assert not any(b"Chrome" in payload for _, payload in records(out))  # stdin ya no se atiende

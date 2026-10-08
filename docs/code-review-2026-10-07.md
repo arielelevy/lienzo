@@ -269,3 +269,21 @@ ventana de Meet con video) con parches de 120 a 230 KB.
 Detective: la medida por LAN contra ar-it33940 quedó pendiente porque esa PC desapareció de la red
 («sin ARP») mientras se terminaba el cambio; se registra abajo cuando vuelva. No se certifica
 teclado sostenido ni uso sin monitor.
+
+Code review (skill `code-review`, nivel alto, diez hallazgos, todos corregidos): (1) el keystream
+nuevo cambiaba el formato de `cifrar` sin versión y una PC sin actualizar no podía abrir secretos
+ni el modo por pestañas: `cifrar` vuelve al formato HMAC por bloque (con XOR de enteros, que era el
+costo grande) y SHAKE-256 queda solo en `sellar`/`abrir`, con subclaves `-v2`, que ya exigen la
+capacidad `browser.stream`; (2) cerrar la ventana vista terminaba en error fatal: el worker avisa
+«ya no está disponible» y el visor relee el catálogo y abre la que quede por el mismo canal;
+(3) el hilo de captura moría en silencio ante una excepción no prevista: ahora cualquier
+excepción se informa, cierra la sesión y el bucle de stdin termina; (4) una solapa oculta seguía
+haciendo capturar a la otra PC: pause/resume por `visibilitychange`; (5) en modo pestañas un 409
+pasajero del worker (pegado largo, diálogo) tiraba toda la vista: se reintenta a los 300 ms y el
+intervalo pasa a 100 ms; (6) cambiar de ventana abría otro canal y otro worker y podía agotar las
+4 sesiones: el socket es independiente de la ventana y se manda `open` por el mismo; (7) y (8)
+código duplicado: `drenar_stderr`/`cerrar_worker` compartidos en `browser_remote.py` y
+`_origin_matches` para `_csrf_ok` y el WebSocket; (9) `fit` cuadro a cuadro peleaba con quien
+maximiza allá: solo al abrir o cambiar de tamaño; (10) docstring de `secretos` actualizado.
+Después de las correcciones: ruff limpio, tsc, eslint y build limpios, 4 pruebas de interfaz de
+Chrome pasan, canal local a 30 cuadros/s.
