@@ -72,6 +72,8 @@ export interface SendBody {
   copycat?: boolean;
   /** con copycat, `false` deja a `from` trabajando ("Duplicar"); si no, recibe un Esc y queda stopped */
   stop_origin?: boolean;
+  /** «Autorizar y que reintente»: la PC dueña anota lo autorizado y deja de mostrar el aviso */
+  autoriza_denegado?: boolean;
 }
 
 export interface SendResult {

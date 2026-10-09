@@ -64,6 +64,7 @@ from sessions import (
     answer_coda_ask,
     answer_dialog,
     answer_pending,
+    autorizar_denegado,
     clean_attachments,
     coda_viva,
     consume_events,
@@ -882,7 +883,12 @@ def sin_validar(d: dict) -> None:
 def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     """POST /sessions/<id>/send: inyecta el texto en la consola. La flecha y copycat son del
     tablero (envio_del_tablero): la PC duena solo teclea."""
-    return send_to_session(s, d.get("text", ""), d.get("attachments") or [])
+    code, res = send_to_session(s, d.get("text", ""), d.get("attachments") or [])
+    if code == 200 and d.get("autoriza_denegado") is True:
+        # «Autorizar y que reintente»: corre en la PC duena (el cuerpo viaja entero), que es la
+        # que relee la transcripcion y volveria a poner el aviso
+        autorizar_denegado(s)
+    return code, res
 
 
 def validar_native(d: dict) -> tuple[int, dict] | None:

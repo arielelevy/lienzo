@@ -32,6 +32,21 @@ test("un permiso denegado por una regla se ve en la tarjeta con su comando", asy
   await expect(bloque).toContainText("git push --force");
 });
 
+test("«Autorizar y que reintente» le avisa a la PC dueña que lo autorizó, para que deje de mostrarlo", async ({ page }) => {
+  const lista = sesiones();
+  lista[0] = { ...lista[0], last_denied: { tool: "Bash", detalle: "node cdp.mjs click", motivo: "auto mode", fuente: "transcript" } };
+  await abrirTablero(page, lista);
+  let cuerpo: Record<string, unknown> | undefined;
+  await page.route(`**/sessions/${lista[0].session_id}/send`, async route => {
+    cuerpo = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"chars":10}' });
+  });
+  await page.locator(`.card[data-sid="${lista[0].session_id}"] .needs.denied`).getByRole("button", { name: "Autorizar y que reintente" }).click();
+  await expect.poll(() => cuerpo).toBeTruthy();
+  expect(cuerpo).toMatchObject({ autoriza_denegado: true, attachments: [] });
+  expect(String(cuerpo!.text)).toContain("node cdp.mjs click");
+});
+
 test("si el auto-aprobar vio el diálogo y no lo contesta, la tarjeta dice por qué", async ({ page }) => {
   const lista = sesiones();
   lista[0] = {

@@ -50,9 +50,9 @@ export function useCardActions(s: Session, toast: ToastFn) {
       return decision === "allow" ? "Permitido en su terminal" : "Denegado en su terminal";
     }, failMsg("contestar"));
 
-  const quickSend = (text: string) =>
+  const quickSend = (text: string, extra: { autoriza_denegado?: boolean } = {}) =>
     act(async () => {
-      const r = await sessionsApi.send(s.session_id, { text, attachments: [] });
+      const r = await sessionsApi.send(s.session_id, { text, attachments: [], ...extra });
       return `Enviado (${r.chars} caracteres)`;
     }, failMsg("enviar"));
 
@@ -64,7 +64,7 @@ export function useCardActions(s: Session, toast: ToastFn) {
     // la tarjeta no mostraba (un rm -r detras de una suma inofensiva, 2026-10-04)
     const lista = d.todas && d.todas.length > 1 ? d.todas : [d];
     const que = lista.map((x, i) => `${lista.length > 1 ? `(${i + 1}) ` : ""}${x.detalle ? `${x.tool} ${x.detalle}` : x.tool}`).join("; ");
-    void quickSend(`El humano autoriza lo que se te denegó: ${que}. Reintentá sólo eso; si la regla te lo vuelve a frenar, avisame y no insistas.`);
+    void quickSend(`El humano autoriza lo que se te denegó: ${que}. Reintentá sólo eso; si la regla te lo vuelve a frenar, avisame y no insistas.`, { autoriza_denegado: true });
   };
 
   // estrella de coordinadora: a lo sumo una por repo; recibe los avisos "cuando termine" del

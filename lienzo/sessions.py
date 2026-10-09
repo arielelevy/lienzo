@@ -834,7 +834,38 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
         set_state(s, "termino" if t.get("ended") else "corriendo")
 
 
+def _par_denegado(x: dict) -> list:
+    return [x.get("tool"), x.get("detalle") or ""]
+
+
+def autorizar_denegado(s: dict) -> None:
+    """El humano autorizo desde el tablero lo que se le denego («Autorizar y que reintente»): la
+    tarjeta lo anota y deja de mostrarlo. Sin esto, el aviso volvia en cada relectura del mismo turno,
+    porque el mensaje de autorizacion entra en medio del turno y no hay pedido nuevo que lo limpie
+    (medido el 2026-10-09 en ar-it33940). Vale hasta el proximo pedido (hook_prompt_submit)."""
+    with lock:
+        d = s.get("last_denied")
+        if not d:
+            return
+        ok = [list(p) for p in s.get("denied_ok") or []]
+        for x in d.get("todas") or [d]:
+            if _par_denegado(x) not in ok:
+                ok.append(_par_denegado(x))
+        s["denied_ok"] = ok[-32:]
+        s["last_denied"] = None
+        touch(s)
+
+
 def set_denied(s: dict, d: dict) -> None:
+    ok = s.get("denied_ok") or []
+    if ok:
+        # lo ya autorizado no se vuelve a mostrar; lo nuevo del mismo turno, si
+        todas = [x for x in d.get("todas") or [d] if _par_denegado(x) not in ok]
+        if not todas:
+            return
+        if _par_denegado(d) in ok:
+            d = {**d, **next((x for x in reversed(todas) if x.get("grave")), todas[-1])}
+        d = {**d, "todas": todas, "n": len(todas)} if d.get("todas") else d
     """Marca en la tarjeta el ultimo permiso DENEGADO (por regla, politica o clasificador). Solo si
     es nuevo: la misma denegacion releida de la transcripcion no se vuelve a anunciar."""
     clave = (
@@ -1136,6 +1167,7 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
     set_state(s, "corriendo")
     s["stopped_by"] = None  # volvio a trabajar: la marca de detenida ya no cuenta
     s["last_denied"] = None  # pedido nuevo: lo denegado antes ya se resolvio o se descarto
+    s["denied_ok"] = None  # y lo autorizado tambien: una denegacion en el turno nuevo es nueva
     # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
     s["prompt_id"] = ev.get("prompt_id")
     s["prompt_ts"] = s["last_event_ts"]
