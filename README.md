@@ -47,7 +47,9 @@ o el traslado crearía un bucle de informes, aparece un error de traspaso; el te
 se reenvía. «Duplicar» conserva a la original trabajando y agrega el informe de vuelta.
 
 Un clic derecho en el área libre del tablero abre «Lanzar CLI»: elegís un proyecto en curso,
-PC y agente. Usa la carpeta de ese proyecto en la PC elegida. «Otra carpeta…» permite abrir
+PC y agente. El Lienzo de destino lanza el proceso, sin exigir una sesión activa previa.
+Usa la carpeta conocida del proyecto en esa PC; si todavía no la conoce, permite indicarla.
+«Otra carpeta…» permite abrir
 un proyecto nuevo dentro de las carpetas permitidas por esa PC.
 
 ## Memoria por proyecto

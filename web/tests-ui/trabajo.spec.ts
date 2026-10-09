@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { SID, abrirTablero } from "./tablero-fijo";
+import { SID, abrirTablero, sesiones } from "./tablero-fijo";
 
 test("área libre permite lanzar CLI y conserva el formulario si falla", async ({ page }) => {
   await abrirTablero(page);
@@ -51,6 +51,29 @@ test("lanzamiento elige proyecto activo y conserva su carpeta en la PC elegida",
   await expect(dialog.getByLabel("Título", { exact: true })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Lanzar", exact: true }).click();
   expect(payload).toMatchObject({ cwd: "D:\\Apps\\lienzo", title: "lienzo", agent: "codex" });
+});
+
+test("otra PC permite lanzar sin sesión activa y nunca reutiliza la carpeta local", async ({ page }) => {
+  await abrirTablero(page, sesiones(), [
+    { pc_id: "pcA", name: "Local", color: "#12B886", alive: true, last_seen: new Date().toISOString(), local: true, health: null },
+    { pc_id: "pcB", name: "Remota", color: "#82C91E", alive: true, last_seen: new Date().toISOString(), local: false, health: null },
+  ]);
+  let payload: Record<string, unknown> | undefined;
+  await page.route("**/sessions/launch", async route => {
+    payload = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+  });
+  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
+  await page.getByRole("menuitem", { name: "Lanzar CLI…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Lanzar CLI", exact: true });
+  await dialog.getByLabel("PC", { exact: true }).selectOption("pcB");
+  await expect(dialog.getByLabel("Carpeta", { exact: true })).toHaveValue("");
+  await expect(dialog.getByRole("button", { name: "Lanzar", exact: true })).toBeDisabled();
+  await dialog.getByLabel("Proyecto", { exact: true }).selectOption({ label: "demo" });
+  await expect(dialog.getByLabel("PC", { exact: true })).toHaveValue("pcB");
+  await dialog.getByLabel("Carpeta", { exact: true }).fill("E:/Repos/demo");
+  await dialog.getByRole("button", { name: "Lanzar", exact: true }).click();
+  expect(payload).toMatchObject({ pc: "pcB", cwd: "E:/Repos/demo", title: "demo", agent: "codex" });
 });
 
 test("copiar trabajo, editarlo y reintentar un envío fallido", async ({ page }) => {

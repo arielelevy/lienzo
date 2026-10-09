@@ -21,8 +21,8 @@ export function Launch({ peers, sessions, onClose, toast }: {
   const active = sessions.filter(s => s.alive && !s.stopped_by && s.cwd);
   const projectKey = (s: Session) => s.repo_key || s.repo || s.cwd!;
   const projects = [...new Map(active.map(s => [projectKey(s), s.repo || s.cwd!] as const))];
-  const source = active.find(s => projectKey(s) === project && (s.pc || localPc) === pc);
-  const directory = project ? source?.cwd ?? "" : cwd.trim();
+  const source = [...active, ...sessions].find(s => s.cwd && projectKey(s) === project && (s.pc || localPc) === pc);
+  const directory = project && source ? source.cwd! : cwd.trim();
   const unavailable = !!pc && !peers.some(p => p.pc_id === pc && p.alive);
   const launch = async () => {
     if (sending.current || !directory || unavailable) return;
@@ -31,7 +31,7 @@ export function Launch({ peers, sessions, onClose, toast }: {
     setError("");
     try {
       const result = await api.post<{ ok: boolean; error?: string }>("/sessions/launch", {
-        cwd: directory, title: project ? source?.repo || "" : "", agent, ...(pc ? { pc } : {}),
+        cwd: directory, title: project ? projects.find(([key]) => key === project)?.[1] || "" : "", agent, ...(pc ? { pc } : {}),
       });
       if (!result.ok) throw new Error(result.error || "No se pudo lanzar la CLI");
       toast?.("CLI lanzada");
@@ -46,23 +46,19 @@ export function Launch({ peers, sessions, onClose, toast }: {
       <div className="launch-heading"><h2>Lanzar CLI</h2><button type="button" className="icon" aria-label="Cerrar lanzamiento" disabled={busy} onClick={onClose}>×</button></div>
       <label>Proyecto<select autoFocus aria-label="Proyecto" disabled={busy} value={project} onChange={e => {
         const next = e.target.value;
-        setProject(next); setError("");
-        if (next && !active.some(s => projectKey(s) === next && (s.pc || localPc) === pc)) {
-          const first = active.find(s => projectKey(s) === next && peers.some(p => p.pc_id === (s.pc || localPc) && p.alive));
-          if (first) setPc(first.pc || localPc);
-        }
+        setProject(next); setCwd(""); setError("");
       }}>
         <option value="">{projects.length ? "Otra carpeta…" : "Nueva carpeta"}</option>
         {projects.map(([key, name]) => <option key={key} value={key}>{name}</option>)}
       </select></label>
-      <label>PC<select aria-label="PC" disabled={busy} value={pc} onChange={e => setPc(e.target.value)}>
+      <label>PC<select aria-label="PC" disabled={busy} value={pc} onChange={e => { setPc(e.target.value); setCwd(""); setError(""); }}>
         {!peers.length && <option value="">Esta PC</option>}
-        {peers.map(p => <option key={p.pc_id} value={p.pc_id} disabled={!p.alive || (!!project && !active.some(s => projectKey(s) === project && (s.pc || localPc) === p.pc_id))}>{p.name}</option>)}
+        {peers.map(p => <option key={p.pc_id} value={p.pc_id} disabled={!p.alive}>{p.name}</option>)}
       </select></label>
       <label>Agente<select aria-label="Agente" disabled={busy} value={agent} onChange={e => setAgent(e.target.value as Agent)}>
         {agentIds.map(id => <option key={id} value={id}>{AGENTS[id].label}</option>)}
       </select></label>
-      {!project && <label>Carpeta<input aria-label="Carpeta" required disabled={busy} value={cwd} onChange={e => setCwd(e.target.value)} /></label>}
+      {(!project || !source) && <label>Carpeta{project && pc ? ` en ${peers.find(p => p.pc_id === pc)?.name || "la PC elegida"}` : ""}<input aria-label="Carpeta" required disabled={busy} value={cwd} onChange={e => setCwd(e.target.value)} /></label>}
       {error && <p role="alert">{error}</p>}
       {unavailable && <p role="alert">La PC elegida no está disponible.</p>}
       <div className="launch-actions"><button type="button" disabled={busy} onClick={onClose}>Cancelar</button>
