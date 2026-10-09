@@ -734,6 +734,32 @@ def _coda_ts(ms) -> str | None:
         return None
 
 
+# UTF-8 leido como Windows-1252: «í» queda «Ã» + guion invisible, «—» queda «â€”». CODA guardo asi
+# los turnos de una sesion de ar-it33940 el 2026-10-09 (los anteriores de la misma sesion, bien)
+_MOJIBAKE_RE = re.compile("[ÂÃâð][\u0080-¿Œ-™]")
+
+
+def _byte_cp1252(c: str) -> int:
+    try:
+        b = c.encode("cp1252")
+    except UnicodeEncodeError:
+        if ord(c) < 256:  # los 5 huecos de cp1252 (0x81, 0x8d...) pasan tal cual
+            return ord(c)
+        raise
+    return b[0]
+
+
+def reparar_mojibake(texto: str) -> str:
+    """El texto original si no tiene la marca del doble decodificado o si no vuelve a ser UTF-8
+    valido entero: todo o nada, para no tocar un texto sano que tenga una «Ã» de verdad."""
+    if not texto or not _MOJIBAKE_RE.search(texto):
+        return texto
+    try:
+        return bytes(_byte_cp1252(c) for c in texto).decode("utf-8")
+    except UnicodeError, ValueError:
+        return texto
+
+
 def parse_coda(path: str, session_id: str | None, max_rows: int = CODA_ROWS) -> dict:
     import sqlite3  # solo CODA lo necesita
 
@@ -757,6 +783,7 @@ def parse_coda(path: str, session_id: str | None, max_rows: int = CODA_ROWS) -> 
     cur: dict | None = None
     for role, content, parent, created in rows:
         ts = _coda_ts(created)
+        content = reparar_mojibake(content) if isinstance(content, str) else content
         if role == "user":
             text = content or ""
             if text.startswith(("[CODA SYSTEM MESSAGE]", "[Request interrupted")) or is_system_prompt(text):

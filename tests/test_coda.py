@@ -576,3 +576,17 @@ def test_un_permiso_cuyo_inicio_de_turno_quedo_fuera_de_la_ventana_igual_se_ve(t
     monkeypatch.setattr(coda, "home", lambda: str(tmp_path))
     act = coda.activity(77)
     assert act is not None and act["running"] and act["asking"]["tool"] == "bash"
+
+
+def test_texto_de_coda_doble_decodificado_se_repara():
+    """UTF-8 leido como cp1252 en coda.db (ar-it33940, 2026-10-09): se repara entero o no se toca."""
+    from lienzo import server  # noqa: F401, I001
+    import transcripts
+
+    roto = "Revisi\xc3\xb3n completa \xe2\u20ac\u201d hab\xc3\xada instalado \xe2\u0153\u2026 \xc3\u2014"
+    assert transcripts.reparar_mojibake(roto) == "Revisión completa — había instalado ✅ ×"
+    sano = "Revisión completa — había instalado ✅"
+    assert transcripts.reparar_mojibake(sano) == sano
+    # una «Ã» de verdad seguida de algo que no arma UTF-8 valido: queda igual
+    assert transcripts.reparar_mojibake("ÃŽ y → flecha") == "ÃŽ y → flecha"
+    assert transcripts.reparar_mojibake("") == ""

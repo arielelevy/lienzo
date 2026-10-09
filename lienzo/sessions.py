@@ -1210,7 +1210,8 @@ def hook_stop(s: dict, ev: dict) -> None:
         set_state(s, "termino")
         if ev.get("last_assistant_message"):
             # entero, igual que turn_say: el recorte se lo hace la tarjeta por CSS
-            s["last_reply"] = (ev["last_assistant_message"] or "").strip()
+            texto = (ev["last_assistant_message"] or "").strip()
+            s["last_reply"] = transcripts.reparar_mojibake(texto) if s["agent"] == "coda" else texto
     s["pending_id"] = None
 
 
