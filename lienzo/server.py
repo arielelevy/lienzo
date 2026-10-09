@@ -44,6 +44,7 @@ import launch
 import mirror
 import pairing
 import pantalla_coda
+import recientes
 import red
 import remote_run
 import restore
@@ -964,7 +965,9 @@ def remote_hand_over(sid: str, origin: dict | None, d: dict, res: dict) -> None:
     if d.get("stop_origin") is not False:
         code, out = accion_retarget({"old": origin["session_id"], "new": sid, "work": True}, desde_tablero=True)
         if code != 200 or out.get("unreachable"):
-            res["handover_error"] = out.get("error") or f"no se pudieron trasladar las conexiones en {out['unreachable']}"
+            res["handover_error"] = (
+                out.get("error") or f"no se pudieron trasladar las conexiones en {out['unreachable']}"
+            )
             return
         if origin.get("coordinator"):
             code, out = atender_accion("PUT", sid, "coordinator", {"on": True}, desde_tablero=True)
@@ -1395,6 +1398,11 @@ class Handler(JsonHandler):
                 return self._enroll()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
+            if parts == ["recientes"]:
+                # carpetas abiertas estos dias en cualquier PC (recientes.py): «Lanzar CLI» las
+                # ofrece grisadas debajo de las carpetas de launch_roots; ?pc= filtra por una PC
+                pc = (self.query.get("pc") or [""])[0]
+                return self._json(200, recientes.listar(pc or None))
             if parts == ["restaurables"]:
                 # el cuerpo sigue siendo la lista (contrato con el front y con coordinar.py); las PCs
                 # que no contestaron van en un header, para no confundirlas con «no hay nada» (S14)

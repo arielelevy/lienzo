@@ -17,6 +17,7 @@ from collections import deque
 from collections.abc import Callable
 
 import federation
+import recientes
 import red
 
 HEALTH_EVERY_S = 15.0
@@ -197,6 +198,12 @@ class Mirror:
             else:
                 return  # tipo desconocido: no hay nada que aplicar, pero last_seen ya se toco
             snapshot_ids = set(pm.sessions) if t == "snapshot" else None
+            # carpetas abiertas estos dias en esa PC (recientes.py), fuera del lock
+            para_recientes = recientes.campos(
+                pm.sessions.values() if t == "snapshot" else [s] if t == "session" else []
+            )
+        if para_recientes:
+            recientes.recordar_tarjetas(para_recientes, pc=pm.pc_id)
         self.on_change()
         if t == "snapshot":
             self.on_snapshot(pm.pc_id, snapshot_ids)

@@ -389,6 +389,7 @@ export async function instalarTablero(page: Page, sessionList: Session[] = sesio
     if (p === "/config") return route.fulfill(json({ auto_continue: false }));
     if (p === "/peers") return peers ? route.fulfill(json(peers)) : route.fulfill(json([]));
     if (p === "/peers/lan") return route.fulfill(json([]));
+    if (p === "/recientes") return route.fulfill(json([])); // Lanzar CLI: carpetas abiertas estos días
     if (p === "/sessions") return route.fulfill(json(board.sessions));
     if (p === "/pending") return route.fulfill(json(board.pending));
     if (p === "/links") return route.fulfill(json(board.links));

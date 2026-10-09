@@ -53,6 +53,73 @@ test("lanzamiento elige proyecto activo y conserva su carpeta en la PC elegida",
   expect(payload).toMatchObject({ cwd: "D:\\Apps\\lienzo", title: "lienzo", agent: "codex" });
 });
 
+test("lanzamiento lista arriba las abiertas y permitidas de la PC y, grisadas abajo, las usadas estos días", async ({ page }) => {
+  const hoy = new Date();
+  const hace = (dias: number) => new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - dias, 10).toISOString();
+  // solo las tarjetas de lienzo: las demás carpetas del tablero fijo también saldrían como «ahora»
+  await abrirTablero(page, sesiones().filter(s => s.repo === "lienzo"), [
+    { pc_id: "pcA", name: "Local", color: "#12B886", alive: true, last_seen: hoy.toISOString(), local: true,
+      health: { launch_roots: ["D:\\Apps\\chess", "D:\\Apps\\lienzo"], mem_free_gb: null, cpu_pct: null, temp_c: null } },
+    { pc_id: "pcB", name: "Remota", color: "#82C91E", alive: true, last_seen: hoy.toISOString(), local: false,
+      health: { launch_roots: ["E:\\Repos"], mem_free_gb: null, cpu_pct: null, temp_c: null } },
+  ]);
+  await page.route("**/recientes*", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
+    { cwd: "D:/Apps/lienzo", repo: "lienzo", pc: "pcA", last: hace(0) }, // ya está arriba: no se repite
+    { cwd: "D:\\Apps\\chess\\motor", repo: "motor", pc: "pcA", last: hace(3) },
+    { cwd: "C:\\Users\\x\\scratch", repo: "scratch", pc: "pcA", last: hace(1) }, // fuera de las permitidas: no se ofrece
+    { cwd: "E:\\Repos\\demo", repo: "demo", pc: "pcB", last: hace(0) },
+  ]) }));
+  let payload: Record<string, unknown> | undefined;
+  await page.route("**/sessions/launch", async route => {
+    payload = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+  });
+  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
+  await page.getByRole("menuitem", { name: "Lanzar CLI…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Lanzar CLI", exact: true });
+  const proyecto = dialog.getByLabel("Proyecto", { exact: true });
+  // arriba la abierta ahora y después las permitidas, sin repetir lienzo
+  await expect(proyecto.locator("optgroup[label='Carpetas'] option")).toHaveText(["lienzo", "chess"]);
+  const usadas = proyecto.locator("optgroup.launch-recientes");
+  await expect(usadas).toHaveAttribute("label", "Usadas estos días");
+  await expect(usadas.locator("option")).toHaveText(["motor · hace 3 días"]);
+  // grisadas: el color del grupo es el apagado de la tarjeta, no el del texto normal
+  const colores = await usadas.evaluate(g => [getComputedStyle(g).color, getComputedStyle(g.closest("select")!).color]);
+  expect(colores[0]).not.toBe(colores[1]);
+  await proyecto.selectOption({ label: "motor · hace 3 días" });
+  await expect(dialog.getByLabel("Carpeta", { exact: true })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Lanzar", exact: true }).click();
+  expect(payload).toMatchObject({ pc: "pcA", cwd: "D:\\Apps\\chess\\motor", title: "motor", agent: "codex" });
+});
+
+test("lanzamiento en otra PC muestra sus carpetas y sus recientes, no los de acá", async ({ page }) => {
+  const hoy = new Date().toISOString();
+  await abrirTablero(page, sesiones().filter(s => s.repo === "lienzo"), [
+    { pc_id: "pcA", name: "Local", color: "#12B886", alive: true, last_seen: hoy, local: true,
+      health: { launch_roots: ["D:\\Apps\\lienzo"], mem_free_gb: null, cpu_pct: null, temp_c: null } },
+    { pc_id: "pcB", name: "Remota", color: "#82C91E", alive: true, last_seen: hoy, local: false,
+      health: { launch_roots: ["E:\\Repos"], mem_free_gb: null, cpu_pct: null, temp_c: null } },
+  ]);
+  await page.route("**/recientes*", route => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([
+    { cwd: "D:\\Apps\\lienzo\\web", repo: "web", pc: "pcA", last: hoy },
+    { cwd: "E:\\Repos\\demo", repo: "demo", pc: "pcB", last: hoy },
+  ]) }));
+  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
+  await page.getByRole("menuitem", { name: "Lanzar CLI…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Lanzar CLI", exact: true });
+  const proyecto = dialog.getByLabel("Proyecto", { exact: true });
+  await expect(proyecto.locator("optgroup[label='Carpetas'] option")).toHaveText(["lienzo"]);
+  await expect(proyecto.locator("optgroup.launch-recientes option")).toHaveText(["web · hoy"]);
+  await dialog.getByLabel("PC", { exact: true }).selectOption("pcB");
+  await expect(proyecto.locator("optgroup[label='Carpetas'] option")).toHaveText(["Repos"]);
+  await expect(proyecto.locator("optgroup.launch-recientes option")).toHaveText(["demo · hoy"]);
+  // los proyectos activos acá que esa PC no conoce siguen al final, con carpeta a mano
+  await expect(proyecto.locator("optgroup[label='En otras PCs'] option").first()).toHaveText("lienzo");
+  // esa PC no tiene lienzo: queda elegida su primera carpeta, sin pedir la ruta a mano
+  await expect(proyecto.locator("option:checked")).toHaveText("Repos");
+  await expect(dialog.getByLabel("Carpeta", { exact: true })).toHaveCount(0);
+});
+
 test("otra PC permite lanzar sin sesión activa y nunca reutiliza la carpeta local", async ({ page }) => {
   await abrirTablero(page, sesiones(), [
     { pc_id: "pcA", name: "Local", color: "#12B886", alive: true, last_seen: new Date().toISOString(), local: true, health: null },

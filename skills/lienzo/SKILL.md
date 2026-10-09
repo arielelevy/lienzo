@@ -20,6 +20,13 @@ Cuando el usuario pide "lanzá N sub CLI" pide terminales reales, que son las qu
 Los subagentes de la herramienta Agent no aparecen en el tablero: sirven para una consulta acotada,
 no para repartir trabajo.
 
+**Para hablarle a otra sesión, el lienzo siempre, también entre PCs.** Encargo con
+`POST /sessions/<sid>/send` (con `from` y `link_to`, para que quede la flecha) y la vuelta con una
+regla `on_stop` cuyo `text` lleve `{respuesta}`. `SendMessage` por el canal nativo no deja rastro en
+el tablero: el usuario lo pidió explícito el 2026-10-09 («usá lienzo, armá la conexión»). Un
+encargo a otra PC dice qué no tocar (git pull, reiniciar el server, configs de seguridad) y que lo
+que pida permiso se lo informe al usuario en vez de forzarlo.
+
 ## Varias PCs
 
 Con dos a cuatro PCs de la misma LAN emparejadas (`peers.json`), un solo tablero ve las tarjetas de
@@ -108,6 +115,16 @@ mandarle el encargo a una tarjeta recién lanzada, mirar `GET /sessions/<sid>/sc
 diálogo y `dialog` vino vacío, el lienzo no lo reconoció y el Enter del encargo elige la opción
 marcada, que es «No, exit»: la sesión muere como `pid-N`, sin `session_id` ni nada que restaurar
 (medido el 2026-10-04 con la variante sin números, «> No, exit / Yes, I trust this folder»).
+
+Lanzar, encargar y cablear, en ese orden y en el mismo turno (el usuario lo marcó el 2026-10-09:
+«lanzaste el CLI pero no le mandaste el encargo»):
+
+1. `POST /sessions/launch`. Para `claude` la respuesta trae `native_name`, que sale del `title`.
+2. La tarjeta aparece en unos segundos con `title` vacío y en `termino`: buscarla por `pc`, `agent`
+   y `started` posterior al lanzamiento.
+3. Mirar su pantalla por el diálogo de confianza (arriba) y mandarle el encargo con `send`.
+4. Recién entonces la regla `on_stop` con `{respuesta}` y `repeat: true`. Antes del encargo, el
+   primer `Stop` puede ser el de la sesión vacía, y con `max_fires: 1` se gasta ahí.
 
 ### Mandar un encargo a otra PC y saber si llegó
 
@@ -204,7 +221,7 @@ explícito**, o los acentos se rompen. Lo que se usa para repartir:
 | `PUT /sessions/<sid>/title` | renombrarla |
 | `PUT /sessions/<sid>/coordinator` | `{on: true}`. Una coordinadora por repo en toda la federación, independientemente de la PC |
 | `POST /sessions/<sid>/send` | escribirle, aunque esté oculta (local o remota, transparente). Con `from` y `link_to` dibuja la flecha |
-| `POST /rules` | `{kind:"on_stop", from, to, text, repeat:true, max_fires:N}`: el informe viaja solo al cerrar cada turno |
+| `POST /rules` | `{kind:"on_stop", from, to, text, repeat:true, max_fires:N}`: al cerrar cada turno le manda `text` a `to`. **El informe viaja solo si `text` lleva `{respuesta}`** (la última respuesta entera, de la transcripción); sin el marcador llega únicamente el encabezado (medido el 2026-10-09). Otros marcadores: `{pedido}`, `{titulo}`, `{repo}`, `{agente}` |
 | `GET /pending`, `POST /pending/<id>` | permisos, `{decision:"allow"\|"deny"}` |
 | `POST /rescan` | barrido de procesos ahora |
 | `GET /peers` | las PCs de la federación, la propia primero (`local: true`), con `alive` y `health` (memoria, CPU, temperatura) |
@@ -421,6 +438,13 @@ Cuando la memoria se termina, en este orden y sin matar el trabajo de nadie:
 
 ## Trampas medidas
 
+- **Las preguntas de CODA (`ask_user`) no se veían en el tablero** hasta el 2026-10-09: con
+  auto-aprobar prendido el hook las dejaba pasar como un permiso más y la tarjeta seguía en
+  `corriendo`. Ahora la tarjeta pasa a «Te hace una pregunta» con el texto, y se contesta en la
+  terminal. Una PC con el lienzo anterior sigue sin mostrarlas: actualizarla (`git pull` y reinicio).
+- **«Lanzar CLI» solo ofrece carpetas dentro de `launch_roots` de la PC elegida**, porque el server
+  rechaza las demás. Con `launch_roots` puntuales (una por proyecto) la lista «Usadas estos días»
+  casi no tiene nada que agregar; con una raíz amplia (`D:/apps`) muestra cada proyecto usado.
 - **Después de un `/compact` la tarjeta queda en `corriendo` aunque la sesión ya esté quieta**
   (medido el 2026-09-26: tres sesiones seguían «corriendo» minutos después de compactar y en la
   terminal se veían inactivas). No esperar a que el estado cambie: dar unos segundos y mandar el encargo; llega

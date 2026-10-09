@@ -20,6 +20,7 @@ import backend
 import coda
 import conocimiento
 import identity
+import recientes
 import restore
 import screen
 import state
@@ -1228,6 +1229,21 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
         set_state(s, "corriendo")
     if s["state"] == "corriendo":
         s["last_reply"] = f"usando {tool}" + (" (subagente)" if sub else "")
+    if name in CODA_ASK_TOOLS and not sub:
+        # ask_user es una PREGUNTA, no un permiso: con auto-aprobar prendido el hook la deja pasar
+        # (la herramienta tiene que correr para preguntar) y nadie marcaba la tarjeta; CODA la
+        # preguntaba en su terminal y el tablero seguia en corriendo (medido el 2026-10-09 en
+        # ar-it33940: dos ask_user AUTO-APROBADOS sin «te necesita»)
+        pregunta = inp.get("question") or inp.get("prompt") or inp.get("message") or ""
+        detalle = (
+            short(str(pregunta).strip(), 300)
+            if pregunta
+            else short(json.dumps(inp, ensure_ascii=False), 300)
+            if inp
+            else ""
+        )
+        set_needs(s, {"kind": "question", "tool": tool, "detail": detalle, "where": "terminal", "via": "tool"})
+        s["needs"]["coda_at"] = f"tool:{ev.get('host_ts') or now()}"
     if name in CODA_DIALOG_TOOLS and not sub:
         # estas herramientas abren SIEMPRE un dialogo «Approval Required» y no dejan un `ask` en el
         # log de coda: sin esto la tarjeta seguia en corriendo y nadie veia el pedido (medido el
@@ -1248,6 +1264,8 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
 
 # herramientas de coda que siempre piden aprobacion en su terminal, con lo que piden
 CODA_DIALOG_TOOLS = {"propose_policy": "propone una regla de permisos permanente:"}
+# herramientas de coda que le preguntan algo al usuario en su terminal (no un permiso)
+CODA_ASK_TOOLS = frozenset({"ask_user", "askuser", "ask_user_question"})
 
 CODA_SENT_RETRY_S = (
     20  # tras contestar, si el permiso sigue abierto pasado este tiempo, la tarjeta vuelve a mostrar los botones
@@ -1300,11 +1318,19 @@ def coda_log_activity(s: dict) -> bool:
         detail = CODA_ASK_CAUSES.get(ask["cause"] or "", ask["cause"] or "")
         detail = " · ".join(x for x in (detail, "de un subagente" if ask["sub"] else "") if x)
         if needs.get("kind") != "permission" or needs.get("coda_at") != ask["at"]:
+            previa = needs if needs.get("kind") == "question" else None
             set_needs(s, {"kind": "permission", "tool": ask["tool"], "detail": detail, "where": "terminal"})
             s["needs"]["coda_at"] = ask["at"]
+            if previa is not None and str(ask.get("tool") or "").lower() in CODA_ASK_TOOLS:
+                # sin auto-aprobar, ask_user pide permiso antes de preguntar: se guarda la pregunta
+                # para volver a ella cuando el permiso se conteste (ver el elif de abajo)
+                s["needs"]["pregunta"] = previa
         elif needs.get("where") == "enviado" and time.time() - (needs.get("sent_ts") or 0) > CODA_SENT_RETRY_S:
             # el Enter/Esc no resolvio el permiso (sigue abierto en el log): se devuelven los botones
             s["needs"] = {**needs, "where": "terminal"}
+    elif s["state"] == "te_necesita" and isinstance(needs.get("pregunta"), dict) and act["running"]:
+        # el permiso de ask_user se contesto: ahora CODA muestra la pregunta en su terminal
+        set_needs(s, needs["pregunta"])
     elif s["state"] == "te_necesita" and needs.get("coda_at") and needs.get("via") not in ("tool", "screen"):
         # (el dialogo de una herramienta como propose_policy no figura en el log: lo cierra el
         # proximo PreToolUse o el fin del turno, no la ausencia de un `ask`)
@@ -1890,8 +1916,12 @@ def remember_live_cards() -> None:
                 for s in sessions.values()
                 if s.get("hooked") and s.get("alive") and restore.live_due(s.get("session_id"))
             ]
+            # carpetas abiertas estos dias (recientes.py): con o sin hooks, con debounce adentro
+            con_carpeta = recientes.campos(sessions.values())
         if vivas:
             restore.remember_live(vivas)
+        if con_carpeta:
+            recientes.recordar_tarjetas(con_carpeta)
 
     restore_guard(work)
 

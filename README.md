@@ -143,11 +143,15 @@ dibuja como flecha (las de envío viven 10 minutos).
 
 ### Lanzar una CLI
 
-Un clic derecho en el área libre del tablero abre «Lanzar CLI»: elegís un proyecto en curso, la PC
-y el agente (Claude Code, Codex, Pi, CODA o Kiro). El Lienzo de la PC elegida lanza el proceso en una
-terminal nueva, sin exigir una sesión activa previa, y la tarjeta aparece sola. Usa la carpeta
-conocida del proyecto en esa PC; si todavía no la conoce, permite indicarla. «Otra carpeta…» abre un
-proyecto nuevo dentro de las carpetas permitidas por esa PC (`launch_roots` de su `config.json`).
+Un clic derecho en el área libre del tablero abre «Lanzar CLI»: elegís el proyecto, la PC y el
+agente (Claude Code, Codex, Pi, CODA o Kiro). El selector de proyecto lista arriba las carpetas
+de la PC elegida: primero las que tienen una sesión abierta ahora y después las permitidas
+(`launch_roots` de su `config.json`). Abajo, grisadas y sin repetir las de arriba, van las usadas
+en los últimos 14 días que recuerda el server (`~/.lienzo/recientes.json`, `GET /recientes`), con
+«hoy», «ayer» o «hace N días». Al final van los proyectos que solo conocen otras PCs, a los que hay
+que indicarles la carpeta. El Lienzo de la PC
+elegida lanza el proceso en una terminal nueva, sin exigir una sesión activa previa, y la tarjeta
+aparece sola. «Otra carpeta…» abre un proyecto nuevo dentro de las carpetas permitidas.
 
 ![Lanzar CLI: proyecto, PC y agente](docs/img/lanzar.png)
 

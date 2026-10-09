@@ -479,6 +479,8 @@ body:has(.panel-open) { overflow: hidden; }
 .launch-heading { display: flex; align-items: center; justify-content: space-between; }
 .launch-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .launch-box select { width: 100%; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font: inherit; font-size: 13px; }
+/* las carpetas abiertas estos días van abajo, grisadas, debajo de las carpetas permitidas */
+.launch-box optgroup.launch-recientes, .launch-box optgroup.launch-recientes option { color: var(--dim); }
 .launch-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
 .launch-box [role="alert"] { color: var(--err); }
 .gate-box.connect { width: min(720px, 100%); padding: 16px 0 0; gap: 0; }

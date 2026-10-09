@@ -21,10 +21,14 @@ def _sin_tmux_real(monkeypatch):
 def _restaurar_en_tmp(tmp_path, monkeypatch):
     """Ningun test toca el ~/.lienzo/restaurar.json de verdad: sessions.drop_session y el barrido lo
     escriben solos. test_restore.py usa este mismo archivo temporal."""
+    import recientes
     import restore
 
     monkeypatch.setattr(restore, "path", lambda: str(tmp_path / "restaurar.json"))
     restore._last_live.clear()
+    # lo mismo para ~/.lienzo/recientes.json (recientes.py): lo escriben la liveness y el espejo
+    monkeypatch.setattr(recientes, "path", lambda: str(tmp_path / "recientes.json"))
+    recientes.olvidar_todo()
 
 
 @pytest.fixture(autouse=True)

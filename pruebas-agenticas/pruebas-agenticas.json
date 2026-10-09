@@ -18,7 +18,7 @@
     { "id": "backend-pytest", "comando": ["py", "-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"], "timeoutMs": 300000, "cubre": ["lienzo/", "install.py", "skills/lienzo/"] },
     { "id": "frontend-lint", "comando": ["node", "node_modules/eslint/bin/eslint.js", ".", "--max-warnings=0"], "cwd": "web", "timeoutMs": 120000, "cubre": ["web/src/", "web/tests-ui/"] },
     { "id": "frontend-build", "comando": ["pwsh.exe", "-NoProfile", "-Command", "npm.cmd run build"], "cwd": "web", "timeoutMs": 120000, "cubre": ["web/src/", "web/tsconfig.json", "web/vite.config.ts"] },
-    { "id": "frontend-unit", "comando": ["node", "--test", "src/nl.test.ts", "src/arrows-geometry.test.ts", "src/docs-parse.test.ts"], "cwd": "web", "timeoutMs": 120000, "cubre": ["web/src/nl.ts", "web/src/arrows-geometry.ts", "web/src/docs-parse.ts"] },
+    { "id": "frontend-unit", "comando": ["node", "--test", "src/nl.test.ts", "src/arrows-geometry.test.ts", "src/docs-parse.test.ts", "src/recientes.test.ts"], "cwd": "web", "timeoutMs": 120000, "cubre": ["web/src/nl.ts", "web/src/arrows-geometry.ts", "web/src/docs-parse.ts", "web/src/recientes.ts"] },
     { "id": "frontend-playwright", "comando": ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "tests-ui/playwright.config.ts", "acciones.spec.ts", "autoaprobar.spec.ts", "flechas.spec.ts", "humo.spec.ts", "mover.spec.ts", "pairing.spec.ts", "pcs.spec.ts", "pi.spec.ts", "pregunta.spec.ts", "salud.spec.ts", "seleccion.spec.ts", "tablero.spec.ts", "tarjeta.spec.ts", "trabajo.spec.ts", "--workers", "2"], "cwd": "web", "timeoutMs": 300000, "cubre": ["web/src/"], "evidencia": ["web/node_modules/.playwright-artifacts"] }
   ],
   "mutaciones": []

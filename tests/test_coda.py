@@ -168,6 +168,61 @@ def test_pretooluse_muestra_el_avance_en_la_tarjeta():
     assert s["last_reply"] == "usando grep (subagente)"
 
 
+def test_pretooluse_ask_user_es_una_pregunta_no_un_permiso():
+    """ask_user auto-aprobado por el hook (tiene que correr para preguntar) dejaba la tarjeta en
+    corriendo mientras CODA preguntaba en su terminal (medido el 2026-10-09 en ar-it33940)."""
+    from lienzo import server  # noqa: F401, I001
+    import sessions as ses
+
+    s = ses.new_session(SID, "coda", "hook")
+    s["state"] = "corriendo"
+    ev = {
+        "tool_name": "ask_user",
+        "auto_aprobado": True,
+        "host_ts": "2026-10-09T12:18:38.000-03:00",
+        "tool_input": {"question": "¿Seguimos con Kiro o con Pi?", "options": ["kiro", "pi"]},
+    }
+    ses.coda_tool(s, ev)
+    assert s["state"] == "te_necesita"
+    assert s["needs"]["kind"] == "question"
+    assert s["needs"]["tool"] == "ask_user"
+    assert s["needs"]["detail"] == "¿Seguimos con Kiro o con Pi?"
+    assert s["needs"]["where"] == "terminal" and s["needs"]["via"] == "tool"
+    assert s["needs"]["coda_at"] == "tool:2026-10-09T12:18:38.000-03:00"
+    # la herramienta siguiente es la respuesta ya dada: vuelve a corriendo
+    ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "kiro-cli"}})
+    assert s["state"] == "corriendo" and s["needs"] is None
+    # un subagente que pregunta no le pregunta al usuario
+    ses.coda_tool(s, {"tool_name": "ask_user", "tool_input": {"question": "x"}}, sub=True)
+    assert s["state"] == "corriendo"
+
+
+def test_ask_user_sin_auto_aprobar_vuelve_a_la_pregunta_tras_el_permiso(monkeypatch):
+    """Sin auto-aprobar, el log de CODA muestra el permiso de ask_user despues del PreToolUse: la
+    tarjeta pide el permiso y, contestado, vuelve a la pregunta en vez de pasar a corriendo."""
+    from lienzo import server  # noqa: F401, I001
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    ask = {"cause": None, "tool": "ask_user", "sub": False, "at": "2026-10-09T15:18:39.000Z"}
+    act = {"running": True, "asking": ask, "last_at": None, "last_tool": "ask_user", "tools": 1, "sub": False}
+    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    s = ses.new_session(SID, "coda", "hook")
+    s["pid"], s["state"] = 1, "corriendo"
+    ses.coda_tool(s, {"tool_name": "ask_user", "tool_input": {"question": "¿Kiro o Pi?"}})
+    assert s["needs"]["kind"] == "question"
+    ses.coda_log_activity(s)
+    assert s["needs"]["kind"] == "permission" and s["needs"]["tool"] == "ask_user"
+    act["asking"] = None  # se permitio: el `ask` deja el log
+    ses.coda_log_activity(s)
+    assert s["state"] == "te_necesita"
+    assert s["needs"]["kind"] == "question" and s["needs"]["detail"] == "¿Kiro o Pi?"
+    # la pregunta se contesta en la terminal: la herramienta siguiente vuelve a corriendo
+    ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "kiro-cli"}})
+    assert s["state"] == "corriendo"
+
+
 def test_pretooluse_despues_del_cierre_reabre_el_turno():
     from lienzo import server  # noqa: F401, I001
     import sessions as ses

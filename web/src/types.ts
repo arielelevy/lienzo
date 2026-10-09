@@ -96,6 +96,15 @@ export interface Session {
   repo_key?: string | null;
 }
 
+/** `GET /recientes`: una carpeta donde el tablero vio una sesión viva estos días (recientes.py), con
+ *  la PC dueña y la última vez. «Lanzar CLI» las lista grisadas debajo de las carpetas permitidas. */
+export interface Reciente {
+  cwd: string;
+  repo: string;
+  pc: string;
+  last: string;
+}
+
 /** Salud de una PC, tal como la mide `lienzo/health.py` (memoria, CPU y temperatura de Windows). */
 export interface PeerHealth {
   protocol_version?: number;

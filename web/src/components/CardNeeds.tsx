@@ -41,7 +41,7 @@ export function CardNeeds({ session: s, pending: p, quick, writable, actions, on
         <div className="needs terminal">
           <b>{needsLabel(s.needs)}</b>
           {s.needs.detail && <code>{s.needs.detail}</code>}
-          {s.needs.coda_at && s.needs.where === "terminal" && writable ? (
+          {s.needs.coda_at && s.needs.where === "terminal" && writable && s.needs.kind !== "question" ? (
             // CODA no tiene un hook que espere la respuesta: los botones teclean Enter o Esc en su
             // diálogo, y el server confirma antes en la pantalla que el diálogo siga abierto
             <PermissionButtons onDecide={codaDecide} note="se teclea en su terminal" />
