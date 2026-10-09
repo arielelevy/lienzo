@@ -157,6 +157,19 @@ test("conectar", async ({ page }) => {
   await page.screenshot({ path: `${DESTINO}/conectar.png` });
 });
 
+test("lanzar", async ({ page }) => {
+  await abrir(page);
+  // clic derecho en el vacío de la columna Trabajo: abre el menú del tablero
+  const col = await page.locator(".board .col").first().boundingBox();
+  await page.mouse.click(col!.x + col!.width / 2, col!.y + col!.height - 40, { button: "right" });
+  await page.getByRole("menuitem", { name: "Lanzar CLI…" }).click();
+  await expect(page.getByRole("dialog", { name: "Lanzar CLI" })).toBeVisible();
+  await page.getByRole("combobox", { name: "PC" }).selectOption(NOTEBOOK);
+  await page.getByRole("combobox", { name: "Agente" }).selectOption("claude");
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${DESTINO}/lanzar.png` });
+});
+
 test.describe("celular", () => {
   test.use({ deviceScaleFactor: 3 });
   test("celular", async ({ page }) => {

@@ -2,23 +2,13 @@
 
 Lienzo muestra las sesiones de Claude Code, Codex CLI, Pi CLI, CODA y Kiro V3 que corren en terminales.
 Cada sesión tiene su tarjeta. Desde ahí podés leer la conversación, mandar mensajes y aprobar
-permisos. También pegar capturas con Ctrl+V y conectar sesiones.
-Hasta 4 PCs de la misma LAN comparten el tablero.
+permisos. También pegar capturas con Ctrl+V, conectar sesiones entre sí, lanzar una CLI nueva y
+manejar el Chrome de otra PC. Hasta 4 PCs de la misma LAN comparten el tablero.
 
 Corre en `127.0.0.1:7321`. Lee el historial de cada agente y escribe en su terminal.
 Las terminales y las transcripciones siguen a cargo de los agentes.
 
-Kiro V3 en Windows usa su historial `~/.kiro/sessions/*/sess_*/messages.jsonl`,
-vinculado al PID de su motor mediante el lock de sesión y el proceso CLI padre.
-Sus permisos y los de Codex se muestran como diálogos en las tarjetas; se responden
-con flechas y Enter, verificando antes que el pedido siga abierto. Kiro se lanza
-por su ruta instalada en `%LOCALAPPDATA%/Kiro-Cli` con `--v3` y retoma por `--resume-id`.
-Todas las CLI pueden marcarse como coordinadora mediante las conexiones del tablero.
-
-[Arquitectura y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/)
-
-[Diseño y decisiones de arquitectura](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/)
-
+[Arquitectura, diseño y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/) ·
 [Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](MEJORAS.md)
 
 ![Tablero](docs/img/tablero.png)
@@ -37,6 +27,13 @@ VS Code). El estado, el contenido y los envíos usan estos canales:
 | Contestar un permiso | El hook `PermissionRequest` espera hasta 60 s la respuesta del tablero; si nadie contesta, el prompt aparece en la terminal como siempre. En CODA, Permitir y Denegar se teclean en su diálogo. |
 | Contestar una pregunta | `AskUserQuestion` llega por el mismo hook; la opción elegida vuelve en la decisión. |
 
+Kiro V3 en Windows usa su historial `~/.kiro/sessions/*/sess_*/messages.jsonl`, vinculado al PID
+de su motor mediante el lock de sesión y el proceso CLI padre. Sus permisos y los de Codex se
+muestran como diálogos en las tarjetas; se responden con flechas y Enter, verificando antes que el
+pedido siga abierto. Kiro se lanza por su ruta instalada en `%LOCALAPPDATA%/Kiro-Cli` con `--v3` y
+retoma por `--resume-id`. Todas las CLI pueden marcarse como coordinadora mediante las conexiones
+del tablero.
+
 Una consola que cambia de `session_id` sin cambiar de proceso (un `/clear`, un resume) le pasa sus
 conexiones a la tarjeta nueva.
 
@@ -46,41 +43,12 @@ una copycat. El historial de mensajes conserva sus extremos originales. Si una P
 o el traslado crearía un bucle de informes, aparece un error de traspaso; el texto ya enviado no
 se reenvía. «Duplicar» conserva a la original trabajando y agrega el informe de vuelta.
 
-Un clic derecho en el área libre del tablero abre «Lanzar CLI»: elegís un proyecto en curso,
-PC y agente. El Lienzo de destino lanza el proceso, sin exigir una sesión activa previa.
-Usa la carpeta conocida del proyecto en esa PC; si todavía no la conoce, permite indicarla.
-«Otra carpeta…» permite abrir
-un proyecto nuevo dentro de las carpetas permitidas por esa PC.
-
-## Memoria por proyecto
-
-El menú ⋯ → Memoria permite elegir un proyecto y consultar su briefing, buscar candidatos,
-leer una vista por tema, y ver pendientes y avisos. Las consultas son de lectura; no confirman
-hallazgos ni aceptan reglas automáticamente.
-
-Cada proyecto tiene identidad propia, rondas, encargos e informes con hash y revisión. El
-bloque JSON `conocimiento` del informe se valida entero antes de incorporarse al grafo. Los
-veredictos requieren una coordinadora o una persona y conservan revisión, evidencia y motivo.
-El cierre de ronda aplica sus veredictos y pendientes explícitos en una transacción.
-
-La recuperación combina archivos y temas, BM25 y relaciones del grafo. `preguntar` devuelve
-candidatos paginados con sus referencias; una búsqueda vacía no prueba que algo no exista.
-El aprendizaje cuenta episodios de recurrencia una vez, cuestiona reglas ante episodios
-posteriores a su vigencia y muestra apoyos rechazados y dependencias.
-
-Las funciones de `skills/lienzo/coordinar.py` incluyen `briefing`, `preguntar`, `vista`,
-`veredicto`, `cerrar_ronda`, `pendientes_memoria`, `recurrencia`, `cuestionar` y `lecciones`.
-`preparar_encargo` agrega el briefing actual y la plantilla de conocimiento al texto de un frente.
-La memoria reside en `~/.lienzo/proyectos/<proyecto>/` de la PC que registra los encargos.
-Las transcripciones y bases de conocimiento no se suben a Git ni se replican por hacer pull.
-El diseño detallado está en [v5](docs/propuesta-memoria-2026-10-08/v5.md).
-
 ## Requisitos
 
 - Windows 10/11 (probado de punta a punta). Mac, Linux y WSL van por tmux, ver [Mac, Linux y WSL](#mac-linux-y-wsl).
 - Python 3.14+, sólo biblioteca estándar.
 - Node 24 LTS para compilar la interfaz.
-- Claude Code 2.1+, Codex CLI 0.153+, Pi CLI 0.86+ o CODA.
+- Claude Code 2.1+, Codex CLI 0.153+, Pi CLI 0.86+, CODA o Kiro V3 (Windows).
 - `cloudflared`, sólo para el acceso desde el celular.
 
 ## Instalación
@@ -123,89 +91,14 @@ seguridad).
 Tres columnas: Trabajo (corriendo y terminó), Te necesita (pide permiso, pregunta o está
 libre) y Muerta. `/` busca; los chips filtran por agente, PC y proyecto (Ctrl+click suma varios).
 Click en una tarjeta la elige y resalta sus conexiones; doble click abre el panel (pestañas *Chat*,
-*Pantalla* y *Conexiones*); Esc cierra de a una capa. Las tarjetas se pueden arrastrar a otro lugar
-(⤢ Ordenar las devuelve); las posiciones y los filtros viven en el navegador.
+*Pantalla* y *Conexiones*); Esc cierra de a una capa. Las tarjetas se pueden arrastrar desde su
+título a otro lugar (⤢ Ordenar las devuelve); con Alt, el arrastre conecta con otra tarjeta. Las
+posiciones y los filtros viven en el navegador.
+
+![Alt + arrastrar lleva una tarjeta sobre otra para conectarlas](docs/img/arrastre.png)
 
 Ctrl+click arma una selección múltiple: Enviar a todas, Interrumpir (un Esc a cada una) o
 Marcar las visibles.
-
-### Chrome remoto
-
-El enlace **Chrome remoto** del encabezado abre `/chrome` en una pestaña nueva del navegador.
-Elegí una PC. **Chrome real · ventana completa** muestra su ventana de Chrome dentro de esa
-pestaña: sus pestañas, barra de direcciones, menús y avisos. Los controles de Lienzo quedan en
-el menú **⋮**, para dejar espacio al navegador; también podés usar pantalla completa.
-Las páginas, el teclado y el mouse se ejecutan en la PC elegida. La PC debe estar encendida y con
-Lienzo abierto; perder la conexión no abre un Chrome sustituto en otra máquina.
-
-En Windows, la vista de ventana completa recuerda el perfil elegido para cada PC. Al entrar,
-conecta con una ventana existente; si no hay ninguna, abre automáticamente el perfil recordado
-o el primero disponible. **Abrir perfil** permite elegir otro, como Globant. Este modo controla
-la sesión gráfica de esa PC y no requiere habilitar la depuración remota de Chrome.
-Cerrar la vista deja Chrome abierto.
-
-Los menús y popups propios de Chrome se incluyen dentro del área de la ventana compartida;
-los que sobresalen de ese borde quedan recortados. El cursor remoto transmite las formas
-habituales, como mano sobre enlaces y cursor de texto. En pantalla táctil, tocar hace clic y
-arrastrar desplaza la página. El mouse y el teclado físicos también permiten controlar la ventana.
-La imagen y las entradas usan un canal persistente; los movimientos se agrupan para enviar la
-posición más reciente y las actualizaciones de imagen omiten regiones que no cambiaron.
-
-![Ventana real de Chrome remoto con su menú abierto](docs/img/chrome-remoto.png)
-
-```mermaid
-flowchart LR
-    V["Pestaña local · canvas y entradas"] <-->|"WebSocket / TCP · :7321"| L["Lienzo local"]
-    L <-->|"WebSocket / TCP · :7322 · mensajes cifrados y autenticados"| R["Lienzo en la PC remota"]
-    R <-->|"Pipes del proceso"| W["Worker de ventana · Windows"]
-    W -->|"Entrada Win32 · mouse y teclado"| C["Chrome real · perfil elegido"]
-    C -->|"PrintWindow · ventana y popups propios"| W
-```
-
-**Transporte y latencia.** La vista de ventana completa usa WebSocket (RFC 6455) sobre **TCP**;
-no usa UDP ni RDP. La conexión se abre con un Upgrade HTTP y permanece abierta: no hace un
-pedido HTTP por cada movimiento o cuadro. Entre PCs, cada mensaje va cifrado y autenticado
-con un contador por sentido. UDP se usa para descubrir PCs en la LAN, no para transmitir Chrome.
-
-El worker compara capturas y envía PNG binario de la región modificada, o un cuadro completo
-cuando corresponde. Si no cambia la imagen, no la reenvía. El visor confirma los cuadros dibujados
-y hay como máximo **dos sin confirmar**, para acotar la cola. Los movimientos consecutivos
-conservan la posición más reciente y se despachan con `requestAnimationFrame`; clics y teclas
-no esperan la siguiente captura. La entrada despierta la captura en reposo y una vista oculta
-pausa las imágenes. Imagen y entrada comparten el transporte TCP: la congestión todavía puede
-agregar demora. No hay una medición publicada de latencia de extremo a extremo ni una garantía
-de equivalencia con RDP.
-
-**Vista por pestañas** ofrece otra forma de navegar, con pestañas, dirección/búsqueda,
-atrás, adelante y recarga propios de Lienzo. Usa la depuración remota de Chrome. Las dos PCs
-necesitan esta versión de Lienzo; la que ejecuta Chrome necesita **Chrome instalado y
-Node.js 24 o posterior**. Para usar sus perfiles existentes (por ejemplo Globant), elegí uno y
-tocá **Abrir perfil en esa PC**. En el Chrome de destino, versión 144 o posterior, habilitá
-`chrome://inspect/#remote-debugging`. Tocá **Conectar Chrome abierto** en Lienzo y aceptá el aviso
-de Chrome en el destino. Chrome decide qué perfil comparte; con varios abiertos usa su perfil
-predeterminado. Abrir un perfil desde Lienzo no garantiza que Chrome comparta ese perfil.
-**Desconectar** deja Chrome y sus pestañas abiertos. No se copian cookies ni se modifican sus
-preferencias para habilitar la conexión. La autorización inicial requiere interacción en el
-Chrome de destino; no se promete que este modo funcione sin monitor o sesión gráfica activa.
-
-La alternativa **Usar un perfil separado de Lienzo → Abrir Chrome** usa un perfil persistente en
-`~/.lienzo/chrome-remoto`, en modo headless, sin monitor. **Cerrar Chrome** cierra sólo ese proceso.
-Volver al tablero o cerrar la pestaña local conserva el navegador remoto. Se admite abrir hasta
-doce pestañas desde Lienzo. El acceso se realiza desde el
-tablero local de una PC emparejada, no desde el túnel público del celular.
-
-El canal de peers autentica los pedidos y cifra el contenido y las entradas del navegador. El
-puerto de control de Chrome queda en loopback, sin abrir otro puerto en la LAN. No acepta comandos
-CDP arbitrarios ni navegación directa a `file:` o `javascript:` en la vista por pestañas. En esa vista,
-Ctrl+C copia texto seleccionado y
-Ctrl+V pega texto; los diálogos JavaScript se contestan dentro de la vista. La imagen se actualiza
-por capturas: no transmite audio. Las descargas se deshabilitan sólo en el perfil separado;
-en Chrome habitual se conserva su configuración y los archivos quedan en la PC remota. Carga de archivos, ventanas
-del sistema y extensiones no están integradas en la vista por pestañas.
-
-Prueba aislada propuesta: `py tests/browser_smoke.py` (Chrome real, perfil temporal y web local,
-sin cuentas ni sitios externos). UI con fixtures: `chrome.spec.ts`. Su ejecución y las limitaciones
-de la corrida se registran con `pruebas-agenticas`; no se fijan baselines automáticamente.
 
 ### La tarjeta
 
@@ -216,6 +109,8 @@ coordinadora del repo: es a quien van los avisos «cuando termine». Según el c
 TUI («Switch model?») se muestran con sus opciones y se eligen desde ahí.
 
 ### Contestar, aprobar, adjuntar
+
+![El panel de una sesión: turnos, mensajes a otras sesiones y la caja para contestar](docs/img/panel.png)
 
 - Contestar: la caja del panel; se escribe en su terminal aunque esté oculta. Tab escribe la
   sugerencia que muestra la terminal.
@@ -246,6 +141,19 @@ dibuja como flecha (las de envío viven 10 minutos).
 
 ![Conectar escribiendo una frase](docs/img/conectar.png)
 
+### Lanzar una CLI
+
+Un clic derecho en el área libre del tablero abre «Lanzar CLI»: elegís un proyecto en curso, la PC
+y el agente (Claude Code, Codex, Pi, CODA o Kiro). El Lienzo de la PC elegida lanza el proceso en una
+terminal nueva, sin exigir una sesión activa previa, y la tarjeta aparece sola. Usa la carpeta
+conocida del proyecto en esa PC; si todavía no la conoce, permite indicarla. «Otra carpeta…» abre un
+proyecto nuevo dentro de las carpetas permitidas por esa PC (`launch_roots` de su `config.json`).
+
+![Lanzar CLI: proyecto, PC y agente](docs/img/lanzar.png)
+
+Lo mismo por API: `POST /sessions/launch {pc?, cwd, agent, title?, model?}`, o
+`coordinar.lanzar_y_titular(...)` desde una coordinadora.
+
 ### Las automatizaciones
 
 En el menú ⋯, apagadas por defecto:
@@ -264,6 +172,107 @@ En el menú ⋯, apagadas por defecto:
   frena el clasificador del auto mode de Claude Code). La prueba real está en
   `pruebas-agenticas/e2e_autoaprobar.py` (lanza un Codex, gasta un turno).
 
+### Chrome remoto
+
+El enlace **Chrome remoto** del encabezado abre `/chrome` en una pestaña nueva del navegador.
+Elegí una PC. **Chrome real · ventana completa** muestra su ventana de Chrome dentro de esa
+pestaña: sus pestañas, barra de direcciones, menús y avisos. Los controles de Lienzo quedan en
+el menú **⋮**, para dejar espacio al navegador; también podés usar pantalla completa.
+Las páginas, el teclado y el mouse se ejecutan en la PC elegida. La PC debe estar encendida y con
+Lienzo abierto; perder la conexión no abre un Chrome sustituto en otra máquina.
+
+![El Chrome de otra PC, con sus perfiles y sesiones, dentro de una pestaña del navegador local](docs/img/chrome-remoto.png)
+
+En Windows, la vista de ventana completa recuerda el perfil elegido para cada PC. Al entrar,
+conecta con una ventana existente; si no hay ninguna, abre automáticamente el perfil recordado
+o el primero disponible. **Abrir perfil** permite elegir otro, por ejemplo el del trabajo. Este modo
+controla la sesión gráfica de esa PC y no requiere habilitar la depuración remota de Chrome.
+Cerrar la vista deja Chrome abierto.
+
+Los menús y popups propios de Chrome se incluyen dentro del área de la ventana compartida;
+los que sobresalen de ese borde quedan recortados. El cursor remoto transmite las formas
+habituales, como mano sobre enlaces y cursor de texto. En pantalla táctil, tocar hace clic y
+arrastrar desplaza la página. El mouse y el teclado físicos también permiten controlar la ventana.
+La imagen y las entradas usan un canal persistente; los movimientos se agrupan para enviar la
+posición más reciente y las actualizaciones de imagen omiten regiones que no cambiaron.
+
+```mermaid
+flowchart LR
+    V["Pestaña local · canvas y entradas"] <-->|"WebSocket / TCP · :7321"| L["Lienzo local"]
+    L <-->|"WebSocket / TCP · :7322 · mensajes cifrados y autenticados"| R["Lienzo en la PC remota"]
+    R <-->|"Pipes del proceso"| W["Worker de ventana · Windows"]
+    W -->|"Entrada Win32 · mouse y teclado"| C["Chrome real · perfil elegido"]
+    C -->|"PrintWindow · ventana y popups propios"| W
+```
+
+**Transporte y latencia.** La vista de ventana completa usa WebSocket (RFC 6455) sobre **TCP**;
+no usa UDP ni RDP. La conexión se abre con un Upgrade HTTP y permanece abierta: no hace un
+pedido HTTP por cada movimiento o cuadro. Entre PCs, cada mensaje va cifrado y autenticado
+con un contador por sentido. UDP se usa para descubrir PCs en la LAN, no para transmitir Chrome.
+
+El worker compara capturas y envía PNG binario de la región modificada, o un cuadro completo
+cuando corresponde. Si no cambia la imagen, no la reenvía. El visor confirma los cuadros dibujados
+y hay como máximo **dos sin confirmar**, para acotar la cola. Los movimientos consecutivos
+conservan la posición más reciente y se despachan con `requestAnimationFrame`; clics y teclas
+no esperan la siguiente captura. La entrada despierta la captura en reposo y una vista oculta
+pausa las imágenes. Imagen y entrada comparten el transporte TCP: la congestión todavía puede
+agregar demora. No hay una medición publicada de latencia de extremo a extremo ni una garantía
+de equivalencia con RDP.
+
+**Vista por pestañas** ofrece otra forma de navegar, con pestañas, dirección/búsqueda,
+atrás, adelante y recarga propios de Lienzo. Usa la depuración remota de Chrome. Las dos PCs
+necesitan esta versión de Lienzo; la que ejecuta Chrome necesita **Chrome instalado y
+Node.js 24 o posterior**. Para usar sus perfiles existentes (el personal, el del trabajo), elegí uno
+y tocá **Abrir perfil en esa PC**. En el Chrome de destino, versión 144 o posterior, habilitá
+`chrome://inspect/#remote-debugging`. Tocá **Conectar Chrome abierto** en Lienzo y aceptá el aviso
+de Chrome en el destino. Chrome decide qué perfil comparte; con varios abiertos usa su perfil
+predeterminado. Abrir un perfil desde Lienzo no garantiza que Chrome comparta ese perfil.
+**Desconectar** deja Chrome y sus pestañas abiertos. No se copian cookies ni se modifican sus
+preferencias para habilitar la conexión. La autorización inicial requiere interacción en el
+Chrome de destino; no se promete que este modo funcione sin monitor o sesión gráfica activa.
+
+La alternativa **Usar un perfil separado de Lienzo → Abrir Chrome** usa un perfil persistente en
+`~/.lienzo/chrome-remoto`, en modo headless, sin monitor. **Cerrar Chrome** cierra sólo ese proceso.
+Volver al tablero o cerrar la pestaña local conserva el navegador remoto. Se admite abrir hasta
+doce pestañas desde Lienzo. El acceso se realiza desde el
+tablero local de una PC emparejada, no desde el túnel público del celular.
+
+El canal de peers autentica los pedidos y cifra el contenido y las entradas del navegador. El
+puerto de control de Chrome queda en loopback, sin abrir otro puerto en la LAN. No acepta comandos
+CDP arbitrarios ni navegación directa a `file:` o `javascript:` en la vista por pestañas. En esa vista,
+Ctrl+C copia texto seleccionado y
+Ctrl+V pega texto; los diálogos JavaScript se contestan dentro de la vista. La imagen se actualiza
+por capturas: no transmite audio. Las descargas se deshabilitan sólo en el perfil separado;
+en Chrome habitual se conserva su configuración y los archivos quedan en la PC remota. Carga de archivos, ventanas
+del sistema y extensiones no están integradas en la vista por pestañas.
+
+Prueba aislada propuesta: `py tests/browser_smoke.py` (Chrome real, perfil temporal y web local,
+sin cuentas ni sitios externos). UI con fixtures: `chrome.spec.ts`. Su ejecución y las limitaciones
+de la corrida se registran con `pruebas-agenticas`; no se fijan baselines automáticamente.
+
+### Memoria por proyecto
+
+El menú ⋯ → Memoria permite elegir un proyecto y consultar su briefing, buscar candidatos,
+leer una vista por tema, y ver pendientes y avisos. Las consultas son de lectura; no confirman
+hallazgos ni aceptan reglas automáticamente.
+
+Cada proyecto tiene identidad propia, rondas, encargos e informes con hash y revisión. El
+bloque JSON `conocimiento` del informe se valida entero antes de incorporarse al grafo. Los
+veredictos requieren una coordinadora o una persona y conservan revisión, evidencia y motivo.
+El cierre de ronda aplica sus veredictos y pendientes explícitos en una transacción.
+
+La recuperación combina archivos y temas, BM25 y relaciones del grafo. `preguntar` devuelve
+candidatos paginados con sus referencias; una búsqueda vacía no prueba que algo no exista.
+El aprendizaje cuenta episodios de recurrencia una vez, cuestiona reglas ante episodios
+posteriores a su vigencia y muestra apoyos rechazados y dependencias.
+
+Las funciones de `skills/lienzo/coordinar.py` incluyen `briefing`, `preguntar`, `vista`,
+`veredicto`, `cerrar_ronda`, `pendientes_memoria`, `recurrencia`, `cuestionar` y `lecciones`.
+`preparar_encargo` agrega el briefing actual y la plantilla de conocimiento al texto de un frente.
+La memoria reside en `~/.lienzo/proyectos/<proyecto>/` de la PC que registra los encargos.
+Las transcripciones y bases de conocimiento no se suben a Git ni se replican por hacer pull.
+El diseño detallado está en [v5](docs/propuesta-memoria-2026-10-08/v5.md).
+
 ## Delegar trabajo a varias sesiones
 
 El flujo que le da sentido al tablero: una coordinadora reparte encargos a varias terminales con
@@ -279,6 +288,8 @@ Opcional: `.\lienzo-server.cmd --remote`. En la PC, Acceso remoto genera una cla
 (uno para Authenticator, otro para abrir el tablero). Desde afuera se entra con el código de 6
 dígitos; en la PC no se pide login. Túnel `cloudflared` con TLS, sin abrir puertos; cookie de 7
 días; cinco intentos fallidos bloquean 15 minutos. La URL del túnel rápido cambia en cada arranque.
+
+<img src="docs/img/celular.png" alt="El tablero en el celular: una columna por vez" width="390">
 
 ## Varias PCs
 
@@ -373,6 +384,8 @@ quedó sin cuota. En violeta, la credencial de git: cada PC prueba con `git ls-r
 (lo mismo que `coordinar.pasar_credencial_git`); con «sin red» o «timeout» avisa que otra credencial
 no lo arregla. Una PC caída se ve en ○ y sus tarjetas quedan grises.
 
+![tira de PCs](docs/img/tira-pcs.png)
+
 Con varias cuentas de GitHub en `gh`, cada repo elige la suya (`cuenta_github.py`, 2026-10-08): el
 helper de `gh` sólo sirve la cuenta activa, y cambiarla es global a la PC. Antes de probar el
 `origin` de un repo vivo en github.com, la PC deja en su `.git/config` (sólo para github.com) un
@@ -380,8 +393,6 @@ helper que saca el token de la cuenta con permiso de push (`gh auth token --user
 cuentas inactivas) en el momento del push; primero prueba la cuenta que se llama como el dueño del
 repo, después la activa, después el resto. Si igual da «vencida» (un 403 por cuenta equivocada),
 vuelve a elegir y mide de nuevo. El token no se guarda en ningún lado ni pasa por el lienzo.
-
-![tira de PCs](docs/img/tira-pcs.png)
 
 La ★ coordinadora es una por repo en toda la federación, independientemente de la PC. El
 canal nativo (`ListAgents` / `SendMessage`) cruza PCs con Remote Control y la misma cuenta: el
@@ -550,6 +561,10 @@ logs e historial SQLite en `pruebas-agenticas/resultados/`. Excluye las capturas
 para no sobrescribirlas. Los tests de interfaz bloquean escrituras reales y usan fixtures de API
 y SSE; el test de humo consulta el tablero real por GET.
 
+Las capturas de este README salen de un tablero fijo con datos inventados
+(`web/tests-ui/capturas.spec.ts`, sólo con `CAPTURAS=1`); la de Chrome remoto es la única real,
+tomada contra la otra PC.
+
 Medido el 2026-10-06: 936 tests backend, 117 de interfaz y tres suites TypeScript pasaron; además
 pasaron cuatro regresiones nuevas de Enter con Win32 mockeado. Se verificó un envío corto en una
 Codex CLI Windows libre: publicó el mensaje, respondió y dejó el editor vacío. La compuerta del
@@ -568,7 +583,9 @@ plugin sigue sin certificar: falta baseline aprobado y no se ejecutaron las muta
   peer.json, peers.json       identidad de esta PC y PCs emparejadas (con la clave del par)
   launch/                     un .cmd por sesión lanzada desde el tablero
   restaurar.json              sesiones para relanzar tras un reinicio
+  proyectos/<proyecto>/       memoria por proyecto (SQLite) de la PC que registra los encargos
   xfer/                       copias entre PCs (trabajos/) y hashes de lo recibido (hashes.db)
+  chrome-remoto/              perfil separado de Chrome para la vista por pestañas
   *.corrupto-<fecha>          un JSON que no se pudo leer, apartado en vez de pisarlo
   lienzo.log                  una línea por hecho
 ```
