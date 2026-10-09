@@ -293,3 +293,24 @@ def test_dialogo_de_remote_control_nunca_elige_desconectar():
     assert ses._opcion_remote_control(apagado) == 1
     assert ses._opcion_remote_control(prendido) == 2
     assert ses._opcion_remote_control(otro) is None
+
+
+def test_exe_path_encuentra_pi_cmd_y_kiro_en_program_files(tmp_path, monkeypatch):
+    """pi.dev en Windows deja pi.cmd en ~/.pi/agent/bin, y Kiro con admin queda en Program Files
+    (ar-it33940, 2026-10-09): Lanzar CLI decia «no encuentro pi.exe»."""
+    monkeypatch.setattr(launch.state, "HOME", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "pf"))
+    monkeypatch.setattr(launch.shutil, "which", lambda name: None)
+    assert launch._exe_path("pi.exe") is None
+    pi = tmp_path / ".pi" / "agent" / "bin" / "pi.cmd"
+    pi.parent.mkdir(parents=True)
+    pi.write_text("@echo off\n")
+    assert launch._exe_path("pi.exe") == str(pi)
+    kiro = tmp_path / "pf" / "Kiro-Cli" / "kiro-cli.exe"
+    kiro.parent.mkdir(parents=True)
+    kiro.write_text("")
+    assert launch._exe_path("kiro-cli.exe") == str(kiro)
+    # un .cmd de npm en el PATH, si no hay .exe
+    monkeypatch.setattr(launch.shutil, "which", lambda name: "C:/npm/codex.cmd" if name == "codex.cmd" else None)
+    assert launch._exe_path("codex.exe") == "C:/npm/codex.cmd"

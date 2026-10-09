@@ -114,13 +114,26 @@ def _exe_path(exe_name: str) -> str | None:
     """Por ruta absoluta, porque el PATH no se hereda entero por explorer.exe: primero donde lo deja
     el instalador de Claude Code (~/.local/bin), despues el PATH de este server."""
     propio = os.path.join(state.HOME, ".local", "bin", exe_name)
+    candidatos: list[str] = []
     if exe_name == "kiro-cli.exe":
-        kiro = os.path.join(
-            os.environ.get("LOCALAPPDATA", os.path.join(state.HOME, "AppData", "Local")), "Kiro-Cli", exe_name
-        )
-        if os.path.isfile(kiro):
-            return kiro
-    return propio if os.path.isfile(propio) else shutil.which(exe_name)
+        # el instalador lo deja por usuario o, con admin, en Program Files (ar-it33940, 2026-10-09)
+        for base in (
+            os.environ.get("LOCALAPPDATA", os.path.join(state.HOME, "AppData", "Local")),
+            os.environ.get("ProgramFiles", r"C:\Program Files"),
+        ):
+            candidatos.append(os.path.join(base, "Kiro-Cli", exe_name))
+    if exe_name == "pi.exe":
+        # el instalador oficial de pi.dev en Windows no trae .exe: la entrada es un .cmd
+        candidatos.append(os.path.join(state.HOME, ".pi", "agent", "bin", "pi.cmd"))
+    for c in candidatos:
+        if os.path.isfile(c):
+            return c
+    if os.path.isfile(propio):
+        return propio
+    encontrado = shutil.which(exe_name)
+    if encontrado is None and exe_name.endswith(".exe"):
+        encontrado = shutil.which(exe_name.removesuffix(".exe") + ".cmd")  # npm deja un .cmd
+    return encontrado
 
 
 def _cuota_coda() -> str | None:
