@@ -25,7 +25,7 @@ def drenar_stderr(process, prefijo: str, limite: int = 8192) -> None:
                     excerpt = excerpt.decode("utf-8", "replace")
                 remaining -= len(excerpt)
                 state.log(f"{prefijo}: {excerpt.rstrip()}")
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass  # El cierre del proceso tambien cierra el lector de diagnostico.
 
 
@@ -65,7 +65,11 @@ class BrowserHost:
             node = shutil.which("node")
             if not node:
                 raise RuntimeError("Instalá Node.js 24 o posterior en esta PC para usar Chrome remoto")
-            command = [node, str(Path(__file__).with_name("browser_host.mjs")), str(Path(state.LIENZO) / "chrome-remoto")]
+            command = [
+                node,
+                str(Path(__file__).with_name("browser_host.mjs")),
+                str(Path(state.LIENZO) / "chrome-remoto"),
+            ]
         self.responses = queue.Queue()
         self.process = subprocess.Popen(
             command,
@@ -112,7 +116,9 @@ class BrowserHost:
                     return 200, {"running": False, "tabs": []}
                 if self.window and data.get("action") == "window-release":
                     return 200, {"ok": True}
-                if data.get("action") not in ("start", "profiles", "prepare", "connect", "windows") and not (self.window and data.get("action") in ("window-frame", "window-input")):
+                if data.get("action") not in ("start", "profiles", "prepare", "connect", "windows") and not (
+                    self.window and data.get("action") in ("window-frame", "window-input")
+                ):
                     return 409, {"error": "Chrome está cerrado. Abrilo desde Chrome remoto"}
                 self._start()
             self.process.stdin.write(json.dumps(data, ensure_ascii=True) + "\n")

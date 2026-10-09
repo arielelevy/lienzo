@@ -1,4 +1,5 @@
 """Límites de la vista de Chrome, sin inyectar entrada en ventanas del usuario."""
+
 import io
 import json
 import struct
@@ -33,13 +34,22 @@ def test_non_chrome_window_cannot_be_targeted():
 def test_no_keyboard_or_mouse_if_foreground_changed():
     windows = module.Windows.__new__(module.Windows)
     windows.owner = lambda hwnd: hwnd  # procesos distintos: la ventana activa no es de Chrome
-    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 456,
-                                   GetWindowThreadProcessId=lambda hwnd, pid: 2, AttachThreadInput=lambda source, target, attach: False,
-                                   keybd_event=lambda *a: None, SwitchToThisWindow=lambda hwnd, alt: None, ShowWindow=lambda hwnd, cmd: None,
-                                   SystemParametersInfoW=lambda *a: 1)
+    windows.user = SimpleNamespace(
+        IsIconic=lambda hwnd: False,
+        SetForegroundWindow=lambda hwnd: None,
+        GetForegroundWindow=lambda: 456,
+        GetWindowThreadProcessId=lambda hwnd, pid: 2,
+        AttachThreadInput=lambda source, target, attach: False,
+        keybd_event=lambda *a: None,
+        SwitchToThisWindow=lambda hwnd, alt: None,
+        ShowWindow=lambda hwnd, cmd: None,
+        SystemParametersInfoW=lambda *a: 1,
+    )
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
     windows.describe = lambda hwnd: "ConsoleWindowClass · Teorema · WindowsTerminal.exe"
-    with pytest.raises(ValueError, match="no se envió la entrada. Al frente está: ConsoleWindowClass · Teorema · WindowsTerminal.exe"):
+    with pytest.raises(
+        ValueError, match="no se envió la entrada. Al frente está: ConsoleWindowClass · Teorema · WindowsTerminal.exe"
+    ):
         windows.input(123, [{"kind": "key", "keyCode": 65, "modifiers": 0, "type": "keyDown"}])
 
 
@@ -57,15 +67,18 @@ def test_focus_taps_shift_before_the_second_try_and_then_attaches_the_foreground
         if "shift" in calls:  # recien despues del Shift, Windows acepta
             foreground[0] = hwnd
 
-    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=set_foreground,
-                                   GetForegroundWindow=lambda: foreground[0],
-                                   keybd_event=lambda vk, scan, flags, extra: calls.append("shift" if vk == 16 and flags == 0 else "shift-up"),
-                                   GetWindowThreadProcessId=lambda hwnd, pid: 2,
-                                   AttachThreadInput=lambda source, target, attach: calls.append("attach") or True,
-                                   BringWindowToTop=lambda hwnd: calls.append("top"),
-                                   SwitchToThisWindow=lambda hwnd, alt: calls.append("switch"),
-                                   ShowWindow=lambda hwnd, cmd: calls.append({6: "min", 9: "restore"}.get(cmd, cmd)),
-                                   SystemParametersInfoW=lambda *a: calls.append("lock0") or 1)
+    windows.user = SimpleNamespace(
+        IsIconic=lambda hwnd: False,
+        SetForegroundWindow=set_foreground,
+        GetForegroundWindow=lambda: foreground[0],
+        keybd_event=lambda vk, scan, flags, extra: calls.append("shift" if vk == 16 and flags == 0 else "shift-up"),
+        GetWindowThreadProcessId=lambda hwnd, pid: 2,
+        AttachThreadInput=lambda source, target, attach: calls.append("attach") or True,
+        BringWindowToTop=lambda hwnd: calls.append("top"),
+        SwitchToThisWindow=lambda hwnd, alt: calls.append("switch"),
+        ShowWindow=lambda hwnd, cmd: calls.append({6: "min", 9: "restore"}.get(cmd, cmd)),
+        SystemParametersInfoW=lambda *a: calls.append("lock0") or 1,
+    )
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
     windows.describe = lambda hwnd: "ConsoleWindowClass · x · conhost.exe"
     windows.focus(123)
@@ -77,7 +90,19 @@ def test_focus_taps_shift_before_the_second_try_and_then_attaches_the_foreground
     windows.user.SetForegroundWindow = lambda hwnd: calls.append("foreground")
     with pytest.raises(ValueError, match="Al frente está: ConsoleWindowClass"):
         windows.focus(123)
-    assert calls == ["foreground", "shift", "shift-up", "foreground", "attach", "top", "foreground", "attach", "switch", "min", "restore"]
+    assert calls == [
+        "foreground",
+        "shift",
+        "shift-up",
+        "foreground",
+        "attach",
+        "top",
+        "foreground",
+        "attach",
+        "switch",
+        "min",
+        "restore",
+    ]
 
 
 def test_focus_succeeds_through_switch_or_restore_without_failing():
@@ -88,10 +113,17 @@ def test_focus_succeeds_through_switch_or_restore_without_failing():
     def switch(hwnd, alt):
         foreground[0] = hwnd
 
-    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None,
-                                   GetForegroundWindow=lambda: foreground[0], keybd_event=lambda *a: None,
-                                   GetWindowThreadProcessId=lambda hwnd, pid: 2, AttachThreadInput=lambda s_, t, a: False,
-                                   SwitchToThisWindow=switch, ShowWindow=lambda hwnd, cmd: None, SystemParametersInfoW=lambda *a: 1)
+    windows.user = SimpleNamespace(
+        IsIconic=lambda hwnd: False,
+        SetForegroundWindow=lambda hwnd: None,
+        GetForegroundWindow=lambda: foreground[0],
+        keybd_event=lambda *a: None,
+        GetWindowThreadProcessId=lambda hwnd, pid: 2,
+        AttachThreadInput=lambda s_, t, a: False,
+        SwitchToThisWindow=switch,
+        ShowWindow=lambda hwnd, cmd: None,
+        SystemParametersInfoW=lambda *a: 1,
+    )
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
     windows.focus(123)  # SwitchToThisWindow alcanzo: no hay error
     foreground[0] = 456
@@ -106,11 +138,17 @@ def test_focus_detects_the_windows_lock_screen_and_does_not_try_anything():
     windows = module.Windows.__new__(module.Windows)
     windows.owner = lambda hwnd: hwnd
     calls = []
-    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, GetForegroundWindow=lambda: 777,
-                                   SetForegroundWindow=lambda hwnd: calls.append("foreground"), keybd_event=lambda *a: calls.append("key"),
-                                   SystemParametersInfoW=lambda *a: calls.append("lock0") or 1)
+    windows.user = SimpleNamespace(
+        IsIconic=lambda hwnd: False,
+        GetForegroundWindow=lambda: 777,
+        SetForegroundWindow=lambda hwnd: calls.append("foreground"),
+        keybd_event=lambda *a: calls.append("key"),
+        SystemParametersInfoW=lambda *a: calls.append("lock0") or 1,
+    )
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
-    windows.describe = lambda hwnd: "Windows.UI.Core.CoreWindow · Pantalla de bloqueo predeterminada de Windows · LockApp.exe"
+    windows.describe = lambda hwnd: (
+        "Windows.UI.Core.CoreWindow · Pantalla de bloqueo predeterminada de Windows · LockApp.exe"
+    )
     with pytest.raises(ValueError, match="bloqueada .*desbloqueala allá"):
         windows.focus(123)
     assert calls == []
@@ -119,10 +157,17 @@ def test_focus_detects_the_windows_lock_screen_and_does_not_try_anything():
 def test_focus_says_when_the_pc_is_locked():
     windows = module.Windows.__new__(module.Windows)
     windows.owner = lambda hwnd: hwnd
-    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 0,
-                                   keybd_event=lambda *a: None, GetWindowThreadProcessId=lambda hwnd, pid: 0,
-                                   AttachThreadInput=lambda source, target, attach: False, SwitchToThisWindow=lambda hwnd, alt: None,
-                                   ShowWindow=lambda hwnd, cmd: None, SystemParametersInfoW=lambda *a: 1)
+    windows.user = SimpleNamespace(
+        IsIconic=lambda hwnd: False,
+        SetForegroundWindow=lambda hwnd: None,
+        GetForegroundWindow=lambda: 0,
+        keybd_event=lambda *a: None,
+        GetWindowThreadProcessId=lambda hwnd, pid: 0,
+        AttachThreadInput=lambda source, target, attach: False,
+        SwitchToThisWindow=lambda hwnd, alt: None,
+        ShowWindow=lambda hwnd, cmd: None,
+        SystemParametersInfoW=lambda *a: 1,
+    )
     windows.kernel = SimpleNamespace(GetCurrentThreadId=lambda: 1)
     windows.describe = lambda hwnd: "?"
     with pytest.raises(ValueError, match="no tiene escritorio activo"):
@@ -134,7 +179,9 @@ def test_system_shortcuts_rejected_before_injection(key, modifiers):
     windows = module.Windows.__new__(module.Windows)
     windows.chrome = lambda hwnd: True
     windows.rect = lambda hwnd: SimpleNamespace(left=0, top=0, right=1280, bottom=800)
-    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 123)
+    windows.user = SimpleNamespace(
+        IsIconic=lambda hwnd: False, SetForegroundWindow=lambda hwnd: None, GetForegroundWindow=lambda: 123
+    )
     with pytest.raises(ValueError, match="atajo de Windows"):
         windows.input(123, [{"kind": "key", "keyCode": key, "modifiers": modifiers, "type": "keyDown"}])
 
@@ -152,9 +199,14 @@ def test_input_allows_chrome_popup_of_same_process():
         point._obj.x, point._obj.y = 5, 6  # byref(POINT): el fake escribe donde escribiría Windows
         return True
 
-    windows.user = SimpleNamespace(IsIconic=lambda hwnd: False, GetForegroundWindow=lambda: 456,
-                                   SetForegroundWindow=lambda hwnd: calls.append("foreground"),
-                                   SetCursorPos=lambda x, y: True, mouse_event=lambda *a: calls.append(a), GetCursorPos=cursor)
+    windows.user = SimpleNamespace(
+        IsIconic=lambda hwnd: False,
+        GetForegroundWindow=lambda: 456,
+        SetForegroundWindow=lambda hwnd: calls.append("foreground"),
+        SetCursorPos=lambda x, y: True,
+        mouse_event=lambda *a: calls.append(a),
+        GetCursorPos=cursor,
+    )
     windows.mouse_pressed = set()
     windows.send_mouse = lambda flag: calls.append((flag, 0, 0, 0, 0))
     windows.input(123, [{"kind": "mouse", "type": "mousePressed", "x": 5, "y": 6, "button": "left"}])
@@ -180,9 +232,14 @@ def test_control_a_restores_modifier_before_key_and_releases_it():
     calls = []
     windows.user = SimpleNamespace(keybd_event=lambda *args: calls.append(args))
     windows.pressed = set()
-    windows.input(1, [{"kind": "key", "keyCode": 65, "modifiers": 2, "type": "keyDown"},
-                      {"kind": "key", "keyCode": 65, "modifiers": 2, "type": "keyUp"},
-                      {"kind": "key", "keyCode": 17, "modifiers": 0, "type": "keyUp"}])
+    windows.input(
+        1,
+        [
+            {"kind": "key", "keyCode": 65, "modifiers": 2, "type": "keyDown"},
+            {"kind": "key", "keyCode": 65, "modifiers": 2, "type": "keyUp"},
+            {"kind": "key", "keyCode": 17, "modifiers": 0, "type": "keyUp"},
+        ],
+    )
     assert calls == [(17, 0, 0, 0), (65, 0, 0, 0), (65, 0, 2, 0), (17, 0, 2, 0)]
     assert windows.pressed == set()
 
@@ -191,12 +248,17 @@ def test_popups_are_owned_by_selected_chrome_only_in_paint_order(monkeypatch):
     monkeypatch.setattr(module.c, "WINFUNCTYPE", module.c.CFUNCTYPE, raising=False)
     windows = module.Windows.__new__(module.Windows)
     windows.owner = lambda hwnd: 10 if hwnd != 4 else 20
+
     def enumerate_windows(callback, data):
         for hwnd in [1, 2, 3, 4, 5]:
             callback(hwnd, data)
         return True
-    windows.user = SimpleNamespace(EnumWindows=enumerate_windows, IsWindowVisible=lambda hwnd: hwnd != 5,
-                                   GetAncestor=lambda hwnd, flag: 1 if hwnd in [2, 4, 5] else hwnd)
+
+    windows.user = SimpleNamespace(
+        EnumWindows=enumerate_windows,
+        IsWindowVisible=lambda hwnd: hwnd != 5,
+        GetAncestor=lambda hwnd, flag: 1 if hwnd in [2, 4, 5] else hwnd,
+    )
     assert windows.popups(1) == [2]  # no otra ventana principal ni otro proceso ni un menú oculto
 
 
@@ -210,7 +272,7 @@ def rgb(width, height, color=(255, 255, 255)):
 def paint(frame, width, x, y, w, h, color):
     data = bytearray(frame)
     for row in range(y, y + h):
-        data[(row * width + x) * 3:(row * width + x + w) * 3] = bytes(color) * w
+        data[(row * width + x) * 3 : (row * width + x + w) * 3] = bytes(color) * w
     return bytes(data)
 
 
@@ -231,7 +293,7 @@ def test_png_of_patch_decodes_to_the_region():
     frame = paint(rgb(8, 4), 8, 2, 1, 3, 2, (9, 8, 7))
     data = module.png(frame, 8, (2, 1, 5, 3))
     assert data.startswith(b"\x89PNG") and struct.unpack(">II", data[16:24]) == (3, 2)
-    idat = data[data.index(b"IDAT") + 4:data.index(b"IEND") - 4]
+    idat = data[data.index(b"IDAT") + 4 : data.index(b"IEND") - 4]
     assert zlib.decompress(idat) == (b"\x00" + bytes((9, 8, 7)) * 3) * 2
 
 
@@ -282,8 +344,8 @@ def records(out):
     items = []
     while data:
         n, kind = module.RECORD.unpack(data[:5])
-        items.append((chr(kind), data[5:4 + n]))
-        data = data[4 + n:]
+        items.append((chr(kind), data[5 : 4 + n]))
+        data = data[4 + n :]
     return items
 
 
@@ -294,12 +356,12 @@ def test_streamer_sends_full_then_patch_then_nothing_and_waits_for_acks():
     streamer.handle({"t": "open", "window": "7", "width": 1280, "height": 720})
     assert json.loads(records(out)[0][1]) == {"t": "opened", "window": "7"}
     first = streamer.step()
-    assert module.FRAME_HEADER.unpack(first[:module.FRAME_HEADER.size]) == (1, 0, 0, 8, 4, 8, 4, module.FRAME_FULL)
+    assert module.FRAME_HEADER.unpack(first[: module.FRAME_HEADER.size]) == (1, 0, 0, 8, 4, 8, 4, module.FRAME_FULL)
     assert captures[0] == (7, None, None) and windows.fits == [(7, 1280, 720)]
     assert streamer.step() is None  # sin cambios: nada viaja
     assert windows.fits == [(7, 1280, 720)]  # el ajuste de tamano no se repite cuadro a cuadro
     patch = streamer.step()
-    assert module.FRAME_HEADER.unpack(patch[:module.FRAME_HEADER.size])[:5] == (2, 0, 1, 8, 1)
+    assert module.FRAME_HEADER.unpack(patch[: module.FRAME_HEADER.size])[:5] == (2, 0, 1, 8, 1)
     assert streamer.in_flight == module.MAX_IN_FLIGHT
     streamer.handle({"t": "ack", "n": 1})
     assert streamer.in_flight == 1

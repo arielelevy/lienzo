@@ -16,6 +16,13 @@ from urllib.parse import urlparse
 
 import state
 
+
+def norm_cwd(c: str | None) -> str:
+    """La carpeta de una tarjeta como identidad comparable: barras de /, sin la final, en minusculas.
+    La usan sessions (sucesion) y conocimiento (proyecto por carpeta): un solo normalizador."""
+    return (c or "").replace("\\", "/").rstrip("/").lower()
+
+
 # paleta fija (plan §3.1: "un hex de una paleta fija elegido por pc_id"); el indice sale del
 # propio pc_id asi que dos PCs con el mismo id (imposible en la practica) quedarian con el mismo
 # color, y no hace falta guardar un contador aparte

@@ -85,7 +85,12 @@ def test_server_handshake_requires_upgrade_headers():
 
         def __init__(self):
             self.out = bytearray()
-            self.headers = {"Upgrade": "websocket", "Connection": "keep-alive", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "x" * 24}
+            self.headers = {
+                "Upgrade": "websocket",
+                "Connection": "keep-alive",
+                "Sec-WebSocket-Version": "13",
+                "Sec-WebSocket-Key": "x" * 24,
+            }
 
         def send_response(self, code):
             self.out += f"{code}".encode()
@@ -125,7 +130,9 @@ def test_client_connect_against_minimal_server():
             k, _, v = line.decode().partition(":")
             headers[k.strip().lower()] = v.strip()
         got.update(request=request, headers=headers)
-        conn.sendall(f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {ws.accept_key(headers['sec-websocket-key'])}\r\n\r\n".encode())
+        conn.sendall(
+            f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {ws.accept_key(headers['sec-websocket-key'])}\r\n\r\n".encode()
+        )
         server = ws.Socket(conn, reader, mask=False)
         assert server.recv() == (ws.TEXT, b"hola")
         server.send(ws.BINARY, b"chau")
@@ -133,10 +140,14 @@ def test_client_connect_against_minimal_server():
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
-    client = ws.client_connect("127.0.0.1", listener.getsockname()[1], "/peer/browser/stream/abc", {"X-Lienzo-Peer": "yo"})
+    client = ws.client_connect(
+        "127.0.0.1", listener.getsockname()[1], "/peer/browser/stream/abc", {"X-Lienzo-Peer": "yo"}
+    )
     client.send(ws.TEXT, b"hola")
     assert client.recv() == (ws.BINARY, b"chau")
     assert client.recv() is None
     thread.join(5)
     listener.close()
-    assert got["request"].startswith("GET /peer/browser/stream/abc HTTP/1.1") and got["headers"]["x-lienzo-peer"] == "yo"
+    assert (
+        got["request"].startswith("GET /peer/browser/stream/abc HTTP/1.1") and got["headers"]["x-lienzo-peer"] == "yo"
+    )

@@ -103,7 +103,7 @@ class Socket:
             if op == PING:
                 try:
                     self.send(PONG, data)
-                except (OSError, ConnectionError):
+                except OSError, ConnectionError:
                     return None
                 continue
             if op == PONG:
@@ -131,7 +131,7 @@ class Socket:
             while not self._stop.wait(interval_s):
                 try:
                     self.send(PING, b"")
-                except (OSError, ValueError, ConnectionError):
+                except OSError, ValueError, ConnectionError:
                     return
 
         self._pinger = threading.Thread(target=loop, daemon=True)
@@ -193,8 +193,14 @@ def client_connect(host: str, port: int, path: str, headers: dict, timeout: floa
     try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         key = base64.b64encode(os.urandom(16)).decode("ascii")
-        lines = [f"GET {path} HTTP/1.1", f"Host: {host}:{port}", "Upgrade: websocket", "Connection: Upgrade",
-                 f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
+        lines = [
+            f"GET {path} HTTP/1.1",
+            f"Host: {host}:{port}",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            f"Sec-WebSocket-Key: {key}",
+            "Sec-WebSocket-Version: 13",
+        ]
         lines += [f"{k}: {v}" for k, v in headers.items()]
         sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
         reader = sock.makefile("rb")

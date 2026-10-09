@@ -1,6 +1,6 @@
 """El HTTP local (127.0.0.1:7321) no puede quedar sin respuesta por nada de afuera: ni una consola
 que no acepta mas texto, ni una PC par que no contesta, ni una interfaz de red que desaparece
-(incidente del 2026-10-05, docs/informe-red-2026-10-05.md).
+(incidente del 2026-10-05, `docs/informe-red-2026-10-05.md` en el historial de git).
 
 Lo que paso ese dia, en orden: a las 14:50 la consola del server dejo de aceptar texto (en una
 ventana de conhost alcanza con hacer click adentro: la seleccion de QuickEdit frena toda escritura

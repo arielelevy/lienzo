@@ -1764,7 +1764,8 @@ def test_detener_avisa_a_la_coordinadora_y_a_las_conectadas(aislado, monkeypatch
     res = ses.hand_over(copia, origen)
     assert res["interrupted"] is True
     destinos = sorted(sid for sid, _ in avisos)
-    assert destinos == sorted([COORD, NEW]), "la coordinadora y la que esperaba su informe; ni la propia ni la copia"
+    assert destinos == [COORD], "la que esperaba el informe ya sigue conectada a la copia"
+    assert st.rules.items[0]["from"] == SID
     assert all("quedo detenida (stopped)" in t and "copycat" in t for _, t in avisos)
     assert [l["to"] for l in st.links.items] == [sid for sid, _ in avisos], "el aviso queda en Conexiones"
 

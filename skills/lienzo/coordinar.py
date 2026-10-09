@@ -19,6 +19,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE = "http://127.0.0.1:7321"
@@ -600,3 +601,255 @@ def salud():
     """
     p = pedir("GET", "/peers")[1]
     return p if isinstance(p, list) else []
+
+
+# --- conocimiento por proyecto (docs/propuesta-memoria-2026-10-08/v5.md, etapa 1) -------------
+#
+# El lienzo guarda por proyecto, en ~/.lienzo/proyectos/<proyecto>/, las rondas, los encargos tal
+# como se mandaron, los informes tal como se entregaron (con hash y revisión) y lo que el server
+# observa de las sesiones que trabajan un encargo. Etapa 1: inventario estructural; el bloque
+# `conocimiento` del informe y los veredictos de la coordinadora vienen en las etapas 2 y 3.
+
+
+def _conocimiento(metodo, ruta, cuerpo=None):
+    code, res = pedir(metodo, "/conocimiento" + ruta, cuerpo)
+    if code != 200:
+        raise RuntimeError(f"conocimiento {metodo} {ruta}: {code} {res.get('error') if isinstance(res, dict) else res}")
+    return res
+
+
+def proyecto(pid, nombre=None, remotes=None, carpetas=None):
+    """Registra el proyecto (o le suma remotes y carpetas si ya existe) y devuelve su ficha. `remotes`
+    son claves como `github.com/arielelevy/teorema`; `carpetas`, `[{"pc": pc_id, "cwd": ruta}]`.
+    Un alias que ya es de otro proyecto es 409: nada se fusiona por nombre."""
+    return _conocimiento("POST", "/proyectos", {"id": pid, "nombre": nombre, "remotes": remotes, "carpetas": carpetas})
+
+
+def proyecto_de(s):
+    """El proyecto de una tarjeta por su repo_key o su carpeta en esa PC, o None si no está asignado."""
+    q = urllib.parse.urlencode(
+        {k: v for k, v in (("repo_key", s.get("repo_key")), ("cwd", s.get("cwd")), ("pc", s.get("pc"))) if v}
+    )
+    return _conocimiento("GET", f"/resolver?{q}").get(
+        "proyecto"
+    )  # un server caido o un 401 se ve, no es «sin proyecto»
+
+
+def abrir_ronda(pid, objetivo):
+    """Abre una ronda y devuelve su nodo (`id`). Se abre ANTES de repartir: cada encargo la cita."""
+    return _conocimiento(
+        "POST", f"/{pid}/rondas", {"objetivo": objetivo, "coordinadora": YO, "autor": f"coordinadora:{YO}"}
+    )
+
+
+def encargo(pid, ronda, letra, texto, archivos=None):
+    """Registra el encargo (el texto entero queda en rondas/<ronda>/encargo-<letra>.md) y devuelve su
+    nodo. Después de lanzar o mandar, `encargo_enviado(pid, e["id"], s)` lo vincula a la tarjeta."""
+    return _conocimiento(
+        "POST",
+        f"/{pid}/encargos",
+        {"ronda": ronda, "letra": letra, "texto": texto, "archivos": archivos or [], "autor": f"coordinadora:{YO}"},
+    )
+
+
+def encargo_enviado(pid, encargo_id, s):
+    """La tarjeta `s` tomó el encargo: pasa a `enviado` y queda vinculada (ejecutado_por). Desde acá
+    el server registra solo lo que observe de esa sesión: cierre, permisos denegados, muerte a medias."""
+    return _conocimiento(
+        "POST",
+        f"/{pid}/encargos/{encargo_id}/enviado",
+        {k: s.get(k) for k in ("session_id", "agent", "model", "pc", "cwd")},
+    )
+
+
+def entregar(pid, encargo_id, cuerpo, revision=1, autor=None):
+    """La entrega explícita de un informe íntegro: queda con hash en rondas/<ronda>/informe-<letra>-r<N>.md
+    y el encargo pasa a `entregado`. Idempotente por (encargo, revisión, hash); la misma revisión con
+    otro contenido es 409. La coordinadora lo llama con el texto que leyó del frente (`informe(s)`).
+    Si el informe termina con un bloque ```conocimiento``` (ver INSTRUCCION_CONOCIMIENTO), el resultado
+    trae `datos.conocimiento`: `{estado: "incorporado", ids: {local: id}}` o
+    `{estado: "pendiente_de_vincular", errores: [{donde, error}]}`; en ese caso se le piden al frente
+    las correcciones y se entrega como revisión siguiente."""
+    return _conocimiento(
+        "POST",
+        f"/{pid}/entregas",
+        {"encargo": encargo_id, "revision": revision, "cuerpo": cuerpo, "autor": autor or f"coordinadora:{YO}"},
+    )
+
+
+def cerrar_ronda(pid, ronda, motivo="", veredictos=None, sin_resolver=None):
+    return _conocimiento(
+        "POST",
+        f"/{pid}/rondas/{ronda}/cerrar",
+        {"por": f"coordinadora:{YO}", "motivo": motivo, "veredictos": veredictos, "sin_resolver": sin_resolver},
+    )
+
+
+def veredicto(pid, items, revision=None, evidencia=None, motivo=""):
+    return _conocimiento(
+        "POST",
+        f"/{pid}/veredictos",
+        {
+            "items": items,
+            "por": f"coordinadora:{YO}",
+            "revision": revision,
+            "evidencia": evidencia,
+            "motivo": motivo,
+        },
+    )
+
+
+def pendientes_memoria(pid, ronda=None):
+    q = urllib.parse.urlencode({"ronda": ronda}) if ronda else ""
+    return _conocimiento("GET", f"/{pid}/pendientes?{q}")
+
+
+def duplicados(pid, ronda=None):
+    q = urllib.parse.urlencode({"ronda": ronda}) if ronda else ""
+    return _conocimiento("GET", f"/{pid}/duplicados?{q}")
+
+
+def tema(pid, texto, aliases=None):
+    return _conocimiento("POST", f"/{pid}/temas", {"texto": texto, "aliases": aliases, "por": f"coordinadora:{YO}"})
+
+
+def temas(pid):
+    return _conocimiento("GET", f"/{pid}/temas")
+
+
+def _consulta_memoria(pid, ruta, parametros):
+    q = urllib.parse.urlencode({k: v for k, v in parametros.items() if v is not None}, doseq=True)
+    return _conocimiento("GET", f"/{pid}/{ruta}?{q}")
+
+
+def briefing(pid, archivos=None, temas=None, consultas=None, desde_cierre=True):
+    return _consulta_memoria(
+        pid,
+        "briefing",
+        {
+            "archivos": archivos,
+            "temas": temas,
+            "q": consultas,
+            "desde_cierre": int(desde_cierre),
+        },
+    )
+
+
+def preguntar(pid, consultas, archivos=None, temas=None, tipo=None, saltos=1, offset=0, limite=100):
+    return _consulta_memoria(
+        pid,
+        "preguntar",
+        {
+            "q": consultas,
+            "archivos": archivos,
+            "temas": temas,
+            "tipo": tipo,
+            "saltos": saltos,
+            "offset": offset,
+            "limite": limite,
+        },
+    )
+
+
+def vista(pid, tema):
+    return _consulta_memoria(pid, "vista", {"tema": tema})
+
+
+def preparar_encargo(pid, texto, archivos=None, temas=None, consultas=None):
+    """Texto para un frente con el briefing actual y la plantilla de conocimiento."""
+    contexto = briefing(pid, archivos=archivos, temas=temas, consultas=consultas)
+    return "\n\n".join(
+        (
+            texto,
+            "Memoria del proyecto (IDs citables; propuestas conservan su estado):\n"
+            + json.dumps(contexto, ensure_ascii=False, indent=2),
+            INSTRUCCION_CONOCIMIENTO,
+        )
+    )
+
+
+def parecidos(pid, incidente, limite=20):
+    return _consulta_memoria(pid, f"incidentes/{incidente}/parecidos", {"limite": limite})
+
+
+def recurrencia(pid, incidente):
+    return _conocimiento("GET", f"/{pid}/incidentes/{incidente}/recurrencia")
+
+
+def cuestionar(pid, regla=None):
+    ruta = f"reglas/{regla}/cuestionar" if regla else "reglas/cuestionar"
+    return _conocimiento("POST", f"/{pid}/{ruta}", {})
+
+
+def reglas_cuestionadas(pid):
+    return _conocimiento("GET", f"/{pid}/reglas/cuestionadas")
+
+
+def avisos(pid, nodo=None):
+    return _conocimiento("GET", f"/{pid}/nodos/{nodo}/aviso" if nodo else f"/{pid}/avisos")
+
+
+def dependencias(pid, nodo):
+    return _conocimiento("GET", f"/{pid}/nodos/{nodo}/dependencias")
+
+
+def lecciones(agente, modelo=None, proyectos=None):
+    q = urllib.parse.urlencode(
+        {
+            k: v
+            for k, v in {
+                "agente": agente,
+                "modelo": modelo,
+                "proyectos": ",".join(proyectos) if proyectos else None,
+            }.items()
+            if v is not None
+        }
+    )
+    return _conocimiento("GET", f"/lecciones?{q}")
+
+
+def conocimiento(pid, consulta=None, tipo=None, saltos=1, estado=None, ronda=None):
+    """Sin `consulta`: el resumen del proyecto (nodos por tipo y estado, rondas). Con `consulta`:
+    búsqueda BM25 (sintaxis FTS5: `halving OR mitad`, `sustitu*`) más los vecinos a `saltos` por el
+    grafo. Con `tipo`/`estado`/`ronda` y sin consulta: la lista de nodos."""
+    if consulta:
+        q = urllib.parse.urlencode(
+            {k: v for k, v in (("q", consulta), ("tipo", tipo), ("saltos", saltos)) if v not in (None, "")}
+        )
+        return _conocimiento("GET", f"/{pid}/buscar?{q}")
+    if tipo or estado or ronda:
+        q = urllib.parse.urlencode({k: v for k, v in (("tipo", tipo), ("estado", estado), ("ronda", ronda)) if v})
+        return _conocimiento("GET", f"/{pid}/nodos?{q}")
+    return _conocimiento("GET", f"/{pid}")
+
+
+INSTRUCCION_CONOCIMIENTO = """\
+Terminá el informe con un bloque de conocimiento para el lienzo (JSON dentro de ```conocimiento ... ```).
+Declarás lo que aprendiste del proyecto: hallazgos, decisiones con sus alternativas, preguntas, mediciones,
+incidentes, reglas, temas y evidencia. Si no hay nada que declarar, no pongas el bloque.
+
+```conocimiento
+{
+  "version": 1,
+  "nodos": [
+    {"id": "h1", "tipo": "hallazgo", "texto": "<una afirmacion>", "datos": {"donde": "ruta:linea o dominio:concepto", "gravedad": "baja|media|alta|critica"}},
+    {"id": "a1", "tipo": "alternativa", "texto": "<un camino considerado>", "datos": {}},
+    {"id": "d1", "tipo": "decision", "texto": "<lo elegido>", "datos": {"motivo": "<por que>"}},
+    {"id": "p1", "tipo": "pregunta", "texto": "<lo que falta responder>", "datos": {"para_quien": "coordinadora|ariel"}},
+    {"id": "m1", "tipo": "medicion", "texto": "<que se midio>", "datos": {"metrica": "", "valor": 0, "unidad": "", "condicion": "<commit, PC, datos>"}},
+    {"id": "t1", "tipo": "tema", "texto": "<modulo, archivo o concepto>", "datos": {}}
+  ],
+  "vinculos": [
+    {"de": "d1", "relacion": "motivada_por", "a": "h1"},
+    {"de": "d1", "relacion": "descarta", "a": "a1", "motivo": "<por que no>"},
+    {"de": "h1", "relacion": "sobre", "a": "t1"}
+  ]
+}
+```
+
+Reglas: cada nodo lleva id local unico, tipo, texto y datos. Una decision exige motivo y al menos un vinculo
+elige o descarta; una regla exige ambito (proyecto|agente) y derivada_de; un incidente, herramienta y agente;
+una evidencia, clase y referencia. Relaciones que podes declarar: motivada_por, elige, descarta, derivada_de,
+aplica_a, sobre, apoya. Un extremo es un id local o `nodo:<id>` de algo que ya esta en el proyecto (te lo doy
+en el encargo). Si algo no valida, el bloque entero queda afuera y te pido la correccion.
+"""

@@ -29,7 +29,10 @@ def dispatch(data):
         return 404, {"error": "La PC elegida no está emparejada"}
     if mirror.MIRROR.supports(pc, "browser.remote") is False:
         return 409, {"error": "Actualizá y reiniciá Lienzo en la otra PC para usar Chrome remoto"}
-    if command.get("action") in ("windows", "window-frame", "window-input", "window-release") and mirror.MIRROR.supports(pc, "browser.window") is False:
+    if (
+        command.get("action") in ("windows", "window-frame", "window-input", "window-release")
+        and mirror.MIRROR.supports(pc, "browser.window") is False
+    ):
         return 409, {"error": "Actualizá y reiniciá Lienzo en la otra PC para ver su ventana real de Chrome"}
     key = channel_key(conn.key)
     request_id = secrets.token_hex(16)

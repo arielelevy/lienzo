@@ -278,8 +278,17 @@ def test_modelo_y_resume_se_combinan(aislado, monkeypatch):
 def test_dialogo_de_remote_control_nunca_elige_desconectar():
     import sessions as ses
 
-    apagado = {"question": "Remote Control", "options": [{"n": 1, "text": "Enable Remote Control  Opens a secure connection"}, {"n": 2, "text": "Never mind"}]}
-    prendido = {"question": "Remote Control", "options": [{"n": 1, "text": "Disconnect this session"}, {"n": 2, "text": "Keep it"}]}
+    apagado = {
+        "question": "Remote Control",
+        "options": [
+            {"n": 1, "text": "Enable Remote Control  Opens a secure connection"},
+            {"n": 2, "text": "Never mind"},
+        ],
+    }
+    prendido = {
+        "question": "Remote Control",
+        "options": [{"n": 1, "text": "Disconnect this session"}, {"n": 2, "text": "Keep it"}],
+    }
     otro = {"question": "Switch model?", "options": [{"n": 1, "text": "Yes"}]}
     assert ses._opcion_remote_control(apagado) == 1
     assert ses._opcion_remote_control(prendido) == 2

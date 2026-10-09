@@ -474,12 +474,15 @@ def test_la_denegacion_grave_manda_aunque_venga_antes_y_lejos_en_el_comando(monk
 
     clasif = "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [{}]"
     borrar = (
-        "S=/c/Users/x/scratchpad; cd /c/datos/paginas; total=0; for d in $(cat $S/sha.txt); do [[ \"$d\" =~ "
-        "^[0-9a-f]{64}$ ]] || exit 1; total=$((total + $(du -sb \"$d\" | cut -f1))); done; echo \"bytes $total\"; "
-        "for d in $(cat $S/sha.txt); do rm -r -- \"/c/datos/paginas/$d\"; done; ls | wc -l"
+        'S=/c/Users/x/scratchpad; cd /c/datos/paginas; total=0; for d in $(cat $S/sha.txt); do [[ "$d" =~ '
+        '^[0-9a-f]{64}$ ]] || exit 1; total=$((total + $(du -sb "$d" | cut -f1))); done; echo "bytes $total"; '
+        'for d in $(cat $S/sha.txt); do rm -r -- "/c/datos/paginas/$d"; done; ls | wc -l'
     )
     sumar = 'cd /d/x; python3 -c "print(sum([1,2,3]))"; head -5 corpus/incluidos.txt'
-    turno = {"id": "t1", "blocks": [tool(borrar, clasif.format("Irreversible Local Destruction")), tool(sumar, clasif.format("x"))]}
+    turno = {
+        "id": "t1",
+        "blocks": [tool(borrar, clasif.format("Irreversible Local Destruction")), tool(sumar, clasif.format("x"))],
+    }
     d = tr.denials(turno)
     assert d[0]["grave"] is True and "rm -r" in d[0]["detalle"]
     assert d[1]["grave"] is False

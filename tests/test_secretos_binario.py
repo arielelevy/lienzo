@@ -27,7 +27,7 @@ def test_abrir_rejects_any_alteration(cambio):
     casos = {
         "aad": (clave, sellado, b"otro"),
         "tag": (clave, sellado[:-1] + bytes([sellado[-1] ^ 1]), b"aad"),
-        "cuerpo": (clave, sellado[:i] + bytes([sellado[i] ^ 1]) + sellado[i + 1:], b"aad"),
+        "cuerpo": (clave, sellado[:i] + bytes([sellado[i] ^ 1]) + sellado[i + 1 :], b"aad"),
         "clave": (bytes(32), sellado, b"aad"),
         "corto": (clave, sellado[:40], b"aad"),
         "tipo": (clave, sellado.hex(), b"aad"),

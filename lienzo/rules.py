@@ -14,6 +14,7 @@ import threading
 import time
 import traceback
 
+import conocimiento
 import identity
 import sessions as ses
 import state
@@ -491,6 +492,11 @@ def aviso_muerta(sid: str, prev: str) -> None:
         destinos = {
             r["to"] for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid
         }
+    # conocimiento por proyecto (v5 §5.1): la muerte con un encargo a medias es un incidente de la
+    # ronda, haya o no a quien avisar. Ya corre en un hilo (en_hilo desde marcar_muerta)
+    conocimiento.incidente_operativo(
+        sid, f"murio sin terminar su encargo (estaba {prev})", herramienta="sesion", datos={"estado": prev}
+    )
     if not s or not destinos:
         return
     titulo = s.get("title") or s.get("repo") or sid[:8]

@@ -2,8 +2,8 @@
 
 import io
 import json
-from pathlib import Path
 from email.message import Message
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest

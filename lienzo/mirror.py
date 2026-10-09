@@ -377,7 +377,9 @@ class Mirror:
                 )
         return out
 
-    def forward(self, pc_id: str, method: str, path: str, body: dict | None = None, *, timeout: float | None = None) -> tuple[int, dict]:
+    def forward(
+        self, pc_id: str, method: str, path: str, body: dict | None = None, *, timeout: float | None = None
+    ) -> tuple[int, dict]:
         """Reenvia un comando a la PC dueña (`path` sin el prefijo `/peer`, que se agrega aca) y
         devuelve su respuesta tal cual: codigo y cuerpo. Peer caido, o desconocido: 503, para que
         el front lo muestre igual que "no hay consola donde escribir". El 503 lleva `no_llego` solo

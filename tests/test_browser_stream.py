@@ -66,7 +66,9 @@ def test_wrong_direction_does_not_verify():
         module.Sealed(key, b">", b"<").open(sock.sent[0][1])
 
 
-@pytest.mark.parametrize("payload", [b"[]", b"42", b'{"a":1}', b'{"t":1}', b"{" * 10, pytest.param(b"x" * 70000, id="grande")])
+@pytest.mark.parametrize(
+    "payload", [b"[]", b"42", b'{"a":1}', b'{"t":1}', b"{" * 10, pytest.param(b"x" * 70000, id="grande")]
+)
 def test_invalid_commands_rejected_before_reaching_worker(payload):
     with pytest.raises((ValueError, UnicodeDecodeError)):
         module._command(payload)
@@ -80,7 +82,9 @@ def test_command_becomes_single_ascii_line():
 
 def test_worker_records_are_delivered_by_kind_and_exit_is_reported():
     frame = struct.pack(">IHHHHHHB", 1, 0, 0, 2, 2, 2, 2, 1) + b"\x89PNG"
-    out = io.BytesIO(module.RECORD.pack(len(frame) + 1, ord("F")) + frame + module.RECORD.pack(3, ord("J")) + b"{}" + b"\x00\x00")
+    out = io.BytesIO(
+        module.RECORD.pack(len(frame) + 1, ord("F")) + frame + module.RECORD.pack(3, ord("J")) + b"{}" + b"\x00\x00"
+    )
     delivered, exited = [], []
     worker = module.Worker.__new__(module.Worker)
     worker.process = SimpleNamespace(stdout=out)

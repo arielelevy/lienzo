@@ -34,6 +34,7 @@ import autoaprobar
 import beacon
 import browser_api
 import browser_stream
+import conocimiento_api
 import cuenta_github
 import federation
 import health
@@ -85,6 +86,7 @@ from sessions import (
     set_title,
     sweep_once,
     touch,
+    transfer_work_rules,
 )
 from sessions import retarget_rules as ses_retarget_rules
 from state import (
@@ -938,6 +940,11 @@ def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
     src_s = registrar_envio(sid, d)
     if s is not None and src_s is not None and d.get("copycat") is True:
         # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
+        if d.get("stop_origin") is not False:
+            code, out = accion_retarget({"old": src_s["session_id"], "new": sid, "work": True}, desde_tablero=True)
+            if code != 200 or out.get("unreachable"):
+                res["handover_error"] = out.get("error") or f"conexiones pendientes en {out['unreachable']}"
+                return
         res.update(hand_over(s, src_s, stop=d.get("stop_origin") is not False))
     elif d.get("copycat") is True:
         remote_hand_over(sid, src_s, d, res)
@@ -955,6 +962,19 @@ def remote_hand_over(sid: str, origin: dict | None, d: dict, res: dict) -> None:
         res["handover_error"] = out.get("error") or "no se pudo titular el destino"
         return
     if d.get("stop_origin") is not False:
+        code, out = accion_retarget({"old": origin["session_id"], "new": sid, "work": True}, desde_tablero=True)
+        if code != 200 or out.get("unreachable"):
+            res["handover_error"] = out.get("error") or f"no se pudieron trasladar las conexiones en {out['unreachable']}"
+            return
+        if origin.get("coordinator"):
+            code, out = atender_accion("PUT", sid, "coordinator", {"on": True}, desde_tablero=True)
+            if code != 200:
+                res["handover_error"] = out.get("error") or "no se pudo trasladar la coordinación"
+                return
+            code, out = atender_accion("PUT", origin["session_id"], "coordinator", {"on": False}, desde_tablero=True)
+            if code != 200:
+                res["handover_error"] = out.get("error") or "no se pudo quitar la coordinación del origen"
+                return
         code, out = atender_accion("PUT", origin["session_id"], "stopped", {"on": True}, desde_tablero=True)
         if code != 200:
             res["handover_error"] = out.get("error") or "no se pudo detener el origen"
@@ -1084,7 +1104,13 @@ def accion_retarget(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     tablero, aca y en las otras PCs; lo que pide otra PC, solo aca."""
     if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
         return 400, {"error": "hace falta old y new"}
-    n = ses_retarget_rules(d["old"], d["new"])
+    if d.get("work") is True:
+        try:
+            n = transfer_work_rules(d["old"], d["new"])
+        except (OSError, ValueError) as e:
+            return 409, {"error": str(e)}
+    else:
+        n = ses_retarget_rules(d["old"], d["new"])
     if not desde_tablero:
         return 200, {"ok": True, "n": n}
     ok, fallaron = fan_out("POST", "/rules/retarget", d)
@@ -1385,6 +1411,10 @@ class Handler(JsonHandler):
                 return self._secret_take(parts[1])
             if parts == ["salud"]:
                 return self._json(200, salud())
+            if parts and parts[0] == "conocimiento":
+                # conocimiento por proyecto (conocimiento_api.py): consultas, sin tocar el lock
+                code, res = conocimiento_api.dispatch("GET", parts[1:], None, self.query)
+                return self._json(code, res)
             if parts == ["sessions"]:
                 # serializar con el lock (es CPU pura) y escribir afuera: es el cuerpo mas grande
                 # que manda el server, y antes se escribia al socket con el lock tomado. El espejo
@@ -1526,6 +1556,14 @@ class Handler(JsonHandler):
                 return self._json(code, res)
             if parts == ["secrets"]:
                 return self._secret_send()
+            if parts and parts[0] == "conocimiento":
+                # conocimiento por proyecto (conocimiento_api.py): proyectos, rondas, encargos, entregas,
+                # nodos y vinculos. Los veredictos y los cuerpos son de la coordinadora o de Ariel en
+                # esta PC o la LAN, como /browser y /restart: nada por el tunel
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "el conocimiento se escribe desde una PC de la LAN"})
+                code, res = conocimiento_api.dispatch("POST", parts[1:], self._json_body(), self.query)
+                return self._json(code, res)
             if parts == ["rules"]:
                 code, res = create_rule(self._json_body())
                 return self._json(code, res)

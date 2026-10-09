@@ -5,6 +5,7 @@ Dos modos sobre el mismo codigo Win32:
 - `--stream`: captura continua con acuse por cuadro y entrada por el mismo canal. stdout pasa a
   ser binario: registros `>IB` (largo, tipo) con J = JSON y F = cuadro (FRAME_HEADER + PNG).
 """
+
 import base64
 import ctypes as c
 import json
@@ -20,9 +21,21 @@ from pathlib import Path
 
 FRAME_HEADER = struct.Struct(">IHHHHHHB")  # seq, x, y, ancho, alto, ancho total, alto total, flags
 FRAME_FULL = 1  # flags: el cuadro es completo (reemplaza todo), no un parche
-SYSTEM_CURSORS = {32512: "default", 32513: "text", 32514: "wait", 32515: "crosshair", 32642: "nwse-resize",
-                  32643: "nesw-resize", 32644: "ew-resize", 32645: "ns-resize", 32646: "move", 32648: "not-allowed",
-                  32649: "pointer", 32650: "progress", 32651: "help"}
+SYSTEM_CURSORS = {
+    32512: "default",
+    32513: "text",
+    32514: "wait",
+    32515: "crosshair",
+    32642: "nwse-resize",
+    32643: "nesw-resize",
+    32644: "ew-resize",
+    32645: "ns-resize",
+    32646: "move",
+    32648: "not-allowed",
+    32649: "pointer",
+    32650: "progress",
+    32651: "help",
+}
 RECORD = struct.Struct(">IB")
 MAX_IN_FLIGHT = 2  # cuadros sin acusar antes de frenar la captura: acota la cola, no la pierde
 MIN_INTERVAL_S = 1 / 60
@@ -47,7 +60,7 @@ def dirty_box(old, new, width, height, step=64):
     que cambiaron; si cambio mas de la mitad de las filas (scroll) va el ancho entero sin mirar."""
     stride = width * 3
     o, n = memoryview(old), memoryview(new)
-    changed = [y for y in range(height) if n[y * stride:(y + 1) * stride] != o[y * stride:(y + 1) * stride]]
+    changed = [y for y in range(height) if n[y * stride : (y + 1) * stride] != o[y * stride : (y + 1) * stride]]
     if not changed:
         return None
     top, bottom = changed[0], changed[-1] + 1
@@ -60,7 +73,7 @@ def dirty_box(old, new, width, height, step=64):
             end = min(width, x + step)
             if left <= x and end <= right:
                 continue  # ya adentro de la caja
-            if n[offset + x * 3:offset + end * 3] != o[offset + x * 3:offset + end * 3]:
+            if n[offset + x * 3 : offset + end * 3] != o[offset + x * 3 : offset + end * 3]:
                 left, right = min(left, x), max(right, end)
     return left, top, right, bottom
 
@@ -68,7 +81,7 @@ def dirty_box(old, new, width, height, step=64):
 def png(rgb, width, box):
     """PNG RGB de 8 bits de la caja (left, top, right, bottom) de un cuadro de `width` pixeles."""
     left, top, right, bottom = box
-    rows = b"".join(b"\0" + rgb[(y * width + left) * 3:(y * width + right) * 3] for y in range(top, bottom))
+    rows = b"".join(b"\0" + rgb[(y * width + left) * 3 : (y * width + right) * 3] for y in range(top, bottom))
 
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
@@ -95,7 +108,9 @@ class Windows:
         self.user.GetAncestor.restype = w.HWND
         self.user.LoadCursorW.restype = w.HANDLE
         self.user.LoadCursorW.argtypes = [w.HINSTANCE, c.c_void_p]
-        self.cursor_shapes = {self.user.LoadCursorW(None, c.c_void_p(number)): shape for number, shape in SYSTEM_CURSORS.items()}
+        self.cursor_shapes = {
+            self.user.LoadCursorW(None, c.c_void_p(number)): shape for number, shape in SYSTEM_CURSORS.items()
+        }
         self.user.MonitorFromWindow.restype = w.HANDLE
         self.gdi.CreateCompatibleDC.restype = w.HDC
         self.gdi.CreateCompatibleBitmap.restype = w.HBITMAP
@@ -103,14 +118,17 @@ class Windows:
         self.kernel.OpenProcess.restype = w.HANDLE
         # Todos los handles conservan sus 64 bits al pasar a la API nativa.
         for dll, name, args in [
-            (self.user, "GetWindowDC", [w.HWND]), (self.user, "ReleaseDC", [w.HWND, w.HDC]),
+            (self.user, "GetWindowDC", [w.HWND]),
+            (self.user, "ReleaseDC", [w.HWND, w.HDC]),
             (self.user, "PrintWindow", [w.HWND, w.HDC, w.UINT]),
             (self.user, "GetWindowRect", [w.HWND, c.POINTER(w.RECT)]),
             (self.user, "GetAncestor", [w.HWND, w.UINT]),
             (self.user, "GetWindowTextW", [w.HWND, w.LPWSTR, c.c_int]),
             (self.user, "GetClassNameW", [w.HWND, w.LPWSTR, c.c_int]),
-            (self.user, "IsWindowVisible", [w.HWND]), (self.user, "IsIconic", [w.HWND]),
-            (self.user, "ShowWindow", [w.HWND, c.c_int]), (self.user, "SetForegroundWindow", [w.HWND]),
+            (self.user, "IsWindowVisible", [w.HWND]),
+            (self.user, "IsIconic", [w.HWND]),
+            (self.user, "ShowWindow", [w.HWND, c.c_int]),
+            (self.user, "SetForegroundWindow", [w.HWND]),
             (self.user, "IsZoomed", [w.HWND]),
             (self.user, "SetWindowPos", [w.HWND, w.HWND, c.c_int, c.c_int, c.c_int, c.c_int, w.UINT]),
             (self.user, "AttachThreadInput", [w.DWORD, w.DWORD, w.BOOL]),
@@ -125,7 +143,8 @@ class Windows:
             (self.gdi, "CreateCompatibleBitmap", [w.HDC, c.c_int, c.c_int]),
             (self.gdi, "SelectObject", [w.HDC, w.HANDLE]),
             (self.gdi, "BitBlt", [w.HDC, c.c_int, c.c_int, c.c_int, c.c_int, w.HDC, c.c_int, c.c_int, w.DWORD]),
-            (self.gdi, "DeleteObject", [w.HANDLE]), (self.gdi, "DeleteDC", [w.HDC]),
+            (self.gdi, "DeleteObject", [w.HANDLE]),
+            (self.gdi, "DeleteDC", [w.HDC]),
             (self.gdi, "GetDIBits", [w.HDC, w.HBITMAP, w.UINT, w.UINT, c.c_void_p, c.c_void_p, w.UINT]),
             (self.kernel, "OpenProcess", [w.DWORD, w.BOOL, w.DWORD]),
             (self.kernel, "CloseHandle", [w.HANDLE]),
@@ -149,7 +168,10 @@ class Windows:
         try:
             path = c.create_unicode_buffer(32768)
             size = w.DWORD(len(path))
-            return bool(self.kernel.QueryFullProcessImageNameW(process, 0, path, c.byref(size))) and Path(path.value).name.lower() == "chrome.exe"
+            return (
+                bool(self.kernel.QueryFullProcessImageNameW(process, 0, path, c.byref(size)))
+                and Path(path.value).name.lower() == "chrome.exe"
+            )
         finally:
             self.kernel.CloseHandle(process)
 
@@ -204,7 +226,9 @@ class Windows:
         left = max(info.work.left, min(rect.left, info.work.right - width))
         top = max(info.work.top, min(rect.top, info.work.bottom - height))
         current = (rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
-        if current != (left, top, width, height) and not self.user.SetWindowPos(hwnd, None, left, top, width, height, 0x14):
+        if current != (left, top, width, height) and not self.user.SetWindowPos(
+            hwnd, None, left, top, width, height, 0x14
+        ):
             fail("Windows no permitió ajustar el tamaño de Chrome")
 
     def popups(self, hwnd):
@@ -214,7 +238,12 @@ class Windows:
         callback_type = c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
 
         def collect(candidate, _):
-            if candidate != hwnd and self.user.IsWindowVisible(candidate) and self.owner(candidate) == pid and self.user.GetAncestor(candidate, 3) == hwnd:
+            if (
+                candidate != hwnd
+                and self.user.IsWindowVisible(candidate)
+                and self.owner(candidate) == pid
+                and self.user.GetAncestor(candidate, 3) == hwnd
+            ):
                 result.append(candidate)
             return True
 
@@ -247,7 +276,9 @@ class Windows:
                 if not self.user.IsWindowVisible(hwnd):
                     return  # se cerró durante la captura
                 fail("Windows no pudo capturar el aviso o menú de Chrome")
-            if not self.gdi.BitBlt(target, rect.left - base.left, rect.top - base.top, width, height, memory, 0, 0, 0x00CC0020):
+            if not self.gdi.BitBlt(
+                target, rect.left - base.left, rect.top - base.top, width, height, memory, 0, 0, 0x00CC0020
+            ):
                 fail("Windows no pudo mostrar el aviso o menú de Chrome")
         finally:
             self.gdi.SelectObject(memory, old)
@@ -309,9 +340,21 @@ class Windows:
                 box = (0, 0, width, height)
         frame_id = secrets.token_hex(16)
         self.previous_frame = (hwnd, width, height, frame_id, rgb)
-        result = {"image": base64.b64encode(png(rgb, width, box)).decode(), "format": "png", "width": width, "height": height, "frameId": frame_id}
+        result = {
+            "image": base64.b64encode(png(rgb, width, box)).decode(),
+            "format": "png",
+            "width": width,
+            "height": height,
+            "frameId": frame_id,
+        }
         if patch_base:
-            result["patch"] = {"base": patch_base, "x": box[0], "y": box[1], "width": box[2] - box[0], "height": box[3] - box[1]}
+            result["patch"] = {
+                "base": patch_base,
+                "x": box[0],
+                "y": box[1],
+                "width": box[2] - box[0],
+                "height": box[3] - box[1],
+            }
         return result
 
     def active(self, hwnd):
@@ -363,7 +406,9 @@ class Windows:
         # entrada no llega a ningun programa: no hay truco que probar, hay que desbloquearla alla
         frente = self.user.GetForegroundWindow()
         if frente and self.describe(frente).endswith("LockApp.exe"):
-            fail("La PC está bloqueada (pantalla de bloqueo de Windows): desbloqueala allá, mientras tanto Chrome no puede recibir la entrada")
+            fail(
+                "La PC está bloqueada (pantalla de bloqueo de Windows): desbloqueala allá, mientras tanto Chrome no puede recibir la entrada"
+            )
         if not getattr(self, "_sin_bloqueo_de_frente", False):
             self._sin_bloqueo_de_frente = True
             self.user.SystemParametersInfoW(0x2001, 0, None, 0x2)  # SPI_SETFOREGROUNDLOCKTIMEOUT = 0, SPIF_SENDCHANGE
@@ -378,7 +423,9 @@ class Windows:
             foreground = self.user.GetForegroundWindow()
             foreground_thread = self.user.GetWindowThreadProcessId(foreground, None)
             current_thread = self.kernel.GetCurrentThreadId()
-            attached = foreground_thread != current_thread and self.user.AttachThreadInput(current_thread, foreground_thread, True)
+            attached = foreground_thread != current_thread and self.user.AttachThreadInput(
+                current_thread, foreground_thread, True
+            )
             try:
                 if attached:
                     self.user.BringWindowToTop(hwnd)
@@ -394,8 +441,12 @@ class Windows:
         if self.user.GetForegroundWindow() != hwnd:
             foreground = self.user.GetForegroundWindow()
             if not foreground:
-                fail("La PC no tiene escritorio activo (bloqueada o con el protector de pantalla): Chrome no puede recibir la entrada")
-            fail(f"Windows no permitió activar Chrome; no se envió la entrada. Al frente está: {self.describe(foreground)}")
+                fail(
+                    "La PC no tiene escritorio activo (bloqueada o con el protector de pantalla): Chrome no puede recibir la entrada"
+                )
+            fail(
+                f"Windows no permitió activar Chrome; no se envió la entrada. Al frente está: {self.describe(foreground)}"
+            )
 
     def input(self, hwnd, events):
         if not isinstance(events, list) or len(events) > 64:
@@ -414,9 +465,14 @@ class Windows:
                 actual = w.POINT()
                 if not self.user.GetCursorPos(c.byref(actual)) or (actual.x, actual.y) != (rect.left + x, rect.top + y):
                     fail("Windows limitó la posición del mouse; no se envió el clic fuera de lugar")
-                flags = {("mousePressed", "left"): 2, ("mouseReleased", "left"): 4,
-                         ("mousePressed", "right"): 8, ("mouseReleased", "right"): 16,
-                         ("mousePressed", "middle"): 32, ("mouseReleased", "middle"): 64}
+                flags = {
+                    ("mousePressed", "left"): 2,
+                    ("mouseReleased", "left"): 4,
+                    ("mousePressed", "right"): 8,
+                    ("mouseReleased", "right"): 16,
+                    ("mousePressed", "middle"): 32,
+                    ("mouseReleased", "middle"): 64,
+                }
                 if event.get("type") == "mouseWheel":
                     delta = -bounded(event.get("deltaY"), -4000, 4000)
                     self.send_mouse(0x800, delta)
@@ -432,7 +488,11 @@ class Windows:
             elif kind == "key":
                 key = bounded(event.get("keyCode"), 1, 255)
                 modifiers = bounded(event.get("modifiers"), 0, 15)
-                if key in (91, 92, 93) or (modifiers & 1 and key in (9, 27, 115)) or (modifiers & 2 and modifiers & 8 and key == 27):
+                if (
+                    key in (91, 92, 93)
+                    or (modifiers & 1 and key in (9, 27, 115))
+                    or (modifiers & 2 and modifiers & 8 and key == 27)
+                ):
                     fail("Ese atajo de Windows no se admite en Chrome remoto")
                 if event.get("type") not in ("keyDown", "keyUp"):
                     fail("Tipo de tecla inválido")
@@ -458,8 +518,16 @@ class Windows:
 
     def send_mouse(self, flags, delta=0):
         """Entrada Win32 con resultado verificable; mouse_event no informa si se insertó."""
+
         class Mouse(c.Structure):
-            _fields_ = [("dx", w.LONG), ("dy", w.LONG), ("data", w.DWORD), ("flags", w.DWORD), ("time", w.DWORD), ("extra", c.c_size_t)]
+            _fields_ = [
+                ("dx", w.LONG),
+                ("dy", w.LONG),
+                ("data", w.DWORD),
+                ("flags", w.DWORD),
+                ("time", w.DWORD),
+                ("extra", c.c_size_t),
+            ]
 
         class Payload(c.Union):
             _fields_ = [("mouse", Mouse)]
@@ -470,17 +538,23 @@ class Windows:
         entry = Input(0, Payload(mouse=Mouse(0, 0, delta & 0xFFFFFFFF, flags, 0, 0)))
         self.user.SendInput.argtypes = [w.UINT, c.c_void_p, c.c_int]
         if self.user.SendInput(1, c.byref(entry), c.sizeof(Input)) != 1:
-            fail("Windows no aceptó el clic o la rueda de Chrome; revisá que Chrome no esté ejecutándose como administrador")
+            fail(
+                "Windows no aceptó el clic o la rueda de Chrome; revisá que Chrome no esté ejecutándose como administrador"
+            )
 
     def text(self, text):
         if not isinstance(text, str) or len(text) > 16000:
             fail("Texto inválido o demasiado grande")
+
         class Keyboard(c.Structure):
             _fields_ = [("vk", w.WORD), ("scan", w.WORD), ("flags", w.DWORD), ("time", w.DWORD), ("extra", c.c_size_t)]
+
         class Payload(c.Union):
             _fields_ = [("key", Keyboard), ("padding", c.c_byte * (32 if c.sizeof(c.c_void_p) == 8 else 24))]
+
         class Input(c.Structure):
             _fields_ = [("type", w.DWORD), ("payload", Payload)]
+
         codes = struct.unpack("<" + "H" * (len(text.encode("utf-16-le")) // 2), text.encode("utf-16-le"))
         inputs = (Input * (len(codes) * 2))()
         for i, code in enumerate(codes):
@@ -636,7 +710,9 @@ class Streamer:
                 box = (0, 0, width, height)
         self.idle = 0
         self.seq += 1
-        header = FRAME_HEADER.pack(self.seq, box[0], box[1], box[2] - box[0], box[3] - box[1], width, height, FRAME_FULL if full else 0)
+        header = FRAME_HEADER.pack(
+            self.seq, box[0], box[1], box[2] - box[0], box[3] - box[1], width, height, FRAME_FULL if full else 0
+        )
         payload = header + png(rgb, width, box)
         with self.cv:
             if self.hwnd != hwnd:
@@ -699,7 +775,13 @@ def main():
             if action == "windows":
                 result = {"windows": windows.windows()}
             elif action == "window-frame":
-                result = windows.frame(windows.target(data.get("window")), data.get("width"), data.get("height"), data.get("delta", False), data.get("base"))
+                result = windows.frame(
+                    windows.target(data.get("window")),
+                    data.get("width"),
+                    data.get("height"),
+                    data.get("delta", False),
+                    data.get("base"),
+                )
             elif action == "window-input":
                 result = windows.input(windows.target(data.get("window")), data.get("events"))
             elif action == "window-release":

@@ -18,6 +18,7 @@ import traceback
 
 import backend
 import coda
+import conocimiento
 import identity
 import restore
 import screen
@@ -202,11 +203,7 @@ def repo_coordinator(repo: str | None, local: list[dict], remote: list[dict]) ->
     if repo is None:
         return None
     return next(
-        (
-            o
-            for o in (*local, *remote)
-            if o.get("coordinator") and _repo_identity(o) == repo
-        ),
+        (o for o in (*local, *remote) if o.get("coordinator") and _repo_identity(o) == repo),
         None,
     )
 
@@ -407,8 +404,7 @@ def retarget_rules(old: str, new: str) -> int:
     return len(suyas)
 
 
-def _norm_cwd(c: str | None) -> str:
-    return (c or "").replace("\\", "/").rstrip("/").lower()
+_norm_cwd = identity.norm_cwd
 
 
 def adopt_dead_target(s: dict) -> str | None:
@@ -660,6 +656,9 @@ def marcar_muerta(s: dict, avisar: bool) -> None:
     s["alive"] = False
     s["dead_since"] = s.get("dead_since") or now()
     set_state(s, "muerta")
+    # conocimiento por proyecto (v5 §5.1): si la sesion trabajo un encargo, su nodo pasa a cerrada.
+    # En hilo: se llama con el lock tomado y sesion_cerrada abre SQLite
+    en_hilo(conocimiento.sesion_cerrada, s["session_id"])
     # un /exit o /quit es el pedido de cerrarse: el proceso que termina despues no murio a medias
     # (medido el 2026-10-04: cerrar cuatro codas con /exit mando cuatro avisos falsos de «murio»)
     salida = (s.get("last_prompt") or "").strip().lower() in SALIDAS_A_PROPOSITO
@@ -854,10 +853,29 @@ def set_denied(s: dict, d: dict) -> None:
     ) == clave:
         return
     s["last_denied"] = {**d, "visto": now()}
+    motivo = d.get("motivo") or d.get("cause") or "sin motivo"
     state.log(
-        f"permiso DENEGADO a {s['session_id'][:8]}: {d.get('tool')} ({d.get('motivo') or d.get('cause') or 'sin motivo'})"
+        f"permiso DENEGADO a {s['session_id'][:8]}: {d.get('tool')} ({motivo})"
         + (f" {d['detalle']}" if d.get("detalle") else "")
     )
+    # conocimiento por proyecto (v5 §5.1): un permiso denegado a una sesion que trabaja un encargo
+    # queda como incidente `observado` en su ronda, una vez aunque llegue por el log de coda y por la
+    # transcripcion (clave). En hilo: puede llamarse con el lock tomado
+    clave = conocimiento.clave_permiso(s["session_id"], d.get("tool"), motivo, d.get("detalle"))
+    if not conocimiento.visto(clave):
+        en_hilo(
+            _incidente,
+            s["session_id"],
+            f"permiso denegado: {d.get('tool')} ({motivo})"
+            + (f": {short(d['detalle'], 200)}" if d.get("detalle") else ""),
+            "permiso",
+            {"tool": d.get("tool"), "motivo": motivo},
+            clave,
+        )
+
+
+def _incidente(sid: str, texto: str, herramienta: str, datos: dict, clave: str | None = None) -> None:
+    conocimiento.incidente_operativo(sid, texto, herramienta=herramienta, datos=datos, clave=clave)
 
 
 def apply_turn(s: dict, t: dict, force_state: bool) -> None:
@@ -907,6 +925,19 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     )
     if s["retryable"]:
         on_api_error(s, f"{t.get('id')}:{s['last_error']}")
+        # conocimiento por proyecto (v5 §5.1): el error de API de una sesion con encargo es un
+        # incidente de su ronda, una vez por turno (clave): apply_turn corre en cada refresco, y sin
+        # mirar la clave antes lanzaria un hilo por refresco mientras el error siga en la tarjeta
+        clave = f"incidente:api:{s['session_id']}:{t.get('id')}"
+        if not conocimiento.visto(clave):
+            en_hilo(
+                _incidente,
+                s["session_id"],
+                f"error de API: {s['last_error']}",
+                "api",
+                {"error": s["last_error"], "turno": t.get("id")},
+                clave,
+            )
 
 
 def model_of(agent: str, path: str) -> str | None:
@@ -1399,6 +1430,11 @@ def apply_event(ev: dict) -> None:
             s["end_reason"] = ev.get("reason") if isinstance(ev.get("reason"), str) else None
         elif name == "SessionStart":
             s["end_reason"] = None
+        if not s["alive"] and not created and not ev_pid_dead:
+            # dada por muerta y volvio (claude --resume conserva el session_id): el conocimiento por
+            # proyecto vuelve su nodo sesion a viva. Con el pid del evento muerto no: marcar_muerta viene
+            # unas lineas abajo y los dos hilos correrian a ver quien escribe ultimo
+            en_hilo(conocimiento.sesion_viva, s["session_id"])
         s["alive"] = True
         s["dead_since"] = None
         apply_hook(s, ev, name, created)
@@ -1725,6 +1761,7 @@ def refresh_alive(s: dict) -> bool:
             return False
         s["alive"] = True
         s["dead_since"] = None
+        en_hilo(conocimiento.sesion_viva, s["session_id"])  # el nodo sesion vuelve a viva
         return True
     if not s["alive"]:
         return False
@@ -2396,6 +2433,16 @@ def hand_over(target: dict, origin: dict, stop: bool = True) -> dict:
     copycat y queda apuntando a su origen. Con `stop` (lo normal) el origen pasa a stopped
     (set_stopped: Esc si corria, aviso a sus conectadas, no recibe nada mas); sin `stop`
     ("Duplicar") las dos siguen y el origen no se toca. Devuelve {interrupted} para el toast."""
+    if stop:
+        try:
+            transfer_work_rules(origin["session_id"], target["session_id"])
+        except (OSError, ValueError) as e:
+            return {"interrupted": False, "handover_error": str(e)}
+        if origin.get("coordinator"):
+            set_coordinator(target, True)
+            with lock:
+                origin["coordinator"] = False
+                touch(origin)
     with lock:
         target["copycat_of"] = origin["session_id"]
     res = set_stopped(origin, True, by=target["session_id"]) if stop else {"interrupted": False}
@@ -2408,6 +2455,39 @@ def hand_over(target: dict, origin: dict, stop: bool = True) -> dict:
         + ("origen detenida" if stop else "duplicada, el origen sigue")
     )
     return {"interrupted": bool(res.get("interrupted"))}
+
+
+def transfer_work_rules(old: str, new: str) -> int:
+    """Traslada reglas pendientes en ambas direcciones; conserva el historial de envíos."""
+    import rules as rule_module
+
+    with lock:
+        before = [dict(r) for r in rules.items]
+        after = [dict(r) for r in before]
+        changed = 0
+        for r in after:
+            if not r.get("enabled") or old not in (r.get("from"), r.get("to")):
+                continue
+            for key in ("from", "to"):
+                if r.get(key) == old:
+                    r[key] = new
+            if r.get("kind") == "on_stop" and r.get("from") == r.get("to"):
+                raise ValueError("el traspaso crearía una regla hacia la misma sesión")
+            changed += 1
+        remote = _mirror_rules()
+        for r in after:
+            if r.get("enabled") and r.get("kind") == "on_stop" and rule_module.loop_conflict(r, after, remote):
+                raise ValueError("el traspaso crearía un bucle de informes")
+        if changed:
+            rules.items[:] = after
+            try:
+                rules.save(strict=True)
+            except OSError:
+                rules.items[:] = before
+                raise
+    if changed:
+        rules.publish()
+    return changed
 
 
 # --- pantalla (solo para las sugerencias de la TUI de Claude, DISENO §12) ------------------

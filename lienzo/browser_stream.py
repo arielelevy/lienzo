@@ -96,12 +96,12 @@ class Worker:
                 if len(payload) != n - 1:
                     break
                 self.deliver(ws.TEXT if kind == ord("J") else ws.BINARY, payload)
-        except (OSError, ValueError, ConnectionError):
+        except OSError, ValueError, ConnectionError:
             pass  # el visor se fue o el pipe se cerro: se termina igual
         finally:
             try:
                 self.deliver(ws.TEXT, _error("Se cerró el worker de Chrome en esa PC"))
-            except (OSError, ValueError, ConnectionError):
+            except OSError, ValueError, ConnectionError:
                 pass
             self.on_exit()
 
@@ -186,7 +186,7 @@ def _recv_text(sock: ws.Socket):
     while True:
         try:
             msg = sock.recv()
-        except (OSError, ValueError, ConnectionError):
+        except OSError, ValueError, ConnectionError:
             return None
         if msg is None or msg[0] == ws.TEXT:
             return msg[1] if msg else None
@@ -238,7 +238,7 @@ def _relay(sock: ws.Socket, pc: str) -> None:
         except (OSError, ValueError, ConnectionError) as exc:
             try:
                 sock.send(ws.TEXT, _error(f"Se cortó el canal con la otra PC ({type(exc).__name__})"))
-            except (OSError, ValueError, ConnectionError):
+            except OSError, ValueError, ConnectionError:
                 pass
         finally:
             sock.close()
@@ -270,7 +270,7 @@ def serve_peer(handler, pair_key: bytes | None, sid: str) -> None:
                 if msg[0] != ws.BINARY:
                     continue
                 kind, payload = sealed.open(msg[1])
-            except (OSError, ValueError, ConnectionError):
+            except OSError, ValueError, ConnectionError:
                 return None
             if kind == ws.TEXT:
                 return payload
@@ -281,4 +281,3 @@ def serve_peer(handler, pair_key: bytes | None, sid: str) -> None:
         state.log(f"Chrome stream (peer): {type(exc).__name__}: {exc}")
     finally:
         sock.close()
-

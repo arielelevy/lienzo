@@ -19,7 +19,7 @@ Todas las CLI pueden marcarse como coordinadora mediante las conexiones del tabl
 
 [Diseño y decisiones de arquitectura](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/)
 
-[Mejoras pendientes y evidencia](MEJORAS.md)
+[Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](MEJORAS.md)
 
 ![Tablero](docs/img/tablero.png)
 
@@ -39,6 +39,39 @@ VS Code). El estado, el contenido y los envíos usan estos canales:
 
 Una consola que cambia de `session_id` sin cambiar de proceso (un `/clear`, un resume) le pasa sus
 conexiones a la tarjeta nueva.
+
+Al pegar trabajo en otra tarjeta y detener la original, las reglas pendientes en ambas
+direcciones pasan a la copia, junto con la marca de coordinadora. También funciona al copiar
+una copycat. El historial de mensajes conserva sus extremos originales. Si una PC no responde
+o el traslado crearía un bucle de informes, aparece un error de traspaso; el texto ya enviado no
+se reenvía. «Duplicar» conserva a la original trabajando y agrega el informe de vuelta.
+
+Un clic derecho en el área libre del tablero abre «Lanzar CLI»: elegís un proyecto en curso,
+PC y agente. Usa la carpeta de ese proyecto en la PC elegida. «Otra carpeta…» permite abrir
+un proyecto nuevo dentro de las carpetas permitidas por esa PC.
+
+## Memoria por proyecto
+
+El menú ⋯ → Memoria permite elegir un proyecto y consultar su briefing, buscar candidatos,
+leer una vista por tema, y ver pendientes y avisos. Las consultas son de lectura; no confirman
+hallazgos ni aceptan reglas automáticamente.
+
+Cada proyecto tiene identidad propia, rondas, encargos e informes con hash y revisión. El
+bloque JSON `conocimiento` del informe se valida entero antes de incorporarse al grafo. Los
+veredictos requieren una coordinadora o una persona y conservan revisión, evidencia y motivo.
+El cierre de ronda aplica sus veredictos y pendientes explícitos en una transacción.
+
+La recuperación combina archivos y temas, BM25 y relaciones del grafo. `preguntar` devuelve
+candidatos paginados con sus referencias; una búsqueda vacía no prueba que algo no exista.
+El aprendizaje cuenta episodios de recurrencia una vez, cuestiona reglas ante episodios
+posteriores a su vigencia y muestra apoyos rechazados y dependencias.
+
+Las funciones de `skills/lienzo/coordinar.py` incluyen `briefing`, `preguntar`, `vista`,
+`veredicto`, `cerrar_ronda`, `pendientes_memoria`, `recurrencia`, `cuestionar` y `lecciones`.
+`preparar_encargo` agrega el briefing actual y la plantilla de conocimiento al texto de un frente.
+La memoria reside en `~/.lienzo/proyectos/<proyecto>/` de la PC que registra los encargos.
+Las transcripciones y bases de conocimiento no se suben a Git ni se replican por hacer pull.
+El diseño detallado está en [v5](docs/propuesta-memoria-2026-10-08/v5.md).
 
 ## Requisitos
 
@@ -287,7 +320,7 @@ usa solo:
 
 Hace falta volver a correr `install.py --peer` (como administrador) para la regla de Tailscale. Una
 PC no emparejada que está en la tailnet aparece igual en «PCs de la LAN» y se empareja con la
-palabra de siempre. Los pasos para cada PC están en [docs/tailscale-otra-pc.md](docs/tailscale-otra-pc.md).
+palabra de siempre. Ya está instalado y andando en las dos PCs (2026-10-05); los pasos por PC quedaron en el historial de git (`docs/tailscale-otra-pc.md`).
 
 Qué va por Tailscale: solo lo que va a una IP 100.x (los otros equipos de la tailnet). Internet,
 el mail y una VPN corporativa siguen por su camino, salvo que se elija un *exit node*.
@@ -439,6 +472,17 @@ además la cookie de sesión.
 | POST | `/xfer` | `{pc, origen, destino, hilos?, bs_mib?, mbps?, disco_mbps?, espejo?}`; copiar a otra PC, 202 con `{id}` |
 | GET | `/xfer`, `/xfer/<id>` | las copias; `estado`, `pct`, `mbps`, `eta_s`, `archivos_hechos`, `errores`, `ultimos` |
 | DELETE, POST | `/xfer/<id>`, `/xfer/<id>/retomar`, `/xfer/<id>/confirmar` | pausar, retomar, dejar borrar al espejo |
+| GET, POST | `/conocimiento/proyectos`, `/conocimiento/resolver?repo_key=&cwd=&pc=` | conocimiento por proyecto: registrar un proyecto (`{id, nombre?, remotes?, carpetas?}`) y saber cuál es el de una tarjeta |
+| GET | `/conocimiento/<p>` | resumen: nodos por tipo y estado, rondas, último cambio |
+| POST | `/conocimiento/<p>/rondas`, `/rondas/<id>/estado` | abrir una ronda (`{objetivo}`); suspender, reabrir o cerrar (`{estado, por}`) |
+| POST | `/conocimiento/<p>/encargos`, `/encargos/<id>/enviado`, `/encargos/<id>/estado` | registrar un encargo (`{ronda, letra, texto, archivos?}`); la tarjeta que lo tomó (`{session_id, agent?, model?, pc?, cwd?}`); abandonarlo o reabrirlo |
+| POST | `/conocimiento/<p>/entregas` | `{encargo, revision, cuerpo}`; la entrega explícita de un informe, con hash; idempotente por (encargo, revisión, hash). Si el cuerpo termina con un bloque ```` ```conocimiento ```` (JSON con nodos y vínculos), se valida entero y se incorpora al grafo, o queda `pendiente_de_vincular` con los errores por posición en `datos.conocimiento` |
+| GET, POST | `/conocimiento/<p>/nodos`, `/nodos/<id>`, `/nodos/<id>/estado`, `/vinculos`, `/vinculos/retirar` | nodos (hallazgo, decisión, alternativa, incidente, regla, medición, pregunta, tema, evidencia) con estado y transiciones; vínculos tipados |
+| GET | `/conocimiento/<p>/buscar?q=&tipo=&saltos=`, `/cambios?desde=`, `/cuerpo?ruta=` | búsqueda BM25 (FTS5) con expansión por el grafo; historial de cambios; el texto de un encargo o informe |
+| POST | `/conocimiento/<p>/veredictos`, `/rondas/<id>/cerrar`, `/temas` | veredictos atómicos con actor y evidencia, cierre explícito y temas canónicos |
+| GET | `/conocimiento/<p>/briefing`, `/preguntar?q=&offset=&limite=`, `/vista?tema=`, `/pendientes`, `/duplicados`, `/temas` | recuperación, vistas y pendientes de revisión |
+| GET, POST | `/conocimiento/<p>/incidentes/<id>/parecidos`, `/recurrencia`, `/reglas/cuestionadas`, `/reglas/cuestionar`, `/avisos`, `/nodos/<id>/dependencias` | aprendizaje operativo; sólo cuestionar escribe |
+| GET | `/conocimiento/lecciones?agente=&modelo=&proyectos=` | reglas y lecciones por agente entre proyectos locales |
 | GET | `/events` | SSE con cada cambio |
 | POST | `/browser` | `{pc, action, ...}`; perfiles, ventanas y acciones de Chrome en la PC elegida |
 | GET | `/browser/stream?pc=<pc_id>` | WebSocket persistente del modo ventana: imagen, cursor y entradas |

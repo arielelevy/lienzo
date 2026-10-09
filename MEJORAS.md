@@ -2,7 +2,7 @@
 
 Registro de problemas y mejoras encontrados al usar Lienzo, sobre todo entre PCs.
 Cada punto lleva evidencia de una sesión real. Los puntos nuevos quedan pendientes;
-se pasan a «Hecho» cuando Ariel lo pide. Última actualización: 2026-10-07.
+se pasan a «Hecho» cuando Ariel lo pide. Última actualización: 2026-10-08.
 
 ## Hecho
 
@@ -61,7 +61,7 @@ se pasan a «Hecho» cuando Ariel lo pide. Última actualización: 2026-10-07.
 | 2026-10-04 | El diálogo de confianza sin números se reconoce (pedido de la coordinadora de chesstudia): `screen.dialog` lee también la lista sin número, con el cursor y el pie «Enter to confirm», y la marca `teclas: flechas`; `answer_dialog` la contesta con flechas, relee la pantalla y recién ahí Enter; `send.py` y `tmux.py` suman `--key up/down/enter` | en ar-it33940 `dialog` daba None, el encargo + Enter eligió «No, exit» y la sesión murió como `pid-6844` |
 | 2026-10-04 | Un chip por proyecto aunque esté en varias PCs: la tira de proyectos junta las sesiones que comparten `repo_key` o el nombre del repo (sin mayúsculas), suma el conteo y el chip filtra las de todas las PCs | «chess» salía dos veces en el menú, una por PC: en una la carpeta tenía remote y en la otra no (pedido de Ariel) |
 | 2026-10-04 | La cuota de coda solo se muestra con coda en uso (bug 10): `cuotas()` y `coda_cuota` del snapshot la traen si hay una tarjeta viva de coda en la PC (hasta 1 h después de la última); el 409 de lanzar una coda sin cuota sigue mirando la cuota real | la tira ponía la PC en rojo con «sin cuota: coda» sin que nadie usara coda, por un error viejo de su log |
-| 2026-10-07 | **Chrome remoto en vivo por WebSocket** (`lienzo/ws.py`, `browser_stream.py`, `browser_window.py --stream`): la PC dueña captura sola y empuja cada cuadro apenas cambia (parche de la región sucia, acuse por cuadro, nunca más de 2 en vuelo), el mouse y el teclado salen por el mismo canal sin cola ni timer, entre PCs cada mensaje va sellado con contador (sin replay ni reorden). `secretos` pasa a SHAKE-256 + XOR de enteros: 1 MB en 14 ms en vez de cientos. Bug corregido: cada cuadro delta mataba el worker (`previous` pisado, `SelectObject` con una tupla) y el siguiente pedido lo relanzaba. Un menú o desplegable de Chrome al frente ya no se cierra al enviar entrada. Pruebas de interfaz de Chrome arregladas (menú ⋯ cerrado al entrar, PNG de ejemplo corrupto) y la de federación rota desde f91fdce | medido por LAN antes del cambio: mouse 15 ms por la API pero 1,6 s por cuadro de 757 KB y 502 al segundo cuadro; en local después: canal en 4 ms, 27 cuadros/s sobre una ventana de Meet. Detalle en `docs/code-review-2026-10-07.md` |
+| 2026-10-07 | **Chrome remoto en vivo por WebSocket** (`lienzo/ws.py`, `browser_stream.py`, `browser_window.py --stream`): la PC dueña captura sola y empuja cada cuadro apenas cambia (parche de la región sucia, acuse por cuadro, nunca más de 2 en vuelo), el mouse y el teclado salen por el mismo canal sin cola ni timer, entre PCs cada mensaje va sellado con contador (sin replay ni reorden). `secretos` pasa a SHAKE-256 + XOR de enteros: 1 MB en 14 ms en vez de cientos. Bug corregido: cada cuadro delta mataba el worker (`previous` pisado, `SelectObject` con una tupla) y el siguiente pedido lo relanzaba. Un menú o desplegable de Chrome al frente ya no se cierra al enviar entrada. Pruebas de interfaz de Chrome arregladas (menú ⋯ cerrado al entrar, PNG de ejemplo corrupto) y la de federación rota desde f91fdce | medido por LAN antes del cambio: mouse 15 ms por la API pero 1,6 s por cuadro de 757 KB y 502 al segundo cuadro; en local después: canal en 4 ms, 27 cuadros/s sobre una ventana de Meet. Detalle en el historial de git (`docs/code-review-2026-10-07.md`) |
 | 2026-10-08 | **Cuenta de GitHub por repo** (`lienzo/cuenta_github.py`): `gh auth git-credential` sólo sirve la cuenta activa (con `ariel-levy_globant` activa, el push a `arielelevy/lienzo` daba 403 y la tira decía «vencida»); health fija cada repo vivo de github.com, en su `.git/config` y sólo para github.com, a la cuenta con `permissions.push` (dueño del repo, activa, resto) con un helper que saca el token con `gh auth token --user` al usarlo, y ante «vencida» vuelve a elegir y mide otra vez | `git push` en `D:/Apps/lienzo` devolvía `Permission to arielelevy/lienzo.git denied to ariel-levy_globant` con la cuenta de Globant activa; con el repo fijado, `git credential fill` responde `username=arielelevy` y el push en seco pasa aunque la activa sea otra |
 | 2026-10-08 | **Auto-aprobar los permisos que la TUI dibuja como diálogo** (`autoaprobar.DialogoDePermiso`): el «Would you like to run the following command?» de Codex (y el «Do you want to proceed?» de Claude) no pasa por ningún hook; el barrido de pantalla lo deja en `dialog` y el auto-aprobar elige la primera opción «Yes» con `answer_dialog`, reintentando a los 20 s si sigue abierto; una pregunta de verdad, «Switch model?» o la confianza en una carpeta no se tocan | la tarjeta de Teorema (Codex) quedó en «Espera que elijas en la terminal» con el auto-aprobar prendido |
 | 2026-10-08 | **Foco de Chrome remoto con toque de Alt** (`browser_window.Windows.focus`): Windows sólo deja cambiar la ventana activa al proceso que recibió la última entrada; antes de enganchar el hilo del frente, el worker se vuelve ese proceso con un Alt sintético (`keybd_event` abajo y arriba) y vuelve a pedir el frente. Sin ventana al frente (PC bloqueada) lo dice en vez de «no permitió activar Chrome» | captura de Ariel del 2026-10-08 11:33: «Windows no permitió activar Chrome; no se envió la entrada» con el escritorio abierto y otra ventana al frente |
@@ -69,136 +69,12 @@ se pasan a «Hecho» cuando Ariel lo pide. Última actualización: 2026-10-07.
 | 2026-10-08 | **El permiso dibujado como diálogo lo reconoce cada perfil** (`agentes.Perfil.permission_option`, `permission_reason`): Claude («Do you want to proceed/make/...»), Codex («Would you like to run», o la opción «don't ask again»), Kiro («requires approval» con Allow/Deny); Pi y coda no. **La tarjeta dice por qué el auto-aprobar no contesta un diálogo** (`auto_aprobar_omitido`: confianza en una carpeta, cambio de modelo, pregunta con opciones), y se borra al cerrarse el diálogo o al apagar el auto-aprobar. **Prueba de punta a punta real** (`pruebas-agenticas/e2e_autoaprobar.py`): lanza un Codex desde el lienzo, le pide un comando y espera el «AUTO-APROBADO (dialogo)» de esa sesión; cierra la sesión al final | la lista global de preguntas en inglés iba a quedar corta; «Espera que elijas en la terminal» no decía si fue decisión o falla; corrida 2026-10-08 13:09: veredicto ok (pid-20716, aprobado a las 13:09:38) |
 | 2026-10-08 | **Foco de Chrome remoto: más trucos y un aviso que dice quién tiene el frente** (`browser_window.Windows.focus`, `describe`): tras Shift y AttachThreadInput se prueban `SwitchToThisWindow` (lo de Alt+Tab) y minimizar/restaurar, con el tiempo de bloqueo del frente en cero para la sesión (SPI_SETFOREGROUNDLOCKTIMEOUT, sin persistir); si igual falla, el error dice «Al frente está: clase · título · proceso» | desde la otra PC seguía «Windows no permitió activar Chrome» con el toque de Shift; sin saber qué ventana tenía el frente no se podía diagnosticar |
 | 2026-10-08 | **Chrome remoto con la otra PC bloqueada: lo dice de entrada** (`browser_window.focus`): si al frente está LockApp.exe (la pantalla de bloqueo de Windows) no prueba ningún truco y avisa «La PC está bloqueada: desbloqueala allá». Con la sesión bloqueada ningún programa recibe entrada; la imagen sí se sigue viendo | medido desde la otra PC: «Al frente está: Windows.UI.Core.CoreWindow · Pantalla de bloqueo predeterminada de Windows · LockApp.exe» |
+| 2026-10-08 | **Conocimiento por proyecto, etapa 1** (`lienzo/conocimiento.py`, `conocimiento_api.py`, `coordinar.proyecto/abrir_ronda/encargo/encargo_enviado/entregar/cerrar_ronda/conocimiento`): base SQLite privada por proyecto en `~/.lienzo/proyectos/<proyecto>/` (FTS5 + CTE), proyectos con identidad propia (remotes y carpetas por PC, no `repo_key`), rondas, encargos con el cuerpo guardado, entrega explícita de informes con hash y revisión (idempotente), nodos tipados con estado y tabla de transiciones por rol, vínculos tipados sin ciclos, historial de cambios, búsqueda BM25 con expansión por el grafo; el server observa de las sesiones con encargo el cierre, la vuelta a viva, el permiso denegado, el error de API y la muerte a medias (incidentes `observado`, una vez por clave). Escrituras sólo desde la LAN; `enviado` exige una tarjeta que el lienzo conozca. Diseño: `docs/propuesta-memoria-2026-10-08/v5.md`; etapas 2 a 5 en PENDIENTES.md | pedido de Ariel del 2026-10-08; proyecto `lienzo` registrado en vivo con su primera ronda; 19 pruebas focales; corrida agéntica `2026-10-08T21-12-35.952Z-40372`: cinco suites en 0, 1144 backend y 119 UI; code review (high) con diez hallazgos corregidos; sin baseline (compuerta 2) |
+| 2026-10-08 | **Conocimiento por proyecto, etapa 2: el bloque `conocimiento` del informe** (`conocimiento.extraer_bloque/validar_bloque/_incorporar_bloque`, `coordinar.INSTRUCCION_CONOCIMIENTO`): el informe termina con JSON (`version`, `nodos`, `vinculos`); el server lo valida entero (ids locales únicos, tipos de hallazgo a evidencia, campos obligatorios por tipo, relaciones del frente, extremos por id local o `nodo:<id>`, motivo en elige/descarta, decisión con elige o descarta, regla con derivada_de) y lo incorpora en la transacción del informe: estado inicial por tipo, ronda del encargo, `declarado_en`, hallazgos `encontrado_por` la sesión. Con un error no entra nada y `datos.conocimiento` trae los errores por posición; el reenvío devuelve los mismos ids. `POST /nodos` exige lo mismo; `enviado` sólo con tarjetas de esta PC (409 para una espejada) hasta la base compartida; cerrar una ronda cerrada es 409; el esquema se decide por `user_version` | primer uso real: informe A r2 del proyecto `lienzo` con 10 nodos y 10 vínculos, buscables y expandibles; 27 pruebas focales; corrida agéntica `2026-10-08T23-00-24.878Z-34616`: cinco suites en 0, 1152 backend y 119 UI; segundo code review (high) con diez hallazgos corregidos; sin baseline (compuerta 2) |
 
-## Pendiente (con evidencia)
+## Pendiente
 
-- [ ] Coordinadora sólo del repo (pedido del 2026-10-07): eliminado el rol por PC del menú,
-  cliente y API. Las marcas guardadas se migran al cargar; se conserva una marca local por repo,
-  prefiriendo la general existente. Seleccionar una coordinadora desmarca las del mismo repo
-  en las demás PCs visibles. Las PCs desconectadas requieren reconciliarse al volver.
-  Prueba focal: 134 casos pasan. Corrida agéntica `2026-10-07T06-12-22.146Z-27252`:
-  cinco suites sin fallas, 981 backend y 117 UI; menú real verificado con captura.
-- [ ] Identidad de Codex en el barrido (hallazgo del cierre, 2026-10-07): `codex.exe` de
-  sandbox/helpers podía ocupar una tarjeta con transcripción de una CLI ya cerrada. Se filtran
-  subcomandos no interactivos y flags internos `--codex-run-as-*`, y la comprobación de vida
-  también lee el comando. Si no se puede leer, no se supone una TUI. Focal: 51 pruebas pasan;
-  no se mataron helpers ni procesos de aplicaciones. El PID 26924 ya no existía al verificar.
-  Corrida backend posterior `2026-10-07T06-16-42.580Z-16520`: 993 pruebas pasan.
-  Revisión y cinco roles en resultados; baseline sin aprobar, compuerta exit 2. Estas notas
-  documentales se agregan después de medir; el código probado no cambia.
-
-### Cierre de implementación del 2026-10-07
-
-Las casillas se conservan pendientes de aceptación. Implementado en esta ronda:
-limpieza de permisos con prompt visible (sin limpiar ante fallo de lectura), lectura
-de `stop_reason` de CODA, contrato de capacidades y `launch_roots`, snapshots periódicos
-con protección ante eventos nuevos, conciliación de reglas por PC, conexiones HTTP
-reutilizables, timeout explícito, traspaso de trabajo entre PCs y cierre forzado Windows
-con confirmación e identificación del proceso. `POST /run` exige un comando nombrado
-en `run_allowlist` de la PC destino y una carpeta dentro de sus `launch_roots`; no se
-habilitó ninguna lista ni se ejecutaron comandos remotos reales.
-
-Validación final y revisión: evidencia en `pruebas-agenticas/resultados/` (ignorada por
-Git), corrida `2026-10-07T06-02-08.125Z-26940`: cinco suites con código 0; 981 pruebas
-backend y 117 UI pasan, además de lint, build y unitarias frontend. Cinco roles registrados
-secuencialmente en `roles.json`; revisión en `revision-cierre.json`. Falta baseline aprobado:
-el runner sale con 1 y la compuerta con 2; no se certifica PASS ni se aprueban propuestas.
-Sin mutaciones ejecutadas. Esta nota documental se agrega después de la medición.
-
-Siguen pendientes las verificaciones con CODA real y dos PCs, aislamiento de login/modelo
-con `--coda-home`, capacidad del servidor de modelos, instalación NUC desatendida y
-paralelización del cableado. La integración visual de specs/SDD de Kiro no está implementada.
-La documentación de Kiro V3 confirma que ofrece un agente Spec nativo; eso no acredita
-su integración en Lienzo. El canal cifrado de secretos ya estaba implementado, como
-consta en «Hecho»; se quitó la propuesta duplicada.
-
-Checklist conservado por pedido de Ariel (2026-10-07). Las casillas quedan pendientes de
-su aceptación; las notas distinguen implementación, pruebas y verificaciones externas.
-
-- [ ] Integración uniforme de CLI y hallazgos del code review: capacidades compartidas entre
-  Python/TypeScript, proveedores de identidad/transcripción/modelo/diálogo/reanudación, Kiro V3
-  limitado explícitamente a Windows y diagnóstico de metadatos sin repetir errores.
-  Evidencia inicial: 190 pruebas focales pasan y build del frontend pasa (2026-10-07).
-- [ ] Validación con `pruebas-agenticas`: obligatoria por la preferencia global de Ariel.
-  Reutilizar la configuración del repo; registrar los cinco roles, logs y veredicto sin fijar baseline.
-
-Verificaciones del 2026-10-07: `restorables_con_fallas` ya usa `fan_out` paralelo;
-`atender_accion` y `ACCIONES_SESION` ya centralizan las acciones de ambos listeners;
-`SSEClient` ya cambia el timeout de lectura después de conectar; CODA ya registra
-`PreCompact` y `PostCompact` en `install.py`. No equivalen a pruebas reales en ambas PCs.
-La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí en vivo.
-
-- [ ] Pruebas que conviene escribir (salieron de la revisión adversarial): matriz de autenticación
-  por ruta para el túnel, paridad entre `Handler` y `PeerHandler`, el contrato de los 404
-  (`unknown_session` contra ruta desconocida) y referencias (golden) por agente en los parsers.
-- [ ] La tarjeta se queda en «Te necesita» con un permiso que ya no existe (medido el 2026-10-02): la tarjeta del Claude del gestor
-  mostró durante unas 16 horas «Pide permiso» con el comando de un ruff de un subagente, desde un aviso (Notification) de las 05:06,
-  aunque en su terminal no había ningún cartel. Ese permiso lo había aprobado yo hacía horas y la marca no se limpió. Confunde a
-  quien mira el tablero y a la coordinadora, que gasta consultas en revisar. Los permisos de los subagentes (forks) de Claude Code
-  salen en la terminal del Claude principal y el tablero no los distingue. Idea: cuando el estado dice permiso en la terminal
-  y la pantalla ya no muestra el cartel («Do you want to proceed?» o «Enter confirm»), limpiar `needs` y volver al estado real.
-- [ ] **Coda: `stop_reason` del Stop sin mirar** (medido el 2026-10-02): el `Stop` trae `stop_reason` y el doc solo muestra
-  `turn_complete`; ver qué otros valores existen (respuesta cortada que continúa, error) y usarlos en vez de adivinar.
-- [ ] **Probar `PreCompact`/`PostCompact` con una coda real**: solo hay prueba con eventos simulados, y falta correr
-  `install.py` en las dos PCs para que coda los mande (toca `~/.coda/config.json`).
-- [ ] **`--coda-home DIR` aísla la configuración de coda** (está en `coda --help`): sirve para lanzar con `--model` sin pisar el
-  modelo por defecto de la PC (ver el punto de `--model`). Falta ver cómo conserva el login.
-- [ ] Reiniciar lienzo en la otra PC cierra las codas que corren (medido el 2026-10-03; la recarga automática por `git pull` NO las cerró: la coda de la sesión 4 siguió viva; la hipótesis de pestañas de Windows Terminal en la misma ventana del server tampoco, según la coda A cada coda abre en su propia consola, aunque lo dijo leyendo el código y no la configuración): la coda de la sesión 3 quedó
-  `ended_at` en el mismo segundo del reinicio y hubo que restaurarla (`restaurar`, con contexto). Además, con la causa sin
-  resolver, todo lo que sale hacia esa PC dio `401 firma invalida` de repente (sin cambios de reloj ni de claves) y solo se
-  arregló reiniciando su lienzo. Ideas: que las codas no cuelguen del proceso del server, y que ante un 401 el lienzo
-  intente el reinicio del peer o avise con el motivo («su server no valida mi firma»), en vez de dejar el tablero mudo.
-- [ ] **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
-  el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.
-- [ ] **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se
-  documenta como «para esta corrida», pero el `config.json` de esa PC pasó de `globant_dgx/Qwen3.8-27B` a
-  `globant_dgx/GLM-5.3-Flash` a las 00:52:18, justo al lanzar el primer coda con GLM, y las sesiones
-  lanzadas después sin modelo ya mostraban GLM. Efectos: se pisa el default del usuario sin que lo sepa
-  y las comparaciones entre modelos no valen (la medición «Qwen contra GLM» de esa noche fue GLM contra
-  GLM). Ideas: que `lanzar` con `model` avise si el agente es coda, que el lienzo lea el default antes
-  y lo restaure al terminar el lote, o lanzar con un `--coda-home` propio para aislar la configuración
-  (hay que ver cómo conserva el login).
-- [ ] El lienzo no puede cerrar un agente colgado de otra PC: `/exit` queda en cola y `interrupt` no
-  alcanza si el proceso está clavado. Hoy hubo que pedirle a otro coda un `taskkill` por PID. Idea:
-  `POST /sessions/<sid>/kill` que la PC dueña ejecute sobre su propio PID (con la misma
-  confirmación que las demás acciones destructivas).
-- [ ] Latencia entre PCs: un pedido mínimo a la otra PC tarda ~86 ms (mediana, p95 136 ms) contra 2,5 ms
-  local; la pantalla de una tarjeta remota, ~470 ms. Cada pedido abre una conexión TCP nueva y firma
-  con HMAC. Idea: conexión persistente (keep-alive) por peer y cachear `screen` unos 500 ms.
-- [ ] El SSE del peer se corta y reconecta cada ~15 s (`peer GET /peer/events` en el log cada 15 s).
-  Funciona, porque cada reconexión trae el snapshot entero, pero es tráfico de más y una ventana en
-  la que el espejo se reemplaza. Hay que ver si el server corta el stream a propósito.
-- [ ] **`launch_roots` no se ve desde la otra PC**: `peers.json` no lo trae y no hay forma de saber qué
-  carpetas permite un peer sin intentar lanzar. Mostrarlo en `GET /peers`.
-- [ ] (Revisar: desactualizado) «Coda no tiene hooks»: el 2026-10-02 las codas figuran `hooked=True`; antes nacía como tarjeta de barrido (`pid-NNNN`, sin título ni
-  transcripción), cambia de id, y su estado no refleja que está trabajando. Un hook de coda daría
-  título, estado y `last_reply` confiables.
-- [ ] Un solo modelo para todos los codas: Qwen en el DGX atiende de a poco; con 5 codas a la vez
-  todos quedan en «Waiting for model». El coordinador tiene que escalonar el trabajo, no repartirlo
-  en paralelo sin límite. `capacidad` mide RAM, no el cupo del modelo.
-- [ ] Traspasar un encargo entre PCs: copiar y pegar trabajo entre tarjetas funciona dentro de una
-  PC; entre PCs no hay forma de mover un encargo a una tarjeta de la otra.
-- [ ] Persistir las reglas cruzadas si la otra PC reinicia: una regla vive en la PC del `from`; si
-  esa PC reinicia el lienzo, hay que ver que sobreviva (hoy se guardan en `~/.lienzo`, falta probarlo
-  con un reinicio real).
-- [ ] Pruebas reales pendientes (solo se probaron con transportes simulados): recuperación cuando una
-  tarjeta remota ya no existe, y el reintento ante conexión rechazada.
-- [ ] Detectar el lienzo viejo de la otra PC por capacidades: hoy se reconoce por el texto «ruta
-  desconocida» de la respuesta (`cablear` y el reenvío). Un campo de capacidades en el handshake
-  (`/peer/health` o el emparejado) sería un contrato; el texto cambia sin avisar.
-- [ ] **`xpc` + `purge_stale_xpc` con hilo y reloj fijo**: la purga corre en un hilo con un reloj fijo y
-  una regla hacia otra PC solo guarda el flag `xpc`. Guardar `to_pc` en la regla y conciliar por peer
-  al aplicar su snapshot: hoy un peer apagado frena la purga de las reglas hacia los demás.
-- [ ] El espejo se reconcilia por rebote: una tarjeta fantasma se detecta cuando un envío vuelve con
-  `unknown_session` (`mirror.forward` → `_tarjeta_fantasma`). Debería reconciliarse con un snapshot
-  periódico o una secuencia en el SSE, no esperar a que alguien escriba.
-- [ ] **El enrutado owner→forward está repetido en ~10 handlers de `lienzo/server.py`** (`_route_session`
-  + `mirror.MIRROR.forward` en cada ruta de `/sessions/<id>/...`): una sola función `route_or_local`.
-- [ ] **`restorables_all` y `cablear` consultan en serie**: una PC lenta o caída suma su timeout al de las
-  demás. Paralelizar las consultas por peer.
-- [ ] Timeout de acciones lentas por sufijo de ruta (`SLOW_ACTIONS`, `RESTORE_ACTION` y
-  `_timeout_para` en `lienzo/federation.py`): una ruta nueva lenta se olvida y cae en los 5 s.
-  Pasar el timeout como parámetro de `forward`.
+La lista única de pendientes está en PENDIENTES.md.
 
 ## Plan: una NUC sin pantalla como PC de trabajo (pedido del usuario, 2026-10-03)
 

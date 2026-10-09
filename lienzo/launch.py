@@ -32,6 +32,7 @@ _CLAUDE_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSIO
 # la comilla del titulo antes de tiempo; fuera, el titulo nunca se interpreta como comando
 _UNSAFE_TITLE_RE = re.compile(r'[&|<>^%"\r\n]')
 
+
 def _resume_args(agent: str, resume: str | None) -> list[str]:
     """Argumentos para retomar, o [] si no se puede (sin pedido, o un id que no es de verdad para
     un agente que retoma por id). Cada elemento es seguro de escribir tal cual en el .cmd."""

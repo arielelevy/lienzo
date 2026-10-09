@@ -8,6 +8,7 @@ import { Enroll } from "./components/Enroll";
 import { Forward } from "./components/Forward";
 import { Header } from "./components/Header";
 import { Login } from "./components/Login";
+import { Knowledge } from "./components/Knowledge";
 import { Pairing } from "./components/Pairing";
 import { Panel } from "./components/Panel";
 import { pcOf, PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
@@ -233,6 +234,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   }, [sessions, query, agents, pcFilter, localPcId, selectedRepos, coordOnly, peerDown, markedLive]);
   const markVisible = useCallback(() => setMarked((cur) => new Set([...cur, ...visibleToMark])), [visibleToMark]);
   const [showHelp, setShowHelp] = useState(false);
+  const [showKnowledge, setShowKnowledge] = useState(false);
   // el panel va pegado a la derecha, debajo del header: su alto sale de aca (--hh)
   useEffect(() => {
     const h = document.querySelector("header");
@@ -264,6 +266,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // panel. `all` cierra todo de una; sin `all` cierra un nivel, el de mas adelante.
   const closeOverlays = useCallback(
     (all = false) => {
+      if (showKnowledge) {
+        setShowKnowledge(false);
+        if (!all) return;
+      }
       if (showHelp) {
         setShowHelp(false);
         if (!all) return;
@@ -274,7 +280,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       }
       if (selectedRef.current) setSelected(null);
     },
-    [connect, showHelp],
+    [connect, showHelp, showKnowledge],
   );
 
   // Escape va de a un nivel; el menu del header lo cierra el propio Header y frena esta cascada
@@ -437,6 +443,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           setShowPairing(true);
         }}
         onHelp={() => setShowHelp(true)}
+        onKnowledge={() => { closeOverlays(true); setShowKnowledge(true); }}
         onRescan={rescan}
         projects={
           <ProjectStrip
@@ -492,6 +499,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           </div>
         </div>
       )}
+      {showKnowledge && <Knowledge onClose={() => setShowKnowledge(false)} />}
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
       {showPairing && <Pairing peers={peers} toast={toast} onClose={() => setShowPairing(false)} />}
@@ -522,7 +530,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         marked={markedLive}
         onMark={toggleMark}
         onClearMarked={clearMarked}
-        escBlocked={showHelp || !!connect}
+        escBlocked={showHelp || showKnowledge || !!connect}
       />
       <SelectionBar sids={[...markedLive]} sessions={sessions} onClear={clearMarked} visibleToMark={visibleToMark} onMarkVisible={markVisible} />
       {connect && sessions[connect.from] && (

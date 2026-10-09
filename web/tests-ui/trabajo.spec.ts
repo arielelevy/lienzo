@@ -1,6 +1,58 @@
 import { expect, test } from "@playwright/test";
 import { SID, abrirTablero } from "./tablero-fijo";
 
+test("área libre permite lanzar CLI y conserva el formulario si falla", async ({ page }) => {
+  await abrirTablero(page);
+  const launches: Record<string, unknown>[] = [];
+  await page.route("**/sessions/launch", async route => {
+    launches.push(route.request().postDataJSON());
+    await route.fulfill({ status: launches.length === 1 ? 400 : 200, contentType: "application/json",
+      body: JSON.stringify(launches.length === 1 ? { error: "carpeta inexistente" } : { ok: true }) });
+  });
+  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
+  await page.getByRole("menuitem", { name: "Lanzar CLI…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Lanzar CLI", exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Proyecto", { exact: true }).selectOption("");
+  await expect(dialog.getByRole("button", { name: "Lanzar", exact: true })).toBeDisabled();
+  await dialog.getByRole("textbox", { name: "Carpeta", exact: true }).fill("D:/Apps/lienzo");
+  await dialog.getByRole("combobox", { name: "Agente", exact: true }).selectOption("codex");
+  await dialog.getByRole("button", { name: "Lanzar", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("carpeta inexistente");
+  await expect(dialog.getByRole("textbox", { name: "Carpeta", exact: true })).toHaveValue("D:/Apps/lienzo");
+  await dialog.getByRole("button", { name: "Lanzar", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(launches).toHaveLength(2);
+  expect(launches[1]).toMatchObject({ cwd: "D:/Apps/lienzo", agent: "codex", title: "" });
+});
+
+test("clic derecho en tarjeta no abre lanzamiento y Escape cierra el menú libre", async ({ page }) => {
+  await abrirTablero(page);
+  await page.locator(`.card[data-sid="${SID.mapas}"]`).click({ button: "right" });
+  await expect(page.getByRole("menu", { name: "Área libre" })).toHaveCount(0);
+  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
+  await expect(page.getByRole("menu", { name: "Área libre" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu", { name: "Área libre" })).toHaveCount(0);
+});
+
+test("lanzamiento elige proyecto activo y conserva su carpeta en la PC elegida", async ({ page }) => {
+  await abrirTablero(page);
+  let payload: Record<string, unknown> | undefined;
+  await page.route("**/sessions/launch", async route => {
+    payload = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+  });
+  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
+  await page.getByRole("menuitem", { name: "Lanzar CLI…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Lanzar CLI", exact: true });
+  await dialog.getByLabel("Proyecto", { exact: true }).selectOption({ label: "lienzo" });
+  await expect(dialog.getByLabel("Carpeta", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByLabel("Título", { exact: true })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Lanzar", exact: true }).click();
+  expect(payload).toMatchObject({ cwd: "D:\\Apps\\lienzo", title: "lienzo", agent: "codex" });
+});
+
 test("copiar trabajo, editarlo y reintentar un envío fallido", async ({ page }) => {
   await abrirTablero(page);
   const source = page.locator(`.card[data-sid="${SID.mapas}"]`);

@@ -327,9 +327,9 @@ con el retomar de cada agente (`claude --resume <id>`, `codex resume <id>`, `pi 
 guarda; la que se cierra con la ventana o el apagado, sí.
 
 ```python
-c.restaurables()                     # de esta PC y de los peers vivos, cada una con su `pc`
-c.restaurar(session_id, pc=None)     # una; con `pc` se manda a esa PC
-c.restaurar(todas=True, pc=None)     # todas las de esa PC, una por una (~2 s entre cada una)
+c.restaurables()  # de esta PC y de los peers vivos, cada una con su `pc`
+c.restaurar(session_id, pc=None)  # una; con `pc` se manda a esa PC
+c.restaurar(todas=True, pc=None)  # todas las de esa PC, una por una (~2 s entre cada una)
 ```
 
 - `todas` respeta la memoria de la PC dueña: hace falta 1,5 GB libres + 0,7 GB por sesión. Si no
@@ -464,7 +464,7 @@ Cuando la memoria se termina, en este orden y sin matar el trabajo de nadie:
   «el puerto está cerrado» es que no corre el lienzo allá; «no contesta el puerto» es el firewall.
   Si una PC entra a esta por Tailscale (el log tiene `peer GET /peer/events de <pc_id>`) pero esta no
   llega a la otra, a la otra le falta el código nuevo: `git pull`, `install.py --peer` como
-  administrador y reiniciar el lienzo (pasos en `docs/tailscale-otra-pc.md`). `tailscale status`
+  administrador y reiniciar el lienzo (ya hecho en las dos PCs; los pasos quedaron en el historial de git como `docs/tailscale-otra-pc.md`). `tailscale status`
   muestra la 100.x de cada PC. Por Tailscale solo va el tráfico a las IP 100.x; lo demás sigue igual.
   En una PC del trabajo, que el usuario le pregunte a IT antes de instalarlo y apague MagicDNS
   ahí: no decidirlo por él.
@@ -544,9 +544,10 @@ tras un corte y verifica cada archivo.
 
 ```python
 xid = c.copiar(pc, r"\\wsl.localhost\Ubuntu\home\yo\volcado", r"\\wsl.localhost\Ubuntu-24.04\home\otro\recibido")
-c.avance(xid)                 # estado, pct, mbps, eta_s, archivos_hechos, errores, ultimos
-v = c.copiar(pc, origen, destino, esperar=True)   # vuelve cuando termina, ya verificado del otro lado
-c.pausar_copia(xid); c.retomar_copia(xid)
+c.avance(xid)  # estado, pct, mbps, eta_s, archivos_hechos, errores, ultimos
+v = c.copiar(pc, origen, destino, esperar=True)  # vuelve cuando termina, ya verificado del otro lado
+c.pausar_copia(xid)
+c.retomar_copia(xid)
 ```
 
 - `destino` es siempre una carpeta: un archivo de origen cae como `destino/<nombre>`; una carpeta
@@ -593,3 +594,77 @@ siguiente no empiece de cero.
 Y al cerrar la ronda: `ruff format` una sola vez sobre todo, las dependencias que los frentes
 instalaron declaradas en el `pyproject.toml`, las correcciones que encontraron llevadas a los
 documentos, el README con el estado real, y un commit por tema.
+
+## Conocimiento por proyecto (inventario, veredictos, aprendizaje y panel)
+
+El lienzo guarda por proyecto, en `~/.lienzo/proyectos/<proyecto>/` (privado, fuera de los repos),
+las rondas, los encargos tal como se mandaron, los informes tal como se entregaron (con hash y
+revisión) y lo que el server observa de las sesiones que trabajan un encargo: cuándo cierran, qué
+permiso les denegaron, qué error de API cortó un turno, si murieron a medias. Es una base SQLite con búsqueda BM25 (FTS5) y un grafo
+de nodos tipados con estado (hallazgo, decisión, alternativa, incidente, regla, medición, pregunta,
+tema, evidencia) que recorre con CTE. El diseño completo está en
+`docs/propuesta-memoria-2026-10-08/v5.md`; lo de abajo es lo que ya existe.
+
+El proyecto es la unidad: no la PC ni la ronda. Tiene identidad propia porque `repo_key` cambia si
+una PC tiene remote y la otra no. Se registra una vez con sus remotes y carpetas:
+
+```python
+c.proyecto(
+    "teorema",
+    "Teorema",
+    remotes=["github.com/arielelevy/teorema"],
+    carpetas=[{"pc": "<pc_id>", "cwd": "D:/Apps/Teorema"}],
+)
+c.proyecto_de(s)  # -> "teorema" o None, por el repo_key o la carpeta de la tarjeta
+```
+
+Una ronda se abre antes de repartir y cada encargo la cita. Después de lanzar o mandar, se vincula
+la tarjeta; al leer el informe del frente, se entrega entero:
+
+```python
+r = c.abrir_ronda("teorema", "ronda 4: halving racional")
+e = c.encargo("teorema", r["id"], "A", texto_del_encargo, archivos=["codigo/sustituciones.py"])
+s = c.lanzar_y_titular(None, "D:/Apps/Teorema", "Teorema - encargo A - ...", agent="codex")
+c.encargo_enviado(
+    "teorema", e["id"], s
+)  # pendiente -> enviado; desde acá el server observa la sesión (tarjeta de ESTA PC: una de otra PC es 409 hasta la base compartida)
+...  # llega el aviso on_stop
+c.entregar("teorema", e["id"], c.informe(s))  # informe r1 con hash; el encargo pasa a entregado
+c.cerrar_ronda("teorema", r["id"])
+c.conocimiento("teorema")  # resumen: nodos por tipo y estado, rondas
+c.conocimiento("teorema", "halving OR mitad", saltos=1)  # BM25 + vecinos por el grafo
+```
+
+### El bloque `conocimiento` del informe (etapa 2)
+
+Lo que un frente aprendió se declara, no se adivina de la prosa: el informe termina con un bloque
+```` ```conocimiento ```` con JSON (`version: 1`, `nodos`, `vinculos`). Al entregarlo, el server lo
+valida entero (ids locales únicos, tipos declarables de hallazgo a evidencia, campos obligatorios por
+tipo, relaciones del frente: `motivada_por`, `elige`, `descarta`, `derivada_de`, `aplica_a`, `sobre`,
+`apoya`; extremos por id local o `nodo:<id>` del proyecto) y lo incorpora en la misma transacción:
+cada nodo nace con el estado inicial de su tipo, en la ronda del encargo, `declarado_en` el informe,
+y los hallazgos `encontrado_por` la sesión que trabajó el encargo. Con un solo error no entra nada:
+el informe queda igual y `datos.conocimiento` dice `pendiente_de_vincular` con los errores por
+posición (`nodo h1`, `vinculos[2]`); la corrección es una revisión nueva. Reenviar el mismo informe
+devuelve los ids ya creados.
+
+El texto que se le pega al frente en el encargo, con la plantilla y las reglas, es
+`coordinar.INSTRUCCION_CONOCIMIENTO`. Si el encargo cita nodos existentes (un incidente, un tema),
+pasarle sus ids para que use `nodo:<id>`.
+
+```python
+inf = c.entregar("teorema", e["id"], c.informe(s))
+inf["datos"].get("conocimiento")   # {"estado": "incorporado", "ids": {"h1": "...", ...}} o los errores
+```
+
+`coordinar.veredicto` aplica una lista atómica de cambios, con revisión, evidencia y motivo.
+`cerrar_ronda` acepta veredictos y `sin_resolver`; todo el cierre es transaccional.
+`pendientes_memoria` evita confundir los pendientes de conocimiento con los permisos de `pendientes()`.
+`briefing`, `preguntar` (offset/limite) y `vista` recuperan conocimiento con IDs citables.
+`preparar_encargo` agrega el briefing y la plantilla JSON al texto para el frente.
+`recurrencia`, `cuestionar`, `avisos`, `dependencias` y `lecciones` exponen el aprendizaje operativo.
+El menú ⋯ → Memoria consulta las mismas rutas, sin escrituras automáticas.
+
+La base sigue siendo de la PC que registra el encargo; la replicación entre PCs está pendiente.
+Nada pasa a `vigente` ni `confirmado` sin un veredicto; lo que entra por el server o por un bloque
+queda `propuesto` u `observado`.

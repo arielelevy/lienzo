@@ -507,7 +507,9 @@ def test_un_exit_no_avisa_que_murio_a_medias(monkeypatch):
     import sessions as ses
 
     avisos = []
-    monkeypatch.setattr(ses, "en_hilo", lambda fn, *a: avisos.append(a))
+    # solo el aviso de muerte: marcar_muerta tambien manda en hilo el cierre de la sesion al
+    # conocimiento por proyecto (conocimiento.sesion_cerrada), que no es un aviso
+    monkeypatch.setattr(ses, "en_hilo", lambda fn, *a: avisos.append(a) if fn is ses.on_died_working else None)
     for prompt, esperado in (("/exit", 0), ("seguí con la sesión 4", 1)):
         avisos.clear()
         s = {"session_id": "z" * 36, "state": "corriendo", "last_prompt": prompt, "needs": None}

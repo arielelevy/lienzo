@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Arrows } from "./Arrows";
+import { Launch } from "./Launch";
 import { Card, freeGroups, PICK_MS } from "./Card";
 import { pcOf } from "./PcStrip";
 import { passesProjects } from "./ProjectStrip";
@@ -289,6 +290,23 @@ const NINGUNO: Set<string> = new Set();
 
 export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
+  const [context, setContext] = useState<{ x: number; y: number } | null>(null);
+  const [launchOpen, setLaunchOpen] = useState(false);
+  useEffect(() => {
+    if (!context) return;
+    const close = () => setContext(null);
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopImmediatePropagation(); close(); } };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", key, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", key, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [context]);
   // tira de PCs: quien es cada peer y cual es la PC local, para saber que sesiones son suyas y si
   // esta caido (ronda 2; peers viene vacio hasta que exista GET /peers)
   const peersById = useMemo(() => new Map(peers.map((p) => [p.pc_id, p])), [peers]);
@@ -769,6 +787,12 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
 
   return (
     <>
+      {context && createPortal(<div role="menu" aria-label="Área libre" className="board-context"
+        style={{ position: "fixed", left: context.x, top: context.y, zIndex: 1000 }}
+        onPointerDown={e => e.stopPropagation()}>
+        <button role="menuitem" autoFocus onClick={() => { setContext(null); setLaunchOpen(true); }}>Lanzar CLI…</button>
+      </div>, document.body)}
+      {launchOpen && createPortal(<div className="gate"><Launch peers={peers} sessions={Object.values(sessions)} toast={toast} onClose={() => setLaunchOpen(false)} /></div>, document.body)}
       {/* selector de columna, solo abajo de 900 px (una columna por vez). Un permiso pendiente en
           otra columna se marca con un punto: ahi no se ven las tarjetas, y sin la marca el pedido
           pasaba desapercibido hasta que vencia */}
@@ -792,6 +816,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       <div
         className={`board ${drag ? "dragging" : ""} ${moving ? "moving" : ""} ${urgent ? "reordered" : ""}`}
         ref={boardRef}
+        onContextMenu={e => {
+          if (escBlocked || selected || (e.target as HTMLElement).closest("[data-sid], button, input, textarea, select, a, dialog")) return;
+          e.preventDefault();
+          setContext({ x: Math.max(0, Math.min(e.clientX, window.innerWidth - 180)), y: Math.max(0, Math.min(e.clientY, window.innerHeight - 55)) });
+        }}
         // una tarjeta corrida para abajo sale del alto natural del tablero (absoluta, no lo empuja):
         // el tablero se estira hasta taparla, asi no queda media tarjeta cortada
         style={altoLibre ? { minHeight: altoLibre } : undefined}
