@@ -223,6 +223,33 @@ def test_ask_user_sin_auto_aprobar_vuelve_a_la_pregunta_tras_el_permiso(monkeypa
     assert s["state"] == "corriendo"
 
 
+def test_ask_user_abierto_antes_del_reinicio_se_ve_en_la_relectura(monkeypatch):
+    """La tarjeta restaurada quedo en corriendo con «usando ask_user» y ningun evento despues: la
+    relectura del log de coda la pasa a «Te hace una pregunta» (2026-10-09, ar-it33940)."""
+    from lienzo import server  # noqa: F401, I001
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    act = {"running": True, "asking": None, "last_at": None, "last_tool": "ask_user", "tools": 1, "sub": False}
+    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    s = ses.new_session(SID, "coda", "hook")
+    s.update(pid=1, state="corriendo", last_event="PreToolUse", last_reply="usando ask_user")
+    s["last_event_ts"] = "2026-10-09T12:21:32.000-03:00"
+    ses.coda_log_activity(s)
+    assert s["state"] == "te_necesita" and s["needs"]["kind"] == "question" and s["needs"]["tool"] == "ask_user"
+    ses.coda_log_activity(s)  # la siguiente relectura no la toca
+    assert s["needs"]["kind"] == "question"
+    # otra herramienta en curso, o un turno cerrado: nada que preguntar
+    for ultimo, corre in (("usando bash", True), ("usando ask_user", False)):
+        s2 = ses.new_session(SID, "coda", "hook")
+        s2.update(pid=1, state="corriendo", last_event="PreToolUse", last_reply=ultimo)
+        act["running"] = corre
+        ses.coda_log_activity(s2)
+        assert s2["needs"] is None, ultimo
+    act["running"] = True
+
+
 def test_pretooluse_despues_del_cierre_reabre_el_turno():
     from lienzo import server  # noqa: F401, I001
     import sessions as ses

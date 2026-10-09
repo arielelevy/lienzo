@@ -1346,6 +1346,29 @@ def coda_log_activity(s: dict) -> bool:
         )
     ask = act.get("asking") if act["running"] else None
     needs = s.get("needs") or {}
+    if (
+        act["running"]
+        and not ask
+        and not needs
+        and s["state"] == "corriendo"
+        and s.get("last_event") == "PreToolUse"
+        and (s.get("last_reply") or "") in {f"usando {t}" for t in CODA_ASK_TOOLS}
+    ):
+        # la pregunta quedo abierta sin que coda_tool la marcara: llego antes de que el server la
+        # conociera (un reinicio con el codigo nuevo, medido el 2026-10-09 en ar-it33940) o se perdio
+        # su PreToolUse. Ninguna herramienta corrio despues: coda esta esperando la respuesta
+        set_needs(
+            s,
+            {
+                "kind": "question",
+                "tool": s["last_reply"][len("usando ") :],
+                "detail": "",
+                "where": "terminal",
+                "via": "tool",
+            },
+        )
+        s["needs"]["coda_at"] = f"tool:{s.get('last_event_ts') or now()}"
+        needs = s["needs"]
     if ask and s["state"] in ("corriendo", "te_necesita"):
         detail = CODA_ASK_CAUSES.get(ask["cause"] or "", ask["cause"] or "")
         detail = " · ".join(x for x in (detail, "de un subagente" if ask["sub"] else "") if x)
