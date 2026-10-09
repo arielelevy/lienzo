@@ -250,6 +250,54 @@ def test_ask_user_abierto_antes_del_reinicio_se_ve_en_la_relectura(monkeypatch):
     act["running"] = True
 
 
+def test_el_turno_abierto_de_coda_muestra_en_vivo_lo_que_vio_el_hook():
+    """CODA guarda el turno al cerrarlo: el digest del turno abierto se completa con las
+    herramientas del hook desde que empezo; uno cerrado no se toca (2026-10-09)."""
+    from lienzo import server  # noqa: F401, I001
+    import sessions as ses
+
+    ses.CODA_VIVO.pop(SID, None)
+    s = ses.new_session(SID, "coda", "hook")
+    s["state"] = "corriendo"
+    viejo = {
+        "tool_name": "bash",
+        "host_ts": "2026-10-09T12:00:00.000-03:00",
+        "tool_input": {"command": "turno anterior"},
+    }
+    ses.coda_tool(s, viejo)
+    for ev in (
+        {
+            "tool_name": "bash",
+            "host_ts": "2026-10-09T12:21:10.000-03:00",
+            "tool_input": {"command": "winget search kiro"},
+        },
+        {
+            "tool_name": "read",
+            "host_ts": "2026-10-09T12:21:20.000-03:00",
+            "tool_input": {"path": "D:/apps/lienzo/README.md"},
+        },
+        {
+            "tool_name": "ask_user",
+            "host_ts": "2026-10-09T12:21:32.000-03:00",
+            "tool_input": {"question": "¿Kiro o Pi?"},
+        },
+    ):
+        ses.coda_tool(s, ev)
+    abierto = {
+        "ts_start": "2026-10-09T12:21:04.659-03:00",
+        "ended": False,
+        "prompt": "y pi dev",
+        "tools": 0,
+        "says": [],
+    }
+    t = ses.coda_vivo_en_turno(SID, abierto)
+    assert t["tools"] == 3 and t["commands"] == ["winget search kiro"]
+    assert t["files"] == ["D:/apps/lienzo/README.md"] and t["questions"] == ["¿Kiro o Pi?"]
+    assert t["says"][-1] == "en vivo: 3 herramientas, la última ask_user"
+    assert ses.coda_vivo_en_turno(SID, {**abierto, "ended": True}) == {**abierto, "ended": True}
+    ses.CODA_VIVO.pop(SID, None)
+
+
 def test_pretooluse_despues_del_cierre_reabre_el_turno():
     from lienzo import server  # noqa: F401, I001
     import sessions as ses

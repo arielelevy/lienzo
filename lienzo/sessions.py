@@ -1229,6 +1229,47 @@ def hook_notification(s: dict, ev: dict) -> None:
     )
 
 
+# lo que CODA corre en el turno abierto, por sesion: su base guarda el turno recien al cerrarlo, y sin
+# esto el panel mostraba el pedido solo, sin nada en vivo (2026-10-09). En memoria y fuera de la
+# tarjeta, que viaja entera por el SSE; GET .../digest lo suma al turno abierto (coda_vivo_en_turno)
+CODA_VIVO: dict[str, list[dict]] = {}
+CODA_VIVO_MAX = 300
+
+
+def _coda_vivo_anotar(sid: str, tool: str, name: str, inp: dict, sub: bool, ts: str) -> None:
+    paso: dict = {"tool": tool, "ts": ts, "sub": sub}
+    if name in CMD_TOOLS:
+        paso["cmd"] = short(str(inp.get("command") or inp.get("cmd") or "").strip().replace("\n", " "), 300)
+    if name in FILE_TOOLS:
+        paso["files"] = tool_paths(inp)
+    if name in CODA_ASK_TOOLS:
+        paso["pregunta"] = short(str(inp.get("question") or inp.get("prompt") or inp.get("message") or ""), 300)
+    lista = CODA_VIVO.setdefault(sid, [])
+    lista.append(paso)
+    del lista[:-CODA_VIVO_MAX]
+
+
+def coda_vivo_en_turno(sid: str, turno: dict) -> dict:
+    """El turno abierto de CODA (tal como lo da transcripts.digest: el pedido solo) con las
+    herramientas que el hook vio desde que empezo. Un turno cerrado vuelve igual: ahi manda la base."""
+    if turno.get("ended"):
+        return turno
+    desde = parse_ts(turno.get("ts_start"))
+    pasos = [p for p in CODA_VIVO.get(sid) or [] if not desde or (parse_ts(p["ts"]) or desde) >= desde]
+    if not pasos:
+        return turno
+    archivos = list(dict.fromkeys(f for p in pasos for f in p.get("files") or []))
+    return {
+        **turno,
+        "tools": max(turno.get("tools") or 0, len(pasos)),
+        "commands": [p["cmd"] for p in pasos if p.get("cmd")][-50:],
+        "files": archivos[-50:],
+        "questions": [p["pregunta"] for p in pasos if p.get("pregunta")],
+        "subagents": max(turno.get("subagents") or 0, int(any(p["sub"] for p in pasos))),
+        "says": [*(turno.get("says") or []), f"en vivo: {len(pasos)} herramientas, la última {pasos[-1]['tool']}"],
+    }
+
+
 def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
     """PreToolUse de CODA: la herramienta que va a correr, a la tarjeta. Es la unica señal de
     avance durante el turno, porque CODA escribe el turno en su base recien al cerrarlo; al
@@ -1236,6 +1277,7 @@ def coda_tool(s: dict, ev: dict, sub: bool = False) -> None:
     tool = str(ev.get("tool_name") or "?")
     name = tool.lower()
     inp = ev.get("tool_input") if isinstance(ev.get("tool_input"), dict) else {}
+    _coda_vivo_anotar(s["session_id"], tool, name, inp, sub, ev.get("host_ts") or now())
     if ev.get("auto_aprobado"):
         cmd = inp.get("command") or inp.get("cmd") or inp.get("file_path") or ""
         state.log(f"AUTO-APROBADO (hook coda) {s['session_id'][:8]}: {tool} {short(str(cmd), 160)}")

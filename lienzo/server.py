@@ -67,6 +67,7 @@ from sessions import (
     autorizar_denegado,
     clean_attachments,
     coda_viva,
+    coda_vivo_en_turno,
     consume_events,
     cuotas_de_sesiones,
     drop_session,
@@ -508,7 +509,11 @@ def session_view_response(s: dict, view: str, query: dict) -> tuple[int, dict]:
     if view == "turns":
         before = (query.get("before") or [None])[0]
         return 200, transcripts.turns(s["agent"], s["transcript_path"], n, before, leaf_id=transcripts.leaf_of(s))
-    return 200, transcripts.digest(s["agent"], s["transcript_path"], n, leaf_id=transcripts.leaf_of(s))
+    d = transcripts.digest(s["agent"], s["transcript_path"], n, leaf_id=transcripts.leaf_of(s))
+    if s["agent"] == "coda" and d.get("turns"):
+        # CODA guarda el turno al cerrarlo: el abierto se completa con lo que vio el hook
+        d["turns"][-1] = coda_vivo_en_turno(s["session_id"], d["turns"][-1])
+    return 200, d
 
 
 def _push_to_ui_clients(payload: str) -> None:
