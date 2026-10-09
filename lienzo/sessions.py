@@ -835,6 +835,10 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
 
 
 def _par_denegado(x: dict) -> list:
+    # una denegacion de coda sale de su log y se identifica por su hora: el comando lo pone el
+    # lienzo con el ultimo que vio, y despues de autorizarla ya no queda el anterior para comparar
+    if x.get("fuente") == "coda" and x.get("at"):
+        return [x.get("tool"), f"at:{x['at']}"]
     return [x.get("tool"), x.get("detalle") or ""]
 
 
@@ -1368,6 +1372,10 @@ def coda_log_activity(s: dict) -> bool:
             set_state(s, "corriendo")
     if act.get("error") and s.get("last_error") != act["error"]:
         s["last_error"] = act["error"]  # «coda sin cuota»: la tarjeta lo dice en rojo en vez de «termino»
+    elif not act.get("error") and (s.get("last_error") or "").startswith("coda sin cuota"):
+        # el log ya no dice que falte cuota (un turno nuevo, o siguio trabajando): antes el aviso
+        # quedaba para siempre aunque coda trabajara (medido el 2026-10-09 en ar-it33940)
+        s["last_error"] = None
     den = act.get("denied")
     pedido, cuando = parse_ts(s.get("prompt_ts")), parse_ts((den or {}).get("at"))
     if den and pedido and cuando and cuando < pedido:
@@ -1375,12 +1383,18 @@ def coda_log_activity(s: dict) -> bool:
         # borro la marca. Sin esto volvia enseguida y el boton «Autorizar» no se iba (2026-10-04)
         den = None
     if den:
+        # la misma denegacion (mismo `at`) conserva el comando que se denego: last_cmd avanza con
+        # cada comando que coda si aprueba, y con el detalle nuevo set_denied la volvia a anunciar
+        # como DENEGADO en todos los comandos que seguian en el turno (2026-10-09, sesion a1209581
+        # de ar-it33940)
+        prev = s.get("last_denied") or {}
+        detalle = prev.get("detalle") if prev.get("fuente") == "coda" and prev.get("at") == den.get("at") else None
         set_denied(
             s,
             {
                 "tool": den["tool"],
                 "motivo": CODA_ASK_CAUSES.get(den.get("cause") or "", den.get("cause") or ""),
-                "detalle": s.get("last_cmd") or "",
+                "detalle": detalle if detalle is not None else s.get("last_cmd") or "",
                 "at": den.get("at"),
                 "fuente": "coda",
                 "sub": den.get("sub"),

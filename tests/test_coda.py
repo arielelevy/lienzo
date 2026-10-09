@@ -338,6 +338,32 @@ def test_actividad_del_log_sin_hooks(tmp_path, monkeypatch):
     assert coda.activity(1234) is None
 
 
+def test_corte_de_cuota_temporal_no_queda_en_la_tarjeta(tmp_path, monkeypatch):
+    """«coda sin cuota» quedaba para siempre aunque coda siguiera trabajando (2026-10-09)."""
+    from lienzo import server  # noqa: F401, I001
+    import sessions as ses
+
+    (tmp_path / "logs").mkdir()
+    log = tmp_path / "logs" / "coda.log"
+    lineas = [
+        {"pid": 4242, "clientName": "cli", "msg": "prompt started"},
+        {"pid": 4242, "clientName": "cli", "msg": "llm error", "detail": "Quota exceeded (code 154)"},
+    ]
+    log.write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")
+    monkeypatch.setenv("CODA_HOME", str(tmp_path))
+    assert coda.activity(4242)["error"].startswith("coda sin cuota")
+    s = ses.new_session(SID, "coda", "hook")
+    s.update(pid=4242, state="corriendo")
+    ses.coda_log_activity(s)
+    assert s["last_error"].startswith("coda sin cuota")
+    # siguio corriendo herramientas en el mismo turno: el corte fue temporal
+    lineas.append({"pid": 4242, "clientName": "cli", "msg": "authorization.decision", "toolName": "bash"})
+    log.write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")
+    assert "error" not in coda.activity(4242)
+    ses.coda_log_activity(s)
+    assert s["last_error"] is None
+
+
 def test_pedido_de_permiso_abierto_y_contestado(tmp_path, monkeypatch):
     (tmp_path / "logs").mkdir()
     log = tmp_path / "logs" / "coda.log"
