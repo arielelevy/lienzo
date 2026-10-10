@@ -254,5 +254,9 @@
         "memoria-e2e"
       ]
     }
-  ]
+  ],
+  "compuerta": {
+    "mutacionMinima": 0.8,
+    "_por_que": "2026-10-10, autorizado por Ariel: cada archivo mutado lleva un mutante de control inocuo que tiene que sobrevivir; con las 6 de memoria el maximo es 5 de 6 (0,83). Recalibrar con calibrar.mjs al sumar mutaciones."
+  }
 }
