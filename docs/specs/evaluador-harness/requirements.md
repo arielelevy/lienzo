@@ -176,3 +176,19 @@ en la vista, sin caerse.
 8.1. El sistema DEBE evaluar `c-20261010-a841ea` (Claude Opus 5.5 contra Pi gpt-6.1-sol) leyendo
 `~/.lienzo/consultas/c-20261010-a841ea/` sin modificarla, y la vista DEBE mostrar esas dos filas con
 sus conteos de la vuelta 2 y sus tiempos marcados como estimados.
+
+## Aclaraciones (2026-10-10, Ariel: «hacelo vos», van las recomendadas)
+
+1. Vista: pestaña «Rendimiento» dentro de ⋯ → Memoria (`web/src/components/Knowledge.tsx`), con «todos los proyectos».
+2. Registro: base aparte `~/.lienzo/evaluador.db`, local de cada PC, regenerable.
+3. Pruebas de un encargo: medidas de la transcripción de la tarjeta (salida de pytest «N passed, M failed», última corrida dentro de la ventana). Sin pruebas, sólo veredictos, y se dice.
+4. Precios: `lienzo/precios.json` versionado.
+5. Otra PC: cada PC evalúa lo suyo; la vista suma las filas del par por `/peer/` (vía `mirror.MIRROR.forward`), con la PC de origen.
+
+## Notas para el diseño (pausado el 2026-10-10, sigue en el paso 3)
+
+- Uso por turno ya parseado en `transcripts.parse(agent, path)` → `turns[].usage`, `ts_start`, `ts_end`. Codex: `total_token_usage` acumulado. Pi: `usage.cost.total`. coda: tabla `usage` de `~/.coda/coda.db` (`cost_micro`).
+- La consulta no guarda `transcript_path`: guardarlo en `_tomar` (`lienzo/consulta.py`) junto con `enviado`. Para las viejas, buscar por sid: `~/.claude/projects/*/<sid>.jsonl`, `~/.pi/agent/sessions/*/*<sid>*.jsonl`, rollouts de Codex, coda.db.
+- Disparo: `consulta._cerrar` llama al evaluador; los encargos (`entregado`/`sin_entrega`) se barren al abrir la vista y al arrancar, para no tocar `conocimiento.cambiar_estado`.
+- Encargo → sesión: vínculo `ejecutado_por`; hallazgos del encargo: `declarado_en` → informe `responde_a` → encargo.
+- Rutas: GET en `server.py` junto a `consultas`; peer en `PeerHandler._route`.
