@@ -51,7 +51,7 @@ UMBRAL_DUPLICADO = 0.5  # fraccion de palabras en comun (Jaccard) para proponer 
 PALABRA_MIN = 4
 PALABRAS_MAX = 12
 LIMITE_CAMBIOS = 500
-BRIEFING_SIN_FILTRO = 100  # nodos vigentes o abiertos que trae un briefing sin archivos, temas ni consultas
+BRIEFING_SIN_FILTRO = 100  # nodos vigentes, y aparte abiertos, de un briefing sin archivos, temas ni consultas
 LOCALIZADOR = re.compile(r"(::.*|:\d+(:\d+)?)$")  # tests/x.py::caso, codigo/a.py:88, a.py:88:4
 NO_PALABRA = re.compile(r"[^a-z0-9]+")
 
@@ -327,7 +327,9 @@ def duplicados(pid: str, ronda: str | None = None) -> list[dict]:
         ya = {
             (r["de"], r["a"])
             for r in con.execute(
-                "SELECT de, a FROM vinculo WHERE activo = 1 AND relacion IN ('mismo_que','repite','reemplaza')"
+                "SELECT v.de, v.a FROM vinculo v JOIN nodo x ON x.id = v.de AND x.proyecto = ?"
+                " WHERE v.activo = 1 AND v.relacion IN ('mismo_que','repite','reemplaza')",
+                (pid,),
             )
         }
         for n in nodos:
@@ -699,14 +701,15 @@ def briefing(pid: str, *, archivos=None, temas=None, consultas=None, desde_cierr
         # sin de donde partir, el estado del proyecto: lo vigente y lo abierto mas reciente (antes devolvia
         # todo vacio y el briefing de una sesion que recien llega no decia nada)
         cand, sin_tema = _Candidatos(), []
-        estados = sorted(VIGENTE | ABIERTO)
-        cond = " OR ".join("(tipo = ? AND estado = ?)" for _ in estados)
         with k._abrir(pid) as con:
-            for r in con.execute(
-                f"SELECT * FROM nodo WHERE proyecto = ? AND ({cond}) ORDER BY fecha DESC, id LIMIT ?",
-                [pid, *[x for par in estados for x in par], BRIEFING_SIN_FILTRO],
-            ):
-                cand.sumar(k._fila(r), "estado", salto=0)
+            for grupo in (VIGENTE, ABIERTO):  # un limite por grupo: muchos abiertos no tapan lo vigente
+                estados = sorted(grupo)
+                cond = " OR ".join("(tipo = ? AND estado = ?)" for _ in estados)
+                for r in con.execute(
+                    f"SELECT * FROM nodo WHERE proyecto = ? AND ({cond}) ORDER BY fecha DESC, id LIMIT ?",
+                    [pid, *[x for par in estados for x in par], BRIEFING_SIN_FILTRO],
+                ):
+                    cand.sumar(k._fila(r), "estado", salto=0)
     vigente, abierto, otros = [], [], []
     for n in cand.lista():
         clave = (n["tipo"], n["estado"])

@@ -57,7 +57,7 @@ def atender(d: dict) -> tuple[int, dict]:
     try:
         op = d.get("op")
         if op == "proyectos":
-            return 200, {"pc": identity.pc_id(), "proyectos": _proyectos_replicables()}
+            return 200, {"pc": identity.pc_id(), "esquema": k.VERSION_ESQUEMA, "proyectos": _proyectos_replicables()}
         pid = k._texto(d.get("proyecto"), "proyecto", 64)
         k.proyecto(pid)
         if op == "cambios":
@@ -176,6 +176,10 @@ def sincronizar(pc: str, forward) -> dict:
         lista = _pedir(forward, pc, {"op": "proyectos"})
         if lista.get("pc") == identity.pc_id():
             raise OSError("el par respondio con el pc_id de esta PC")
+        if lista.get("esquema") != k.VERSION_ESQUEMA:
+            # (pc, seq_origen) identifica un cambio en toda la base desde el esquema 4: con otro esquema los
+            # numeros no se comparan. Se espera a que la otra PC se actualice (code review 2026-10-10)
+            raise SinSoporte(pc)
         for remoto in lista.get("proyectos") or []:
             pid = None
             try:
@@ -321,6 +325,9 @@ def _ultimo_cambio(con, nid: str) -> tuple[str, str] | None:
 def _aplicar_nodo(con, pid: str, c: dict, n: dict) -> None:
     nid = n["id"]
     actual = con.execute("SELECT * FROM nodo WHERE id = ?", (nid,)).fetchone()
+    if actual is not None and actual["proyecto"] != pid:
+        # el id existe en otro proyecto de esta base: no se pisa; espera con el error a la vista
+        raise sqlite3.IntegrityError(f"el nodo {nid} ya es del proyecto {actual['proyecto']}")
     valores = {campo: n.get(campo) for campo in CAMPOS_NODO}
     valores["datos"] = _js(valores["datos"])
     valores["origen"] = _js(valores["origen"])

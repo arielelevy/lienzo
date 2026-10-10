@@ -429,3 +429,43 @@ def test_un_id_largo_con_sufijo_no_pasa_de_64(red):
         k.registrar_proyecto(largo, remotes=["github.com/otro/otro"])
         pid = replica._proyecto_local({"id": largo, "remotes": ["github.com/x/largo"]})
     assert pid == "p" * 56 and len(pid) <= 64
+
+
+def test_un_par_con_otro_esquema_se_trata_como_sin_soporte(red):
+    _poblar_a(red)
+    calls = []
+
+    def forward(pc, metodo, ruta, cuerpo):
+        code, res = red.forward(pc, metodo, ruta, cuerpo)
+        if cuerpo.get("op") == "proyectos":
+            res = {**res, "esquema": 3}  # A responde como un lienzo de esquema 3
+        calls.append(cuerpo.get("op"))
+        return code, res
+
+    with red.en("pcB"), pytest.raises(replica.SinSoporte):
+        replica.sincronizar("pcA", forward)
+    assert calls == ["proyectos"]  # no pidio cambios con numeros que no se comparan
+
+
+def test_un_nodo_que_existe_en_otro_proyecto_no_se_pisa(red):
+    a = _poblar_a(red)
+    red.sync("pcB", "pcA")
+    with red.en("pcB"):
+        k.registrar_proyecto("otro")
+        nodo = {
+            "pc": "pcC",
+            "seq_origen": 9,
+            "accion": "nodo",
+            "nodo_id": a["h1"],
+            "fecha": k.ahora(),
+            "autor": "c",
+            "motivo": "",
+            "origen": {},
+            "nuevo": {**k.nodo("teorema", a["h1"]), "texto": "pisado", "proyecto": "otro"},
+        }
+        nodo["nuevo"].pop("vinculos", None)
+        nodo["nuevo"].pop("cambios", None)
+        with k._abrir("otro") as con:
+            assert replica.aplicar(con, "otro", nodo) is False
+        assert k.nodo("teorema", a["h1"])["texto"] != "pisado"
+        assert "ya es del proyecto teorema" in replica.estado("otro")["pendientes"][0]["error"]

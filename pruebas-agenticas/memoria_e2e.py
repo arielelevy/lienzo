@@ -99,6 +99,7 @@ try:
     evento("Stop", last_assistant_message=cuerpo, stop_reason="end_turn")
     pid = esperar(lambda: pedir("GET", "/conocimiento/carpeta?cwd=" + urllib.request.quote(CWD))[1].get("proyecto"))
     paso("el proyecto de la carpeta se creo solo", pid, proyecto=pid)
+
     def _dos_capturas():
         r = pedir("GET", f"/conocimiento/{pid}/capturas")[1]
         return r if r and r.get("total", 0) >= 2 else None
@@ -153,6 +154,21 @@ try:
         "respaldo con la API de backup",
         code == 200 and os.path.isfile(os.path.join(resp["destino"], "conocimiento.sqlite")),
     )
+    paso("una sola base para el lienzo", os.path.isfile(os.path.join(HOME, "conocimiento.sqlite")))
+    # 5. el comando que usa cualquier agente desde su terminal, contra este server
+    cli_env = {**env, "LIENZO_URL": BASE}
+    memoria = [sys.executable, os.path.join(RAIZ, "skills", "lienzo", "memoria.py")]
+
+    def cli(*args):
+        p = subprocess.run([*memoria, *args], cwd=CWD, env=cli_env, capture_output=True, text=True, encoding="utf-8")
+        return p.returncode, p.stdout
+
+    code, out = cli("cola")
+    paso("memoria.py busca en el proyecto de la carpeta", code == 0 and "la cola de captura no bloquea" in out)
+    code, out = cli()
+    paso("memoria.py sin argumentos da el briefing con lo abierto", code == 0 and "[hallazgo, propuesto]" in out)
+    code, out = cli('"sin cerrar')
+    paso("memoria.py con una consulta FTS rota sale con 3", code == 3)
 finally:
     srv.terminate()
     try:

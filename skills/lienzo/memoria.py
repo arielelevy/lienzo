@@ -10,8 +10,9 @@ con los ids citables (`nodo:<id>`).
     py memoria.py --capturas [--clase respuesta]   lo ultimo que paso por el lienzo en esta carpeta
 
 Opciones: --proyecto <id> (si no, el de la carpeta), --cwd <carpeta>, --sin-prosa, --json.
-Solo lee: nunca crea el proyecto ni cambia estados. Sale con 0 si respondio, 1 si el proyecto no tiene
-memoria todavia y 2 si el lienzo no contesta.
+Solo lee: nunca crea el proyecto ni cambia estados. Sale con 0 si respondio, 1 si la carpeta no tiene
+memoria todavia, 2 si el lienzo no contesta y 3 si la memoria rechazo el pedido (una consulta FTS mal
+escrita, una alternativa que no existe) o fallo.
 """
 
 from __future__ import annotations
@@ -75,7 +76,10 @@ def preguntar(pid: str, args) -> str:
     if r.get("prosa"):
         out.append("\n### Prosa (no declarado: no tiene estado ni veredicto)")
         for p in r["prosa"][:15]:
-            donde = p.get("ruta") or f"{p.get('fuente')} de {str(p.get('session_id'))[:8]} {p.get('fecha', '')[:16]}"
+            donde = (
+                p.get("ruta")
+                or f"{p.get('fuente')} de {str(p.get('session_id') or '?')[:8]} {(p.get('fecha') or '')[:16]}"
+            )
             out.append(f"- {donde}: {p.get('fragmento')}")
     return "\n".join(out)
 
@@ -94,6 +98,9 @@ def main(argv=None) -> int:
     ap.add_argument("--sin-prosa", action="store_true")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
+    modos = [bool(args.por_que), bool(args.tema), args.capturas]
+    if sum(modos) > 1 or (any(modos) and (args.consultas or args.archivo or args.tema_filtro)):
+        ap.error("--por-que, --tema y --capturas van solos, sin consultas ni --archivo")
     try:
         pid = proyecto(args)
         if not pid:
@@ -105,7 +112,7 @@ def main(argv=None) -> int:
                 json.dumps(r, ensure_ascii=False, indent=1)
                 if args.json
                 else "\n".join(
-                    [f"## Por qué se descartó «{r['alternativa']['texto']}»"]
+                    [f"## Por qué se descartó «{(r.get('alternativa') or {}).get('texto', args.por_que)}»"]
                     + [_linea(n) + f" — motivo del descarte: {n.get('motivo_descarte')}" for n in r["descartada_por"]]
                     + ["### Fundamentos"]
                     + ([_linea(n) for n in r["fundamentos"]] or ["_sin fundamentos vinculados_"])
@@ -128,8 +135,8 @@ def main(argv=None) -> int:
                 else "\n".join(
                     [f"## Lo último que pasó por el lienzo en {pid} ({r['total']} en total)"]
                     + [
-                        f"- {x['fecha'][:16]} {x['clase']} · {x.get('agente') or '?'} {x['session_id'][:8]}: "
-                        + " ".join(x["texto"].split())[:300]
+                        f"- {(x.get('fecha') or '')[:16]} {x.get('clase')} · {x.get('agente') or '?'} "
+                        f"{str(x.get('session_id') or '?')[:8]}: " + " ".join((x.get("texto") or "").split())[:300]
                         for x in r["capturas"]
                     ]
                 )
@@ -143,8 +150,8 @@ def main(argv=None) -> int:
         print(f"El lienzo no contesta en {c.BASE}: {e}", file=sys.stderr)
         return 2
     except LookupError as e:
-        print(f"La memoria respondió con un error: {e}", file=sys.stderr)
-        return 1
+        print(f"La memoria rechazó el pedido: {e}", file=sys.stderr)
+        return 3
     print(texto)
     return 0
 

@@ -301,6 +301,13 @@ CREATE TABLE IF NOT EXISTS replica_duplicado (
   fecha TEXT NOT NULL,
   PRIMARY KEY (nodo_local, nodo_remoto)
 );
+-- bases viejas por proyecto ya traidas a esta (anexo D): hasta que cambio, para que reimportar no duplique
+CREATE TABLE IF NOT EXISTS importada (
+  ruta TEXT PRIMARY KEY,
+  proyecto TEXT NOT NULL,
+  ultimo_seq INTEGER NOT NULL,
+  fecha TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS replica_pendiente (
   proyecto TEXT NOT NULL,
   pc TEXT NOT NULL,
@@ -692,6 +699,8 @@ def _migrar(path: str) -> None:
     finally:
         con.close()
     if al_dia:
+        if path not in _revisadas:
+            _revisar_viejas(path)
         return
     importadas: list[str] = []
     with _lock_migracion:
@@ -705,6 +714,7 @@ def _migrar(path: str) -> None:
                     for sentencia in _sentencias(ESQUEMA):
                         con.execute(sentencia)
                     importadas = _importar_viejas(con)
+                    _asegurar_proyectos(con)
                     con.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
                 con.execute("COMMIT")
             except BaseException:
@@ -712,6 +722,11 @@ def _migrar(path: str) -> None:
                 raise
         finally:
             con.close()
+    _revisadas.add(path)
+    _renombrar(importadas)
+
+
+def _renombrar(importadas: list[str]) -> None:
     for vieja in importadas:
         for sufijo in ("", "-wal", "-shm"):
             if os.path.exists(vieja + sufijo):
@@ -775,11 +790,50 @@ _CAMBIO = (
 )
 
 
+_revisadas: set[str] = set()  # bases centrales ya revisadas en este proceso (bajo _lock_migracion)
+
+
+def _revisar_viejas(path: str) -> None:
+    """Una vez por proceso, con la base ya al dia: trae una base vieja que haya aparecido o crecido despues
+    de migrar (no se pudo renombrar, o la escribio un server viejo) y da de alta en la tabla `proyecto` a
+    los proyectos del indice que no esten (los creo un server viejo: sin la fila, las claves foraneas
+    rechazarian toda escritura). Code review 2026-10-10."""
+    with _lock_migracion:
+        if path in _revisadas:
+            return
+        hay = os.path.isdir(raiz()) and any(os.path.isfile(_db_vieja(p)) for p in os.listdir(raiz()))
+        con = sqlite3.connect(path, timeout=30, isolation_level=None)
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                importadas = _importar_viejas(con) if hay else []
+                _asegurar_proyectos(con)
+                con.execute("COMMIT")
+            except BaseException:
+                con.execute("ROLLBACK")
+                raise
+        finally:
+            con.close()
+        _revisadas.add(path)
+    _renombrar(importadas)
+
+
+def _asegurar_proyectos(con: sqlite3.Connection) -> None:
+    for pid, p in _leer_indice()["proyectos"].items():
+        con.execute(
+            "INSERT OR IGNORE INTO proyecto (id, nombre, creado) VALUES (?, ?, ?)",
+            (pid, p.get("nombre") or pid, p.get("creado") or ahora()),
+        )
+
+
 def _importar_viejas(con: sqlite3.Connection) -> list[str]:
-    """Copia a la base del lienzo cada base vieja `proyectos/<p>/conocimiento.sqlite` (esquemas 1 a 3),
-    leida en solo lectura, en la transaccion del llamador: mismos ids, el historial en su orden (los
-    cambios de esta PC reciben su seq nuevo como seq de origen) y la prosa de sus cuerpos. Devuelve las
-    rutas importadas."""
+    """Copia a la base del lienzo cada base vieja `proyectos/<p>/conocimiento.sqlite` (esquemas 1 a 3), leida
+    en solo lectura, en la transaccion del llamador, cada una en su SAVEPOINT: una ilegible se loguea y se
+    saltea (no se renombra) sin frenar a las demas. Mismos ids, el historial en su orden y la prosa de sus
+    cuerpos. Los cambios de esta PC reciben su seq nuevo como seq de origen: el esquema 3, donde ese numero
+    era por base, no llego a correr en vivo, asi que ningun par los conoce con el viejo. `importada`
+    recuerda hasta que cambio se trajo cada archivo: reimportar solo suma lo nuevo. Lo que ya estaba (un
+    id repetido) no se pisa, y se cuenta en el log. Devuelve las rutas importadas enteras."""
     base = raiz()
     if not os.path.isdir(base):
         return []
@@ -789,28 +843,55 @@ def _importar_viejas(con: sqlite3.Connection) -> list[str]:
         vieja = _db_vieja(pid)
         if not os.path.isfile(vieja):
             continue
-        ro = sqlite3.connect("file:" + vieja.replace("\\", "/") + "?mode=ro", uri=True, timeout=30)
+        con.execute("SAVEPOINT vieja")
         try:
-            tablas = {r[0] for r in ro.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-            for tabla, cols in _COLUMNAS.items():
-                if tabla in tablas:
-                    filas = ro.execute(f"SELECT {', '.join(cols)} FROM {tabla} ORDER BY rowid").fetchall()
-                    con.executemany(
-                        f"INSERT OR IGNORE INTO {tabla} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
-                        filas,
-                    )
-            if "cambio" in tablas:
-                tiene = {r[1] for r in ro.execute("PRAGMA table_info(cambio)")}
-                extra = ", pc, seq_origen" if {"pc", "seq_origen"} <= tiene else ", NULL, NULL"
-                for fila in ro.execute(f"SELECT {', '.join(_CAMBIO)}{extra} FROM cambio ORDER BY seq").fetchall():
-                    pc = fila[-2] or local
-                    seq_origen = fila[-1] if pc != local else None  # lo de otra PC conserva su par de origen
-                    con.execute(
-                        f"INSERT OR IGNORE INTO cambio ({', '.join(_CAMBIO)}, pc, seq_origen)"
-                        f" VALUES ({', '.join('?' * (len(_CAMBIO) + 2))})",
-                        (*fila[:-2], pc, seq_origen),
-                    )
-                con.execute("UPDATE cambio SET seq_origen = seq WHERE seq_origen IS NULL AND pc = ?", (local,))
+            ignoradas = _importar_una(con, pid, vieja, local)
+            con.execute("RELEASE vieja")
+        except (sqlite3.Error, OSError, ValueError) as e:
+            con.execute("ROLLBACK TO vieja")
+            con.execute("RELEASE vieja")
+            state.log(f"conocimiento: la base vieja de {pid} no se pudo importar ({e}); queda donde esta")
+            continue
+        importadas.append(vieja)
+        aviso = f"; {ignoradas} fila(s) ya estaban y no se pisaron" if ignoradas else ""
+        state.log(f"conocimiento: la base vieja de {pid} paso a la del lienzo{aviso}")
+    return importadas
+
+
+def _importar_una(con: sqlite3.Connection, pid: str, vieja: str, local: str) -> int:
+    ro = sqlite3.connect("file:" + vieja.replace("\\", "/") + "?mode=ro", uri=True, timeout=30)
+    ignoradas = 0
+    try:
+        tablas = {r[0] for r in ro.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        previo = con.execute("SELECT ultimo_seq FROM importada WHERE ruta = ?", (vieja,)).fetchone()
+        desde = previo[0] if previo else 0
+        for tabla, cols in _COLUMNAS.items():
+            if tabla in tablas:
+                filas = ro.execute(f"SELECT {', '.join(cols)} FROM {tabla} ORDER BY rowid").fetchall()
+                antes = con.total_changes
+                con.executemany(
+                    f"INSERT OR IGNORE INTO {tabla} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", filas
+                )
+                if not previo:
+                    ignoradas += len(filas) - (con.total_changes - antes)
+        ultimo = desde
+        if "cambio" in tablas:
+            tiene = {r[1] for r in ro.execute("PRAGMA table_info(cambio)")}
+            extra = ", pc, seq_origen" if {"pc", "seq_origen"} <= tiene else ", NULL, NULL"
+            for fila in ro.execute(
+                f"SELECT seq, {', '.join(_CAMBIO)}{extra} FROM cambio WHERE seq > ? ORDER BY seq", (desde,)
+            ).fetchall():
+                pc = fila[-2] or local
+                seq_origen = fila[-1] if pc != local else None  # lo de otra PC conserva su par de origen
+                cur = con.execute(
+                    f"INSERT OR IGNORE INTO cambio ({', '.join(_CAMBIO)}, pc, seq_origen)"
+                    f" VALUES ({', '.join('?' * (len(_CAMBIO) + 2))})",
+                    (*fila[1:-2], pc, seq_origen),
+                )
+                ignoradas += 1 - cur.rowcount
+                ultimo = fila[0]
+            con.execute("UPDATE cambio SET seq_origen = seq WHERE seq_origen IS NULL AND pc = ?", (local,))
+        if not previo:
             if "prosa_fts" in tablas:
                 con.executemany(
                     "INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)",
@@ -818,11 +899,14 @@ def _importar_viejas(con: sqlite3.Connection) -> list[str]:
                 )
             else:
                 _rellenar_prosa(con, pid)
-        finally:
-            ro.close()
-        importadas.append(vieja)
-        state.log(f"conocimiento: la base vieja de {pid} paso a la del lienzo")
-    return importadas
+        con.execute(
+            "INSERT INTO importada (ruta, proyecto, ultimo_seq, fecha) VALUES (?,?,?,?)"
+            " ON CONFLICT (ruta) DO UPDATE SET ultimo_seq = excluded.ultimo_seq, fecha = excluded.fecha",
+            (vieja, pid, ultimo, ahora()),
+        )
+    finally:
+        ro.close()
+    return ignoradas
 
 
 def _leer_archivo(full: str) -> str | None:
@@ -928,10 +1012,17 @@ def _cambio(
     con.execute("UPDATE cambio SET seq_origen = seq WHERE seq = ?", (cur.lastrowid,))
 
 
-def id_de_sesion(sid: str) -> str:
-    """El id del nodo `sesion` sale del session_id, igual en todas las PCs: si la PC del coordinador y la
-    de la sesion la registran las dos, la replica las junta en un nodo (anexo C) en vez de duplicarla."""
-    return uuid.uuid5(uuid.NAMESPACE_URL, f"lienzo:sesion:{sid}").hex
+def id_de_sesion(pid: str, sid: str) -> str:
+    """El id del nodo `sesion` de `sid` en el proyecto `pid`: igual en todas las PCs (la del coordinador y la
+    de la sesion lo crean igual y la replica los junta, anexo C) y distinto por proyecto (una sesion que
+    trabaja en dos carpetas tiene un nodo en cada una: la base es una sola y el id es global, code review
+    2026-10-10). El proyecto se nombra por su remote, que es lo que lo une entre PCs; sin remote, por su id."""
+    try:
+        remotes = sorted(proyecto(pid).get("remotes") or [])
+    except Rechazo:
+        remotes = []
+    clave = remotes[0] if remotes else f"proyecto:{pid}"
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"lienzo:sesion:{clave}:{sid}").hex
 
 
 def declarar_nodo(pid: str, tipo, texto, datos, *, autor: str, origen=None, ronda=None, motivo: str = "") -> dict:
@@ -1317,7 +1408,7 @@ def _sesion(con, pid, sid, *, agente=None, modelo=None, pc=None, cwd=None, autor
         clave_ingesta=f"sesion:{sid}",
         motivo="sesion observada",
         con=con,
-        nid=id_de_sesion(sid),
+        nid=id_de_sesion(pid, sid),
     )
     if not n["creado"] and any(v is not None and n["datos"].get(k) != v for k, v in datos.items()):
         # cada mutacion deja su cambio (v5 §8.4): el modelo o el cwd de la sesion cambiaron

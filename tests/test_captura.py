@@ -469,19 +469,80 @@ def test_dos_proyectos_viejos_y_cuatro_aperturas_a_la_vez_importan_una_vez(monke
     assert {n["id"] for n in k.nodos("q")["nodos"]} == {"r-q", "e-q", "t-q"}
 
 
-def test_la_importacion_que_falla_a_mitad_no_deja_nada_y_se_reintenta(monkeypatch):
+def test_una_base_vieja_que_falla_no_frena_a_las_demas_y_se_reintenta(monkeypatch):
     base_vieja("p")
+    base_vieja("q")
     original = k._rellenar_prosa
-    monkeypatch.setattr(k, "_rellenar_prosa", lambda *a: (_ for _ in ()).throw(OSError("disco")))
-    with pytest.raises(OSError):
-        k.resumen("p")
-    con = sqlite3.connect(k.db_path())
-    assert con.execute("PRAGMA user_version").fetchone()[0] == 0
-    assert con.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'nodo'").fetchone()[0] == 0
-    con.close()
-    assert os.path.isfile(os.path.join(k.raiz(), "p", "conocimiento.sqlite"))  # la vieja sigue donde estaba
+
+    def falla_en_p(con, pid):
+        if pid == "p":
+            raise OSError("disco")
+        return original(con, pid)
+
+    monkeypatch.setattr(k, "_rellenar_prosa", falla_en_p)
+    assert k.nodos("q")["total"] == 3  # q entro igual
+    assert k.nodos("p")["total"] == 0
+    assert os.path.isfile(os.path.join(k.raiz(), "p", "conocimiento.sqlite"))  # p queda donde estaba
+    assert not os.path.isfile(os.path.join(k.raiz(), "q", "conocimiento.sqlite"))
     monkeypatch.setattr(k, "_rellenar_prosa", original)
+    k._revisadas.clear()  # el proceso siguiente
+    assert k.nodos("p")["total"] == 3 and k.nodos("q")["total"] == 3
+
+
+def test_una_base_vieja_corrupta_no_deja_sin_memoria_a_nadie():
+    base_vieja("q")
+    os.makedirs(os.path.join(k.raiz(), "p"), exist_ok=True)
+    with open(os.path.join(k.raiz(), "p", "conocimiento.sqlite"), "wb") as f:
+        f.write(b"esto no es una base")
+    idx = k._leer_indice()
+    idx["proyectos"]["p"] = {"nombre": "p", "remotes": [], "carpetas": [], "creado": k.ahora()}
+    k._guardar_indice(idx)
+    assert k.nodos("q")["total"] == 3
+    assert k.nodos("p")["total"] == 0
+    assert k.crear_nodo("p", "tema", "p sigue andando", autor="c")["creado"]  # su fila de proyecto existe
+
+
+def test_reimportar_una_base_vieja_que_no_se_renombro_no_duplica(monkeypatch):
+    base_vieja("p")
+    monkeypatch.setattr(k.os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError("abierta")))
+    assert len(k.cambios("p")) == 3
+    vieja = os.path.join(k.raiz(), "p", "conocimiento.sqlite")
+    con = sqlite3.connect(vieja)  # el server viejo siguio escribiendo
+    con.execute(
+        "INSERT INTO cambio (proyecto, nodo_id, accion, nuevo, autor, motivo, origen, fecha) VALUES (?,?,?,?,?,?,?,?)",
+        ("p", "t-p", "datos", "{}", "c", "tarde", "{}", k.ahora()),
+    )
+    con.commit()
+    con.close()
+    k._revisadas.clear()
+    assert [c["motivo"] for c in k.cambios("p")][-1] == "tarde" and len(k.cambios("p")) == 4  # solo lo nuevo
+
+
+def test_una_base_vieja_que_aparece_despues_se_importa_al_arrancar():
+    k.registrar_proyecto("otro")  # la base del lienzo ya existe
+    base_vieja("p")
+    k._revisadas.clear()
     assert k.nodos("p")["total"] == 3
+
+
+def test_la_misma_sesion_en_dos_proyectos_tiene_un_nodo_en_cada_uno(tmp_path):
+    a = captura.proyecto_de(_tarjeta("s1", tmp_path / "uno"))
+    b = captura.proyecto_de(_tarjeta("s1", tmp_path / "dos"))
+    captura.procesar(_ev("pedido", _tarjeta("s1", tmp_path / "uno"), "en uno", "c1"))
+    captura.procesar(_ev("pedido", _tarjeta("s1", tmp_path / "dos"), "en dos", "c2"))  # antes: UNIQUE nodo.id
+    na, nb = k.nodos(a, tipo="sesion")["nodos"], k.nodos(b, tipo="sesion")["nodos"]
+    assert len(na) == len(nb) == 1 and na[0]["id"] != nb[0]["id"]
+    assert k.capturas(b)["capturas"][0]["texto"] == "en dos"
+
+
+def test_el_id_de_sesion_es_el_mismo_en_dos_pcs_con_el_mismo_remote():
+    k.registrar_proyecto("lienzo", remotes=["github.com/a/lienzo"])
+    k.registrar_proyecto("lienzo-2", remotes=["github.com/a/otro"])
+    uno = k.id_de_sesion("lienzo", "s1")
+    assert uno != k.id_de_sesion("lienzo-2", "s1")
+    import uuid
+
+    assert uno == uuid.uuid5(uuid.NAMESPACE_URL, "lienzo:sesion:github.com/a/lienzo:s1").hex
 
 
 def test_los_cambios_de_otra_pc_conservan_su_origen_al_importar(monkeypatch):

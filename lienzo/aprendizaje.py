@@ -174,7 +174,11 @@ def recurrencias(pid: str) -> list[dict]:
             for r in con.execute("SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'incidente'", (pid,))
         }
         vecinos: dict[str, set[str]] = {}
-        for r in con.execute("SELECT de, a FROM vinculo WHERE relacion = 'repite' AND activo = 1"):
+        for r in con.execute(
+            "SELECT v.de, v.a FROM vinculo v JOIN nodo x ON x.id = v.de AND x.proyecto = ?"
+            " WHERE v.relacion = 'repite' AND v.activo = 1",
+            (pid,),
+        ):
             if r["de"] in nodos and r["a"] in nodos:
                 vecinos.setdefault(r["de"], set()).add(r["a"])
                 vecinos.setdefault(r["a"], set()).add(r["de"])
@@ -386,7 +390,9 @@ class _Respaldos:
         self.motiva: dict[str, list[str]] = {}  # decision -> sus respaldos (motivada_por)
         self.contesta: dict[str, list[str]] = {}  # pregunta -> nodos que la contestan
         for r in con.execute(
-            "SELECT de, relacion, a FROM vinculo WHERE activo = 1 AND relacion IN ('motivada_por','contesta')"
+            "SELECT v.de, v.relacion, v.a FROM vinculo v JOIN nodo x ON x.id = v.de AND x.proyecto = ?"
+            " WHERE v.activo = 1 AND v.relacion IN ('motivada_por','contesta')",
+            (pid,),
         ):
             de, rel, a = r["de"], r["relacion"], r["a"]
             if de not in self.nodos or a not in self.nodos:

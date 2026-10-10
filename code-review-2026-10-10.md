@@ -74,3 +74,20 @@ tarjetas y nunca hace I/O con su propio lock), idempotencia por `(pc, seq_origen
   igual sin estos cambios).
 - Copia de la base viva migrada de esquema 1 a 3: 40 nodos, 58 vínculos y 130 cambios iguales, 10 cuerpos
   indexados, cero cambios sin origen.
+
+## Segunda revisión: base única del lienzo (`569d016..7732c84`)
+
+Un revisor delegado, con pruebas propias contra bases viejas armadas con el código anterior. Corregido
+todo, con regresión en `tests/test_captura.py` y `tests/test_replica.py`:
+
+| Sev. | Hallazgo | Arreglo |
+|---|---|---|
+| HIGH | La misma sesión no podía estar en dos proyectos: el id de su nodo era global y chocaba la PRIMARY KEY | `id_de_sesion(pid, sid)` incluye el proyecto (su remote, igual en todas las PCs, o su id) |
+| HIGH | La importación descartaba en silencio lo repetido | se cuenta y se loguea; cada base en su SAVEPOINT |
+| HIGH | Renumerar el seq de origen al importar podía confundir a un par de esquema 3 | el esquema 3 no llegó a correr en vivo; la réplica rechaza un par con otro esquema (`SinSoporte`) |
+| MEDIUM | Una base vieja ilegible dejaba sin memoria a todo el lienzo | se saltea con su error en el log y se reintenta en el arranque siguiente |
+| MEDIUM | Una base vieja que aparecía después de migrar no se importaba, y un proyecto creado por un server viejo no tenía su fila | revisión una vez por proceso; la tabla `importada` hace la reimportación idempotente; se asegura la fila de cada proyecto del índice |
+| MEDIUM | La réplica podía pisar un nodo con el mismo id en otro proyecto | queda pendiente con el error a la vista |
+| LOW | El briefing sin filtros compartía un límite: muchos abiertos tapaban lo vigente | un límite por grupo |
+| LOW | `memoria.py` mezclaba códigos de salida y fallaba con campos ausentes | 1 sin memoria, 2 sin lienzo, 3 pedido rechazado; sin tracebacks |
+| LOW | Tres recorridos leían los vínculos de todos los proyectos | filtran por proyecto con un JOIN |
