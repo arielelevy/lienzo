@@ -232,10 +232,17 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 8. Gravedad: media.
 
-- [ ] **`--coda-home DIR` aísla la configuración de coda** (está en `coda --help`): sirve para lanzar con `--model` sin pisar el
+- [x] **`--coda-home DIR` aísla la configuración de coda** (está en `coda --help`): sirve para lanzar con `--model` sin pisar el
   modelo por defecto de la PC (ver el punto de `--model`). Falta ver cómo conserva el login.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 9. Gravedad: media.
+  - **Cerrado el 2026-10-10:** probado con `coda --globant --coda-home C:\Users\ArielLevy\.coda-prueba-home`. Una carpeta
+    nueva arranca en el alta (log: «the coda home is not set up (missing .secrets and/or empty global config)»); con
+    `--globant` se elige el entorno (Clients) y se pega la clave una vez, que queda en `<carpeta>/.secrets`, y hay que
+    reiniciar coda para que cargue el proveedor (antes da 401). Después contestó por el DGX. Cambiar el modelo ahí
+    escribió el `config.json` de esa carpeta (`globant_dgx/Qwen3.8-27B`) y el de `~/.coda` siguió en
+    `globant_dgx/GLM-5.3-Flash`: aísla el default. Sin `--globant` el alta no ofrece Globant. Que `launch.py` lo use solo
+    queda como mejora, sin pedido.
 
 - [ ] **La herramienta `read` de coda se traba** (medido el 2026-10-02): se evita (el adjunto a un coda se lee con
   el shell y los mensajes cortos se tipean directo), pero la causa sigue en coda: avisar a quien lo mantiene.

@@ -119,3 +119,9 @@ Revisión propia antes del commit; pruebas en `tests/test_pendientes_tanda3.py` 
 | MEDIUM | El pane viene de un archivo de evento, que podría estar alterado | se toma sólo si es `%` y dígitos, y sólo en tarjetas de tmux |
 | LOW | En Linux `/proc/<pid>/exe` del Claude nativo es un binario con nombre de versión | se usa `comm`, que sigue siendo `claude` |
 | LOW | El cupo de codas no distingue modelos | todas comparten hoy el servidor del DGX; si se suman otros, separar por `model` |
+
+## Cierre de `--coda-home` en PENDIENTES
+
+**Alcance:** solo `PENDIENTES.md` (una casilla cerrada con evidencia de una prueba manual con coda real). Sin cambios de
+código, así que no hay hallazgos ni hace falta compuerta nueva: la última (PASS sobre 4e22760) sigue valiendo para el código.
+La evidencia no cita la clave ni su contenido, solo dónde la guarda coda (`<carpeta>/.secrets`). La carpeta de prueba se borró.
