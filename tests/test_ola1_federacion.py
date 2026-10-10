@@ -707,9 +707,10 @@ def test_rules_loop_una_regla_que_revienta_no_corta_las_demas(reglas, monkeypatc
 # --- 1.16: procinfo.py no importaba fuera de Windows -------------------------------------------
 
 
-def test_procinfo_importa_y_responde_nada_fuera_de_windows(monkeypatch):
+def test_procinfo_importa_y_responde_nada_fuera_de_windows(monkeypatch, tmp_path):
     """En Mac/Linux no hay ctypes.WinDLL: el modulo tiene que importar igual (lo usan hook, procs y
-    backend) y las consultas Win32 devolver «nada»."""
+    backend) y las consultas Win32 devolver «nada». `proc_info` lee /proc desde la tanda 3 de
+    PENDIENTES (2026-10-10): con un /proc sin ese pid, tampoco devuelve nada."""
     import ctypes
     import importlib.util
     import sys
@@ -722,6 +723,7 @@ def test_procinfo_importa_y_responde_nada_fuera_de_windows(monkeypatch):
     spec.loader.exec_module(pi)
     assert pi.open_process(1234) is None
     assert pi.alive(1234) is False
+    monkeypatch.setattr(pi, "_PROC", str(tmp_path))
     assert pi.proc_info(1234) == (None, None)
     assert pi.command_args('node "/opt/pi coding/cli.js" --mode rpc') == [
         "node",
@@ -730,7 +732,9 @@ def test_procinfo_importa_y_responde_nada_fuera_de_windows(monkeypatch):
         "rpc",
     ]
     assert pi.command_args("") == []
-    assert pi.agent_of("/usr/bin/claude") is None  # sin .exe: no es un agente de Windows
+    # fuera de Windows el binario no lleva .exe: el hook lo reconoce por su comm
+    assert pi.agent_of("/usr/bin/claude") == "claude"
+    assert pi.agent_of("/usr/bin/python3") is None
 
 
 # --- B9: un beacon firmado y capturado se podia reenviar dentro de la ventana desde otra IP --------
