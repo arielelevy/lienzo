@@ -269,3 +269,8 @@ y lint.
 - **La síntesis no entraba a la memoria:** `consulta._cerrar` la capturaba con `clase="consulta"`, que no está en
   `conocimiento.CLASES_CAPTURA`, y se descartaba. Con coordinador ya entra como el envío que se le hace; sin coordinador se
   captura como `envio`. Verificado en la base: Teorema tiene las 40 respuestas y los 39 envíos de las cuatro consultas.
+- **El auto-aprobar no corría los workflows de coda:** el primer uso de un workflow (o después de editarlo) pide «Run a
+  dynamic workflow?» con «1. Yes, run it» marcado, sin el cartel «Approval Required». `coda_ask_open` no lo reconocía,
+  y con el cambio de «si no está en la terminal, quitalo» el auto-aprobar lo daba por contestado sin teclear: la coda
+  quedaba esperando. Ahora ese diálogo cuenta como permiso, pero solo con la opción de correrlo marcada (con otra marcada,
+  un Enter haría otra cosa). Test nuevo; verificado en vivo con el workflow de la segunda prueba SDD.

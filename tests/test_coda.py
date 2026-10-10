@@ -697,3 +697,15 @@ def test_permiso_de_fondo_contestado_no_vuelve_a_ofrecer_permitir(monkeypatch):
     assert s["state"] == "termino" and s["needs"] is None
     ses.coda_log_activity(s)  # el log todavia lo muestra abierto: no vuelve
     assert s["state"] == "termino" and s["needs"] is None
+
+
+def test_el_dialogo_de_correr_un_workflow_cuenta_como_permiso_abierto():
+    """2026-10-10: «Run a dynamic workflow?» no tiene «Approval Required»; el auto-aprobar lo daba por
+    contestado sin teclear y la coda quedaba esperando. Con la opción de correrlo marcada, el Enter lo corre."""
+    import sessions as ses
+
+    lineas = ["┃ Run a dynamic workflow?", "  > 1. Yes, run it", "    2. View raw script", "    3. No"]
+    pantalla = "\n".join([*lineas, "  Esc to cancel · Tab to amend"])
+    assert ses.coda_ask_open(pantalla)
+    # si la marca está en otra opción, un Enter haría otra cosa: no se toca
+    assert not ses.coda_ask_open(pantalla.replace("> 1. Yes", "  1. Yes").replace("    2. View", "  > 2. View"))

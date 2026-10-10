@@ -2430,8 +2430,14 @@ def _elegir_con_flechas(s: dict, visto: dict, choice: int) -> tuple[int, dict]:
 def coda_ask_open(pantalla: str) -> bool:
     """¿La pantalla de CODA muestra un permiso abierto? El titulo «Approval Required» se sale de la
     pantalla cuando el comando es largo (un heredoc que escribe un archivo): por eso tambien vale el
-    pie del cartel, que siempre esta abajo («Enter confirm · Esc deny»)."""
-    return "Approval Required" in pantalla or ("Enter confirm" in pantalla and "Esc deny" in pantalla)
+    pie del cartel, que siempre esta abajo («Enter confirm · Esc deny»). Tambien el dialogo de correr
+    un workflow, con la opcion de correrlo ya marcada."""
+    if "Approval Required" in pantalla or ("Enter confirm" in pantalla and "Esc deny" in pantalla):
+        return True
+    # el primer uso de un workflow (o despues de editarlo) pide su propio dialogo, con «1. Yes, run it» ya
+    # marcado: el Enter lo corre. Sin esto el auto-aprobar lo daba por contestado sin teclear nada y la
+    # coda quedaba esperando (medido el 2026-10-10 con el workflow sdd-olas)
+    return "Run a dynamic workflow?" in pantalla and "> 1. Yes, run it" in pantalla
 
 
 def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
