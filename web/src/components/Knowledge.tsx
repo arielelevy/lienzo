@@ -9,11 +9,13 @@ type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type RecordData = { [key: string]: Json };
 interface Project { id: string; nombre?: string }
 interface Topic { id: string; texto: string }
-type View = "briefing" | "preguntar" | "vista" | "pendientes";
+type View = "briefing" | "preguntar" | "vista" | "pendientes" | "capturas";
 const VIEWS: { id: View; label: string }[] = [
   { id: "briefing", label: "Briefing" }, { id: "preguntar", label: "Buscar" },
   { id: "vista", label: "Vista por tema" }, { id: "pendientes", label: "Pendientes y avisos" },
+  { id: "capturas", label: "Capturado" },
 ];
+const CLASES = [["", "Todo"], ["pedido", "Pedidos"], ["respuesta", "Respuestas"], ["envio", "Envíos"], ["regla", "Reglas"]];
 const LABELS: Record<string, string> = {
   vigente: "Vigente", abierto: "Abierto", otros: "Relacionado", candidatos: "Resultados",
   pendientes: "Pendientes de veredicto", avisos: "Avisos", temas_sin_resolver: "Temas sin resolver",
@@ -30,6 +32,10 @@ const LABELS: Record<string, string> = {
   ronda_cerrada: "Ronda cerrada", disponible: "Disponible", error: "Error",
   metrica: "Métrica", valor: "Valor", unidad: "Unidad", condicion: "Condiciones",
   aliases: "Otros nombres", para_quien: "Para quién", vigente_desde: "Vigente desde",
+  capturas: "Capturado por el lienzo", prosa: "Prosa (no declarado)", fragmento: "Fragmento", marca: "Marca",
+  clase: "Clase", session_id: "Sesión", agente: "Agente", modelo: "Modelo", pc: "PC", fuente: "Fuente",
+  observado: "Observado", encargos_abiertos: "Encargos abiertos", apoyo_rechazado: "Apoyo rechazado",
+  puesto: "Puesto en la búsqueda", redactado: "Secretos tapados", recortado: "Recortado",
 };
 function label(key: string) { return Object.hasOwn(LABELS, key) ? LABELS[key] : key.replaceAll("_", " "); }
 function record(value: unknown): value is RecordData { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -45,7 +51,7 @@ function topics(value: unknown): Topic[] {
 }
 function response(value: unknown, view: View): RecordData {
   if (!record(value)) throw new Error("La consulta no devolvió un objeto válido");
-  const lists = view === "briefing" ? ["vigente", "abierto", "otros"] : view === "preguntar" ? ["candidatos"] : view === "pendientes" ? ["pendientes"] : [];
+  const lists = view === "briefing" ? ["vigente", "abierto", "otros"] : view === "preguntar" ? ["candidatos"] : view === "pendientes" ? ["pendientes"] : view === "capturas" ? ["capturas"] : [];
   if (lists.some(k => !Array.isArray(value[k])) || (view === "vista" && typeof value.markdown !== "string"))
     throw new Error("La consulta no tiene el formato esperado");
   if (view === "preguntar" && (!Number.isInteger(value.offset) || Number(value.offset) < 0 || !Number.isInteger(value.limite) || Number(value.limite) < 1 || !Number.isInteger(value.total) || Number(value.total) < 0 || (value.siguientes !== null && (!Number.isInteger(value.siguientes) || Number(value.siguientes) <= Number(value.offset)))))
@@ -99,12 +105,14 @@ function Nodes({ value, empty }: { value: Json; empty: string }) {
 }
 function Readout({ data, view }: { data: RecordData; view: View }) {
   if (view === "vista") return <Markdown text={data.markdown as string} />;
-  const groups = view === "briefing" ? ["vigente", "abierto", "otros"] : view === "preguntar" ? ["candidatos"] : ["pendientes"];
+  const groups = view === "briefing" ? ["vigente", "abierto", "otros"] : view === "preguntar" ? ["candidatos"] : view === "capturas" ? ["capturas"] : ["pendientes", "encargos_abiertos"];
   return <>
     {view === "preguntar" && <p className="knowledge-note">{typeof data.total === "number" ? data.total : (data.candidatos as Json[]).length} resultados. Son candidatos con su respaldo; una búsqueda vacía no prueba que algo no exista.</p>}
     {Array.isArray(data.temas_sin_resolver) && data.temas_sin_resolver.length > 0 && <section className="knowledge-notice"><h3>Temas sin resolver</h3><Value value={data.temas_sin_resolver} /></section>}
     {data.truncado === true && <p className="knowledge-notice">El servidor recortó este resultado. Puede haber más registros.</p>}
-    {groups.map(k => <section key={k} className="knowledge-section"><h3>{label(k)}</h3><Nodes value={data[k]} empty={k === "candidatos" ? "No hay coincidencias. Probá otras palabras, temas o archivos." : "Sin registros en esta sección."} /></section>)}
+    {view === "capturas" && <p className="knowledge-note">Lo que pasó por el lienzo en este proyecto, sin registrarlo a mano. Queda observado: no es conocimiento declarado ni tiene veredicto.</p>}
+    {groups.filter(k => data[k] !== undefined).map(k => <section key={k} className="knowledge-section"><h3>{label(k)}</h3><Nodes value={data[k]} empty={k === "candidatos" ? "No hay coincidencias. Probá otras palabras, temas o archivos." : "Sin registros en esta sección."} /></section>)}
+    {view === "preguntar" && Array.isArray(data.prosa) && <section className="knowledge-section knowledge-prose"><h3>{label("prosa")}</h3><p className="knowledge-note">Coincidencias en lo escrito (encargos, informes y capturas). No son nodos: no tienen estado ni veredicto.</p><Nodes value={data.prosa} empty="Sin coincidencias en la prosa." /></section>}
     {view === "briefing" && data.cambios !== null && data.cambios !== undefined && <section className="knowledge-section"><h3>Cambios desde el cierre</h3><Value value={data.cambios} /></section>}
     {data.avisos !== undefined && <section className="knowledge-section"><h3>Avisos</h3><Value value={data.avisos} /></section>}
   </>;
@@ -120,6 +128,8 @@ function ProjectPanel({ id }: { id: string }) {
   const [themes, setThemes] = useState("");
   const [theme, setTheme] = useState("");
   const [hops, setHops] = useState("1");
+  const [prose, setProse] = useState(false);
+  const [clase, setClase] = useState("");
   const [data, setData] = useState<RecordData>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -140,7 +150,8 @@ function ProjectPanel({ id }: { id: string }) {
     if (view === "briefing" || view === "preguntar") {
       q.forEach(x => params.append("q", x)); archives.forEach(x => params.append("archivos", x)); refs.forEach(x => params.append("temas", x));
     }
-    if (view === "preguntar") { params.set("saltos", hops); params.set("offset", String(offset)); params.set("limite", "100"); }
+    if (view === "preguntar") { params.set("saltos", hops); params.set("offset", String(offset)); params.set("limite", "100"); if (prose) params.set("prosa", "1"); }
+    if (view === "capturas") { params.set("limite", "100"); if (clase) params.set("clase", clase); }
     if (view === "vista") params.set("tema", theme);
     try {
       const result = response(await api.get<unknown>(base + "/" + view + "?" + params.toString(), { signal: controller.signal }), view);
@@ -149,6 +160,9 @@ function ProjectPanel({ id }: { id: string }) {
         try { result.avisos = await api.get<Json>(base + "/avisos", { signal: controller.signal }); }
         catch (err: unknown) { if (!controller.signal.aborted) result.avisos = { error: failMsg("leer los avisos")(err) }; }
       }
+      // capturas y prosa traen `clase`/`fuente` y `fragmento`: se muestran con la misma lista que los nodos
+      if (Array.isArray(result.capturas)) result.capturas = result.capturas.map(c => record(c) ? { ...c, tipo: "captura: " + String(c.clase) } : c);
+      if (Array.isArray(result.prosa)) result.prosa = result.prosa.map(c => record(c) ? { ...c, texto: String(c.fragmento ?? ""), tipo: String(c.fuente ?? "prosa") } : c);
       if (!controller.signal.aborted) setData(result);
     } catch (err: unknown) {
       if (!controller.signal.aborted) setError(failMsg("consultar la memoria")(err));
@@ -167,12 +181,14 @@ function ProjectPanel({ id }: { id: string }) {
             <label htmlFor={fieldId + "-themes"}>Temas, uno por línea</label><textarea id={fieldId + "-themes"} value={themes} rows={2} onChange={e => { clear(); setThemes(e.target.value); }} />
             {catalog.data && catalog.data.length > 0 && <p className="knowledge-note">Temas disponibles: {catalog.data.map(t => t.texto).join(", ")}</p>}
           </details>
+          {view === "preguntar" && <label className="knowledge-hops"><input type="checkbox" checked={prose} onChange={e => { clear(); setProse(e.target.checked); }} /> Buscar también en la prosa (encargos, informes y capturas; aparte, no declarado)</label>}
           {view === "preguntar" && <label className="knowledge-hops">Relaciones a recorrer<select aria-label="Saltos de relaciones" value={hops} onChange={e => { clear(); setHops(e.target.value); }}><option value="0">Sin expandir</option><option value="1">Un salto</option><option value="2">Dos saltos</option></select></label>}
         </>}
         {view === "vista" && <><label htmlFor={fieldId + "-theme"}>Tema de la vista</label><select id={fieldId + "-theme"} value={theme} onChange={e => { clear(); setTheme(e.target.value); }}><option value="">Elegí un tema</option>{catalog.data?.map(t => <option key={t.id} value={t.id}>{t.texto}</option>)}</select>{catalog.loading && <p role="status">Cargando temas…</p>}{catalog.data?.length === 0 && <p className="knowledge-note">Este proyecto no tiene temas registrados.</p>}</>}
         {catalog.error && <div className="knowledge-error" role="alert"><p>{catalog.error}</p><button type="button" onClick={catalog.reload}>Reintentar temas</button></div>}
         {view === "pendientes" && <p className="knowledge-note">Leé lo que espera veredicto y los apoyos rechazados. Consultar no cambia estados.</p>}
-        <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : view === "briefing" ? "Leer briefing" : view === "vista" ? "Generar vista" : view === "pendientes" ? "Leer pendientes y avisos" : "Buscar"}</button>{loading && <button type="button" onClick={clear}>Cancelar consulta</button>}</div>
+        {view === "capturas" && <label className="knowledge-hops">Mostrar<select aria-label="Clase de captura" value={clase} onChange={e => { clear(); setClase(e.target.value); }}>{CLASES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label>}
+        <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : view === "briefing" ? "Leer briefing" : view === "vista" ? "Generar vista" : view === "pendientes" ? "Leer pendientes y avisos" : view === "capturas" ? "Leer lo capturado" : "Buscar"}</button>{loading && <button type="button" onClick={clear}>Cancelar consulta</button>}</div>
       </form>
       <div className="knowledge-results" aria-busy={loading}>
         {loading && <p role="status">Leyendo la memoria del proyecto…</p>}

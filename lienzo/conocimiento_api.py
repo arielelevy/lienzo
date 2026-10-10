@@ -27,9 +27,15 @@ ruta ya sin el primer tramo `conocimiento`.
     GET  /conocimiento/<p>/prosa?q=&limite=           BM25 en cuerpos y capturas, «prosa, no declarado»
     GET  /conocimiento/<p>/texto/roto                 U+FFFD y mojibake en nodos, cuerpos, cambios y capturas
     POST /conocimiento/<p>/texto/reparar              {por, aplicar?} repara el mojibake con un cambio por nodo
+    POST /conocimiento/<p>/informes/<id>/reincorporar {por} vuelve a validar un bloque pendiente
+    POST /conocimiento/<p>/evidencia                  {nombre, clase, texto?, contenido_base64 | contenido_texto, autor?}
+    POST /conocimiento/<p>/respaldo                   respaldo con la API de backup y los artefactos
 """
 
 from __future__ import annotations
+
+import base64
+import binascii
 
 import aprendizaje_api
 import conocimiento as k
@@ -237,6 +243,29 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
         return 200, k.texto_roto_proyecto(pid)
     if resto == ["texto", "reparar"] and metodo == "POST":
         return 200, k.reparar_texto(pid, por=d.get("por"), aplicar=d.get("aplicar") is True)
+    if len(resto) == 3 and resto[0] == "informes" and resto[2] == "reincorporar" and metodo == "POST":
+        return 200, k.reincorporar(pid, resto[1], por=d.get("por"))
+    if resto == ["evidencia"] and metodo == "POST":
+        if isinstance(d.get("contenido_base64"), str):
+            try:
+                contenido = base64.b64decode(d["contenido_base64"], validate=True)
+            except (ValueError, binascii.Error) as e:
+                raise Rechazo("contenido_base64 invalido") from e
+        elif isinstance(d.get("contenido_texto"), str):
+            contenido = d["contenido_texto"].encode("utf-8")
+        else:
+            raise Rechazo("falta contenido_base64 o contenido_texto")
+        return 200, k.recibir_evidencia(
+            pid,
+            d.get("nombre"),
+            contenido,
+            clase=d.get("clase"),
+            texto=d.get("texto") if isinstance(d.get("texto"), str) else None,
+            autor=d.get("autor") or "coordinadora",
+            origen=d.get("origen"),
+        )
+    if resto == ["respaldo"] and metodo == "POST":
+        return 200, k.respaldar(pid)
     if resto == ["cuerpo"] and metodo == "GET":
         return 200, {"ruta": _q(query, "ruta"), "texto": k.leer_cuerpo(pid, k._texto(_q(query, "ruta"), "ruta", 300))}
     return 404, {"error": "ruta desconocida"}

@@ -28,6 +28,7 @@ RESPALDOS_CAIDOS = {("hallazgo", "rechazado"), ("medicion", "rechazada"), ("deci
 # relaciones por las que un nodo depende de otro (quien cita a quien), para `dependencias`
 RELACIONES_DEPENDENCIA = ("motivada_por", "apoya", "derivada_de", "contesta")
 ESTADOS_LECCION = ("vigente", "cuestionada")
+LIMITE_INCIDENTES_AGENTE = 50  # por proyecto, los mas nuevos
 
 _SQL_GRUPO = """
 WITH RECURSIVE grupo(id) AS (
@@ -555,7 +556,7 @@ def lecciones(agente: str, *, modelo: str | None = None, proyectos: list[str] | 
     pedidos = (
         [p.strip().lower() for p in proyectos if isinstance(p, str) and p.strip()] if proyectos else list(registrados)
     )
-    reglas, no_disponibles, consultados = [], [], []
+    reglas, incidentes, no_disponibles, consultados = [], [], [], []
     for pid in pedidos:
         if pid not in registrados:
             no_disponibles.append({"proyecto": pid, "error": "proyecto desconocido"})
@@ -567,10 +568,20 @@ def lecciones(agente: str, *, modelo: str | None = None, proyectos: list[str] | 
                     " AND json_extract(datos, '$.ambito') = 'agente' ORDER BY fecha, id",
                     (pid,),
                 ).fetchall()
+                inc = con.execute(
+                    "SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'incidente'"
+                    " AND lower(json_extract(datos, '$.agente')) = ? ORDER BY fecha DESC, id LIMIT ?",
+                    (pid, agente, LIMITE_INCIDENTES_AGENTE),
+                ).fetchall()
         except Exception as e:
             no_disponibles.append({"proyecto": pid, "error": str(e)})
             continue
         consultados.append(pid)
+        for r in inc:
+            i = k._fila(r)
+            if modelo and i["datos"].get("modelo") and str(i["datos"]["modelo"]).lower() != modelo:
+                continue
+            incidentes.append({**_episodio(i), "proyecto": pid})
         for r in filas:
             regla = k._fila(r)
             d = regla["datos"]
@@ -584,5 +595,6 @@ def lecciones(agente: str, *, modelo: str | None = None, proyectos: list[str] | 
         "modelo": modelo,
         "proyectos": consultados,
         "reglas": reglas,
+        "incidentes": incidentes,  # v5 §4: como se comporta el agente; episodios, no lecciones
         "no_disponibles": no_disponibles,
     }

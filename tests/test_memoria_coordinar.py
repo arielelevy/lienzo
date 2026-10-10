@@ -27,8 +27,15 @@ def test_preguntar_conserva_consultas_repetidas_y_paginacion(monkeypatch):
 
 def test_texto_encargo_conserva_estado_y_referencias(monkeypatch):
     c = cliente()
-    monkeypatch.setattr(c, "briefing", lambda *args, **kwargs: {"abierto": [{"id": "h1", "estado": "propuesto"}]})
+    pedidos = []
+
+    def briefing(*args, **kwargs):
+        pedidos.append(kwargs)
+        return {"markdown": "## Memoria del proyecto\n- [hallazgo, propuesto] cola lenta (nodo:h1)"}
+
+    monkeypatch.setattr(c, "briefing", briefing)
     texto = c.preparar_encargo("lienzo", "Revisar conexiones")
     assert texto.startswith("Revisar conexiones")
-    assert '"id": "h1"' in texto and '"estado": "propuesto"' in texto
+    assert pedidos[0]["markdown"] is True  # texto legible (v5 etapa 5), no el JSON del briefing
+    assert "nodo:h1" in texto and "propuesto" in texto
     assert c.INSTRUCCION_CONOCIMIENTO in texto

@@ -11,6 +11,8 @@ La coordinadora la engancha en `conocimiento_api._dispatch` por prefijo de ruta.
     GET  /conocimiento/<p>/briefing?archivos=&temas=&q=&desde_cierre=   (parametros repetibles)
     GET  /conocimiento/<p>/preguntar?q=&archivos=&temas=&tipo=&saltos=&prosa=1   (prosa: opt-in, aparte)
     GET  /conocimiento/<p>/vista?tema=
+    GET  /conocimiento/<p>/briefing?...&encargos=&markdown=1            (encargos: sus archivos; markdown: el texto)
+    GET  /conocimiento/<p>/alternativas/<id>/por_que                    por que se descarto (v5 §8.5 consulta 1)
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import conocimiento as k
 import veredictos as v
 from conocimiento import Rechazo
 
-PREFIJOS = ("veredictos", "pendientes", "duplicados", "temas", "briefing", "preguntar", "vista")
+PREFIJOS = ("veredictos", "pendientes", "duplicados", "temas", "briefing", "preguntar", "vista", "alternativas")
 
 
 def es_mia(resto: list[str]) -> bool:
@@ -100,13 +102,19 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
     if resto == ["temas"] and metodo == "GET":
         return 200, {"temas": v.temas(pid)}
     if resto == ["briefing"] and metodo == "GET":
-        return 200, v.briefing(
+        b = v.briefing(
             pid,
             archivos=_lista(query, "archivos"),
             temas=_lista(query, "temas"),
             consultas=_lista(query, "q"),
             desde_cierre=_uno(query, "desde_cierre", "1") not in ("0", "false", "no"),
+            encargos=_lista(query, "encargos"),
         )
+        if _uno(query, "markdown") in ("1", "true", "si"):
+            b["markdown"] = v.briefing_markdown(b)
+        return 200, b
+    if len(resto) == 3 and resto[0] == "alternativas" and resto[2] == "por_que" and metodo == "GET":
+        return 200, v.por_que_descartada(pid, resto[1])
     if resto == ["preguntar"] and metodo == "GET":
         return 200, v.preguntar(
             pid,

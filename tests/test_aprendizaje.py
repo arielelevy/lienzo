@@ -80,9 +80,15 @@ def _regla(texto, origen, vigente_desde=ANTES, ambito="proyecto", agente=None, m
         datos["modelo"] = modelo
     r = k.crear_nodo(pid, "regla", texto, datos, autor="f")
     k.vincular(pid, r["id"], "derivada_de", origen, autor="f")
-    k.cambiar_estado(pid, r["id"], "vigente", por=COORD, motivo="veredicto")
+    k.cambiar_estado(pid, r["id"], "vigente", por=COORD, motivo="veredicto")  # ya pone vigente_desde
     if vigente_desde:
         k.actualizar_datos(pid, r["id"], {"vigente_desde": vigente_desde}, por=COORD, motivo="vigente_desde")
+    else:
+        # una regla vigente de antes del 2026-10-09, cuando esta ruta no ponia vigente_desde
+        with k._abrir(pid) as con:
+            d = k._nodo(con, pid, r["id"])["datos"]
+            d.pop("vigente_desde", None)
+            con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (k._json(d), r["id"]))
     return r["id"]
 
 
@@ -403,6 +409,7 @@ def test_lecciones_cruza_proyectos_de_solo_lectura_y_dice_que_no_pudo_abrir(proy
         "modelo": None,
         "proyectos": [],
         "reglas": [],
+        "incidentes": [],
         "no_disponibles": [{"proyecto": "nadie", "error": "proyecto desconocido"}],
     }
     with pytest.raises(Rechazo):

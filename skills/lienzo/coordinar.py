@@ -289,14 +289,19 @@ def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5):
     return {"ok": False, "libre_gb": None, "necesita_gb": round(n * gb_por_sesion, 1), "entran": None}
 
 
-def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None, cablear_al_lanzar=True):
+def lanzar_y_titular(
+    pc, cwd, titulo, agent="claude", espera=60, model=None, cablear_al_lanzar=True, proyecto=None, encargo=None
+):
     """Lanza y devuelve LA tarjeta nueva (ya titulada), no solo el 200 de `lanzar`. Distingue la
     nueva de las que ya había en esa carpeta comparando ids antes y después. None si no apareció.
 
     **Nunca queda sin cablear**: con `YO` fijado, la tarjeta nueva sale con una regla `on_stop` hacia
     la coordinadora, para que el aviso de que terminó (o de que se colgó) llegue solo. La tarjeta nace
     como `pid-N` y al llegar su primer hook pasa a su id real: el lienzo le traslada la regla. Con
-    `cablear_al_lanzar=False` se la deja sin regla (solo para una sesión de prueba descartable)."""
+    `cablear_al_lanzar=False` se la deja sin regla (solo para una sesión de prueba descartable).
+
+    Con `proyecto` y `encargo` (el id que devolvió `encargo(...)`), la tarjeta queda vinculada al
+    encargo apenas aparece (`encargo_enviado`): v5 §7.2 pide que el lanzamiento admita la ronda."""
 
     def norm(c):
         # con barra o contrabarra, y con o sin barra final, es la misma carpeta (antes no coincidian y
@@ -331,6 +336,11 @@ def lanzar_y_titular(pc, cwd, titulo, agent="claude", espera=60, model=None, cab
                     f"[regla automática] Terminó «{titulo}» ({sid[:8]}). Leé su `last_reply` en GET /sessions "
                     f"(la tarjeta {sid}) y decidí el próximo paso.",
                 )
+            if proyecto and encargo:
+                try:
+                    encargo_enviado(proyecto, encargo, nueva)
+                except RuntimeError as e:  # la tarjeta ya existe: se informa, no se pierde
+                    print(f"lanzar_y_titular: no se vinculo el encargo: {e}", file=sys.stderr)
             return nueva
     print(
         f"lanzar_y_titular: se lanzo pero la tarjeta no aparecio en {espera} s (queda abierta, sin titulo ni regla)",
@@ -753,7 +763,9 @@ def _consulta_memoria(pid, ruta, parametros):
     return _conocimiento("GET", f"/{pid}/{ruta}?{q}")
 
 
-def briefing(pid, archivos=None, temas=None, consultas=None, desde_cierre=True):
+def briefing(pid, archivos=None, temas=None, consultas=None, desde_cierre=True, encargos=None, markdown=False):
+    """Lo vigente, lo abierto, los avisos y lo cambiado desde el último cierre. `encargos` (ids) suma los
+    archivos que declaró cada encargo; `markdown=True` agrega `markdown`, el texto para pegar."""
     return _consulta_memoria(
         pid,
         "briefing",
@@ -762,8 +774,38 @@ def briefing(pid, archivos=None, temas=None, consultas=None, desde_cierre=True):
             "temas": temas,
             "q": consultas,
             "desde_cierre": int(desde_cierre),
+            "encargos": encargos,
+            "markdown": 1 if markdown else None,
         },
     )
+
+
+def por_que(pid, alternativa):
+    """¿Por qué se descartó esta alternativa? Decisiones que la descartan (con motivo), sus fundamentos
+    y las que la eligen."""
+    return _conocimiento("GET", f"/{pid}/alternativas/{alternativa}/por_que")
+
+
+def reincorporar(pid, informe):
+    """Vuelve a validar el bloque pendiente de un informe (lo que faltaba ya existe)."""
+    return _conocimiento("POST", f"/{pid}/informes/{informe}/reincorporar", {"por": f"coordinadora:{YO}"})
+
+
+def evidencia(pid, nombre, clase, contenido, texto=None):
+    """Entrega un artefacto (bytes o texto) como evidencia del proyecto: queda en evidencia/ con hash."""
+    import base64
+
+    cuerpo = {"nombre": nombre, "clase": clase, "texto": texto, "autor": f"coordinadora:{YO}"}
+    if isinstance(contenido, bytes):
+        cuerpo["contenido_base64"] = base64.b64encode(contenido).decode("ascii")
+    else:
+        cuerpo["contenido_texto"] = contenido
+    return _conocimiento("POST", f"/{pid}/evidencia", cuerpo)
+
+
+def respaldar(pid):
+    """Respaldo de la base (API de backup de SQLite) y sus artefactos en ~/.lienzo/respaldos/."""
+    return _conocimiento("POST", f"/{pid}/respaldo", {})
 
 
 def preguntar(pid, consultas, archivos=None, temas=None, tipo=None, saltos=1, offset=0, limite=100, prosa=False):
@@ -791,15 +833,8 @@ def vista(pid, tema):
 
 def preparar_encargo(pid, texto, archivos=None, temas=None, consultas=None):
     """Texto para un frente con el briefing actual y la plantilla de conocimiento."""
-    contexto = briefing(pid, archivos=archivos, temas=temas, consultas=consultas)
-    return "\n\n".join(
-        (
-            texto,
-            "Memoria del proyecto (IDs citables; propuestas conservan su estado):\n"
-            + json.dumps(contexto, ensure_ascii=False, indent=2),
-            INSTRUCCION_CONOCIMIENTO,
-        )
-    )
+    contexto = briefing(pid, archivos=archivos, temas=temas, consultas=consultas, markdown=True)
+    return "\n\n".join((texto, contexto["markdown"], INSTRUCCION_CONOCIMIENTO))
 
 
 def parecidos(pid, incidente, limite=20):

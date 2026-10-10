@@ -130,24 +130,30 @@ def _tema_por_texto(con: sqlite3.Connection, pid: str, ref: str) -> dict | None:
 
 
 def _estado_en(con, pid, nid, nuevo, *, por, motivo, origen) -> dict:
-    """`conocimiento.cambiar_estado` sobre la conexion del veredicto (misma tabla, mismos codigos).
-    Una regla que pasa a vigente recibe `datos.vigente_desde`: abre un periodo nuevo (v5 §3.4, §6.2)."""
-    n = k._nodo(con, pid, nid)
-    actual = n.get("estado")
-    if actual == nuevo:
-        return n
-    permitidos = k.TRANSICIONES.get(n["tipo"], {}).get((actual, nuevo))
-    if not permitidos:
-        raise Rechazo(f"transicion no permitida para {n['tipo']}: {actual} -> {nuevo}", 409)
-    if k.rol_de(por) not in permitidos:
-        raise Rechazo(f"{k.rol_de(por) or '?'} no puede pasar {n['tipo']} de {actual} a {nuevo}", 403)
-    fecha = k.ahora()
-    con.execute("UPDATE nodo SET estado = ?, estado_fecha = ?, estado_por = ? WHERE id = ?", (nuevo, fecha, por, nid))
-    if n["tipo"] == "regla" and nuevo == "vigente":
-        con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (k._json({**n["datos"], "vigente_desde": fecha}), nid))
-    n2 = k._nodo(con, pid, nid)
-    k._cambio(con, pid, "estado", por, motivo, origen, n2, anterior=n, nodo_id=nid)
-    return n2
+    """`conocimiento.cambiar_estado` sobre la conexion del veredicto (misma tabla, mismos codigos, el
+    mismo `vigente_desde` para reglas). El respaldo de §3.4 se difiere: `_respaldos` lo mira al final."""
+    return k.cambiar_estado(pid, nid, nuevo, por=por, motivo=motivo, origen=origen, con=con, diferir_respaldo=True)
+
+
+def _respaldos(con, pid, aplicados: list[dict], origen: dict) -> None:
+    """Al final del veredicto: cada nodo que quedo en un estado «con respaldo» (corregido, resuelto,
+    contestada, reemplazada, superada) lo tiene. Si no, 409 y la transaccion entera se revierte."""
+    for a in aplicados:
+        if a["accion"] != "estado" or not a.get("cambio"):
+            continue  # un estado que ya estaba no se vuelve a juzgar
+        n = k._nodo(con, pid, a["nodo"]["id"])
+        if (falta := k.falta_respaldo(con, n["id"], n["tipo"], n["estado"], origen)) is not None:
+            raise Rechazo(f"item {a['item']}: {falta}", 409)
+
+
+def _cuestionar_si_repite(pid: str, aplicados: list[dict]) -> list[dict]:
+    """Un `repite` confirmado puede dejar una regla con recurrencia posterior a su vigencia: se aplica
+    la transicion del server en el acto (v5 §6.2), no cuando alguien se acuerde de pedirla."""
+    if not any(a["accion"] == "vinculo" and a["vinculo"]["relacion"] == "repite" for a in aplicados):
+        return []
+    import aprendizaje
+
+    return [r for r in aprendizaje.cuestionar(pid) if r.get("recien")]
 
 
 def _retirar_en(con, pid, de, relacion, a, *, por, motivo, origen) -> dict:
@@ -187,10 +193,11 @@ def _item_en(con, pid, i, it, *, por, motivo, origen) -> dict:
     try:
         if "nodo" in it:
             nid = k._texto(it.get("nodo"), "nodo", 64)
+            antes = k._nodo(con, pid, nid).get("estado")
             n = _estado_en(
                 con, pid, nid, k._texto(it.get("estado"), "estado", 40), por=por, motivo=motivo, origen=origen
             )
-            return {"item": i, "accion": "estado", "nodo": n}
+            return {"item": i, "accion": "estado", "nodo": n, "cambio": antes != n.get("estado")}
         if "retirar" in it:
             r = k._objeto(it.get("retirar"), "retirar")
             v = _retirar_en(
@@ -236,7 +243,11 @@ def veredicto(pid: str, items: list, *, por: str, revision=None, evidencia=None,
     with k._abrir(pid) as con:
         origen = _origen_veredicto(con, pid, revision, evidencia)
         aplicados = [_item_en(con, pid, i, it, por=por, motivo=motivo, origen=origen) for i, it in enumerate(items)]
-    return {"por": por, "origen": origen, "aplicados": aplicados, "n": len(aplicados)}
+        _respaldos(con, pid, aplicados, origen)
+    res = {"por": por, "origen": origen, "aplicados": aplicados, "n": len(aplicados)}
+    if cuestionadas := _cuestionar_si_repite(pid, aplicados):
+        res["reglas_cuestionadas"] = cuestionadas
+    return res
 
 
 # --- pendientes y duplicados ------------------------------------------------------------------------
@@ -272,7 +283,18 @@ def pendientes(pid: str, ronda: str | None = None) -> dict:
         n["vinculos"] = vinculos.get(n["id"], [])
         for kk in ("ronda_fecha", "ronda_cierre", "ronda_estado"):
             n.pop(kk, None)
-    return {"ronda": ronda, "total": len(out), "pendientes": out}
+    with k._abrir(pid) as con:
+        cond_e = ["proyecto = ? AND tipo = 'encargo' AND estado IN ('pendiente','enviado','sin_entrega')"]
+        args_e = [pid]
+        if ronda:
+            cond_e.append("ronda = ?")
+            args_e.append(ronda)
+        encargos = [
+            k._fila(r)
+            for r in con.execute(f"SELECT * FROM nodo WHERE {' AND '.join(cond_e)} ORDER BY fecha, rowid", args_e)
+        ]
+    # v5 §4 «¿Que quedo abierto?»: tambien los encargos pendientes, enviados o sin entrega
+    return {"ronda": ronda, "total": len(out), "pendientes": out, "encargos_abiertos": encargos}
 
 
 def _informe_de(con: sqlite3.Connection, nid: str) -> str | None:
@@ -412,6 +434,7 @@ def cerrar_ronda(pid: str, ronda: str, *, por: str, veredictos=None, sin_resolve
                 _item_en(con, pid, i, it, por=por, motivo=g.get("motivo") or motivo or "cierre de ronda", origen=origen)
                 for i, it in enumerate(items)
             ]
+            _respaldos(con, pid, resultados, origen)
             aplicados.append({"por": por, "origen": origen, "aplicados": resultados, "n": len(resultados)})
         if sr:
             fecha = k.ahora()
@@ -426,7 +449,10 @@ def cerrar_ronda(pid: str, ronda: str, *, por: str, veredictos=None, sin_resolve
         cerrada = k.cerrar_ronda(pid, ronda, por=por, motivo=motivo, con=con)
     dejados = {x["nodo"] for x in sr}
     quedan = [p for p in pendientes(pid, ronda)["pendientes"] if p["id"] not in dejados]
-    return {"ronda": cerrada, "veredictos": aplicados, "sin_resolver": sr, "pendientes": quedan}
+    res = {"ronda": cerrada, "veredictos": aplicados, "sin_resolver": sr, "pendientes": quedan}
+    if cuestionadas := _cuestionar_si_repite(pid, [a for g in aplicados for a in g["aplicados"]]):
+        res["reglas_cuestionadas"] = cuestionadas
+    return res
 
 
 # --- temas canonicos --------------------------------------------------------------------------------
@@ -484,7 +510,7 @@ class _Candidatos:
         self.nodos: dict[str, dict] = {}
         self.orden: list[str] = []
 
-    def sumar(self, n: dict, procedencia: str, *, puntaje=None, salto=None) -> None:
+    def sumar(self, n: dict, procedencia: str, *, puntaje=None, salto=None, puesto=None) -> None:
         c = self.nodos.get(n["id"])
         if c is None:
             c = {
@@ -504,6 +530,7 @@ class _Candidatos:
             }
             c["procedencia"] = []
             c["puntaje"] = None
+            c["puesto"] = None
             c["salto"] = None
             self.nodos[n["id"]] = c
             self.orden.append(n["id"])
@@ -513,6 +540,8 @@ class _Candidatos:
             c["puntaje"] = puntaje
         if salto is not None and (c["salto"] is None or salto < c["salto"]):
             c["salto"] = salto
+        if puesto is not None and (c["puesto"] is None or puesto < c["puesto"]):
+            c["puesto"] = puesto
 
     def lista(self) -> list[dict]:
         return [self.nodos[i] for i in self.orden]
@@ -549,10 +578,12 @@ def _joins(con, pid, cand: _Candidatos, archivos: list[str], temas_ref: list[str
 
 
 def _bm25(pid, cand: _Candidatos, consultas: list[str], tipo: str | None) -> None:
-    """Capa 2: cada consulta FTS por separado; un nodo que aparece en varias conserva el mejor puntaje."""
+    """Capa 2: cada consulta FTS por separado. Los puntajes de consultas distintas no se comparan entre
+    si: un nodo conserva su mejor puesto en cualquiera de las listas (v5 §7.1, «combinando por mejor
+    puesto de cada lista») y, aparte, su mejor puntaje."""
     for q in consultas:
-        for h in k.buscar(pid, q, tipo=tipo, limite=k.LIMITE_BUSQUEDA):
-            cand.sumar(h, f"bm25:{q}", puntaje=h["puntaje"], salto=0)
+        for i, h in enumerate(k.buscar(pid, q, tipo=tipo, limite=k.LIMITE_BUSQUEDA)):
+            cand.sumar(h, f"bm25:{q}", puntaje=h["puntaje"], salto=0, puesto=i + 1)
 
 
 def _expansion(pid, cand: _Candidatos, saltos: int) -> None:
@@ -573,6 +604,13 @@ def _recuperar(pid, *, archivos, temas_ref, consultas, tipo, saltos) -> tuple[_C
     _bm25(pid, cand, consultas, tipo)
     _expansion(pid, cand, saltos)
     return cand, sin_tema
+
+
+def _apoyos_caidos(pid: str) -> dict[str, list[str]]:
+    """id -> respaldos caidos, para marcar candidatos (decisiones y preguntas con apoyo rechazado)."""
+    import aprendizaje
+
+    return {a["id"]: a["respaldos_caidos"] for a in aprendizaje.apoyos_rechazados(pid)}
 
 
 def _avisos(pid: str) -> dict:
@@ -625,11 +663,18 @@ def _cambios_desde_cierre(pid: str) -> dict:
     }
 
 
-def briefing(pid: str, *, archivos=None, temas=None, consultas=None, desde_cierre: bool = True) -> dict:
+def briefing(pid: str, *, archivos=None, temas=None, consultas=None, desde_cierre: bool = True, encargos=None) -> dict:
     """Para abrir una ronda (v5 §7.2): joins por temas y archivos, BM25 por cada consulta y un salto de
     expansion; devuelve `vigente`, `abierto` y `otros` (sin repetir: un nodo con todas sus procedencias),
-    `cambios` desde el cierre anterior y los `avisos` del modulo obligatorio aprendizaje."""
+    `cambios` desde el cierre anterior y los `avisos` del modulo obligatorio aprendizaje. `encargos`
+    (ids) suma los archivos que cada encargo declaro (v5 §7.2: «parte de archivos/temas» del encargo)."""
     archivos = _lista_textos(archivos, "archivos")
+    for eid in _lista_textos(encargos, "encargos"):
+        with k._abrir(pid) as con:
+            e = k._nodo(con, pid, eid)
+        if e["tipo"] != "encargo":
+            raise Rechazo(f"{eid} no es un encargo")
+        archivos += [a for a in e["datos"].get("archivos") or [] if isinstance(a, str) and a not in archivos]
     temas_ref = _lista_textos(temas, "temas")
     consultas = _lista_textos(consultas, "consultas", 10)
     cand, sin_tema = _recuperar(pid, archivos=archivos, temas_ref=temas_ref, consultas=consultas, tipo=None, saltos=1)
@@ -690,9 +735,14 @@ def preguntar(
         n["vinculos"] = vinculos.get(n["id"], [])
         if n["tipo"] in ("informe", "encargo"):
             n["ruta"] = n["datos"].get("ruta")
+    caidos = _apoyos_caidos(pid)
+    for n in out:
+        if n["id"] in caidos:
+            n["apoyo_rechazado"] = caidos[n["id"]]  # v5 §6.3: el aviso acompana al candidato
     out.sort(
         key=lambda n: (
             n["salto"] if n["salto"] is not None else 9,
+            n["puesto"] if n["puesto"] is not None else 0,
             n["puntaje"] if n["puntaje"] is not None else 0,
             n["id"],
         )
@@ -737,6 +787,81 @@ def _linea(n: dict) -> str:
         extra = f" — para {d['para_quien']}"
     estado = f", {n['estado']}" if n.get("estado") else ""
     return f"- [{n['tipo']}{estado}] {n['texto']}{extra} (nodo:{n['id']})"
+
+
+def briefing_markdown(b: dict) -> str:
+    """El briefing como texto para pegar en un encargo (v5 §9, etapa 5: «texto generado para los
+    encargos»): vigente, abierto, avisos y lo cambiado, cada linea con `nodo:<id>` para citar."""
+    lineas = ["## Memoria del proyecto"]
+    if b.get("archivos") or b.get("temas"):
+        lineas.append(f"Partiendo de: {', '.join([*b.get('archivos', []), *b.get('temas', [])])}.")
+    for titulo, items, vacio in (
+        ("Vigente", b["vigente"], "nada vigente"),
+        ("Abierto o esperando veredicto", b["abierto"], "nada abierto"),
+    ):
+        lineas.append(f"\n### {titulo}")
+        if items:
+            lineas.extend(_linea(n) for n in items)
+        else:
+            lineas.append(f"_{vacio}_")
+    av = b.get("avisos") or {}
+    avisos = [f"- apoyo rechazado: {x['texto']} (nodo:{x['id']})" for x in av.get("apoyos_rechazados", [])]
+    avisos += [f"- regla cuestionada: {x['texto']} (nodo:{x['id']})" for x in av.get("reglas_cuestionadas", [])]
+    lineas.append("\n### Avisos")
+    lineas.extend(avisos or ["_sin avisos_"])
+    cambios = (b.get("cambios") or {}).get("cambios") or []
+    if cambios:
+        lineas.append(f"\n### Cambios desde el ultimo cierre ({len(cambios)}, los ultimos 15)")
+        for c in cambios[-15:]:
+            que = c.get("texto") or c.get("relacion") or ""
+            lineas.append(f"- {c['accion']} {c.get('tipo') or ''}: {que}".rstrip())
+    lineas.append("\nCita estos ids en tu bloque de conocimiento como `nodo:<id>`.")
+    return "\n".join(lineas)
+
+
+_SQL_DESCARTE = """
+WITH RECURSIVE cadena(id) AS (
+  SELECT v.de FROM vinculo v JOIN nodo d ON d.id = v.de
+  WHERE v.a = :alt AND v.relacion = 'descarta' AND v.activo = 1 AND d.proyecto = :p
+  UNION
+  SELECT v.a FROM cadena c JOIN vinculo v ON v.de = c.id AND v.activo = 1
+  JOIN nodo n ON n.id = v.a AND n.proyecto = :p
+  WHERE v.relacion IN ('motivada_por','apoya','confirmado_por')
+)
+SELECT n.*, (SELECT motivo FROM vinculo WHERE de = n.id AND relacion = 'descarta' AND a = :alt AND activo = 1)
+  AS motivo_descarte
+FROM cadena c JOIN nodo n ON n.id = c.id ORDER BY n.tipo, n.id
+"""
+
+
+def por_que_descartada(pid: str, alternativa: str) -> dict:
+    """v5 §4 y §8.5 consulta 1: las decisiones que descartan la alternativa (con su motivo) y los
+    fundamentos alcanzables por motivada_por, apoya y confirmado_por, incluidos estados no vigentes.
+    `UNION` tolera ciclos. Tambien las decisiones que la eligen: la alternativa no tiene estado
+    absoluto (§3.1). Cada nodo con un apoyo caido trae el aviso."""
+    with k._abrir(pid) as con:
+        a = k._nodo(con, pid, alternativa)
+        if a["tipo"] != "alternativa":
+            raise Rechazo(f"{alternativa} no es una alternativa")
+        out = [k._fila(r) for r in con.execute(_SQL_DESCARTE, {"alt": alternativa, "p": pid}).fetchall()]
+        elegida = [
+            k._fila(r)
+            for r in con.execute(
+                "SELECT d.*, v.motivo AS motivo_eleccion FROM vinculo v JOIN nodo d ON d.id = v.de"
+                " WHERE v.a = ? AND v.relacion = 'elige' AND v.activo = 1 ORDER BY d.fecha, d.id",
+                (alternativa,),
+            )
+        ]
+    caidos = _apoyos_caidos(pid)
+    for n in out:
+        if n["id"] in caidos:
+            n["apoyo_rechazado"] = caidos[n["id"]]
+    return {
+        "alternativa": {"id": a["id"], "texto": a["texto"]},
+        "descartada_por": [n for n in out if n.get("motivo_descarte")],
+        "fundamentos": [n for n in out if not n.get("motivo_descarte")],
+        "elegida_por": elegida,
+    }
 
 
 def vista(pid: str, tema_ref: str) -> dict:

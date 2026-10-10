@@ -210,3 +210,29 @@ test("paginación mantiene filtros, vuelve atrás y descarta páginas de una bú
   await expect(page.getByText("Página 100", { exact: true })).toHaveCount(0);
   expect(new URL(requests.at(-1)!.url).searchParams.get("offset")).toBe("0");
 });
+
+test("capturado y prosa: lo que pasó por el lienzo se ve aparte, sin estado de veredicto", async ({ page }) => {
+  await prepare(page); await selectProject(page);
+  await page.route("**/conocimiento/lienzo/capturas?**", route => json(route, { total: 1, capturas: [{ id: "c1", clase: "pedido", estado: "observado", texto: "Medí la cola de captura", agente: "codex", modelo: "gpt-5", session_id: "s1", fecha: "2026-10-09T12:00:00Z", origen: { via: "terminal" } }] }));
+  await page.route("**/conocimiento/lienzo/preguntar?**", route => {
+    const prosa = new URL(route.request().url()).searchParams.get("prosa") === "1";
+    return json(route, { ...defaults("/preguntar"), ...(prosa ? { prosa: [{ fuente: "informe", marca: "prosa, no declarado", nodo: "inf-1", fragmento: "la [cola] tarda 2 ms", puntaje: -1 }] } : {}) });
+  });
+  await page.getByRole("button", { name: "Capturado", exact: true }).click();
+  await page.getByLabel("Clase de captura").selectOption("pedido");
+  const pedido = page.waitForRequest(r => new URL(r.url()).pathname === "/conocimiento/lienzo/capturas");
+  await page.getByRole("button", { name: "Leer lo capturado", exact: true }).click();
+  expect(new URL((await pedido).url()).searchParams.get("clase")).toBe("pedido");
+  await expect(page.getByText("Medí la cola de captura", { exact: true })).toBeVisible();
+  await expect(page.getByText("captura: pedido", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Buscar", exact: true }).first().click();
+  await page.getByLabel("Consultas, una por línea").fill("cola");
+  await page.getByRole("button", { name: "Buscar", exact: true }).last().click();
+  await expect(page.getByRole("heading", { name: "Prosa (no declarado)" })).toHaveCount(0);
+  await page.getByLabel(/Buscar también en la prosa/).check();
+  const conProsa = page.waitForRequest(r => new URL(r.url()).pathname === "/conocimiento/lienzo/preguntar");
+  await page.getByRole("button", { name: "Buscar", exact: true }).last().click();
+  expect(new URL((await conProsa).url()).searchParams.get("prosa")).toBe("1");
+  await expect(page.getByRole("heading", { name: "Prosa (no declarado)" })).toBeVisible();
+  await expect(page.getByText(/tarda 2 ms/).first()).toBeVisible();
+});

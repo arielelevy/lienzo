@@ -103,10 +103,12 @@ BLOQUE_HALVING = {
 
 def test_veredicto_aplica_todo_en_una_transaccion_o_nada_y_dice_la_posicion(proy):
     r, e, inf, ids = _entrega(BLOQUE_HALVING)
+    ev = k.crear_nodo(P, "evidencia", "la correccion", {"clase": "prueba", "referencia": "tests/x.py"}, autor="c")["id"]
     items = [
         {"nodo": ids["h1"], "estado": "confirmado"},
         {"nodo": ids["d1"], "estado": "vigente"},
         {"nodo": ids["h1"], "estado": "corregido"},  # confirmado -> corregido: vale porque el item 0 ya paso
+        # (y porque el veredicto cita evidencia: §3.4 pide la correccion respaldada)
         {"nodo": ids["m1"], "estado": "rechazada"},
         {"nodo": ids["p1"], "estado": "contestada"},
         {"de": ids["d1"], "relacion": "contesta", "a": ids["p1"]},
@@ -121,7 +123,12 @@ def test_veredicto_aplica_todo_en_una_transaccion_o_nada_y_dice_la_posicion(proy
     assert h["estado"] == "propuesto" and k.nodo(P, ids["d1"])["estado"] == "propuesta"
     assert k.nodo(P, ids["m1"])["vinculos"]["salen"]  # el retiro del item 6 tampoco quedo
     assert not any(c["origen"].get("veredicto") for c in k.cambios(P))  # los estados que hay son del server (encargo)
-    res = v.veredicto(P, items[:-1], por=COORD, revision=inf["id"], motivo="revisado el informe A r1")
+    sin_respaldo = [x for x in items[:-1] if x.get("relacion") != "contesta"]
+    with pytest.raises(Rechazo, match="exige un vinculo contesta"):
+        v.veredicto(P, sin_respaldo, por=COORD, evidencia=[ev], motivo="sin contesta")
+    with pytest.raises(Rechazo, match="corregido exige"):
+        v.veredicto(P, items[:-1], por=COORD, motivo="sin evidencia")
+    res = v.veredicto(P, items[:-1], por=COORD, revision=inf["id"], evidencia=[ev], motivo="revisado el informe A r1")
     assert res["n"] == 8 and [a["accion"] for a in res["aplicados"][5:7]] == ["vinculo", "vinculo_retirado"]
     assert k.nodo(P, ids["h1"])["estado"] == "corregido" and k.nodo(P, ids["d1"])["estado"] == "revertida"
     assert k.nodo(P, ids["p1"])["estado"] == "contestada"
@@ -525,12 +532,14 @@ def test_consulta_2_que_esta_vigente_sobre_un_tema(proy):
     k.vincular(P, regla["id"], "aplica_a", ids["t1"], autor="frente:sid-f")
     vieja = k.declarar_nodo(P, "decision", "vieja", {"motivo": "m"}, autor=COORD)
     k.vincular(P, vieja["id"], "sobre", ids["t1"], autor=COORD)
+    sucesora = k.crear_nodo(P, "decision", "sucesora (sin tema)", {"motivo": "m"}, autor=COORD)
     v.veredicto(
         P,
         [
             {"nodo": ids["d1"], "estado": "vigente"},
             {"nodo": regla["id"], "estado": "vigente"},
             {"nodo": vieja["id"], "estado": "vigente"},
+            {"de": sucesora["id"], "relacion": "reemplaza", "a": vieja["id"]},
             {"nodo": vieja["id"], "estado": "reemplazada"},
         ],
         por=COORD,
@@ -539,7 +548,9 @@ def test_consulta_2_que_esta_vigente_sobre_un_tema(proy):
     assert {(n["tipo"], n["id"]) for n in b["vigente"]} == {("decision", ids["d1"]), ("regla", regla["id"])}
     assert all("tema" in n["procedencia"] for n in b["vigente"])
     # propuestos y abiertos, aparte; el incidente observado y el informe recibido llegan a un salto
-    assert {n["id"] for n in b["abierto"]} == {ids["h1"], ids["p1"], ids["m1"], inc["id"], inf["id"]}
+    # la sucesora propuesta llega a un salto de la vieja por reemplaza
+    esperados = {ids["h1"], ids["p1"], ids["m1"], inc["id"], inf["id"], sucesora["id"]}
+    assert {n["id"] for n in b["abierto"]} == esperados
     assert vieja["id"] in {n["id"] for n in b["otros"]}  # reemplazada: ni vigente ni abierta
 
 

@@ -782,13 +782,19 @@ def cambiar_estado(
     motivo: str = "",
     origen: dict | None = None,
     con: sqlite3.Connection | None = None,
+    diferir_respaldo: bool = False,
 ) -> dict:
-    """Aplica una transicion de v5 §3.4 o la rechaza (409). Idempotente si ya esta en `nuevo`."""
+    """Aplica una transicion de v5 §3.4 o la rechaza (409). Idempotente si ya esta en `nuevo`. Una
+    regla que pasa a vigente recibe `datos.vigente_desde` (abre un periodo nuevo, §6.2), venga del
+    veredicto o de esta ruta. Las transiciones «con respaldo» (RESPALDO) exigen el suyo; un veredicto
+    las difiere (`diferir_respaldo`) y las mira al final, para que el vinculo pueda venir en otro item."""
     por = _texto(por, "por", 200)
     origen = _objeto(origen, "origen")
     if con is None:
         with _abrir(pid) as c2:
-            return cambiar_estado(pid, nid, nuevo, por=por, motivo=motivo, origen=origen, con=c2)
+            return cambiar_estado(
+                pid, nid, nuevo, por=por, motivo=motivo, origen=origen, con=c2, diferir_respaldo=diferir_respaldo
+            )
     n = _nodo(con, pid, nid)
     actual = n.get("estado")
     if actual == nuevo:
@@ -798,11 +804,54 @@ def cambiar_estado(
         raise Rechazo(f"transicion no permitida para {n['tipo']}: {actual} -> {nuevo}", 409)
     if rol_de(por) not in permitidos:
         raise Rechazo(f"{rol_de(por) or '?'} no puede pasar {n['tipo']} de {actual} a {nuevo}", 403)
+    if not diferir_respaldo and (falta := falta_respaldo(con, nid, n["tipo"], nuevo, origen)):
+        raise Rechazo(falta, 409)
     fecha = ahora()
     con.execute("UPDATE nodo SET estado = ?, estado_fecha = ?, estado_por = ? WHERE id = ?", (nuevo, fecha, por, nid))
+    if n["tipo"] == "regla" and nuevo == "vigente":
+        con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (_json({**n["datos"], "vigente_desde": fecha}), nid))
     n2 = _nodo(con, pid, nid)
     _cambio(con, pid, "estado", por, motivo, origen, n2, anterior=n, nodo_id=nid)
     return n2
+
+
+# (tipo, estado nuevo) -> el respaldo que exige (v5 §3.4): corregir o resolver con una correccion
+# respaldada (vinculo corregido_en, o evidencia citada en el veredicto), contestar con `contesta`,
+# reemplazar o superar con la sucesora (`reemplaza` que llega)
+RESPALDO = {
+    ("hallazgo", "corregido"): "corregido_en",
+    ("incidente", "resuelto"): "corregido_en",
+    ("pregunta", "contestada"): "contesta",
+    ("decision", "reemplazada"): "reemplaza",
+    ("medicion", "superada"): "reemplaza",
+}
+
+
+def falta_respaldo(con: sqlite3.Connection, nid: str, tipo: str, nuevo: str, origen: dict | None) -> str | None:
+    """El error si la transicion a `nuevo` exige un respaldo que no esta, o None."""
+    rel = RESPALDO.get((tipo, nuevo))
+    if rel is None:
+        return None
+    if rel == "corregido_en":
+        if (origen or {}).get("evidencia"):
+            return None
+        q, que = (
+            "SELECT 1 FROM vinculo WHERE de = ? AND relacion = 'corregido_en' AND activo = 1",
+            "corregido_en a una evidencia, o evidencia en el veredicto",
+        )
+    elif rel == "contesta":
+        q, que = (
+            "SELECT 1 FROM vinculo WHERE a = ? AND relacion = 'contesta' AND activo = 1",
+            "un vinculo contesta que llegue",
+        )
+    else:
+        q, que = (
+            "SELECT 1 FROM vinculo WHERE a = ? AND relacion = 'reemplaza' AND activo = 1",
+            "la sucesora (reemplaza que llegue)",
+        )
+    if con.execute(q, (nid,)).fetchone() is None:
+        return f"{tipo} {nuevo} exige {que} (v5 §3.4)"
+    return None
 
 
 def actualizar_datos(
@@ -1020,8 +1069,13 @@ def _sesion(con, pid, sid, *, agente=None, modelo=None, pc=None, cwd=None, autor
         con=con,
     )
     if not n["creado"] and any(v is not None and n["datos"].get(k) != v for k, v in datos.items()):
+        # cada mutacion deja su cambio (v5 §8.4): el modelo o el cwd de la sesion cambiaron
+        anterior = n
         con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (_json({**n["datos"], **datos}), n["id"]))
         n = _nodo(con, pid, n["id"])
+        _cambio(
+            con, pid, "datos", autor, "sesion observada", {"session_id": sid}, n, anterior=anterior, nodo_id=n["id"]
+        )
     return n
 
 
@@ -1112,6 +1166,9 @@ def entregar(
             _escribir_cuerpo(pid, ruta, cuerpo, con=con, nodo=n["id"])  # antes del commit, como en crear_encargo
     if (n["creado"] or n.get("adoptado")) and e["estado"] == "enviado":
         cambiar_estado(pid, encargo, "entregado", por="server", motivo=f"informe r{revision}")
+    elif (n["creado"] or n.get("adoptado")) and e["estado"] == "sin_entrega" and rol_de(autor) in (C, P):
+        # entrega tardia explicita (v5 §3.4): sin_entrega -> entregado, por quien entrega
+        cambiar_estado(pid, encargo, "entregado", por=autor, motivo=f"entrega tardia r{revision}")
     return n
 
 
@@ -1557,6 +1614,108 @@ def incidente_operativo(
     except Exception as e:
         state.log(f"conocimiento: incidente de {sid[:8]}: {e}")
         return None
+
+
+# --- bloque pendiente, evidencia recibida y respaldo (v5 §5.2, §8.2, §8.3) -----------------------
+
+
+def reincorporar(pid: str, informe: str, *, por: str) -> dict:
+    """Vuelve a validar el bloque de un informe que quedo `pendiente_de_vincular` (v5 §5.2: «el cuerpo
+    guardado permite recuperar un bloque pendiente»): si lo que faltaba ya existe (un `nodo:<id>` que
+    se creo despues, un tema), se incorpora con las mismas claves que la primera vez. Con errores,
+    devuelve los de ahora y no toca nada."""
+    por = _texto(por, "por", 200)
+    if rol_de(por) not in (C, P):
+        raise Rechazo(f"{rol_de(por) or '?'} no reincorpora bloques", 403)
+    with _abrir(pid) as con:
+        con.execute("BEGIN IMMEDIATE")
+        n = _nodo(con, pid, informe)
+        if n["tipo"] != "informe":
+            raise Rechazo("no es un informe")
+        estado = (n["datos"].get("conocimiento") or {}).get("estado")
+        if estado != "pendiente_de_vincular":
+            raise Rechazo(f"el bloque del informe no esta pendiente ({estado or 'sin bloque'})", 409)
+        cuerpo = _leer_archivo(os.path.join(_carpeta(pid), *n["datos"]["ruta"].split("/")))
+        bloque = extraer_bloque(cuerpo or "")
+        if bloque is None:
+            raise Rechazo("el cuerpo guardado no tiene bloque", 409)
+        r = con.execute(
+            "SELECT a FROM vinculo WHERE de = ? AND relacion = 'responde_a' AND activo = 1 LIMIT 1", (informe,)
+        ).fetchone()
+        sesion = _sesion_del_encargo(con, r["a"]) if r else (n["origen"] or {}).get("sesion_nodo")
+        res = _incorporar_bloque(
+            con, pid, informe, n["ronda"], sesion, bloque, autor=por, origen={"reincorporado": True}
+        )
+        if res["estado"] != "incorporado":
+            return {"informe": informe, "conocimiento": res}
+        con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (_json({**n["datos"], "conocimiento": res}), informe))
+        n2 = _nodo(con, pid, informe)
+        _cambio(con, pid, "conocimiento", por, "bloque reincorporado", {}, n2, anterior=n, nodo_id=informe)
+    return {"informe": informe, "conocimiento": res}
+
+
+EVIDENCIA_MAX_BYTES = 10_000_000
+NOMBRE_SEGURO = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def recibir_evidencia(
+    pid: str, nombre: str, contenido: bytes, *, clase: str, texto: str | None = None, autor: str, origen=None
+) -> dict:
+    """Un artefacto entregado al lienzo (v5 §8.2): se guarda en evidencia/<hash>-<nombre> y queda un nodo
+    `evidencia` con clase, referencia (la ruta en la carpeta del proyecto), hash y bytes. El mismo
+    contenido devuelve la misma evidencia. Un hash identifica el contenido, no demuestra nada (§3.1)."""
+    if not isinstance(contenido, bytes) or not contenido:
+        raise Rechazo("contenido vacio")
+    if len(contenido) > EVIDENCIA_MAX_BYTES:
+        raise Rechazo(f"la evidencia pasa de {EVIDENCIA_MAX_BYTES} bytes", 413)
+    nombre = NOMBRE_SEGURO.sub("-", _texto(nombre, "nombre", 120)).strip("-.") or "evidencia"
+    clase = _texto(clase, "clase", 40)
+    sha = hashlib.sha256(contenido).hexdigest()
+    ruta = f"evidencia/{sha[:16]}-{nombre}"
+    with _abrir(pid) as con:
+        n = crear_nodo(
+            pid,
+            "evidencia",
+            texto or nombre,
+            {"clase": clase, "referencia": ruta, "hash": sha, "bytes": len(contenido), "recibida": True},
+            autor=autor,
+            origen=origen,
+            clave_ingesta=f"evidencia:{sha}",
+            motivo="evidencia recibida",
+            con=con,
+        )
+        if n["creado"]:
+            full = os.path.join(_carpeta(pid), *ruta.split("/"))
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            escribir_exacto(full, contenido)
+    return n
+
+
+def respaldar(pid: str, destino: str | None = None) -> dict:
+    """Respaldo de la instancia del proyecto (v5 §8.3): la base con la API de backup de SQLite (no una
+    copia del archivo abierto) y los artefactos asociados (rondas/, capturas/, evidencia/), mas su
+    entrada del indice. En `destino` o en <LIENZO_HOME>/respaldos/<proyecto>/<fecha>/."""
+    p = proyecto(pid)
+    fecha = ahora().replace(":", "").replace("-", "").replace(".", "")
+    destino = destino or os.path.join(os.path.dirname(raiz()), "respaldos", pid, fecha)
+    os.makedirs(destino, exist_ok=True)
+    origen = sqlite3.connect(_db_path(pid), timeout=10)
+    copia = sqlite3.connect(os.path.join(destino, "conocimiento.sqlite"))
+    try:
+        origen.backup(copia)
+    finally:
+        copia.close()
+        origen.close()
+    archivos = 0
+    import shutil
+
+    for sub in ("rondas", "capturas", "evidencia"):
+        src = os.path.join(_carpeta(pid), sub)
+        if os.path.isdir(src):
+            shutil.copytree(src, os.path.join(destino, sub), dirs_exist_ok=True)
+            archivos += sum(len(f) for _, _, f in os.walk(src))
+    atomic_write(os.path.join(destino, "proyecto.json"), json.dumps(p, ensure_ascii=False, indent=1))
+    return {"proyecto": pid, "destino": destino, "archivos": archivos}
 
 
 # --- texto roto ya guardado: medir y reparar por auditoria ----------------------------------------
