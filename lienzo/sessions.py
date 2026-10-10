@@ -239,10 +239,13 @@ def save_session(s: dict) -> None:
     atomic_write(os.path.join(state.SESSIONS, f"{s['session_id']}.json"), json.dumps(s, ensure_ascii=False, indent=1))
 
 
-def add_link(src: str | None, dst: str, text: str, kind: str = "send", rule_id: str | None = None) -> None:
+def add_link(
+    src: str | None, dst: str, text: str, kind: str = "send", rule_id: str | None = None, consulta: str | None = None
+) -> None:
     """kind: send (inyeccion manual entre sesiones) | native (canal Claude<->Claude por SendMessage) |
     rule (nacido de una regla 'cuando termine' / 'a las HH:MM'; trae rule_id) | user (lo que el
-    usuario escribio desde el SendBox del lienzo: from None, solo se ve en la pestana Conexiones)."""
+    usuario escribio desde el SendBox del lienzo: from None, solo se ve en la pestana Conexiones) |
+    consulta (una vuelta de una consulta entre investigadores, consulta.py; trae `consulta`)."""
     link = {
         "id": secrets.token_hex(6),
         "from": src,
@@ -254,6 +257,8 @@ def add_link(src: str | None, dst: str, text: str, kind: str = "send", rule_id: 
     }
     if rule_id:
         link["rule_id"] = rule_id
+    if consulta:
+        link["consulta"] = consulta
     links.add(link)
 
 

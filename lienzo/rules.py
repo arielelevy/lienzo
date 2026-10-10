@@ -16,6 +16,7 @@ import traceback
 
 import captura
 import conocimiento
+import consulta
 import identity
 import sessions as ses
 import state
@@ -444,6 +445,12 @@ def fire_on_stop(sid: str) -> None:
         cerrada = dict(sessions.get(sid) or {})
     if cerrada:
         captura.respuesta(cerrada)  # la respuesta final queda en la memoria del proyecto (anexo A de v5)
+        try:
+            if consulta.espera(sid):
+                # una vuelta de una consulta entre investigadores: la respuesta entera, sin el recorte de {respuesta}
+                consulta.turno_cerrado(cerrada, full_reply(cerrada, consulta.TEXTO_MAX))
+        except Exception:
+            state.log(f"consulta, cierre de turno de {sid[:8]}:\n{traceback.format_exc()}")
     ahora = dt.datetime.now().astimezone()
 
     def suya(r: dict) -> bool:

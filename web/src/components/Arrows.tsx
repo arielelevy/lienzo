@@ -437,7 +437,8 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   // la descripcion va al lado del glifo, no en una franja fija: se lee junto a lo que explica. Se
   // corre para no salirse del tablero por ningun costado
   const descX = selSeg ? Math.max(DESC_EDGE, Math.min(selSeg.x, Math.max(DESC_EDGE, size.w - DESC_EDGE))) : 0;
-  const kindOf = (s: Seg) => (s.kind === "rule" ? "conexión pendiente" : s.kind === "native" ? "canal nativo" : "envío hecho");
+  const kindOf = (s: Seg) =>
+    s.kind === "rule" ? "conexión pendiente" : s.kind === "native" ? "canal nativo" : s.kind === "consulta" ? "consulta entre investigadores" : "envío hecho";
   return (
     <>
     {selSeg && !edit && !view && (

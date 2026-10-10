@@ -38,6 +38,7 @@ import browser_api
 import browser_stream
 import captura
 import conocimiento_api
+import consulta
 import cuenta_github
 import federation
 import health
@@ -321,6 +322,36 @@ def _route_session(sid: str) -> tuple[dict | None, str | None]:
     return None, mirror.MIRROR.owner_of(sid)
 
 
+def consulta_tarjeta(sid: str) -> dict | None:
+    """La tarjeta `sid`, local o espejada de otra PC (consulta.tarjeta)."""
+    s, _owner = _route_session(sid)
+    return s if s is not None else next((x for x in mirror.MIRROR.sessions() if x["session_id"] == sid), None)
+
+
+def consulta_enviar(sid: str, texto: str, de: str | None, cid: str) -> tuple[int, dict]:
+    """consulta.enviar: el envio del tablero (local o reenviado a la PC duena), con la flecha de la consulta."""
+    d = {"text": texto, "consulta": cid}
+    if de and de != sid:
+        d["from"] = de
+    return atender_accion("POST", sid, "send", d, desde_tablero=True)
+
+
+def consulta_respuesta(s: dict) -> str:
+    """El texto entero de la ultima respuesta: de la transcripcion si es local, lo que trae la tarjeta si no."""
+    with lock:
+        local = s.get("session_id") in sessions
+    return rl.full_reply(s, consulta.TEXTO_MAX) if local else s.get("last_reply") or ""
+
+
+def consulta_loop() -> None:
+    while True:
+        try:
+            consulta.vigilar(leer_respuesta=consulta_respuesta)
+        except Exception:
+            state.log(f"consulta, vigilancia:\n{traceback.format_exc()}")
+        time.sleep(10)
+
+
 def _pending_owner(request_id: str) -> str | None:
     with lock:
         if request_id in pending:
@@ -475,6 +506,12 @@ def registrar_envio(sid: str, d: dict) -> dict | None:
     text = d.get("text", "") if isinstance(d.get("text"), str) else ""
     src, link_to = d.get("from"), d.get("link_to")
     kind = "native" if d.get("native") else "send"
+    cid = d.get("consulta") if isinstance(d.get("consulta"), str) else None
+    if cid:
+        # una vuelta de una consulta (consulta.py): flecha propia, de quien se lee hacia quien la recibe
+        if src and src != sid and (src in sessions or _known_session(src)):
+            add_link(src, sid, text, "consulta", consulta=cid)
+        return None
     with lock:
         src_s = sessions.get(src) if isinstance(src, str) else None
         link_to_local = isinstance(link_to, str) and link_to in sessions
@@ -1518,6 +1555,11 @@ class Handler(JsonHandler):
             if parts == ["auth", "sessions"]:
                 # las sesiones web abiertas (pentest B4), para revisarlas y cerrar las que no son propias
                 return self._json(200, auth.sesiones_web(auth.parse_cookie(self.headers.get("Cookie"))))
+            if parts == ["consultas"]:
+                return self._json(200, consulta.listar())
+            if len(parts) == 2 and parts[0] == "consultas":
+                c = consulta.ver(parts[1])
+                return self._json(200, c) if c else self._json(404, {"error": "no hay una consulta con ese id"})
             if parts == ["links"]:
                 # las locales y las de las otras PCs (espejo, con su `pc`), como GET /rules
                 return self._json(200, links.snapshot() + mirror.MIRROR.links())
@@ -1648,6 +1690,12 @@ class Handler(JsonHandler):
                 if self._via_tunnel() or not self._is_local():
                     return self._json(403, {"error": "el conocimiento se escribe desde una PC de la LAN"})
                 code, res = conocimiento_api.dispatch("POST", parts[1:], self._json_body(), self.query)
+                return self._json(code, res)
+            if parts == ["consultas"]:
+                code, res = consulta.abrir(self._json_body())
+                return self._json(code, res)
+            if len(parts) == 3 and parts[0] == "consultas" and parts[2] == "cancelar":
+                code, res = consulta.cancelar(parts[1])
                 return self._json(code, res)
             if parts == ["rules"]:
                 code, res = create_rule(self._json_body())
@@ -2704,6 +2752,8 @@ def main() -> int:
     purged, retitled = load_sessions()
     links.load(lambda l: l.get("to") in sessions and (not l.get("from") or l["from"] in sessions))
     rules.load(conservar_regla)
+    consulta.tarjeta, consulta.enviar = consulta_tarjeta, consulta_enviar
+    consulta.cargar()
     purge_stale_at_rules()
     clean_attachments()
     captura.arrancar()  # lo que pasa por el lienzo queda en la memoria del proyecto (anexo A de v5)
@@ -2751,6 +2801,7 @@ def main() -> int:
     # la memoria por proyecto se replica con los pares vivos (anexo C de v5)
     threading.Thread(target=replica.bucle, args=(mirror.MIRROR,), name="replica", daemon=True).start()
     threading.Thread(target=vigia_loop, name="vigia", daemon=True).start()
+    threading.Thread(target=consulta_loop, name="consulta", daemon=True).start()
     if modo_pares:
         stop_beacon = threading.Event()
         beacon.start(a.peer_port, stop_beacon)

@@ -53,7 +53,7 @@ const FREE_ZONE: Zone = { bands: [], strips: [] };
 export interface Seg {
   /** ids de todos los links agrupados (o el id de la regla) */
   ids: string[];
-  kind: "link" | "rule" | "native";
+  kind: "link" | "rule" | "native" | "consulta";
   from: string;
   to: string;
   d: string;
@@ -779,12 +779,14 @@ export function buildItems(links: Link[], rules: Rule[], anchors: Map<string, Re
 function linkItems(links: Link[], anchors: Map<string, Rect>, fmt: Formatters, now: number): Item[] {
   const items: Item[] = [];
   const groups = new Map<string, Link[]>();
-  for (const l of links) pushTo(groups, `${l.kind === "native" ? "n" : "s"}|${l.from}|${l.to}`, l);
+  const clave = (l: Link) => (l.kind === "native" ? "n" : l.kind === "consulta" ? "c" : "s");
+  for (const l of links) pushTo(groups, `${clave(l)}|${l.from}|${l.to}`, l);
   for (const g of groups.values()) {
     g.sort((a, c) => c.ts.localeCompare(a.ts)); // mas nuevo primero
     const newest = g[0];
     if (!anchors.has(newest.from) || !anchors.has(newest.to)) continue;
     const native = newest.kind === "native";
+    const deConsulta = newest.kind === "consulta";
     // un envio viejo se va del tablero; el canal nativo se queda mientras exista
     const edad = now - new Date(newest.ts).getTime();
     if (!native && !(edad < LINK_TTL_MS)) continue;
@@ -792,22 +794,26 @@ function linkItems(links: Link[], anchors: Map<string, Rect>, fmt: Formatters, n
     const a = fmt.name(newest.from);
     const b = fmt.name(newest.to);
     const when = fmt.ago(newest.ts);
-    const head = native
+    const head = deConsulta
+      ? `consulta: ${b} leyó lo que pensó ${a}, hace ${when}`
+      : native
       ? `canal nativo entre ${a} y ${b}, abierto hace ${when}`
       : n > 1
         ? `${n} envíos de ${a} a ${b}, el último hace ${when}`
         : `envío de ${a} a ${b}, hace ${when}`;
-    const desc = native
+    const desc = deConsulta
+      ? `Una vuelta de la consulta entre investigadores: el lienzo le pasó a ${b} lo que respondió ${a}, hace ${when}. Doble click para ver los envíos.`
+      : native
       ? `${a} y ${b} tienen abierto el canal nativo desde hace ${when}. Doble click para ver lo que se dijeron.`
       : n > 1
         ? `${a} le mandó ${n} mensajes a ${b}. El último, hace ${when}. Doble click para verlos o mandar de nuevo.`
         : `${a} le mandó un mensaje a ${b} hace ${when}. Doble click para verlo o mandarlo de nuevo.`;
     items.push({
       ids: g.map((l) => l.id),
-      kind: native ? "native" : "link",
+      kind: native ? "native" : deConsulta ? "consulta" : "link",
       from: newest.from,
       to: newest.to,
-      glyph: n > 1 ? `×${n}` : native ? "⇄" : "↪",
+      glyph: deConsulta ? "🔬" : n > 1 ? `×${n}` : native ? "⇄" : "↪",
       title: `${head}${ELEGIR}`,
       desc,
     });

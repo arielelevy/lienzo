@@ -208,7 +208,36 @@ export interface Link {
   to: string;
   ts: string;
   text: string;
-  kind?: "send" | "native" | "rule" | "user";
+  kind?: "send" | "native" | "rule" | "user" | "consulta";
+  /** id de la consulta entre investigadores, si la flecha es una de sus vueltas */
+  consulta?: string;
+}
+
+/** Una consulta entre investigadores (lienzo/consulta.py), como la ve el tablero. */
+export interface ConsultaResumen {
+  id: string;
+  pregunta: string;
+  estado: "abierta" | "sintetizando" | "revisando" | "cerrada" | "cancelada";
+  vuelta: number;
+  vueltas: number;
+  investigadores: string[];
+  revisor: string;
+  coordinador: string | null;
+  nombres: Record<string, string>;
+  esperando: string[];
+  pendientes: string[];
+  fuera: Record<string, string>;
+  motivo: string | null;
+  creada: string;
+  cerrada: string | null;
+}
+
+/** La consulta entera (GET /consultas/<id>), con las respuestas por vuelta. */
+export interface ConsultaEntera extends Omit<ConsultaResumen, "esperando" | "pendientes"> {
+  pendientes: Record<string, { marca: string; enviado: string }>;
+  respuestas: Record<string, Record<string, { texto: string; ts: string; agente?: string; modelo?: string }>>;
+  sintesis: string | null;
+  objeciones: Record<string, string>;
 }
 
 /** Dialogo de opciones numeradas de la TUI de Claude, leido del buffer de la consola. */
@@ -292,4 +321,5 @@ export type ServerEvent =
   | { type: "session"; session: Session }
   | { type: "removed"; session_id: string }
   | { type: "pending"; pending: Pending[] }
-  | { type: "transcript"; session_id: string; size: number };
+  | { type: "transcript"; session_id: string; size: number }
+  | { type: "consulta"; consulta: ConsultaResumen };

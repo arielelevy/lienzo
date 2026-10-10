@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, isMissingRoute, pendingApi, rulesApi, sessionsApi, type AuthInfo } from "./api";
 import { Board, colOf, norm, passesFilters } from "./components/Board";
+import { ConsultasBar } from "./components/Consulta";
 import { RemoteBrowser } from "./components/RemoteBrowser";
 import { allAgents } from "./agents";
 import { canWrite, hasConsole, shortName, toggled } from "./names";
@@ -509,6 +510,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
       {showPairing && <Pairing peers={peers} toast={toast} onClose={() => setShowPairing(false)} />}
       <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onSelect={selectPc} onToggle={togglePc} onAll={showAllPcs} />
+      <ConsultasBar />
       <Board
         sessions={sessions}
         pending={pending}

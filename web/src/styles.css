@@ -640,3 +640,41 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
 *::-webkit-scrollbar-thumb { background: #394052; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
 *::-webkit-scrollbar-thumb:hover { background: #4a5468; background-clip: content-box; }
 *::-webkit-scrollbar-corner { background: transparent; }
+
+/* Consulta entre investigadores (Consulta.tsx, consultas.ts): un violeta propio, distinto del azul de
+   los envíos y del dorado de la coordinadora, para reconocer de un vistazo quién está discutiendo */
+:root { --investigador: #b48cff; --investigador-bg: #241b38; --revisor: #6fd3c1; --revisor-bg: #14302c; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --investigador: #6b3fd1; --investigador-bg: #efe8ff; --revisor: #12806e; --revisor-bg: #e3f6f2; }
+}
+:root[data-theme="light"] { --investigador: #6b3fd1; --investigador-bg: #efe8ff; --revisor: #12806e; --revisor-bg: #e3f6f2; }
+.arrows .line.consulta { stroke: var(--investigador); stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 2.5; opacity: 1; }
+.rol-consulta { font-size: 11px; border-radius: 4px; padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.rol-investigador { color: var(--investigador); background: var(--investigador-bg); }
+.rol-revisor { color: var(--revisor); background: var(--revisor-bg); }
+.rol-coordinador { color: var(--fg); background: var(--line); }
+.rol-avance { opacity: .8; }
+.consultas-bar { display: flex; gap: 8px; padding: 6px 12px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.consulta-chip { display: flex; gap: 8px; align-items: baseline; max-width: 520px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--investigador); background: var(--investigador-bg); color: var(--fg); cursor: pointer; font: inherit; text-align: left; }
+.consulta-chip.vieja { opacity: .55; border-style: dashed; }
+.consulta-chip:focus-visible { outline: 2px solid var(--investigador); outline-offset: 2px; }
+.consulta-pregunta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.consulta-avance { color: var(--investigador); font-size: 12px; white-space: nowrap; }
+.consulta-fondo { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 50; display: flex; justify-content: center; align-items: flex-start; padding: 32px 16px; overflow-y: auto; }
+.consulta-vista { background: var(--panel); color: var(--fg); border: 1px solid var(--investigador); border-radius: 8px; width: min(1200px, 100%); padding: 16px 20px; }
+.consulta-vista header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.consulta-vista h2 { font-size: 18px; margin: 0; line-height: 1.35; }
+.consulta-cerrar { background: none; border: 0; color: var(--dim); font-size: 22px; cursor: pointer; }
+.consulta-meta { color: var(--dim); font-size: 13px; margin: 6px 0 14px; }
+.consulta-tabla { display: grid; gap: 12px; }
+.consulta-col-titulo { font-weight: 600; color: var(--investigador); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.consulta-respuesta, .consulta-sintesis { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; min-width: 0; }
+.consulta-respuesta h3, .consulta-sintesis h3 { font-size: 12px; color: var(--dim); margin: 0 0 6px; font-weight: 600; }
+.consulta-texto { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; max-height: 480px; overflow-y: auto; }
+.consulta-sintesis { margin-top: 14px; border-color: var(--revisor); }
+.consulta-sintesis h3 { color: var(--revisor); }
+.consulta-objeciones { margin: 10px 0 0; padding-left: 18px; font-size: 13px; }
+.consulta-vista footer { margin-top: 14px; display: flex; justify-content: flex-end; }
+.consulta-vista footer button { background: none; border: 1px solid var(--err); color: var(--err); border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.consulta-error { color: var(--err); }
+@media (max-width: 720px) { .consulta-tabla { grid-template-columns: 1fr !important; } }

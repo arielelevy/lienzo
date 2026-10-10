@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { Link, Pending, Rule, ServerEvent, Session } from "../types";
+import { setConsultas, upsertConsulta } from "../consultas";
+import type { ConsultaResumen, Link, Pending, Rule, ServerEvent, Session } from "../types";
 
 interface Options {
   /** se llama al abrir o cortar el stream: la URL del tunel o la cookie pueden haber cambiado */
@@ -54,6 +55,8 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
         setPending(byId(ps, (p) => p.request_id));
         setLinks(boardLinks(ls));
         setRules(rs);
+        // las consultas, aparte: un server sin la ruta (otra PC sin actualizar) no traba el tablero
+        api.get<ConsultaResumen[]>("/consultas").then(setConsultas, () => null);
         if (selectedRef.current) setTranscriptTick((t) => t + 1);
       } catch (e) {
         if (!disposed) console.warn("tablero: no se pudo actualizar", e);
@@ -127,6 +130,9 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
           break;
         case "links":
           setLinks(boardLinks(m.links));
+          break;
+        case "consulta":
+          upsertConsulta(m.consulta);
           break;
         case "rules":
           setRules(m.rules);

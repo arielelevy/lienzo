@@ -180,3 +180,28 @@ con el workflow corriendo y la tarjeta en `termino`.
   (`coda_fondo_hecho`) para no levantarlo otra vez. Y a pedido de Ariel («si doy permitir y no está en la terminal,
   quitalo»), `answer_coda_ask` sin cartel en pantalla ya no da 409: saca el pedido de la tarjeta sin teclear nada.
   Tests nuevos en `tests/test_coda.py` y `tests/test_ola1_sesiones.py`; 1338 pasan.
+
+## Consulta entre investigadores (`lienzo/consulta.py` y su cableado, web)
+
+**Alcance:** motor nuevo `lienzo/consulta.py`; `server.py` (rutas `/consultas`, envío con flecha `consulta`, vigilancia,
+arranque), `rules.py` (gancho en `fire_on_stop`), `sessions.add_link` (campo `consulta`); `coordinar.consulta`; web
+(`consultas.ts`, `Consulta.tsx`, rol en `Card`, flecha en `arrows-geometry`, estilos). Spec en
+`.kiro/specs/consulta-investigadores/`, hecha con la skill `sdd`.
+
+**Revisión:**
+- Nadie le escribe a nadie: todo envío sale del motor con tope de vueltas; no se crean reglas, así que no hay bucle A↔B.
+- Qué cuenta como respuesta: marca al inicio del último pedido o dentro del `mensaje.md` del adjunto, y cierre de turno
+  posterior al envío. `_tomar` es idempotente (gancho y vigilancia pueden ver la misma respuesta).
+- Concurrencia: todo el estado con `state.lock` (RLock; `broadcast` lo vuelve a tomar en el mismo hilo); los envíos de una
+  vuelta en hilos, sin el lock, con resultado por investigador; un envío fallido saca a ese investigador.
+- Errores visibles: excepciones del gancho y de la vigilancia van al log con traza y no cortan las reglas del usuario; un
+  `consulta.json` roto se aparta con `apartar_corrupto`.
+- Hallazgo propio corregido: la primera versión de la vigilancia guardaba el instante de la última pasada como global y los
+  tests se pisaban entre sí; el fixture la reinicia.
+- Límite conocido: para un investigador de otra PC la respuesta sale de `last_reply` de la tarjeta espejada, no de su
+  transcripción entera (anotado en el diseño, 6.3).
+- `vuelta1` permite seguir una vuelta 1 hecha a mano (así arrancó la prueba de Teorema).
+
+**Pruebas:** `tests/test_consulta.py` (6: consulta completa con revisor aparte y objeción, validaciones, convergencia por
+`SIN CAMBIOS` desde una vuelta 1 previa, respuesta por adjunto y vigilancia, cancelación con menos de dos, recarga de
+disco); suite completa 1329 en el worktree; build y lint de la web.

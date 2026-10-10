@@ -972,3 +972,35 @@ una evidencia, clase y referencia. Relaciones que podes declarar: motivada_por, 
 aplica_a, sobre, apoya. Un extremo es un id local o `nodo:<id>` de algo que ya esta en el proyecto (te lo doy
 en el encargo). Si algo no valida, el bloque entero queda afuera y te pido la correccion.
 """
+
+
+def consulta(pregunta, investigadores, vueltas=2, revisor=None, espera_min=30, enfoques=None, vuelta1=None):
+    """Abre una consulta entre investigadores (lienzo/consulta.py): 2 o 3 tarjetas quietas piensan
+    `pregunta` por vueltas, cada una lee a las otras, y `revisor` (otra tarjeta; si falta, el primer
+    investigador) escribe la síntesis, que los demás revisan. `YO` queda como coordinador y recibe la
+    síntesis. `vuelta1` ({sid: respuesta}) sigue una vuelta 1 ya hecha a mano. Devuelve el id; un error
+    del server levanta RuntimeError con el motivo."""
+    cuerpo = {
+        "pregunta": pregunta,
+        "investigadores": list(investigadores),
+        "vueltas": vueltas,
+        "espera_min": espera_min,
+    }
+    if revisor:
+        cuerpo["revisor"] = revisor
+    if YO:
+        cuerpo["coordinador"] = YO
+    if enfoques:
+        cuerpo["enfoques"] = enfoques
+    if vuelta1:
+        cuerpo["vuelta1"] = vuelta1
+    code, res = pedir("POST", "/consultas", cuerpo, timeout=120)
+    if code != 200:
+        raise RuntimeError(f"consulta: {code} {res}")
+    return res["id"]
+
+
+def consulta_estado(cid):
+    """La consulta entera (estado, vuelta, respuestas, síntesis), o None si no existe."""
+    code, res = pedir("GET", f"/consultas/{cid}")
+    return res if code == 200 else None

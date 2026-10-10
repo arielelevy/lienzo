@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ago, failMsg, sessionsApi } from "../api";
 import { can } from "../agents";
+import { avance, rolDe, useConsultas } from "../consultas";
 import { continueAt, useCardActions } from "../hooks/useCardActions";
 import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
@@ -280,6 +281,8 @@ interface Props {
 
 export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, peerDown, pcColor, marked = false, onMark, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
   const { toast, node: toastNode } = useLocalToast(extToast);
+  // su papel en una consulta entre investigadores abierta (consultas.ts), o null
+  const consultaRol = rolDe(useConsultas(), s.session_id);
   const workClipboard = useWorkClipboard(s, !!p || !!s.pending_id, toast);
   const [promptOpen, setPromptOpen] = useState(false);
   const [errorOpen, setErrorOpen] = useState(false);
@@ -554,6 +557,15 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               ✓
             </span>
           ) : null}
+          {consultaRol && (
+            <span
+              className={`rol-consulta rol-${consultaRol.rol}`}
+              title={`${consultaRol.rol} de la consulta «${consultaRol.consulta.pregunta}» — ${avance(consultaRol.consulta)}`}
+            >
+              {consultaRol.rol === "investigador" ? "🔬 investigador" : consultaRol.rol === "revisor" ? "⚖ revisor" : "🧭 coordina la consulta"}
+              <span className="rol-avance"> · {avance(consultaRol.consulta)}</span>
+            </span>
+          )}
           {/* la coordinadora se sigue viendo, pero como indicador: la acción vive en el menú ⋯ */}
           {s.coordinator && (
             <span className="star on" role="img" aria-label="coordinadora del repo" title="coordinadora del repo: recibe los avisos 'cuando termine' y 'avisame'">

@@ -263,6 +263,25 @@ El canal nativo queda para cuando no hay lienzo (el server caído) o para una se
 tablero. Entre frentes no se abre ninguno de los dos: todo pasa por la coordinadora, que es lo que
 evita los bucles.
 
+## Consulta entre investigadores
+
+Para un problema difícil cuyas respuestas se pueden criticar (una conjetura, una decisión de
+arquitectura, un bug que nadie entiende), no un trabajo con archivos (eso es SDD o un frente): dos o
+tres investigadores de modelos de frontera, con esfuerzo alto, y un revisor.
+
+```python
+cid = c.consulta("¿…?", [sid_claude, sid_codex], vueltas=2, revisor=sid_revisor)
+c.consulta_estado(cid)
+```
+
+El lienzo manda la vuelta 1 a todos a la vez, después le pasa a cada uno las respuestas de los otros
+(acepto / sostengo / refuto con evidencia, o `SIN CAMBIOS`), le pide la síntesis al revisor y que los
+investigadores digan si los representa (`REPRESENTA BIEN` o su corrección). Todo por el envío de
+siempre, con flechas violetas punteadas; las tarjetas muestran su papel y en qué vuelta va, y la tira
+de consultas arriba del tablero abre la consulta entera. Nadie le escribe a nadie directo: no hay
+bucle posible. La síntesis queda en `~/.lienzo/consultas/<id>/sintesis.md`, en la memoria del proyecto
+y te llega a vos (`YO`). Los investigadores tienen que estar quietos al abrir (si no, 409).
+
 ## El patrón que funciona
 
 Una sesión coordinadora (la ★ del repo) reparte, cablea una regla `on_stop` de cada frente hacia
