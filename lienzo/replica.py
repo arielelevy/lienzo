@@ -549,6 +549,11 @@ def sincronizar_todos(mirror) -> list[dict]:
         pc = p.get("pc_id")
         if not pc or not p.get("alive") or ahora - _sin_soporte.get(pc, -SIN_SOPORTE_S) < SIN_SOPORTE_S:
             continue
+        supports = getattr(mirror, "supports", None)
+        if supports is not None and supports(pc, "memoria.replica") is False:
+            # el contrato de capacidades lo dice antes de pedir; sin contrato (lienzo viejo) se prueba y
+            # la «ruta desconocida» del pedido lo confirma
+            continue
         try:
             out.append(sincronizar(pc, mirror.forward))
             _sin_soporte.pop(pc, None)

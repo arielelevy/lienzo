@@ -181,6 +181,10 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: s
         res["resumed"] = bool(resume_args)
     if model is not None:
         res["model_applied"] = bool(model_args)
+    if agent == "coda" and model_args and res.get("ok"):
+        # medido el 2026-10-02: coda escribe el --model en su config.json, asi que las codas que se
+        # lancen despues sin modelo corren este (PENDIENTES, «--model en coda»)
+        res["aviso"] = "coda guarda --model como modelo por defecto de esta PC: las proximas codas sin modelo usan este"
     return res
 
 

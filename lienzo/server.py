@@ -16,6 +16,7 @@ import os
 import queue
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -31,6 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import auth
 import autoaprobar
+import backend
 import beacon
 import browser_api
 import browser_stream
@@ -62,7 +64,9 @@ from rules import connections_of, purge_stale_at_rules, rules_loop
 # todavia toman de `server` (find_enabled, at_fields, check_rule)
 from rules_api import _known_session, at_fields, check_rule, create_rule, edit_rule, find_enabled  # noqa: F401
 from sessions import (
+    ADJUNTOS_CUOTA,
     add_link,
+    adjuntos_bytes,
     answer_coda_ask,
     answer_dialog,
     answer_pending,
@@ -132,11 +136,14 @@ _peer_nonces = federation.NonceCache()
 # Un peer que se conecta a /peer/events NO se registra aca: solo ve la verdad local de esta PC, ni
 # siquiera lo que esta PC espeja de un tercero (evita amplificar en una malla de 3 o 4 PCs).
 ui_clients: list = []
+# cupo de streams SSE abiertos a la vez, tablero y peers juntos (pentest 2026-09-07, B6): cada uno es un
+# hilo de ThreadingHTTPServer; un tablero abre uno, un peer otro, y 64 deja margen de sobra para pestanas
+MAX_SSE = 64
 
 
-CLOUDFLARED = os.path.join(
+CLOUDFLARED = shutil.which("cloudflared") or os.path.join(
     os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "cloudflared", "cloudflared.exe"
-)
+)  # el del PATH (Linux, macOS, scoop) y si no, donde lo deja winget
 remote_url: str | None = None
 # alta desde el celular con un solo QR: token de 15 min que entrega passphrase + otpauth una vez
 enroll: dict | None = None
@@ -433,6 +440,22 @@ def config_peers_loop(stop_event: threading.Event | None = None) -> None:
             log(f"reintento de auto-aprobar en otras PCs:\n{traceback.format_exc()}")
 
 
+def salud_publica(autorizado: bool) -> dict:
+    """GET /health, que se atiende antes de autenticar (lo usan los monitores para saber si el server esta
+    vivo). Sin autenticar (por el tunel) solo dice que vive: cuantas sesiones y permisos hay es informacion
+    del usuario (pentest 2026-09-07, B1). Autenticado o desde esta PC, ademas, las fuentes del barrido
+    activas (plan multiplataforma: Windows, tmux)."""
+    if not autorizado:
+        return {"ok": True, "ts": now()}
+    return {
+        "ok": True,
+        "sessions": len(sessions),
+        "pending": len(pending),
+        "ts": now(),
+        "fuentes": backend.fuentes_activas(),
+    }
+
+
 def registrar_envio(sid: str, d: dict) -> dict | None:
     """Despues de un envio que entro (200) a la tarjeta `sid`, deja la flecha en el historial segun
     como se pidio, y devuelve la tarjeta de origen si es local (para copycat), o None.
@@ -587,9 +610,20 @@ def _stream_sse(handler: BaseHTTPRequestHandler, initial_json: str, extra_client
     si no llego nada. Extraido de lo que antes era Handler._sse, sin cambiar el formato del wire."""
     q: queue.Queue = queue.Queue(maxsize=1000)
     with lock:
-        clients.append(q)
-        for lst in extra_client_lists:
-            lst.append(q)
+        lleno = len(clients) >= MAX_SSE
+        if not lleno:
+            clients.append(q)
+            for lst in extra_client_lists:
+                lst.append(q)
+    if lleno:
+        cuerpo = json.dumps({"error": f"demasiados streams abiertos (tope {MAX_SSE})"}).encode()
+        handler.send_response(503)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(cuerpo)))
+        handler.send_header("Retry-After", "30")
+        handler.end_headers()
+        handler.wfile.write(cuerpo)
+        return
     handler.send_response(200)
     handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
     handler.send_header("Cache-Control", "no-store")
@@ -944,6 +978,13 @@ def validar_attach(d: dict) -> tuple[int, dict] | None:
 def accion_attach(s: dict, d: dict) -> tuple[int, dict]:
     """POST /sessions/<id>/attach: guarda el archivo en ADJUNTOS/<sid>/ y devuelve su ruta, que
     despues viaja en `attachments` de un envio."""
+    usados = adjuntos_bytes(s["session_id"])
+    if usados + len(d["data"]) > ADJUNTOS_CUOTA:
+        # cuota acumulada por sesion (pentest B5): MAX_ATTACH acota cada pedido, no la suma
+        return 413, {
+            "ok": False,
+            "error": f"la sesion ya tiene {usados // 2**20} MB de adjuntos (tope {ADJUNTOS_CUOTA // 2**20} MB)",
+        }
     path = save_attachment(s["session_id"], d["filename"], d["data"])
     return 200, {"path": path, "bytes": len(d["data"])}
 
@@ -1396,7 +1437,7 @@ class Handler(JsonHandler):
                 # el icono de la pestaña: vive en la raiz del build, no en assets/
                 return self._file(os.path.join(DIST, "favicon.svg"), "image/svg+xml", cache="public, max-age=86400")
             if parts == ["health"]:
-                return self._json(200, {"ok": True, "sessions": len(sessions), "pending": len(pending), "ts": now()})
+                return self._json(200, salud_publica(self._authed() or self._is_local()))
             if parts == ["auth"]:
                 return self._json(
                     200,
@@ -1466,8 +1507,12 @@ class Handler(JsonHandler):
                 return self._get_peers_lan()
             if parts == ["pending"]:
                 return self._json(200, public_pending() + mirror.MIRROR.pending())
+            if parts == ["auth", "sessions"]:
+                # las sesiones web abiertas (pentest B4), para revisarlas y cerrar las que no son propias
+                return self._json(200, auth.sesiones_web(auth.parse_cookie(self.headers.get("Cookie"))))
             if parts == ["links"]:
-                return self._json(200, links.snapshot())
+                # las locales y las de las otras PCs (espejo, con su `pc`), como GET /rules
+                return self._json(200, links.snapshot() + mirror.MIRROR.links())
             if parts == ["rules"]:
                 # las locales y las que viven en otras PCs (espejo, con su `pc`): un cliente de la API
                 # que solo viera las locales creeria que el cableado entre PCs no existe
@@ -1557,6 +1602,10 @@ class Handler(JsonHandler):
                 return self._setup()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
+            if len(parts) == 4 and parts[:2] == ["auth", "sessions"] and parts[3] == "revoke":
+                if auth.revocar(parts[2]):
+                    return self._json(200, {"ok": True})
+                return self._json(404, {"ok": False, "error": "no hay una sesion web con ese id"})
             if parts == ["browser"]:
                 if self._via_tunnel() or not self._is_local():
                     return self._json(403, {"error": "Chrome remoto se maneja desde la PC de Lienzo"})
@@ -2508,7 +2557,8 @@ def tunnel_loop(port: int) -> None:
     Solo se levanta si hay login configurado; sin auth.json no se expone nada."""
     global remote_url
     if not os.path.exists(CLOUDFLARED):
-        log(f"--remote: no encuentro {CLOUDFLARED} (winget install Cloudflare.cloudflared)")
+        como = "winget install Cloudflare.cloudflared" if os.name == "nt" else "instalalo y dejalo en el PATH"
+        log(f"--remote: no encuentro cloudflared ({como})")
         return
     if not auth.configured():
         log("--remote: esperando el alta del acceso (boton 'Acceso remoto' en la UI) para levantar el tunel")
@@ -2525,8 +2575,8 @@ def tunnel_loop(port: int) -> None:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                creationflags=0x08000000,
-            )  # CREATE_NO_WINDOW
+                creationflags=0x08000000 if os.name == "nt" else 0,  # CREATE_NO_WINDOW
+            )
         except OSError as e:
             log(f"--remote: cloudflared no arranca: {e}")
             return
@@ -2626,7 +2676,12 @@ def main() -> int:
     ap.add_argument("--no-sweep", action="store_true")
     ap.add_argument("--sweep-every", type=float, default=30.0)
     ap.add_argument("--remote", action="store_true", help="publicar por cloudflared (exige login configurado)")
-    ap.add_argument("--peer-port", type=int, default=7322, help="listener de peers (plan multi-PC §3.2)")
+    ap.add_argument(
+        "--peer-port",
+        type=int,
+        default=pairing._my_port(),
+        help="listener de peers (plan multi-PC §3.2); por defecto LIENZO_PEER_PORT o 7322, lo mismo que anuncia el emparejado",
+    )
     ap.add_argument("--peer-host", default=None, help="IP de LAN del listener de peers; por defecto se autodetecta")
     ap.add_argument("--peers", action="store_true", help="arranca el listener de peers aunque peers.json este vacio")
     a = ap.parse_args()

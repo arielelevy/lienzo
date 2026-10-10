@@ -266,6 +266,35 @@ def logout(token: str | None) -> None:
         _atomic(WEB_SESSIONS, sessions)
 
 
+def sesiones_web(token_actual: str | None = None) -> list[dict]:
+    """Las sesiones web vigentes, la mas nueva primero (pentest B4). `id` son los primeros 16 caracteres
+    del hash del token: alcanza para revocarla y no sirve para entrar. `actual` marca la del pedido."""
+    actual = _key(token_actual) if token_actual else None
+    with _lock:
+        sessions = _load(WEB_SESSIONS)
+    _prune(sessions)
+    filas = [
+        {"id": k[:16], "actual": k == actual, **{c: v.get(c) for c in ("created", "expires", "ip", "ua")}}
+        for k, v in sessions.items()
+    ]
+    return sorted(filas, key=lambda f: f["created"] or "", reverse=True)
+
+
+def revocar(ident: str) -> bool:
+    """Cierra la sesion web cuyo hash empieza con `ident` (el `id` de sesiones_web). False si no hay una
+    sola que coincida."""
+    if not isinstance(ident, str) or len(ident) != 16 or any(c not in "0123456789abcdef" for c in ident):
+        return False
+    with _lock:
+        sessions = _load(WEB_SESSIONS)
+        claves = [k for k in sessions if k.startswith(ident)]
+        if len(claves) != 1:
+            return False
+        del sessions[claves[0]]
+        _atomic(WEB_SESSIONS, sessions)
+    return True
+
+
 def cookie_header(token: str, secure: bool = True) -> str:
     flags = f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_DAYS * 86400}"
     return flags + ("; Secure" if secure else "")

@@ -91,3 +91,20 @@ todo, con regresión en `tests/test_captura.py` y `tests/test_replica.py`:
 | LOW | El briefing sin filtros compartía un límite: muchos abiertos tapaban lo vigente | un límite por grupo |
 | LOW | `memoria.py` mezclaba códigos de salida y fallaba con campos ausentes | 1 sin memoria, 2 sin lienzo, 3 pedido rechazado; sin tracebacks |
 | LOW | Tres recorridos leían los vínculos de todos los proyectos | filtran por proyecto con un JOIN |
+
+## Tandas 1 y 2 de PENDIENTES
+
+Revisión propia del diff antes del commit. Pruebas nuevas en `tests/test_pendientes_tanda1.py` y
+`tests/test_pendientes_tanda2.py` (12); batería completa 1313 pasan; lint, tipos y build del front.
+Verificado en vivo tras reiniciar el server: `/health` por el túnel sólo dice `ok` y `ts`,
+`/auth/sessions` lista y revoca, `request_id` con punto da 400 y `/links` trae las del espejo.
+
+| Sev. | Observación | Decisión |
+|---|---|---|
+| MEDIUM | `prettier --write` sobre `Setup.tsx` reformateaba líneas ajenas | se descartó; el diff toca sólo lo nuevo |
+| MEDIUM | `/health` con `_is_local()`: hay que confirmar que el túnel no cuente como local | `_is_local` devuelve False con `_via_tunnel`; probado con `CF-Connecting-IP` |
+| LOW | La cuota de adjuntos no cuenta `mensaje.md` ni `.send.txt` que arma el envío | a propósito: los arma el server, no el cliente; la limpieza por antigüedad los libera |
+| LOW | `ruta_wsl` no llama a `wslpath` | WSL monta las unidades en `/mnt/<letra>` por defecto; un `automount.root` distinto queda fuera |
+| LOW | Lista fija de capacidades en `tests/test_health.py` | se sumó `memoria.replica` |
+
+Queda abierto: destino del hook por `TMUX_PANE` en Unix (sin una PC Linux donde probarlo).

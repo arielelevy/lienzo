@@ -120,6 +120,51 @@ export function Setup({ onClose }: Props) {
   );
 }
 
+interface SesionWeb {
+  id: string;
+  actual: boolean;
+  created: string;
+  expires: string;
+  ip: string;
+  ua: string;
+}
+
+/** Las sesiones web abiertas (celular, otra PC por el tunel), con un boton para cerrar cada una. */
+function SesionesWeb() {
+  const [filas, setFilas] = useState<SesionWeb[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const cargar = () =>
+    api
+      .get<SesionWeb[]>("/auth/sessions")
+      .then(setFilas)
+      .catch((e) => setError((e as Error).message));
+  useEffect(() => {
+    cargar();
+  }, []);
+  const revocar = (id: string) =>
+    api
+      .post(`/auth/sessions/${id}/revoke`, {})
+      .then(cargar)
+      .catch((e) => setError((e as Error).message));
+  return (
+    <details className="sesiones-web">
+      <summary className="small dim pointer">sesiones abiertas{filas ? ` (${filas.length})` : ""}</summary>
+      {error && <div className="gate-err">{error}</div>}
+      {filas?.length === 0 && <p className="small dim">Ninguna sesión remota abierta.</p>}
+      {filas?.map((f) => (
+        <div key={f.id} className="row small">
+          <span title={f.ua}>
+            {f.ip} · desde {f.created.slice(0, 16).replace("T", " ")}
+            {f.actual && " (esta)"}
+          </span>
+          <span className="sp" />
+          <button onClick={() => revocar(f.id)}>Cerrar</button>
+        </div>
+      ))}
+    </details>
+  );
+}
+
 /** Volver a mostrar el QR de Authenticator para un acceso ya configurado (solo local). */
 export function TotpQr({ onClose }: { onClose: () => void }) {
   const [data, setData] = useState<{ otpauth: string; totp_secret: string } | null>(null);
@@ -147,6 +192,7 @@ export function TotpQr({ onClose }: { onClose: () => void }) {
             <pre className="pass small">{data.totp_secret}</pre>
           </details>
         )}
+        <SesionesWeb />
         <div className="row">
           <span className="sp" />
           <button onClick={onClose}>Cerrar</button>

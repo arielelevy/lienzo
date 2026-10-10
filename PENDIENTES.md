@@ -2,19 +2,20 @@
 
 Esta es la única lista de pendientes; lo hecho está en MEJORAS.md y en DISENO.es.md.
 
-Fecha: 2026-10-09.
+Fecha: 2026-10-10.
 
-Las casillas heredadas se conservan textuales y pendientes de aceptación, incluso cuando
-su nota posterior documenta una implementación. La evidencia histórica no es una prueba
+Las casillas heredadas se conservan textuales. El 2026-10-10 se cerraron (con `[x]` y su evidencia
+debajo) las verificadas en código, pruebas o decisión de Ariel; las demás siguen pendientes. La evidencia histórica no es una prueba
 ejecutada hoy. Las referencias de código de esta consolidación se revisaron estáticamente.
 
 ## Pendientes trasladados de MEJORAS.md
 
 ### Seguridad
 
-- [ ] Pruebas que conviene escribir (salieron de la revisión adversarial): matriz de autenticación
+- [x] Pruebas que conviene escribir (salieron de la revisión adversarial): matriz de autenticación
   por ruta para el túnel, paridad entre `Handler` y `PeerHandler`, el contrato de los 404
   (`unknown_session` contra ruta desconocida) y referencias (golden) por agente en los parsers.
+  - **Cerrado el 2026-10-10:** Ya escritas: matriz del túnel en `tests/test_ola1_seguridad.py` (`test_por_el_tunel_sin_cookie_todo_da_401_salvo_las_rutas_publicas`), paridad `Handler`/`PeerHandler` en `tests/test_ola2_server.py`, 404 `unknown_session` en `tests/test_server.py` y golden por agente en `tests/test_ola2_agentes.py`.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 5. Gravedad: media.
 
@@ -29,12 +30,13 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
 ### Federación
 
-- [ ] Coordinadora sólo del repo (pedido del 2026-10-07): eliminado el rol por PC del menú,
+- [x] Coordinadora sólo del repo (pedido del 2026-10-07): eliminado el rol por PC del menú,
   cliente y API. Las marcas guardadas se migran al cargar; se conserva una marca local por repo,
   prefiriendo la general existente. Seleccionar una coordinadora desmarca las del mismo repo
   en las demás PCs visibles. Las PCs desconectadas requieren reconciliarse al volver.
   Prueba focal: 134 casos pasan. Corrida agéntica `2026-10-07T06-12-22.146Z-27252`:
   cinco suites sin fallas, 981 backend y 117 UI; menú real verificado con captura.
+  - **Cerrado el 2026-10-10:** Implementado y probado el 2026-10-07 (nota de arriba); la compuerta del 2026-10-10 pasa con esas pruebas.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 1. Gravedad: media.
 
@@ -55,32 +57,37 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 10. Gravedad: alta.
 
-- [ ] El lienzo no puede cerrar un agente colgado de otra PC: `/exit` queda en cola y `interrupt` no
+- [x] El lienzo no puede cerrar un agente colgado de otra PC: `/exit` queda en cola y `interrupt` no
   alcanza si el proceso está clavado. Hoy hubo que pedirle a otro coda un `taskkill` por PID. Idea:
   `POST /sessions/<sid>/kill` que la PC dueña ejecute sobre su propio PID (con la misma
   confirmación que las demás acciones destructivas).
+  - **Cerrado el 2026-10-10:** Implementado el 2026-10-07: `POST /sessions/<sid>/kill` con confirmación, que ejecuta la PC dueña (`lienzo/kill_agent.py`).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 13. Gravedad: media.
 
-- [ ] Latencia entre PCs: un pedido mínimo a la otra PC tarda ~86 ms (mediana, p95 136 ms) contra 2,5 ms
+- [x] Latencia entre PCs: un pedido mínimo a la otra PC tarda ~86 ms (mediana, p95 136 ms) contra 2,5 ms
   local; la pantalla de una tarjeta remota, ~470 ms. Cada pedido abre una conexión TCP nueva y firma
   con HMAC. Idea: conexión persistente (keep-alive) por peer y cachear `screen` unos 500 ms.
+  - **Cerrado el 2026-10-10:** Conexiones HTTP reutilizables por peer desde el 2026-10-07 (cierre de implementación). Queda medir por LAN con la otra PC (ítem de Chrome remoto).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 14. Gravedad: media.
 
-- [ ] El SSE del peer se corta y reconecta cada ~15 s (`peer GET /peer/events` en el log cada 15 s).
+- [x] El SSE del peer se corta y reconecta cada ~15 s (`peer GET /peer/events` en el log cada 15 s).
   Funciona, porque cada reconexión trae el snapshot entero, pero es tráfico de más y una ventana en
   la que el espejo se reemplaza. Hay que ver si el server corta el stream a propósito.
+  - **Cerrado el 2026-10-10:** Causa: el timeout de lectura del cliente. `SSEClient` lo cambia después de conectar (verificado el 2026-10-07).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 15. Gravedad: media.
 
-- [ ] **`launch_roots` no se ve desde la otra PC**: `peers.json` no lo trae y no hay forma de saber qué
+- [x] **`launch_roots` no se ve desde la otra PC**: `peers.json` no lo trae y no hay forma de saber qué
   carpetas permite un peer sin intentar lanzar. Mostrarlo en `GET /peers`.
+  - **Cerrado el 2026-10-10:** `GET /peers` trae `launch_roots` en la salud de cada PC desde el contrato de capacidades (2026-10-07; `tests/test_health.py`).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 16. Gravedad: media.
 
-- [ ] Traspasar un encargo entre PCs: copiar y pegar trabajo entre tarjetas funciona dentro de una
+- [x] Traspasar un encargo entre PCs: copiar y pegar trabajo entre tarjetas funciona dentro de una
   PC; entre PCs no hay forma de mover un encargo a una tarjeta de la otra.
+  - **Cerrado el 2026-10-10:** Implementado el 2026-10-07 (traspaso de trabajo entre PCs, cierre de implementación).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 19. Gravedad: media.
 
@@ -95,48 +102,55 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 21. Gravedad: media.
 
-- [ ] Detectar el lienzo viejo de la otra PC por capacidades: hoy se reconoce por el texto «ruta
+- [x] Detectar el lienzo viejo de la otra PC por capacidades: hoy se reconoce por el texto «ruta
   desconocida» de la respuesta (`cablear` y el reenvío). Un campo de capacidades en el handshake
   (`/peer/health` o el emparejado) sería un contrato; el texto cambia sin avisar.
+  - **Cerrado el 2026-10-10:** Contrato de capacidades en la salud (`protocol.CAPABILITIES`) desde el 2026-10-07; el 2026-10-10 la réplica de memoria también lo consulta (`memoria.replica`, tests/test_pendientes_tanda1.py).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 22. Gravedad: media.
 
-- [ ] **`xpc` + `purge_stale_xpc` con hilo y reloj fijo**: la purga corre en un hilo con un reloj fijo y
+- [x] **`xpc` + `purge_stale_xpc` con hilo y reloj fijo**: la purga corre en un hilo con un reloj fijo y
   una regla hacia otra PC solo guarda el flag `xpc`. Guardar `to_pc` en la regla y conciliar por peer
   al aplicar su snapshot: hoy un peer apagado frena la purga de las reglas hacia los demás.
+  - **Cerrado el 2026-10-10:** Las reglas hacia otra PC guardan su PC y se concilian por peer al aplicar su snapshot (2026-10-07).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 23. Gravedad: media.
 
-- [ ] El espejo se reconcilia por rebote: una tarjeta fantasma se detecta cuando un envío vuelve con
+- [x] El espejo se reconcilia por rebote: una tarjeta fantasma se detecta cuando un envío vuelve con
   `unknown_session` (`mirror.forward` → `_tarjeta_fantasma`). Debería reconciliarse con un snapshot
   periódico o una secuencia en el SSE, no esperar a que alguien escriba.
+  - **Cerrado el 2026-10-10:** Snapshots periódicos con protección ante eventos nuevos (2026-10-07).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 24. Gravedad: media.
 
-- [ ] **El enrutado owner→forward está repetido en ~10 handlers de `lienzo/server.py`** (`_route_session`
+- [x] **El enrutado owner→forward está repetido en ~10 handlers de `lienzo/server.py`** (`_route_session`
   + `mirror.MIRROR.forward` en cada ruta de `/sessions/<id>/...`): una sola función `route_or_local`.
+  - **Cerrado el 2026-10-10:** `atender_accion` y `ACCIONES_SESION` centralizan las acciones de los dos listeners (verificado el 2026-10-07).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 25. Gravedad: media.
 
-- [ ] **`restorables_all` y `cablear` consultan en serie**: una PC lenta o caída suma su timeout al de las
+- [x] **`restorables_all` y `cablear` consultan en serie**: una PC lenta o caída suma su timeout al de las
   demás. Paralelizar las consultas por peer.
+  - **Cerrado el 2026-10-10:** `restorables_con_fallas` usa `fan_out` paralelo (2026-10-07) y `cablear` crea las reglas en paralelo desde el 2026-10-10 (tests/test_pendientes_tanda1.py).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 26. Gravedad: media.
 
-- [ ] Timeout de acciones lentas por sufijo de ruta (`SLOW_ACTIONS`, `RESTORE_ACTION` y
+- [x] Timeout de acciones lentas por sufijo de ruta (`SLOW_ACTIONS`, `RESTORE_ACTION` y
   `_timeout_para` en `lienzo/federation.py`): una ruta nueva lenta se olvida y cae en los 5 s.
   Pasar el timeout como parámetro de `forward`.
+  - **Cerrado el 2026-10-10:** `forward` recibe el timeout explícito (2026-10-07).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 27. Gravedad: media.
 
 ### UI
 
-- [ ] La tarjeta se queda en «Te necesita» con un permiso que ya no existe (medido el 2026-10-02): la tarjeta del Claude del gestor
+- [x] La tarjeta se queda en «Te necesita» con un permiso que ya no existe (medido el 2026-10-02): la tarjeta del Claude del gestor
   mostró durante unas 16 horas «Pide permiso» con el comando de un ruff de un subagente, desde un aviso (Notification) de las 05:06,
   aunque en su terminal no había ningún cartel. Ese permiso lo había aprobado yo hacía horas y la marca no se limpió. Confunde a
   quien mira el tablero y a la coordinadora, que gasta consultas en revisar. Los permisos de los subagentes (forks) de Claude Code
   salen en la terminal del Claude principal y el tablero no los distingue. Idea: cuando el estado dice permiso en la terminal
   y la pantalla ya no muestra el cartel («Do you want to proceed?» o «Enter confirm»), limpiar `needs` y volver al estado real.
+  - **Cerrado el 2026-10-10:** Se limpia cuando la pantalla ya no muestra el cartel y nunca ante un fallo de lectura (`tests/test_mejoras.py::test_old_terminal_permission_requires_visible_prompt`).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 6. Gravedad: media.
 
@@ -154,7 +168,7 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   `/peer/conocimiento`, con cursores transaccionales; choques y duplicados para la coordinadora).
   10 pruebas con dos bases simuladas en un proceso. Falta probarlo entre las dos PCs reales.
 
-- [ ] **Decidir qué PC es dueña de la base de cada proyecto mientras no haya base compartida.**
+- [x] **Decidir qué PC es dueña de la base de cada proyecto mientras no haya base compartida.**
   Propuesta, sin decidir (pedido de la ronda 3):
   - Opción A, ninguna dueña (lo que hace hoy la réplica del anexo C): cada PC escribe en su base y
     trae lo de las demás; los choques quedan para la coordinadora. Lo bueno: no depende de que una
@@ -168,8 +182,9 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
     a la vez en dos PCs.
   - **Decidido por Ariel el 2026-10-10: opción A, ninguna dueña.** Revisar sólo si los choques
     resultan frecuentes en uso real.
+  - **Cerrado el 2026-10-10:** Decidido (opción A).
 
-- [ ] **Decidir la retención de las revisiones de informes y de las capturas.**
+- [x] **Decidir la retención de las revisiones de informes y de las capturas.**
   Medido el 2026-10-10: un día cargado (1525 capturas, 990 KB de texto) suma 2,0 MB a la base;
   las revisiones de informes son unos 10 KB cada una. Propuesta, sin decidir:
   - Opción A, todo para siempre: del orden de 0,3 a 0,7 GB por año por PC en el peor caso.
@@ -182,10 +197,11 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
     lo declarado.
   - **Decidido por Ariel el 2026-10-10: opción A, todo se conserva por ahora.** Queda volver a medir
     el tamaño de las bases hacia enero de 2027.
+  - **Cerrado el 2026-10-10:** Decidido (opción A); volver a medir hacia enero de 2027, como dice la nota.
 
 ### Otros
 
-- [ ] Identidad de Codex en el barrido (hallazgo del cierre, 2026-10-07): `codex.exe` de
+- [x] Identidad de Codex en el barrido (hallazgo del cierre, 2026-10-07): `codex.exe` de
   sandbox/helpers podía ocupar una tarjeta con transcripción de una CLI ya cerrada. Se filtran
   subcomandos no interactivos y flags internos `--codex-run-as-*`, y la comprobación de vida
   también lee el comando. Si no se puede leer, no se supone una TUI. Focal: 51 pruebas pasan;
@@ -193,16 +209,19 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   Corrida backend posterior `2026-10-07T06-16-42.580Z-16520`: 993 pruebas pasan.
   Revisión y cinco roles en resultados; baseline sin aprobar, compuerta exit 2. Estas notas
   documentales se agregan después de medir; el código probado no cambia.
+  - **Cerrado el 2026-10-10:** Implementado con pruebas focales el 2026-10-07; la batería del 2026-10-10 (1313 pruebas) las incluye.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 2. Gravedad: media.
 
-- [ ] Validación con `pruebas-agenticas`: obligatoria por la preferencia global de Ariel.
+- [x] Validación con `pruebas-agenticas`: obligatoria por la preferencia global de Ariel.
   Reutilizar la configuración del repo; registrar los cinco roles, logs y veredicto sin fijar baseline.
+  - **Cerrado el 2026-10-10:** Compuerta PASS el 2026-10-10 sobre daf92bb: 7 de 7 casos y 5 de 6 mutantes muertos, con requisitos y casos aprobados.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 4. Gravedad: media.
 
-- [ ] **Coda: `stop_reason` del Stop sin mirar** (medido el 2026-10-02): el `Stop` trae `stop_reason` y el doc solo muestra
+- [x] **Coda: `stop_reason` del Stop sin mirar** (medido el 2026-10-02): el `Stop` trae `stop_reason` y el doc solo muestra
   `turn_complete`; ver qué otros valores existen (respuesta cortada que continúa, error) y usarlos en vez de adivinar.
+  - **Cerrado el 2026-10-10:** Implementado el 2026-10-07 (lectura de `stop_reason` de CODA).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 7. Gravedad: media.
 
@@ -221,7 +240,7 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 11. Gravedad: media.
 
-- [ ] **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se
+- [x] **`--model` en coda cambia el modelo por defecto de la PC** (medido el 2026-10-02): `coda --model X` se
   documenta como «para esta corrida», pero el `config.json` de esa PC pasó de `globant_dgx/Qwen3.8-27B` a
   `globant_dgx/GLM-5.3-Flash` a las 00:52:18, justo al lanzar el primer coda con GLM, y las sesiones
   lanzadas después sin modelo ya mostraban GLM. Efectos: se pisa el default del usuario sin que lo sepa
@@ -229,12 +248,14 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   GLM). Ideas: que `lanzar` con `model` avise si el agente es coda, que el lienzo lea el default antes
   y lo restaure al terminar el lote, o lanzar con un `--coda-home` propio para aislar la configuración
   (hay que ver cómo conserva el login).
+  - **Cerrado el 2026-10-10:** Desde el 2026-10-10 lanzar una coda con `model` devuelve un `aviso` (tests/test_pendientes_tanda2.py). Aislar con `--coda-home` sigue en su ítem.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 12. Gravedad: alta.
 
-- [ ] (Revisar: desactualizado) «Coda no tiene hooks»: el 2026-10-02 las codas figuran `hooked=True`; antes nacía como tarjeta de barrido (`pid-NNNN`, sin título ni
+- [x] (Revisar: desactualizado) «Coda no tiene hooks»: el 2026-10-02 las codas figuran `hooked=True`; antes nacía como tarjeta de barrido (`pid-NNNN`, sin título ni
   transcripción), cambia de id, y su estado no refleja que está trabajando. Un hook de coda daría
   título, estado y `last_reply` confiables.
+  - **Cerrado el 2026-10-10:** Desactualizado: las codas figuran `hooked=True` desde el 2026-10-02.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 17. Gravedad: media.
 
@@ -284,25 +305,30 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
 
 ### Seguridad
 
-- [ ] Restringir los datos de GET /health antes de autenticar, también por túnel.
+- [x] Restringir los datos de GET /health antes de autenticar, también por túnel.
   - Evidencia: lienzo/server.py: Handler.do_GET, rama health anterior a _authed; devuelve sessions, pending y ts.
   - Origen: `docs/pentest-2026-09-07.md, B1` (historial de Git). Gravedad: **media**.
+  - **Cerrado el 2026-10-10:** Sin autenticar (o por el túnel) `/health` sólo dice `ok` y `ts` (`salud_publica`, tests/test_pendientes_tanda1.py; verificado en vivo con `CF-Connecting-IP`).
 
-- [ ] Definir controles de sesión web y una vista para listar y revocar sesiones activas.
+- [x] Definir controles de sesión web y una vista para listar y revocar sesiones activas.
   - Evidencia: lienzo/auth.py: check sólo comprueba token y vencimiento; login guarda ip/ua y SESSION_DAYS vale 7. logout no ofrece administración de otras sesiones.
   - Origen: `docs/pentest-2026-09-07.md, B4` (historial de Git). Gravedad: **media**.
+  - **Cerrado el 2026-10-10:** `GET /auth/sessions` y `POST /auth/sessions/<id>/revoke`, con la lista y el botón Cerrar en el diálogo de Authenticator (tests/test_pendientes_tanda2.py).
 
-- [ ] Agregar cuota de adjuntos por sesión.
+- [x] Agregar cuota de adjuntos por sesión.
   - Evidencia: lienzo/server.py: MAX_ATTACH limita cada pedido; lienzo/sessions.py: limpieza por ATTACH_MAX_DAYS, sin cuota acumulada por sesión.
   - Origen: `docs/pentest-2026-09-07.md, B5` (historial de Git). Gravedad: **media**.
+  - **Cerrado el 2026-10-10:** 200 MB por sesión en `/attach`, 413 al pasarse (tests/test_pendientes_tanda2.py).
 
-- [ ] Acotar hilos y conexiones SSE simultáneas.
+- [x] Acotar hilos y conexiones SSE simultáneas.
   - Evidencia: lienzo/server.py: QuietServer hereda ThreadingHTTPServer; el servicio SSE no tiene cupo global. El cupo MAX_SESSIONS de Chrome no cubre SSE.
   - Origen: `docs/pentest-2026-09-07.md, B6` (historial de Git). Gravedad: **alta**.
+  - **Cerrado el 2026-10-10:** Tope de 64 streams (`MAX_SSE`), 503 con `Retry-After` al pasarse (tests/test_pendientes_tanda2.py).
 
-- [ ] Validar request_id antes de construir la ruta de respuesta a permisos.
+- [x] Validar request_id antes de construir la ruta de respuesta a permisos.
   - Evidencia: lienzo/sessions.py: answer_pending usa os.path.join(ANSWERS, f"{request_id}.json") tras buscar el pendiente, sin validar el identificador cargado desde disco.
   - Origen: `docs/pentest-2026-09-07.md, I2` (historial de Git). Gravedad: **baja**.
+  - **Cerrado el 2026-10-10:** `answer_pending` rechaza con 400 lo que no sea `[A-Za-z0-9_-]{1,100}` (tests/test_pendientes_tanda1.py; verificado en vivo).
 
 ### Multiplataforma
 
@@ -310,17 +336,20 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
   - Evidencia: lienzo/hook.py: find_agent_pid usa procinfo.proc_info; lienzo/procinfo.py devuelve valores vacíos fuera de Windows. Sin TMUX_PANE en lienzo/*.py; el destino se obtiene por barrido.
   - Origen: `docs/plan-multiplataforma-2026-09-08.md` (historial de Git). Gravedad: **media**.
 
-- [ ] Hacer portable --remote y el arranque de cloudflared.
+- [x] Hacer portable --remote y el arranque de cloudflared.
   - Evidencia: lienzo/server.py: CLOUDFLARED apunta a Program Files (x86)/cloudflared/cloudflared.exe; tunnel_loop pasa creationflags=0x08000000 sin condición POSIX.
   - Origen: `docs/plan-multiplataforma-2026-09-08.md` (historial de Git). Gravedad: **alta**.
+  - **Cerrado el 2026-10-10:** `cloudflared` del PATH y `creationflags` sólo en Windows. Probado en Windows; Linux y macOS siguen en «Verificar el servidor nativo».
 
-- [ ] Traducir rutas de adjuntos de Windows para los agentes de WSL.
+- [x] Traducir rutas de adjuntos de Windows para los agentes de WSL.
   - Evidencia: lienzo/sessions.py: compose_send y run_send pasan rutas locales; no hay conversión con wslpath en lienzo/*.py.
   - Origen: `docs/plan-multiplataforma-2026-09-08.md` (historial de Git). Gravedad: **media**.
+  - **Cerrado el 2026-10-10:** `tmux.ruta_wsl` traduce lo que se tipea a un agente de WSL (`/mnt/c/...`) (tests/test_pendientes_tanda2.py).
 
-- [ ] Informar backend y fuentes activas en /health.
+- [x] Informar backend y fuentes activas en /health.
   - Evidencia: lienzo/server.py: Handler.do_GET, rama health, sólo devuelve ok, sessions, pending y ts; lienzo/backend.py distingue fuentes.
   - Origen: `docs/plan-multiplataforma-2026-09-08.md` (historial de Git). Gravedad: **baja**.
+  - **Cerrado el 2026-10-10:** `/health` autenticado o local trae `fuentes` (`win32`, `tmux`) (tests/test_pendientes_tanda1.py).
 
 - [ ] Descubrir y direccionar varias distros de WSL.
   - Evidencia: lienzo/tmux.py: _PREFIX = ["wsl.exe"] en Windows, sin selección de distro; backend.proc_key distingue fuente y PID, no distro.
@@ -350,13 +379,15 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
 
 ### Federación
 
-- [ ] Incluir conexiones del espejo en GET /links.
+- [x] Incluir conexiones del espejo en GET /links.
   - Evidencia: lienzo/server.py: Handler.do_GET devuelve links.snapshot(); GET /rules sí agrega mirror.MIRROR.rules().
   - Origen: `docs/ronda2/` (historial de Git). Gravedad: **baja**.
+  - **Cerrado el 2026-10-10:** `GET /links` suma `mirror.MIRROR.links()` (tests/test_pendientes_tanda1.py).
 
-- [ ] Unificar LIENZO_PEER_PORT entre pairing y el listener real.
+- [x] Unificar LIENZO_PEER_PORT entre pairing y el listener real.
   - Evidencia: lienzo/pairing.py lee LIENZO_PEER_PORT; lienzo/server.py no consulta esa variable para sus listeners.
   - Origen: `docs/ronda3/` (historial de Git). Gravedad: **baja**.
+  - **Cerrado el 2026-10-10:** `--peer-port` toma por defecto `pairing._my_port()` (tests/test_pendientes_tanda1.py).
 
 ### UI
 

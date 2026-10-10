@@ -29,6 +29,15 @@ except ImportError:  # con lienzo/ en sys.path (server.py, las pruebas)
 # (tmux nativo). Asi el mismo modulo sirve de "fuente tmux nativa" y de "fuente wsl-tmux".
 _PREFIX: list[str] = ["wsl.exe"] if sys.platform == "win32" else []
 _VIA_WSL = bool(_PREFIX)
+VIA_WSL = _VIA_WSL
+
+
+def ruta_wsl(path: str) -> str:
+    r"""`C:\x\y` como la ve un agente de WSL (`/mnt/c/x/y`), sin llamar a wslpath: los adjuntos viven en
+    el disco de Windows, que WSL monta en /mnt/<letra>. Una ruta que no es de unidad queda igual."""
+    if len(path) > 2 and path[1] == ":" and path[0].isalpha() and path[2] in "\\/":
+        return f"/mnt/{path[0].lower()}/" + path[3:].replace("\\", "/")
+    return path
 
 
 def _tmux(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:

@@ -76,6 +76,12 @@ def sweep() -> list[dict]:
     return found
 
 
+def fuentes_activas() -> list[str]:
+    """Las fuentes que el barrido mira en esta PC: `win32` (procesos de Windows) y `tmux` (panes, nativo o
+    por WSL). La salud las informa para saber de entrada por que una sesion no aparece."""
+    return (["win32"] if _win is not None else []) + (["tmux"] if HAS_TMUX else [])
+
+
 def _tmux_alive(pid) -> bool:
     """Vivo Y sigue siendo un agente (no un pid reciclado): se re-mira la linea de comando."""
     if not pid or not _t.pid_alive(int(pid)):

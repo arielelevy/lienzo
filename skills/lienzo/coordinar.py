@@ -396,6 +396,7 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
     r = r if isinstance(r, list) else (r or {}).get("rules", []) or []
     ya = {x.get("from") for x in r if x.get("to") == YO and x.get("kind") == "on_stop"}
     out = {"creadas": [], "ya_estaban": [], "fallaron": []}
+    pendientes = []
     for s in sesiones():
         sid = s["session_id"]
         if sid == YO or s.get("coordinator") or (pc and s.get("pc") != pc) or (solo_vivas and not s.get("alive")):
@@ -410,21 +411,32 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
             texto
             or f"[regla automática] Terminó «{nombre}» ({sid[:8]}). Leé su `last_reply` en GET /sessions (la tarjeta {sid}) y decidí el próximo paso."
         )
-        code, res = pedir(
+        pendientes.append((sid, msg))
+
+    def crear(par):
+        sid, msg = par
+        return sid, pedir(
             "POST",
             "/rules",
             {"kind": "on_stop", "from": sid, "to": YO, "text": msg, "repeat": True, "max_fires": max_fires},
         )
-        if code == 200:
-            out["creadas"].append(sid)
-        else:
-            out["fallaron"].append(
-                {
-                    "sid": sid,
-                    "code": code,
-                    "error": (res if isinstance(res, str) else (res or {}).get("error", ""))[:140],
-                }
-            )
+
+    # en paralelo: una regla de una tarjeta de otra PC lenta o caida esperaba su timeout antes de seguir
+    # con las demas (PENDIENTES, «cablear consulta en serie»)
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for sid, (code, res) in pool.map(crear, pendientes):
+            if code == 200:
+                out["creadas"].append(sid)
+            else:
+                out["fallaron"].append(
+                    {
+                        "sid": sid,
+                        "code": code,
+                        "error": (res if isinstance(res, str) else (res or {}).get("error", ""))[:140],
+                    }
+                )
     return out
 
 

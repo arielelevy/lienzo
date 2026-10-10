@@ -10,6 +10,7 @@ import datetime as dt
 import glob
 import json
 import os
+import re
 import secrets
 import subprocess
 import threading
@@ -1754,7 +1755,13 @@ def public_pending() -> list[dict]:
         return [{k: v for k, v in d.items() if k != "nonce"} for d in pending.values()]
 
 
+REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
+
+
 def answer_pending(request_id: str, decision: str, reason: str = "", answers: object = None) -> tuple[int, dict]:
+    # el id arma una ruta en ANSWERS: solo letras, digitos, guion y guion bajo (pentest 2026-09-07, I2)
+    if not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
+        return 400, {"ok": False, "error": "request_id invalido"}
     with lock:
         d = pending.get(request_id)
     if d is None:
@@ -2104,6 +2111,20 @@ def liveness_loop(sweep_every: float) -> None:
 # --- envio ---------------------------------------------------------------------------
 
 
+# lo que una sesion puede juntar en ADJUNTOS/<sid>/ por /attach (pentest B5); la limpieza por antiguedad
+# (ATTACH_MAX_DAYS) lo libera
+ADJUNTOS_CUOTA = 200 * 2**20
+
+
+def adjuntos_bytes(sid: str) -> int:
+    """Bytes que ya ocupan los adjuntos de `sid`."""
+    try:
+        with os.scandir(os.path.join(ADJUNTOS, os.path.basename(sid))) as it:
+            return sum(e.stat().st_size for e in it if e.is_file())
+    except FileNotFoundError:
+        return 0
+
+
 def save_attachment(sid: str, name: str, data: bytes) -> str:
     safe = "".join(c for c in os.path.basename(name) if c.isalnum() or c in "._- ") or "adjunto"
     d = os.path.join(ADJUNTOS, sid)
@@ -2156,7 +2177,9 @@ def _under_adjuntos(path: str) -> bool:
         return False
 
 
-def compose_send(sid: str, text: str, attachments: list[str], agent: str | None = None) -> tuple[str, str, list[str]]:
+def compose_send(
+    sid: str, text: str, attachments: list[str], agent: str | None = None, wsl: bool = False
+) -> tuple[str, str, list[str]]:
     """(lo que se tipea, lo que escribio el usuario, los adjuntos). Un mensaje largo o de varias
     lineas no se tipea: se guarda como .md y viaja como 'Leé el archivo adjunto...' (§6.5). Para un
     agente de SHELL_READERS el aviso le pide leerlo con el shell y no con su herramienta `read`."""
@@ -2167,7 +2190,8 @@ def compose_send(sid: str, text: str, attachments: list[str], agent: str | None 
         attachments = [save_attachment(sid, "mensaje.md", text.encode("utf-8"))] + list(attachments)
         text = ATTACH_WRAPPER_SHELL if agent in SHELL_READERS else ATTACH_WRAPPER
     parts = [strip_control(text).strip()] if text.strip() else []  # A4: sin teclas de control
-    parts += [f"Adjunto: {a}" for a in attachments]
+    # un agente de WSL lee /mnt/c/..., no C:\...: la ruta se traduce solo en lo que se tipea
+    parts += [f"Adjunto: {tmux.ruta_wsl(a) if wsl else a}" for a in attachments]
     return " ".join(parts), orig, attachments
 
 
@@ -2474,7 +2498,9 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     if frenado := dialogo_abierto(s):
         return frenado
     attachments_pedidos = list(attachments or [])
-    final, orig, attachments = compose_send(sid, text, attachments, agent=s.get("agent"))
+    final, orig, attachments = compose_send(
+        sid, text, attachments, agent=s.get("agent"), wsl=backend.is_tmux(s) and tmux.VIA_WSL
+    )
     if not final:
         return 400, {"ok": False, "error": "texto vacio"}
     with lock:
