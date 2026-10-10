@@ -803,6 +803,16 @@ def evidencia(pid, nombre, clase, contenido, texto=None):
     return _conocimiento("POST", f"/{pid}/evidencia", cuerpo)
 
 
+def replicar(pc=None):
+    """Trae ya de la PC `pc` (o de todas las vivas) lo nuevo de la memoria; normalmente corre sola."""
+    return _conocimiento("POST", "/replicar", {"pc": pc})
+
+
+def estado_replica(pid):
+    """Cursores por PC, choques (nodos cambiados en dos PCs a la vez) y duplicados sugeridos."""
+    return _conocimiento("GET", f"/{pid}/replica")
+
+
 def respaldar(pid):
     """Respaldo de la base (API de backup de SQLite) y sus artefactos en ~/.lienzo/respaldos/."""
     return _conocimiento("POST", f"/{pid}/respaldo", {})

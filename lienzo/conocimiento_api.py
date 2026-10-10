@@ -30,6 +30,8 @@ ruta ya sin el primer tramo `conocimiento`.
     POST /conocimiento/<p>/informes/<id>/reincorporar {por} vuelve a validar un bloque pendiente
     POST /conocimiento/<p>/evidencia                  {nombre, clase, texto?, contenido_base64 | contenido_texto, autor?}
     POST /conocimiento/<p>/respaldo                   respaldo con la API de backup y los artefactos
+    POST /conocimiento/replicar                       {pc?} trae ya lo nuevo de un par (o de todos los vivos)
+    GET  /conocimiento/<p>/replica                    cursores, choques, duplicados y cambios que esperan
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ import veredictos_api
 from conocimiento import Rechazo
 
 
-def _tarjeta(d: dict) -> dict:
+def _tarjeta(d: dict, pid: str | None = None) -> dict:
     """La tarjeta real de `session_id`, local o espejada de otra PC. Un id que el lienzo no conoce es
     404: antes se creaba un nodo sesion para un id inventado y el encargo quedaba `enviado` esperando
     observaciones que nunca llegarian (code review 2026-10-08)."""
@@ -53,14 +55,26 @@ def _tarjeta(d: dict) -> dict:
     with ses.lock:
         s = ses.sessions.get(sid)
     if s is None:
-        if ses.find_session(sid) is not None:
-            # la tarjeta es de otra PC: la base es por PC hasta la etapa 5 (base compartida) y las
-            # observaciones (cierre, permisos, errores) las haria el server de alla, que no tiene el proyecto
+        remota = ses.find_session(sid)
+        if remota is not None:
+            # la tarjeta es de otra PC: las observaciones (cierre, permisos, errores) las hace el server
+            # de alla. Con la replica andando con esa PC en este proyecto (anexo C), el nodo sesion y el
+            # vinculo llegan alla y sus observaciones vuelven; sin replica, se vincula desde la PC duena
+            if pid and remota.get("pc") and _replica_con(pid, remota["pc"]):
+                return {k2: remota.get(k2) for k2 in ("session_id", "agent", "model", "pc", "cwd")}
             raise Rechazo(
-                f"la sesion {sid} es de otra PC: hasta la base compartida, el encargo se vincula desde la PC duena", 409
+                f"la sesion {sid} es de otra PC y la memoria todavia no se replico con ella: vinculala desde la"
+                " PC duena o replica primero (POST /conocimiento/replicar)",
+                409,
             )
         raise Rechazo(f"el lienzo no conoce la sesion {sid}", 404)
     return {k2: s.get(k2) for k2 in ("session_id", "agent", "model", "pc", "cwd")}
+
+
+def _replica_con(pid: str, pc: str) -> bool:
+    import replica
+
+    return any(c["peer"] == pc for c in replica.estado(pid)["cursores"])
 
 
 def _q(query: dict, nombre: str, defecto=None):
@@ -117,6 +131,18 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             url = identity.origin_url(cwd)
             remote = identity._normalize_remote(url) if url else None
             return 200, {"proyecto": k.proyecto_de_carpeta(cwd, pc, remote), "carpeta": k.carpeta_de(cwd)}
+    if partes == ["replicar"] and metodo == "POST":
+        import mirror
+        import replica
+
+        try:
+            if isinstance(d.get("pc"), str) and d["pc"]:
+                return 200, [replica.sincronizar(d["pc"], mirror.MIRROR.forward)]
+            return 200, replica.sincronizar_todos(mirror.MIRROR)
+        except replica.SinSoporte as e:
+            raise Rechazo(f"{e} tiene un lienzo sin replica de la memoria", 409) from e
+        except OSError as e:
+            raise Rechazo(f"replica: {e}", 503) from e
     if partes == ["resolver"] and metodo == "GET":
         return 200, {"proyecto": k.resolver_proyecto(_q(query, "repo_key"), _q(query, "cwd"), _q(query, "pc"))}
     if not partes:
@@ -154,7 +180,7 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
         )
     if len(resto) == 3 and resto[0] == "encargos" and metodo == "POST":
         if resto[2] == "enviado":
-            return 200, k.encargo_enviado(pid, resto[1], _tarjeta(d))
+            return 200, k.encargo_enviado(pid, resto[1], _tarjeta(d, pid))
         if resto[2] == "estado":
             return 200, k.cambiar_estado(
                 pid,
@@ -264,6 +290,10 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             autor=d.get("autor") or "coordinadora",
             origen=d.get("origen"),
         )
+    if resto == ["replica"] and metodo == "GET":
+        import replica
+
+        return 200, replica.estado(pid)
     if resto == ["respaldo"] and metodo == "POST":
         return 200, k.respaldar(pid)
     if resto == ["cuerpo"] and metodo == "GET":

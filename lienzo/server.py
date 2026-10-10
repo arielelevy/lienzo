@@ -48,6 +48,7 @@ import pantalla_coda
 import recientes
 import red
 import remote_run
+import replica
 import restore
 import rules as rl
 import secretos
@@ -2021,6 +2022,10 @@ class PeerHandler(JsonHandler):
                 log(f"peer POST /peer/{'/'.join(rest)} de {pc_id}: {code} {res.get('error')}")
             return self._json(code, res)
         log(f"peer {method} /peer/{'/'.join(rest)}" + (f" de {pc_id}" if pc_id else ""))
+        if method == "POST" and rest == ["conocimiento"]:
+            # replica de la memoria por proyecto (replica.py, anexo C de v5): solo lectura de la base de aca
+            code, res = replica.atender(self._body_json(raw))
+            return self._json(code, res)
         if method == "GET" and rest == ["hello"]:
             info = identity.pc_info()
             return self._json(200, {"pc_id": info["pc_id"], "name": info["name"]})
@@ -2675,6 +2680,8 @@ def main() -> int:
     xfer.arrancar()  # los trabajos de copia que estaban andando antes del reinicio siguen solos
     # siempre, no solo con peers guardados: uno emparejado despues tambien puede quedar pendiente
     threading.Thread(target=config_peers_loop, daemon=True).start()
+    # la memoria por proyecto se replica con los pares vivos (anexo C de v5)
+    threading.Thread(target=replica.bucle, args=(mirror.MIRROR,), name="replica", daemon=True).start()
     threading.Thread(target=vigia_loop, name="vigia", daemon=True).start()
     if modo_pares:
         stop_beacon = threading.Event()

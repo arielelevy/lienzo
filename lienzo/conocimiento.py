@@ -31,7 +31,7 @@ import state
 import transcripts
 from atomico import atomic_write
 
-VERSION_ESQUEMA = 2  # 2: captura automatica (tabla captura) e indice de prosa (cuerpos de encargos e informes)
+VERSION_ESQUEMA = 3  # 2: captura e indice de prosa; 3: origen de cada cambio y tablas de replica (anexo C)
 LIMITE_BUSQUEDA = 30
 LIMITE_PAGINA = 100
 SALTOS_MAX = 2
@@ -207,8 +207,12 @@ CREATE TABLE IF NOT EXISTS cambio (
   autor TEXT NOT NULL,
   motivo TEXT NOT NULL,
   origen TEXT NOT NULL CHECK (json_valid(origen)),
-  fecha TEXT NOT NULL
+  fecha TEXT NOT NULL,
+  pc TEXT,
+  seq_origen INTEGER
 );
+-- version 3 (anexo C): pc es la PC donde se origino el cambio y seq_origen su seq alla; el par
+-- identifica el cambio en todas las PCs. Sin comentarios dentro del CREATE TABLE: rompen ALTER TABLE
 CREATE INDEX IF NOT EXISTS cambio_proyecto ON cambio(proyecto, seq);
 CREATE VIRTUAL TABLE IF NOT EXISTS nodo_fts USING fts5(
   texto, datos, content='nodo', content_rowid='rowid',
@@ -264,6 +268,45 @@ END;
 CREATE VIRTUAL TABLE IF NOT EXISTS prosa_fts USING fts5(
   nodo UNINDEXED, texto, tokenize='unicode61 remove_diacritics 2'
 );
+-- version 3: replica entre PCs (anexo C de v5). Cursores por par, choques y duplicados para la
+-- coordinadora, y cambios que esperan a otro (un vinculo cuyo nodo todavia no llego)
+CREATE TABLE IF NOT EXISTS replica_cursor (
+  peer TEXT NOT NULL,
+  proyecto_remoto TEXT NOT NULL,
+  clase TEXT NOT NULL CHECK (clase IN ('cambio','captura')),
+  ultimo INTEGER NOT NULL DEFAULT 0,
+  fecha TEXT NOT NULL,
+  PRIMARY KEY (peer, proyecto_remoto, clase)
+);
+CREATE TABLE IF NOT EXISTS replica_conflicto (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nodo TEXT NOT NULL,
+  pc TEXT NOT NULL,
+  seq_origen INTEGER NOT NULL,
+  motivo TEXT NOT NULL,
+  fecha TEXT NOT NULL,
+  UNIQUE (pc, seq_origen)
+);
+CREATE TABLE IF NOT EXISTS replica_duplicado (
+  nodo_local TEXT NOT NULL,
+  nodo_remoto TEXT NOT NULL,
+  clave TEXT NOT NULL,
+  fecha TEXT NOT NULL,
+  PRIMARY KEY (nodo_local, nodo_remoto)
+);
+CREATE TABLE IF NOT EXISTS replica_pendiente (
+  pc TEXT NOT NULL,
+  seq_origen INTEGER NOT NULL,
+  cambio TEXT NOT NULL CHECK (json_valid(cambio)),
+  error TEXT NOT NULL,
+  fecha TEXT NOT NULL,
+  PRIMARY KEY (pc, seq_origen)
+);
+"""
+# despues de que exista la columna (en una base vieja, despues del ALTER)
+ESQUEMA_3 = """
+CREATE UNIQUE INDEX IF NOT EXISTS cambio_origen ON cambio(pc, seq_origen);
+CREATE INDEX IF NOT EXISTS cambio_nodo ON cambio(nodo_id, fecha);
 """
 
 _lock = threading.RLock()  # el indice y las carpetas; la base tiene sus propias transacciones
@@ -606,6 +649,14 @@ class _Conexion:
             if version == 1:
                 # de 1 a 2: los cuerpos ya guardados entran al indice de prosa
                 _rellenar_prosa(self.con, os.path.dirname(self.path))
+            if 1 <= version < 3:
+                # de 2 a 3: cada cambio viejo es de esta PC, con su seq como seq de origen
+                columnas = {r[1] for r in self.con.execute("PRAGMA table_info(cambio)")}
+                for col, tipo in (("pc", "TEXT"), ("seq_origen", "INTEGER")):
+                    if col not in columnas:
+                        self.con.execute(f"ALTER TABLE cambio ADD COLUMN {col} {tipo}")
+                self.con.execute("UPDATE cambio SET pc = ?, seq_origen = seq WHERE pc IS NULL", (identity.pc_id(),))
+            self.con.executescript(ESQUEMA_3)
             self.con.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
             self.con.commit()
         return self.con
@@ -671,9 +722,9 @@ def _nodo(con: sqlite3.Connection, pid: str, nid: str) -> dict:
 def _cambio(
     con, pid, accion, autor, motivo, origen, nuevo, anterior=None, nodo_id=None, de=None, relacion=None, a=None
 ):
-    con.execute(
-        "INSERT INTO cambio (proyecto, nodo_id, de, relacion, a, accion, anterior, nuevo, autor, motivo, origen, fecha)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    cur = con.execute(
+        "INSERT INTO cambio (proyecto, nodo_id, de, relacion, a, accion, anterior, nuevo, autor, motivo, origen, fecha, pc)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             pid,
             nodo_id,
@@ -687,8 +738,17 @@ def _cambio(
             motivo or "",
             _json(origen or {}),
             ahora(),
+            identity.pc_id(),
         ),
     )
+    # un cambio de esta PC: su seq de origen es su seq (la replica lo trae a las demas por ese par)
+    con.execute("UPDATE cambio SET seq_origen = seq WHERE seq = ?", (cur.lastrowid,))
+
+
+def id_de_sesion(sid: str) -> str:
+    """El id del nodo `sesion` sale del session_id, igual en todas las PCs: si la PC del coordinador y la
+    de la sesion la registran las dos, la replica las junta en un nodo (anexo C) en vez de duplicarla."""
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"lienzo:sesion:{sid}").hex
 
 
 def declarar_nodo(pid: str, tipo, texto, datos, *, autor: str, origen=None, ronda=None, motivo: str = "") -> dict:
@@ -715,9 +775,10 @@ def crear_nodo(
     clave_ingesta: str | None = None,
     motivo: str = "",
     con: sqlite3.Connection | None = None,
+    nid: str | None = None,
 ) -> dict:
     """Un nodo nuevo con el estado inicial de su tipo. Con `clave_ingesta` es idempotente: si ya
-    existe, devuelve el existente (`creado: False`)."""
+    existe, devuelve el existente (`creado: False`). `nid` fija el id (sesiones: `id_de_sesion`)."""
     if not isinstance(tipo, str) or tipo not in TIPOS:
         raise Rechazo(f"tipo desconocido: {tipo}")
     texto = _texto(texto, "texto")
@@ -737,6 +798,7 @@ def crear_nodo(
                 clave_ingesta=clave_ingesta,
                 motivo=motivo,
                 con=c2,
+                nid=nid,
             )
     if clave_ingesta:
         r = con.execute("SELECT * FROM nodo WHERE clave_ingesta = ?", (clave_ingesta,)).fetchone()
@@ -748,7 +810,7 @@ def crear_nodo(
             raise Rechazo("ronda no es una ronda")
     estado = ESTADO_INICIAL[tipo]
     fecha = ahora()
-    nid = nuevo_id()
+    nid = nid or nuevo_id()
     con.execute(
         "INSERT INTO nodo (id, proyecto, tipo, texto, datos, estado, estado_fecha, estado_por, autor, origen, ronda,"
         " fecha, clave_ingesta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1067,6 +1129,7 @@ def _sesion(con, pid, sid, *, agente=None, modelo=None, pc=None, cwd=None, autor
         clave_ingesta=f"sesion:{sid}",
         motivo="sesion observada",
         con=con,
+        nid=id_de_sesion(sid),
     )
     if not n["creado"] and any(v is not None and n["datos"].get(k) != v for k, v in datos.items()):
         # cada mutacion deja su cambio (v5 §8.4): el modelo o el cwd de la sesion cambiaron

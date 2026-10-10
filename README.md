@@ -290,8 +290,11 @@ posteriores a su vigencia y muestra apoyos rechazados y dependencias.
 Las funciones de `skills/lienzo/coordinar.py` incluyen `briefing`, `preguntar`, `vista`,
 `veredicto`, `cerrar_ronda`, `pendientes_memoria`, `recurrencia`, `cuestionar` y `lecciones`.
 `preparar_encargo` agrega el briefing actual y la plantilla de conocimiento al texto de un frente.
-La memoria reside en `~/.lienzo/proyectos/<proyecto>/` de la PC que registra los encargos.
-Las transcripciones y bases de conocimiento no se suben a Git ni se replican por hacer pull.
+La memoria reside en `~/.lienzo/proyectos/<proyecto>/` de cada PC y se replica entre las PCs
+emparejadas por el canal firmado (cada 120 s, o `POST /conocimiento/replicar`): cada PC trae de las
+demás los cambios nacidos allá, los proyectos se unen por remote, y los choques y duplicados quedan
+para la coordinadora ([anexo C](docs/propuesta-memoria-2026-10-08/anexo-c-replica.md)). Las bases no
+se suben a Git.
 El diseño detallado está en [v5](docs/propuesta-memoria-2026-10-08/v5.md).
 
 ## Delegar trabajo a varias sesiones

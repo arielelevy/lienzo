@@ -636,6 +636,11 @@ id antes de la primera captura: `c.proyecto_carpeta(cwd)`. Para leer: `c.captura
 «prosa, no declarado»). No se guardan adjuntos, secretos con forma conocida (se tapan) ni carpetas
 temporales. Texto con U+FFFD o mojibake se rechaza al entregar o declarar, con línea y columna;
 `c.texto_roto(pid)` mide y `c.reparar_texto(pid, aplicar=True)` repara el mojibake por auditoría.
+**Entre PCs** la memoria se replica sola cada 120 s por el canal firmado (proyectos unidos por
+remote); `c.replicar(pc)` la fuerza y `c.estado_replica(pid)` muestra choques y duplicados, que se
+resuelven con un veredicto. Con la réplica andando, `encargo_enviado` acepta una tarjeta de la otra PC.
+Otras consultas del plan v5: `c.por_que(pid, alternativa)`, `c.briefing(pid, encargos=[...],
+markdown=True)`, `c.reincorporar(pid, informe)`, `c.evidencia(...)`, `c.respaldar(pid)`.
 
 El lienzo guarda por proyecto, en `~/.lienzo/proyectos/<proyecto>/` (privado, fuera de los repos),
 las rondas, los encargos tal como se mandaron, los informes tal como se entregaron (con hash y

@@ -2,7 +2,7 @@
 
 Esta es la única lista de pendientes; lo hecho está en MEJORAS.md y en DISENO.es.md.
 
-Fecha: 2026-10-08.
+Fecha: 2026-10-09.
 
 Las casillas heredadas se conservan textuales y pendientes de aceptación, incluso cuando
 su nota posterior documenta una implementación. La evidencia histórica no es una prueba
@@ -148,6 +148,36 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   revisiones de informes y los duplicados se sugieren sin fusionarlos automáticamente.
 
   Origen: v5 §9. Gravedad: media.
+
+  Nota del 2026-10-09: diseño en `docs/propuesta-memoria-2026-10-08/anexo-c-replica.md` e
+  implementación en `lienzo/replica.py` (cada PC trae de sus pares los cambios nacidos allá, por
+  `/peer/conocimiento`, con cursores transaccionales; choques y duplicados para la coordinadora).
+  10 pruebas con dos bases simuladas en un proceso. Falta probarlo entre las dos PCs reales.
+
+- [ ] **Decidir qué PC es dueña de la base de cada proyecto mientras no haya base compartida.**
+  Propuesta, sin decidir (pedido de la ronda 3):
+  - Opción A, ninguna dueña (lo que hace hoy la réplica del anexo C): cada PC escribe en su base y
+    trae lo de las demás; los choques quedan para la coordinadora. Lo bueno: no depende de que una
+    PC esté prendida. Lo malo: puede haber choques y duplicados para revisar.
+  - Opción B, dueña la PC de la carpeta (la del remote más viejo): las demás le reenvían las
+    escrituras. Sin choques, pero si esa PC está apagada, las otras no escriben.
+  - Opción C, dueña la PC donde corre la coordinadora de la ronda: lo natural mientras dura una
+    ronda, pero cambia de ronda a ronda y un frente de otra PC escribe por la red.
+  - Recomendación: A, que ya está implementada. B o C sólo si en uso real los choques resultan
+    frecuentes. Las capturas no chocan (son inmutables); los choques posibles son veredictos dados
+    a la vez en dos PCs.
+
+- [ ] **Decidir la retención de las revisiones de informes y de las capturas.**
+  Medido el 2026-10-10: un día cargado (1525 capturas, 990 KB de texto) suma 2,0 MB a la base;
+  las revisiones de informes son unos 10 KB cada una. Propuesta, sin decidir:
+  - Opción A, todo para siempre: del orden de 0,3 a 0,7 GB por año por PC en el peor caso.
+  - Opción B, revisiones para siempre y capturas por 180 días, con un respaldo
+    (`POST /conocimiento/<p>/respaldo`) antes de borrar: el conocimiento declarado no se pierde y
+    la prosa vieja queda en el respaldo.
+  - Opción C, recortar el texto de las capturas viejas a su primera línea y conservar hash y fecha.
+  - Recomendación: A por ahora (el volumen es chico) y medir otra vez a los tres meses; si pasa
+    de 1 GB, B. Las revisiones de informes conviene conservarlas siempre: son la procedencia de
+    lo declarado.
 
 ### Otros
 
