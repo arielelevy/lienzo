@@ -637,28 +637,12 @@ class _Conexion:
         self.path = path
 
     def __enter__(self) -> sqlite3.Connection:
+        # el esquema se decide por user_version, no por si el archivo existia: connect lo crea antes
+        # de que corra el esquema, y un fallo a mitad dejaria una base vacia que nadie repararia
+        _migrar(self.path)
         self.con = sqlite3.connect(self.path, timeout=10, isolation_level="DEFERRED")
         self.con.row_factory = sqlite3.Row
         self.con.execute("PRAGMA foreign_keys = ON")
-        # el esquema se decide por user_version, no por si el archivo existia: connect lo crea antes
-        # de que corra el esquema, y un fallo a mitad dejaria una base vacia que nadie repararia
-        version = self.con.execute("PRAGMA user_version").fetchone()[0]
-        if version < VERSION_ESQUEMA:
-            self.con.execute("PRAGMA journal_mode = WAL")
-            self.con.executescript(ESQUEMA)
-            if version == 1:
-                # de 1 a 2: los cuerpos ya guardados entran al indice de prosa
-                _rellenar_prosa(self.con, os.path.dirname(self.path))
-            if 1 <= version < 3:
-                # de 2 a 3: cada cambio viejo es de esta PC, con su seq como seq de origen
-                columnas = {r[1] for r in self.con.execute("PRAGMA table_info(cambio)")}
-                for col, tipo in (("pc", "TEXT"), ("seq_origen", "INTEGER")):
-                    if col not in columnas:
-                        self.con.execute(f"ALTER TABLE cambio ADD COLUMN {col} {tipo}")
-                self.con.execute("UPDATE cambio SET pc = ?, seq_origen = seq WHERE pc IS NULL", (identity.pc_id(),))
-            self.con.executescript(ESQUEMA_3)
-            self.con.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
-            self.con.commit()
         return self.con
 
     def __exit__(self, et, ev, tb):
@@ -668,6 +652,66 @@ class _Conexion:
             self.con.rollback()
         self.con.close()
         return False
+
+
+_lock_migracion = threading.Lock()
+
+
+def _sentencias(script: str):
+    """Las sentencias de un script, una por una: un trigger lleva `;` adentro de BEGIN ... END y
+    `sqlite3.complete_statement` sabe cuando termina."""
+    buf = ""
+    for linea in script.splitlines(keepends=True):
+        if not buf and (not linea.strip() or linea.lstrip().startswith("--")):
+            continue
+        buf += linea
+        if sqlite3.complete_statement(buf):
+            yield buf.strip()
+            buf = ""
+
+
+def _migrar(path: str) -> None:
+    """Lleva la base a VERSION_ESQUEMA de una sola vez, o no la toca. `executescript` hacia COMMIT
+    entre sentencias y dos aperturas a la vez (el hilo de captura, el barrido y el panel al arrancar)
+    duplicaban la prosa o chocaban con «duplicate column» (code review 2026-10-09). Ahora: un lock por
+    proceso, BEGIN IMMEDIATE entre procesos, user_version releido adentro, cada sentencia con execute
+    y el numero de version en la misma transaccion."""
+    con = sqlite3.connect(path, timeout=30, isolation_level=None)
+    try:
+        al_dia = con.execute("PRAGMA user_version").fetchone()[0] >= VERSION_ESQUEMA  # lectura, sin lock
+    finally:
+        con.close()
+    if al_dia:
+        return
+    with _lock_migracion:
+        con = sqlite3.connect(path, timeout=30, isolation_level=None)
+        try:
+            con.execute("PRAGMA journal_mode = WAL")
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                version = con.execute("PRAGMA user_version").fetchone()[0]
+                if version < VERSION_ESQUEMA:
+                    for sentencia in _sentencias(ESQUEMA):
+                        con.execute(sentencia)
+                    if 1 <= version < 3:
+                        # de 2 a 3: cada cambio viejo es de esta PC, con su seq como seq de origen
+                        columnas = {r[1] for r in con.execute("PRAGMA table_info(cambio)")}
+                        for col, tipo in (("pc", "TEXT"), ("seq_origen", "INTEGER")):
+                            if col not in columnas:
+                                con.execute(f"ALTER TABLE cambio ADD COLUMN {col} {tipo}")
+                        con.execute("UPDATE cambio SET pc = ?, seq_origen = seq WHERE pc IS NULL", (identity.pc_id(),))
+                    if version == 1:
+                        # de 1 a 2: los cuerpos ya guardados entran al indice de prosa
+                        _rellenar_prosa(con, os.path.dirname(path))
+                    for sentencia in _sentencias(ESQUEMA_3):
+                        con.execute(sentencia)
+                    con.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
+                con.execute("COMMIT")
+            except BaseException:
+                con.execute("ROLLBACK")
+                raise
+        finally:
+            con.close()
 
 
 def _leer_archivo(full: str) -> str | None:
@@ -719,6 +763,31 @@ def _nodo(con: sqlite3.Connection, pid: str, nid: str) -> dict:
     return _fila(r)
 
 
+def _despues_de(fecha: str) -> str:
+    """`fecha` mas un milisegundo, en el mismo formato de `ahora()`."""
+    d = dt.datetime.fromisoformat(fecha) + dt.timedelta(milliseconds=1)
+    return d.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _fecha_causal(con, nodo_id, de, relacion, a) -> str:
+    """La fecha de un cambio local: la hora de ahora, pero nunca antes que el ultimo cambio que esta PC
+    ya conoce de ese nodo o vinculo (un reloj hibrido). La replica decide el ultimo que escribe por
+    fecha: con el reloj de otra PC adelantado, una edicion hecha despues de ver la de alla perdia y las
+    dos PCs quedaban distintas para siempre (encargo B, code review 2026-10-09)."""
+    fecha = ahora()
+    if nodo_id:
+        r = con.execute("SELECT MAX(fecha) FROM cambio WHERE nodo_id = ?", (nodo_id,)).fetchone()
+    elif de and a:
+        r = con.execute(
+            "SELECT MAX(fecha) FROM cambio WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)
+        ).fetchone()
+    else:
+        r = None
+    if r and r[0] and r[0] >= fecha:
+        fecha = _despues_de(r[0])
+    return fecha
+
+
 def _cambio(
     con, pid, accion, autor, motivo, origen, nuevo, anterior=None, nodo_id=None, de=None, relacion=None, a=None
 ):
@@ -737,7 +806,7 @@ def _cambio(
             autor,
             motivo or "",
             _json(origen or {}),
-            ahora(),
+            _fecha_causal(con, nodo_id, de, relacion, a),
             identity.pc_id(),
         ),
     )
@@ -811,9 +880,11 @@ def crear_nodo(
     estado = ESTADO_INICIAL[tipo]
     fecha = ahora()
     nid = nid or nuevo_id()
-    con.execute(
+    # ON CONFLICT: dos escritores con la misma clave a la vez (la captura y encargo_enviado crean la
+    # misma sesion) pasaban los dos el SELECT de arriba y el segundo moria en UNIQUE (code review)
+    cur = con.execute(
         "INSERT INTO nodo (id, proyecto, tipo, texto, datos, estado, estado_fecha, estado_por, autor, origen, ronda,"
-        " fecha, clave_ingesta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " fecha, clave_ingesta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_ingesta) DO NOTHING",
         (
             nid,
             pid,
@@ -830,6 +901,9 @@ def crear_nodo(
             clave_ingesta,
         ),
     )
+    if cur.rowcount == 0:
+        r = con.execute("SELECT * FROM nodo WHERE clave_ingesta = ?", (clave_ingesta,)).fetchone()
+        return {**_fila(r), "creado": False}
     n = _nodo(con, pid, nid)
     _cambio(con, pid, "nodo", autor, motivo, origen, n, nodo_id=nid)
     return {**n, "creado": True}
@@ -1311,6 +1385,15 @@ def informe_capturado(pid: str, sid: str, cuerpo: str, *, ronda: str | None, ori
         return None
     sha = hashlib.sha256(cuerpo.encode("utf-8")).hexdigest()
     with _abrir(pid) as con:
+        # la coordinadora pudo entregarlo a mano antes de que la cola de captura llegara: es el mismo
+        # informe, no otro con su bloque repetido (code review 2026-10-09)
+        ya = con.execute(
+            "SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'informe' AND json_extract(datos, '$.hash') = ?"
+            " ORDER BY fecha, id LIMIT 1",
+            (pid, sha),
+        ).fetchone()
+        if ya is not None:
+            return {**_fila(ya), "creado": False}
         s = con.execute("SELECT id FROM nodo WHERE clave_ingesta = ?", (f"sesion:{sid}",)).fetchone()
         encargos = [
             _fila(r)
@@ -1928,7 +2011,8 @@ def capturar(
 ) -> dict | None:
     """Una captura `observado` en el proyecto: un pedido, una respuesta final, un envio entre sesiones
     o el disparo de una regla, con sesion, agente, modelo, pc y hora. El texto ya viene sin secretos
-    (lo tapa captura.py); se guarda hasta CAPTURA_MAX_BYTES con el hash y los bytes del original.
+    (captura.py los tapa antes de encolar: el original nunca llega aca); se guarda hasta
+    CAPTURA_MAX_BYTES, con el hash y los bytes del texto entero antes de recortarlo.
     Idempotente por `clave` (devuelve None si ya estaba). Nunca crea nodos de conocimiento ni cambios
     de estado: el veredicto de v5 §3.4 no cambia."""
     if clase not in CLASES_CAPTURA:

@@ -51,9 +51,11 @@ _SECRETOS = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),  # JWT
     re.compile(r"(?i)(?<=\bbearer )[A-Za-z0-9._~+/=-]{20,}"),
 )
+# clave=valor: la clave puede venir con prefijo (`DB_PASSWORD`, `AZURE_CLIENT_SECRET`, `GITHUB_TOKEN`)
+# o entre comillas como en JSON (`"password": "..."`); `\b` no cortaba despues de `_` (code review)
 _CLAVE_VALOR = re.compile(
-    r"(?i)\b(password|passwd|pwd|contrase(?:ñ|n)a|secret|client_secret|api[_-]?key|access[_-]?token|"
-    r"accountkey|sharedaccesskey)(\s*[:=]\s*)(\"[^\"\s]{6,}\"|'[^'\s]{6,}'|[^\s;,'\"]{6,})"
+    r"(?i)(?<![A-Za-z0-9])([A-Za-z0-9_]*(?:password|passwd|pwd|contrase(?:ñ|n)a|secret|api[_-]?key|token|"
+    r"accountkey|sharedaccesskey)|sig)(\"?\s*[:=]\s*)(\"[^\"\s]{6,}\"|'[^'\s]{6,}'|[^\s;,&'\"]{6,})"
 )
 
 _cola: queue.Queue | None = None
@@ -284,7 +286,14 @@ def procesar(ev: dict) -> dict | None:
         clave=ev.get("clave"),
         redactado=bool(ev.get("redactado")),
     )
-    if cap is not None and ev["tipo"] == "respuesta" and k.extraer_bloque(ev.get("texto") or "") is not None:
+    if cap is not None and ev["tipo"] == "respuesta" and ev.get("redactado"):
+        # con un secreto tapado, el texto ya no es el que el frente escribio: un informe con este
+        # cuerpo haria chocar (409) la entrega explicita del original. Queda la captura; el informe,
+        # si hace falta, lo entrega la coordinadora (code review 2026-10-09)
+        state.log(
+            f"captura: la respuesta de {tarjeta['session_id'][:8]} tenia un secreto tapado; no se toma como informe"
+        )
+    elif cap is not None and ev["tipo"] == "respuesta" and k.extraer_bloque(ev.get("texto") or "") is not None:
         try:
             with k._abrir(pid) as con:
                 ronda = k._ronda_de_sesion(con, pid, tarjeta["session_id"])

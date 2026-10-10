@@ -28,6 +28,7 @@ import json
 import os
 import sqlite3
 import threading
+import time
 import traceback
 
 import conocimiento as k
@@ -38,7 +39,11 @@ from conocimiento import Rechazo
 LOTE = 500  # cambios o capturas por pedido
 CICLO_S = 120  # cada cuanto el server sincroniza con los pares vivos
 _lock = threading.Lock()  # una sincronizacion a la vez por proceso
-_sin_soporte: set[str] = set()  # pares viejos que no tienen la ruta: se avisa una vez
+_sin_soporte: dict[str, float] = {}  # par viejo sin la ruta -> cuando se vio; se reintenta pasado SIN_SOPORTE_S
+SIN_SOPORTE_S = 900  # la otra PC se actualiza con un pull: no se la saltea hasta el reinicio
+_cuerpos_fallidos: dict[tuple[str, str, str], float] = {}  # (par, proyecto, ruta) -> cuando fallo
+REINTENTO_CUERPO_S = 1800
+SUBCARPETAS = ("rondas", "capturas", "evidencia")  # lo unico que un par puede pedir o traer
 
 ACCIONES_DE_NODO = ("nodo", "estado", "datos", "texto", "conocimiento", "adopcion")
 CAMPOS_NODO = ("tipo", "texto", "datos", "estado", "estado_fecha", "estado_por", "autor", "origen", "ronda", "fecha")
@@ -103,10 +108,22 @@ def _capturas_propias(pid: str, desde: int, limite: int) -> dict:
     return {"pc": yo, "capturas": out, "hay_mas": len(filas) > limite}
 
 
-def _cuerpo(pid: str, ruta: str) -> dict:
+def ruta_segura(pid: str, ruta) -> str | None:
+    """La ruta absoluta de `ruta` si cae dentro de rondas/, capturas/ o evidencia/ del proyecto; si no,
+    None. La usan los dos lados: el que atiende no entrega la base ni nada de afuera, y el que recibe no
+    escribe donde diga un nodo de otra PC (`../..`)."""
+    if not isinstance(ruta, str) or not ruta.strip():
+        return None
     base = os.path.realpath(k._carpeta(pid))
-    full = os.path.realpath(os.path.join(base, *ruta.split("/")))
-    if not full.startswith(base + os.sep) or not os.path.isfile(full):
+    full = os.path.realpath(os.path.join(base, *ruta.replace("\\", "/").split("/")))
+    if not any(full.startswith(os.path.join(base, sub) + os.sep) for sub in SUBCARPETAS):
+        return None
+    return full
+
+
+def _cuerpo(pid: str, ruta: str) -> dict:
+    full = ruta_segura(pid, ruta)
+    if full is None or not os.path.isfile(full):
         raise Rechazo("cuerpo desconocido", 404)
     with open(full, "rb") as f:
         datos = f.read()
@@ -142,7 +159,7 @@ def _proyecto_local(remoto: dict) -> str | None:
             if libres and not set(libres) & otros:
                 k.registrar_proyecto(p["id"], remotes=libres)
             return p["id"]
-    base, i = remoto["id"], 2
+    base, i = remoto["id"][:56], 2  # el sufijo -N no puede pasar el largo de un id (64)
     pid = base
     while any(p["id"] == pid for p in k.proyectos()) or os.path.exists(k._carpeta(pid)):
         pid, i = f"{base}-{i}", i + 1
@@ -160,14 +177,20 @@ def sincronizar(pc: str, forward) -> dict:
         if lista.get("pc") == identity.pc_id():
             raise OSError("el par respondio con el pc_id de esta PC")
         for remoto in lista.get("proyectos") or []:
-            pid = _proyecto_local(remoto)
-            if pid is None:
-                res["sin_remote"].append(remoto.get("id"))
-                continue
+            pid = None
             try:
+                pid = _proyecto_local(remoto)
+                if pid is None:
+                    res["sin_remote"].append(remoto.get("id"))
+                    continue
                 res["proyectos"].append(_sincronizar_proyecto(pc, forward, remoto["id"], pid))
-            except (OSError, sqlite3.Error, Rechazo) as e:
-                res["proyectos"].append({"proyecto": pid, "remoto": remoto["id"], "error": str(e)})
+            except SinSoporte:
+                raise
+            except Exception as e:  # un proyecto roto no frena a los demas; queda dicho y en el log
+                state.log(f"replica: {remoto.get('id')} de {pc}:\n{traceback.format_exc()}")
+                res["proyectos"].append(
+                    {"proyecto": pid, "remoto": remoto.get("id"), "error": f"{type(e).__name__}: {e}"}
+                )
         return res
 
 
@@ -320,7 +343,10 @@ def _aplicar_nodo(con, pid: str, c: dict, n: dict) -> None:
     anterior = c.get("anterior") if isinstance(c.get("anterior"), dict) else None
     loc = k._fila(actual)
     diverge = anterior is not None and any(loc.get(x) != anterior.get(x) for x in ("estado", "texto", "datos"))
-    if diverge:
+    # choque solo si lo que se pisa nacio en esta PC: con tres PCs, C puede recibir la edicion de B
+    # antes que la de A que B ya habia visto, y eso no es un choque (encargo B, code review 2026-10-09).
+    # Un choque entre A y B lo registran A y B, que son quienes editaron
+    if diverge and ultimo is not None and ultimo[1] == identity.pc_id():
         con.execute(
             "INSERT OR IGNORE INTO replica_conflicto (nodo, pc, seq_origen, motivo, fecha) VALUES (?,?,?,?,?)",
             (
@@ -393,11 +419,16 @@ def _reintentar_pendientes(pid: str) -> int:
 
 
 def _aplicar_captura(con, pid: str, c: dict) -> int:
+    """Una captura de otra PC, por id. Una que ya esta se saltea; una mal formada levanta (NOT NULL o
+    CHECK): el lote no se aplica, el cursor no avanza y el error queda a la vista, en vez de que un
+    INSERT OR IGNORE la descarte en silencio (code review 2026-10-09)."""
+    if con.execute("SELECT 1 FROM captura WHERE id = ?", (c.get("id"),)).fetchone() is not None:
+        return 0
     sesion = c.get("sesion")
     if sesion and con.execute("SELECT 1 FROM nodo WHERE id = ?", (sesion,)).fetchone() is None:
         sesion = None
     cur = con.execute(
-        "INSERT OR IGNORE INTO captura (id, proyecto, clase, estado, session_id, sesion, agente, modelo, pc, origen,"
+        "INSERT INTO captura (id, proyecto, clase, estado, session_id, sesion, agente, modelo, pc, origen,"
         " texto, bytes, hash, recortado, redactado, fecha, clave_ingesta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             c["id"],
@@ -430,14 +461,23 @@ def _traer_cuerpos(pc: str, forward, remoto: str, pid: str) -> int:
         for r in con.execute("SELECT id, tipo, datos FROM nodo WHERE tipo IN ('encargo','informe','evidencia')"):
             d = json.loads(r["datos"])
             ruta = d.get("ruta") if r["tipo"] != "evidencia" else (d.get("referencia") if d.get("recibida") else None)
-            if isinstance(ruta, str) and not os.path.isfile(os.path.join(k._carpeta(pid), *ruta.split("/"))):
-                faltan.append((r["id"], r["tipo"], ruta, d.get("hash")))
+            full = ruta_segura(pid, ruta)
+            if ruta is not None and full is None:
+                state.log(f"replica: {r['id']} cita una ruta fuera del proyecto ({ruta!r}): no se trae")
+                continue
+            if full is not None and not os.path.isfile(full):
+                faltan.append((r["id"], r["tipo"], ruta, full, d.get("hash")))
     hechos = 0
-    for nid, tipo, ruta, sha in faltan:
+    ahora = time.monotonic()
+    for nid, tipo, ruta, full, sha in faltan:
+        clave = (pc, remoto, ruta)
+        if ahora - _cuerpos_fallidos.get(clave, -REINTENTO_CUERPO_S) < REINTENTO_CUERPO_S:
+            continue  # ese par no lo tenia hace poco (un nodo de una tercera PC): no se pide cada vuelta
         try:
             res = _pedir(forward, pc, {"op": "cuerpo", "proyecto": remoto, "ruta": ruta})
             datos = base64.b64decode(res["base64"])
         except (OSError, KeyError, ValueError) as e:
+            _cuerpos_fallidos[clave] = ahora
             state.log(f"replica: cuerpo {ruta} de {pc}: {e}")
             continue
         if (
@@ -447,9 +487,9 @@ def _traer_cuerpos(pc: str, forward, remoto: str, pid: str) -> int:
         ):
             state.log(f"replica: cuerpo {ruta} de {pc} no coincide con su hash: no se guarda")
             continue
-        full = os.path.join(k._carpeta(pid), *ruta.split("/"))
         os.makedirs(os.path.dirname(full), exist_ok=True)
         k.escribir_exacto(full, datos)
+        _cuerpos_fallidos.pop(clave, None)
         if tipo in ("encargo", "informe"):
             with k._abrir(pid) as con:
                 con.execute(
@@ -480,17 +520,23 @@ def estado(pid: str) -> dict:
 def sincronizar_todos(mirror) -> list[dict]:
     """Una vuelta con cada par vivo. Un par viejo (sin la ruta) se avisa una vez y se saltea."""
     out = []
+    ahora = time.monotonic()
     for p in mirror.peers_status():
         pc = p.get("pc_id")
-        if not pc or not p.get("alive") or pc in _sin_soporte:
+        if not pc or not p.get("alive") or ahora - _sin_soporte.get(pc, -SIN_SOPORTE_S) < SIN_SOPORTE_S:
             continue
         try:
             out.append(sincronizar(pc, mirror.forward))
+            _sin_soporte.pop(pc, None)
         except SinSoporte:
-            _sin_soporte.add(pc)
-            state.log(f"replica: {p.get('name') or pc} tiene un lienzo sin replica de la memoria; se saltea")
-        except OSError as e:
-            out.append({"pc": pc, "error": str(e)})
+            if pc not in _sin_soporte:
+                state.log(
+                    f"replica: {p.get('name') or pc} tiene un lienzo sin replica de la memoria; se reintenta en 15 min"
+                )
+            _sin_soporte[pc] = ahora
+        except Exception as e:  # un par roto no frena a los demas
+            state.log(f"replica: con {pc}:\n{traceback.format_exc()}")
+            out.append({"pc": pc, "error": f"{type(e).__name__}: {e}"})
     return out
 
 

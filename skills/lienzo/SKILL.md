@@ -672,7 +672,7 @@ e = c.encargo("teorema", r["id"], "A", texto_del_encargo, archivos=["codigo/sust
 s = c.lanzar_y_titular(None, "D:/Apps/Teorema", "Teorema - encargo A - ...", agent="codex")
 c.encargo_enviado(
     "teorema", e["id"], s
-)  # pendiente -> enviado; desde acá el server observa la sesión (tarjeta de ESTA PC: una de otra PC es 409 hasta la base compartida)
+)  # pendiente -> enviado; desde acá el server observa la sesión (una tarjeta de otra PC vale si la memoria ya se replicó con esa PC; si no, 409)
 ...  # llega el aviso on_stop
 c.entregar("teorema", e["id"], c.informe(s))  # informe r1 con hash; el encargo pasa a entregado
 c.cerrar_ronda("teorema", r["id"])
@@ -710,6 +710,6 @@ inf["datos"].get("conocimiento")   # {"estado": "incorporado", "ids": {"h1": "..
 `recurrencia`, `cuestionar`, `avisos`, `dependencias` y `lecciones` exponen el aprendizaje operativo.
 El menú ⋯ → Memoria consulta las mismas rutas, sin escrituras automáticas.
 
-La base sigue siendo de la PC que registra el encargo; la replicación entre PCs está pendiente.
+Cada PC tiene su base y se replican entre sí (ver arriba y el anexo C de v5).
 Nada pasa a `vigente` ni `confirmado` sin un veredicto; lo que entra por el server o por un bloque
 queda `propuesto` u `observado`.

@@ -627,15 +627,28 @@ def _avisos(pid: str) -> dict:
 
 
 def _cambios_desde_cierre(pid: str) -> dict:
-    """Los cambios posteriores al `cierre_seq` de la ultima ronda cerrada (v5 §4), compactados: sin el
-    nodo entero antes y despues, con tipo, texto y estado del resultado."""
+    """Los cambios posteriores al cierre de la ultima ronda cerrada (v5 §4), compactados: sin el nodo
+    entero antes y despues, con tipo, texto y estado del resultado. La ultima es la de cierre mas nuevo
+    por fecha, y el punto de corte es el seq LOCAL del cambio que anoto `cierre_seq`: si la ronda la
+    cerro otra PC, su `cierre_seq` es del espacio de seq de alla y no se compara con el de aca
+    (code review 2026-10-09)."""
     with k._abrir(pid) as con:
         r = con.execute(
             "SELECT id, json_extract(datos, '$.cierre_seq') AS seq FROM nodo WHERE proyecto = ? AND tipo = 'ronda'"
-            " AND estado = 'cerrada' AND json_extract(datos, '$.cierre_seq') IS NOT NULL ORDER BY seq DESC LIMIT 1",
+            " AND estado = 'cerrada' AND json_extract(datos, '$.cierre_seq') IS NOT NULL"
+            " ORDER BY estado_fecha DESC, id LIMIT 1",
             (pid,),
         ).fetchone()
-    desde = int(r["seq"]) if r else 0
+        ancla = None
+        if r is not None:
+            ancla = con.execute(
+                "SELECT seq FROM cambio WHERE nodo_id = ? AND accion = 'datos' AND motivo = 'cierre_seq'"
+                " ORDER BY seq DESC LIMIT 1",
+                (r["id"],),
+            ).fetchone()
+    # el ancla es el cambio que guardo cierre_seq: la lista empieza en el (como siempre: en la PC que
+    # cerro, cierre_seq es justo el seq anterior al del ancla)
+    desde = int(ancla["seq"]) - 1 if ancla else (int(r["seq"]) if r else 0)
     out = []
     for c in k.cambios(pid, desde=desde, limite=LIMITE_CAMBIOS):
         nuevo = c.get("nuevo") if isinstance(c.get("nuevo"), dict) else {}
@@ -742,7 +755,8 @@ def preguntar(
     out.sort(
         key=lambda n: (
             n["salto"] if n["salto"] is not None else 9,
-            n["puesto"] if n["puesto"] is not None else 0,
+            # sin puesto (llego por tema o archivo) va despues de los de BM25, como antes del puesto
+            n["puesto"] if n["puesto"] is not None else float("inf"),
             n["puntaje"] if n["puntaje"] is not None else 0,
             n["id"],
         )

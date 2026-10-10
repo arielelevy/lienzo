@@ -477,3 +477,93 @@ def test_la_regla_que_dispara_queda_como_regla_en_el_destino(enganche, monkeypat
     ev = next(e for e in eventos if e["tipo"] == "regla")
     assert ev["tarjeta"]["session_id"] == "dst" and ev["origen"]["rule_id"] == "r1" and ev["origen"]["de"] == "src"
     assert "hecho" in ev["texto"]
+
+
+# --- regresiones del code review del 2026-10-09 --------------------------------------------------
+
+
+def test_cuatro_aperturas_a_la_vez_migran_una_sola_vez(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    k.registrar_proyecto("p")
+    r = k.abrir_ronda("p", "r", autor="c")
+    for letra in "ABC":
+        k.crear_encargo("p", r["id"], letra, f"# Encargo {letra}\nhalving entero", autor="c")
+    con = sqlite3.connect(k._db_path("p"))
+    con.executescript(
+        "DROP TABLE prosa_fts; DROP TABLE captura_fts; DROP TABLE captura; DROP INDEX cambio_origen;"
+        " ALTER TABLE cambio DROP COLUMN seq_origen; ALTER TABLE cambio DROP COLUMN pc; PRAGMA user_version = 1;"
+    )
+    con.close()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda _: k.resumen("p"), range(4)))
+    with k._abrir("p") as c2:
+        assert c2.execute("SELECT COUNT(*) FROM prosa_fts").fetchone()[0] == 3  # no 12
+        assert c2.execute("SELECT COUNT(*) FROM cambio WHERE seq_origen IS NULL").fetchone()[0] == 0
+
+
+def test_la_migracion_que_falla_a_mitad_no_deja_nada(tmp_path, monkeypatch):
+    k.registrar_proyecto("p")
+    k.crear_nodo("p", "tema", "x", autor="c")
+    con = sqlite3.connect(k._db_path("p"))
+    con.executescript("DROP TABLE prosa_fts; PRAGMA user_version = 1;")
+    con.close()
+    monkeypatch.setattr(k, "_rellenar_prosa", lambda *a: (_ for _ in ()).throw(OSError("disco")))
+    with pytest.raises(OSError):
+        k.resumen("p")
+    con = sqlite3.connect(k._db_path("p"))
+    assert con.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert con.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'prosa_fts'").fetchone()[0] == 0
+    con.close()
+
+
+def test_la_captura_que_llega_despues_de_la_entrega_explicita_no_duplica(tmp_path):
+    cwd = tmp_path / "app"
+    pid = captura.proyecto_de(_tarjeta("s1", cwd))
+    r = k.abrir_ronda(pid, "r", autor="coordinadora:c")
+    e = k.crear_encargo(pid, r["id"], "A", "x", autor="coordinadora:c")
+    k.encargo_enviado(pid, e["id"], _tarjeta("s1", cwd))
+    inf = k.entregar(pid, e["id"], BLOQUE.strip(), revision=1, autor="coordinadora:c")
+    c = captura.procesar(_ev("respuesta", _tarjeta("s1", cwd), BLOQUE, "r1"))
+    assert c["informe"] == inf["id"]
+    assert k.nodos(pid, tipo="informe")["total"] == 1 and k.nodos(pid, tipo="hallazgo")["total"] == 1
+
+
+def test_dos_escritores_con_la_misma_clave_no_chocan(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    k.registrar_proyecto("p")
+    for i in range(10):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            tarjeta = {"session_id": f"s{i}", "agent": "claude"}
+            res = list(pool.map(lambda t: k.registrar_sesion("p", t), [tarjeta, dict(tarjeta)]))
+        assert res[0]["id"] == res[1]["id"]
+    assert k.nodos("p", tipo="sesion")["total"] == 10
+
+
+def test_la_respuesta_con_secreto_tapado_no_es_informe(tmp_path):
+    t = _tarjeta("s1", tmp_path / "app")
+    c = captura.procesar({**_ev("respuesta", t, BLOQUE, "r1"), "redactado": True})
+    assert "informe" not in c and k.nodos("app", tipo="informe")["total"] == 0
+
+
+@pytest.mark.parametrize(
+    "secreto",
+    [
+        "AZURE_CLIENT_SECRET=abcdef123456",
+        "DB_PASSWORD=hunter2hunter",
+        "GITHUB_TOKEN=abcdef123456",
+        '{"password": "hunter2hunter"}',
+        "token: abcdef123456",
+        "https://x.blob.core.windows.net/c?sv=2020&sig=abcdef123456",
+    ],
+)
+def test_tapar_cubre_las_formas_comunes(secreto):
+    texto, tapado = captura.tapar(secreto)
+    assert tapado and captura.TAPADO in texto
+    assert "hunter2hunter" not in texto and "abcdef123456" not in texto
+
+
+def test_tapar_no_toca_texto_comun():
+    for sano in ("max_tokens: 4096", "prompt_tokens=12", "el secreto es la constancia", "password corta=abc"):
+        assert captura.tapar(sano) == (sano, False)

@@ -22,9 +22,18 @@ en el par se crea acá con su id (o `-2`) y sus remotes, sin carpeta en esta PC.
 
 - Ids globales: los nodos usan UUID; la sesión, un UUID derivado del `session_id`, así que la PC del
   coordinador y la de la sesión crean el mismo nodo.
-- Un cambio de estado, texto o datos gana si es el más nuevo por (fecha, pc). Si el nodo local ya no
-  estaba como el cambio remoto lo vio (`anterior`), queda un choque en `replica_conflicto` para la
-  coordinadora. Los dos cambios quedan en el historial.
+- Un cambio de estado, texto o datos gana si es el más nuevo por (fecha, pc). La fecha de un cambio
+  local sale de un reloj híbrido: la hora de ahora, pero nunca antes que el último cambio que esta PC
+  ya conoce de ese nodo o vínculo. Así una edición hecha después de ver la de otra PC gana aunque el
+  reloj de la otra esté adelantado.
+- Si el nodo local ya no estaba como el cambio remoto lo vio (`anterior`) y lo que se pisa nació en
+  esta PC, queda un choque en `replica_conflicto` para la coordinadora. Lo registran las PCs que
+  editaron; una tercera que recibe las dos ediciones en otro orden no inventa choques. Los dos
+  cambios quedan en el historial.
+- La «lista de cambios desde el cierre» corta en el seq local del cambio que anotó `cierre_seq`, no en
+  el número de la PC que cerró la ronda.
+- Los cuerpos y la evidencia sólo se piden y se escriben dentro de `rondas/`, `capturas/` y
+  `evidencia/` del proyecto: el lado que atiende no entrega la base y el que recibe no escribe afuera.
 - Vínculos: el más nuevo por fecha decide si está activo.
 - Lo que no se puede aplicar todavía (un vínculo cuyo nodo creó una tercera PC) espera en
   `replica_pendiente` y se reintenta en cada vuelta.
@@ -52,7 +61,8 @@ el mismo informe entregado en las dos), el remoto entra igual, sin la clave, y q
   la PC que atiende.
 - El server sincroniza cada 120 s con los pares vivos; `POST /conocimiento/replicar {pc?}` lo fuerza;
   `GET /conocimiento/<p>/replica` muestra cursores, choques, duplicados y pendientes.
-- Un par con un lienzo sin réplica responde «ruta desconocida»: se avisa una vez y se saltea.
+- Un par con un lienzo sin réplica responde «ruta desconocida»: se avisa una vez y se reintenta a
+  los 15 minutos (se actualiza con un pull). Un proyecto o un par con un error no frena a los demás.
 
 ## Encargos a tarjetas de otra PC
 

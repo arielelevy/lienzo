@@ -304,3 +304,149 @@ def test_encargo_enviado_a_una_tarjeta_de_otra_pc_vale_si_ya_hay_replica(red, mo
     with red.en("pcB"):
         # el nodo sesion y el vinculo llegaron a la PC de la sesion: sus observaciones se registran aca
         assert k.incidente_operativo("sB", "permiso denegado", herramienta="Bash", clave="i") is not None
+
+
+# --- regresiones del code review del 2026-10-09 --------------------------------------------------
+
+
+def test_un_nodo_con_ruta_fuera_del_proyecto_no_escribe_afuera(red, tmp_path):
+    _poblar_a(red)
+    with red.en("pcA"):
+        k.crear_nodo(
+            "teorema",
+            "evidencia",
+            "mala",
+            {"clase": "x", "referencia": "../../afuera.txt", "recibida": True},
+            autor="c",
+        )
+    red.sync("pcB", "pcA")
+    assert not (tmp_path / "pcB" / "afuera.txt").exists() and not (tmp_path / "afuera.txt").exists()
+    with red.en("pcA"):
+        assert replica.atender({"op": "cuerpo", "proyecto": "teorema", "ruta": "conocimiento.sqlite"})[0] == 404
+
+
+def test_un_par_viejo_se_reintenta_despues_de_un_rato(red, monkeypatch):
+    _poblar_a(red)
+
+    class Espejo:
+        def peers_status(self):
+            return [{"pc_id": "pcA", "alive": True, "name": "A"}]
+
+        forward = staticmethod(red.forward)
+
+    red.viejo.add("pcA")
+    with red.en("pcB"):
+        assert replica.sincronizar_todos(Espejo()) == []
+        red.viejo.clear()
+        assert replica.sincronizar_todos(Espejo()) == []  # todavia dentro de los 15 min
+        monkeypatch.setattr(replica, "SIN_SOPORTE_S", 0)
+        res = replica.sincronizar_todos(Espejo())
+    assert res and res[0]["proyectos"][0]["cambios"] > 0 and "pcA" not in replica._sin_soporte
+
+
+def test_un_proyecto_roto_no_frena_a_los_demas(red, monkeypatch):
+    _poblar_a(red)
+    with red.en("pcA"):
+        k.registrar_proyecto("otro", remotes=["github.com/ariel/otro"])
+        k.crear_nodo("otro", "tema", "x", autor="c")
+    original = replica._sincronizar_proyecto
+
+    def rompe(pc, forward, remoto, pid):
+        if remoto == "teorema":
+            raise KeyError("campo")
+        return original(pc, forward, remoto, pid)
+
+    monkeypatch.setattr(replica, "_sincronizar_proyecto", rompe)
+    res = red.sync("pcB", "pcA")
+    por = {p["remoto"]: p for p in res["proyectos"]}
+    assert "KeyError" in por["teorema"]["error"] and por["otro"]["cambios"] > 0
+
+
+def test_los_cambios_desde_el_cierre_de_una_ronda_cerrada_en_otra_pc(red):
+    a = _poblar_a(red)
+    red.sync("pcB", "pcA")
+    with red.en("pcB"):
+        for i in range(5):
+            k.crear_nodo("teorema", "tema", f"de B antes {i}", autor="c")  # seq altos en B
+    with red.en("pcA"):
+        v.cerrar_ronda("teorema", a["ronda"]["id"], por=C)
+        k.crear_nodo("teorema", "tema", "despues del cierre", autor="c")
+    red.sync("pcB", "pcA")
+    with red.en("pcB"):
+        textos = [c["texto"] for c in v._cambios_desde_cierre("teorema")["cambios"]]
+    assert "despues del cierre" in textos and not any(t and t.startswith("de B antes") for t in textos)
+
+
+def test_una_captura_mal_formada_no_avanza_el_cursor(red, monkeypatch):
+    _poblar_a(red)
+    original = replica._capturas_propias
+
+    def rota(pid, desde, limite):
+        res = original(pid, desde, limite)
+        for c in res["capturas"]:
+            c["texto"] = None
+        return res
+
+    monkeypatch.setattr(replica, "_capturas_propias", rota)
+    res = red.sync("pcB", "pcA")
+    assert "IntegrityError" in res["proyectos"][0]["error"]
+    with red.en("pcB"):
+        cur = [c for c in replica.estado("teorema")["cursores"] if c["clase"] == "captura"]
+    assert cur == [] or cur[0]["ultimo"] == 0
+
+
+def _reloj(monkeypatch, red, adelanto_pc, minutos):
+    import datetime as dt
+
+    real = k.ahora
+
+    def ahora():
+        if red.actual != adelanto_pc:
+            return real()
+        d = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=minutos)
+        return d.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    monkeypatch.setattr(k, "ahora", ahora)
+
+
+def test_con_el_reloj_de_b_adelantado_las_dos_pcs_terminan_iguales(red, monkeypatch):
+    a = _poblar_a(red)
+    red.sync("pcB", "pcA")
+    _reloj(monkeypatch, red, "pcB", 10)
+    with red.en("pcB"):
+        k.cambiar_estado("teorema", a["h1"], "confirmado", por=C, motivo="b primero")
+    red.sync("pcA", "pcB")
+    with red.en("pcA"):  # A ve lo de B y edita despues, en tiempo real (con su reloj atrasado)
+        k.cambiar_estado("teorema", a["h1"], "rechazado", por=C, motivo="a despues")
+    red.sync("pcB", "pcA")
+    estados = {}
+    for pc in ("pcA", "pcB"):
+        with red.en(pc):
+            estados[pc] = k.nodo("teorema", a["h1"])["estado"]
+            assert replica.estado("teorema")["conflictos"] == [], pc
+    assert estados == {"pcA": "rechazado", "pcB": "rechazado"}
+
+
+def test_tres_pcs_en_orden_no_inventan_choques(red, tmp_path):
+    red.homes["pcC"] = str(tmp_path / "pcC")
+    a = _poblar_a(red)
+    red.sync("pcB", "pcA")
+    red.sync("pcC", "pcA")
+    with red.en("pcA"):
+        k.cambiar_estado("teorema", a["h1"], "confirmado", por=C)
+    red.sync("pcB", "pcA")
+    with red.en("pcB"):  # B vio lo de A y edita despues
+        k.cambiar_estado("teorema", a["h1"], "rechazado", por=C)
+    red.sync("pcC", "pcB")  # C trae primero lo de B
+    red.sync("pcC", "pcA")  # y despues lo de A
+    with red.en("pcC"):
+        assert k.nodo("teorema", a["h1"])["estado"] == "rechazado"
+        assert replica.estado("teorema")["conflictos"] == []
+
+
+def test_un_id_largo_con_sufijo_no_pasa_de_64(red):
+    largo = "p" * 64
+    with red.en("pcB"):
+        k.registrar_proyecto(largo, remotes=["github.com/otro/otro"])
+        pid = replica._proyecto_local({"id": largo, "remotes": ["github.com/x/largo"]})
+    assert pid == "p" * 56 and len(pid) <= 64

@@ -2015,6 +2015,13 @@ class PeerHandler(JsonHandler):
             browser_stream.serve_peer(self, _peer_key(pc_id), rest[2])
             self.close_connection = True
             return
+        if method == "POST" and rest == ["conocimiento"]:
+            # replica de la memoria (replica.py, anexo C de v5): solo lectura de la base de aca. Varios
+            # pedidos por par cada 120 s: al log solo los errores, como xfer
+            code, res = replica.atender(self._body_json(raw))
+            if code >= 400:
+                log(f"peer POST /peer/conocimiento de {pc_id}: {code} {res.get('error')}")
+            return self._json(code, res)
         if method == "POST" and rest[:1] == ["xfer"]:
             # copia entre PCs (xfer.py): miles de pedidos por trabajo, no van uno por uno al log
             code, res = xfer.atender_peer(rest[1:], raw)
@@ -2022,10 +2029,6 @@ class PeerHandler(JsonHandler):
                 log(f"peer POST /peer/{'/'.join(rest)} de {pc_id}: {code} {res.get('error')}")
             return self._json(code, res)
         log(f"peer {method} /peer/{'/'.join(rest)}" + (f" de {pc_id}" if pc_id else ""))
-        if method == "POST" and rest == ["conocimiento"]:
-            # replica de la memoria por proyecto (replica.py, anexo C de v5): solo lectura de la base de aca
-            code, res = replica.atender(self._body_json(raw))
-            return self._json(code, res)
         if method == "GET" and rest == ["hello"]:
             info = identity.pc_info()
             return self._json(200, {"pc_id": info["pc_id"], "name": info["name"]})
