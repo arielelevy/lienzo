@@ -51,6 +51,7 @@ UMBRAL_DUPLICADO = 0.5  # fraccion de palabras en comun (Jaccard) para proponer 
 PALABRA_MIN = 4
 PALABRAS_MAX = 12
 LIMITE_CAMBIOS = 500
+BRIEFING_SIN_FILTRO = 100  # nodos vigentes o abiertos que trae un briefing sin archivos, temas ni consultas
 LOCALIZADOR = re.compile(r"(::.*|:\d+(:\d+)?)$")  # tests/x.py::caso, codigo/a.py:88, a.py:88:4
 NO_PALABRA = re.compile(r"[^a-z0-9]+")
 
@@ -690,7 +691,22 @@ def briefing(pid: str, *, archivos=None, temas=None, consultas=None, desde_cierr
         archivos += [a for a in e["datos"].get("archivos") or [] if isinstance(a, str) and a not in archivos]
     temas_ref = _lista_textos(temas, "temas")
     consultas = _lista_textos(consultas, "consultas", 10)
-    cand, sin_tema = _recuperar(pid, archivos=archivos, temas_ref=temas_ref, consultas=consultas, tipo=None, saltos=1)
+    if archivos or temas_ref or consultas:
+        cand, sin_tema = _recuperar(
+            pid, archivos=archivos, temas_ref=temas_ref, consultas=consultas, tipo=None, saltos=1
+        )
+    else:
+        # sin de donde partir, el estado del proyecto: lo vigente y lo abierto mas reciente (antes devolvia
+        # todo vacio y el briefing de una sesion que recien llega no decia nada)
+        cand, sin_tema = _Candidatos(), []
+        estados = sorted(VIGENTE | ABIERTO)
+        cond = " OR ".join("(tipo = ? AND estado = ?)" for _ in estados)
+        with k._abrir(pid) as con:
+            for r in con.execute(
+                f"SELECT * FROM nodo WHERE proyecto = ? AND ({cond}) ORDER BY fecha DESC, id LIMIT ?",
+                [pid, *[x for par in estados for x in par], BRIEFING_SIN_FILTRO],
+            ):
+                cand.sumar(k._fila(r), "estado", salto=0)
     vigente, abierto, otros = [], [], []
     for n in cand.lista():
         clave = (n["tipo"], n["estado"])

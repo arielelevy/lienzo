@@ -15,6 +15,7 @@ apenas se mueve un encargo de una tarjeta a otra.
 
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -22,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = "http://127.0.0.1:7321"
+BASE = os.environ.get("LIENZO_URL") or "http://127.0.0.1:7321"  # otra instancia (pruebas): LIENZO_URL
 YO = ""  # session_id de la coordinadora; lo fija quien importa este módulo
 
 
