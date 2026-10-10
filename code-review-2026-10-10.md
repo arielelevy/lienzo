@@ -266,3 +266,6 @@ aunque no tengan sesiones. Test en `recientes.test.ts`.
 
 **Pruebas:** suite completa 1385, contrato de salud actualizado, 4 tests nuevos de las correcciones, web 8 unitarias, build
 y lint.
+- **La síntesis no entraba a la memoria:** `consulta._cerrar` la capturaba con `clase="consulta"`, que no está en
+  `conocimiento.CLASES_CAPTURA`, y se descartaba. Con coordinador ya entra como el envío que se le hace; sin coordinador se
+  captura como `envio`. Verificado en la base: Teorema tiene las 40 respuestas y los 39 envíos de las cuatro consultas.

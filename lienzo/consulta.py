@@ -538,14 +538,17 @@ def _cerrar(cid: str) -> None:
         titulo = "Objeciones (ya integradas por el revisor)" if corregida else "Objeciones"
         texto += f"\n## {titulo}\n\n" + "\n".join(f"- **{c['nombres'][k]}:** {v}" for k, v in objeciones.items())
     _guardar_md(cid, "sintesis.md", texto)
-    try:
-        import captura
+    if not c["coordinador"]:
+        # con coordinador, la sintesis entra a la memoria al enviarsela (el envio se captura solo); sin el,
+        # se captura aca como envio. `consulta` no es una clase de captura: se descartaba (2026-10-10)
+        try:
+            import captura
 
-        rev = tarjeta(c["revisor"]) if tarjeta else None
-        if rev:
-            captura.envio(rev, texto, de=c["coordinador"], clase="consulta", consulta=cid)
-    except Exception as e:
-        state.log(f"consulta {cid}: la síntesis no quedó en la memoria: {e}")
+            rev = tarjeta(c["revisor"]) if tarjeta else None
+            if rev:
+                captura.envio(rev, texto, de=None, consulta=cid)
+        except Exception as e:
+            state.log(f"consulta {cid}: la síntesis no quedó en la memoria: {e}")
     state.log(f"consulta {cid}: cerrada ({len(objeciones)} objeciones)")
     _avisar_coordinador(c, f"[consulta {cid} · cerrada]\n\n{texto}")
 
