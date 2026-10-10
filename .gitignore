@@ -29,3 +29,6 @@ node_modules/
 
 # evidencia regenerada por pruebas-agenticas (las propuestas requieren revisión)
 pruebas-agenticas/resultados/
+
+# carpeta de trabajo de coda (planes, olas, docs de workflows): no es del repo
+.coda/
