@@ -663,7 +663,7 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
 .consulta-fondo { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 50; display: flex; justify-content: center; align-items: flex-start; padding: 32px 16px; overflow-y: auto; }
 .consulta-vista { background: var(--panel); color: var(--fg); border: 1px solid var(--investigador); border-radius: 8px; width: min(1200px, 100%); padding: 16px 20px; }
 .consulta-vista header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
-.consulta-vista h2 { font-size: 18px; margin: 0; line-height: 1.35; }
+.consulta-vista h2 { font-size: 13px; font-weight: 400; margin: 0; line-height: 1.5; color: var(--fg); }
 .consulta-cerrar { background: none; border: 0; color: var(--dim); font-size: 22px; cursor: pointer; }
 .consulta-meta { color: var(--dim); font-size: 13px; margin: 6px 0 14px; }
 .consulta-tabla { display: grid; gap: 12px; }
