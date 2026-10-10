@@ -5,22 +5,58 @@ import type { ConsultaEntera, ConsultaResumen } from "../types";
 
 /** La tira de consultas arriba del tablero: las abiertas (y las tres últimas cerradas, apagadas),
  *  cada una con su pregunta y en qué va. Un click abre la consulta entera. */
+// las cerradas que la persona sacó de la tira con la cruz: solo en este navegador (la consulta sigue en disco)
+const OCULTAS = "lienzo.consultas.ocultas";
+const CERRADA_VISIBLE_MS = 30 * 60_000;
+function leerOcultas(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(OCULTAS) || "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
 export function ConsultasBar() {
   const consultas = useConsultas();
   const [abierta, setAbierta] = useState<string | null>(null);
+  const [ocultas, setOcultas] = useState<string[]>(leerOcultas);
+  const [ahora, setAhora] = useState(Date.now);
+  useEffect(() => {
+    const t = window.setInterval(() => setAhora(Date.now()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+  const ocultar = (id: string) => {
+    const nuevas = [...ocultas, id].slice(-50);
+    setOcultas(nuevas);
+    try {
+      localStorage.setItem(OCULTAS, JSON.stringify(nuevas));
+    } catch {
+      /* sin almacenamiento (ventana privada): se oculta hasta recargar */
+    }
+  };
   const lista = Object.values(consultas).sort((a, b) => b.creada.localeCompare(a.creada));
   const vivas = lista.filter(ABIERTA);
-  const viejas = lista.filter((c) => !ABIERTA(c)).slice(0, 3);
+  // una cerrada se va sola de la tira a los 30 min de cerrar (o antes, con la cruz); sigue en disco.
+  // El reloj avanza desde un timer, no en el render (como en Card)
+  const reciente = (c: ConsultaResumen) => !c.cerrada || ahora - new Date(c.cerrada).getTime() < CERRADA_VISIBLE_MS;
+  const viejas = lista.filter((c) => !ABIERTA(c) && !ocultas.includes(c.id) && reciente(c)).slice(0, 3);
   if (!vivas.length && !viejas.length) return null;
   return (
     <>
       <div className="consultas-bar" role="list" aria-label="consultas entre investigadores">
         {[...vivas, ...viejas].map((c) => (
-          <button key={c.id} role="listitem" className={`consulta-chip ${ABIERTA(c) ? "viva" : "vieja"}`} onClick={() => setAbierta(c.id)} title={c.pregunta}>
-            <span className="consulta-icono" aria-hidden>🔬</span>
-            <span className="consulta-pregunta">{c.pregunta}</span>
-            <span className="consulta-avance">{avance(c)}</span>
-          </button>
+          <span key={c.id} role="listitem" className={`consulta-chip ${ABIERTA(c) ? "viva" : "vieja"}`}>
+            <button className="consulta-abrir" onClick={() => setAbierta(c.id)} title={c.pregunta}>
+              <span className="consulta-icono" aria-hidden>🔬</span>
+              <span className="consulta-pregunta">{c.pregunta}</span>
+              <span className="consulta-avance">{avance(c)}</span>
+            </button>
+            {!ABIERTA(c) && (
+              <button className="consulta-quitar" onClick={() => ocultar(c.id)} aria-label="sacar de la tira" title="sacar de la tira (la consulta queda guardada)">
+                ×
+              </button>
+            )}
+          </span>
         ))}
       </div>
       {abierta && <ConsultaVista id={abierta} resumen={consultas[abierta]} onClose={() => setAbierta(null)} />}

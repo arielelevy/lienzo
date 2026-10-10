@@ -687,3 +687,6 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
 :root { --balanza: #f5c542; }
 .balanza { color: var(--balanza); }
 .arrows .lbl.balanza { fill: var(--balanza); font-size: 12px; }
+.consulta-chip .consulta-abrir { display: inline-flex; gap: 6px; align-items: center; min-width: 0; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.consulta-chip .consulta-quitar { background: none; border: 0; padding: 0 0 0 4px; color: var(--dim); font-size: 14px; line-height: 1; cursor: pointer; }
+.consulta-chip .consulta-quitar:hover { color: var(--fg); }
