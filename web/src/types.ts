@@ -242,6 +242,8 @@ export interface ConsultaResumen {
 export interface ConsultaEntera extends Omit<ConsultaResumen, "esperando" | "pendientes"> {
   pendientes: Record<string, { marca: string; enviado: string }>;
   respuestas: Record<string, Record<string, { texto: string; ts: string; agente?: string; modelo?: string }>>;
+  /** las réplicas mandadas: a quién, de quién y de qué vuelta (consultas viejas de disco: puede no estar) */
+  replicas?: { para: string; de: string; vuelta: number; ts: string }[];
   sintesis: string | null;
   objeciones: Record<string, string>;
 }

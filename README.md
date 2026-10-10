@@ -545,6 +545,7 @@ además la cookie de sesión.
 | POST | `/consultas` | `{pregunta, investigadores, vueltas?, revisor?, coordinador?, espera_min?, enfoques?, vuelta1?, revisar_sintesis?}`; abre una consulta entre investigadores, devuelve `{id, tope_turnos}` |
 | GET | `/consultas`, `/consultas/<id>` | las últimas consultas (resumen); una entera, con las respuestas por vuelta |
 | POST | `/consultas/<id>/cancelar` | la deja cancelada; lo respondido queda guardado |
+| POST | `/consultas/<id>/replica` | `{para, de, vuelta}`; le reenvía a `para` la respuesta de `de` que no le llegó, sin tocar el avance (409 si está contestando) |
 | GET | `/peers`, `/peers/lan` | las PCs emparejadas con su salud; las de la LAN sin emparejar |
 | POST | `/peers/offer`, `/peers/join` | emparejar: ofrecer la palabra, pegarla |
 | DELETE | `/peers/<pc_id>` | revoca el peer |

@@ -274,3 +274,25 @@ y lint.
   y con el cambio de «si no está en la terminal, quitalo» el auto-aprobar lo daba por contestado sin teclear: la coda
   quedaba esperando. Ahora ese diálogo cuenta como permiso, pero solo con la opción de correrlo marcada (con otra marcada,
   un Enter haría otra cosa). Test nuevo; verificado en vivo con el workflow de la segunda prueba SDD.
+
+## Réplica en la consulta (spec `docs/specs/consulta-replica/`, segunda prueba SDD con coda)
+
+**Alcance:** `consulta.replica` y `_enviar_uno` (extraído de `_mandar_vuelta`), ruta `POST /consultas/<id>/replica`,
+`coordinar.consulta_replica`, línea en la skill, tamaño de cada respuesta en la vista; `tests/test_consulta_replica.py`.
+
+**Cómo se hizo:** la coda escribió la spec (corta: 194 líneas, con `_Leer:_` por tarea), lanzó el workflow y cortó el turno,
+como pide la skill mejorada. El workflow hizo las tareas 1 y 4 y frenó en la ola 2 por **cuota agotada** del proveedor
+(«Quota exceeded»), no por el código. Las tareas 2, 3 y 5 las terminé yo. El informe de la coda decía «no quedó nada
+escrito»: no era cierto, las tareas 1 y 4 estaban hechas y marcadas.
+
+**Revisión del código de la coda — tres correcciones:**
+1. Un envío fallido devolvía 200 con `ok: false`: ahora 502.
+2. Una réplica a quien está contestando una vuelta pisaba su último pedido, y su respuesta dejaba de reconocerse como de
+   la vuelta (`_es_respuesta` mira la marca del último pedido): ahora 409 «está contestando», validado después de las
+   demás razones. Test nuevo.
+3. El tipo `replicas` de la web no coincidía con lo que guarda el server (una lista de `{para, de, vuelta, ts}`).
+
+**Gasto de la coda hasta la cuota:** 3,6 M de entrada (sesión principal 1,4 M), contra 21,2 M de la primera prueba para una
+spec más grande; la principal no hizo tareas a mano.
+
+**Pruebas:** 1391 pasan; build y lint de la web.

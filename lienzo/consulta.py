@@ -215,6 +215,7 @@ def abrir(d: dict) -> tuple[int, dict]:
         "vuelta": 1,
         "pendientes": {},
         "respuestas": {},
+        "replicas": [],
         "sintesis": None,
         "objeciones": {},
         "fuera": {},
@@ -341,6 +342,15 @@ def _pedido_revisar_sintesis(c: dict) -> str:
 # --- enviar --------------------------------------------------------------------------------------
 
 
+def _enviar_uno(cid: str, sid: str, texto: str, de: str | None) -> tuple[int, dict]:
+    """El envio de una sola tarjeta, con try/except: sin anotar pendiente ni sacar a nadie (eso lo
+    deciden quienes lo llaman — `_mandar_vuelta` anota y saca, `replica` no toca nada)."""
+    try:
+        return enviar(sid, texto, de, cid) if enviar else (503, {"error": "sin envío cableado"})
+    except Exception as e:
+        return 500, {"error": f"{type(e).__name__}: {e}"}
+
+
 def _mandar_vuelta(cid: str, pedidos: dict[str, str], de: str | None) -> None:
     """Manda los pedidos (uno por tarjeta) en paralelo y anota los pendientes con su marca. `de` es el
     origen de la flecha: el coordinador, o el investigador cuya respuesta se pasa (si es uno solo)."""
@@ -352,10 +362,7 @@ def _mandar_vuelta(cid: str, pedidos: dict[str, str], de: str | None) -> None:
     resultados: dict[str, tuple[int, dict]] = {}
 
     def uno(sid: str, texto: str) -> None:
-        try:
-            resultados[sid] = enviar(sid, texto, de, cid) if enviar else (503, {"error": "sin envío cableado"})
-        except Exception as e:  # un envio roto no corta a los demas
-            resultados[sid] = (500, {"error": f"{type(e).__name__}: {e}"})
+        resultados[sid] = _enviar_uno(cid, sid, texto, de)  # un envio roto no corta a los demas
 
     hilos = [threading.Thread(target=uno, args=(sid, t), daemon=True) for sid, t in pedidos.items()]
     for h in hilos:
@@ -581,6 +588,57 @@ def _sacar(cid: str, sid: str, motivo: str) -> None:
             c["estado"] = "abierta"  # vuelve a pedir la sintesis al revisor nuevo
             c["vuelta"] = c["vueltas"]
     _avanzar(cid)
+
+
+def replica(cid: str, d: dict) -> tuple[int, dict]:
+    """POST /consultas/<id>/replica. d = {"para": sid, "de": sid, "vuelta": n}. Le reenvía a `para` la
+    respuesta de `de` en esa vuelta, por el envío de siempre: sin tocar pendientes ni avance, y si el
+    envío falla no saca a nadie — devuelve el error como respuesta."""
+    with lock:
+        c = CONSULTAS.get(cid)
+        if not c:
+            return 404, {"ok": False, "error": "no hay una consulta con ese id"}
+        if c["estado"] not in ABIERTAS:
+            return 409, {"ok": False, "error": f"la consulta ya está {c['estado']}"}
+        para, de, vuelta = d.get("para"), d.get("de"), d.get("vuelta")
+        if not isinstance(para, str) or not isinstance(de, str):
+            return _rechazo("para y de son ids de tarjeta")
+        if not isinstance(vuelta, int) or isinstance(vuelta, bool) or vuelta < 1:
+            return _rechazo("vuelta tiene que ser un entero positivo")
+        if para not in _participantes(c):
+            return _rechazo(f"{para[:8]} no participa de la consulta")
+        r = c["respuestas"].get(str(vuelta), {}).get(de)
+        if not r:
+            return _rechazo(f"no hay respuesta de {de[:8]} en la vuelta {vuelta}")
+        if para in c["pendientes"]:
+            # mientras contesta una vuelta, la replica pisaria su ultimo pedido y su respuesta ya no se
+            # reconoceria como de la vuelta (_es_respuesta mira la marca del ultimo pedido)
+            return _rechazo(f"{para[:8]} está contestando: mandá la réplica cuando termine", 409)
+        pedido = "\n\n".join(
+            (
+                _marca(cid, "réplica"),
+                (
+                    f"Te reenvía el coordinador una respuesta puntual de {c['nombres'].get(de, de[:8])} "
+                    f"de la vuelta {vuelta}, por si no te llegó:"
+                ),
+                r["texto"],
+                REGLAS,
+            )
+        )
+    code, out = _enviar_uno(cid, para, pedido, de)
+    if code != 200:
+        return 502, {"ok": False, "error": f"el envío falló ({code}: {short(str(out.get('error') or out), 120)})"}
+    with lock:
+        c = CONSULTAS.get(cid)
+        if not c:
+            return 404, {"ok": False, "error": "no hay una consulta con ese id"}
+        anotacion = {"para": para, "de": de, "vuelta": vuelta, "ts": now()}
+        c.setdefault("replicas", []).append(anotacion)
+        _guardar(c)
+    state.log(
+        f"consulta {cid}: réplica de {c['nombres'].get(de, de[:8])} a {c['nombres'].get(para, para[:8])} (vuelta {vuelta})"
+    )
+    return 200, {"ok": True, "replica": anotacion}
 
 
 def cancelar(cid: str) -> tuple[int, dict]:

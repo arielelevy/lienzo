@@ -1722,6 +1722,10 @@ class Handler(JsonHandler):
             if len(parts) == 3 and parts[0] == "consultas" and parts[2] == "cancelar":
                 code, res = consulta.cancelar(parts[1])
                 return self._json(code, res)
+            if len(parts) == 3 and parts[0] == "consultas" and parts[2] == "replica":
+                # reenviarle a un investigador una respuesta que no recibio (sin tocar el avance)
+                code, res = consulta.replica(parts[1], self._json_body())
+                return self._json(code, res)
             if parts == ["rules"]:
                 code, res = create_rule(self._json_body())
                 return self._json(code, res)

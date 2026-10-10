@@ -65,7 +65,7 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
     monkeypatch.setattr(health._k32, "GlobalMemoryStatusEx", revienta)
     monkeypatch.setattr(health._k32, "GetSystemTimes", revienta)
     monkeypatch.setattr(health, "_temp_c", lambda: (_ for _ in ()).throw(OSError("simulado")))
-    monkeypatch.setattr(health.protocol.tmux, "distros", lambda: [])
+    monkeypatch.setattr(health.protocol.tmux, "distros", list)
     monkeypatch.setattr(health.protocol, "carpetas_de_proyecto", lambda roots: [])
     s = health.snapshot()
     assert s == {

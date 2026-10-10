@@ -272,6 +272,7 @@ tres investigadores de modelos de frontera, con esfuerzo alto, y un revisor.
 ```python
 cid = c.consulta("¿…?", [sid_claude, sid_codex], vueltas=2, revisor=sid_revisor)
 c.consulta_estado(cid)
+c.consulta_replica(cid, para, de, vuelta)   # reenvía a `para` la respuesta de `de` que no le llegó
 ```
 
 El lienzo manda la vuelta 1 a todos a la vez, después le pasa a cada uno las respuestas de los otros

@@ -64,6 +64,14 @@ export function ConsultasBar() {
   );
 }
 
+/** El tamaño de un texto en formato corto: bytes, KB o MB. */
+function tamano(texto: string): string {
+  const bytes = new TextEncoder().encode(texto).length;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** Una consulta entera: una columna por investigador, una fila por vuelta, la síntesis al pie. */
 function ConsultaVista({ id, resumen, onClose }: { id: string; resumen?: ConsultaResumen; onClose: () => void }) {
   const [c, setC] = useState<ConsultaEntera | null>(null);
@@ -108,7 +116,10 @@ function ConsultaVista({ id, resumen, onClose }: { id: string; resumen?: Consult
                 .flatMap((n) =>
                   c.investigadores.map((s) => (
                     <article key={`${n}-${s}`} className="consulta-respuesta">
-                      <h3>vuelta {n}</h3>
+                      <h3>
+                        vuelta {n}
+                        {c.respuestas[n][s] && <span className="consulta-tamano"> · {tamano(c.respuestas[n][s].texto)}</span>}
+                      </h3>
                       <div className="consulta-texto">{c.respuestas[n][s]?.texto ?? (c.pendientes[s] ? "…pensando" : "—")}</div>
                     </article>
                   )),
@@ -116,7 +127,10 @@ function ConsultaVista({ id, resumen, onClose }: { id: string; resumen?: Consult
             </div>
             {c.sintesis && (
               <article className="consulta-sintesis">
-                <h3>Síntesis de {c.nombres[c.revisor] ?? "el revisor"}</h3>
+                <h3>
+                  Síntesis de {c.nombres[c.revisor] ?? "el revisor"}
+                  <span className="consulta-tamano"> · {tamano(c.sintesis)}</span>
+                </h3>
                 <div className="consulta-texto">{c.sintesis}</div>
                 {Object.entries(c.objeciones).length > 0 && (
                   <ul className="consulta-objeciones">

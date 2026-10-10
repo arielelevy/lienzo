@@ -1000,6 +1000,16 @@ def consulta(pregunta, investigadores, vueltas=2, revisor=None, espera_min=30, e
     return res["id"]
 
 
+def consulta_replica(cid, para, de, vuelta):
+    """Le reenvía a `para` la respuesta de `de` en la vuelta `vuelta` (una que no le llegó), sin tocar el
+    avance de la consulta. 409 si `para` está contestando una vuelta: esperar a que termine. Levanta
+    RuntimeError con el motivo si el server no la acepta."""
+    code, res = pedir("POST", f"/consultas/{cid}/replica", {"para": para, "de": de, "vuelta": vuelta}, timeout=120)
+    if code != 200:
+        raise RuntimeError(f"consulta_replica: {code} {res}")
+    return res.get("replica")
+
+
 def consulta_estado(cid):
     """La consulta entera (estado, vuelta, respuestas, síntesis), o None si no existe."""
     code, res = pedir("GET", f"/consultas/{cid}")
