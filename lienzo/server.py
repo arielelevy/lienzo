@@ -328,12 +328,18 @@ def consulta_tarjeta(sid: str) -> dict | None:
     return s if s is not None else next((x for x in mirror.MIRROR.sessions() if x["session_id"] == sid), None)
 
 
-def consulta_enviar(sid: str, texto: str, de: str | None, cid: str) -> tuple[int, dict]:
-    """consulta.enviar: el envio del tablero (local o reenviado a la PC duena), con la flecha de la consulta."""
+def consulta_enviar(sid: str, texto: str, de: str | list[str] | None, cid: str) -> tuple[int, dict]:
+    """consulta.enviar: el envio del tablero (local o reenviado a la PC duena), con la flecha de la consulta.
+    Con varios `de` (la sintesis lee a todos los investigadores) se teclea una vez y se dibuja una flecha por cada uno."""
+    origenes = [x for x in (de if isinstance(de, list) else [de]) if x and x != sid]
     d = {"text": texto, "consulta": cid}
-    if de and de != sid:
-        d["from"] = de
-    return atender_accion("POST", sid, "send", d, desde_tablero=True)
+    if origenes:
+        d["from"] = origenes[0]
+    code, res = atender_accion("POST", sid, "send", d, desde_tablero=True)
+    if code == 200:
+        for src in origenes[1:]:
+            add_link(src, sid, texto, "consulta", consulta=cid)
+    return code, res
 
 
 def consulta_respuesta(s: dict) -> str:
@@ -1692,7 +1698,14 @@ class Handler(JsonHandler):
                 code, res = conocimiento_api.dispatch("POST", parts[1:], self._json_body(), self.query)
                 return self._json(code, res)
             if parts == ["consultas"]:
-                code, res = consulta.abrir(self._json_body())
+                d = self._json_body()
+                code, res = consulta.abrir(d)
+                coord = d.get("coordinador") if isinstance(d, dict) else None
+                if code == 200 and isinstance(coord, str) and coord:
+                    # quien coordina la consulta queda como coordinadora del repo (★): es la que recibe la sintesis
+                    s_coord = consulta_tarjeta(coord)
+                    if s_coord and not s_coord.get("coordinator"):
+                        atender_accion("PUT", coord, "coordinator", {"on": True}, desde_tablero=True)
                 return self._json(code, res)
             if len(parts) == 3 and parts[0] == "consultas" and parts[2] == "cancelar":
                 code, res = consulta.cancelar(parts[1])

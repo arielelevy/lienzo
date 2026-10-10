@@ -74,6 +74,7 @@ def test_una_consulta_completa_con_revisor_aparte(mundo):
     _contesta(tarjetas, A, "A corregida")
     _contesta(tarjetas, B, "B corregida")
     assert [e["sid"] for e in envios] == [R] and "· síntesis]" in envios[0]["texto"]
+    assert envios[0]["de"] == [A, B]  # una flecha de cada investigador al revisor
     assert "A corregida" in envios[0]["texto"] and consulta.ver(cid)["estado"] == "sintetizando"
 
     envios.clear()
@@ -84,12 +85,24 @@ def test_una_consulta_completa_con_revisor_aparte(mundo):
     envios.clear()
     _contesta(tarjetas, A, consulta.REPRESENTA)
     _contesta(tarjetas, B, "No: yo dije que Q no equivale a #82")
+    # con una objeción, el revisor la integra antes de cerrar (prueba de Teorema, 2026-10-10)
     c = consulta.ver(cid)
-    assert c["estado"] == "cerrada" and c["objeciones"][B].startswith("No:")
-    assert [e["sid"] for e in envios] == [K] and "Objeciones" in envios[0]["texto"]
+    assert c["estado"] == "corrigiendo" and [e["sid"] for e in envios] == [R]
+    assert "· corrección]" in envios[0]["texto"] and "Q no equivale" in envios[0]["texto"] and envios[0]["de"] == [B]
+
+    envios.clear()
+    _contesta(tarjetas, R, "Síntesis corregida: Q no equivale a #82")
+    c = consulta.ver(cid)
+    assert (
+        c["estado"] == "cerrada"
+        and c["sintesis"].startswith("Síntesis corregida")
+        and c["objeciones"][B].startswith("No:")
+    )
+    assert [e["sid"] for e in envios] == [K] and "ya integradas" in envios[0]["texto"]
     with open(f"{consulta.DIR}/{cid}/sintesis.md", encoding="utf-8") as f:
         sintesis = f.read()
-    assert "Q no equivale" in sintesis and "REPRESENTA" not in sintesis
+    assert "Representa bien, según:** Claude (opus)" in sintesis and "revisor ·" not in c["nombres"][A]
+    assert c["nombres"][R].startswith("revisor · ")
 
 
 def test_validaciones_al_abrir(mundo):
@@ -110,10 +123,27 @@ def test_validaciones_al_abrir(mundo):
     assert consulta.abrir({"pregunta": "y", "investigadores": [A, R]})[0] == 400  # A ya está en una abierta
 
 
+def test_el_revisor_puede_ser_quien_abre_aunque_figure_corriendo(mundo):
+    """Prueba de Teorema (2026-10-10): la coordinadora era también la revisora y al abrir figuraba
+    corriendo; el 409 hacía imposible que una sesión abriera una consulta que ella misma revisa."""
+    tarjetas, envios = mundo
+    tarjetas[R]["state"] = "corriendo"
+    code, _ = consulta.abrir(
+        {"pregunta": "x", "investigadores": [A, B], "revisor": R, "coordinador": R, "vuelta1": {A: "a", B: "b"}}
+    )
+    assert code == 200 and sorted(e["sid"] for e in envios) == [A, B]
+
+
 def test_converge_por_sin_cambios_y_sigue_desde_una_vuelta_1_hecha_a_mano(mundo):
     tarjetas, envios = mundo
     code, out = consulta.abrir(
-        {"pregunta": "x", "investigadores": [A, B], "vueltas": 3, "vuelta1": {A: "a1", B: "b1"}, "revisar_sintesis": False}
+        {
+            "pregunta": "x",
+            "investigadores": [A, B],
+            "vueltas": 3,
+            "vuelta1": {A: "a1", B: "b1"},
+            "revisar_sintesis": False,
+        }
     )
     cid = out["id"]
     assert code == 200 and sorted(e["sid"] for e in envios) == [A, B]
@@ -137,7 +167,9 @@ def test_respuesta_por_adjunto_y_vigilancia(mundo, tmp_path):
     _contesta(tarjetas, A, "a1")
     assert A in consulta.ver(cid)["respuestas"]["1"]
     # B contestó con el server caído: lo toma vigilar() por la tarjeta
-    tarjetas[B].update(state="termino", state_since=(dt.datetime.now().astimezone() + dt.timedelta(seconds=1)).isoformat())
+    tarjetas[B].update(
+        state="termino", state_since=(dt.datetime.now().astimezone() + dt.timedelta(seconds=1)).isoformat()
+    )
     # R murió: sale, y con dos que quedan sigue
     tarjetas[R]["state"] = "muerta"
     consulta.vigilar(ahora=10**10, leer_respuesta=lambda s: "b1 entera")
@@ -166,3 +198,41 @@ def test_cancelar_y_recargar_de_disco(mundo, monkeypatch):
     assert consulta.de_tarjeta(B)["id"] == cid
     assert consulta.cancelar(cid)[0] == 200 and not consulta.espera(A)
     assert consulta.listar()[0]["estado"] == "cancelada"
+
+
+def test_una_aprobacion_con_precision_pasa_a_la_correccion(mundo):
+    tarjetas, envios = mundo
+    cid = consulta.abrir(
+        {"pregunta": "x", "investigadores": [A, B], "revisor": R, "vuelta1": {A: "a", B: "b"}, "vueltas": 2}
+    )[1]["id"]
+    _contesta(tarjetas, A, "a2")
+    _contesta(tarjetas, B, "b2")
+    _contesta(tarjetas, R, "síntesis")
+    envios.clear()
+    _contesta(tarjetas, A, "REPRESENTA BIEN.")
+    _contesta(
+        tarjetas, B, "REPRESENTA BIEN, con esta precisión: sostengo no abandonar θ=½ mientras L1∃ siga sin prueba"
+    )
+    assert consulta.ver(cid)["estado"] == "corrigiendo" and [e["sid"] for e in envios] == [R]
+    assert "θ=½" in envios[0]["texto"] and "a2" not in envios[0]["texto"]
+
+
+def test_full_reply_prefiere_la_respuesta_del_hook_si_la_transcripcion_va_atrasada(monkeypatch, tmp_path):
+    """c-20261010-4f8afd: Claude Code escribe la respuesta final en la transcripción después del Stop; leída
+    en ese instante, el «final» era el último texto intermedio. La tarjeta trae la del hook, entera."""
+    import rules
+
+    tp = tmp_path / "t.jsonl"
+    tp.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(rules.transcripts, "turns", lambda *a, **k: {"turns": [{"final": "Estoy corriendo CP-SAT…"}]})
+    monkeypatch.setattr(rules.transcripts, "leaf_of", lambda s: None)
+    s = {
+        "session_id": "x" * 36,
+        "agent": "claude",
+        "transcript_path": str(tp),
+        "last_reply": "## Respuesta\n" + "y" * 4800,
+    }
+    assert rules.full_reply(s, 10**6).startswith("## Respuesta")
+    # y si la transcripción ya tiene la entera (más larga que la tarjeta), gana la transcripción
+    s["last_reply"] = "corta"
+    assert rules.full_reply(s, 10**6) == "Estoy corriendo CP-SAT…"

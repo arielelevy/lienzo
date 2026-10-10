@@ -30,7 +30,7 @@ ESPERA_DEFECTO_MIN = 30
 SIN_CAMBIOS = "SIN CAMBIOS"
 REPRESENTA = "REPRESENTA BIEN"
 VIGILAR_CADA_S = 30.0
-ABIERTAS = ("abierta", "sintetizando", "revisando")
+ABIERTAS = ("abierta", "sintetizando", "revisando", "corrigiendo")
 TEXTO_MAX = 200_000  # una respuesta entera de una vuelta (rules.full_reply recorta a 6000 por defecto)
 
 CONSULTAS: dict[str, dict] = {}
@@ -184,9 +184,9 @@ def abrir(d: dict) -> tuple[int, dict]:
         ocupadas = {p for c in CONSULTAS.values() if c["estado"] in ABIERTAS for p in _participantes(c)}
     if ocupadas & set(todos):
         return _rechazo(f"{min(ocupadas & set(todos))[:8]} ya está en otra consulta abierta")
-    corriendo = [
-        sid for sid in (*inv, *([revisor] if revisor and previa else [])) if tarjetas[sid].get("state") == "corriendo"
-    ]
+    # solo los investigadores: el revisor recibe su pedido recien en la sintesis, y muchas veces es la
+    # misma sesion que abre la consulta, que al abrirla figura corriendo (prueba de Teorema, 2026-10-10)
+    corriendo = [sid for sid in inv if tarjetas[sid].get("state") == "corriendo"]
     if corriendo:
         return _rechazo(f"{corriendo[0][:8]} está trabajando: la consulta arranca con todos quietos", 409)
 
@@ -196,6 +196,9 @@ def abrir(d: dict) -> tuple[int, dict]:
         if len(repetidos) > 1:
             for i, sid in enumerate(repetidos):
                 nombres[sid] = f"{nombre} {'ABC'[i]}"
+    if revisor:
+        # el revisor aparte se nombra como tal: si no, «Claude (opus)» se confunde con un investigador
+        nombres[revisor] = f"revisor · {nombres[revisor]}"
     cid = f"c-{dt.datetime.now():%Y%m%d}-{secrets.token_hex(3)}"
     c = {
         "id": cid,
@@ -432,6 +435,9 @@ def _tomar(cid: str, sid: str, s: dict, texto: str) -> bool:
         elif etapa == "sintetizando":
             c["sintesis"] = texto
             nombre_md = "sintesis-borrador.md"
+        elif etapa == "corrigiendo":
+            c["sintesis_previa"], c["sintesis"] = c["sintesis"], texto
+            nombre_md = "sintesis-corregida.md"
         else:
             c["objeciones"][sid] = texto.strip()
             nombre_md = f"revision-{sid[:8]}.md"
@@ -466,7 +472,10 @@ def _avanzar(cid: str) -> None:
             c["estado"] = "sintetizando"
             if c["revisor"] in c["fuera"] or c["revisor"] not in _participantes(c):
                 c["revisor"] = activos[0]
-        _mandar_vuelta(cid, {c["revisor"]: _pedido_sintesis(c)}, de=c["coordinador"])
+        # la flecha de la sintesis sale de cada investigador: son sus respuestas las que llegan al revisor
+        _mandar_vuelta(
+            cid, {c["revisor"]: _pedido_sintesis(c)}, de=[i for i in activos if i != c["revisor"]] or c["coordinador"]
+        )
         return
     if estado == "sintetizando":
         revisan = [i for i in activos if i != c["revisor"]] if c["revisar_sintesis"] else []
@@ -475,18 +484,59 @@ def _avanzar(cid: str) -> None:
                 c["estado"] = "revisando"
             _mandar_vuelta(cid, {sid: _pedido_revisar_sintesis(c) for sid in revisan}, de=c["revisor"])
             return
+    if estado == "revisando" and _objeciones(c) and c["revisor"] not in c["fuera"]:
+        # una vuelta corta: el revisor integra las objeciones antes de cerrar (pedido de la prueba de Teorema)
+        with lock:
+            c["estado"] = "corrigiendo"
+        _mandar_vuelta(cid, {c["revisor"]: _pedido_corregir(c)}, de=list(_objeciones(c)))
+        return
     _cerrar(cid)
+
+
+PRECISION_MIN = 40  # una aprobacion con mas texto que esto despues de REPRESENTA BIEN trae una precision
+
+
+def _objeciones(c: dict) -> dict[str, str]:
+    """Lo que el revisor tiene que integrar: las revisiones que no dicen REPRESENTA BIEN y las que lo dicen
+    pero agregan una precision (prueba de Teorema, c-20261010-a22b28: «REPRESENTA BIEN, con esta precision…»
+    se trataba como aprobacion pura y la precision no llegaba a la correccion ni al cierre)."""
+    out = {}
+    for k, v in c["objeciones"].items():
+        t = v.strip().lstrip("«*").strip()
+        if not t.upper().startswith(REPRESENTA) or len(t[len(REPRESENTA) :].strip(" .,:;»*")) > PRECISION_MIN:
+            out[k] = v.strip()
+    return out
+
+
+def _pedido_corregir(c: dict) -> str:
+    obj = "\n\n".join(f"### {c['nombres'][k]}\n\n{v}" for k, v in _objeciones(c).items())
+    return "\n\n".join(
+        (
+            _marca(c["id"], "corrección"),
+            "Estas son las objeciones y precisiones de los investigadores a tu síntesis:",
+            obj,
+            (
+                "Integralas: corregí la síntesis donde tengan razón y, donde no, decí por qué en una línea. "
+                "Devolvé la síntesis final completa, con las mismas secciones. No edites archivos."
+            ),
+        )
+    )
 
 
 def _cerrar(cid: str) -> None:
     with lock:
         c = CONSULTAS[cid]
         c["estado"], c["cerrada"] = "cerrada", now()
-        objeciones = {k: v for k, v in c["objeciones"].items() if not v.upper().startswith(REPRESENTA)}
+        objeciones = _objeciones(c)
+        aceptaron = [c["nombres"][k] for k in c["objeciones"] if k not in objeciones]
+        corregida = "sintesis_previa" in c
         _guardar(c)
     texto = f"# Consulta {cid}\n\n**Pregunta:** {c['pregunta']}\n\n{c['sintesis'] or ''}\n"
+    if aceptaron:
+        texto += f"\n**Representa bien, según:** {', '.join(aceptaron)}.\n"
     if objeciones:
-        texto += "\n## Objeciones\n\n" + "\n".join(f"- **{c['nombres'][k]}:** {v}" for k, v in objeciones.items())
+        titulo = "Objeciones (ya integradas por el revisor)" if corregida else "Objeciones"
+        texto += f"\n## {titulo}\n\n" + "\n".join(f"- **{c['nombres'][k]}:** {v}" for k, v in objeciones.items())
     _guardar_md(cid, "sintesis.md", texto)
     try:
         import captura

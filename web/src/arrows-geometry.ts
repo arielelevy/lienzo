@@ -789,7 +789,8 @@ function linkItems(links: Link[], anchors: Map<string, Rect>, fmt: Formatters, n
     const deConsulta = newest.kind === "consulta";
     // un envio viejo se va del tablero; el canal nativo se queda mientras exista
     const edad = now - new Date(newest.ts).getTime();
-    if (!native && !(edad < LINK_TTL_MS)) continue;
+    // las de una consulta no vencen por tiempo: duran mientras sus tarjetas tengan el papel (las filtra Arrows)
+    if (!native && !deConsulta && !(edad < LINK_TTL_MS)) continue;
     const n = g.length;
     const a = fmt.name(newest.from);
     const b = fmt.name(newest.to);

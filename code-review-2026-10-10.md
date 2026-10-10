@@ -205,3 +205,33 @@ arranque), `rules.py` (gancho en `fire_on_stop`), `sessions.add_link` (campo `co
 **Pruebas:** `tests/test_consulta.py` (6: consulta completa con revisor aparte y objeción, validaciones, convergencia por
 `SIN CAMBIOS` desde una vuelta 1 previa, respuesta por adjunto y vigilancia, cancelación con menos de dos, recarga de
 disco); suite completa 1329 en el worktree; build y lint de la web.
+
+## Consulta: ajustes de las pruebas reales en Teorema y el aspecto en el tablero
+
+**Alcance:** `lienzo/consulta.py`, `lienzo/server.py` (solo `consulta_enviar` y la ruta `POST /consultas`; los cambios de
+distros de WSL que la coda tiene a medias en ese archivo no entran), `tests/test_consulta.py`; web (`consultas.ts`,
+`Arrows.tsx`, `arrows-geometry.ts`, `Card.tsx`, `App.tsx`, `useLienzoData.ts`, `styles.css`); README, DISENO §18 y captura.
+
+**Defectos que encontraron las pruebas con turnos reales (consultas c-20261010-56b274, -a22b28, -4f8afd):**
+- La revisora que abre la consulta figuraba `corriendo` y el 409 la bloqueaba: ahora solo se exige quietud a los
+  investigadores. Test nuevo.
+- El revisor aparte tenía el mismo nombre que un investigador: se lo nombra «revisor · …».
+- Las objeciones quedaban pegadas al final: una vuelta `corrigiendo` le pide al revisor integrarlas; una aprobación con
+  precisión (más de 40 caracteres después de `REPRESENTA BIEN`) también cuenta. El cierre lista a quienes aceptaron.
+- El pedido de síntesis no dejaba flecha (origen = destino): ahora sale una de cada investigador al revisor
+  (`consulta_enviar` con varios `de`: se teclea una vez).
+- Las consultas no aparecían en el tablero: se cargaban dentro de `load()`, que se descarta si llega un evento SSE en
+  el medio (casi siempre); ahora se cargan aparte y con cada snapshot.
+- Quien coordina queda como coordinadora del repo (★), a pedido de Ariel.
+
+**Revisión del aspecto:** papel y flechas atados a `rolDe` (abierta, o cerrada sin reusar la tarjeta); la relación entre
+investigadores reemplaza sus flechas de envío; la línea del revisor solo con la consulta abierta, con patas rectas y arco
+por encima de todas las tarjetas (la cubica única cruzaba la vecina). Se sacaron los colores claros, que chocaban con un
+tablero siempre oscuro. Sin hallazgos pendientes; `lineasDeConsulta` asume tarjetas medidas en el mismo tablero.
+
+**Pruebas:** `tests/test_consulta.py` 8; build y lint de la web; capturas con Playwright del tablero real.
+- **Respuesta perdida (tercera prueba, c-20261010-4f8afd):** la vuelta 1 de Claude quedó como la línea de estado de 168
+  caracteres. Causa medida en su transcripción: Claude Code escribe la línea de la respuesta final después de disparar el
+  Stop, y `rules.full_reply` leía la transcripción en ese instante y tomaba el último texto que ya estaba. Afectaba
+  también a `{respuesta}` de las reglas. Ahora gana la más larga entre la de la transcripción y la de la tarjeta (la del
+  hook, `last_assistant_message`, entera). Test nuevo en `tests/test_consulta.py`.

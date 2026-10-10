@@ -509,8 +509,11 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
       {showPairing && <Pairing peers={peers} toast={toast} onClose={() => setShowPairing(false)} />}
-      <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onSelect={selectPc} onToggle={togglePc} onAll={showAllPcs} />
-      <ConsultasBar />
+      {/* las PCs y las consultas comparten renglón; si no entran, las consultas bajan a una segunda fila */}
+      <div className="tiras">
+        <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onSelect={selectPc} onToggle={togglePc} onAll={showAllPcs} />
+        <ConsultasBar />
+      </div>
       <Board
         sessions={sessions}
         pending={pending}

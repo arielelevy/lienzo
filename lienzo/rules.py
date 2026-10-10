@@ -74,17 +74,25 @@ def connections_of(sid: str) -> dict:
 
 
 def full_reply(s: dict, cap: int = 6000) -> str:
-    """Ultima respuesta completa, leida de la transcripcion (la tarjeta guarda 600 caracteres y una
-    revision entera no entra ahi). Si no se puede leer, lo que tiene la tarjeta."""
+    """Ultima respuesta completa: la mas larga entre la de la transcripcion y la de la tarjeta.
+
+    La tarjeta trae la del hook Stop (`last_assistant_message`, entera), que es la verdad del turno que
+    cerro; la transcripcion sirve cuando el hook no la trae. Antes ganaba siempre la transcripcion, y
+    Claude Code escribe la linea de la respuesta final DESPUES de disparar el Stop: leida en ese instante,
+    el «final» del turno era el ultimo texto intermedio (medido el 2026-10-10 en la consulta
+    c-20261010-4f8afd: se guardo «Estoy corriendo CP-SAT…», 168 caracteres, en vez de la respuesta de
+    4.805, y lo mismo le pasaba a {respuesta} de las reglas)."""
+    tarjeta = s.get("last_reply") or ""
     path = s.get("transcript_path")
     if path and os.path.exists(path):
         try:
             ts = transcripts.turns(s["agent"], path, 1, leaf_id=transcripts.leaf_of(s))["turns"]
-            if ts and ts[-1].get("final"):
-                return short(ts[-1]["final"], cap)
+            final = ts[-1].get("final") if ts else None
+            if final and len(final) >= len(tarjeta):
+                return short(final, cap)
         except Exception as e:
             state.log(f"respuesta completa de {s['session_id'][:8]}: {e}")
-    return s.get("last_reply") or ""
+    return short(tarjeta, cap) if tarjeta else ""
 
 
 def render_template(tpl: str, s: dict | None) -> str:

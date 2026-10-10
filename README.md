@@ -479,6 +479,51 @@ peers revocables, tope de 4. Un pedido sin firma recibe 401 sin que se lea el cu
 cada 401 queda en el log. **Con auto-aprobar prendido, una PC emparejada puede ejecutar comandos en
 las otras.**
 
+## Consulta entre investigadores
+
+![Una consulta abierta: dos investigadores con su relación 🔬, la revisora con su flecha ⚖ y la tira de consultas](docs/img/consulta-investigadores.png)
+
+Para un problema difícil cuyas respuestas se pueden discutir (una conjetura, una decisión de
+arquitectura, un bug que nadie entiende), dos o tres agentes de modelos distintos, con esfuerzo alto,
+lo piensan juntos y un revisor sintetiza. El lienzo media cada vuelta por el envío de siempre:
+
+1. **Vuelta 1.** Todos reciben la pregunta a la vez y contestan sin ver a los demás.
+2. **Vueltas siguientes** (2 por defecto, 3 como máximo). Cada uno recibe las respuestas de los otros, con
+   nombre de agente y modelo, y separa lo que acepta, lo que sostiene y lo que refuta con evidencia; si
+   todos escriben `SIN CAMBIOS`, la consulta converge antes del tope.
+3. **Síntesis.** El revisor (otra tarjeta, o el primer investigador si no se elige) escribe acuerdos,
+   desacuerdos con quién sostiene qué, y la conclusión recomendada.
+4. **Revisión.** Cada investigador contesta `REPRESENTA BIEN` o su corrección. Si alguien objeta, o
+   aprueba con una precisión, el revisor recibe una vuelta corta para integrarlo antes de cerrar.
+
+Nadie le escribe a nadie directo: todo envío sale del lienzo, que lleva la cuenta, así que no hay bucle
+posible. La síntesis queda en `~/.lienzo/consultas/<id>/sintesis.md` (con las respuestas de cada vuelta
+al lado), en la memoria del proyecto y en la tarjeta del coordinador, que queda como coordinadora del
+repo (★).
+
+En el tablero la consulta se reconoce de un vistazo:
+
+- **La tira de consultas**, en la fila de las PCs: las abiertas primero, con la pregunta y en qué va
+  («vuelta 2 de 2 · esperando a Codex»); un click abre la consulta entera, con las respuestas de cada
+  vuelta lado a lado y la síntesis al pie.
+- **El papel en cada tarjeta**: 🔬 investiga, ⚖ revisa, 🧭 coordina.
+- **La relación entre investigadores**: una línea violeta punteada de costado a costado, con punta en los
+  dos lados y el 🔬 al medio, mientras conserven el papel (también con la consulta cerrada, hasta que la
+  tarjeta reciba otro trabajo o se borre).
+- **La flecha del revisor**: verde agua, en arco por encima de las tarjetas, desde la relación hasta el
+  revisor, con la ⚖ amarilla; se ve mientras la consulta está abierta.
+
+Desde una sesión, con el skill del lienzo:
+
+```python
+cid = c.consulta("¿…?", [sid_claude, sid_codex], vueltas=2, revisor=sid_revisor)
+c.consulta_estado(cid)
+```
+
+Los investigadores tienen que estar quietos al abrir (si no, 409); el revisor no, porque muchas veces
+es la misma sesión que abre la consulta. `vuelta1={sid: respuesta}` sigue una vuelta 1 hecha a mano. El
+diseño está en [`.kiro/specs/consulta-investigadores/`](.kiro/specs/consulta-investigadores/design.md).
+
 ## API
 
 Todo en `http://127.0.0.1:7321`, JSON. Las escrituras exigen el header `X-Lienzo: 1`; por el túnel,
@@ -497,6 +542,9 @@ además la cookie de sesión.
 | PUT | `/sessions/<sid>/title`, `/stopped`, `/coordinator` | título; la llave stopped (`{on}`); coordinadora del repo (`{on}`) |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
 | POST | `/sessions/launch` | `{pc?, cwd, agent, title?, model?}`; lanza una sesión, local o en otra PC |
+| POST | `/consultas` | `{pregunta, investigadores, vueltas?, revisor?, coordinador?, espera_min?, enfoques?, vuelta1?, revisar_sintesis?}`; abre una consulta entre investigadores, devuelve `{id, tope_turnos}` |
+| GET | `/consultas`, `/consultas/<id>` | las últimas consultas (resumen); una entera, con las respuestas por vuelta |
+| POST | `/consultas/<id>/cancelar` | la deja cancelada; lo respondido queda guardado |
 | GET | `/peers`, `/peers/lan` | las PCs emparejadas con su salud; las de la LAN sin emparejar |
 | POST | `/peers/offer`, `/peers/join` | emparejar: ofrecer la palabra, pegarla |
 | DELETE | `/peers/<pc_id>` | revoca el peer |
@@ -547,6 +595,7 @@ lienzo/
   procs.py, procinfo.py, backend.py, tmux.py   procesos y fuentes (Windows, tmux de WSL/Linux)
   send.py, screen.py   escribir en la consola de un proceso y leer su buffer
   rules.py, rules_api.py   reglas «cuando termine» y programadas
+  consulta.py      consulta entre investigadores: vueltas, síntesis, revisión y vigilancia
   state.py         estado compartido, config, log
   federation.py    firma HMAC, peers.json, beacon, cliente SSE, transporte HTTP
   pairing.py       emparejamiento con SPAKE2

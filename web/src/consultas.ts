@@ -27,18 +27,22 @@ export function useConsultas(): Record<string, ConsultaResumen> {
 
 export const ABIERTA = (c: ConsultaResumen) => c.estado === "abierta" || c.estado === "sintetizando" || c.estado === "revisando";
 
-export type RolConsulta = { rol: "investigador" | "revisor" | "coordinador"; consulta: ConsultaResumen };
+export type RolConsulta = { rol: "investigador" | "revisor" | "coordinador"; consulta: ConsultaResumen; coordina?: boolean };
 
-/** El papel de una tarjeta en la consulta abierta en que participa, o null. */
-export function rolDe(consultas: Record<string, ConsultaResumen>, sid: string): RolConsulta | null {
-  for (const c of Object.values(consultas)) {
-    if (!ABIERTA(c)) continue;
+/** El papel de una tarjeta en una consulta, o null. Vale mientras la consulta está abierta y, ya cerrada,
+ *  mientras la tarjeta no se reusó: su último pedido sigue siendo uno de esa consulta (empieza con su
+ *  marca). Una tarjeta borrada no tiene sesión y no pasa por acá. Gana la consulta más nueva. */
+export function rolDe(consultas: Record<string, ConsultaResumen>, sid: string, lastPrompt?: string | null): RolConsulta | null {
+  const orden = Object.values(consultas).sort((a, b) => b.creada.localeCompare(a.creada));
+  for (const c of orden) {
+    const vigente = ABIERTA(c) || (lastPrompt ?? "").trimStart().startsWith(`[consulta ${c.id}`);
+    if (!vigente) continue;
     if (c.investigadores.includes(sid) && !(sid in c.fuera)) {
       // sin revisor aparte, el primer investigador sintetiza: mientras sintetiza se lo muestra como revisor
       const sintetiza = c.revisor === sid && c.estado === "sintetizando";
       return { rol: sintetiza ? "revisor" : "investigador", consulta: c };
     }
-    if (c.revisor === sid) return { rol: "revisor", consulta: c };
+    if (c.revisor === sid) return { rol: "revisor", consulta: c, coordina: c.coordinador === sid };
     if (c.coordinador === sid) return { rol: "coordinador", consulta: c };
   }
   return null;

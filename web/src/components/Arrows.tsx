@@ -3,7 +3,8 @@ import { ago, rulesApi, sessionsApi, type RuleEdit } from "../api";
 import { everySeconds, hhmm, nextAt, splitEvery, type EveryUnit } from "../nl";
 import { canWrite, periodLabel, shortName, whenLabel } from "../names";
 import { GLYPH_HIT, computeSegs, laneHeight, type Band, type Rect, type Seg } from "../arrows-geometry";
-import type { Link, Rule, Session } from "../types";
+import { ABIERTA, rolDe, useConsultas } from "../consultas";
+import type { ConsultaResumen, Link, Rule, Session } from "../types";
 
 interface Props {
   links: Link[];
@@ -179,9 +180,73 @@ interface View {
  *  y aparece al lado una descripcion de que es y que hace. Recien el doble click abre para operar
  *  (el editor de una regla, la vista de un envio), y Quitar vive adentro de esos dos, con
  *  confirmacion. Antes el click borraba y el doble click era la unica puerta al editor. */
+/** Las lineas propias de cada consulta vigente:
+ *  - la relacion entre cada par de investigadores vecinos, mientras conserven el papel (abierta, o cerrada
+ *    sin reusar): sale del medio del costado de una tarjeta y llega al de la otra, con punta en los dos
+ *    extremos (se hablan entre ellos) y el glifo 🔬 al medio; apiladas en una columna, de abajo a arriba;
+ *  - la del revisor, solo con la consulta abierta: una curva desde su borde de arriba, por encima de las
+ *    tarjetas, hasta el glifo de la relacion. */
+function lineasDeConsulta(consultas: Record<string, ConsultaResumen>, rects: Map<string, Rect>, sessions: Record<string, Session>) {
+  const out: { id: string; d: string; clase: "relacion" | "revisor"; glifo?: { x: number; y: number }; doble?: boolean; titulo: string }[] = [];
+  if (!rects.size) return out;
+  const techo = Math.min(...[...rects.values()].map((r) => r.t));
+  const vigente = (c: ConsultaResumen, sid: string) => rolDe(consultas, sid, sessions[sid]?.last_prompt)?.consulta.id === c.id;
+  for (const c of Object.values(consultas)) {
+    const inv = c.investigadores
+      .filter((s) => !(s in c.fuera) && vigente(c, s) && rects.has(s))
+      .map((s) => rects.get(s)!)
+      .sort((a, b) => a.l - b.l || a.t - b.t);
+    if (inv.length < 2) continue;
+    let glifo: { x: number; y: number } | null = null;
+    for (let i = 0; i + 1 < inv.length; i++) {
+      const [a, b] = [inv[i], inv[i + 1]];
+      let d: string;
+      let m: { x: number; y: number };
+      if (a.r <= b.l) {
+        // lado a lado: del medio del costado derecho de una al del izquierdo de la otra
+        const [x1, y1, x2, y2] = [a.r, (a.t + a.b) / 2, b.l, (b.t + b.b) / 2];
+        const cx = (x1 + x2) / 2;
+        d = `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+        m = { x: cx, y: (y1 + y2) / 2 };
+      } else {
+        // una arriba de la otra: del medio del borde de abajo de la de arriba al de arriba de la otra
+        const [up, down] = a.t <= b.t ? [a, b] : [b, a];
+        const [x1, y1, x2, y2] = [(up.l + up.r) / 2, up.b, (down.l + down.r) / 2, down.t];
+        const cy = (y1 + y2) / 2;
+        d = `M${x1},${y1} C${x1},${cy} ${x2},${cy} ${x2},${y2}`;
+        m = { x: (x1 + x2) / 2, y: cy };
+      }
+      glifo ??= m;
+      out.push({ id: `${c.id}-rel-${i}`, d, clase: "relacion", glifo: m, doble: true, titulo: `investigadores de la consulta «${c.pregunta}»: se leen y se contestan` });
+    }
+    const rev = rects.get(c.revisor);
+    if (!glifo || !ABIERTA(c) || c.investigadores.includes(c.revisor) || !rev || !vigente(c, c.revisor)) continue;
+    // sube del revisor, corre por encima de todas las tarjetas y baja recta por el hueco entre los
+    // investigadores hasta el glifo de la relacion; esquinas redondeadas. Va del glifo al revisor: la punta
+    // queda en el revisor (le vuelve lo que discutieron) y su glifo ⚖ en el tramo de arriba
+    // las patas rectas (por el hueco y sobre el revisor) y un arco suave por encima de las tarjetas: curva
+    // sin esquinas que no cruza ninguna (una sola cubica de punta a punta bajaba en diagonal sobre la vecina)
+    const rx = (rev.l + rev.r) / 2;
+    const gx = glifo.x;
+    const pie = techo - 8; // donde arrancan y terminan las patas, apenas arriba de las tarjetas
+    const cima = techo - 56; // los puntos de control del arco
+    out.push({
+      id: `${c.id}-rev`,
+      d: `M${gx},${glifo.y - 11} L${gx},${pie} C${gx},${cima} ${rx},${cima} ${rx},${pie} L${rx},${rev.t}`,
+      clase: "revisor",
+      glifo: { x: (gx + rx) / 2, y: pie + 0.75 * (cima - pie) },
+      titulo: `revisor de la consulta «${c.pregunta}»: recibe lo que discutieron los investigadores y lo sintetiza`,
+    });
+  }
+  return out;
+}
+
 export function Arrows({ links, rules, sessions, boardRef, version, hover, onDelete, onDeleteRule, toast }: Props) {
   const [segs, setSegs] = useState<Seg[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  // rects de las tarjetas: las lineas de una consulta los necesitan (ver lineasDeConsulta)
+  const [rects, setRects] = useState<Map<string, Rect>>(new Map());
+  const consultas = useConsultas();
   // flecha seleccionada, por el id de su primer link o regla: mientras lo esta, se explica sola
   const [sel, setSel] = useState<string | null>(null);
   const selSeg = sel ? (segs.find((s) => s.ids[0] === sel) ?? null) : null;
@@ -341,14 +406,25 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     const { w, h } = boardContent(board);
     setSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
     const measured = measureBoard(board);
+    setRects((prev) => (measured && JSON.stringify([...prev]) !== JSON.stringify([...measured.rects]) ? measured.rects : prev));
     if (!measured) {
       setSegs([]);
       setLanes(board, 0);
       return;
     }
+    // una flecha de consulta vive mientras sus dos tarjetas tengan el papel en esa consulta (rolDe):
+    // si una se reusa o se borra, la flecha se va con el papel
+    const vivas = links.filter((l) => {
+      if (l.kind !== "consulta") return true;
+      const rol = (sid: string) => rolDe(consultas, sid, sessions[sid]?.last_prompt);
+      const [a, b] = [rol(l.from), rol(l.to)];
+      if (!l.consulta || a?.consulta.id !== l.consulta || b?.consulta.id !== l.consulta) return false;
+      // entre dos investigadores lo dibuja la relacion fija (lineasDeConsulta), con punta en los dos lados
+      return !(a.rol === "investigador" && b.rol === "investigador");
+    });
     const out = computeSegs({
       ...measured,
-      links,
+      links: vivas,
       rules,
       boardWidth: w,
       fmt: {
@@ -566,7 +642,37 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         <marker id="arrowtail" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="9" refX="0.8" refY="4.5" orient="auto">
           <path d="M13,0 L0,4.5 L13,9 z" fill="var(--acc)" />
         </marker>
+        <marker id="consultahead" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="9" refX="12.2" refY="4.5" orient="auto">
+          <path d="M0,0 L13,4.5 L0,9 z" fill="var(--investigador)" />
+        </marker>
+        <marker id="revisorhead" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="9" refX="12.2" refY="4.5" orient="auto">
+          <path d="M0,0 L13,4.5 L0,9 z" fill="var(--revisor)" />
+        </marker>
+        <marker id="consultatail" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="9" refX="0.8" refY="4.5" orient="auto">
+          <path d="M13,0 L0,4.5 L13,9 z" fill="var(--investigador)" />
+        </marker>
       </defs>
+      {/* consulta vigente: la relacion entre investigadores y la linea del revisor (lineasDeConsulta) */}
+      {lineasDeConsulta(consultas, rects, sessions).map((l) => (
+        <g key={l.id}>
+          {l.titulo && <title>{l.titulo}</title>}
+          <path
+            d={l.d}
+            className={`line ${l.clase}`}
+            markerEnd={l.doble ? "url(#consultahead)" : l.clase === "revisor" ? "url(#revisorhead)" : undefined}
+            markerStart={l.doble ? "url(#consultatail)" : undefined}
+          />
+          {l.glifo && (
+            <>
+              <circle cx={l.glifo.x} cy={l.glifo.y} r={11} className={`dot ${l.clase === "revisor" ? "revisor-glifo" : "consulta-glifo"}`} />
+              <text x={l.glifo.x} y={l.glifo.y + 3.5} textAnchor="middle" className={`lbl ${l.clase === "revisor" ? "balanza" : ""}`}>
+                {/* U+FE0E: la balanza como texto, no emoji, para que tome el color del CSS */}
+                {l.clase === "revisor" ? "⚖︎" : "🔬"}
+              </text>
+            </>
+          )}
+        </g>
+      ))}
       {/* seleccionada: se marcan las dos tarjetas que une, para ver de quien a quien es */}
       {selSeg?.ends.map((r, i) => (
         <rect

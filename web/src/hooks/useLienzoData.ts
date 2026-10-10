@@ -40,7 +40,12 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
     let disposed = false;
     let loading = false;
     let revision = 0;
+    // las consultas, aparte y sin la guarda de `revision`: con el tablero activo casi siempre llega un
+    // evento SSE durante la carga y `load` descarta todo lo suyo; el snapshot del stream no las trae.
+    // Un server sin la ruta (otra PC sin actualizar) no traba nada
+    const loadConsultas = () => api.get<ConsultaResumen[]>("/consultas").then((cs) => !disposed && setConsultas(cs), () => null);
     const load = async () => {
+      loadConsultas();
       if (loading) return;
       loading = true;
       const startedAt = revision;
@@ -55,8 +60,6 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
         setPending(byId(ps, (p) => p.request_id));
         setLinks(boardLinks(ls));
         setRules(rs);
-        // las consultas, aparte: un server sin la ruta (otra PC sin actualizar) no traba el tablero
-        api.get<ConsultaResumen[]>("/consultas").then(setConsultas, () => null);
         if (selectedRef.current) setTranscriptTick((t) => t + 1);
       } catch (e) {
         if (!disposed) console.warn("tablero: no se pudo actualizar", e);
@@ -126,6 +129,7 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
           setPending(byId(m.pending, (p) => p.request_id));
           if (m.links) setLinks(boardLinks(m.links));
           if (m.rules) setRules(m.rules);
+          loadConsultas();
           setTranscriptTick((t) => t + 1);
           break;
         case "links":

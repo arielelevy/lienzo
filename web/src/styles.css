@@ -529,7 +529,8 @@ a.btn { display: block; text-align: center; text-decoration: none; background: v
 /* busqueda + chips de agente en el header: filtran las tarjetas visibles, nada mas */
 header .search { display: flex; flex-wrap: wrap; min-width: 0; align-items: center; gap: 4px; background: var(--card); border: 1px solid transparent; border-radius: 8px; padding: 2px 4px 2px 6px; }
 header .search:focus-within { border-color: var(--line); }
-header .search input { background: transparent; color: var(--fg); border: 0; padding: 4px 6px; font: inherit; font-size: 12px; width: 170px; }
+header .search input { background: transparent; color: var(--fg); border: 0; padding: 4px 6px; font: inherit; font-size: 12px; width: 90px; transition: width .15s; }
+header .search input:focus, header .search input:not(:placeholder-shown) { width: 170px; }
 header .search input:focus { outline: none; }
 header .search .chip { display: inline-flex; align-items: center; justify-content: center; height: 24px; padding: 3px 9px; font-size: 11px; font-weight: 600; border-radius: 10px; opacity: .45; border: 0; background: transparent; }
 header .search .chip.on { opacity: 1; color: var(--ink); }
@@ -644,22 +645,21 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
 /* Consulta entre investigadores (Consulta.tsx, consultas.ts): un violeta propio, distinto del azul de
    los envíos y del dorado de la coordinadora, para reconocer de un vistazo quién está discutiendo */
 :root { --investigador: #b48cff; --investigador-bg: #241b38; --revisor: #6fd3c1; --revisor-bg: #14302c; }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) { --investigador: #6b3fd1; --investigador-bg: #efe8ff; --revisor: #12806e; --revisor-bg: #e3f6f2; }
-}
-:root[data-theme="light"] { --investigador: #6b3fd1; --investigador-bg: #efe8ff; --revisor: #12806e; --revisor-bg: #e3f6f2; }
 .arrows .line.consulta { stroke: var(--investigador); stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 2.5; opacity: 1; }
-.rol-consulta { font-size: 11px; border-radius: 4px; padding: 1px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.rol-consulta { font-size: 11px; border-radius: 4px; padding: 1px 6px; white-space: nowrap; flex: 0 0 auto; cursor: help; }
 .rol-investigador { color: var(--investigador); background: var(--investigador-bg); }
 .rol-revisor { color: var(--revisor); background: var(--revisor-bg); }
 .rol-coordinador { color: var(--fg); background: var(--line); }
 .rol-avance { opacity: .8; }
-.consultas-bar { display: flex; gap: 8px; padding: 6px 12px; overflow-x: auto; border-bottom: 1px solid var(--line); }
-.consulta-chip { display: flex; gap: 8px; align-items: baseline; max-width: 520px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--investigador); background: var(--investigador-bg); color: var(--fg); cursor: pointer; font: inherit; text-align: left; }
+.tiras { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; }
+.tiras > .pcstrip { flex: 0 1 auto; }
+.consultas-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 0; flex: 1 1 320px; min-width: 0; }
+.consulta-chip { display: inline-flex; gap: 6px; align-items: center; max-width: 100%; font-size: 11.5px; padding: 4px 10px; border-radius: 12px; border: 1px solid var(--investigador); background: var(--investigador-bg); color: var(--fg); cursor: pointer; font-family: inherit; text-align: left; min-width: 0; }
+.consulta-chip .consulta-pregunta { max-width: 220px; color: var(--fg); }
 .consulta-chip.vieja { opacity: .55; border-style: dashed; }
 .consulta-chip:focus-visible { outline: 2px solid var(--investigador); outline-offset: 2px; }
 .consulta-pregunta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.consulta-avance { color: var(--investigador); font-size: 12px; white-space: nowrap; }
+.consulta-avance { color: var(--investigador); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .consulta-fondo { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 50; display: flex; justify-content: center; align-items: flex-start; padding: 32px 16px; overflow-y: auto; }
 .consulta-vista { background: var(--panel); color: var(--fg); border: 1px solid var(--investigador); border-radius: 8px; width: min(1200px, 100%); padding: 16px 20px; }
 .consulta-vista header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
@@ -678,3 +678,12 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
 .consulta-vista footer button { background: none; border: 1px solid var(--err); color: var(--err); border-radius: 4px; padding: 4px 10px; cursor: pointer; }
 .consulta-error { color: var(--err); }
 @media (max-width: 720px) { .consulta-tabla { grid-template-columns: 1fr !important; } }
+.arrows .line.revisor { stroke: var(--revisor); stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 2.5; opacity: 1; pointer-events: none; }
+.arrows .revisor-nudo { fill: var(--revisor); }
+.arrows .line.relacion { stroke: var(--investigador); stroke-dasharray: 2 5; stroke-linecap: round; stroke-width: 2.5; opacity: 1; pointer-events: none; }
+.arrows .dot.consulta-glifo { stroke: var(--investigador); pointer-events: none; }
+.arrows .dot.revisor-glifo { stroke: var(--revisor); pointer-events: none; }
+.arrows .revisor-glifo + .lbl { fill: var(--revisor); }
+:root { --balanza: #f5c542; }
+.balanza { color: var(--balanza); }
+.arrows .lbl.balanza { fill: var(--balanza); font-size: 12px; }
