@@ -67,6 +67,8 @@ export interface Session {
   no_console?: boolean;
   /** que fuente maneja la tarjeta: "win32" (Windows) o "tmux" (Mac/Linux/WSL). Ausente = primario. */
   backend?: string;
+  /** distro de WSL dueña del tmux de esta tarjeta (solo si corre en WSL). Ausente = no WSL. */
+  distro?: string;
   in_vscode?: boolean;
   suggestion?: string | null;
   /** alguien esta escribiendo en esa terminal (lo detecta screen_loop): lo que se mande se mezcla */
@@ -110,6 +112,8 @@ export interface PeerHealth {
   protocol_version?: number;
   capabilities?: string[];
   launch_roots?: string[];
+  /** los proyectos que existen en disco dentro de launch_roots (protocol.carpetas_de_proyecto) */
+  carpetas?: string[];
   mem_free_gb: number | null;
   mem_total_gb?: number | null;
   cpu_pct: number | null;
@@ -120,6 +124,8 @@ export interface PeerHealth {
    *  401/403), no_verificable (no habia credencial que mandar sin abrir un login: no prueba que venza),
    *  sin_red (no llega al host), timeout (git no termino) o error (otra cosa) */
   git_auth?: Record<string, "ok" | "vencida" | "no_verificable" | "sin_red" | "timeout" | "error"> | null;
+  /** distros de WSL instaladas en esa PC (solo Windows con WSL; vacía o ausente = ninguna) */
+  distros_wsl?: string[];
   /** cuota por agente en esa PC: "ok", "agotada", "agotada hasta HH:MM" o "desconocida" */
   cuotas?: Record<string, string> | null;
 }

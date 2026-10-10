@@ -522,7 +522,7 @@ c.consulta_estado(cid)
 
 Los investigadores tienen que estar quietos al abrir (si no, 409); el revisor no, porque muchas veces
 es la misma sesión que abre la consulta. `vuelta1={sid: respuesta}` sigue una vuelta 1 hecha a mano. El
-diseño está en [`.kiro/specs/consulta-investigadores/`](.kiro/specs/consulta-investigadores/design.md).
+diseño está en [`docs/specs/consulta-investigadores/`](docs/specs/consulta-investigadores/design.md).
 
 ## API
 

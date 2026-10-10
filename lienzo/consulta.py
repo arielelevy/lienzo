@@ -1,4 +1,4 @@
-"""Consulta entre investigadores (.kiro/specs/consulta-investigadores): dos o tres agentes piensan un
+"""Consulta entre investigadores (docs/specs/consulta-investigadores): dos o tres agentes piensan un
 problema dificil por vueltas y un revisor sintetiza. El lienzo media cada vuelta por el envio de siempre
 (se teclea, deja flecha `kind: "consulta"`), lleva la cuenta y pone el tope: ninguna tarjeta le escribe
 a otra, asi que no hay bucle A<->B posible.

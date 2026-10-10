@@ -19,6 +19,7 @@ import subprocess
 import sys
 
 import state
+import tmux
 from agentes import AGENTES
 
 WINDOWS = sys.platform == "win32"
@@ -145,12 +146,17 @@ def _cuota_coda() -> str | None:
         return None
 
 
-def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: str | None = None) -> dict:
+def launch(
+    cwd: str, title: str, agent: str, resume: str | None = None, model: str | None = None, distro: str | None = None
+) -> dict:
     """Escribe el .cmd en `<LIENZO_HOME>/launch/` y lo lanza con explorer.exe. Rechaza (sin tocar
     disco ni proceso) un `cwd` fuera de `launch_roots` y un `agent` desconocido. Devuelve
     `{ok, cmd_path}`; buscar la tarjeta nueva lo hace despues el server (rescan de por medio).
     Con `resume` (el session_id a retomar) agrega el retomar del agente; si el id no es valido para
-    un agente que retoma por id (p. ej. `pid-123`) lanza sin retomar y lo dice: `resumed: false`."""
+    un agente que retoma por id (p. ej. `pid-123`) lanza sin retomar y lo dice: `resumed: false`.
+    Con `distro` (Windows con WSL) la sesion nace adentro de tmux de esa distro: spawn por
+    wsl.exe -d <distro> con el cwd traducido a /mnt/<letra>, y la tarjeta queda direccionada a esa
+    distro desde el nacimiento. Sin pedido, el comportamiento de siempre."""
     exe_name = AGENT_EXES.get(agent)
     if exe_name is None:
         return {"ok": False, "error": f"agente desconocido: {agent!r}"}
@@ -165,16 +171,30 @@ def launch(cwd: str, title: str, agent: str, resume: str | None = None, model: s
         }
     if not _cwd_allowed(cwd, _allowed_roots()):
         return {"ok": False, "error": "cwd fuera de launch_roots"}
-    if not WINDOWS:
+    if not WINDOWS or distro:
         exe_name = exe_name.removesuffix(".exe")
-    exe_path = _exe_path(exe_name)
+    if distro and WINDOWS:
+        # adentro de WSL corre el binario de Linux de esa distro, no el .exe de Windows (revision 2026-10-10:
+        # se le pasaba la ruta de Windows y la sesion no arrancaba); se busca en el PATH de la distro
+        exe_path = exe_name if tmux.en_distro(distro, exe_name) else None
+        if exe_path is None:
+            return {"ok": False, "error": f"no encuentro {exe_name} en la distro {distro}"}
+    else:
+        exe_path = _exe_path(exe_name)
     if exe_path is None:
         return {"ok": False, "error": f"no encuentro {exe_name} en esta PC"}
     resume_args = _resume_args(agent, resume)
     model_args = _model_args(agent, model)
     nombre_args = _nombre_args(agent, title)
     extra = [*AGENTES[agent].iniciar, *resume_args, *model_args, *nombre_args]
-    res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
+    if distro and WINDOWS:
+        # WSL: el cwd de Windows no existe adentro de la distro; se traduce a /mnt/<letra> (§WSL)
+        cwd_linux = tmux.ruta_wsl(cwd)
+        res = _launch_tmux(cwd_linux, title, exe_path, extra, distro=distro)
+    else:
+        res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
+    if distro and res.get("ok"):
+        res["distro"] = distro
     if nombre_args and res.get("ok"):
         res["native_name"] = nombre_corto(title)
     if resume is not None:
@@ -206,14 +226,20 @@ def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str]) -> dict:
     return {"ok": True, "cmd_path": cmd_path}
 
 
-def _launch_tmux(cwd: str, title: str, exe_path: str, extra: list[str] | None = None) -> dict:
+def _launch_tmux(
+    cwd: str, title: str, exe_path: str, extra: list[str] | None = None, distro: str | None = None
+) -> dict:
     """Mac/Linux/WSL: una sesion de tmux nueva y suelta (-d) con el agente adentro, en `cwd`, con el
     titulo como nombre de ventana. Va como lista de argumentos, sin shell: ni el titulo ni el cwd se
-    interpretan. El barrido la encuentra despues por el pane, como a cualquier agente en tmux."""
+    interpretan. El barrido la encuentra despues por el pane, como a cualquier agente en tmux.
+    Con `distro` (Windows con WSL) el spawn va por `wsl.exe -d <distro>`: nace en el tmux de esa
+    distro, y el barrido la etiqueta con ella (la tarjeta la trae del barrido, no de aca)."""
     nombre = f"lienzo-{secrets.token_hex(3)}"
     unset = [a for v in _CLAUDE_ENV for a in ("-u", v)]
     argv = ["tmux", "new-session", "-d", "-s", nombre, "-n", _sanitize_title(title), "-c", cwd]
     argv += ["env", *unset, exe_path, *(extra or [])]
+    if distro:
+        argv = ["wsl.exe", "-d", distro, *argv]
     try:
         subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as e:

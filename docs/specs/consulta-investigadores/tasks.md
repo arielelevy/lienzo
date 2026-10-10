@@ -61,5 +61,5 @@
   - pytest completo, ruff, build y lint de la web; recorrido de la web con fixtures; una consulta real entre
     un Claude y un Codex de esta PC (dos vueltas, síntesis en la memoria); code review y pruebas agénticas.
   - _Requisitos: 6.2_
-  - _Archivos: .kiro/specs/consulta-investigadores/tasks.md_
+  - _Archivos: docs/specs/consulta-investigadores/tasks.md_
   - _Depende de: 5, 7_

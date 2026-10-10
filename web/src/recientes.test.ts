@@ -66,3 +66,15 @@ test("opciones sin PCs (server viejo): las abiertas como locales, sin permitidas
   assert.deepEqual(g.usadas.map(o => o.label), ["chess · ayer"]);
   assert.deepEqual(g.otras, []);
 });
+
+test("opciones: los proyectos en disco de la PC elegida aparecen aunque no tengan sesiones", () => {
+  // pedido de Ariel (2026-10-10): mientras la carpeta exista en esa PC, el proyecto se ofrece
+  const conCarpetas = (pc_id: string, local: boolean, roots: string[], carpetas: string[]): Peer =>
+    ({ ...peer(pc_id, local, roots), health: { launch_roots: roots, carpetas, mem_free_gb: null, cpu_pct: null, temp_c: null } });
+  const peers = [conCarpetas("pcA", true, ["D:/Apps"], ["D:/Apps/chess", "D:/Apps/lienzo", "D:/Apps/Teorema"]), conCarpetas("pcB", false, ["D:/apps"], ["D:/apps/lienzo"])];
+  const a = opcionesProyecto("pcA", peers, [], [], AHORA);
+  assert.deepEqual(a.carpetas.map(o => o.label), ["chess", "lienzo", "Teorema"]);
+  // en la otra PC solo lo que existe ahí; la raíz contenedora no se ofrece sola
+  const b = opcionesProyecto("pcB", peers, [], [], AHORA);
+  assert.deepEqual(b.carpetas.map(o => o.label), ["lienzo"]);
+});

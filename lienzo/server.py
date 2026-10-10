@@ -56,6 +56,7 @@ import restore
 import rules as rl
 import secretos
 import state
+import tmux
 import transcripts
 import xfer
 from beacon import DISCOVERED_TTL_S as BEACON_TTL_S
@@ -498,6 +499,7 @@ def salud_publica(autorizado: bool) -> dict:
         "pending": len(pending),
         "ts": now(),
         "fuentes": backend.fuentes_activas(),
+        "distros_wsl": tmux.distros(),  # [] fuera de Windows con WSL (tmux.distros se frena solo)
     }
 
 
@@ -1202,11 +1204,21 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
         return 400, {"error": "cwd y agent son obligatorios"}
     cwd, agent, title = valid
     model = d.get("model") if isinstance(d.get("model"), str) else None
+    distro = d.get("distro") if isinstance(d.get("distro"), str) and d.get("distro").strip() else None
     pc = d.get("pc")
     if desde_tablero and pc and pc != identity.pc_id():
+        # la distro la valida la PC duena, contra SUS distros (revision 2026-10-10: se validaba aca, contra
+        # las de esta PC, y un lanzamiento en otra PC con una distro que esta no tiene daba 400)
         cuerpo = {"cwd": cwd, "title": title, "agent": agent, **({"model": model} if model else {})}
+        if distro:
+            cuerpo["distro"] = distro
         return mirror.MIRROR.forward(pc, "POST", "/launch", cuerpo)
-    res = launch.launch(cwd, title, agent, model=model)
+    if distro is not None and distro not in tmux.distros():
+        # ante una verdad vencida se re-parsea una vez: puede haber nacido una distro hace un momento
+        tmux.invalidar_distros()
+        if distro not in tmux.distros():
+            return 400, {"error": f"distro desconocida: {distro}"}
+    res = launch.launch(cwd, title, agent, model=model, distro=distro)
     if res.get("ok"):
         return 200, res
     # launch dice su codigo cuando no es un pedido mal hecho (409: coda sin cuota en esta PC)

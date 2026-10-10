@@ -24,6 +24,8 @@ def test_snapshot_trae_las_cinco_claves():
         "protocol_version",
         "capabilities",
         "launch_roots",
+        "carpetas",
+        "distros_wsl",
         "mem_free_gb",
         "mem_total_gb",
         "cpu_pct",
@@ -63,6 +65,8 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
     monkeypatch.setattr(health._k32, "GlobalMemoryStatusEx", revienta)
     monkeypatch.setattr(health._k32, "GetSystemTimes", revienta)
     monkeypatch.setattr(health, "_temp_c", lambda: (_ for _ in ()).throw(OSError("simulado")))
+    monkeypatch.setattr(health.protocol.tmux, "distros", lambda: [])
+    monkeypatch.setattr(health.protocol, "carpetas_de_proyecto", lambda roots: [])
     s = health.snapshot()
     assert s == {
         "protocol_version": 1,
@@ -81,6 +85,8 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
             "memoria.replica",
         ],
         "launch_roots": [],
+        "carpetas": [],
+        "distros_wsl": [],
         "mem_free_gb": None,
         "mem_total_gb": None,
         "cpu_pct": None,
@@ -492,3 +498,32 @@ def test_coda_en_uso_no_levanta_si_falla_la_consulta(monkeypatch):
 
     monkeypatch.setattr(health, "coda_viva", rompe)
     assert health.coda_en_uso() is False
+
+
+# --- /health trae distros_wsl (spec wsl-distros, requisitos 1.1 y 1.3) -----------------------
+
+
+def test_health_autenticado_trae_distros_wsl(monkeypatch):
+    """Requisito 1.1: /health autenticado expone la lista de distros parseada por tmux.distros()."""
+    from lienzo import server
+
+    monkeypatch.setattr(server.tmux, "distros", lambda: ["Ubuntu", "Debian"])
+    completa = server.salud_publica(True)
+    assert completa["distros_wsl"] == ["Ubuntu", "Debian"]
+    # sin autenticar (por el tunel) la salud sigue minima: la lista es informacion del usuario
+    assert "distros_wsl" not in server.salud_publica(False)
+
+
+def test_health_sin_wsl_trae_lista_vacia(monkeypatch):
+    """Requisito 1.3: en Mac/Linux (sin WSL) tmux.distros() devuelve [] sin llamar a wsl.exe,
+    y /health la reporta vacia."""
+    from lienzo import server
+
+    # el tmux que usa server es el import top-level (server.py hace `import tmux`): parcheo ese
+    def revienta(*a, **k):
+        raise AssertionError("no hay que llamar a wsl.exe fuera de Windows")
+
+    monkeypatch.setattr(server.tmux.subproc, "correr", revienta)
+    monkeypatch.setattr(server.tmux, "_VIA_WSL", False)
+    monkeypatch.setattr(server.tmux, "_distros_cache", None)
+    assert server.salud_publica(True)["distros_wsl"] == []

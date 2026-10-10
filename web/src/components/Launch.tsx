@@ -32,6 +32,13 @@ export function Launch({ peers, sessions, onClose, toast }: {
   const elegida = opciones.find(o => o.key === project);
   const directory = elegida?.cwd ?? cwd.trim();
   const unavailable = !!pc && !peers.some(p => p.pc_id === pc && p.alive);
+  // distros de WSL de la PC elegida. Por defecto se lanza como siempre (en Windows): la distro va solo
+  // si se elige una (revisión 2026-10-10: con una sola distro se mandaba siempre y todo nacía en WSL)
+  const distros = peers.find(p => p.pc_id === pc)?.health?.distros_wsl ?? [];
+  // la distro elegida recuerda para qué PC fue: al cambiar de PC vuelve la default de esa PC,
+  // sin effect (setState sincrónico en un effect encadena renders)
+  const [distroElegida, setDistro] = useState<{ pc: string; d: string } | null>(null);
+  const distro = distroElegida && distroElegida.pc === pc && distros.includes(distroElegida.d) ? distroElegida.d : "";
   const launch = async () => {
     if (sending.current || !directory || unavailable) return;
     sending.current = true;
@@ -40,6 +47,7 @@ export function Launch({ peers, sessions, onClose, toast }: {
     try {
       const result = await api.post<{ ok: boolean; error?: string }>("/sessions/launch", {
         cwd: directory, title: elegida?.title ?? "", agent, ...(pc ? { pc } : {}),
+        ...(distro ? { distro } : {}),
       });
       if (!result.ok) throw new Error(result.error || "No se pudo lanzar la CLI");
       toast?.("CLI lanzada");
@@ -75,6 +83,10 @@ export function Launch({ peers, sessions, onClose, toast }: {
       <label>Agente<select aria-label="Agente" disabled={busy} value={agent} onChange={e => setAgent(e.target.value as Agent)}>
         {agentIds.map(id => <option key={id} value={id}>{AGENTS[id].label}</option>)}
       </select></label>
+      {distros.length > 0 && <label>Dónde<select aria-label="Distro de WSL" disabled={busy} value={distro} onChange={e => setDistro({ pc, d: e.target.value })}>
+        <option value="">Windows</option>
+        {distros.map(d => <option key={d} value={d}>WSL · {d}</option>)}
+      </select></label>}
       {!elegida?.cwd && <label>Carpeta{elegida && pc ? ` en ${peers.find(p => p.pc_id === pc)?.name || "la PC elegida"}` : ""}<input aria-label="Carpeta" required disabled={busy} value={cwd} onChange={e => setCwd(e.target.value)} /></label>}
       {error && <p role="alert">{error}</p>}
       {unavailable && <p role="alert">La PC elegida no está disponible.</p>}

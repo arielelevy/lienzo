@@ -2310,12 +2310,12 @@ def run_send(s: dict, final: str, enter: bool = True, key: str | None = None) ->
     sin confirmar); con `key="escape"` va esa tecla sola. (codigo, respuesta)."""
     sid, pid = s["session_id"], s["pid"]
     if backend.is_tmux(s):
-        if not tmux.target_valid(s.get("target"), pid):
+        if not tmux.target_valid(s.get("target"), pid, s.get("distro")):
             return 409, {
                 "ok": False,
                 "error": "el pane cambió (¿tmux reinició?): no se envía, para no teclear en la terminal equivocada",
             }
-        r = tmux.send(s.get("target"), final, enter=enter, key=key)
+        r = tmux.send(s.get("target"), final, enter=enter, key=key, distro=s.get("distro"))
         if not r.get("ok"):
             state.log(f"send {sid[:8]} fallo (pane {s.get('target')}): {r.get('error')}")
             return 500, r
@@ -2818,9 +2818,9 @@ def read_screen(s: dict) -> dict:
     Windows (FreeConsole/AttachConsole no puede correr dentro del server)."""
     if backend.is_tmux(s):
         tgt = s.get("target")
-        if not tmux.target_valid(tgt, s.get("pid")):
+        if not tmux.target_valid(tgt, s.get("pid"), s.get("distro")):
             return {"ok": False, "error": "el pane ya no es de esta sesión"}
-        r = tmux.screen(tgt, scrollback=200)
+        r = tmux.screen(tgt, scrollback=200, distro=s.get("distro"))
         if r.get("ok"):
             r["lines"] = r.pop("text").splitlines()
             r["area"] = screen.input_area(r["lines"])

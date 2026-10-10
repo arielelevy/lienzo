@@ -61,7 +61,10 @@ export function opcionesProyecto(pc: string, peers: Peer[], sessions: Session[],
     return true;
   };
   for (const s of active.filter(dePc)) agregar(s.cwd!, s.repo || nombreCarpeta(s.cwd!));
-  for (const r of roots) agregar(r, nombreCarpeta(r));
+  // los proyectos que existen en disco en esa PC (protocol.carpetas_de_proyecto), tengan o no sesiones;
+  // un server viejo sin `carpetas` deja las raíces tal cual, como antes
+  const enDisco = peers.find(p => p.pc_id === pcKey)?.health?.carpetas;
+  for (const r of enDisco ?? roots) agregar(r, nombreCarpeta(r));
 
   // el server ya las manda de la más nueva a la más vieja; sin PC conocida (server viejo, sin
   // GET /peers) se muestran todas

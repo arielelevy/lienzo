@@ -235,3 +235,34 @@ tablero siempre oscuro. Sin hallazgos pendientes; `lineasDeConsulta` asume tarje
   Stop, y `rules.full_reply` leía la transcripción en ese instante y tomaba el último texto que ya estaba. Afectaba
   también a `{respuesta}` de las reglas. Ahora gana la más larga entre la de la transcripción y la de la tarjeta (la del
   hook, `last_assistant_message`, entera). Test nuevo en `tests/test_consulta.py`.
+
+## Varias distros de WSL (spec `docs/specs/wsl-distros/`, hecha por una coda con la skill `sdd`)
+
+**Alcance:** `lienzo/tmux.py` (prefijo por distro `_argv`, `distros()` con caché de 60 s, `list_panes_todas`, home UNC por
+distro, `en_distro`), `backend.py` (barrido etiquetado, `proc_key` con la distro), `sessions.py` (envío y pantalla a la
+distro de la tarjeta), `server.py` y `launch.py` (lanzar en una distro), `protocol.py` (`distros_wsl` y `carpetas` en la
+salud), web (`Launch.tsx`, `Card.tsx`, `types.ts`, `recientes.ts`), pruebas.
+
+**Revisión manual del código de la coda — cuatro defectos, corregidos:**
+1. **Todo lanzamiento iba a nacer en WSL.** El diálogo mandaba la distro si había al menos una (`distros[0]`); con la única
+   distro de esta PC, cada agente lanzado desde el tablero habría arrancado adentro de WSL y no en Windows. Ahora por
+   defecto es Windows y el selector («Dónde») ofrece Windows y cada distro.
+2. **El selector no aparecía nunca.** Leía `distros_wsl` de la salud de `GET /peers`, que sale de `protocol.info`, pero el
+   campo solo estaba en `/health`. Movido a `protocol.info`.
+3. **Lanzar en otra PC con una distro que esta no tiene daba 400.** `accion_launch` validaba contra las distros locales
+   antes de reenviar; ahora valida la PC dueña.
+4. **Adentro de WSL se intentaba correr el `.exe` de Windows.** `launch` pasaba la ruta de Windows del agente al tmux de la
+   distro; ahora usa el nombre del binario de Linux y verifica que esté en el PATH de la distro (`tmux.en_distro`).
+
+Lo demás está bien: los comandos sin distro quedan idénticos a los de hoy, `distros()` nunca levanta y re-decodifica UTF-16,
+una distro caída no corta a las demás, y en Mac/Linux nada de esto corre. Observación menor que queda: `tmux.py` registra
+con `logging` en vez de `state.log` (no llega a `lienzo.log`); es un módulo que también usa el hook, así que no lo cambio.
+
+**Diálogo de lanzar (pedido de Ariel):** cada PC publica `carpetas`, los proyectos que existen en disco dentro de sus
+`launch_roots` (una raíz que es repo cuenta como proyecto; una que agrupa, sus repos de un nivel), y el diálogo los ofrece
+aunque no tengan sesiones. Test en `recientes.test.ts`.
+
+**Specs:** pasan de `.kiro/specs/` a `docs/specs/` a pedido de Ariel, y la skill `sdd` las escribe ahí.
+
+**Pruebas:** suite completa 1385, contrato de salud actualizado, 4 tests nuevos de las correcciones, web 8 unitarias, build
+y lint.

@@ -1,4 +1,4 @@
-"""Consulta entre investigadores (lienzo/consulta.py, .kiro/specs/consulta-investigadores)."""
+"""Consulta entre investigadores (lienzo/consulta.py, docs/specs/consulta-investigadores)."""
 
 import datetime as dt
 
