@@ -296,3 +296,24 @@ escrito»: no era cierto, las tareas 1 y 4 estaban hechas y marcadas.
 spec más grande; la principal no hizo tareas a mano.
 
 **Pruebas:** 1391 pasan; build y lint de la web.
+
+## Consulta: una tarjeta que cambia de id ya no se da por muerta
+
+**Alcance:** `consulta.reapuntar` y su llamada desde `sessions.repoint_refs`; `tests/test_consulta_reapuntar.py`.
+
+**Qué pasó (Teorema, 16:00):** el Codex investigador nació como `pid-1096`. Al llegar su primer hook pasó a su UUID, la
+vigilancia no encontró `pid-1096` y lo sacó con «la tarjeta murió». Con un solo investigador, la consulta se canceló a
+los 20 s.
+
+**Arreglo:** `repoint_refs` es el punto por donde pasan los tres cambios de id: la provisoria al llegar su primer hook, la
+continuación tras un `/clear` y la adopción del barrido. Ahí ya se trasladaban las reglas y las flechas; ahora también
+las consultas abiertas (investigadores, revisor, coordinador y las claves de `nombres`, `pendientes`, `fuera`,
+`objeciones`, `enfoques` y `respuestas`). Las consultas cerradas no se tocan.
+
+**Revisión:** el lock es un RLock, así que llamarla con el lock tomado no traba. `consulta` sólo importa `state`, así que
+no hay import circular. Dos pruebas quedan pendientes:
+- Un fallo de `_guardar` dentro de `reapuntar` sale como `OSError` después de que se guardaron las reglas, y no se
+  revierte. Es el mismo caso que ya tiene `repoint_refs` con la segunda lista; no lo traté aparte.
+- La prueba no pasa por `claim_pid`: llama a `reapuntar` directamente.
+
+**Pruebas:** 1394 pasan (incluye las 3 nuevas, una de ellas reproduce la cancelación sin el arreglo).

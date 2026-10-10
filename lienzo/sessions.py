@@ -21,6 +21,7 @@ import backend
 import captura
 import coda
 import conocimiento
+import consulta
 import identity
 import recientes
 import restore
@@ -522,6 +523,9 @@ def repoint_refs(old_sid: str, new_sid: str) -> tuple[int, int]:
                 state.log(f"no se pudo revertir {os.path.basename(coll.path)} tras fallo al re-apuntar: {e}")
         raise
 
+    # las consultas abiertas tambien la nombran: sin esto la vigilancia da `old_sid` por muerta
+    if consulta.reapuntar(old_sid, new_sid):
+        state.log(f"consulta: {old_sid[:8]} sigue como {new_sid[:8]}")
     counts = {id(coll): n for coll, _, n in cambios}
     return counts.get(id(rules), 0), counts.get(id(links), 0)
 

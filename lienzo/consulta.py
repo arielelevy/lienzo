@@ -129,6 +129,35 @@ def _participantes(c: dict) -> list[str]:
     return [*c["investigadores"], *([c["revisor"]] if c["revisor"] else [])]
 
 
+def reapuntar(viejo: str, nuevo: str) -> int:
+    """La tarjeta `viejo` sigue como `nuevo` (la provisoria `pid-N` al llegar su primer hook, o un
+    /clear): las consultas abiertas que la nombraban pasan al id nuevo. Sin esto, la vigilancia no
+    encontraba `pid-N` y la sacaba por muerta (Teorema, 2026-10-10: Codex nacio `pid-1096` y la
+    consulta se cancelo a los 20 s). Devuelve cuantas consultas cambiaron."""
+    n = 0
+    with lock:
+        for c in CONSULTAS.values():
+            if c["estado"] not in ABIERTAS or viejo not in [*_participantes(c), c["coordinador"]]:
+                continue
+            c["investigadores"] = [nuevo if s == viejo else s for s in c["investigadores"]]
+            for k in ("revisor", "coordinador"):
+                if c[k] == viejo:
+                    c[k] = nuevo
+            for d in (
+                c["nombres"],
+                c["pendientes"],
+                c["fuera"],
+                c.get("objeciones", {}),
+                c.get("enfoques", {}),
+                *c["respuestas"].values(),
+            ):
+                if viejo in d:
+                    d[nuevo] = d.pop(viejo)
+            _guardar(c)
+            n += 1
+    return n
+
+
 # --- abrir ---------------------------------------------------------------------------------------
 
 
