@@ -848,21 +848,36 @@ def _par_denegado(x: dict) -> list:
     return [x.get("tool"), x.get("detalle") or ""]
 
 
-def autorizar_denegado(s: dict) -> None:
+def autorizar_denegado(s: dict) -> dict | None:
     """El humano autorizo desde el tablero lo que se le denego («Autorizar y que reintente»): la
     tarjeta lo anota y deja de mostrarlo. Sin esto, el aviso volvia en cada relectura del mismo turno,
     porque el mensaje de autorizacion entra en medio del turno y no hay pedido nuevo que lo limpie
-    (medido el 2026-10-09 en ar-it33940). Vale hasta el proximo pedido (hook_prompt_submit)."""
+    (medido el 2026-10-09 en ar-it33940). Vale hasta el proximo pedido (hook_prompt_submit), salvo el
+    del propio mensaje de autorizacion: se llama ANTES de teclearlo y deja `autorizando`, porque su
+    UserPromptSubmit puede llegar antes o despues que este llamado y en los dos casos borraba lo
+    autorizado, y la relectura volvia a poner el aviso (medido el 2026-10-10 en chesstudia C).
+    Devuelve lo que habia, para `deshacer_autorizacion` si el envio no entra; None si no habia aviso."""
     with lock:
         d = s.get("last_denied")
         if not d:
-            return
+            return None
+        antes = {"last_denied": d, "denied_ok": s.get("denied_ok")}
         ok = [list(p) for p in s.get("denied_ok") or []]
         for x in d.get("todas") or [d]:
             if _par_denegado(x) not in ok:
                 ok.append(_par_denegado(x))
         s["denied_ok"] = ok[-32:]
         s["last_denied"] = None
+        s["autorizando"] = True
+        touch(s)
+        return antes
+
+
+def deshacer_autorizacion(s: dict, antes: dict) -> None:
+    """El mensaje de autorizacion no entro: el aviso vuelve como estaba."""
+    with lock:
+        s.update(antes)
+        s["autorizando"] = False
         touch(s)
 
 
@@ -1176,13 +1191,20 @@ def claim_pid(s: dict, ev: dict) -> None:
 def hook_prompt_submit(s: dict, ev: dict) -> None:
     set_state(s, "corriendo")
     s["stopped_by"] = None  # volvio a trabajar: la marca de detenida ya no cuenta
+    raw = ev.get("prompt", "")
+    sistema = transcripts.is_system_prompt(raw)
+    via = None if sistema else prompt_origin(s, raw)
+    # el pedido que es el propio mensaje de autorizacion (lo tecleo el lienzo con `autorizando`) no
+    # olvida lo autorizado: si no, la relectura del turno volvia a mostrar la misma denegacion
+    autorizacion = via == "lienzo" and s.get("autorizando")
+    s["autorizando"] = False
     s["last_denied"] = None  # pedido nuevo: lo denegado antes ya se resolvio o se descarto
-    s["denied_ok"] = None  # y lo autorizado tambien: una denegacion en el turno nuevo es nueva
+    if not autorizacion:
+        s["denied_ok"] = None  # y lo autorizado tambien: una denegacion en el turno nuevo es nueva
     # pedido en curso: con esto se reconoce un Stop tardio del pedido anterior (stale_stop)
     s["prompt_id"] = ev.get("prompt_id")
     s["prompt_ts"] = s["last_event_ts"]
-    if not transcripts.is_system_prompt(raw := ev.get("prompt", "")):
-        via = prompt_origin(s, raw)
+    if not sistema:
         set_last_prompt(s, raw, via)
         title_from_prompt(s)
         captura.pedido(s, raw, via, turno=ev.get("prompt_id"))  # la memoria del proyecto (anexo A de v5)

@@ -92,3 +92,43 @@ def test_el_envio_con_autoriza_denegado_marca_la_tarjeta(aislado, monkeypatch): 
     monkeypatch.setattr(server, "send_to_session", lambda s, text, att: (409, {"error": "ocupada"}))
     server.accion_send(s2, {"text": "x", "attachments": [], "autoriza_denegado": True})
     assert s2["last_denied"] is not None
+
+
+def test_el_hook_del_propio_mensaje_de_autorizacion_no_hace_volver_el_aviso(aislado, monkeypatch):  # noqa: F811
+    """Medido el 2026-10-10 en chesstudia C: el mensaje de autorizacion entra como pedido, su
+    UserPromptSubmit borraba lo autorizado (llegue antes o despues de que el envio vuelva) y la
+    relectura del turno volvia a mostrar la misma denegacion."""
+    s = tarjeta()
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+
+    def teclea_y_llega_el_hook(tarjeta_, texto, att):
+        ses.mark_sent(tarjeta_, texto)
+        ses.hook_prompt_submit(tarjeta_, {"prompt": texto, "prompt_id": "p2"})  # el hook gana la carrera
+        return 200, {"chars": len(texto)}
+
+    monkeypatch.setattr(server, "send_to_session", teclea_y_llega_el_hook)
+    texto = "El humano autoriza lo que se te denegó: Bash node cdp.mjs click. Reintentá sólo eso."
+    code, _ = server.accion_send(s, {"text": texto, "attachments": [], "autoriza_denegado": True})
+    assert code == 200
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})  # la relectura del mismo turno
+    assert s["last_denied"] is None and s["denied_ok"] == [["Bash", "node cdp.mjs click"]]
+    # el hook que llega despues de que el envio volvio, tambien
+    s2 = tarjeta()
+    ses.set_denied(s2, {**DRIVE, "n": 1, "todas": [DRIVE]})
+    monkeypatch.setattr(server, "send_to_session", lambda t, texto, att: (ses.mark_sent(t, texto), (200, {}))[1])
+    server.accion_send(s2, {"text": "autorizo drive", "attachments": [], "autoriza_denegado": True})
+    ses.hook_prompt_submit(s2, {"prompt": "autorizo drive", "prompt_id": "p3"})
+    ses.set_denied(s2, {**DRIVE, "n": 1, "todas": [DRIVE]})
+    assert s2["last_denied"] is None
+    # un pedido del usuario en la terminal, despues, si olvida lo autorizado
+    ses.hook_prompt_submit(s2, {"prompt": "otra cosa", "prompt_id": "p4"})
+    assert s2["denied_ok"] is None and not s2["autorizando"]
+
+
+def test_si_el_envio_de_la_autorizacion_falla_el_aviso_vuelve_como_estaba(aislado, monkeypatch):  # noqa: F811
+    s = tarjeta()
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+    antes = dict(s["last_denied"])
+    monkeypatch.setattr(server, "send_to_session", lambda t, texto, att: (409, {"error": "ocupada"}))
+    server.accion_send(s, {"text": "autorizo", "attachments": [], "autoriza_denegado": True})
+    assert s["last_denied"] == antes and not s["denied_ok"] and not s["autorizando"]

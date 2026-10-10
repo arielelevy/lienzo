@@ -72,6 +72,7 @@ from sessions import (
     coda_vivo_en_turno,
     consume_events,
     cuotas_de_sesiones,
+    deshacer_autorizacion,
     drop_session,
     hand_over,
     interrupt_session,
@@ -890,16 +891,17 @@ def sin_validar(d: dict) -> None:
 def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     """POST /sessions/<id>/send: inyecta el texto en la consola. La flecha y copycat son del
     tablero (envio_del_tablero): la PC duena solo teclea."""
+    # «Autorizar y que reintente»: corre en la PC duena (el cuerpo viaja entero), que es la que relee la
+    # transcripcion. Se anota ANTES de teclear: el hook del pedido puede llegar antes de que el envio vuelva
+    antes = autorizar_denegado(s) if d.get("autoriza_denegado") is True else None
     with captura.origen(
         de=d.get("from") if isinstance(d.get("from"), str) else None,
         kind="native" if d.get("native") else ("send" if d.get("from") else "user"),
         link_to=d.get("link_to") if isinstance(d.get("link_to"), str) else None,
     ):
         code, res = send_to_session(s, d.get("text", ""), d.get("attachments") or [])
-    if code == 200 and d.get("autoriza_denegado") is True:
-        # «Autorizar y que reintente»: corre en la PC duena (el cuerpo viaja entero), que es la
-        # que relee la transcripcion y volveria a poner el aviso
-        autorizar_denegado(s)
+    if code != 200 and antes is not None:
+        deshacer_autorizacion(s, antes)
     return code, res
 
 
