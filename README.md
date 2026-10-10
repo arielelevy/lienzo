@@ -479,13 +479,13 @@ peers revocables, tope de 4. Un pedido sin firma recibe 401 sin que se lea el cu
 cada 401 queda en el log. **Con auto-aprobar prendido, una PC emparejada puede ejecutar comandos en
 las otras.**
 
-## Consulta entre investigadores
+## Lienzo en la investigación científica
 
 ![Una consulta abierta: dos investigadores con su relación 🔬, la revisora con su flecha ⚖ y la tira de consultas](docs/img/consulta-investigadores.png)
 
 Para un problema difícil cuyas respuestas se pueden discutir (una conjetura, una decisión de
-arquitectura, un bug que nadie entiende), dos o tres agentes de modelos distintos, con esfuerzo alto,
-lo piensan juntos y un revisor sintetiza. El lienzo media cada vuelta por el envío de siempre:
+arquitectura, un bug que nadie entiende), el lienzo arma una **consulta entre investigadores**: dos o
+tres agentes de modelos distintos, con esfuerzo alto, lo piensan juntos y un revisor sintetiza. El lienzo media cada vuelta por el envío de siempre:
 
 1. **Vuelta 1.** Todos reciben la pregunta a la vez y contestan sin ver a los demás.
 2. **Vueltas siguientes** (2 por defecto, 3 como máximo). Cada uno recibe las respuestas de los otros, con
