@@ -2,7 +2,7 @@
   "nombre": "lienzo",
   "raiz": "..",
   "resultados": "pruebas-agenticas/resultados",
-  "_alcance": "Revisión solicitada el 2026-10-06. Ejecuta suites existentes; no acepta propuestas ni fija baseline. UI usa fixtures y bloquea escrituras. Sin pruebas reales de teclado o peers.",
+  "_alcance": "Revisión solicitada el 2026-10-06; ampliada el 2026-10-10 con los casos de memoria (memoria-focal, memoria-e2e) y las mutaciones memoria-*, aprobadas por Ariel. UI usa fixtures y bloquea escrituras. Sin pruebas reales de teclado o peers.",
   "reglas": [
     "README.md: una sesión stopped no recibe envíos, reglas ni pegados.",
     "README.md: cada PC es dueña de sus teclas, pantalla, hooks, permisos y recursos.",
@@ -10,16 +10,249 @@
     "README.md: los mensajes se escriben en la consola del proceso por PID, sin foco.",
     "tests-ui/tablero-fijo.ts: ninguna prueba escribe en las sesiones reales."
   ],
-  "prioridades": ["Enviar texto y confirmar en la TUI correcta", "Aislar PCs y permisos", "Preservar borradores por sesión", "Detectar errores de API en la interfaz"],
+  "prioridades": [
+    "Enviar texto y confirmar en la TUI correcta",
+    "Aislar PCs y permisos",
+    "Preservar borradores por sesión",
+    "Detectar errores de API en la interfaz"
+  ],
   "precondiciones": [
-    { "nombre": "Lienzo real sirve la interfaz", "url": "http://127.0.0.1:7321/", "debeContener": "Lienzo" }
+    {
+      "nombre": "Lienzo real sirve la interfaz",
+      "url": "http://127.0.0.1:7321/",
+      "debeContener": "Lienzo"
+    }
   ],
   "casos": [
-    { "id": "backend-pytest", "comando": ["py", "-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"], "timeoutMs": 300000, "cubre": ["lienzo/", "install.py", "skills/lienzo/"] },
-    { "id": "frontend-lint", "comando": ["node", "node_modules/eslint/bin/eslint.js", ".", "--max-warnings=0"], "cwd": "web", "timeoutMs": 120000, "cubre": ["web/src/", "web/tests-ui/"] },
-    { "id": "frontend-build", "comando": ["pwsh.exe", "-NoProfile", "-Command", "npm.cmd run build"], "cwd": "web", "timeoutMs": 120000, "cubre": ["web/src/", "web/tsconfig.json", "web/vite.config.ts"] },
-    { "id": "frontend-unit", "comando": ["node", "--test", "src/nl.test.ts", "src/arrows-geometry.test.ts", "src/docs-parse.test.ts", "src/recientes.test.ts"], "cwd": "web", "timeoutMs": 120000, "cubre": ["web/src/nl.ts", "web/src/arrows-geometry.ts", "web/src/docs-parse.ts", "web/src/recientes.ts"] },
-    { "id": "frontend-playwright", "comando": ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "tests-ui/playwright.config.ts", "acciones.spec.ts", "autoaprobar.spec.ts", "flechas.spec.ts", "humo.spec.ts", "mover.spec.ts", "pairing.spec.ts", "pcs.spec.ts", "pi.spec.ts", "pregunta.spec.ts", "salud.spec.ts", "seleccion.spec.ts", "tablero.spec.ts", "tarjeta.spec.ts", "trabajo.spec.ts", "--workers", "2"], "cwd": "web", "timeoutMs": 300000, "cubre": ["web/src/"], "evidencia": ["web/node_modules/.playwright-artifacts"] }
+    {
+      "id": "backend-pytest",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "lienzo/",
+        "install.py",
+        "skills/lienzo/"
+      ]
+    },
+    {
+      "id": "frontend-lint",
+      "comando": [
+        "node",
+        "node_modules/eslint/bin/eslint.js",
+        ".",
+        "--max-warnings=0"
+      ],
+      "cwd": "web",
+      "timeoutMs": 120000,
+      "cubre": [
+        "web/src/",
+        "web/tests-ui/"
+      ]
+    },
+    {
+      "id": "frontend-build",
+      "comando": [
+        "pwsh.exe",
+        "-NoProfile",
+        "-Command",
+        "npm.cmd run build"
+      ],
+      "cwd": "web",
+      "timeoutMs": 120000,
+      "cubre": [
+        "web/src/",
+        "web/tsconfig.json",
+        "web/vite.config.ts"
+      ]
+    },
+    {
+      "id": "frontend-unit",
+      "comando": [
+        "node",
+        "--test",
+        "src/nl.test.ts",
+        "src/arrows-geometry.test.ts",
+        "src/docs-parse.test.ts",
+        "src/recientes.test.ts"
+      ],
+      "cwd": "web",
+      "timeoutMs": 120000,
+      "cubre": [
+        "web/src/nl.ts",
+        "web/src/arrows-geometry.ts",
+        "web/src/docs-parse.ts",
+        "web/src/recientes.ts"
+      ]
+    },
+    {
+      "id": "frontend-playwright",
+      "comando": [
+        "node",
+        "node_modules/@playwright/test/cli.js",
+        "test",
+        "--config",
+        "tests-ui/playwright.config.ts",
+        "acciones.spec.ts",
+        "conocimiento.spec.ts",
+        "autoaprobar.spec.ts",
+        "flechas.spec.ts",
+        "humo.spec.ts",
+        "mover.spec.ts",
+        "pairing.spec.ts",
+        "pcs.spec.ts",
+        "pi.spec.ts",
+        "pregunta.spec.ts",
+        "salud.spec.ts",
+        "seleccion.spec.ts",
+        "tablero.spec.ts",
+        "tarjeta.spec.ts",
+        "trabajo.spec.ts",
+        "--workers",
+        "2"
+      ],
+      "cwd": "web",
+      "timeoutMs": 300000,
+      "cubre": [
+        "web/src/"
+      ],
+      "evidencia": [
+        "web/node_modules/.playwright-artifacts"
+      ]
+    },
+    {
+      "id": "memoria-focal",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_captura.py",
+        "tests/test_replica.py",
+        "tests/test_conocimiento.py",
+        "tests/test_v5_completo.py",
+        "tests/test_veredictos.py",
+        "tests/test_aprendizaje.py",
+        "tests/test_memoria_coordinar.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "lienzo/captura.py",
+        "lienzo/replica.py",
+        "lienzo/conocimiento.py",
+        "lienzo/conocimiento_api.py",
+        "lienzo/veredictos.py",
+        "lienzo/veredictos_api.py",
+        "lienzo/aprendizaje.py",
+        "lienzo/aprendizaje_api.py"
+      ]
+    },
+    {
+      "id": "memoria-e2e",
+      "comando": [
+        "py",
+        "pruebas-agenticas/memoria_e2e.py"
+      ],
+      "timeoutMs": 180000,
+      "cubre": [
+        "lienzo/captura.py",
+        "lienzo/replica.py",
+        "lienzo/conocimiento.py",
+        "lienzo/conocimiento_api.py",
+        "lienzo/veredictos.py",
+        "lienzo/veredictos_api.py",
+        "lienzo/aprendizaje.py",
+        "lienzo/aprendizaje_api.py"
+      ]
+    }
   ],
-  "mutaciones": []
+  "mutaciones": [
+    {
+      "id": "memoria-control-inocuo",
+      "requisito": "memoria-captura",
+      "archivo": "lienzo/captura.py",
+      "buscar": "    if via == \"lienzo\":\n        return\n    clave =",
+      "reemplazar": "    if (via == \"lienzo\"):\n        return\n    clave =",
+      "tipo": "inocua",
+      "por_que": "Control: parentesis equivalentes; tiene que sobrevivir.",
+      "casos": [
+        "memoria-focal",
+        "memoria-e2e"
+      ]
+    },
+    {
+      "id": "memoria-captura-duplica-lienzo",
+      "requisito": "memoria-captura",
+      "archivo": "lienzo/captura.py",
+      "buscar": "    if via == \"lienzo\":\n        return\n    clave =",
+      "reemplazar": "    clave =",
+      "tipo": "destructiva",
+      "por_que": "Lo tecleado por el lienzo se capturaria dos veces (envio y pedido).",
+      "casos": [
+        "memoria-focal",
+        "memoria-e2e"
+      ]
+    },
+    {
+      "id": "memoria-secretos-sin-tapar",
+      "requisito": "memoria-secretos",
+      "archivo": "lienzo/captura.py",
+      "buscar": "    limpio, tapado = tapar(texto)",
+      "reemplazar": "    limpio, tapado = texto, False",
+      "tipo": "destructiva",
+      "por_que": "Los tokens entrarian a la base.",
+      "casos": [
+        "memoria-focal",
+        "memoria-e2e"
+      ]
+    },
+    {
+      "id": "memoria-roto-no-rechaza",
+      "requisito": "memoria-texto-roto",
+      "archivo": "lienzo/conocimiento.py",
+      "buscar": "    if marcas := texto_roto(cuerpo):\n        raise Rechazo",
+      "reemplazar": "    if False and (marcas := texto_roto(cuerpo)):\n        raise Rechazo",
+      "tipo": "destructiva",
+      "por_que": "Un informe con U+FFFD entraria.",
+      "casos": [
+        "memoria-focal",
+        "memoria-e2e"
+      ]
+    },
+    {
+      "id": "memoria-replica-cursor-sin-transaccion",
+      "requisito": "memoria-replica",
+      "archivo": "lienzo/replica.py",
+      "buscar": "                for c in cambios:\n                    if aplicar(con, pid, c):",
+      "reemplazar": "                for c in cambios[:1]:\n                    if aplicar(con, pid, c):",
+      "tipo": "destructiva",
+      "por_que": "El cursor avanzaria sin aplicar el lote entero: se perderian cambios.",
+      "casos": [
+        "memoria-focal",
+        "memoria-e2e"
+      ]
+    },
+    {
+      "id": "memoria-respaldo-sin-exigir",
+      "requisito": "memoria-v5-transiciones",
+      "archivo": "lienzo/conocimiento.py",
+      "buscar": "    rel = RESPALDO.get((tipo, nuevo))\n    if rel is None:",
+      "reemplazar": "    rel = None\n    if rel is None:",
+      "tipo": "destructiva",
+      "por_que": "Corregir o contestar sin respaldo volveria a valer.",
+      "casos": [
+        "memoria-focal",
+        "memoria-e2e"
+      ]
+    }
+  ]
 }
