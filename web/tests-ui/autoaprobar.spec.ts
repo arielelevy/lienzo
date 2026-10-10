@@ -3,7 +3,7 @@ import { abrirTablero, BASE, bloquearEscrituras, instalarTablero, sesiones } fro
 
 /** Auto-aprobar TODO (peligroso) y los permisos denegados: lo que tiene que verse sí o sí. */
 
-test("con auto-aprobar prendido hay una barra negra arriba y el check del menú se ve en negro", async ({ page }) => {
+test("con auto-aprobar prendido hay una barra negra arriba y su switch del menú va en rojo", async ({ page }) => {
   await bloquearEscrituras(page);
   await instalarTablero(page);
   // registrada DESPUES del tablero fijo, asi que gana (Playwright prueba de la ultima a la primera)
