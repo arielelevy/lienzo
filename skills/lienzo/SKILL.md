@@ -165,7 +165,9 @@ contempla).
 
 - **Antes de abrir N sesiones, `coordinar.capacidad(pc, N)`**: mira la memoria libre de esa PC (cada
   sesión ocupa ~0,7 GB, y con menos de 1,5 GB de reserva Windows se arrastra). Si da `ok: False`,
-  abrir menos y decírselo al usuario; no lanzar «a ver qué pasa».
+  abrir menos y decírselo al usuario; no lanzar «a ver qué pasa». Para codas, `capacidad(pc, N,
+  agent="coda")` cuenta además el cupo del modelo (dos corriendo a la vez por PC): lo que no entra se
+  escalona.
 - **Lanzar con `coordinar.lanzar_y_titular(pc, cwd, titulo, agent)`**: devuelve *la* tarjeta nueva y
   ya titulada. `lanzar` solo da el 200 y después hay que adivinar cuál de las tarjetas de esa carpeta
   es. No lanzar una sesión de prueba: queda abierta en la PC del usuario ocupando memoria.

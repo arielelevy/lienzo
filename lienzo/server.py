@@ -440,6 +440,14 @@ def config_peers_loop(stop_event: threading.Event | None = None) -> None:
             log(f"reintento de auto-aprobar en otras PCs:\n{traceback.format_exc()}")
 
 
+def conservar_regla(r: dict) -> bool:
+    """Al arrancar, que reglas de rules.json siguen: las que salen de una tarjeta de esta PC (o de
+    ninguna, las `at`) y van a una tarjeta conocida o a otra PC (`xpc`). La de otra PC se conserva
+    aunque su destino todavia no se vea: el espejo llega despues, y si el destino ya no existe la
+    purga la estaciona (`purge_stale_xpc`) en vez de perderla."""
+    return (r.get("to") in sessions or bool(r.get("xpc"))) and (not r.get("from") or r["from"] in sessions)
+
+
 def salud_publica(autorizado: bool) -> dict:
     """GET /health, que se atiende antes de autenticar (lo usan los monitores para saber si el server esta
     vivo). Sin autenticar (por el tunel) solo dice que vive: cuantas sesiones y permisos hay es informacion
@@ -2695,7 +2703,7 @@ def main() -> int:
         return 1
     purged, retitled = load_sessions()
     links.load(lambda l: l.get("to") in sessions and (not l.get("from") or l["from"] in sessions))
-    rules.load(lambda r: (r.get("to") in sessions or r.get("xpc")) and (not r.get("from") or r["from"] in sessions))
+    rules.load(conservar_regla)
     purge_stale_at_rules()
     clean_attachments()
     captura.arrancar()  # lo que pasa por el lienzo queda en la memoria del proyecto (anexo A de v5)

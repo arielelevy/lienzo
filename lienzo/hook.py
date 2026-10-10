@@ -293,6 +293,10 @@ def main() -> int:
             "hook_ms": round((time.perf_counter() - T0) * 1000, 1),
         }
     )
+    if os.environ.get("TMUX_PANE"):
+        # el pane donde corre el agente (tmux lo exporta a todo lo que corre adentro): el destino de
+        # lo que se le teclea sin esperar al barrido
+        data["tmux_pane"] = os.environ["TMUX_PANE"]
     if agent == "coda" and not data.get("transcript_path"):
         # CODA manda transcript_path vacio: su transcripcion es la base compartida (ver coda.py)
         data["transcript_path"] = os.path.join(os.environ.get("CODA_HOME") or os.path.join(HOME, ".coda"), "coda.db")

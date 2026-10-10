@@ -253,3 +253,16 @@ def test_restaurar_espera_mas_que_el_reenvio_a_la_otra_pc(monkeypatch):
     monkeypatch.setattr(c, "pedir", lambda m, r, cuerpo=None, timeout=20: pedidos.append(timeout) or (200, {}))
     c.restaurar(todas=True, pc="pcB")
     assert pedidos[0] > federation.RESTORE_TIMEOUT_S
+
+
+def test_capacidad_de_codas_cuenta_el_cupo_del_modelo(monkeypatch):
+    monkeypatch.setattr(c, "salud", lambda: [{"pc_id": "pcB", "health": {"mem_free_gb": 30, "agentes_libres": 20}}])
+    corriendo = [_tarjeta("a", alive=True, state="corriendo"), _tarjeta("b", alive=True, state="termino")]
+    monkeypatch.setattr(c, "sesiones", lambda: corriendo)
+    assert c.capacidad("pcB", 3)["ok"] is True  # sin agent, solo la memoria
+    r = c.capacidad("pcB", 2, agent="coda")
+    assert r["ok"] is False and r["entran"] == 1 and r["codas_corriendo"] == 1 and "escalonar" in r["motivo"]
+    assert c.capacidad("pcB", 1, agent="coda")["ok"] is True
+    # las de otra PC no ocupan el cupo de esta
+    corriendo.append(_tarjeta("c", pc="pcC", alive=True, state="corriendo"))
+    assert c.capacidad("pcB", 1, agent="coda")["entran"] == 1

@@ -272,10 +272,42 @@ def estancada(s, minutos=5):
     return s.get("state") == "corriendo" and ahora - previo[1] >= minutos * 60
 
 
-def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5):
+# codas trabajando a la vez contra un mismo servidor de modelos: con 5 en paralelo, Qwen en el DGX dejó a
+# todas en «Waiting for model» (PENDIENTES, «Un solo modelo para todos los codas»)
+CODAS_EN_PARALELO = 2
+
+
+def _codas_corriendo(pc):
+    return sum(
+        1
+        for s in sesiones()
+        if s.get("agent") == "coda"
+        and s.get("alive")
+        and s.get("state") == "corriendo"
+        and (s.get("pc") == pc or (pc is None and not s.get("pc")))
+    )
+
+
+def capacidad(pc, n, gb_por_sesion=0.7, reserva_gb=1.5, agent=None, en_paralelo=CODAS_EN_PARALELO):
     """¿Aguanta esa PC `n` sesiones más? Devuelve {ok, libre_gb, necesita_gb, entran}. La regla es la
     del server (`agentes_libres` en su salud, lienzo/health.py); `gb_por_sesion` y `reserva_gb` solo
-    se usan con un peer viejo que todavía no publica ese campo."""
+    se usan con un peer viejo que todavía no publica ese campo.
+
+    Con `agent="coda"` además cuenta el cupo del modelo, que la RAM no mide: entran a lo sumo
+    `en_paralelo` codas corriendo a la vez en esa PC (`codas_corriendo` en la respuesta). Lo que no
+    entra se escalona: se lanza cuando termine una."""
+    r = _capacidad_ram(pc, n, gb_por_sesion, reserva_gb)
+    if agent != "coda" or r["entran"] is None:
+        return r
+    corriendo = _codas_corriendo(pc)
+    entran = min(r["entran"], max(0, en_paralelo - corriendo))
+    r.update({"entran": entran, "ok": n <= entran, "codas_corriendo": corriendo})
+    if not r["ok"] and entran < n:
+        r["motivo"] = f"{corriendo} codas ya corren contra el modelo (tope {en_paralelo}): escalonar"
+    return r
+
+
+def _capacidad_ram(pc, n, gb_por_sesion, reserva_gb):
     for p in salud():
         if p.get("pc_id") == pc or (pc is None and p.get("local")):
             h = p.get("health") or {}

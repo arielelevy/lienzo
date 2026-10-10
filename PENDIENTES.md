@@ -54,6 +54,7 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   resolver, todo lo que sale hacia esa PC dio `401 firma invalida` de repente (sin cambios de reloj ni de claves) y solo se
   arregló reiniciando su lienzo. Ideas: que las codas no cuelguen del proceso del server, y que ante un 401 el lienzo
   intente el reinicio del peer o avise con el motivo («su server no valida mi firma»), en vez de dejar el tablero mudo.
+  - **Nota del 2026-10-10:** el 401 ya llega al tablero con su motivo («la otra PC no acepta mi firma», `federation.py`, con `causa_401`). Queda la causa de que mueran las codas, que necesita la otra PC.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 10. Gravedad: alta.
 
@@ -94,6 +95,7 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 - [ ] Persistir las reglas cruzadas si la otra PC reinicia: una regla vive en la PC del `from`; si
   esa PC reinicia el lienzo, hay que ver que sobreviva (hoy se guardan en `~/.lienzo`, falta probarlo
   con un reinicio real).
+  - **Nota del 2026-10-10:** la regla de qué se conserva al arrancar quedó nombrada (`server.conservar_regla`) y probada releyendo `rules.json` (tests/test_pendientes_tanda3.py): la regla hacia otra PC sobrevive aunque su destino todavía no se vea. Falta el reinicio real en la otra PC.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 20. Gravedad: media.
 
@@ -259,9 +261,10 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 17. Gravedad: media.
 
-- [ ] Un solo modelo para todos los codas: Qwen en el DGX atiende de a poco; con 5 codas a la vez
+- [x] Un solo modelo para todos los codas: Qwen en el DGX atiende de a poco; con 5 codas a la vez
   todos quedan en «Waiting for model». El coordinador tiene que escalonar el trabajo, no repartirlo
   en paralelo sin límite. `capacidad` mide RAM, no el cupo del modelo.
+  - **Cerrado el 2026-10-10:** `coordinar.capacidad(pc, n, agent="coda")` cuenta las codas que ya corren en esa PC y deja entrar a lo sumo dos (`CODAS_EN_PARALELO`); lo demás se escalona (`tests/test_coordinar.py`, skill actualizado).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 18. Gravedad: media.
 
@@ -332,9 +335,10 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
 
 ### Multiplataforma
 
-- [ ] Resolver PID y destino del hook en Unix.
+- [x] Resolver PID y destino del hook en Unix.
   - Evidencia: lienzo/hook.py: find_agent_pid usa procinfo.proc_info; lienzo/procinfo.py devuelve valores vacíos fuera de Windows. Sin TMUX_PANE en lienzo/*.py; el destino se obtiene por barrido.
   - Origen: `docs/plan-multiplataforma-2026-09-08.md` (historial de Git). Gravedad: **media**.
+  - **Cerrado el 2026-10-10:** fuera de Windows `procinfo.proc_info` lee `/proc` (o `ps` en macOS) y el hook manda `TMUX_PANE`, que pasa a ser el `target` de la tarjeta de tmux (tests/test_pendientes_tanda3.py). Sin corrida en un Linux real, que sigue en «Verificar el servidor nativo».
 
 - [x] Hacer portable --remote y el arranque de cloudflared.
   - Evidencia: lienzo/server.py: CLOUDFLARED apunta a Program Files (x86)/cloudflared/cloudflared.exe; tunnel_loop pasa creationflags=0x08000000 sin condición POSIX.

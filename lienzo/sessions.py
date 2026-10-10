@@ -1581,6 +1581,8 @@ def apply_event(ev: dict) -> None:
         ev_pid_dead = bool(ev.get("pid")) and not backend.agent_alive(ev)
         if ev.get("pid") and not ev_pid_dead:
             claim_pid(s, ev)
+        if backend.is_tmux(s) and isinstance(ev.get("tmux_pane"), str) and TMUX_PANE.fullmatch(ev["tmux_pane"]):
+            s["target"] = ev["tmux_pane"]
         if ev.get("cwd") and (not s.get("cwd") or name == "SessionStart"):
             # el cwd de los hooks sigue al shell del agente (cambia con un cd de una tool);
             # el repo de la tarjeta se fija al arrancar y no baila
@@ -1756,6 +1758,7 @@ def public_pending() -> list[dict]:
 
 
 REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
+TMUX_PANE = re.compile(r"%[0-9]{1,6}")  # el id de pane que exporta tmux: %0, %1, ...
 
 
 def answer_pending(request_id: str, decision: str, reason: str = "", answers: object = None) -> tuple[int, dict]:

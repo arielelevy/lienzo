@@ -153,8 +153,42 @@ def read_memory(h, addr: int, n: int) -> bytes | None:
     return buf.raw
 
 
+# raiz de /proc (Linux); las pruebas la apuntan a una carpeta armada a mano
+_PROC = "/proc"
+
+
+def _proc_info_posix(pid: int | None) -> tuple[int | None, str | None]:
+    """(padre, nombre del proceso) fuera de Windows: /proc en Linux y WSL, `ps` en macOS (sin /proc).
+    El nombre es `comm` y no la ruta del ejecutable: el Claude nativo es un binario con nombre de
+    version (~/.local/share/claude/versions/2.x.y), y su comm sigue siendo `claude`."""
+    if not pid:
+        return None, None
+    if os.path.isdir(_PROC):
+        try:
+            with open(os.path.join(_PROC, str(pid), "stat"), encoding="utf-8", errors="replace") as f:
+                stat = f.read()
+            with open(os.path.join(_PROC, str(pid), "comm"), encoding="utf-8", errors="replace") as f:
+                comm = f.read().strip()
+            # el comm va entre parentesis y puede tener espacios: el ppid es el segundo campo despues del ultimo ")"
+            return int(stat.rsplit(")", 1)[1].split()[1]), comm
+        except OSError, ValueError, IndexError:
+            return None, None
+    import subprocess  # solo macOS: hook.py no paga este import en Windows ni en Linux
+
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True, timeout=2
+        ).stdout.split(None, 1)
+        return int(out[0]), os.path.basename(out[1].strip())
+    except OSError, ValueError, IndexError, subprocess.SubprocessError:
+        return None, None
+
+
 def proc_info(pid: int | None) -> tuple[int | None, str | None]:
-    """(parent_pid, ruta_del_ejecutable) o (None, None)."""
+    """(parent_pid, ruta_del_ejecutable) o (None, None). Fuera de Windows, el nombre del proceso
+    (`_proc_info_posix`)."""
+    if not _WIN:
+        return _proc_info_posix(pid)
     h = open_process(pid)
     if not h:
         return None, None
@@ -326,7 +360,8 @@ def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
             return "pi" if pi_interactive(args[2:]) else None
         return None
     for k, v in AGENTS.items():
-        if name == k or name.startswith(k + "."):
+        # fuera de Windows el binario no lleva .exe (comm `claude`, `codex`)
+        if name == k or name.startswith(k + ".") or (not _WIN and name == k.removesuffix(".exe")):
             if v == "codex" and cmdline and not codex_interactive(command_args(cmdline)[1:]):
                 return None
             if v == "pi" and cmdline and not pi_interactive(command_args(cmdline)[1:]):

@@ -108,3 +108,14 @@ Verificado en vivo tras reiniciar el server: `/health` por el túnel sólo dice 
 | LOW | Lista fija de capacidades en `tests/test_health.py` | se sumó `memoria.replica` |
 
 Queda abierto: destino del hook por `TMUX_PANE` en Unix (sin una PC Linux donde probarlo).
+
+## Tanda 3 de PENDIENTES
+
+Revisión propia antes del commit; pruebas en `tests/test_pendientes_tanda3.py` y `tests/test_coordinar.py`.
+
+| Sev. | Observación | Decisión |
+|---|---|---|
+| MEDIUM | `proc_info` cambia de comportamiento fuera de Windows | sólo lo usan `hook.py` y `kiro.py` (Kiro está limitado a Windows) |
+| MEDIUM | El pane viene de un archivo de evento, que podría estar alterado | se toma sólo si es `%` y dígitos, y sólo en tarjetas de tmux |
+| LOW | En Linux `/proc/<pid>/exe` del Claude nativo es un binario con nombre de versión | se usa `comm`, que sigue siendo `claude` |
+| LOW | El cupo de codas no distingue modelos | todas comparten hoy el servidor del DGX; si se suman otros, separar por `model` |
