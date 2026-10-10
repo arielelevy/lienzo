@@ -4,7 +4,8 @@ tipados, historial de cambios, rondas, encargos, entrega explicita de informes y
 lo que el server ya observa (sesiones que cierran, permisos denegados, errores de API, muerte con
 un encargo a medias).
 
-Vive en `<LIENZO_HOME>/proyectos/<proyecto>/`: `conocimiento.sqlite`, `rondas/<ronda>/` con los
+La base es una por instancia del lienzo, `<LIENZO_HOME>/conocimiento.sqlite`, con el proyecto como columna de
+cada tabla (pedido de Ariel del 2026-10-10). En `<LIENZO_HOME>/proyectos/<proyecto>/` quedan `rondas/<ronda>/` con los
 cuerpos de encargos e informes, y `evidencia/`. `indice.json` al lado de las carpetas dice que
 proyecto corresponde a cada remote y a cada carpeta por PC: `repo_key` cambia si una PC tiene remote
 y la otra no (MEJORAS.md, 2026-10-04), asi que el proyecto tiene identidad propia.
@@ -31,7 +32,7 @@ import state
 import transcripts
 from atomico import atomic_write
 
-VERSION_ESQUEMA = 3  # 2: captura e indice de prosa; 3: origen de cada cambio y tablas de replica (anexo C)
+VERSION_ESQUEMA = 4  # 4: una sola base para todo el lienzo (pedido de Ariel, 2026-10-10)
 LIMITE_BUSQUEDA = 30
 LIMITE_PAGINA = 100
 SALTOS_MAX = 2
@@ -179,7 +180,8 @@ CREATE TABLE IF NOT EXISTS nodo (
   origen TEXT NOT NULL CHECK (json_valid(origen)),
   ronda TEXT REFERENCES nodo(id),
   fecha TEXT NOT NULL,
-  clave_ingesta TEXT UNIQUE
+  clave_ingesta TEXT,
+  UNIQUE (proyecto, clave_ingesta)
 );
 CREATE INDEX IF NOT EXISTS nodo_tipo ON nodo(proyecto, tipo, estado);
 CREATE TABLE IF NOT EXISTS vinculo (
@@ -211,9 +213,11 @@ CREATE TABLE IF NOT EXISTS cambio (
   pc TEXT,
   seq_origen INTEGER
 );
--- version 3 (anexo C): pc es la PC donde se origino el cambio y seq_origen su seq alla; el par
--- identifica el cambio en todas las PCs. Sin comentarios dentro del CREATE TABLE: rompen ALTER TABLE
+-- pc es la PC donde se origino el cambio y seq_origen su seq alla: el par lo identifica en todas las
+-- PCs (anexo C). Sin comentarios dentro de un CREATE TABLE: rompen ALTER TABLE
 CREATE INDEX IF NOT EXISTS cambio_proyecto ON cambio(proyecto, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS cambio_origen ON cambio(pc, seq_origen);
+CREATE INDEX IF NOT EXISTS cambio_nodo ON cambio(nodo_id, fecha);
 CREATE VIRTUAL TABLE IF NOT EXISTS nodo_fts USING fts5(
   texto, datos, content='nodo', content_rowid='rowid',
   tokenize='unicode61 remove_diacritics 2'
@@ -228,8 +232,8 @@ CREATE TRIGGER IF NOT EXISTS nodo_au AFTER UPDATE ON nodo BEGIN
   INSERT INTO nodo_fts(nodo_fts, rowid, texto, datos) VALUES ('delete', old.rowid, old.texto, old.datos);
   INSERT INTO nodo_fts(rowid, texto, datos) VALUES (new.rowid, new.texto, new.datos);
 END;
--- version 2: lo que pasa por el lienzo queda sin registrarlo a mano (anexo A de v5). Un registro
--- inmutable aparte de los nodos: no entra al BM25 de nodos ni a los cambios del briefing
+-- lo que pasa por el lienzo queda sin registrarlo a mano (anexo A de v5): un registro inmutable aparte
+-- de los nodos, que no entra al BM25 de nodos ni a los cambios del briefing
 CREATE TABLE IF NOT EXISTS captura (
   id TEXT PRIMARY KEY,
   proyecto TEXT NOT NULL REFERENCES proyecto(id),
@@ -268,18 +272,20 @@ END;
 CREATE VIRTUAL TABLE IF NOT EXISTS prosa_fts USING fts5(
   nodo UNINDEXED, texto, tokenize='unicode61 remove_diacritics 2'
 );
--- version 3: replica entre PCs (anexo C de v5). Cursores por par, choques y duplicados para la
--- coordinadora, y cambios que esperan a otro (un vinculo cuyo nodo todavia no llego)
+-- replica entre PCs (anexo C de v5): cursores por par, choques y duplicados para la coordinadora, y
+-- cambios que esperan a otro (un vinculo cuyo nodo todavia no llego), cada uno con su proyecto local
 CREATE TABLE IF NOT EXISTS replica_cursor (
   peer TEXT NOT NULL,
   proyecto_remoto TEXT NOT NULL,
   clase TEXT NOT NULL CHECK (clase IN ('cambio','captura')),
+  proyecto TEXT NOT NULL,
   ultimo INTEGER NOT NULL DEFAULT 0,
   fecha TEXT NOT NULL,
   PRIMARY KEY (peer, proyecto_remoto, clase)
 );
 CREATE TABLE IF NOT EXISTS replica_conflicto (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  proyecto TEXT NOT NULL,
   nodo TEXT NOT NULL,
   pc TEXT NOT NULL,
   seq_origen INTEGER NOT NULL,
@@ -288,6 +294,7 @@ CREATE TABLE IF NOT EXISTS replica_conflicto (
   UNIQUE (pc, seq_origen)
 );
 CREATE TABLE IF NOT EXISTS replica_duplicado (
+  proyecto TEXT NOT NULL,
   nodo_local TEXT NOT NULL,
   nodo_remoto TEXT NOT NULL,
   clave TEXT NOT NULL,
@@ -295,6 +302,7 @@ CREATE TABLE IF NOT EXISTS replica_duplicado (
   PRIMARY KEY (nodo_local, nodo_remoto)
 );
 CREATE TABLE IF NOT EXISTS replica_pendiente (
+  proyecto TEXT NOT NULL,
   pc TEXT NOT NULL,
   seq_origen INTEGER NOT NULL,
   cambio TEXT NOT NULL CHECK (json_valid(cambio)),
@@ -302,11 +310,6 @@ CREATE TABLE IF NOT EXISTS replica_pendiente (
   fecha TEXT NOT NULL,
   PRIMARY KEY (pc, seq_origen)
 );
-"""
-# despues de que exista la columna (en una base vieja, despues del ALTER)
-ESQUEMA_3 = """
-CREATE UNIQUE INDEX IF NOT EXISTS cambio_origen ON cambio(pc, seq_origen);
-CREATE INDEX IF NOT EXISTS cambio_nodo ON cambio(nodo_id, fecha);
 """
 
 _lock = threading.RLock()  # el indice y las carpetas; la base tiene sus propias transacciones
@@ -498,7 +501,15 @@ def _carpeta(pid: str) -> str:
     return os.path.join(raiz(), pid)
 
 
-def _db_path(pid: str) -> str:
+def db_path() -> str:
+    """La base del lienzo: una para todos los proyectos, en <LIENZO_HOME>/conocimiento.sqlite (pedido de
+    Ariel del 2026-10-10). Cada fila lleva su proyecto; los cuerpos de encargos e informes y la evidencia
+    siguen como archivos en proyectos/<proyecto>/."""
+    return os.path.join(os.path.dirname(raiz()), "conocimiento.sqlite")
+
+
+def _db_vieja(pid: str) -> str:
+    """Donde vivia la base de un proyecto hasta el esquema 3: se importa una vez a la del lienzo."""
     return os.path.join(_carpeta(pid), "conocimiento.sqlite")
 
 
@@ -626,7 +637,7 @@ def proyecto_de_carpeta(cwd: str | None, pc: str, remote: str | None = None) -> 
         return pid
 
 
-# --- base por proyecto ----------------------------------------------------------------------
+# --- la base del lienzo ----------------------------------------------------------------------
 
 
 class _Conexion:
@@ -671,11 +682,10 @@ def _sentencias(script: str):
 
 
 def _migrar(path: str) -> None:
-    """Lleva la base a VERSION_ESQUEMA de una sola vez, o no la toca. `executescript` hacia COMMIT
-    entre sentencias y dos aperturas a la vez (el hilo de captura, el barrido y el panel al arrancar)
-    duplicaban la prosa o chocaban con «duplicate column» (code review 2026-10-09). Ahora: un lock por
-    proceso, BEGIN IMMEDIATE entre procesos, user_version releido adentro, cada sentencia con execute
-    y el numero de version en la misma transaccion."""
+    """Lleva la base a VERSION_ESQUEMA de una sola vez, o no la toca: un lock por proceso, BEGIN IMMEDIATE
+    entre procesos, user_version releido adentro, cada sentencia con execute (executescript hacia COMMIT
+    entre sentencias: code review 2026-10-09) y el numero de version en la misma transaccion. Al crearla
+    importa las bases viejas por proyecto y despues las renombra a `.importada` (no se borran)."""
     con = sqlite3.connect(path, timeout=30, isolation_level=None)
     try:
         al_dia = con.execute("PRAGMA user_version").fetchone()[0] >= VERSION_ESQUEMA  # lectura, sin lock
@@ -683,6 +693,7 @@ def _migrar(path: str) -> None:
         con.close()
     if al_dia:
         return
+    importadas: list[str] = []
     with _lock_migracion:
         con = sqlite3.connect(path, timeout=30, isolation_level=None)
         try:
@@ -693,18 +704,7 @@ def _migrar(path: str) -> None:
                 if version < VERSION_ESQUEMA:
                     for sentencia in _sentencias(ESQUEMA):
                         con.execute(sentencia)
-                    if 1 <= version < 3:
-                        # de 2 a 3: cada cambio viejo es de esta PC, con su seq como seq de origen
-                        columnas = {r[1] for r in con.execute("PRAGMA table_info(cambio)")}
-                        for col, tipo in (("pc", "TEXT"), ("seq_origen", "INTEGER")):
-                            if col not in columnas:
-                                con.execute(f"ALTER TABLE cambio ADD COLUMN {col} {tipo}")
-                        con.execute("UPDATE cambio SET pc = ?, seq_origen = seq WHERE pc IS NULL", (identity.pc_id(),))
-                    if version == 1:
-                        # de 1 a 2: los cuerpos ya guardados entran al indice de prosa
-                        _rellenar_prosa(con, os.path.dirname(path))
-                    for sentencia in _sentencias(ESQUEMA_3):
-                        con.execute(sentencia)
+                    importadas = _importar_viejas(con)
                     con.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
                 con.execute("COMMIT")
             except BaseException:
@@ -712,6 +712,117 @@ def _migrar(path: str) -> None:
                 raise
         finally:
             con.close()
+    for vieja in importadas:
+        for sufijo in ("", "-wal", "-shm"):
+            if os.path.exists(vieja + sufijo):
+                try:
+                    os.replace(vieja + sufijo, f"{vieja}.importada{sufijo}")
+                except OSError as e:  # abierta por un server viejo: queda; ya no se lee
+                    state.log(f"conocimiento: no pude renombrar {vieja}{sufijo} tras importarla: {e}")
+
+
+_COLUMNAS = {
+    "proyecto": ("id", "nombre", "creado"),
+    "nodo": (
+        "id",
+        "proyecto",
+        "tipo",
+        "texto",
+        "datos",
+        "estado",
+        "estado_fecha",
+        "estado_por",
+        "autor",
+        "origen",
+        "ronda",
+        "fecha",
+        "clave_ingesta",
+    ),
+    "vinculo": ("de", "relacion", "a", "activo", "fecha", "autor", "origen", "motivo"),
+    "captura": (
+        "id",
+        "proyecto",
+        "clase",
+        "estado",
+        "session_id",
+        "sesion",
+        "agente",
+        "modelo",
+        "pc",
+        "origen",
+        "texto",
+        "bytes",
+        "hash",
+        "recortado",
+        "redactado",
+        "fecha",
+        "clave_ingesta",
+    ),
+}
+_CAMBIO = (
+    "proyecto",
+    "nodo_id",
+    "de",
+    "relacion",
+    "a",
+    "accion",
+    "anterior",
+    "nuevo",
+    "autor",
+    "motivo",
+    "origen",
+    "fecha",
+)
+
+
+def _importar_viejas(con: sqlite3.Connection) -> list[str]:
+    """Copia a la base del lienzo cada base vieja `proyectos/<p>/conocimiento.sqlite` (esquemas 1 a 3),
+    leida en solo lectura, en la transaccion del llamador: mismos ids, el historial en su orden (los
+    cambios de esta PC reciben su seq nuevo como seq de origen) y la prosa de sus cuerpos. Devuelve las
+    rutas importadas."""
+    base = raiz()
+    if not os.path.isdir(base):
+        return []
+    local = identity.pc_id()
+    importadas = []
+    for pid in sorted(os.listdir(base)):
+        vieja = _db_vieja(pid)
+        if not os.path.isfile(vieja):
+            continue
+        ro = sqlite3.connect("file:" + vieja.replace("\\", "/") + "?mode=ro", uri=True, timeout=30)
+        try:
+            tablas = {r[0] for r in ro.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            for tabla, cols in _COLUMNAS.items():
+                if tabla in tablas:
+                    filas = ro.execute(f"SELECT {', '.join(cols)} FROM {tabla} ORDER BY rowid").fetchall()
+                    con.executemany(
+                        f"INSERT OR IGNORE INTO {tabla} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                        filas,
+                    )
+            if "cambio" in tablas:
+                tiene = {r[1] for r in ro.execute("PRAGMA table_info(cambio)")}
+                extra = ", pc, seq_origen" if {"pc", "seq_origen"} <= tiene else ", NULL, NULL"
+                for fila in ro.execute(f"SELECT {', '.join(_CAMBIO)}{extra} FROM cambio ORDER BY seq").fetchall():
+                    pc = fila[-2] or local
+                    seq_origen = fila[-1] if pc != local else None  # lo de otra PC conserva su par de origen
+                    con.execute(
+                        f"INSERT OR IGNORE INTO cambio ({', '.join(_CAMBIO)}, pc, seq_origen)"
+                        f" VALUES ({', '.join('?' * (len(_CAMBIO) + 2))})",
+                        (*fila[:-2], pc, seq_origen),
+                    )
+                con.execute("UPDATE cambio SET seq_origen = seq WHERE seq_origen IS NULL AND pc = ?", (local,))
+            if "prosa_fts" in tablas:
+                con.executemany(
+                    "INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)",
+                    ro.execute("SELECT nodo, texto FROM prosa_fts").fetchall(),
+                )
+            else:
+                _rellenar_prosa(con, pid)
+        finally:
+            ro.close()
+        importadas.append(vieja)
+        state.log(f"conocimiento: la base vieja de {pid} paso a la del lienzo")
+    return importadas
 
 
 def _leer_archivo(full: str) -> str | None:
@@ -722,11 +833,14 @@ def _leer_archivo(full: str) -> str | None:
         return None
 
 
-def _rellenar_prosa(con: sqlite3.Connection, carpeta: str) -> int:
-    """Indexa los cuerpos de encargos e informes que ya estaban guardados (migracion 1 -> 2). Un
-    cuerpo que falta en disco no frena la migracion: queda fuera del indice."""
+def _rellenar_prosa(con: sqlite3.Connection, pid: str) -> int:
+    """Indexa los cuerpos de encargos e informes de un proyecto importado que no tenia indice de prosa
+    (esquema 1). Un cuerpo que falta en disco no frena la importacion: queda fuera del indice."""
     n = 0
-    for r in con.execute("SELECT id, datos FROM nodo WHERE tipo IN ('encargo','informe')").fetchall():
+    carpeta = _carpeta(pid)
+    for r in con.execute(
+        "SELECT id, datos FROM nodo WHERE proyecto = ? AND tipo IN ('encargo','informe')", (pid,)
+    ).fetchall():
         ruta = json.loads(r[1]).get("ruta")
         if not isinstance(ruta, str):
             continue
@@ -740,7 +854,7 @@ def _rellenar_prosa(con: sqlite3.Connection, carpeta: str) -> int:
 def _abrir(pid: str) -> _Conexion:
     if not os.path.isdir(_carpeta(pid)):
         raise Rechazo(f"proyecto desconocido: {pid}", 404)
-    return _Conexion(_db_path(pid))
+    return _Conexion(db_path())
 
 
 def _fila(r: sqlite3.Row | None) -> dict | None:
@@ -870,7 +984,7 @@ def crear_nodo(
                 nid=nid,
             )
     if clave_ingesta:
-        r = con.execute("SELECT * FROM nodo WHERE clave_ingesta = ?", (clave_ingesta,)).fetchone()
+        r = con.execute("SELECT * FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, clave_ingesta)).fetchone()
         if r is not None:
             return {**_fila(r), "creado": False}
     if ronda:
@@ -884,7 +998,7 @@ def crear_nodo(
     # misma sesion) pasaban los dos el SELECT de arriba y el segundo moria en UNIQUE (code review)
     cur = con.execute(
         "INSERT INTO nodo (id, proyecto, tipo, texto, datos, estado, estado_fecha, estado_por, autor, origen, ronda,"
-        " fecha, clave_ingesta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (clave_ingesta) DO NOTHING",
+        " fecha, clave_ingesta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (proyecto, clave_ingesta) DO NOTHING",
         (
             nid,
             pid,
@@ -902,7 +1016,7 @@ def crear_nodo(
         ),
     )
     if cur.rowcount == 0:
-        r = con.execute("SELECT * FROM nodo WHERE clave_ingesta = ?", (clave_ingesta,)).fetchone()
+        r = con.execute("SELECT * FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, clave_ingesta)).fetchone()
         return {**_fila(r), "creado": False}
     n = _nodo(con, pid, nid)
     _cambio(con, pid, "nodo", autor, motivo, origen, n, nodo_id=nid)
@@ -1394,13 +1508,16 @@ def informe_capturado(pid: str, sid: str, cuerpo: str, *, ronda: str | None, ori
         ).fetchone()
         if ya is not None:
             return {**_fila(ya), "creado": False}
-        s = con.execute("SELECT id FROM nodo WHERE clave_ingesta = ?", (f"sesion:{sid}",)).fetchone()
+        s = con.execute(
+            "SELECT id FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, f"sesion:{sid}")
+        ).fetchone()
         encargos = [
             _fila(r)
             for r in con.execute(
                 "SELECT e.* FROM nodo e JOIN vinculo v ON v.de = e.id AND v.relacion = 'ejecutado_por' AND v.activo = 1"
-                " JOIN nodo x ON x.id = v.a WHERE x.clave_ingesta = ? AND e.tipo = 'encargo' AND e.estado = 'enviado'",
-                (f"sesion:{sid}",),
+                " JOIN nodo x ON x.id = v.a WHERE x.proyecto = ? AND x.clave_ingesta = ? AND e.tipo = 'encargo'"
+                " AND e.estado = 'enviado'",
+                (pid, f"sesion:{sid}"),
             )
         ]
     if len(encargos) == 1:
@@ -1652,16 +1769,15 @@ def _proyecto_de_sesion(sid: str) -> str | None:
             return pid
         if sid in _sesion_sin_proyecto:
             return None
-    for p in proyectos():
-        try:
-            with _abrir(p["id"]) as con:
-                r = con.execute("SELECT 1 FROM nodo WHERE clave_ingesta = ?", (f"sesion:{sid}",)).fetchone()
-        except Rechazo:
-            continue
-        if r is not None:
-            with _lock:
-                _sesion_proyecto[sid] = p["id"]
-            return p["id"]
+    with _Conexion(db_path()) as con:
+        r = con.execute(
+            "SELECT proyecto FROM nodo WHERE tipo = 'sesion' AND clave_ingesta = ? ORDER BY fecha DESC LIMIT 1",
+            (f"sesion:{sid}",),
+        ).fetchone()
+    if r is not None and os.path.isdir(_carpeta(r[0])):
+        with _lock:
+            _sesion_proyecto[sid] = r[0]
+        return r[0]
     with _lock:
         _sesion_sin_proyecto.add(sid)
     return None
@@ -1670,8 +1786,8 @@ def _proyecto_de_sesion(sid: str) -> str | None:
 def _ronda_de_sesion(con, pid, sid) -> str | None:
     r = con.execute(
         "SELECT e.ronda FROM nodo s JOIN vinculo v ON v.a = s.id AND v.relacion = 'ejecutado_por' AND v.activo = 1"
-        " JOIN nodo e ON e.id = v.de WHERE s.clave_ingesta = ? ORDER BY e.fecha DESC LIMIT 1",
-        (f"sesion:{sid}",),
+        " JOIN nodo e ON e.id = v.de WHERE s.proyecto = ? AND s.clave_ingesta = ? ORDER BY e.fecha DESC LIMIT 1",
+        (pid, f"sesion:{sid}"),
     ).fetchone()
     return r[0] if r else None
 
@@ -1693,7 +1809,9 @@ def _estado_sesion(sid: str, estado: str, motivo: str) -> None:
         if not pid:
             return
         with _abrir(pid) as con:
-            r = con.execute("SELECT id FROM nodo WHERE clave_ingesta = ?", (f"sesion:{sid}",)).fetchone()
+            r = con.execute(
+                "SELECT id FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, f"sesion:{sid}")
+            ).fetchone()
         if r is not None:
             cambiar_estado(pid, r["id"], estado, por="server", motivo=motivo)
     except Exception as e:
@@ -1737,7 +1855,9 @@ def incidente_operativo(
             return None
         with _abrir(pid) as con:
             ronda = _ronda_de_sesion(con, pid, sid)
-            s = con.execute("SELECT datos FROM nodo WHERE clave_ingesta = ?", (f"sesion:{sid}",)).fetchone()
+            s = con.execute(
+                "SELECT datos FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, f"sesion:{sid}")
+            ).fetchone()
             sd = json.loads(s["datos"]) if s else {}
             d = {"herramienta": herramienta, "agente": sd.get("agente"), "modelo": sd.get("modelo"), **(datos or {})}
             d = {k: v for k, v in d.items() if v is not None}
@@ -1845,7 +1965,7 @@ def respaldar(pid: str, destino: str | None = None) -> dict:
     fecha = ahora().replace(":", "").replace("-", "").replace(".", "")
     destino = destino or os.path.join(os.path.dirname(raiz()), "respaldos", pid, fecha)
     os.makedirs(destino, exist_ok=True)
-    origen = sqlite3.connect(_db_path(pid), timeout=10)
+    origen = sqlite3.connect(db_path(), timeout=10)
     copia = sqlite3.connect(os.path.join(destino, "conocimiento.sqlite"))
     try:
         origen.backup(copia)

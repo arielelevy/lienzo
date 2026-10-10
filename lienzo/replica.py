@@ -195,17 +195,19 @@ def sincronizar(pc: str, forward) -> dict:
 
 
 def _cursor(con, pc: str, remoto: str, clase: str) -> int:
+    """El ultimo seq de origen (o rowid de captura) traido de `pc` para su proyecto `remoto`."""
     r = con.execute(
         "SELECT ultimo FROM replica_cursor WHERE peer = ? AND proyecto_remoto = ? AND clase = ?", (pc, remoto, clase)
     ).fetchone()
     return r[0] if r else 0
 
 
-def _mover_cursor(con, pc: str, remoto: str, clase: str, ultimo: int) -> None:
+def _mover_cursor(con, pid: str, pc: str, remoto: str, clase: str, ultimo: int) -> None:
     con.execute(
-        "INSERT INTO replica_cursor (peer, proyecto_remoto, clase, ultimo, fecha) VALUES (?,?,?,?,?)"
-        " ON CONFLICT (peer, proyecto_remoto, clase) DO UPDATE SET ultimo = excluded.ultimo, fecha = excluded.fecha",
-        (pc, remoto, clase, ultimo, k.ahora()),
+        "INSERT INTO replica_cursor (peer, proyecto_remoto, clase, proyecto, ultimo, fecha) VALUES (?,?,?,?,?,?)"
+        " ON CONFLICT (peer, proyecto_remoto, clase) DO UPDATE SET ultimo = excluded.ultimo, fecha = excluded.fecha,"
+        " proyecto = excluded.proyecto",
+        (pc, remoto, clase, pid, ultimo, k.ahora()),
     )
 
 
@@ -222,7 +224,7 @@ def _sincronizar_proyecto(pc: str, forward, remoto: str, pid: str) -> dict:
                 for c in cambios:
                     if aplicar(con, pid, c):
                         out["cambios"] += 1
-                _mover_cursor(con, pc, remoto, "cambio", max(int(c["seq_origen"]) for c in cambios))
+                _mover_cursor(con, pid, pc, remoto, "cambio", max(int(c["seq_origen"]) for c in cambios))
         if not lote.get("hay_mas"):
             break
     out["pendientes"] = _reintentar_pendientes(pid)
@@ -236,7 +238,7 @@ def _sincronizar_proyecto(pc: str, forward, remoto: str, pid: str) -> dict:
                 con.execute("BEGIN IMMEDIATE")
                 for c in caps:
                     out["capturas"] += _aplicar_captura(con, pid, c)
-                _mover_cursor(con, pc, remoto, "captura", max(int(c["_rowid"]) for c in caps))
+                _mover_cursor(con, pid, pc, remoto, "captura", max(int(c["_rowid"]) for c in caps))
         if not lote.get("hay_mas"):
             break
     out["cuerpos"] = _traer_cuerpos(pc, forward, remoto, pid)
@@ -244,7 +246,7 @@ def _sincronizar_proyecto(pc: str, forward, remoto: str, pid: str) -> dict:
         # la vuelta termino bien: el cursor queda aunque no haya llegado nada (asi se sabe que esta PC
         # replica con `pc` en este proyecto, y que los encargos a sus tarjetas se pueden vincular de aca)
         for clase in ("cambio", "captura"):
-            _mover_cursor(con, pc, remoto, clase, _cursor(con, pc, remoto, clase))
+            _mover_cursor(con, pid, pc, remoto, clase, _cursor(con, pc, remoto, clase))
     return out
 
 
@@ -269,8 +271,9 @@ def aplicar(con: sqlite3.Connection, pid: str, c: dict) -> bool:
         con.execute("ROLLBACK TO replica")
         con.execute("RELEASE replica")
         con.execute(
-            "INSERT OR REPLACE INTO replica_pendiente (pc, seq_origen, cambio, error, fecha) VALUES (?,?,?,?,?)",
-            (c["pc"], c["seq_origen"], k._json(c), str(e), k.ahora()),
+            "INSERT OR REPLACE INTO replica_pendiente (proyecto, pc, seq_origen, cambio, error, fecha)"
+            " VALUES (?,?,?,?,?,?)",
+            (pid, c["pc"], c["seq_origen"], k._json(c), str(e), k.ahora()),
         )
         return False
 
@@ -324,12 +327,13 @@ def _aplicar_nodo(con, pid: str, c: dict, n: dict) -> None:
     if actual is None:
         clave = n.get("clave_ingesta")
         if clave:
-            otro = con.execute("SELECT id FROM nodo WHERE clave_ingesta = ?", (clave,)).fetchone()
+            otro = con.execute("SELECT id FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, clave)).fetchone()
             if otro is not None:
                 # lo mismo registrado en las dos PCs con ids distintos: se sugiere, no se fusiona
                 con.execute(
-                    "INSERT OR IGNORE INTO replica_duplicado (nodo_local, nodo_remoto, clave, fecha) VALUES (?,?,?,?)",
-                    (otro[0], nid, clave, k.ahora()),
+                    "INSERT OR IGNORE INTO replica_duplicado (proyecto, nodo_local, nodo_remoto, clave, fecha)"
+                    " VALUES (?,?,?,?,?)",
+                    (pid, otro[0], nid, clave, k.ahora()),
                 )
                 clave = None
         con.execute(
@@ -348,8 +352,9 @@ def _aplicar_nodo(con, pid: str, c: dict, n: dict) -> None:
     # Un choque entre A y B lo registran A y B, que son quienes editaron
     if diverge and ultimo is not None and ultimo[1] == identity.pc_id():
         con.execute(
-            "INSERT OR IGNORE INTO replica_conflicto (nodo, pc, seq_origen, motivo, fecha) VALUES (?,?,?,?,?)",
+            "INSERT OR IGNORE INTO replica_conflicto (proyecto, nodo, pc, seq_origen, motivo, fecha) VALUES (?,?,?,?,?,?)",
             (
+                pid,
                 nid,
                 c["pc"],
                 c["seq_origen"],
@@ -413,9 +418,11 @@ def _reintentar_pendientes(pid: str) -> int:
     """Los cambios que esperaban un nodo de otra PC: se reintentan en orden. Devuelve los que siguen."""
     with k._abrir(pid) as con:
         con.execute("BEGIN IMMEDIATE")
-        for (cambio,) in con.execute("SELECT cambio FROM replica_pendiente ORDER BY fecha, pc, seq_origen").fetchall():
+        for (cambio,) in con.execute(
+            "SELECT cambio FROM replica_pendiente WHERE proyecto = ? ORDER BY fecha, pc, seq_origen", (pid,)
+        ).fetchall():
             aplicar(con, pid, json.loads(cambio))
-        return con.execute("SELECT COUNT(*) FROM replica_pendiente").fetchone()[0]
+        return con.execute("SELECT COUNT(*) FROM replica_pendiente WHERE proyecto = ?", (pid,)).fetchone()[0]
 
 
 def _aplicar_captura(con, pid: str, c: dict) -> int:
@@ -458,7 +465,9 @@ def _traer_cuerpos(pc: str, forward, remoto: str, pid: str) -> int:
     por hash si el nodo lo trae, y entran al indice de prosa."""
     with k._abrir(pid) as con:
         faltan = []
-        for r in con.execute("SELECT id, tipo, datos FROM nodo WHERE tipo IN ('encargo','informe','evidencia')"):
+        for r in con.execute(
+            "SELECT id, tipo, datos FROM nodo WHERE proyecto = ? AND tipo IN ('encargo','informe','evidencia')", (pid,)
+        ):
             d = json.loads(r["datos"])
             ruta = d.get("ruta") if r["tipo"] != "evidencia" else (d.get("referencia") if d.get("recibida") else None)
             full = ruta_segura(pid, ruta)
@@ -507,12 +516,20 @@ def estado(pid: str) -> dict:
     with k._abrir(pid) as con:
         return {
             "proyecto": pid,
-            "cursores": [dict(r) for r in con.execute("SELECT * FROM replica_cursor ORDER BY peer, clase")],
-            "conflictos": [dict(r) for r in con.execute("SELECT * FROM replica_conflicto ORDER BY id")],
-            "duplicados": [dict(r) for r in con.execute("SELECT * FROM replica_duplicado ORDER BY fecha")],
+            "cursores": [
+                dict(r)
+                for r in con.execute("SELECT * FROM replica_cursor WHERE proyecto = ? ORDER BY peer, clase", (pid,))
+            ],
+            "conflictos": [
+                dict(r) for r in con.execute("SELECT * FROM replica_conflicto WHERE proyecto = ? ORDER BY id", (pid,))
+            ],
+            "duplicados": [
+                dict(r)
+                for r in con.execute("SELECT * FROM replica_duplicado WHERE proyecto = ? ORDER BY fecha", (pid,))
+            ],
             "pendientes": [
                 {kk: r[kk] for kk in ("pc", "seq_origen", "error", "fecha")}
-                for r in con.execute("SELECT * FROM replica_pendiente ORDER BY fecha")
+                for r in con.execute("SELECT * FROM replica_pendiente WHERE proyecto = ? ORDER BY fecha", (pid,))
             ],
         }
 

@@ -85,7 +85,8 @@ def proy():
 
 
 def test_registrar_crea_carpeta_base_y_aliases(proy):
-    assert os.path.isfile(os.path.join(k.raiz(), "teorema", "conocimiento.sqlite"))
+    assert os.path.isdir(os.path.join(k.raiz(), "teorema", "rondas"))  # carpeta de cuerpos del proyecto
+    assert os.path.isfile(k.db_path())  # una base para todo el lienzo
     assert k.resolver_proyecto(repo_key="github.com/arielelevy/teorema") == "teorema"
     assert k.resolver_proyecto(cwd="d:\\apps\\teorema\\", pc="pcA") == "teorema"
     assert k.resolver_proyecto(cwd="D:/Apps/Teorema", pc="pcB") is None  # otra PC, misma carpeta: no se adivina
@@ -237,7 +238,7 @@ def test_sesion_que_revive_vuelve_a_viva_y_la_cache_negativa_se_invalida(proy, m
     k.sesion_cerrada("sid-comun")
     assert "sid-comun" in k._sesion_sin_proyecto
     aperturas = []
-    monkeypatch.setattr(k, "_abrir", lambda pid: aperturas.append(pid) or k._Conexion(k._db_path(pid)))
+    monkeypatch.setattr(k, "_abrir", lambda pid: aperturas.append(pid) or k._Conexion(k.db_path()))
     k.sesion_cerrada("sid-comun")
     assert aperturas == []
     # esa misma tarjeta toma un encargo: sale de la cache negativa y el server la observa
@@ -296,7 +297,7 @@ def test_incidente_con_clave_es_idempotente_y_no_reabre_las_bases(proy, monkeypa
     i = k.incidente_operativo("sid-1", "error de API: stopped", herramienta="api", clave=clave)
     assert i["creado"] and i["datos"]["herramienta"] == "api"
     aperturas = []
-    monkeypatch.setattr(k, "_abrir", lambda pid: aperturas.append(pid) or k._Conexion(k._db_path(pid)))
+    monkeypatch.setattr(k, "_abrir", lambda pid: aperturas.append(pid) or k._Conexion(k.db_path()))
     assert k.incidente_operativo("sid-1", "error de API: stopped", herramienta="api", clave=clave) is None
     assert aperturas == []  # la clave ya vista no toca SQLite
     k._incidentes_vistos.clear()  # reinicio del server: la base sigue siendo la que decide
@@ -708,7 +709,7 @@ def test_base_a_medio_crear_se_repara_por_user_version(proy, monkeypatch):
     «ya inicializada» para siempre."""
     import sqlite3
 
-    ruta = k._db_path("teorema")
+    ruta = k.db_path()
     os.remove(ruta)
     sqlite3.connect(ruta).close()  # un archivo vacio, como el que deja un fallo a mitad del esquema
     assert k.nodos("teorema")["total"] == 0  # el esquema se vuelve a crear y la base funciona

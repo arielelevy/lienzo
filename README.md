@@ -290,7 +290,9 @@ posteriores a su vigencia y muestra apoyos rechazados y dependencias.
 Las funciones de `skills/lienzo/coordinar.py` incluyen `briefing`, `preguntar`, `vista`,
 `veredicto`, `cerrar_ronda`, `pendientes_memoria`, `recurrencia`, `cuestionar` y `lecciones`.
 `preparar_encargo` agrega el briefing actual y la plantilla de conocimiento al texto de un frente.
-La memoria reside en `~/.lienzo/proyectos/<proyecto>/` de cada PC y se replica entre las PCs
+La memoria es **una base SQLite por instancia del lienzo** (`~/.lienzo/conocimiento.sqlite`), con el proyecto
+como una dimensión de cada tabla; los cuerpos de encargos e informes y la evidencia quedan como archivos en
+`~/.lienzo/proyectos/<proyecto>/`. Se replica entre las PCs
 emparejadas por el canal firmado (cada 120 s, o `POST /conocimiento/replicar`): cada PC trae de las
 demás los cambios nacidos allá, los proyectos se unen por remote, y los choques y duplicados quedan
 para la coordinadora ([anexo C](docs/propuesta-memoria-2026-10-08/anexo-c-replica.md)). Las bases no
@@ -610,7 +612,8 @@ plugin sigue sin certificar: falta baseline aprobado y no se ejecutaron las muta
   peer.json, peers.json       identidad de esta PC y PCs emparejadas (con la clave del par)
   launch/                     un .cmd por sesión lanzada desde el tablero
   restaurar.json              sesiones para relanzar tras un reinicio
-  proyectos/<proyecto>/       memoria por proyecto (SQLite) de la PC que registra los encargos
+  conocimiento.sqlite         la memoria de todos los proyectos (una base por instancia, replicada entre PCs)
+  proyectos/<proyecto>/       cuerpos de encargos e informes y evidencia de cada proyecto
   xfer/                       copias entre PCs (trabajos/) y hashes de lo recibido (hashes.db)
   chrome-remoto/              perfil separado de Chrome para la vista por pestañas
   *.corrupto-<fecha>          un JSON que no se pudo leer, apartado en vez de pisarlo

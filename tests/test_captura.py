@@ -375,17 +375,131 @@ def test_preguntar_con_prosa_es_opt_in_y_no_mezcla(tmp_path):
         k.buscar_prosa("p", '"sin cerrar')
 
 
-def test_migracion_1_a_2_indexa_los_cuerpos_existentes(tmp_path):
-    k.registrar_proyecto("p")
-    r = k.abrir_ronda("p", "r", autor="c")
-    e = k.crear_encargo("p", r["id"], "A", "# Encargo\nhalving entero", autor="c")
-    db = k._db_path("p")
-    con = sqlite3.connect(db)
-    con.executescript("DROP TABLE prosa_fts; DROP TABLE captura_fts; DROP TABLE captura; PRAGMA user_version = 1;")
+# --- una base para todo el lienzo: importar las viejas por proyecto ------------------------------
+
+V1 = """
+CREATE TABLE proyecto (id TEXT PRIMARY KEY, nombre TEXT NOT NULL, creado TEXT NOT NULL);
+CREATE TABLE nodo (id TEXT PRIMARY KEY, proyecto TEXT NOT NULL, tipo TEXT NOT NULL, texto TEXT NOT NULL,
+  datos TEXT NOT NULL DEFAULT '{}', estado TEXT, estado_fecha TEXT, estado_por TEXT, autor TEXT NOT NULL,
+  origen TEXT NOT NULL, ronda TEXT, fecha TEXT NOT NULL, clave_ingesta TEXT UNIQUE);
+CREATE TABLE vinculo (de TEXT NOT NULL, relacion TEXT NOT NULL, a TEXT NOT NULL, activo INTEGER NOT NULL DEFAULT 1,
+  fecha TEXT NOT NULL, autor TEXT NOT NULL, origen TEXT NOT NULL, motivo TEXT, PRIMARY KEY (de, relacion, a));
+CREATE TABLE cambio (seq INTEGER PRIMARY KEY AUTOINCREMENT, proyecto TEXT NOT NULL, nodo_id TEXT, de TEXT,
+  relacion TEXT, a TEXT, accion TEXT NOT NULL, anterior TEXT, nuevo TEXT NOT NULL, autor TEXT NOT NULL,
+  motivo TEXT NOT NULL, origen TEXT NOT NULL, fecha TEXT NOT NULL);
+PRAGMA user_version = 1;
+"""
+
+
+def base_vieja(pid, texto="# Encargo\nhalving entero", con_origen=None):
+    """Una base por proyecto como las que hubo hasta el esquema 3 (la viva del proyecto lienzo era 1), con
+    una ronda, un encargo con su cuerpo, un tema y su vinculo. `con_origen` agrega las columnas pc y
+    seq_origen del esquema 3 con cambios de esa PC. La registra en el indice sin abrir la base central."""
+    carpeta = os.path.join(k.raiz(), pid)
+    os.makedirs(os.path.join(carpeta, "rondas", f"r-{pid}"), exist_ok=True)
+    with open(os.path.join(carpeta, "rondas", f"r-{pid}", "encargo-A.md"), "w", encoding="utf-8") as f:
+        f.write(texto)
+    con = sqlite3.connect(os.path.join(carpeta, "conocimiento.sqlite"))
+    con.executescript(V1)
+    if con_origen:
+        con.executescript("ALTER TABLE cambio ADD COLUMN pc TEXT; ALTER TABLE cambio ADD COLUMN seq_origen INTEGER;")
+    f = "2026-10-08T21:00:00.000Z"
+    con.execute("INSERT INTO proyecto VALUES (?,?,?)", (pid, pid, f))
+    nodos = [
+        (f"r-{pid}", "ronda", "ronda 1", "{}", "abierta", None, None),
+        (
+            f"e-{pid}",
+            "encargo",
+            "Encargo A",
+            json.dumps({"ruta": f"rondas/r-{pid}/encargo-A.md", "letra": "A"}),
+            "pendiente",
+            f"r-{pid}",
+            f"encargo:r-{pid}:A",
+        ),
+        (f"t-{pid}", "tema", "halving", "{}", None, None, None),
+    ]
+    for nid, tipo, texto_n, datos, estado, ronda, clave in nodos:
+        con.execute(
+            "INSERT INTO nodo (id, proyecto, tipo, texto, datos, estado, autor, origen, ronda, fecha, clave_ingesta)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (nid, pid, tipo, texto_n, datos, estado, "c", "{}", ronda, f, clave),
+        )
+        con.execute(
+            "INSERT INTO cambio (proyecto, nodo_id, accion, nuevo, autor, motivo, origen, fecha) VALUES (?,?,?,?,?,?,?,?)",
+            (pid, nid, "nodo", json.dumps({"id": nid, "tipo": tipo, "texto": texto_n}), "c", "", "{}", f),
+        )
+    con.execute("INSERT INTO vinculo VALUES (?,?,?,1,?,?,?,NULL)", (f"e-{pid}", "sobre", f"t-{pid}", f, "c", "{}"))
+    if con_origen:
+        con.execute("UPDATE cambio SET pc = ?, seq_origen = seq + 100", (con_origen,))
+    con.commit()
     con.close()
-    assert [x["nodo"] for x in k.buscar_prosa("p", "halving")] == [e["id"]]
-    with k._abrir("p") as c2:
-        assert c2.execute("PRAGMA user_version").fetchone()[0] == k.VERSION_ESQUEMA
+    idx = k._leer_indice()
+    idx["proyectos"][pid] = {"nombre": pid, "remotes": [], "carpetas": [], "creado": f}
+    k._guardar_indice(idx)
+
+
+def test_la_base_vieja_de_un_proyecto_pasa_entera_a_la_del_lienzo(monkeypatch):
+    monkeypatch.setattr(k.identity, "pc_id", lambda: "pcA")
+    base_vieja("p")
+    assert not os.path.exists(k.db_path())
+    assert [x["nodo"] for x in k.buscar_prosa("p", "halving")] == ["e-p"]  # la prosa se indexo del cuerpo
+    assert k.nodos("p")["total"] == 3 and k.buscar("p", "halving")[0]["id"] == "t-p"
+    assert [v["a"] for v in k.nodo("p", "e-p")["vinculos"]["salen"]] == ["t-p"]
+    cambios = k.cambios("p")
+    assert len(cambios) == 3 and all(c["pc"] == "pcA" and c["seq_origen"] == c["seq"] for c in cambios)
+    vieja = os.path.join(k.raiz(), "p", "conocimiento.sqlite")
+    assert not os.path.exists(vieja) and os.path.isfile(vieja + ".importada")  # renombrada, no borrada
+    # despues de importar todo sigue andando en la base del lienzo
+    k.crear_encargo("p", "r-p", "B", "# Encargo B", autor="c")
+    with pytest.raises(Rechazo):
+        k.crear_encargo("p", "r-p", "A", "repetido", autor="c")  # la clave del encargo viejo sigue valiendo
+
+
+def test_dos_proyectos_viejos_y_cuatro_aperturas_a_la_vez_importan_una_vez(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    base_vieja("p")
+    base_vieja("q")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda pid: k.resumen(pid), ["p", "q", "p", "q"]))
+    with k._abrir("p") as con:
+        assert con.execute("SELECT COUNT(*) FROM prosa_fts").fetchone()[0] == 2  # uno por proyecto, no 8
+        filas = con.execute("SELECT proyecto, COUNT(*) FROM nodo GROUP BY proyecto ORDER BY proyecto").fetchall()
+        assert [tuple(f) for f in filas] == [("p", 3), ("q", 3)]
+    assert {n["id"] for n in k.nodos("q")["nodos"]} == {"r-q", "e-q", "t-q"}
+
+
+def test_la_importacion_que_falla_a_mitad_no_deja_nada_y_se_reintenta(monkeypatch):
+    base_vieja("p")
+    original = k._rellenar_prosa
+    monkeypatch.setattr(k, "_rellenar_prosa", lambda *a: (_ for _ in ()).throw(OSError("disco")))
+    with pytest.raises(OSError):
+        k.resumen("p")
+    con = sqlite3.connect(k.db_path())
+    assert con.execute("PRAGMA user_version").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'nodo'").fetchone()[0] == 0
+    con.close()
+    assert os.path.isfile(os.path.join(k.raiz(), "p", "conocimiento.sqlite"))  # la vieja sigue donde estaba
+    monkeypatch.setattr(k, "_rellenar_prosa", original)
+    assert k.nodos("p")["total"] == 3
+
+
+def test_los_cambios_de_otra_pc_conservan_su_origen_al_importar(monkeypatch):
+    monkeypatch.setattr(k.identity, "pc_id", lambda: "pcA")
+    base_vieja("p", con_origen="pcB")
+    cambios = k.cambios("p")
+    assert {(c["pc"], c["seq_origen"]) for c in cambios} == {("pcB", 101), ("pcB", 102), ("pcB", 103)}
+    k.crear_nodo("p", "tema", "nuevo", autor="c")
+    assert k.cambios("p")[-1]["pc"] == "pcA"
+
+
+def test_el_mismo_texto_de_clave_en_dos_proyectos_no_choca():
+    k.registrar_proyecto("p")
+    k.registrar_proyecto("q")
+    a = k.crear_nodo("p", "tema", "x", autor="c", clave_ingesta="tema:x")
+    b = k.crear_nodo("q", "tema", "x", autor="c", clave_ingesta="tema:x")
+    assert a["creado"] and b["creado"] and a["id"] != b["id"]
+    assert not k.crear_nodo("p", "tema", "x", autor="c", clave_ingesta="tema:x")["creado"]
 
 
 # --- cuerpos byte por byte -------------------------------------------------------------------
@@ -480,41 +594,6 @@ def test_la_regla_que_dispara_queda_como_regla_en_el_destino(enganche, monkeypat
 
 
 # --- regresiones del code review del 2026-10-09 --------------------------------------------------
-
-
-def test_cuatro_aperturas_a_la_vez_migran_una_sola_vez(tmp_path):
-    from concurrent.futures import ThreadPoolExecutor
-
-    k.registrar_proyecto("p")
-    r = k.abrir_ronda("p", "r", autor="c")
-    for letra in "ABC":
-        k.crear_encargo("p", r["id"], letra, f"# Encargo {letra}\nhalving entero", autor="c")
-    con = sqlite3.connect(k._db_path("p"))
-    con.executescript(
-        "DROP TABLE prosa_fts; DROP TABLE captura_fts; DROP TABLE captura; DROP INDEX cambio_origen;"
-        " ALTER TABLE cambio DROP COLUMN seq_origen; ALTER TABLE cambio DROP COLUMN pc; PRAGMA user_version = 1;"
-    )
-    con.close()
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda _: k.resumen("p"), range(4)))
-    with k._abrir("p") as c2:
-        assert c2.execute("SELECT COUNT(*) FROM prosa_fts").fetchone()[0] == 3  # no 12
-        assert c2.execute("SELECT COUNT(*) FROM cambio WHERE seq_origen IS NULL").fetchone()[0] == 0
-
-
-def test_la_migracion_que_falla_a_mitad_no_deja_nada(tmp_path, monkeypatch):
-    k.registrar_proyecto("p")
-    k.crear_nodo("p", "tema", "x", autor="c")
-    con = sqlite3.connect(k._db_path("p"))
-    con.executescript("DROP TABLE prosa_fts; PRAGMA user_version = 1;")
-    con.close()
-    monkeypatch.setattr(k, "_rellenar_prosa", lambda *a: (_ for _ in ()).throw(OSError("disco")))
-    with pytest.raises(OSError):
-        k.resumen("p")
-    con = sqlite3.connect(k._db_path("p"))
-    assert con.execute("PRAGMA user_version").fetchone()[0] == 1
-    assert con.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'prosa_fts'").fetchone()[0] == 0
-    con.close()
 
 
 def test_la_captura_que_llega_despues_de_la_entrega_explicita_no_duplica(tmp_path):

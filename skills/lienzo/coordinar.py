@@ -616,7 +616,7 @@ def salud():
 
 # --- conocimiento por proyecto (docs/propuesta-memoria-2026-10-08/v5.md, etapa 1) -------------
 #
-# El lienzo guarda por proyecto, en ~/.lienzo/proyectos/<proyecto>/, las rondas, los encargos tal
+# El lienzo guarda por proyecto (en una base por instancia, ~/.lienzo/conocimiento.sqlite), las rondas, los encargos tal
 # como se mandaron, los informes tal como se entregaron (con hash y revisión) y lo que el server
 # observa de las sesiones que trabajan un encargo. Etapa 1: inventario estructural; el bloque
 # `conocimiento` del informe y los veredictos de la coordinadora vienen en las etapas 2 y 3.

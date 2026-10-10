@@ -636,13 +636,17 @@ id antes de la primera captura: `c.proyecto_carpeta(cwd)`. Para leer: `c.captura
 «prosa, no declarado»). No se guardan adjuntos, secretos con forma conocida (se tapan) ni carpetas
 temporales. Texto con U+FFFD o mojibake se rechaza al entregar o declarar, con línea y columna;
 `c.texto_roto(pid)` mide y `c.reparar_texto(pid, aplicar=True)` repara el mojibake por auditoría.
+**Desde cualquier terminal**, el agente que trabaja (Claude, Codex, coda, Pi) consulta la memoria de su
+carpeta con `py <skill>/memoria.py` (briefing), `memoria.py "consulta"` (búsqueda, la prosa aparte),
+`--archivo ruta`, `--tema t`, `--por-que <id>`, `--capturas`: sólo lee, texto con ids citables.
 **Entre PCs** la memoria se replica sola cada 120 s por el canal firmado (proyectos unidos por
 remote); `c.replicar(pc)` la fuerza y `c.estado_replica(pid)` muestra choques y duplicados, que se
 resuelven con un veredicto. Con la réplica andando, `encargo_enviado` acepta una tarjeta de la otra PC.
 Otras consultas del plan v5: `c.por_que(pid, alternativa)`, `c.briefing(pid, encargos=[...],
 markdown=True)`, `c.reincorporar(pid, informe)`, `c.evidencia(...)`, `c.respaldar(pid)`.
 
-El lienzo guarda por proyecto, en `~/.lienzo/proyectos/<proyecto>/` (privado, fuera de los repos),
+El lienzo guarda, en una base por instancia (`~/.lienzo/conocimiento.sqlite`, privada, fuera de los repos)
+con el proyecto como dimensión, y con los cuerpos en `~/.lienzo/proyectos/<proyecto>/`,
 las rondas, los encargos tal como se mandaron, los informes tal como se entregaron (con hash y
 revisión) y lo que el server observa de las sesiones que trabajan un encargo: cuándo cierran, qué
 permiso les denegaron, qué error de API cortó un turno, si murieron a medias. Es una base SQLite con búsqueda BM25 (FTS5) y un grafo

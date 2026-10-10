@@ -6,7 +6,6 @@ import contextlib
 import hashlib
 import json
 import os
-import sqlite3
 import sys
 
 import pytest
@@ -16,7 +15,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import conocimiento as k
 import replica
 import veredictos as v
-from conocimiento import Rechazo
 
 REMOTE = "github.com/ariel/teorema"
 C = "coordinadora:c"
@@ -259,25 +257,6 @@ def test_atender_no_escribe_y_rechaza_lo_que_no_conoce(red):
         assert replica.atender({"op": "otra", "proyecto": "teorema"})[0] == 400
         assert replica.atender({"op": "cuerpo", "proyecto": "teorema", "ruta": "../../peer.json"})[0] == 404
         assert len(k.cambios("teorema", limite=500)) == antes
-
-
-def test_migracion_2_a_3_marca_los_cambios_viejos_como_de_esta_pc(red):
-    with red.en("pcA"):
-        k.registrar_proyecto("p")
-        k.crear_nodo("p", "tema", "x", autor="c")
-        con = sqlite3.connect(k._db_path("p"))
-        con.executescript(
-            "DROP INDEX cambio_origen; ALTER TABLE cambio DROP COLUMN seq_origen; ALTER TABLE cambio DROP COLUMN pc;"
-            " PRAGMA user_version = 2;"
-        )
-        con.close()
-        cambios = k.cambios("p")
-        assert cambios and all(c["pc"] == "pcA" and c["seq_origen"] == c["seq"] for c in cambios)
-        k.crear_nodo("p", "tema", "y", autor="c")
-        nuevo = k.cambios("p")[-1]
-        assert nuevo["pc"] == "pcA" and nuevo["seq_origen"] == nuevo["seq"]
-    with pytest.raises(Rechazo):
-        k.proyecto("p")  # fuera de pcA no existe
 
 
 def test_encargo_enviado_a_una_tarjeta_de_otra_pc_vale_si_ya_hay_replica(red, monkeypatch):

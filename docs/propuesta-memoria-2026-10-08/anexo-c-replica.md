@@ -5,7 +5,8 @@ PCs emparejadas (HMAC por par, `/peer/*`). Pruebas: `tests/test_replica.py`.
 
 ## Propiedad
 
-No hay una base dueña. Cada PC escribe sólo en su base y es la autoridad de los cambios que nacieron
+No hay una base dueña. Cada PC tiene una sola base para todos sus proyectos (anexo D de v5), escribe sólo
+en ella y es la autoridad de los cambios que nacieron
 en ella: cada `cambio` lleva `pc` (la PC de origen) y `seq_origen` (su número allá). Una PC le pide a
 cada par vivo los cambios con origen en ese par, desde su cursor. Con hasta cuatro PCs no se reenvían
 cambios ajenos: cada uno se trae de su PC de origen (si esa PC está apagada, llega cuando vuelve).

@@ -414,9 +414,9 @@ def test_lecciones_cruza_proyectos_de_solo_lectura_y_dice_que_no_pudo_abrir(proy
     }
     with pytest.raises(Rechazo):
         ap.lecciones("")
-    # una base que no se puede abrir se informa, no se devuelve vacia
-    os.rename(k._db_path("lienzo"), k._db_path("lienzo") + ".fuera")
-    os.makedirs(k._db_path("lienzo"))  # un directorio donde iba el archivo: sqlite no lo abre
+    # un proyecto que no se puede abrir se informa, no se devuelve vacio (la base es una sola: falta la
+    # carpeta del proyecto, que es lo que _abrir exige)
+    os.rename(k._carpeta("lienzo"), k._carpeta("lienzo") + ".fuera")
     res = ap.lecciones("codex")
     assert res["proyectos"] == [P] and res["no_disponibles"][0]["proyecto"] == "lienzo"
     assert [r["id"] for r in res["reglas"]] == [r1]
