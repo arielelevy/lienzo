@@ -231,6 +231,13 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
 ### Otros
 
+- [ ] **Evaluador de performance por harness** (pedido de Ariel, 2026-10-10). Por agente (claude, codex,
+  pi, coda) y modelo, el resultado contra el gasto (tokens y dólares) y el tiempo, acumulado entre rondas,
+  con señales objetivas (aceptado/refutado en las consultas, veredictos de la coordinadora y pruebas en
+  los encargos) antes que la opinión de otro modelo. Spec con el método SDD en
+  `docs/specs/evaluador-harness/`, código en el worktree `D:/Apps/lienzo-evaluador` (rama
+  `evaluador-harness`). Primer caso real: la consulta `c-20261010-a841ea` de Teorema (sólo lectura).
+
 - [x] Identidad de Codex en el barrido (hallazgo del cierre, 2026-10-07): `codex.exe` de
   sandbox/helpers podía ocupar una tarjeta con transcripción de una CLI ya cerrada. Se filtran
   subcomandos no interactivos y flags internos `--codex-run-as-*`, y la comprobación de vida
