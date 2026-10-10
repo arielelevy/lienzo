@@ -357,6 +357,12 @@ la tarjeta vieja desaparece:
 efecto en el transcript, no el envío. `/exit` se verifica con que el proceso ya no exista y la
 tarjeta quede `muerta`.
 
+**`/exit` no cierra un Pi** (medido el 2026-10-10, Pi con gpt-6.1-sol en modo build): lo tomó como
+mensaje, contestó «Cierro» y el proceso siguió vivo, con el `send` en `ok: true`. Un Pi no se da por
+cerrado por el envío: mirar que el `pid` ya no exista. Todavía no hay un comando de cierre de Pi
+medido desde el lienzo; mientras tanto, pedirle al usuario que lo cierre o cerrar su consola
+(`Stop-Process -Id <pid>`), sólo con la sesión quieta y su trabajo ya entregado.
+
 ## Restaurar sesiones tras un reinicio
 
 Al reiniciar la PC mueren todos los agentes y las tarjetas se borran a los 60 s. Cada PC guarda en
@@ -459,6 +465,48 @@ Cuando la memoria se termina, en este orden y sin matar el trabajo de nadie:
 3. Postergar lo que no apura (mediciones de navegador) y decírselo al frente.
 
 ## Trampas medidas
+
+### Recursos compartidos entre frentes
+
+Varios frentes en una máquina comparten candados, semáforos, puertos, bases y números correlativos
+(migraciones, versiones). Lo que salió mal, en general:
+
+- **Un candado o turno no se pide desde adentro de otro del mismo tipo.** Un comando que ya pide su
+  turno, envuelto en otro pedido del mismo semáforo, espera un turno que nunca se libera si el
+  dueño de los demás es él mismo, y con el candado tomado traba a todos los que esperan detrás. El
+  semáforo tiene que negarse a anidar (marcar el turno en el entorno y cortar si ya está), y el
+  encargo común lo dice: «no envuelvas en el semáforo un guion que ya lo usa».
+- **Un servidor de larga vida no se queda con un turno.** Un servicio levantado adentro de un turno
+  lo retiene mientras viva; con pocos turnos, dos servidores de frentes distintos dejan a la
+  máquina sin ninguno para las pruebas. El servidor va fuera del semáforo, con sus puertos propios.
+- **«Esperando el candado» dos veces seguidas es para mirar, no para esperar.** La coordinadora
+  revisa quién lo tiene (`fuser -v <candado>`, `pstree -ap <pid>`) y desde cuándo; un dueño dormido
+  con el candado tomado es un bloqueo, no una cola.
+- **Un número correlativo se asigna al frente que lo va a usar, cuando lo pide.** Reservar uno para
+  un frente que todavía no arrancó deja un hueco en la cadena, y el siguiente que lo use apunta a
+  algo que no existe; en migraciones eso rompe la base de prueba de todos. La coordinadora lleva la
+  lista y contesta el número al que lo pide.
+- **Un frente que muta archivos compartidos para probar (mutaciones) avisa antes y pide el árbol
+  quieto**; la coordinadora no commitea ni edita hasta que el frente confirme los archivos
+  restaurados por huella. Los demás frentes, mientras tanto, no lanzan pruebas que copien el árbol.
+- **Un archivo de referencia de una prueba que cambia un solo dígito** sin que nadie lo explique es
+  una mutación que no se restauró: se vuelve a la versión del último commit antes de buscar el bug.
+
+### El sistema donde corren los frentes
+
+- **WSL apaga la distro cuando no queda ninguna sesión `wsl.exe` abierta**, y con ella caen las
+  bases, las APIs y los servidores de desarrollo de todos los frentes; adentro se ve como un
+  reinicio (`last -x`: shutdown y boot) y los procesos lanzados con `nohup` mueren sin dejar rastro.
+  Mientras dure una ronda, la coordinadora deja abierta una sesión oculta:
+  `Start-Process wsl.exe -ArgumentList '-d','<distro>','--','sleep','infinity' -WindowStyle Hidden`.
+- **El nombre de la distro cambia entre PCs** (`Ubuntu`, `Ubuntu-24.04`): un encargo a otra PC no lo
+  da por sentado; se mira con `wsl -l -q`.
+- **Un comando con `!` corre en la PC de la sesión donde se escribe.** Para que el usuario corra
+  algo en otra PC, se lo escribe en la terminal o la tarjeta de un frente de esa PC.
+- **El clasificador de permisos frena por su cuenta lo destructivo y lo que toca secretos** (borrar
+  una rama sin mergear, reescribir un archivo de claves), aunque el usuario lo haya autorizado en el
+  chat. No se rodea ni se le teclea a otra sesión: se le pide al usuario que lo corra con `!` en la
+  terminal de esa PC.
 
 - **Las preguntas de CODA (`ask_user`) no se veían en el tablero** hasta el 2026-10-09: con
   auto-aprobar prendido el hook las dejaba pasar como un permiso más y la tarjeta seguía en
