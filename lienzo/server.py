@@ -34,6 +34,7 @@ import autoaprobar
 import beacon
 import browser_api
 import browser_stream
+import captura
 import conocimiento_api
 import cuenta_github
 import federation
@@ -888,7 +889,12 @@ def sin_validar(d: dict) -> None:
 def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     """POST /sessions/<id>/send: inyecta el texto en la consola. La flecha y copycat son del
     tablero (envio_del_tablero): la PC duena solo teclea."""
-    code, res = send_to_session(s, d.get("text", ""), d.get("attachments") or [])
+    with captura.origen(
+        de=d.get("from") if isinstance(d.get("from"), str) else None,
+        kind="native" if d.get("native") else ("send" if d.get("from") else "user"),
+        link_to=d.get("link_to") if isinstance(d.get("link_to"), str) else None,
+    ):
+        code, res = send_to_session(s, d.get("text", ""), d.get("attachments") or [])
     if code == 200 and d.get("autoriza_denegado") is True:
         # «Autorizar y que reintente»: corre en la PC duena (el cuerpo viaja entero), que es la
         # que relee la transcripcion y volveria a poner el aviso
@@ -2627,6 +2633,7 @@ def main() -> int:
     rules.load(lambda r: (r.get("to") in sessions or r.get("xpc")) and (not r.get("from") or r["from"] in sessions))
     purge_stale_at_rules()
     clean_attachments()
+    captura.arrancar()  # lo que pasa por el lienzo queda en la memoria del proyecto (anexo A de v5)
     if not a.no_sweep:
         sweep_once()
     threading.Thread(target=consume_events, daemon=True).start()

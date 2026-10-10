@@ -260,6 +260,19 @@ El menú ⋯ → Memoria permite elegir un proyecto y consultar su briefing, bus
 leer una vista por tema, y ver pendientes y avisos. Las consultas son de lectura; no confirman
 hallazgos ni aceptan reglas automáticamente.
 
+**Todo lo que pasa por el lienzo queda en la memoria, sin registrar nada a mano** (pedido de
+Ariel del 2026-10-09). El proyecto es la carpeta: la primera vez que el lienzo ve una sesión en una
+carpeta (hook, barrido, lanzamiento o envío) crea el proyecto de esa carpeta (la raíz del repo, y la
+del repo principal para un worktree) y la sesión queda como nodo. El remote sólo une la misma
+carpeta en dos PCs; dos carpetas de una PC nunca se juntan. Cada pedido, respuesta final, envío entre
+sesiones y disparo de regla queda como captura `observado` con sesión, agente, modelo, PC y hora; una
+respuesta final con bloque `conocimiento` es además un informe y se incorpora igual que una entrega
+(si la sesión trabaja un encargo enviado, lo entrega como su revisión siguiente). Nada capturado pasa
+a `vigente`. No se guardan adjuntos (sólo su nombre), ni secretos con forma conocida (se tapan), ni
+las carpetas temporales del sistema; cada captura guarda hasta 64 KB con el hash del original.
+`coordinar.proyecto(...)` queda para ponerle nombre o alias. Las rondas explícitas siguen para
+agrupar, pero no hacen falta para que algo quede.
+
 Cada proyecto tiene identidad propia, rondas, encargos e informes con hash y revisión. El
 bloque JSON `conocimiento` del informe se valida entero antes de incorporarse al grafo. Los
 veredictos requieren una coordinadora o una persona y conservan revisión, evidencia y motivo.
@@ -267,6 +280,10 @@ El cierre de ronda aplica sus veredictos y pendientes explícitos en una transac
 
 La recuperación combina archivos y temas, BM25 y relaciones del grafo. `preguntar` devuelve
 candidatos paginados con sus referencias; una búsqueda vacía no prueba que algo no exista.
+Con `prosa=True` suma, aparte y marcado «prosa, no declarado», lo escrito en encargos, informes y
+capturas que coincide; sin ese parámetro la respuesta no cambia. El texto con U+FFFD o mojibake
+(UTF-8 leído como Windows-1252) se rechaza al entregar, al declarar un nodo y en el bloque, con la
+línea y la columna; `reparar_texto` repara el mojibake guardado con un cambio auditado por nodo.
 El aprendizaje cuenta episodios de recurrencia una vez, cuestiona reglas ante episodios
 posteriores a su vigencia y muestra apoyos rechazados y dependencias.
 
@@ -490,6 +507,9 @@ además la cookie de sesión.
 | GET | `/xfer`, `/xfer/<id>` | las copias; `estado`, `pct`, `mbps`, `eta_s`, `archivos_hechos`, `errores`, `ultimos` |
 | DELETE, POST | `/xfer/<id>`, `/xfer/<id>/retomar`, `/xfer/<id>/confirmar` | pausar, retomar, dejar borrar al espejo |
 | GET, POST | `/conocimiento/proyectos`, `/conocimiento/resolver?repo_key=&cwd=&pc=` | conocimiento por proyecto: registrar un proyecto (`{id, nombre?, remotes?, carpetas?}`) y saber cuál es el de una tarjeta |
+| GET, POST | `/conocimiento/carpeta?cwd=&pc=` | el proyecto de una carpeta (GET sin crear; POST `{cwd, pc?}` lo crea si falta) |
+| GET | `/conocimiento/<p>/capturas?session_id=&clase=&desde=&limite=`, `/prosa?q=` | lo capturado solo (pedido, respuesta, envío, regla) y la búsqueda en la prosa |
+| GET, POST | `/conocimiento/<p>/texto/roto`, `/texto/reparar` | medir U+FFFD y mojibake; reparar el mojibake de los nodos (`{por, aplicar?}`) con un cambio por nodo |
 | GET | `/conocimiento/<p>` | resumen: nodos por tipo y estado, rondas, último cambio |
 | POST | `/conocimiento/<p>/rondas`, `/rondas/<id>/estado` | abrir una ronda (`{objetivo}`); suspender, reabrir o cerrar (`{estado, por}`) |
 | POST | `/conocimiento/<p>/encargos`, `/encargos/<id>/enviado`, `/encargos/<id>/estado` | registrar un encargo (`{ronda, letra, texto, archivos?}`); la tarjeta que lo tomó (`{session_id, agent?, model?, pc?, cwd?}`); abandonarlo o reabrirlo |

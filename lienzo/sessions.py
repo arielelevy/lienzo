@@ -17,6 +17,7 @@ import time
 import traceback
 
 import backend
+import captura
 import coda
 import conocimiento
 import identity
@@ -689,6 +690,7 @@ def touch(s: dict) -> bool:
             return False
         save_session(s)
         state.broadcast({"type": "session", "session": s})
+        captura.vista(s)  # la primera vez con carpeta: su proyecto y su sesion (anexo A de v5)
     return True
 
 
@@ -826,6 +828,10 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
     ninguno de los dos se pisa desde aca."""
     if p := turn_prompt(t):
         set_last_prompt(s, p)
+        if not s.get("hooked"):
+            # sin hooks, el pedido sale de la transcripcion; el que tecleo el lienzo ya quedo como envio
+            via = "lienzo" if s.get("sent_mark") and prompt_mark(p) == s["sent_mark"] else None
+            captura.pedido(s, p, via, turno=t.get("id"))
     if t.get("final") or not t.get("ended"):
         s["last_reply"] = turn_say(t) or s["last_reply"]
     if not turn_say(t) and (waiting := perfil(s["agent"]).waiting_text(t)):
@@ -1176,8 +1182,10 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
     s["prompt_id"] = ev.get("prompt_id")
     s["prompt_ts"] = s["last_event_ts"]
     if not transcripts.is_system_prompt(raw := ev.get("prompt", "")):
-        set_last_prompt(s, raw, prompt_origin(s, raw))
+        via = prompt_origin(s, raw)
+        set_last_prompt(s, raw, via)
         title_from_prompt(s)
+        captura.pedido(s, raw, via, turno=ev.get("prompt_id"))  # la memoria del proyecto (anexo A de v5)
     s["pending_id"] = None
     s["typing"] = False  # lo que habia en la caja ya se mando; screen_loop lo confirma en 5 s
     if s["agent"] == "coda":
@@ -2443,6 +2451,7 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
         return frenado
     if frenado := dialogo_abierto(s):
         return frenado
+    attachments_pedidos = list(attachments or [])
     final, orig, attachments = compose_send(sid, text, attachments, agent=s.get("agent"))
     if not final:
         return 400, {"ok": False, "error": "texto vacio"}
@@ -2453,6 +2462,8 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
         with lock:
             s["sent_mark"] = None  # no entro: lo que se tipee despues es del usuario
         return code, out
+    # la memoria del proyecto de la carpeta de `s` (anexo A de v5): el texto entero, no el envoltorio
+    captura.envio(s, text, adjuntos=attachments_pedidos, **captura.origen_actual())
     state.log(
         f"send {sid[:8]}: {len(orig) if orig else out.get('chars')} caracteres"
         + (" (como adjunto)" if attachments else "")
@@ -2525,7 +2536,8 @@ def notify_stopped(s: dict, recipients: list[dict]) -> None:
         "ni cuentes con sus conexiones hasta que la habiliten desde el tablero; lo que le llegue rebota."
     )
     for r in recipients:
-        code, out = send_to_session(r, text, [])
+        with captura.origen(de=s["session_id"], kind="aviso_detenida"):
+            code, out = send_to_session(r, text, [])
         if code == 200:
             add_link(None, r["session_id"], text, "user")
         else:

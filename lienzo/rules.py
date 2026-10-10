@@ -14,6 +14,7 @@ import threading
 import time
 import traceback
 
+import captura
 import conocimiento
 import identity
 import sessions as ses
@@ -400,7 +401,8 @@ def fire_rule(rule: dict) -> None:
         rules.publish()
         return
     text = render_template(rule.get("text") or "", src)
-    code, res = send_to_session(dst, text, [])
+    with captura.origen(clase="regla", de=src["session_id"] if src else None, rule_id=rule["id"], kind=rule["kind"]):
+        code, res = send_to_session(dst, text, [])
     with lock:
         rule["fired"] = rule.get("fired", 0) + 1
         rule["last_fired"] = now()
@@ -438,6 +440,10 @@ def fire_on_stop(sid: str) -> None:
             if not s1 or s1.get("state") != "termino" or s1.get("state_since") != desde:
                 state.log(f"on_stop de {sid[:8]} no disparado: la tarjeta volvio a trabajar (Stop intermedio de coda)")
                 return
+    with lock:
+        cerrada = dict(sessions.get(sid) or {})
+    if cerrada:
+        captura.respuesta(cerrada)  # la respuesta final queda en la memoria del proyecto (anexo A de v5)
     ahora = dt.datetime.now().astimezone()
 
     def suya(r: dict) -> bool:
@@ -513,7 +519,8 @@ def aviso_muerta(sid: str, prev: str) -> None:
             if dst is None:
                 state.log(f"aviso de muerte de {sid[:8]} -> {to[:8]}: el destino no se ve, no se avisa")
                 continue
-            code, res = send_to_session(dst, texto, [])
+            with captura.origen(de=sid, kind="aviso_muerta"):
+                code, res = send_to_session(dst, texto, [])
         except Exception:
             # un destino roto no deja sin aviso a los demas, y queda en el log (plan 1.1)
             state.log(f"aviso de muerte de {sid[:8]} -> {to[:8]}:\n{traceback.format_exc()}")

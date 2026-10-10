@@ -652,12 +652,24 @@ def briefing(pid: str, *, archivos=None, temas=None, consultas=None, desde_cierr
 
 
 def preguntar(
-    pid: str, consultas, *, archivos=None, temas=None, tipo=None, saltos: int = 1, offset: int = 0, limite: int = 100
+    pid: str,
+    consultas,
+    *,
+    archivos=None,
+    temas=None,
+    tipo=None,
+    saltos: int = 1,
+    offset: int = 0,
+    limite: int = 100,
+    prosa: bool = False,
 ) -> dict:
     """La cadena joins -> BM25 -> expansion (v5 §7.1) sin leer cuerpos: candidatos con procedencia,
     puntaje, salto y sus vinculos activos; los informes y encargos traen `ruta` para `leer_cuerpo`.
     `tipo` filtra las semillas BM25 (la expansion trae lo que las rodea). Pagina despues de
-    recuperar todo: total sin recorte, siguientes como offset o None; limite entre 1 y 500."""
+    recuperar todo: total sin recorte, siguientes como offset o None; limite entre 1 y 500.
+    Con `prosa` (opt-in) suma `prosa`: BM25 de cada consulta sobre los cuerpos de encargos e informes y
+    las capturas, marcado «prosa, no declarado» y sin mezclarse con los candidatos ni con su paginacion.
+    Sin `prosa` la respuesta no cambia."""
     if type(offset) is not int or offset < 0:
         raise Rechazo("offset debe ser un entero no negativo")
     if type(limite) is not int or not 1 <= limite <= 500:
@@ -685,7 +697,7 @@ def preguntar(
             n["id"],
         )
     )
-    return {
+    res = {
         "proyecto": pid,
         "consultas": consultas,
         "temas_sin_resolver": sin_tema,
@@ -695,6 +707,16 @@ def preguntar(
         "siguientes": offset + limite if offset + limite < len(out) else None,
         "candidatos": out[offset : offset + limite],
     }
+    if prosa:
+        vistos, prosa_out = set(), []
+        for q in consultas:
+            for p in k.buscar_prosa(pid, q):
+                clave = p.get("nodo") or p.get("captura")
+                if clave not in vistos:
+                    vistos.add(clave)
+                    prosa_out.append({**p, "consulta": q})
+        res["prosa"] = prosa_out
+    return res
 
 
 # --- vista en Markdown (v5 §7.2) ---------------------------------------------------------------------

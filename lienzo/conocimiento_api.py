@@ -21,12 +21,19 @@ ruta ya sin el primer tramo `conocimiento`.
     GET  /conocimiento/<p>/buscar?q=&tipo=&saltos=    BM25 + expansion por grafo
     GET  /conocimiento/<p>/cambios?desde=
     GET  /conocimiento/<p>/cuerpo?ruta=               el texto de un encargo o informe
+    GET  /conocimiento/carpeta?cwd=&pc=               {proyecto|null} de esa carpeta (sin crear)
+    POST /conocimiento/carpeta                        {cwd, pc?} el proyecto de la carpeta, creado si falta
+    GET  /conocimiento/<p>/capturas?session_id=&clase=&desde=&limite=   lo capturado solo (anexo A de v5)
+    GET  /conocimiento/<p>/prosa?q=&limite=           BM25 en cuerpos y capturas, «prosa, no declarado»
+    GET  /conocimiento/<p>/texto/roto                 U+FFFD y mojibake en nodos, cuerpos, cambios y capturas
+    POST /conocimiento/<p>/texto/reparar              {por, aplicar?} repara el mojibake con un cambio por nodo
 """
 
 from __future__ import annotations
 
 import aprendizaje_api
 import conocimiento as k
+import identity
 import sessions as ses
 import veredictos_api
 from conocimiento import Rechazo
@@ -94,6 +101,16 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
         if metodo == "POST":
             p = k.registrar_proyecto(d.get("id"), d.get("nombre"), d.get("remotes"), d.get("carpetas"))
             return 200, p
+    if partes == ["carpeta"]:
+        pc = (_q(query, "pc") if metodo == "GET" else d.get("pc")) or identity.pc_id()
+        cwd = _q(query, "cwd") if metodo == "GET" else d.get("cwd")
+        k._texto(cwd, "cwd", 1000)
+        if metodo == "GET":
+            return 200, {"proyecto": k.resolver_proyecto(cwd=cwd, pc=pc), "carpeta": k.carpeta_de(cwd)}
+        if metodo == "POST":
+            url = identity.origin_url(cwd)
+            remote = identity._normalize_remote(url) if url else None
+            return 200, {"proyecto": k.proyecto_de_carpeta(cwd, pc, remote), "carpeta": k.carpeta_de(cwd)}
     if partes == ["resolver"] and metodo == "GET":
         return 200, {"proyecto": k.resolver_proyecto(_q(query, "repo_key"), _q(query, "cwd"), _q(query, "pc"))}
     if not partes:
@@ -206,6 +223,20 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
         return 200, {"semillas": semillas, "expandidos": expandidos}
     if resto == ["cambios"] and metodo == "GET":
         return 200, k.cambios(pid, desde=_entero(_q(query, "desde"), "desde", 0))
+    if resto == ["capturas"] and metodo == "GET":
+        return 200, k.capturas(
+            pid,
+            session_id=_q(query, "session_id"),
+            clase=_q(query, "clase"),
+            desde=_q(query, "desde"),
+            limite=_entero(_q(query, "limite"), "limite", 100),
+        )
+    if resto == ["prosa"] and metodo == "GET":
+        return 200, k.buscar_prosa(pid, _q(query, "q", ""), limite=_entero(_q(query, "limite"), "limite", 30))
+    if resto == ["texto", "roto"] and metodo == "GET":
+        return 200, k.texto_roto_proyecto(pid)
+    if resto == ["texto", "reparar"] and metodo == "POST":
+        return 200, k.reparar_texto(pid, por=d.get("por"), aplicar=d.get("aplicar") is True)
     if resto == ["cuerpo"] and metodo == "GET":
         return 200, {"ruta": _q(query, "ruta"), "texto": k.leer_cuerpo(pid, k._texto(_q(query, "ruta"), "ruta", 300))}
     return 404, {"error": "ruta desconocida"}

@@ -635,6 +635,37 @@ def proyecto_de(s):
     )  # un server caido o un 401 se ve, no es «sin proyecto»
 
 
+def proyecto_carpeta(cwd, pc=None):
+    """El proyecto de una carpeta, creado si falta (proyecto = carpeta: lo que pasa por el lienzo ya
+    queda solo; esto sirve para conocer el id antes de la primera captura). `proyecto(...)` queda para
+    ponerle nombre o sumarle remotes."""
+    return _conocimiento("POST", "/carpeta", {"cwd": cwd, "pc": pc})["proyecto"]
+
+
+def capturas(pid, session_id=None, clase=None, desde=None, limite=100):
+    """Lo que el lienzo capturo solo en el proyecto: pedidos, respuestas finales, envíos y disparos de
+    reglas, de lo más nuevo a lo más viejo. `clase`: pedido|respuesta|envio|regla."""
+    return _consulta_memoria(
+        pid, "capturas", {"session_id": session_id, "clase": clase, "desde": desde, "limite": limite}
+    )
+
+
+def prosa(pid, consulta, limite=30):
+    """BM25 sobre lo escrito (cuerpos de encargos e informes, capturas): «prosa, no declarado»."""
+    return _consulta_memoria(pid, "prosa", {"q": consulta, "limite": limite})
+
+
+def texto_roto(pid):
+    """U+FFFD y mojibake en nodos, cuerpos, cambios y capturas del proyecto (solo mide)."""
+    return _conocimiento("GET", f"/{pid}/texto/roto")
+
+
+def reparar_texto(pid, aplicar=False):
+    """Repara el mojibake de los nodos con un cambio auditado por nodo; sin `aplicar`, dice qué haría.
+    Los nodos con U+FFFD vuelven en `irrecuperables`."""
+    return _conocimiento("POST", f"/{pid}/texto/reparar", {"por": f"coordinadora:{YO}", "aplicar": bool(aplicar)})
+
+
 def abrir_ronda(pid, objetivo):
     """Abre una ronda y devuelve su nodo (`id`). Se abre ANTES de repartir: cada encargo la cita."""
     return _conocimiento(
@@ -735,7 +766,9 @@ def briefing(pid, archivos=None, temas=None, consultas=None, desde_cierre=True):
     )
 
 
-def preguntar(pid, consultas, archivos=None, temas=None, tipo=None, saltos=1, offset=0, limite=100):
+def preguntar(pid, consultas, archivos=None, temas=None, tipo=None, saltos=1, offset=0, limite=100, prosa=False):
+    """joins -> BM25 -> grafo. Con `prosa=True` suma `prosa`: lo escrito en encargos, informes y capturas
+    que coincide, marcado «prosa, no declarado» (no son nodos: no tienen estado ni veredicto)."""
     return _consulta_memoria(
         pid,
         "preguntar",
@@ -747,6 +780,7 @@ def preguntar(pid, consultas, archivos=None, temas=None, tipo=None, saltos=1, of
             "saltos": saltos,
             "offset": offset,
             "limite": limite,
+            "prosa": 1 if prosa else None,
         },
     )
 

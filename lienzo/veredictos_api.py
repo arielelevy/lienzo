@@ -9,7 +9,7 @@ La coordinadora la engancha en `conocimiento_api._dispatch` por prefijo de ruta.
     POST /conocimiento/<p>/temas                    {texto, por, aliases?}
     GET  /conocimiento/<p>/temas
     GET  /conocimiento/<p>/briefing?archivos=&temas=&q=&desde_cierre=   (parametros repetibles)
-    GET  /conocimiento/<p>/preguntar?q=&archivos=&temas=&tipo=&saltos=
+    GET  /conocimiento/<p>/preguntar?q=&archivos=&temas=&tipo=&saltos=&prosa=1   (prosa: opt-in, aparte)
     GET  /conocimiento/<p>/vista?tema=
 """
 
@@ -117,6 +117,7 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             saltos=_entero(_uno(query, "saltos"), "saltos", 1),
             offset=_entero(_uno(query, "offset"), "offset", 0),
             limite=_entero(_uno(query, "limite"), "limite", 100),
+            prosa=_uno(query, "prosa") in ("1", "true", "si"),
         )
     if resto == ["vista"] and metodo == "GET":
         return 200, v.vista(pid, _uno(query, "tema", ""))

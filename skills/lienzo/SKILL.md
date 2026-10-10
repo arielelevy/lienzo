@@ -621,6 +621,22 @@ documentos, el README con el estado real, y un commit por tema.
 
 ## Conocimiento por proyecto (inventario, veredictos, aprendizaje y panel)
 
+**Lo que pasa por el lienzo queda solo** (pedido de Ariel, 2026-10-09; anexo A de v5): proyecto =
+carpeta. La primera vez que el lienzo ve una sesión en una carpeta, crea su proyecto (raíz del repo;
+para un worktree, la del repo principal; sin repo, la carpeta) y la sesión. Desde ahí cada pedido,
+respuesta final, envío (`send`, del tablero o de otra sesión, con su `de`), disparo de regla `on_stop`
+y aviso automático queda como captura `observado`, con sesión, agente, modelo, PC y hora. Una
+respuesta final con bloque ```` ```conocimiento ```` se incorpora igual que una entrega; si la sesión
+tiene un único encargo `enviado`, queda entregado como su revisión siguiente, y una entrega explícita
+posterior con el mismo texto devuelve ese informe (no duplica). **No hace falta llamar a
+`proyecto`, `abrir_ronda`, `encargo`, `encargo_enviado` ni `entregar` para que algo quede**: siguen
+sirviendo para nombrar el proyecto, agrupar en rondas y dejar el encargo explícito. Para conocer el
+id antes de la primera captura: `c.proyecto_carpeta(cwd)`. Para leer: `c.capturas(pid, clase=...)`,
+`c.prosa(pid, "consulta")`, `c.preguntar(pid, [...], prosa=True)` (la prosa vuelve aparte, marcada
+«prosa, no declarado»). No se guardan adjuntos, secretos con forma conocida (se tapan) ni carpetas
+temporales. Texto con U+FFFD o mojibake se rechaza al entregar o declarar, con línea y columna;
+`c.texto_roto(pid)` mide y `c.reparar_texto(pid, aplicar=True)` repara el mojibake por auditoría.
+
 El lienzo guarda por proyecto, en `~/.lienzo/proyectos/<proyecto>/` (privado, fuera de los repos),
 las rondas, los encargos tal como se mandaron, los informes tal como se entregaron (con hash y
 revisión) y lo que el server observa de las sesiones que trabajan un encargo: cuándo cierran, qué

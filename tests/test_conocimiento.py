@@ -254,16 +254,16 @@ def test_cuerpo_que_no_se_puede_escribir_no_deja_nodo(proy, monkeypatch):
     que convierta cada reintento en 409 (code review 2026-10-08). La ronda creada por POST /nodos no
     tiene carpeta: se crea al escribir."""
     r = k.crear_nodo("teorema", "ronda", "ronda sin carpeta", autor="c")
-    escribir = k.atomic_write
-    monkeypatch.setattr(k, "atomic_write", lambda *a, **kw: (_ for _ in ()).throw(OSError("disco lleno")))
+    escribir = k.escribir_exacto
+    monkeypatch.setattr(k, "escribir_exacto", lambda *a, **kw: (_ for _ in ()).throw(OSError("disco lleno")))
     with pytest.raises(OSError):
         k.crear_encargo("teorema", r["id"], "A", "cuerpo", autor="c")
     assert k.nodos("teorema", tipo="encargo")["total"] == 0
-    monkeypatch.setattr(k, "atomic_write", escribir)
+    monkeypatch.setattr(k, "escribir_exacto", escribir)
     e = k.crear_encargo("teorema", r["id"], "A", "cuerpo", autor="c")  # el reintento anda
     assert k.leer_cuerpo("teorema", e["datos"]["ruta"]) == "cuerpo"
     k.encargo_enviado("teorema", e["id"], {"session_id": "s9"})
-    monkeypatch.setattr(k, "atomic_write", lambda *a, **kw: (_ for _ in ()).throw(OSError("disco lleno")))
+    monkeypatch.setattr(k, "escribir_exacto", lambda *a, **kw: (_ for _ in ()).throw(OSError("disco lleno")))
     with pytest.raises(OSError):
         k.entregar("teorema", e["id"], "informe", revision=1, autor="f")
     assert k.nodos("teorema", tipo="informe")["total"] == 0

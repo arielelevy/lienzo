@@ -28,9 +28,10 @@ import uuid
 
 import identity
 import state
+import transcripts
 from atomico import atomic_write
 
-VERSION_ESQUEMA = 1
+VERSION_ESQUEMA = 2  # 2: captura automatica (tabla captura) e indice de prosa (cuerpos de encargos e informes)
 LIMITE_BUSQUEDA = 30
 LIMITE_PAGINA = 100
 SALTOS_MAX = 2
@@ -223,6 +224,46 @@ CREATE TRIGGER IF NOT EXISTS nodo_au AFTER UPDATE ON nodo BEGIN
   INSERT INTO nodo_fts(nodo_fts, rowid, texto, datos) VALUES ('delete', old.rowid, old.texto, old.datos);
   INSERT INTO nodo_fts(rowid, texto, datos) VALUES (new.rowid, new.texto, new.datos);
 END;
+-- version 2: lo que pasa por el lienzo queda sin registrarlo a mano (anexo A de v5). Un registro
+-- inmutable aparte de los nodos: no entra al BM25 de nodos ni a los cambios del briefing
+CREATE TABLE IF NOT EXISTS captura (
+  id TEXT PRIMARY KEY,
+  proyecto TEXT NOT NULL REFERENCES proyecto(id),
+  clase TEXT NOT NULL CHECK (clase IN ('pedido','respuesta','envio','regla')),
+  estado TEXT NOT NULL DEFAULT 'observado' CHECK (estado = 'observado'),
+  session_id TEXT NOT NULL,
+  sesion TEXT REFERENCES nodo(id),
+  agente TEXT,
+  modelo TEXT,
+  pc TEXT,
+  origen TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(origen)),
+  texto TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  hash TEXT NOT NULL,
+  recortado INTEGER NOT NULL DEFAULT 0,
+  redactado INTEGER NOT NULL DEFAULT 0,
+  fecha TEXT NOT NULL,
+  clave_ingesta TEXT UNIQUE
+);
+CREATE INDEX IF NOT EXISTS captura_sesion ON captura(session_id, fecha);
+CREATE INDEX IF NOT EXISTS captura_fecha ON captura(proyecto, fecha);
+CREATE VIRTUAL TABLE IF NOT EXISTS captura_fts USING fts5(
+  texto, content='captura', content_rowid='rowid',
+  tokenize='unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER IF NOT EXISTS captura_ai AFTER INSERT ON captura BEGIN
+  INSERT INTO captura_fts(rowid, texto) VALUES (new.rowid, new.texto);
+END;
+CREATE TRIGGER IF NOT EXISTS captura_ad AFTER DELETE ON captura BEGIN
+  INSERT INTO captura_fts(captura_fts, rowid, texto) VALUES ('delete', old.rowid, old.texto);
+END;
+CREATE TRIGGER IF NOT EXISTS captura_inmutable BEFORE UPDATE ON captura BEGIN
+  SELECT RAISE(ABORT, 'una captura no se modifica');
+END;
+-- la prosa de encargos e informes, aparte del BM25 de nodos (lo que se escribio, no lo declarado)
+CREATE VIRTUAL TABLE IF NOT EXISTS prosa_fts USING fts5(
+  nodo UNINDEXED, texto, tokenize='unicode61 remove_diacritics 2'
+);
 """
 
 _lock = threading.RLock()  # el indice y las carpetas; la base tiene sus propias transacciones
@@ -279,6 +320,101 @@ def _texto(x, nombre: str, maximo: int = 4000) -> str:
 
 def rol_de(por: str) -> str:
     return (por or "").split(":", 1)[0]
+
+
+# --- texto roto (U+FFFD y mojibake) ----------------------------------------------------------------
+
+_ROTO = re.compile("�|" + transcripts._MOJIBAKE_RE.pattern + "+")
+ROTO_MAX = 5  # marcas que se informan por texto; las demas se cuentan
+
+
+def texto_roto(texto) -> list[dict]:
+    """Las marcas de texto roto de `texto`: `reemplazo` (U+FFFD: el caracter original se perdio al
+    decodificar, no se puede recuperar) o `mojibake` (UTF-8 leido como Windows-1252: «ó» quedo «Ã³»;
+    `transcripts.reparar_mojibake` lo recupera). Cada una con posicion, linea y columna (desde 1).
+    Vacio si el texto esta sano o no es texto."""
+    if not isinstance(texto, str):
+        return []
+    out = []
+    for m in _ROTO.finditer(texto):
+        antes = texto[: m.start()]
+        linea = antes.count("\n") + 1
+        columna = m.start() - (antes.rfind("\n") + 1) + 1
+        if m.group() == "�":
+            out.append({"clase": "reemplazo", "pos": m.start(), "linea": linea, "columna": columna})
+        else:
+            reparado = transcripts.reparar_mojibake(m.group())
+            out.append(
+                {
+                    "clase": "mojibake",
+                    "pos": m.start(),
+                    "linea": linea,
+                    "columna": columna,
+                    "muestra": m.group(),
+                    "reparado": reparado if reparado != m.group() else None,
+                }
+            )
+    return out
+
+
+def describir_roto(marcas: list[dict]) -> str:
+    """Las marcas en una frase para el error: sin repetir el caracter de reemplazo, que se volveria a
+    copiar donde se lea el error."""
+    partes = []
+    for x in marcas[:ROTO_MAX]:
+        donde = f"linea {x['linea']}, columna {x['columna']}"
+        if x["clase"] == "reemplazo":
+            partes.append(f"U+FFFD (caracter perdido al decodificar) en {donde}")
+        else:
+            quiso = f" (quiso decir «{x['reparado']}»)" if x.get("reparado") else ""
+            partes.append(f"mojibake de UTF-8 leido como Windows-1252 «{x['muestra']}»{quiso} en {donde}")
+    if len(marcas) > ROTO_MAX:
+        partes.append(f"y {len(marcas) - ROTO_MAX} marca(s) mas")
+    return "texto roto: " + "; ".join(partes) + ". Mandalo en UTF-8 sin decodificar de nuevo"
+
+
+_MOJIBAKE_RACHA = re.compile(transcripts._MOJIBAKE_RE.pattern + "+")
+
+
+def reparar_segmentos(texto: str) -> str:
+    """Repara cada racha de mojibake por separado (`transcripts.reparar_mojibake` es todo o nada sobre
+    el texto entero y no repara uno que ademas tenga, por ejemplo, una flecha). Una racha que no vuelve
+    a ser UTF-8 valido queda como estaba."""
+    if not isinstance(texto, str):
+        return texto
+    return _MOJIBAKE_RACHA.sub(lambda m: transcripts.reparar_mojibake(m.group()), texto)
+
+
+def _reparar_en(x):
+    if isinstance(x, str):
+        return reparar_segmentos(x)
+    if isinstance(x, dict):
+        return {kk: _reparar_en(v) for kk, v in x.items()}
+    if isinstance(x, list):
+        return [_reparar_en(v) for v in x]
+    return x
+
+
+def _textos_de(x, camino: str):
+    """(camino, texto) de cada cadena dentro de `x` (dicts y listas anidados)."""
+    if isinstance(x, str):
+        yield camino, x
+    elif isinstance(x, dict):
+        for kk, v in x.items():
+            yield from _textos_de(v, f"{camino}.{kk}" if camino else str(kk))
+    elif isinstance(x, list):
+        for i, v in enumerate(x):
+            yield from _textos_de(v, f"{camino}[{i}]")
+
+
+def roto_en(campos: dict) -> list[str]:
+    """Los errores de texto roto de varios campos (`{"texto": ..., "datos": {...}}`), uno por campo."""
+    err = []
+    for camino, s in _textos_de(campos, ""):
+        marcas = texto_roto(s)
+        if marcas:
+            err.append(f"{camino}: {describir_roto(marcas)}")
+    return err
 
 
 # --- indice de proyectos --------------------------------------------------------------------
@@ -372,18 +508,79 @@ def registrar_proyecto(
 
 
 def resolver_proyecto(repo_key: str | None = None, cwd: str | None = None, pc: str | None = None) -> str | None:
-    """El proyecto de una tarjeta, por remote (repo_key normalizado) o por carpeta en esa PC. None si
-    no esta asignado: las coincidencias por nombre solo sugieren (v5 §8.1), no asignan."""
+    """El proyecto de una tarjeta, por carpeta en esa PC (el cwd o la raiz del repo que lo contiene:
+    anexo A de v5, proyecto = carpeta) o, si ninguna carpeta coincide, por remote (repo_key
+    normalizado). None si no esta asignado: las coincidencias por nombre solo sugieren (v5 §8.1)."""
     rk = (repo_key or "").strip().lower()
-    c = norm_cwd(cwd)
+    candidatas = {x for x in (norm_cwd(cwd), norm_cwd(carpeta_de(cwd))) if x}
     with _lock:
         idx = _leer_indice()
     for pid, v in idx["proyectos"].items():
+        if any(x.get("cwd") in candidatas and (not pc or x.get("pc") in ("", pc)) for x in (v.get("carpetas") or [])):
+            return pid
+    for pid, v in idx["proyectos"].items():
         if rk and rk in (v.get("remotes") or []):
             return pid
-        if c and any(x.get("cwd") == c and (not pc or x.get("pc") in ("", pc)) for x in (v.get("carpetas") or [])):
-            return pid
     return None
+
+
+def carpeta_de(cwd: str | None) -> str | None:
+    """La carpeta que identifica al proyecto de un cwd (anexo A de v5: proyecto = carpeta): la raiz
+    del repo Git que lo contiene, y para un worktree la del repo principal (el que tiene el `.git`
+    comun, porque un worktree es el mismo proyecto en paralelo). Sin repo, el cwd. None sin cwd."""
+    if not cwd or not str(cwd).strip():
+        return None
+    try:
+        found = identity._find_repo_root(cwd)
+    except OSError:
+        found = None
+    if found is None:
+        return os.path.abspath(cwd)
+    root, git_dir = found
+    if os.path.basename(os.path.normpath(git_dir)).lower() == ".git":
+        return os.path.dirname(os.path.normpath(git_dir))
+    return root
+
+
+def _slug(nombre: str) -> str:
+    s = re.sub(r"[^a-z0-9._-]+", "-", (nombre or "").lower()).strip("-._")
+    return s[:56] or "carpeta"
+
+
+def proyecto_de_carpeta(cwd: str | None, pc: str, remote: str | None = None) -> str | None:
+    """El proyecto de una carpeta en la PC `pc`, creandolo si nadie lo tiene (anexo A de v5: lo que pasa
+    por el lienzo se registra solo). Orden: (1) la carpeta ya es de un proyecto en esta PC; (2) el
+    `remote` es de un proyecto que todavia no tiene carpeta en esta PC: es la misma carpeta en otra PC
+    y se le suma como alias; (3) proyecto nuevo con el nombre de la carpeta (`-2`, `-3` si ya existe),
+    con el remote como alias si nadie lo tiene. Dos carpetas de la misma PC nunca se juntan por el
+    remote. None sin cwd."""
+    carpeta = carpeta_de(cwd)
+    if carpeta is None:
+        return None
+    c = norm_cwd(carpeta)
+    rk = (remote or "").strip().lower() or None
+    with _lock:
+        idx = _leer_indice()["proyectos"]
+        for pid, v in idx.items():
+            if any(x.get("cwd") == c and x.get("pc") in ("", pc) for x in (v.get("carpetas") or [])):
+                return pid
+        if rk:
+            for pid, v in idx.items():
+                if rk in (v.get("remotes") or []) and not any(
+                    x.get("pc") in ("", pc) for x in (v.get("carpetas") or [])
+                ):
+                    registrar_proyecto(pid, carpetas=[{"pc": pc, "cwd": c}])
+                    return pid
+        base = _slug(os.path.basename(carpeta.rstrip("\\/")))
+        pid, i = base, 2
+        while pid in idx or os.path.exists(_carpeta(pid)):
+            pid, i = f"{base}-{i}", i + 1
+        libre = rk and not any(rk in (v.get("remotes") or []) for v in idx.values())
+        registrar_proyecto(
+            pid, os.path.basename(carpeta.rstrip("\\/")) or pid, [rk] if libre else [], [{"pc": pc, "cwd": c}]
+        )
+        state.log(f"conocimiento: proyecto {pid} creado solo para la carpeta {c} (pc {pc})")
+        return pid
 
 
 # --- base por proyecto ----------------------------------------------------------------------
@@ -402,9 +599,13 @@ class _Conexion:
         self.con.execute("PRAGMA foreign_keys = ON")
         # el esquema se decide por user_version, no por si el archivo existia: connect lo crea antes
         # de que corra el esquema, y un fallo a mitad dejaria una base vacia que nadie repararia
-        if self.con.execute("PRAGMA user_version").fetchone()[0] < VERSION_ESQUEMA:
+        version = self.con.execute("PRAGMA user_version").fetchone()[0]
+        if version < VERSION_ESQUEMA:
             self.con.execute("PRAGMA journal_mode = WAL")
             self.con.executescript(ESQUEMA)
+            if version == 1:
+                # de 1 a 2: los cuerpos ya guardados entran al indice de prosa
+                _rellenar_prosa(self.con, os.path.dirname(self.path))
             self.con.execute(f"PRAGMA user_version = {VERSION_ESQUEMA}")
             self.con.commit()
         return self.con
@@ -416,6 +617,29 @@ class _Conexion:
             self.con.rollback()
         self.con.close()
         return False
+
+
+def _leer_archivo(full: str) -> str | None:
+    try:
+        with open(full, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _rellenar_prosa(con: sqlite3.Connection, carpeta: str) -> int:
+    """Indexa los cuerpos de encargos e informes que ya estaban guardados (migracion 1 -> 2). Un
+    cuerpo que falta en disco no frena la migracion: queda fuera del indice."""
+    n = 0
+    for r in con.execute("SELECT id, datos FROM nodo WHERE tipo IN ('encargo','informe')").fetchall():
+        ruta = json.loads(r[1]).get("ruta")
+        if not isinstance(ruta, str):
+            continue
+        texto = _leer_archivo(os.path.join(carpeta, *ruta.split("/")))
+        if texto:
+            con.execute("INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)", (r[0], texto))
+            n += 1
+    return n
 
 
 def _abrir(pid: str) -> _Conexion:
@@ -473,7 +697,7 @@ def declarar_nodo(pid: str, tipo, texto, datos, *, autor: str, origen=None, rond
     informe los crea el server por sus propias operaciones."""
     if not isinstance(tipo, str) or tipo not in DECLARABLES:
         raise Rechazo(f"tipo no declarable: {tipo}")
-    faltan = _faltan_datos(tipo, _objeto(datos, "datos"))
+    faltan = _faltan_datos(tipo, _objeto(datos, "datos")) + roto_en({"texto": texto, "datos": datos})
     if faltan:
         raise Rechazo("; ".join(faltan))
     return crear_nodo(pid, tipo, texto, datos, autor=autor, origen=origen, ronda=ronda, motivo=motivo)
@@ -749,14 +973,36 @@ def crear_encargo(
         )
         if not n["creado"]:
             raise Rechazo(f"ya hay un encargo {letra} en esta ronda", 409)
-        _escribir_cuerpo(pid, ruta, texto)  # antes del commit: si el disco falla, el nodo no queda
+        _escribir_cuerpo(
+            pid, ruta, texto, con=con, nodo=n["id"]
+        )  # antes del commit: si el disco falla, el nodo no queda
     return n
 
 
-def _escribir_cuerpo(pid: str, ruta: str, cuerpo: str) -> None:
+def escribir_exacto(full: str, datos: bytes) -> None:
+    """Escribe `datos` en un .tmp y lo cambia por `full` de un saque, sin traducir fines de linea."""
+    tmp = f"{full}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(datos)
+        os.replace(tmp, full)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _escribir_cuerpo(pid: str, ruta: str, cuerpo: str, *, con: sqlite3.Connection, nodo: str) -> None:
+    """El cuerpo tal cual, byte por byte: el hash del nodo es el de estos bytes. `atomic_write` abre
+    en modo texto y en Windows cada \\n quedaba \\r\\n, asi que ningun informe guardado hasta el
+    2026-10-09 verificaba su hash contra el archivo (medido: 5 de 5). Tambien entra al indice de prosa,
+    en la transaccion del nodo."""
     full = os.path.join(_carpeta(pid), *ruta.split("/"))
     os.makedirs(os.path.dirname(full), exist_ok=True)
-    atomic_write(full, cuerpo)
+    escribir_exacto(full, cuerpo.encode("utf-8"))
+    con.execute("INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)", (nodo, cuerpo))
 
 
 def _sesion(con, pid, sid, *, agente=None, modelo=None, pc=None, cwd=None, autor="server") -> dict:
@@ -826,6 +1072,8 @@ def entregar(
         raise Rechazo("revision debe ser un entero >= 1")
     if not isinstance(cuerpo, str) or not cuerpo.strip():
         raise Rechazo("cuerpo vacio")
+    if marcas := texto_roto(cuerpo):
+        raise Rechazo(f"cuerpo: {describir_roto(marcas)}")
     sha = hashlib.sha256(cuerpo.encode("utf-8")).hexdigest()
     origen = _objeto(origen, "origen")
     with _abrir(pid) as con:
@@ -841,33 +1089,142 @@ def entregar(
         ).fetchone()
         if otra is not None and json.loads(otra["datos"]).get("hash") != sha:
             raise Rechazo(f"la revision {revision} ya existe con otro contenido", 409)
+        if (ya := _informe_por_hash(con, pid, sha, encargo)) is not None:
+            # el mismo contenido ya entro: como otra revision de este encargo (idempotente por
+            # contenido), o capturado solo al cerrar el turno del frente sin encargo (se adopta)
+            n = _adoptar(con, pid, ya, e, revision, autor=autor, origen=origen)
+        else:
+            n = crear_nodo(
+                pid,
+                "informe",
+                f"informe {letra} r{revision}",
+                {"ruta": ruta, "hash": sha, "revision": revision, "bytes": len(cuerpo.encode("utf-8"))},
+                autor=autor,
+                origen=origen,
+                ronda=e["ronda"],
+                clave_ingesta=f"informe:{encargo}:{revision}:{sha}",
+                motivo="entrega",
+                con=con,
+            )
+        if n["creado"]:
+            vincular(pid, n["id"], "responde_a", encargo, autor=autor, origen=origen, con=con)
+            n = _con_bloque(con, pid, n, cuerpo, ronda=e["ronda"], encargo=e["id"], autor=autor, origen=origen)
+            _escribir_cuerpo(pid, ruta, cuerpo, con=con, nodo=n["id"])  # antes del commit, como en crear_encargo
+    if (n["creado"] or n.get("adoptado")) and e["estado"] == "enviado":
+        cambiar_estado(pid, encargo, "entregado", por="server", motivo=f"informe r{revision}")
+    return n
+
+
+def _informe_por_hash(con: sqlite3.Connection, pid: str, sha: str, encargo: str) -> dict | None:
+    """Un informe con ese contenido que ya responde a `encargo`, o uno capturado que no responde a
+    ninguno. None si no hay."""
+    for r in con.execute(
+        "SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'informe' AND json_extract(datos, '$.hash') = ?"
+        " ORDER BY fecha, id",
+        (pid, sha),
+    ).fetchall():
+        destinos = {
+            x[0]
+            for x in con.execute(
+                "SELECT a FROM vinculo WHERE de = ? AND relacion = 'responde_a' AND activo = 1", (r["id"],)
+            )
+        }
+        if encargo in destinos or not destinos:
+            return _fila(r)
+    return None
+
+
+def _adoptar(con, pid: str, informe: dict, encargo: dict, revision: int, *, autor: str, origen: dict) -> dict:
+    """Un informe capturado (sin encargo) pasa a responder a `encargo`: vinculo, revision y ronda. Su
+    bloque ya se incorporo al capturarlo y no se repite. Si ya respondia a este encargo, se devuelve."""
+    ya = con.execute(
+        "SELECT 1 FROM vinculo WHERE de = ? AND relacion = 'responde_a' AND a = ? AND activo = 1",
+        (informe["id"], encargo["id"]),
+    ).fetchone()
+    if ya is not None:
+        return {**informe, "creado": False}
+    vincular(pid, informe["id"], "responde_a", encargo["id"], autor=autor, origen=origen, con=con)
+    datos = {**informe["datos"], "revision": revision, "capturado": True}
+    con.execute(
+        "UPDATE nodo SET datos = ?, ronda = COALESCE(ronda, ?) WHERE id = ?",
+        (_json(datos), encargo["ronda"], informe["id"]),
+    )
+    n2 = _nodo(con, pid, informe["id"])
+    _cambio(
+        con,
+        pid,
+        "adopcion",
+        autor,
+        f"responde al encargo {encargo['id']}",
+        origen,
+        n2,
+        anterior=informe,
+        nodo_id=n2["id"],
+    )
+    return {**n2, "creado": False, "adoptado": True}
+
+
+def _con_bloque(con, pid: str, n: dict, cuerpo: str, *, ronda, encargo, autor: str, origen: dict) -> dict:
+    """Incorpora el bloque ```conocimiento``` del cuerpo al informe recien creado `n`, si lo trae."""
+    bloque = extraer_bloque(cuerpo)
+    if bloque is None:
+        return n
+    # v5 §5.2: todo o nada, en la misma transaccion que el informe. Con errores el informe
+    # queda igual y el bloque «pendiente de vincular», con los errores por posicion
+    sesion = _sesion_del_encargo(con, encargo) if encargo else origen.get("sesion_nodo")
+    res = _incorporar_bloque(con, pid, n["id"], ronda, sesion, bloque, autor=autor, origen=origen)
+    datos = {**n["datos"], "conocimiento": res}
+    con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (_json(datos), n["id"]))
+    n2 = _nodo(con, pid, n["id"])
+    _cambio(con, pid, "conocimiento", autor, res["estado"], origen, n2, anterior=n, nodo_id=n["id"])
+    return {**n2, "creado": True}
+
+
+def informe_capturado(pid: str, sid: str, cuerpo: str, *, ronda: str | None, origen: dict) -> dict | None:
+    """La respuesta final de una sesion trae un bloque ```conocimiento```: es un informe aunque nadie
+    lo entregue (anexo A de v5). Queda `recibido` en capturas/, con su bloque incorporado igual que en
+    una entrega (o pendiente con sus errores). Si la sesion trabaja un unico encargo `enviado`, se
+    entrega a ese encargo como su revision siguiente; si no, queda sin encargo hasta que una entrega
+    explicita con el mismo contenido lo adopte. Idempotente por (sesion, hash). None si el cuerpo
+    tiene texto roto: no se guarda un informe que la entrega explicita rechazaria."""
+    if texto_roto(cuerpo):
+        return None
+    sha = hashlib.sha256(cuerpo.encode("utf-8")).hexdigest()
+    with _abrir(pid) as con:
+        s = con.execute("SELECT id FROM nodo WHERE clave_ingesta = ?", (f"sesion:{sid}",)).fetchone()
+        encargos = [
+            _fila(r)
+            for r in con.execute(
+                "SELECT e.* FROM nodo e JOIN vinculo v ON v.de = e.id AND v.relacion = 'ejecutado_por' AND v.activo = 1"
+                " JOIN nodo x ON x.id = v.a WHERE x.clave_ingesta = ? AND e.tipo = 'encargo' AND e.estado = 'enviado'",
+                (f"sesion:{sid}",),
+            )
+        ]
+    if len(encargos) == 1:
+        e = encargos[0]
+        with _abrir(pid) as con:
+            hechas = con.execute(
+                "SELECT COUNT(*) FROM vinculo WHERE a = ? AND relacion = 'responde_a' AND activo = 1", (e["id"],)
+            ).fetchone()[0]
+        return entregar(pid, e["id"], cuerpo, revision=hechas + 1, autor="server", origen=origen)
+    origen = {**origen, "session_id": sid, "sesion_nodo": s["id"] if s else None}
+    ruta = f"capturas/informe-{sha[:16]}.md"
+    with _abrir(pid) as con:
         n = crear_nodo(
             pid,
             "informe",
-            f"informe {letra} r{revision}",
-            {"ruta": ruta, "hash": sha, "revision": revision, "bytes": len(cuerpo.encode("utf-8"))},
-            autor=autor,
+            f"informe capturado {sid[:8]}",
+            {"ruta": ruta, "hash": sha, "bytes": len(cuerpo.encode("utf-8")), "capturado": True},
+            autor="server",
             origen=origen,
-            ronda=e["ronda"],
-            clave_ingesta=f"informe:{encargo}:{revision}:{sha}",
-            motivo="entrega",
+            ronda=ronda,
+            clave_ingesta=f"informe:captura:{sid}:{sha}",
+            motivo="respuesta final con bloque de conocimiento",
             con=con,
         )
         if n["creado"]:
-            vincular(pid, n["id"], "responde_a", encargo, autor=autor, origen=origen, con=con)
-            bloque = extraer_bloque(cuerpo)
-            if bloque is not None:
-                # v5 §5.2: todo o nada, en la misma transaccion que el informe. Con errores el informe
-                # queda igual y el bloque «pendiente de vincular», con los errores por posicion
-                res = _incorporar_bloque(con, pid, n["id"], e, bloque, autor=autor, origen=origen)
-                datos = {**n["datos"], "conocimiento": res}
-                con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (_json(datos), n["id"]))
-                n2 = _nodo(con, pid, n["id"])
-                _cambio(con, pid, "conocimiento", autor, res["estado"], origen, n2, anterior=n, nodo_id=n["id"])
-                n = {**n2, "creado": True}
-            _escribir_cuerpo(pid, ruta, cuerpo)  # antes del commit, como en crear_encargo
-    if n["creado"] and e["estado"] == "enviado":
-        cambiar_estado(pid, encargo, "entregado", por="server", motivo=f"informe r{revision}")
+            n = _con_bloque(con, pid, n, cuerpo, ronda=ronda, encargo=None, autor="server", origen=origen)
+            _escribir_cuerpo(pid, ruta, cuerpo, con=con, nodo=n["id"])
     return n
 
 
@@ -968,6 +1325,7 @@ def validar_bloque(con: sqlite3.Connection, pid: str, texto: str) -> tuple[dict 
         if not isinstance(datos, dict):
             err.append({"donde": donde, "error": "datos debe ser un objeto"})
             datos = {}
+        err += [{"donde": donde, "error": x} for x in roto_en({"texto": nd.get("texto"), "datos": datos})]
         if tipo:
             err += [{"donde": donde, "error": x} for x in _faltan_datos(tipo, datos)]
             if isinstance(lid, str) and lid not in tipos:
@@ -1010,6 +1368,7 @@ def validar_bloque(con: sqlite3.Connection, pid: str, texto: str) -> tuple[dict 
             err.append({"donde": donde, "error": f"{rel} no admite {tde} -> {ta}"})
         if rel in CON_MOTIVO and not _campo(v, "motivo"):
             err.append({"donde": donde, "error": f"{rel} exige motivo"})
+        err += [{"donde": donde, "error": x} for x in roto_en({"motivo": v.get("motivo")})]
         if isinstance(v.get("de"), str) and not v["de"].startswith("nodo:"):
             con_salida.setdefault(v["de"], set()).add(rel)
     for lid, tipo in tipos.items():
@@ -1029,16 +1388,23 @@ def _sesion_del_encargo(con: sqlite3.Connection, encargo: str) -> str | None:
 
 
 def _incorporar_bloque(
-    con: sqlite3.Connection, pid: str, informe: str, encargo: dict, texto: str, *, autor: str, origen: dict
+    con: sqlite3.Connection,
+    pid: str,
+    informe: str,
+    ronda: str | None,
+    sesion: str | None,
+    texto: str,
+    *,
+    autor: str,
+    origen: dict,
 ) -> dict:
-    """Valida el bloque y, si esta entero, crea sus nodos (estado inicial de su tipo, ronda del
-    encargo, `declarado_en` el informe, hallazgos `encontrado_por` la sesion del encargo) y sus
-    vinculos. Devuelve lo que se guarda en datos.conocimiento del informe: el mapa de ids locales a
-    persistentes, o los errores. Idempotente por informe (clave declarado:<informe>:<id local>)."""
+    """Valida el bloque y, si esta entero, crea sus nodos (estado inicial de su tipo, `ronda`,
+    `declarado_en` el informe, hallazgos `encontrado_por` el nodo `sesion`) y sus vinculos. Devuelve
+    lo que se guarda en datos.conocimiento del informe: el mapa de ids locales a persistentes, o los
+    errores. Idempotente por informe (clave declarado:<informe>:<id local>)."""
     bloque, errores = validar_bloque(con, pid, texto)
     if bloque is None:
         return {"estado": "pendiente_de_vincular", "errores": errores}
-    sesion = _sesion_del_encargo(con, encargo["id"])
     ids: dict[str, str] = {}
     for nd in bloque["nodos"]:
         n = crear_nodo(
@@ -1048,7 +1414,7 @@ def _incorporar_bloque(
             nd["datos"],
             autor=autor,
             origen={**origen, "informe": informe, "local": nd["id"]},
-            ronda=encargo["ronda"],
+            ronda=ronda,
             clave_ingesta=f"declarado:{informe}:{nd['id']}",
             motivo="declarado en el informe",
             con=con,
@@ -1191,6 +1557,274 @@ def incidente_operativo(
     except Exception as e:
         state.log(f"conocimiento: incidente de {sid[:8]}: {e}")
         return None
+
+
+# --- texto roto ya guardado: medir y reparar por auditoria ----------------------------------------
+
+
+def texto_roto_proyecto(pid: str) -> dict:
+    """Mide el texto roto del proyecto sin tocar nada: nodos (texto y datos), cuerpos de encargos e
+    informes en disco, cambios y capturas. Cada nodo dice si es reparable (solo mojibake) o no (tiene
+    U+FFFD: el original se perdio)."""
+    carpeta = _carpeta(pid)
+    nodos_rotos, cuerpos = [], []
+    with _abrir(pid) as con:
+        filas = [_fila(r) for r in con.execute("SELECT * FROM nodo WHERE proyecto = ? ORDER BY fecha, id", (pid,))]
+        cambios_rotos = sum(
+            1 for (n,) in con.execute("SELECT nuevo FROM cambio WHERE proyecto = ?", (pid,)) if texto_roto(n)
+        )
+        capturas_rotas = sum(
+            1 for (t,) in con.execute("SELECT texto FROM captura WHERE proyecto = ?", (pid,)) if texto_roto(t)
+        )
+    for n in filas:
+        marcas = [m for _, s in _textos_de({"texto": n["texto"], "datos": n["datos"]}, "") for m in texto_roto(s)]
+        if marcas:
+            reemplazos = sum(1 for m in marcas if m["clase"] == "reemplazo")
+            nodos_rotos.append(
+                {
+                    "id": n["id"],
+                    "tipo": n["tipo"],
+                    "texto": n["texto"],
+                    "reemplazo": reemplazos,
+                    "mojibake": len(marcas) - reemplazos,
+                    "reparable": reemplazos == 0,
+                }
+            )
+        ruta = n["datos"].get("ruta") if n["tipo"] in ("encargo", "informe") else None
+        if isinstance(ruta, str):
+            texto = _leer_archivo(os.path.join(carpeta, *ruta.split("/")))
+            marcas = texto_roto(texto or "")
+            if marcas:
+                reemplazos = sum(1 for m in marcas if m["clase"] == "reemplazo")
+                cuerpos.append(
+                    {"nodo": n["id"], "ruta": ruta, "reemplazo": reemplazos, "mojibake": len(marcas) - reemplazos}
+                )
+    return {
+        "proyecto": pid,
+        "nodos": len(filas),
+        "nodos_rotos": nodos_rotos,
+        "cuerpos_rotos": cuerpos,
+        "cambios_rotos": cambios_rotos,
+        "capturas_rotas": capturas_rotas,
+    }
+
+
+def reparar_texto(pid: str, *, por: str, aplicar: bool = False) -> dict:
+    """Repara el mojibake de los nodos por la via de auditoria: cada nodo reparado cambia su texto y sus
+    datos en una transaccion con un `cambio` (accion `texto`, anterior y nuevo), sin UPDATE a mano.
+    Un nodo con U+FFFD no se toca: se lista en `irrecuperables` (no se inventa el texto perdido). Sin
+    `aplicar`, solo dice que haria. Los cuerpos en disco no se reescriben: su hash es el de lo
+    entregado."""
+    por = _texto(por, "por", 200)
+    if rol_de(por) not in (C, P):
+        raise Rechazo(f"{rol_de(por) or '?'} no repara texto", 403)
+    reparados, irrecuperables, sin_cambio = [], [], []
+    with _abrir(pid) as con:
+        con.execute("BEGIN IMMEDIATE")
+        for r in con.execute("SELECT * FROM nodo WHERE proyecto = ? ORDER BY fecha, id", (pid,)).fetchall():
+            n = _fila(r)
+            marcas = [m for _, s in _textos_de({"texto": n["texto"], "datos": n["datos"]}, "") for m in texto_roto(s)]
+            if not marcas:
+                continue
+            if any(m["clase"] == "reemplazo" for m in marcas):
+                irrecuperables.append({"id": n["id"], "tipo": n["tipo"], "texto": n["texto"]})
+                continue
+            texto, datos = reparar_segmentos(n["texto"]), _reparar_en(n["datos"])
+            if (texto, datos) == (n["texto"], n["datos"]):
+                sin_cambio.append({"id": n["id"], "tipo": n["tipo"], "texto": n["texto"]})
+                continue
+            reparados.append({"id": n["id"], "tipo": n["tipo"], "antes": n["texto"], "despues": texto})
+            if aplicar:
+                con.execute("UPDATE nodo SET texto = ?, datos = ? WHERE id = ?", (texto, _json(datos), n["id"]))
+                n2 = _nodo(con, pid, n["id"])
+                _cambio(
+                    con,
+                    pid,
+                    "texto",
+                    por,
+                    "reparar mojibake (UTF-8 leido como Windows-1252)",
+                    {},
+                    n2,
+                    anterior=n,
+                    nodo_id=n["id"],
+                )
+    return {
+        "aplicado": bool(aplicar),
+        "reparados": reparados,
+        "irrecuperables": irrecuperables,
+        "sin_cambio": sin_cambio,
+    }
+
+
+# --- captura automatica (anexo A de v5): lo que pasa por el lienzo, sin registrarlo a mano -----
+
+CLASES_CAPTURA = ("pedido", "respuesta", "envio", "regla")
+CAPTURA_MAX_BYTES = 64_000  # texto guardado por captura; el hash y los bytes son los del original
+
+
+def _recordar_sesion(sid: str, pid: str) -> None:
+    with _lock:
+        _sesion_proyecto[sid] = pid
+        _sesion_sin_proyecto.discard(sid)
+
+
+def registrar_sesion(pid: str, tarjeta: dict) -> dict:
+    """El nodo `sesion` de una tarjeta vista en la carpeta del proyecto (viva), con agente, modelo, pc
+    y cwd; idempotente por session_id. Desde aca los adaptadores (cierre, vuelta, permisos, errores)
+    la encuentran aunque no trabaje un encargo."""
+    sid = _texto(tarjeta.get("session_id"), "session_id", 100)
+    with _abrir(pid) as con:
+        n = _sesion(
+            con,
+            pid,
+            sid,
+            agente=tarjeta.get("agent"),
+            modelo=tarjeta.get("model"),
+            pc=tarjeta.get("pc"),
+            cwd=tarjeta.get("cwd"),
+        )
+    _recordar_sesion(sid, pid)
+    return n
+
+
+def _recortar(texto: str) -> tuple[str, bool]:
+    b = texto.encode("utf-8")
+    if len(b) <= CAPTURA_MAX_BYTES:
+        return texto, False
+    return b[:CAPTURA_MAX_BYTES].decode("utf-8", errors="ignore") + "\n[... recortado por el lienzo]", True
+
+
+def capturar(
+    pid: str,
+    clase: str,
+    texto: str,
+    tarjeta: dict,
+    *,
+    origen: dict | None = None,
+    clave: str | None = None,
+    redactado: bool = False,
+) -> dict | None:
+    """Una captura `observado` en el proyecto: un pedido, una respuesta final, un envio entre sesiones
+    o el disparo de una regla, con sesion, agente, modelo, pc y hora. El texto ya viene sin secretos
+    (lo tapa captura.py); se guarda hasta CAPTURA_MAX_BYTES con el hash y los bytes del original.
+    Idempotente por `clave` (devuelve None si ya estaba). Nunca crea nodos de conocimiento ni cambios
+    de estado: el veredicto de v5 §3.4 no cambia."""
+    if clase not in CLASES_CAPTURA:
+        raise Rechazo(f"clase de captura desconocida: {clase}")
+    if not isinstance(texto, str) or not texto.strip():
+        return None
+    sid = _texto(tarjeta.get("session_id"), "session_id", 100)
+    original = texto.strip()
+    guardado, recortado = _recortar(original)
+    b = original.encode("utf-8")
+    with _abrir(pid) as con:
+        if clave and con.execute("SELECT 1 FROM captura WHERE clave_ingesta = ?", (clave,)).fetchone():
+            return None
+        s = _sesion(
+            con,
+            pid,
+            sid,
+            agente=tarjeta.get("agent"),
+            modelo=tarjeta.get("model"),
+            pc=tarjeta.get("pc"),
+            cwd=tarjeta.get("cwd"),
+        )
+        fila = {
+            "id": nuevo_id(),
+            "proyecto": pid,
+            "clase": clase,
+            "session_id": sid,
+            "sesion": s["id"],
+            "agente": tarjeta.get("agent"),
+            "modelo": tarjeta.get("model"),
+            "pc": tarjeta.get("pc"),
+            "origen": _json(_objeto(origen, "origen")),
+            "texto": guardado,
+            "bytes": len(b),
+            "hash": hashlib.sha256(b).hexdigest(),
+            "recortado": int(recortado),
+            "redactado": int(bool(redactado)),
+            "fecha": ahora(),
+            "clave_ingesta": clave,
+        }
+        con.execute(
+            f"INSERT INTO captura ({', '.join(fila)}) VALUES ({', '.join('?' * len(fila))})", list(fila.values())
+        )
+    _recordar_sesion(sid, pid)
+    return {**fila, "origen": json.loads(fila["origen"])}
+
+
+def capturas(
+    pid: str, *, session_id: str | None = None, clase: str | None = None, desde: str | None = None, limite: int = 100
+) -> dict:
+    """Las capturas del proyecto, de la mas nueva a la mas vieja, con filtros por sesion, clase y fecha
+    minima (ISO UTC)."""
+    cond, args = ["proyecto = ?"], [pid]
+    for col, v in (("session_id", session_id), ("clase", clase)):
+        if v:
+            cond.append(f"{col} = ?")
+            args.append(v)
+    if desde:
+        cond.append("fecha >= ?")
+        args.append(desde)
+    limite = max(1, min(int(limite), 500))
+    with _abrir(pid) as con:
+        total = con.execute(f"SELECT COUNT(*) FROM captura WHERE {' AND '.join(cond)}", args).fetchone()[0]
+        filas = con.execute(
+            f"SELECT * FROM captura WHERE {' AND '.join(cond)} ORDER BY fecha DESC, rowid DESC LIMIT ?", [*args, limite]
+        ).fetchall()
+    return {"total": total, "capturas": [_fila(r) for r in filas]}
+
+
+def buscar_prosa(pid: str, consulta: str, *, limite: int = LIMITE_BUSQUEDA) -> list[dict]:
+    """BM25 sobre la prosa: los cuerpos de encargos e informes y las capturas. Fuente aparte de los
+    nodos: cada resultado viene marcado `prosa, no declarado`, con un fragmento y, si es un cuerpo, el
+    nodo al que pertenece. La consulta es FTS5 como en `buscar`; una sintaxis invalida es 400."""
+    consulta = _texto(consulta, "consulta", 500)
+    limite = max(1, min(int(limite), LIMITE_PAGINA))
+    out = []
+    with _abrir(pid) as con:
+        try:
+            for r in con.execute(
+                "SELECT p.nodo, n.tipo, n.texto AS titulo, n.datos, bm25(prosa_fts) AS puntaje,"
+                " snippet(prosa_fts, 1, '[', ']', ' … ', 24) AS fragmento FROM prosa_fts p"
+                " JOIN nodo n ON n.id = p.nodo AND n.proyecto = ? WHERE prosa_fts MATCH ? ORDER BY puntaje LIMIT ?",
+                (pid, consulta, limite),
+            ):
+                out.append(
+                    {
+                        "fuente": r["tipo"],
+                        "marca": "prosa, no declarado",
+                        "nodo": r["nodo"],
+                        "titulo": r["titulo"],
+                        "ruta": json.loads(r["datos"]).get("ruta"),
+                        "puntaje": r["puntaje"],
+                        "fragmento": r["fragmento"],
+                    }
+                )
+            for r in con.execute(
+                "SELECT c.id, c.clase, c.session_id, c.agente, c.fecha, bm25(captura_fts) AS puntaje,"
+                " snippet(captura_fts, 0, '[', ']', ' … ', 24) AS fragmento FROM captura_fts"
+                " JOIN captura c ON c.rowid = captura_fts.rowid WHERE captura_fts MATCH ? AND c.proyecto = ?"
+                " ORDER BY puntaje LIMIT ?",
+                (consulta, pid, limite),
+            ):
+                out.append(
+                    {
+                        "fuente": f"captura:{r['clase']}",
+                        "marca": "prosa, no declarado",
+                        "captura": r["id"],
+                        "session_id": r["session_id"],
+                        "agente": r["agente"],
+                        "fecha": r["fecha"],
+                        "puntaje": r["puntaje"],
+                        "fragmento": r["fragmento"],
+                    }
+                )
+        except sqlite3.OperationalError as e:
+            raise Rechazo(f"consulta FTS invalida: {e}") from e
+    out.sort(key=lambda x: (x["puntaje"], x.get("nodo") or x.get("captura")))
+    return out[:limite]
 
 
 # --- consultas ------------------------------------------------------------------------------
