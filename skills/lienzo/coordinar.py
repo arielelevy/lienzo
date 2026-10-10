@@ -26,6 +26,11 @@ import urllib.request
 BASE = os.environ.get("LIENZO_URL") or "http://127.0.0.1:7321"  # otra instancia (pruebas): LIENZO_URL
 YO = ""  # session_id de la coordinadora; lo fija quien importa este módulo
 
+# El texto de la regla de vuelta. Los marcadores los llena el server al disparar: sin `{respuesta}` llega
+# solo el encabezado y la coordinadora tiene que ir a buscar el informe (medido el 2026-10-09); y el
+# título va por `{titulo}` porque el id del lanzamiento (pid-N) cambia con el primer hook.
+INFORME = "[regla automática] Terminó «{titulo}». Su informe:\n\n{respuesta}"
+
 
 def pedir(metodo, ruta, cuerpo=None, timeout=20):
     """Un pedido al lienzo. Devuelve (código, cuerpo), y 0 con el motivo si no hubo respuesta.
@@ -363,12 +368,7 @@ def lanzar_y_titular(
             nueva = nuevas[0]
             titular(nueva, titulo)
             if cablear_al_lanzar and YO:
-                sid = nueva["session_id"]
-                regla_informe(
-                    nueva,
-                    f"[regla automática] Terminó «{titulo}» ({sid[:8]}). Leé su `last_reply` en GET /sessions "
-                    f"(la tarjeta {sid}) y decidí el próximo paso.",
-                )
+                regla_informe(nueva, INFORME)
             if proyecto and encargo:
                 try:
                     encargo_enviado(proyecto, encargo, nueva)
@@ -438,12 +438,7 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
         if sid in ya:
             out["ya_estaban"].append(sid)
             continue
-        nombre = (s.get("title") or s.get("repo") or sid[:8])[:40]
-        msg = (
-            texto
-            or f"[regla automática] Terminó «{nombre}» ({sid[:8]}). Leé su `last_reply` en GET /sessions (la tarjeta {sid}) y decidí el próximo paso."
-        )
-        pendientes.append((sid, msg))
+        pendientes.append((sid, texto or INFORME))
 
     def crear(par):
         sid, msg = par

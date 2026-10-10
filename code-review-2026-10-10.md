@@ -145,3 +145,14 @@ la marca de compactación el Stop de ese pedido se ignoraba hasta 10 minutos (on
 
 **Pruebas:** 1320 pasan; verificado en vivo dos veces con una coda real (con y sin PreCompact), log
 «coda abortó la compactación (pocos mensajes); la tarjeta vuelve a termino».
+
+## Regla de vuelta sin el informe (`skills/lienzo/coordinar.py`)
+
+**Defecto (encontrado al lanzar una coda con `lanzar_y_titular`):** el texto por defecto de `cablear` y de
+`lanzar_y_titular` no llevaba `{respuesta}`, así que a la coordinadora le llegaba solo el encabezado y tenía que ir a buscar
+el informe, justo lo que la skill marca como error desde el 2026-10-09. Además nombraba la tarjeta por el id del
+lanzamiento (`pid-N`), que cambia con el primer hook.
+
+**Arreglo:** una constante `INFORME` con `{titulo}` y `{respuesta}` (los llena `rules.py` al disparar), usada en los dos
+lugares; se quitó la variable que quedó sin uso. Test: `test_cablear_crea_una_regla...` exige los dos marcadores.
+Sin hallazgos pendientes.

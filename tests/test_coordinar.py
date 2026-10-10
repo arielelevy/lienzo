@@ -85,12 +85,16 @@ def test_cablear_crea_una_regla_por_frente_vivo_y_no_repite(monkeypatch):
         if m == "GET":
             return 200, [{"kind": "on_stop", "from": "b", "to": "coord"}]
         creadas.append(cuerpo["from"])
+        textos.append(cuerpo["text"])
         return 200, {"id": "x"}
 
+    textos = []
     monkeypatch.setattr(c, "pedir", pedir)
     monkeypatch.setattr(c, "sesiones", lambda: ses)
     r = c.cablear()
     assert r["creadas"] == ["a"] and r["ya_estaban"] == ["b"] and r["fallaron"] == [] and creadas == ["a"]
+    # sin {respuesta} el server manda solo el encabezado y el informe no llega (medido el 2026-10-09)
+    assert "{respuesta}" in textos[0] and "{titulo}" in textos[0]
 
 
 def test_cablear_cuenta_los_fallos_con_el_motivo(monkeypatch):
