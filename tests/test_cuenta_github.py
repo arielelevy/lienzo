@@ -166,7 +166,8 @@ def test_helper_de_saca_el_token_al_usarlo_y_rechaza_logins_raros():
 def _repo(tmp_path):
     d = tmp_path / "repo" if tmp_path.name not in ("a", "b") else tmp_path
     d.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-q", str(d)], check=True)
+    # los tres handles explicitos: sin consola (pytest lanzado por un agente) heredar uno da WinError 6
+    subprocess.run(["git", "init", "-q", str(d)], check=True, stdin=subprocess.DEVNULL, capture_output=True)
     return str(d)
 
 
@@ -178,7 +179,11 @@ def test_fijar_deja_helper_vacio_mas_el_de_la_cuenta_solo_para_github_y_es_idemp
     assert cg.fijar(repo, "ariel-levy_globant")
     assert cg.cuenta_fijada(repo) == "ariel-levy_globant"
     out = subprocess.run(
-        ["git", "config", "--local", "--get-all", cg.CLAVE_HELPER], cwd=repo, capture_output=True, text=True
+        ["git", "config", "--local", "--get-all", cg.CLAVE_HELPER],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
     ).stdout.splitlines()
     # vacio (resetea la lista global), el de la cuenta, y los de sistema/global que no sean el de gh
     assert out[0] == "" and "ariel-levy_globant" in out[1] and out[2:] == cg._helpers_globales()
@@ -186,7 +191,11 @@ def test_fijar_deja_helper_vacio_mas_el_de_la_cuenta_solo_para_github_y_es_idemp
     # lo global no se toca y no queda nada fuera del alcance github.com
     assert (
         subprocess.run(
-            ["git", "config", "--local", "--get-all", "credential.helper"], cwd=repo, capture_output=True, text=True
+            ["git", "config", "--local", "--get-all", "credential.helper"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
         ).stdout
         == ""
     )

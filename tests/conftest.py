@@ -4,12 +4,15 @@ mockeado (test_backend_tmux.py) o a mano (tmux_smoke.py)."""
 
 import os
 import sys
+import time
 
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lienzo"))
 
 import backend
+
+_MONOTONIC = time.monotonic  # el real: hay pruebas que reemplazan time.monotonic por un reloj finito
 
 
 @pytest.fixture(autouse=True)
@@ -54,3 +57,22 @@ def _sin_estado_real(tmp_path, monkeypatch):
         c = getattr(health, cache, None)
         if c is not None and hasattr(c, "limpiar"):
             c.limpiar()
+
+
+@pytest.fixture(autouse=True)
+def _hilos_de_trabajo_terminan(_sin_estado_real):
+    """Los hilos que lanza sessions.en_hilo (cierre de sesion, incidentes, avisos) terminan antes de que
+    la prueba devuelva LIENZO_HOME a la carpeta real: uno rezagado escribia en el ~/.lienzo/lienzo.log de
+    verdad («incidente de ffffffff», medido el 2026-10-10) y, con la base unica del lienzo, podria abrir
+    y migrar la base real. Depende de _sin_estado_real para cerrarse antes que ella."""
+    import threading
+
+    import sessions
+
+    antes = set(threading.enumerate())
+    yield
+    fin = _MONOTONIC() + 5
+    for t in threading.enumerate():
+        if t in antes or not t.is_alive() or getattr(t, "_target", None) is not sessions._correr_logueando:
+            continue
+        t.join(max(0.0, fin - _MONOTONIC()))

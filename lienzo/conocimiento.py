@@ -868,12 +868,12 @@ def _importar_una(con: sqlite3.Connection, pid: str, vieja: str, local: str) -> 
         for tabla, cols in _COLUMNAS.items():
             if tabla in tablas:
                 filas = ro.execute(f"SELECT {', '.join(cols)} FROM {tabla} ORDER BY rowid").fetchall()
-                antes = con.total_changes
-                con.executemany(
+                # rowcount de executemany: las filas que entraron, sin las que los triggers suman al FTS
+                cur = con.executemany(
                     f"INSERT OR IGNORE INTO {tabla} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", filas
                 )
                 if not previo:
-                    ignoradas += len(filas) - (con.total_changes - antes)
+                    ignoradas += len(filas) - max(cur.rowcount, 0)
         ultimo = desde
         if "cambio" in tablas:
             tiene = {r[1] for r in ro.execute("PRAGMA table_info(cambio)")}
