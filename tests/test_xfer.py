@@ -240,8 +240,10 @@ def test_receptor_muere_a_mitad_y_se_retoma_desde_el_diario(canal, monkeypatch):
     _esperar_fin(t)
     assert t.estado == "terminado", t.errores
     _igual(canal, datos)
-    # retomo: los bloques que ya estaban en el diario no viajaron de nuevo
-    assert not (set(diario) & set(llegados))
+    # retomo: lo que ya estaba en el diario no viaja de nuevo, salvo los bloques que estaban en vuelo
+    # cuando murio el receptor (hasta `hilos`): los escribio pero su respuesta no llego, y el emisor los
+    # reintenta. La asercion estricta fallaba de vez en cuando segun el instante del corte (2026-10-10)
+    assert len(set(diario) & set(llegados)) <= 2
     assert len(antes) + len(llegados) <= 24 + 2
 
 
