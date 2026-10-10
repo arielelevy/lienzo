@@ -21,6 +21,25 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
 ### Multiplataforma
 
+- [ ] **Evaluar una forma más óptima de sincronizar las bases de memoria entre PCs** (pedido de Ariel,
+  2026-10-10). Hoy cada server le pide a cada par, cada 120 s, los cambios y capturas nacidos allá desde su
+  cursor (`lienzo/replica.py`, `/peer/conocimiento`), en lotes, aunque no haya nada nuevo; los cuerpos van
+  aparte. Lo que habría que medir y comparar:
+  - **Empujar en vez de sondear:** que el par avise por el SSE que ya tienen abierto (`/peer/events`) cuando
+    nace un cambio, y recién ahí se pida; el ciclo de 120 s queda solo como red. Menos tráfico ocioso y la
+    otra PC se entera en segundos, no en hasta dos minutos.
+  - **Tamaño y forma de los lotes:** comprimir el JSON (gzip) y ajustar el límite por pedido; medir cuánto
+    pesa hoy un ciclo vacío y uno con capturas largas.
+  - **Changesets de SQLite** (extensión session) o una base CRDT (cr-sqlite) en vez de la tabla `cambio`
+    propia: ver si ahorran código y bytes o si suman una dependencia que no paga (la stdlib no trae ninguna).
+  - **Qué no replicar:** si las capturas `observado` de una carpeta temporal o los textos muy largos tienen que
+    viajar enteros o alcanza con el resumen y el hash.
+  - Criterio: latencia entre que nace un cambio y lo ve la otra PC, bytes por hora con el tablero quieto y
+    activo, y que no se rompan los cursores ni la idempotencia (las 10 pruebas de `replica.py` siguen
+    pasando).
+
+  Origen: conversación con Ariel del 2026-10-10. Gravedad: **alta, prioridad** (Ariel, 2026-10-10).
+
 - [ ] Integración uniforme de CLI y hallazgos del code review: capacidades compartidas entre
   Python/TypeScript, proveedores de identidad/transcripción/modelo/diálogo/reanudación, Kiro V3
   limitado explícitamente a Windows y diagnóstico de metadatos sin repetir errores.
@@ -163,25 +182,6 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 6. Gravedad: media.
 
 ### Conocimiento por proyecto
-
-- [ ] **Evaluar una forma más óptima de sincronizar las bases de memoria entre PCs** (pedido de Ariel,
-  2026-10-10). Hoy cada server le pide a cada par, cada 120 s, los cambios y capturas nacidos allá desde su
-  cursor (`lienzo/replica.py`, `/peer/conocimiento`), en lotes, aunque no haya nada nuevo; los cuerpos van
-  aparte. Lo que habría que medir y comparar:
-  - **Empujar en vez de sondear:** que el par avise por el SSE que ya tienen abierto (`/peer/events`) cuando
-    nace un cambio, y recién ahí se pida; el ciclo de 120 s queda solo como red. Menos tráfico ocioso y la
-    otra PC se entera en segundos, no en hasta dos minutos.
-  - **Tamaño y forma de los lotes:** comprimir el JSON (gzip) y ajustar el límite por pedido; medir cuánto
-    pesa hoy un ciclo vacío y uno con capturas largas.
-  - **Changesets de SQLite** (extensión session) o una base CRDT (cr-sqlite) en vez de la tabla `cambio`
-    propia: ver si ahorran código y bytes o si suman una dependencia que no paga (la stdlib no trae ninguna).
-  - **Qué no replicar:** si las capturas `observado` de una carpeta temporal o los textos muy largos tienen que
-    viajar enteros o alcanza con el resumen y el hash.
-  - Criterio: latencia entre que nace un cambio y lo ve la otra PC, bytes por hora con el tablero quieto y
-    activo, y que no se rompan los cursores ni la idempotencia (las 10 pruebas de `replica.py` siguen
-    pasando).
-
-  Origen: conversación con Ariel del 2026-10-10. Gravedad: baja.
 
 - [ ] Replicar la base de conocimiento entre PCs con un protocolo explícito de propiedad,
   concurrencia y recuperación. El código de las etapas 1 a 5 de v5 §9 usa la base local de la
