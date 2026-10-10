@@ -57,7 +57,9 @@ def test_codex_enter_espera_texto_consumido_y_reposo(monkeypatch):
 def test_codex_no_confirma_si_no_consume_texto(monkeypatch):
     events = consola(monkeypatch, [4])
     clock = iter([0, 11])
-    monkeypatch.setattr(send.time, "monotonic", lambda: next(clock))
+    # un `time` propio de send: send.time es el modulo de todo el proceso, y un hilo ajeno que leyera la
+    # hora en medio agotaba este reloj de dos valores (StopIteration, medido el 2026-10-10)
+    monkeypatch.setattr(send, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=send.time.sleep))
     result = send.inject(123, "hola")
     assert result["ok"] is False
     assert "Enter no enviado" in result["error"]
