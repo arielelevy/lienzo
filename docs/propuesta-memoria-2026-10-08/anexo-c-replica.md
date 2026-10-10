@@ -9,8 +9,8 @@ No hay una base dueña. Cada PC escribe sólo en su base y es la autoridad de lo
 en ella: cada `cambio` lleva `pc` (la PC de origen) y `seq_origen` (su número allá). Una PC le pide a
 cada par vivo los cambios con origen en ese par, desde su cursor. Con hasta cuatro PCs no se reenvían
 cambios ajenos: cada uno se trae de su PC de origen (si esa PC está apagada, llega cuando vuelve).
-Qué PC es la «dueña» mientras no haya base compartida sigue abierta (PENDIENTES.md): este diseño
-funciona con cualquiera de las opciones.
+Decidido por Ariel el 2026-10-10: ninguna PC es dueña de la base; cada una escribe en la suya y
+trae lo de las demás. Se revisa sólo si los choques resultan frecuentes en uso real.
 
 ## Identidad del proyecto entre PCs
 

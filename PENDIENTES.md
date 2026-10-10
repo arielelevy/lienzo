@@ -166,6 +166,8 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   - Recomendación: A, que ya está implementada. B o C sólo si en uso real los choques resultan
     frecuentes. Las capturas no chocan (son inmutables); los choques posibles son veredictos dados
     a la vez en dos PCs.
+  - **Decidido por Ariel el 2026-10-10: opción A, ninguna dueña.** Revisar sólo si los choques
+    resultan frecuentes en uso real.
 
 - [ ] **Decidir la retención de las revisiones de informes y de las capturas.**
   Medido el 2026-10-10: un día cargado (1525 capturas, 990 KB de texto) suma 2,0 MB a la base;
@@ -178,6 +180,8 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   - Recomendación: A por ahora (el volumen es chico) y medir otra vez a los tres meses; si pasa
     de 1 GB, B. Las revisiones de informes conviene conservarlas siempre: son la procedencia de
     lo declarado.
+  - **Decidido por Ariel el 2026-10-10: opción A, todo se conserva por ahora.** Queda volver a medir
+    el tamaño de las bases hacia enero de 2027.
 
 ### Otros
 
