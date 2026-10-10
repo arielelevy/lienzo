@@ -639,3 +639,61 @@ def test_texto_de_coda_doble_decodificado_se_repara():
     # una «Ã» de verdad seguida de algo que no arma UTF-8 valido: queda igual
     assert transcripts.reparar_mojibake("ÃŽ y → flecha") == "ÃŽ y → flecha"
     assert transcripts.reparar_mojibake("") == ""
+
+
+def test_permiso_de_un_subagente_de_fondo_se_ve_con_la_tarjeta_en_termino(monkeypatch):
+    """Medido el 2026-10-10: con un workflow de coda en segundo plano el turno principal ya cerro (tarjeta
+    en termino, `running` falso en el log) y un subagente quedo una hora esperando un permiso que el
+    lienzo no veia, asi que el auto-aprobar tampoco. Ahora pasa a te_necesita, y al contestarse vuelve
+    a termino sin pasar por set_state (no es el fin de un trabajo: on_stop no se dispara)."""
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    ask = {"tool": "bash", "cause": "command-policy", "sub": True, "at": "2026-10-10T15:25:01.798Z"}
+    act = {"running": False, "tools": 16, "last_tool": "bash", "sub": True, "last_at": ask["at"], "asking": ask}
+    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    s = {"session_id": "e" * 36, "agent": "coda", "pid": 9, "state": "termino", "state_since": "x", "needs": None}
+    s["hooked"] = True
+    assert ses.coda_log_activity(s)
+    assert s["state"] == "te_necesita" and s["needs"]["kind"] == "permission" and s["needs"]["de_fondo"]
+    assert s["needs"]["coda_at"] == ask["at"] and "subagente" in s["needs"]["detail"]
+
+    disparos = []
+    monkeypatch.setattr(ses, "on_turn_end", lambda sid: disparos.append(sid))
+    act["asking"] = None  # contestado
+    ses.coda_log_activity(s)
+    assert s["state"] == "termino" and s["needs"] is None and disparos == []
+
+    # un permiso de la TUI (no de subagente) con el turno cerrado sigue sin contar: es de un turno viejo
+    act["asking"] = {**ask, "sub": False, "at": "otro"}
+    ses.coda_log_activity(s)
+    assert s["state"] == "termino" and s["needs"] is None
+
+
+def test_permiso_de_fondo_contestado_no_vuelve_a_ofrecer_permitir(monkeypatch):
+    """El log sigue mostrando el permiso del subagente hasta su proximo evento (mientras corre el
+    comando aprobado): la pantalla sin cartel lo cierra y ese mismo pedido no se vuelve a levantar."""
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(ses, "touch", lambda s: None)
+    ask = {"tool": "bash", "cause": "command-policy", "sub": True, "at": "t-fondo"}
+    act = {"running": False, "tools": 3, "last_tool": "bash", "sub": True, "last_at": "t-fondo", "asking": ask}
+    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    sid = "f" * 36
+    s = {"session_id": sid, "agent": "coda", "pid": 9, "state": "termino", "state_since": "x", "needs": None}
+    s["hooked"] = True
+    monkeypatch.setitem(ses.sessions, sid, s)
+    ses.coda_log_activity(s)
+    assert s["state"] == "te_necesita" and s["needs"]["de_fondo"]
+    ses._pantalla_mirada.pop(sid, None)
+    assert ses.coda_mirar_fondo(s) == "t-fondo"
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"lines": ["  Approval Required", "  Enter confirm · Esc deny"]})
+    assert not ses.coda_fondo_en_pantalla(s, "t-fondo") and s["state"] == "te_necesita"
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"lines": ["┃ Ask anything..."]})
+    assert ses.coda_fondo_en_pantalla(s, "t-fondo")
+    assert s["state"] == "termino" and s["needs"] is None
+    ses.coda_log_activity(s)  # el log todavia lo muestra abierto: no vuelve
+    assert s["state"] == "termino" and s["needs"] is None

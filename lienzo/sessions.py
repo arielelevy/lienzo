@@ -1387,6 +1387,13 @@ CODA_ASK_CAUSES = {
 }
 
 
+def _pedido_de_fondo(act: dict) -> bool:
+    """¿El log de coda muestra un permiso abierto de un subagente aunque el turno principal ya cerro?
+    Pasa con un workflow o un agente de fondo (medido el 2026-10-10: el workflow sdd-olas de una coda
+    quedo una hora esperando la aprobacion de un `py -c` de solo lectura con la tarjeta en termino)."""
+    return not act["running"] and bool((act.get("asking") or {}).get("sub"))
+
+
 def coda_log_activity(s: dict) -> bool:
     """Lo que dice el log de CODA (coda.activity), con el lock tomado; devuelve si cambio algo.
 
@@ -1433,7 +1440,9 @@ def coda_log_activity(s: dict) -> bool:
                 "sub": den.get("sub"),
             },
         )
-    ask = act.get("asking") if act["running"] else None
+    ask = act.get("asking") if act["running"] or _pedido_de_fondo(act) else None
+    if ask and ask.get("at") == s.get("coda_fondo_hecho"):
+        ask = None  # el permiso de fondo que la pantalla ya mostro contestado (coda_fondo_en_pantalla)
     needs = s.get("needs") or {}
     if (
         act["running"]
@@ -1458,13 +1467,17 @@ def coda_log_activity(s: dict) -> bool:
         )
         s["needs"]["coda_at"] = f"tool:{s.get('last_event_ts') or now()}"
         needs = s["needs"]
-    if ask and s["state"] in ("corriendo", "te_necesita"):
+    if ask and (s["state"] in ("corriendo", "te_necesita") or (s["state"] == "termino" and _pedido_de_fondo(act))):
         detail = CODA_ASK_CAUSES.get(ask["cause"] or "", ask["cause"] or "")
         detail = " · ".join(x for x in (detail, "de un subagente" if ask["sub"] else "") if x)
         if needs.get("kind") != "permission" or needs.get("coda_at") != ask["at"]:
             previa = needs if needs.get("kind") == "question" else None
+            de_fondo = s["state"] == "termino" or bool(needs.get("de_fondo"))
             set_needs(s, {"kind": "permission", "tool": ask["tool"], "detail": detail, "where": "terminal"})
             s["needs"]["coda_at"] = ask["at"]
+            if de_fondo:
+                # pedido con el turno principal cerrado: al contestarse vuelve a termino sin disparar on_stop
+                s["needs"]["de_fondo"] = True
             if previa is not None and str(ask.get("tool") or "").lower() in CODA_ASK_TOOLS:
                 # sin auto-aprobar, ask_user pide permiso antes de preguntar: se guarda la pregunta
                 # para volver a ella cuando el permiso se conteste (ver el elif de abajo)
@@ -1478,7 +1491,12 @@ def coda_log_activity(s: dict) -> bool:
     elif s["state"] == "te_necesita" and needs.get("coda_at") and needs.get("via") not in ("tool", "screen"):
         # (el dialogo de una herramienta como propose_policy no figura en el log: lo cierra el
         # proximo PreToolUse o el fin del turno, no la ausencia de un `ask`)
-        set_state(s, "corriendo" if act["running"] else "termino")
+        if needs.get("de_fondo") and not act["running"]:
+            # el permiso de un subagente de fondo se contesto: la tarjeta vuelve a como estaba, sin que
+            # cuente como fin de un trabajo (set_state dispararia on_stop con cada permiso)
+            s["state"], s["state_since"], s["needs"] = "termino", now(), None
+        else:
+            set_state(s, "corriendo" if act["running"] else "termino")
     if not s.get("hooked") and act["running"] and act["last_tool"]:
         s["tool_count"] = act["tools"]
         if s["state"] == "corriendo":
@@ -1975,6 +1993,38 @@ def coda_mirar_pantalla(s: dict) -> bool:
     return True
 
 
+def coda_mirar_fondo(s: dict) -> str | None:
+    """(Con el lock.) El `coda_at` del permiso de fondo que hay que confirmar en la pantalla, o None.
+    Un permiso de un subagente de fondo (`de_fondo`, ver _pedido_de_fondo) sigue figurando abierto en
+    el log hasta el proximo evento de ese subagente, que puede tardar lo que tarde su comando: la
+    pantalla es la que dice si el cartel sigue. Se mira como mucho cada CODA_PANTALLA_CADA_S."""
+    n = s.get("needs") or {}
+    if s.get("agent") != "coda" or s.get("state") != "te_necesita" or not n.get("de_fondo") or not s.get("pid"):
+        return None
+    ahora = time.time()
+    if ahora - _pantalla_mirada.get(s["session_id"], 0) < CODA_PANTALLA_CADA_S:
+        return None
+    _pantalla_mirada[s["session_id"]] = ahora
+    return n.get("coda_at")
+
+
+def coda_fondo_en_pantalla(s: dict, coda_at: str) -> bool:
+    """(Sin el lock.) Si el cartel de ese permiso de fondo ya no esta en la pantalla (se contesto aca o
+    en la terminal), la tarjeta vuelve a termino sin disparar on_stop y ese pedido no se vuelve a
+    levantar aunque el log lo siga mostrando. Devuelve si lo cerro."""
+    if coda_ask_open("\n".join(read_screen(s).get("lines") or [])):
+        return False
+    with lock:
+        n = s.get("needs") or {}
+        if sessions.get(s["session_id"]) is not s or s.get("state") != "te_necesita" or n.get("coda_at") != coda_at:
+            return False
+        s["coda_fondo_hecho"] = coda_at
+        s["state"], s["state_since"], s["needs"] = "termino", now(), None
+        touch(s)
+    state.log(f"{s['session_id'][:8]}: el permiso del subagente de fondo ya no está en la pantalla; vuelve a termino")
+    return True
+
+
 def coda_dialogo_en_pantalla(s: dict) -> bool:
     """(Sin el lock.) Si la pantalla de la coda muestra el cartel «Approval Required», la tarjeta pasa a
     te_necesita con el comando, para que se vea y el auto-aprobar lo tome. Es la red de abajo de las
@@ -2055,9 +2105,17 @@ def check_liveness(sid: str) -> None:
         if s is None:
             return
         changed = refresh_alive(s)
-        if s["agent"] == "coda" and s.get("alive") and s.get("pid") and s["state"] in ("corriendo", "te_necesita"):
+        if (
+            s["agent"] == "coda"
+            and s.get("alive")
+            and s.get("pid")
+            and s["state"] in ("corriendo", "te_necesita", "termino")
+        ):
+            # tambien en termino: un workflow o un agente de fondo sigue pidiendo permisos con el turno
+            # principal ya cerrado (ver coda_log_activity)
             changed = coda_log_activity(s) or changed
         mirar_pantalla = coda_mirar_pantalla(s)
+        fondo = coda_mirar_fondo(s)
         dead_since = parse_ts(s["dead_since"]) if s["state"] == "muerta" else None
         if dead_since and (dt.datetime.now().astimezone() - dead_since).total_seconds() > DEAD_GRACE_S:
             drop_session(sid, "muerta hace mas de 60 s", muerta=True)
@@ -2084,6 +2142,8 @@ def check_liveness(sid: str) -> None:
             touch(s)
     if mirar_pantalla:
         coda_dialogo_en_pantalla(s)  # un subproceso: sin el lock
+    if fondo:
+        coda_fondo_en_pantalla(s, fondo)  # idem
     if not crecio:
         return
     r = read_transcript(s)  # lo caro, sin el lock
@@ -2388,7 +2448,17 @@ def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
         return 409, {"ok": False, "error": "esa sesion no tiene un permiso de CODA abierto"}
     pantalla = "\n".join(read_screen(s).get("lines") or [])
     if not coda_ask_open(pantalla):
-        return 409, {"ok": False, "error": "el dialogo de permiso ya no esta en la terminal"}
+        # ya se contesto (en la terminal, o el log lo sigue mostrando mientras corre el comando):
+        # se saca de la tarjeta en vez de dejar unos botones que no hacen nada (pedido de Ariel, 2026-10-10)
+        with lock:
+            if sessions.get(s["session_id"]) is s and (s.get("needs") or {}).get("coda_at") == coda_at:
+                if abierto.get("de_fondo"):
+                    s["coda_fondo_hecho"] = coda_at
+                    s["state"], s["state_since"], s["needs"] = "termino", now(), None
+                else:
+                    set_state(s, "corriendo")
+                touch(s)
+        return 200, {"ok": True, "ya_no_estaba": True}
     if decision == "allow":
         code, out = run_send(s, "", enter=True)
     else:

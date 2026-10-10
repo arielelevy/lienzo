@@ -174,6 +174,16 @@ def test_contestar_coda_marca_enviado_si_el_permiso_sigue_siendo_el_mismo(aislad
     assert s["needs"]["where"] == "enviado" and s["needs"]["coda_at"] == "t1"
 
 
+def test_contestar_coda_sin_cartel_en_pantalla_lo_saca_de_la_tarjeta(aislado, monkeypatch):
+    """Pedido de Ariel (2026-10-10): «si doy permitir y no está en la terminal, quitalo». Antes daba 409
+    y los botones quedaban; ahora el pedido se saca (sin teclear nada) y la tarjeta sigue."""
+    s = _coda_con_permiso(monkeypatch)
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"lines": ["┃ Ask anything..."]})
+    monkeypatch.setattr(ses, "run_send", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no se teclea")))
+    code, out = ses.answer_coda_ask(s, "allow")
+    assert code == 200 and out["ya_no_estaba"] and not s.get("needs") and s["state"] == "corriendo"
+
+
 def test_detener_dos_veces_a_la_vez_manda_un_solo_esc(aislado, monkeypatch):
     """E4: set_stopped miraba stopped_by afuera del lock y lo marcaba despues del Esc (un envio de
     hasta 60 s): dos pedidos juntos mandaban dos Esc y avisaban dos veces a las conectadas."""

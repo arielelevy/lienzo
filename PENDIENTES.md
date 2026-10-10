@@ -49,12 +49,16 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: `docs/plan-multi-pc-2026-09-26.md`, cierres F1 a F5. Gravedad: media.
 
-- [ ] Reiniciar lienzo en la otra PC cierra las codas que corren (medido el 2026-10-03; la recarga automática por `git pull` NO las cerró: la coda de la sesión 4 siguió viva; la hipótesis de pestañas de Windows Terminal en la misma ventana del server tampoco, según la coda A cada coda abre en su propia consola, aunque lo dijo leyendo el código y no la configuración): la coda de la sesión 3 quedó
+- [x] Reiniciar lienzo en la otra PC cierra las codas que corren (medido el 2026-10-03; la recarga automática por `git pull` NO las cerró: la coda de la sesión 4 siguió viva; la hipótesis de pestañas de Windows Terminal en la misma ventana del server tampoco, según la coda A cada coda abre en su propia consola, aunque lo dijo leyendo el código y no la configuración): la coda de la sesión 3 quedó
   `ended_at` en el mismo segundo del reinicio y hubo que restaurarla (`restaurar`, con contexto). Además, con la causa sin
   resolver, todo lo que sale hacia esa PC dio `401 firma invalida` de repente (sin cambios de reloj ni de claves) y solo se
   arregló reiniciando su lienzo. Ideas: que las codas no cuelguen del proceso del server, y que ante un 401 el lienzo
   intente el reinicio del peer o avise con el motivo («su server no valida mi firma»), en vez de dejar el tablero mudo.
   - **Nota del 2026-10-10:** el 401 ya llega al tablero con su motivo («la otra PC no acepta mi firma», `federation.py`, con `causa_401`). Queda la causa de que mueran las codas, que necesita la otra PC.
+  - **Cerrado el 2026-10-10 (no se reprodujo):** con el código de db12f5e se lanzó una coda en ar-it33940 desde el tablero de
+    la otra PC (PID 16848, contestó «OK») y se reinició ahí el server matando solo el PID de 7321 y relanzando con
+    `lienzo-server.cmd`: la coda siguió viva antes, durante y después (mismo padre, PID 19636), y el tablero la volvió a
+    ver. Si vuelve a pasar, reabrir con el modo en que se abrió esa coda (a mano o desde el lienzo).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 10. Gravedad: alta.
 
@@ -92,10 +96,12 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 19. Gravedad: media.
 
-- [ ] Persistir las reglas cruzadas si la otra PC reinicia: una regla vive en la PC del `from`; si
+- [x] Persistir las reglas cruzadas si la otra PC reinicia: una regla vive en la PC del `from`; si
   esa PC reinicia el lienzo, hay que ver que sobreviva (hoy se guardan en `~/.lienzo`, falta probarlo
   con un reinicio real).
   - **Nota del 2026-10-10:** la regla de qué se conserva al arrancar quedó nombrada (`server.conservar_regla`) y probada releyendo `rules.json` (tests/test_pendientes_tanda3.py): la regla hacia otra PC sobrevive aunque su destino todavía no se vea. Falta el reinicio real en la otra PC.
+  - **Cerrado el 2026-10-10:** reinicio real en ar-it33940: la regla `on_stop` de su coda (`e3e32f37`) hacia una sesión
+    de la otra PC siguió en `GET /rules` (vive en ar-it33940, la PC del `from`) después de reiniciar su server dos veces.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 20. Gravedad: media.
 
@@ -169,6 +175,9 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   implementación en `lienzo/replica.py` (cada PC trae de sus pares los cambios nacidos allá, por
   `/peer/conocimiento`, con cursores transaccionales; choques y duplicados para la coordinadora).
   10 pruebas con dos bases simuladas en un proceso. Falta probarlo entre las dos PCs reales.
+  - **Nota del 2026-10-10:** primera réplica real: con las dos PCs en db12f5e, esta PC trajo de ar-it33940
+    «replica con dee050ccab4f: 9 aplicados» (12:00:21, en `lienzo.log`). Falta ver el sentido inverso en el log de
+    ar-it33940 y un choque real.
 
 - [x] **Decidir qué PC es dueña de la base de cada proyecto mientras no haya base compartida.**
   Propuesta, sin decidir (pedido de la ronda 3):

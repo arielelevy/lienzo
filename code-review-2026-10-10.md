@@ -156,3 +156,27 @@ lanzamiento (`pid-N`), que cambia con el primer hook.
 **Arreglo:** una constante `INFORME` con `{titulo}` y `{respuesta}` (los llena `rules.py` al disparar), usada en los dos
 lugares; se quitó la variable que quedó sin uso. Test: `test_cablear_crea_una_regla...` exige los dos marcadores.
 Sin hallazgos pendientes.
+
+## Permisos de subagentes de fondo en coda (`lienzo/sessions.py`)
+
+**Defecto (reportado por Ariel: «no anda el auto aprobar en coda»):** con un workflow de coda corriendo en segundo plano, el
+turno principal ya cerró y la tarjeta queda en `termino`. `check_liveness` solo consultaba el log de coda para tarjetas en
+`corriendo`/`te_necesita`, y aun consultándolo `coda.activity` da `running=False` con el `asking` (sub: true) abierto. El
+permiso nunca pasaba a `te_necesita`, así que ni el botón ni el auto-aprobar lo veían: un subagente del workflow `sdd-olas`
+esperó una hora un `py -c` de solo lectura. El PreToolUse del hook no ayuda: coda no lo manda para los subagentes.
+
+**Arreglo:** la consulta del log también corre con la tarjeta en `termino`; `_pedido_de_fondo` reconoce el permiso abierto de
+un subagente con el turno cerrado; el pedido queda marcado `de_fondo` y, al contestarse, la tarjeta vuelve a `termino` sin
+`set_state` (si no, cada permiso dispararía las reglas `on_stop`). Un permiso de la TUI con el turno cerrado sigue sin
+contar. Revisión: el cambio de filtro también activa la rama ya existente que devuelve a `corriendo` una coda cuyo log muestra
+herramientas después del cierre, que estaba muerta por ese filtro; es el comportamiento que esa rama documentaba.
+`coda.activity` lee el log por tarjeta viva: mismo costo que ya pagaban las codas en `corriendo`.
+
+**Pruebas:** test nuevo en `tests/test_coda.py`; verificado en vivo: «AUTO-APROBADO (coda) coda lienzo/8b5c395e» a las 12:30
+con el workflow corriendo y la tarjeta en `termino`.
+- **Segunda parte, el mismo día:** el log de coda sigue mostrando el permiso del subagente hasta su próximo evento (mientras
+  corre el comando aprobado), y la tarjeta volvía a ofrecer «Permitir» con el cartel ya cerrado. `coda_mirar_fondo` /
+  `coda_fondo_en_pantalla` confirman en la pantalla (sin el lock, cada 10 s como mucho) y recuerdan el pedido ya cerrado
+  (`coda_fondo_hecho`) para no levantarlo otra vez. Y a pedido de Ariel («si doy permitir y no está en la terminal,
+  quitalo»), `answer_coda_ask` sin cartel en pantalla ya no da 409: saca el pedido de la tarjeta sin teclear nada.
+  Tests nuevos en `tests/test_coda.py` y `tests/test_ola1_sesiones.py`; 1338 pasan.
