@@ -23,7 +23,8 @@ interface Props {
   /** el menu ⋯ se acaba de abrir (no en cada toggle): abrirlo es cambiar de contexto, asi que App
    *  cierra lo que haya abierto detras (panel, dialogo de conectar, ayuda) */
   onMenuOpen?: () => void;
-  flags: { label: string; icon: string; on: boolean; toggle: () => void; title: string; danger?: boolean }[];
+  /** `vista`: interruptores de lo que se ve (flechas, detalles técnicos), juntos en un renglón del menú */
+  flags: { label: string; icon: string; on: boolean; toggle: () => void; title: string; danger?: boolean; vista?: boolean }[];
   /** los chips de proyecto (ProjectStrip), que van despues de los de agente */
   projects?: React.ReactNode;
 }
@@ -132,9 +133,42 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
         </button>
         {menuOpen && (
           <div className="dropdown" role="menu">
-            {/* la descripcion va visible debajo del nombre: el title nativo tarda un segundo en aparecer
-                y nadie lo espera para saber que hace "Pensamiento" */}
-            {flags.map((f) => (
+            {/* primero lo que se abre (la memoria arriba de todo, que no quedaba a la vista), despues lo
+                que se ve y al final la automatizacion. La descripcion va visible debajo del nombre: el
+                title nativo tarda un segundo y nadie lo espera para saber que hace un interruptor */}
+            {onKnowledge && <button role="menuitem" onClick={closeAnd(onKnowledge)}>
+              <span className="row">🧠 Memoria</span>
+              <span className="desc">lo aprendido y lo capturado por proyecto</span>
+            </button>}
+            <button role="menuitem" onClick={closeAnd(onShowPairing)}>
+              <span className="row">🖥 Varias PCs</span>
+              <span className="desc">emparejar con otra PC de la red local</span>
+            </button>
+            <button role="menuitem" onClick={closeAnd(() => window.open("/docs", "_blank", "noopener"))}>
+              <span className="row">📖 Referencia</span>
+              <span className="desc">README y diseño, con buscador (otra pestaña)</span>
+            </button>
+            <button role="menuitem" onClick={closeAnd(onHelp)}>
+              <span className="row">? Atajos de teclado</span>
+            </button>
+            <button role="menuitem" onClick={closeAnd(onRescan)}>
+              <span className="row">↻ Barrer procesos</span>
+              <span className="desc">buscar sesiones ahora (si no, cada 30 s)</span>
+            </button>
+            <hr />
+            {flags.some((f) => f.vista) && (
+              <div className="vista" role="group" aria-label="Vista">
+                <span className="vista-titulo">Vista</span>
+                {flags.filter((f) => f.vista).map((f) => (
+                  <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle} title={f.title}>
+                    <span className="row">
+                      {f.icon} {f.label} <span className={`state ${f.on ? "on" : ""}`}>{f.on ? "sí" : "no"}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {flags.filter((f) => !f.vista).map((f) => (
               <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle} className={f.danger ? "danger" : undefined}>
                 <span className="row">
                   {/* "sí"/"no" y no "on"/"off": es lo único que quedaba en inglés en toda la app */}
@@ -143,27 +177,6 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
                 <span className="desc">{f.title}</span>
               </button>
             ))}
-            <hr />
-            <button role="menuitem" onClick={closeAnd(onRescan)}>
-              <span className="row">↻ Barrer procesos</span>
-              <span className="desc">barrer ahora los procesos de la PC en busca de sesiones (solo se hace cada 30 s)</span>
-            </button>
-            <button role="menuitem" onClick={closeAnd(() => window.open("/docs", "_blank", "noopener"))}>
-              <span className="row">📖 Referencia</span>
-              <span className="desc">el README y el diseño por secciones, con buscador (se abre en otra pestaña)</span>
-            </button>
-            <button role="menuitem" onClick={closeAnd(onHelp)}>
-              <span className="row">? Atajos de teclado</span>
-              <span className="desc">qué hace cada tecla y cada gesto del tablero</span>
-            </button>
-            <button role="menuitem" onClick={closeAnd(onShowPairing)}>
-              <span className="row">🖥 Varias PCs</span>
-              <span className="desc">emparejar esta PC con otra de la misma red local y ver el tablero conjunto</span>
-            </button>
-            {onKnowledge && <button role="menuitem" onClick={closeAnd(onKnowledge)}>
-              <span className="row">Memoria</span>
-              <span className="desc">consultar lo aprendido por proyecto, sus pendientes y avisos</span>
-            </button>}
             {authInfo.configured && !authInfo.local && (
               <>
                 <hr />
