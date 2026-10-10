@@ -23,8 +23,8 @@ interface Props {
   /** el menu ⋯ se acaba de abrir (no en cada toggle): abrirlo es cambiar de contexto, asi que App
    *  cierra lo que haya abierto detras (panel, dialogo de conectar, ayuda) */
   onMenuOpen?: () => void;
-  /** `vista`: interruptores de lo que se ve (flechas, detalles técnicos), juntos en un renglón del menú */
-  flags: { label: string; icon: string; on: boolean; toggle: () => void; title: string; danger?: boolean; vista?: boolean }[];
+  /** `grupo`: «mostrar» (lo que se ve) o «auto» (lo que el lienzo hace solo); `desc`, una linea visible */
+  flags: readonly { grupo: "mostrar" | "auto"; label: string; desc?: string; on: boolean; toggle: () => void; title: string; danger?: boolean }[];
   /** los chips de proyecto (ProjectStrip), que van despues de los de agente */
   projects?: React.ReactNode;
 }
@@ -133,59 +133,53 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
         </button>
         {menuOpen && (
           <div className="dropdown" role="menu">
-            {/* primero lo que se abre (la memoria arriba de todo, que no quedaba a la vista), despues lo
-                que se ve y al final la automatizacion. La descripcion va visible debajo del nombre: el
-                title nativo tarda un segundo y nadie lo espera para saber que hace un interruptor */}
-            {onKnowledge && <button role="menuitem" onClick={closeAnd(onKnowledge)}>
-              <span className="row">🧠 Memoria</span>
-              <span className="desc">lo aprendido y lo capturado por proyecto</span>
-            </button>}
-            <button role="menuitem" onClick={closeAnd(onShowPairing)}>
-              <span className="row">🖥 Varias PCs</span>
-              <span className="desc">emparejar con otra PC de la red local</span>
-            </button>
-            <button role="menuitem" onClick={closeAnd(() => window.open("/docs", "_blank", "noopener"))}>
-              <span className="row">📖 Referencia</span>
-              <span className="desc">README y diseño, con buscador (otra pestaña)</span>
-            </button>
-            <button role="menuitem" onClick={closeAnd(onHelp)}>
-              <span className="row">? Atajos de teclado</span>
-            </button>
-            <button role="menuitem" onClick={closeAnd(onRescan)}>
-              <span className="row">↻ Barrer procesos</span>
-              <span className="desc">buscar sesiones ahora (si no, cada 30 s)</span>
-            </button>
-            <hr />
-            {flags.some((f) => f.vista) && (
-              <div className="vista" role="group" aria-label="Vista">
-                <span className="vista-titulo">Vista</span>
-                {flags.filter((f) => f.vista).map((f) => (
-                  <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle} title={f.title}>
-                    <span className="row">
-                      {f.icon} {f.label} <span className={`state ${f.on ? "on" : ""}`}>{f.on ? "sí" : "no"}</span>
-                    </span>
+            {(["mostrar", "auto"] as const).map((g) => (
+              <div key={g} className="grupo" role="group" aria-label={g === "mostrar" ? "Mostrar" : "Automático"}>
+                <span className="grupo-titulo">{g === "mostrar" ? "Mostrar" : "Automático"}</span>
+                {flags.filter((f) => f.grupo === g).map((f) => (
+                  <button
+                    key={f.label}
+                    role="menuitemcheckbox"
+                    aria-checked={f.on}
+                    title={f.title}
+                    onClick={f.toggle}
+                    className={`interruptor${f.danger && f.on ? " danger" : ""}`}
+                  >
+                    <span className="nombre">{f.label}</span>
+                    <span className={`switch${f.on ? " on" : ""}`} aria-hidden="true" />
+                    {f.desc && <span className="desc">{f.desc}</span>}
                   </button>
                 ))}
               </div>
-            )}
-            {flags.filter((f) => !f.vista).map((f) => (
-              <button key={f.label} role="menuitemcheckbox" aria-checked={f.on} onClick={f.toggle} className={f.danger ? "danger" : undefined}>
-                <span className="row">
-                  {/* "sí"/"no" y no "on"/"off": es lo único que quedaba en inglés en toda la app */}
-                  {f.icon} {f.label} <span className={`state ${f.on ? "on" : ""}`}>{f.on ? "sí" : "no"}</span>
-                </span>
-                <span className="desc">{f.title}</span>
-              </button>
             ))}
-            {authInfo.configured && !authInfo.local && (
-              <>
-                <hr />
+            <div className="acciones">
+              <button role="menuitem" onClick={closeAnd(onRescan)} title="el barrido se hace solo cada 30 s">
+                <span className="nombre">Buscar sesiones ahora</span>
+              </button>
+              <button role="menuitem" onClick={closeAnd(() => window.open("/docs", "_blank", "noopener"))}>
+                <span className="nombre">Referencia</span>
+                <span className="aparte">otra pestaña</span>
+              </button>
+              <button role="menuitem" onClick={closeAnd(onHelp)}>
+                <span className="nombre">Atajos de teclado</span>
+                <kbd className="aparte">?</kbd>
+              </button>
+              <button role="menuitem" onClick={closeAnd(onShowPairing)}>
+                <span className="nombre">Varias PCs</span>
+              </button>
+              {onKnowledge && (
+                <button role="menuitem" className="memoria" onClick={closeAnd(onKnowledge)}>
+                  <span className="nombre">Memoria</span>
+                  <span className="desc">lo aprendido y lo capturado, por proyecto</span>
+                </button>
+              )}
+              {authInfo.configured && !authInfo.local && (
                 <button role="menuitem" onClick={closeAnd(onLogout)}>
-                  <span className="row">⏏ Salir</span>
+                  <span className="nombre">Salir</span>
                   <span className="desc">cerrar la sesión remota en este dispositivo</span>
                 </button>
-              </>
-            )}
+              )}
+            </div>
           </div>
         )}
       </div>

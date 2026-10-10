@@ -377,12 +377,15 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const writable = Object.values(sessions).filter((s) => canWrite(s) && !peerDown(s));
 
   const flags = [
-    { label: "Avisos", icon: "🔔", on: notify, toggle: toggleNotify, title: "aviso del navegador (aunque la pestaña esté atrás) cuando una sesión pide permiso o te hace una pregunta" },
-    { label: "Flechas", icon: "↪", on: showArrows, toggle: toggleArrows, title: "dibujar las conexiones entre tarjetas: envíos hechos, reglas pendientes y canal nativo", vista: true },
-    { label: "Detalles técnicos", icon: "🛠", on: details, toggle: toggleDetails, title: "para depurar: PID, hooks e id de sesión en las tarjetas, contadores en cero del digest, nombre del .jsonl en el panel", vista: true },
+    // grupo «mostrar»: lo que se ve en el tablero; «auto»: lo que el lienzo hace solo. `desc` es la linea
+    // corta visible en el menu; `title`, el detalle entero en el tooltip
+    { grupo: "mostrar", label: "Avisos del navegador", on: notify, toggle: toggleNotify, title: "aviso del navegador (aunque la pestaña esté atrás) cuando una sesión pide permiso o te hace una pregunta" },
+    { grupo: "mostrar", label: "Flechas", on: showArrows, toggle: toggleArrows, title: "dibujar las conexiones entre tarjetas: envíos hechos, reglas pendientes y canal nativo" },
+    { grupo: "mostrar", label: "Detalles técnicos", on: details, toggle: toggleDetails, title: "para depurar: PID, hooks e id de sesión en las tarjetas, contadores en cero del digest, nombre del .jsonl en el panel" },
     {
-      label: "Reintentar solo tras un error de API",
-      icon: "↻",
+      grupo: "auto",
+      label: "Reintentar tras un error de API",
+      desc: "manda «Continuar» una vez, a los 10 s",
       on: !!config?.auto_retry,
       toggle: toggleAutoRetry,
       title: config
@@ -390,8 +393,9 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         : "el server que corre no tiene /config: reiniciá el server",
     },
     {
-      label: "Auto-aprobar TODO (peligroso)",
-      icon: "☠",
+      grupo: "auto",
+      label: "Auto-aprobar TODO",
+      desc: "aprueba cada permiso sin mirarlo, en todas las PCs",
       on: !!config?.auto_aprobar,
       toggle: toggleAutoAprobar,
       danger: true,
@@ -400,15 +404,16 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         : "el server que corre no tiene /config: reiniciá el server",
     },
     {
-      label: "Continuar solo tras límite de uso",
-      icon: "⏰",
+      grupo: "auto",
+      label: "Continuar tras el límite de uso",
+      desc: "a la hora que avisa el agente",
       on: !!config?.auto_continue,
       toggle: toggleAutoContinue,
       title: config
         ? "cuando una sesión avisa que llegó al límite de uso con hora de vuelta, programar \"Continuar\" un minuto después (auto_continue en ~/.lienzo/config.json)"
         : "el server que corre no tiene /config: reiniciá el server",
     },
-  ];
+  ] as const;
 
   return (
     <div className={`${details ? "details" : ""} ${sel ? "panel-open" : ""}`}>
