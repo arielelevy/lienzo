@@ -229,6 +229,10 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
 - [ ] **Probar `PreCompact`/`PostCompact` con una coda real**: solo hay prueba con eventos simulados, y falta correr
   `install.py` en las dos PCs para que coda los mande (toca `~/.coda/config.json`).
+  - **Nota del 2026-10-10:** en esta PC los hooks ya estaban y con una coda real (CODA 1.4.0) el PreCompact llegó. El
+    PostCompact no se vio: con cinco vueltas cortas coda contesta «Too few messages for compaction» y aborta sin mandarlo (ni
+    Stop), lo que dejaba la tarjeta trabada; arreglado (`sessions.coda_compactacion_abortada`). Falta una compactación que
+    sí ocurra (conversación larga) y la otra PC.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 8. Gravedad: media.
 

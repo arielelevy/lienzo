@@ -1217,6 +1217,7 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
 
 
 COMPACTING_MAX_S = 600  # si PostCompact no llega (coda se cae), la marca vence sola
+COMPACTING_CARRERA_S = 10  # PreCompact y el UserPromptSubmit del mismo /compact llegan en cualquier orden
 
 
 def compacting(s: dict) -> bool:
@@ -1506,6 +1507,11 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
         if (s.get("needs") or {}).get("kind") == "pi_dialog":
             s["state"], s["state_since"], s["needs"] = ("termino" if ev.get("pi_idle") else "corriendo"), now(), None
     elif name == "UserPromptSubmit":
+        # un pedido nuevo es un turno nuevo: la compactacion anterior termino aunque PostCompact no
+        # haya llegado (coda la aborta sin mandarlo, ver coda_compactacion_abortada). Una marca reciente
+        # es la del propio /compact: los dos hooks son procesos aparte y llegan en cualquier orden
+        if s.get("compacting") and time.time() - s["compacting"] > COMPACTING_CARRERA_S:
+            s["compacting"] = None
         hook_prompt_submit(s, ev)
     elif name == "Stop":
         hook_stop(s, ev)
@@ -1977,6 +1983,7 @@ def coda_dialogo_en_pantalla(s: dict) -> bool:
     lineas = (read_screen(s).get("lines") or []) if s.get("pid") else []
     pantalla = "\n".join(lineas)
     if not coda_ask_open(pantalla):
+        coda_compactacion_abortada(s, lineas)
         return False
     try:
         import pantalla_coda
@@ -2003,6 +2010,39 @@ def coda_dialogo_en_pantalla(s: dict) -> bool:
     state.log(
         f"{s['session_id'][:8]}: coda espera una aprobación en su terminal ({short(cmd, 80) or 'sin comando visible'})"
     )
+    return True
+
+
+CODA_COMPACTACION_ABORTADA = "Too few messages for compaction"
+
+
+def _ultimo_mensaje_coda(lineas: list[str]) -> str:
+    """El ultimo renglon con texto arriba de la caja vacia de coda («Ask anything...»), sin el panel de
+    la derecha ni el borde «┃». Vacio si la caja tiene algo escrito (no muestra el placeholder)."""
+    izq = [ln.split("│")[0].strip(" ┃▄█▀") for ln in lineas]
+    caja = next((i for i in range(len(izq) - 1, -1, -1) if izq[i].startswith("Ask anything")), None)
+    if caja is None:
+        return ""
+    return next((t for t in reversed(izq[:caja]) if t), "")
+
+
+def coda_compactacion_abortada(s: dict, lineas: list[str]) -> bool:
+    """(Sin el lock.) Un /compact con poca conversacion: coda muestra «Too few messages for compaction» y
+    no manda PostCompact ni Stop (medido el 2026-10-10 con CODA 1.4.0; el PreCompact a veces si llega).
+    Sin esto la tarjeta queda corriendo, y con la marca de compactacion el Stop del pedido siguiente
+    tampoco la cierra. Solo cuenta si ese cartel es lo ultimo que dijo la coda: uno viejo, de un
+    /compact anterior, no corta una compactacion de verdad. Vuelve a termino sin disparar on_stop:
+    abortar un /compact no es terminar un trabajo."""
+    if not _ultimo_mensaje_coda(lineas).startswith(CODA_COMPACTACION_ABORTADA):
+        return False
+    with lock:
+        pidio = compacting(s) or (s.get("last_prompt") or "").strip() == "/compact"
+        if sessions.get(s["session_id"]) is not s or not pidio or s.get("state") != "corriendo":
+            return False
+        s["compacting"] = None
+        s["state"], s["state_since"] = "termino", now()
+        touch(s)
+    state.log(f"{s['session_id'][:8]}: coda abortó la compactación (pocos mensajes); la tarjeta vuelve a termino")
     return True
 
 

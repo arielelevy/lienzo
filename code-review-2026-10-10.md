@@ -125,3 +125,23 @@ Revisión propia antes del commit; pruebas en `tests/test_pendientes_tanda3.py` 
 **Alcance:** solo `PENDIENTES.md` (una casilla cerrada con evidencia de una prueba manual con coda real). Sin cambios de
 código, así que no hay hallazgos ni hace falta compuerta nueva: la última (PASS sobre 4e22760) sigue valiendo para el código.
 La evidencia no cita la clave ni su contenido, solo dónde la guarda coda (`<carpeta>/.secrets`). La carpeta de prueba se borró.
+
+## Compactación abortada de coda (`lienzo/sessions.py`)
+
+**Alcance:** `apply_hook` (UserPromptSubmit), `coda_dialogo_en_pantalla`, `coda_compactacion_abortada` y
+`_ultimo_mensaje_coda` nuevos; test en `tests/test_coda.py`.
+
+**Defecto encontrado en vivo (CODA 1.4.0):** `/compact` con poca conversación muestra «Too few messages for compaction»
+y no manda PostCompact ni Stop (el PreCompact a veces sí). La tarjeta quedaba `corriendo` hasta el pedido siguiente, y con
+la marca de compactación el Stop de ese pedido se ignoraba hasta 10 minutos (on_stop sin disparar).
+
+**Arreglo y revisión:**
+- La red de pantalla que ya mira una coda quieta en `corriendo` (cada 10 s, sin el lock) ahora también reconoce el cartel, y
+  solo si es el último renglón arriba de la caja vacía: un cartel viejo no corta una compactación real. Exige que la tarjeta
+  tenga la marca o que el pedido haya sido `/compact`. Vuelve a `termino` sin `set_state`, para no disparar on_stop.
+- `UserPromptSubmit` limpia una marca de más de 10 s. Hallazgo propio en la primera versión: limpiarla siempre perdía la del
+  mismo `/compact`, porque los dos hooks llegan en cualquier orden; corregido con `COMPACTING_CARRERA_S` y probado.
+- Sin silencios ni fallbacks nuevos; la escritura del dict va con el lock. Complejidad baja.
+
+**Pruebas:** 1320 pasan; verificado en vivo dos veces con una coda real (con y sin PreCompact), log
+«coda abortó la compactación (pocos mensajes); la tarjeta vuelve a termino».

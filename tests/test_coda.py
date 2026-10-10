@@ -415,6 +415,55 @@ def test_compactacion_de_coda_no_cuenta_como_fin_de_turno(monkeypatch):
     assert "PreCompact" in __import__("install").CODA_EVENTS and "PostCompact" in __import__("install").CODA_EVENTS
 
 
+def test_compact_abortado_por_coda_devuelve_la_tarjeta_sin_disparar_on_stop(monkeypatch):
+    """Medido con CODA 1.4.0: /compact con poca conversacion muestra «Too few messages for compaction» y
+    no manda PostCompact ni Stop (el PreCompact a veces si). La pantalla devuelve la tarjeta a termino sin
+    pasar por set_state (que dispararia on_stop), solo si el cartel es lo ultimo que dijo la coda."""
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(ses, "touch", lambda s: None)
+    monkeypatch.setattr(ses, "set_state", lambda *a: (_ for _ in ()).throw(AssertionError("no es fin de trabajo")))
+    sid = "c" * 36
+    s = {"session_id": sid, "agent": "coda", "pid": 7, "state": "corriendo", "state_since": "x", "needs": None}
+    s["compacting"] = ses.time.time()
+    monkeypatch.setitem(ses.sessions, sid, s)
+    panel = " " * 10 + "│ Tokens 18.3k"
+    abortado = [
+        "┃ hola" + panel,
+        "  OK" + panel,
+        "┃ Too few messages for compaction." + panel,
+        " " * 90 + "▄│",
+        "┃" + panel,
+        "┃ Ask anything... (/ for commands ? for shortcuts)" + panel,
+    ]
+    # un cartel viejo, de un /compact anterior, con la coda contestando despues: no corta nada
+    viejo = abortado[:3] + ["┃ y 5+5?" + panel, "  10" + panel] + abortado[3:]
+    assert not ses.coda_compactacion_abortada(s, viejo)
+    assert s["state"] == "corriendo" and s["compacting"]
+    assert ses.coda_compactacion_abortada(s, abortado)
+    assert s["state"] == "termino" and s["compacting"] is None
+    assert not ses.coda_compactacion_abortada(s, abortado)  # ya en termino: no vuelve a tocar nada
+    # sin PreCompact (tambien medido): alcanza con que el pedido haya sido /compact
+    s.update(state="corriendo", last_prompt="/compact")
+    assert ses.coda_compactacion_abortada(s, abortado) and s["state"] == "termino"
+    s.update(state="corriendo", last_prompt="arreglá el test")
+    assert not ses.coda_compactacion_abortada(s, abortado)
+
+    monkeypatch.undo()
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(ses, "hook_prompt_submit", lambda s, ev: None)
+    # el UserPromptSubmit del mismo /compact puede llegar despues del PreCompact: la marca reciente queda
+    s2 = {"session_id": "d" * 36, "agent": "coda", "state": "termino", "compacting": ses.time.time()}
+    ses.apply_hook(s2, {"hook_event_name": "UserPromptSubmit"}, "UserPromptSubmit", False)
+    assert s2["compacting"]
+    # una marca vieja (PostCompact nunca llego) la limpia el pedido siguiente
+    s2["compacting"] = ses.time.time() - ses.COMPACTING_CARRERA_S - 1
+    ses.apply_hook(s2, {"hook_event_name": "UserPromptSubmit"}, "UserPromptSubmit", False)
+    assert s2["compacting"] is None
+
+
 def test_permiso_enviado_que_sigue_abierto_devuelve_los_botones(monkeypatch):
     """Tras Permitir/Denegar la tarjeta queda `enviado`; si el log sigue mostrando el permiso abierto
     pasado CODA_SENT_RETRY_S (el Enter no hizo efecto), vuelve a `terminal` y muestra los botones."""
