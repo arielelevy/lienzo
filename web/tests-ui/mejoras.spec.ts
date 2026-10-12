@@ -6,6 +6,33 @@ const report = (sid: string) => ({ session_id: sid, snapshot: "reviewed", agent:
   jev_available: true, jev_max_cost_usd: .001, evidence: { scope: "ultimos 10 turnos", counts: { turns: 2, closed: 1, tools: 3, errors: 1, known_results: 2, missing_results: 1 } }, suggestions: [] });
 const json = (data: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
 
+test("piloto distingue habilitado de apto y pausa llamadas automáticas", async ({ page }) => {
+  await abrirTablero(page);
+  await page.route("**/agent-improvements", route => route.fulfill(json(settings)));
+  let enabled = true;
+  await page.route("**/agent-improvements/scheduler", route => {
+    if (route.request().method() === "PUT") {
+      const action = route.request().postDataJSON();
+      if (action.action === "configure") enabled = action.enabled;
+    }
+    return route.fulfill(json({ enabled, pilot_enabled: true, paid_enabled: false,
+      reason: enabled ? "cooldown" : "pausado por el usuario", projects: [], jobs: [],
+      budget: { limit_usd: "2", spent_usd: ".00002268", reserved_usd: ".037418892", available_usd: "1.962558428", unknown_charges: 1, blocked: false,
+        pilot: { deadline: 1791993600, attempts: 1, maximum_calls: 24, cooldown_seconds: 3600, within_window: true } } }));
+  });
+  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
+  await page.getByRole("menuitem", { name: "Mejoras de agentes…" }).click();
+  const section = page.getByRole("region", { name: "Aprendizaje en segundo plano" });
+  await expect(section.getByText(/llamadas pagas acotadas/)).toBeVisible();
+  await expect(section.getByText(/intentos 1\/24/)).toBeVisible();
+  await expect(section.getByText(/cooldown 60 min/)).toBeVisible();
+  await expect(section.getByText(/cota permanece reservada/)).toBeVisible();
+  await expect(section.getByText(/Sin envío automático ahora/)).toBeVisible();
+  await section.getByRole("button", { name: "Pausar aprendizaje" }).click();
+  await expect(section.getByText("pausado por el usuario", { exact: true })).toBeVisible();
+  await expect(section.getByRole("button", { name: "Habilitar aprendizaje" })).toBeVisible();
+});
+
 test("scheduler informa bloqueo y encola solo análisis local", async ({ page }) => {
   await abrirTablero(page);
   await page.route("**/agent-improvements", route => route.fulfill(json(settings)));

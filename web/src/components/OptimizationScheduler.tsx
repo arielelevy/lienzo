@@ -4,9 +4,10 @@ import { api } from "../api";
 interface Status {
   enabled: boolean; reason: string;
   automatic_scope?: string;
+  pilot_enabled?: boolean; paid_enabled?: boolean;
   projects: { id: string; name: string }[];
   jobs: { id: string; project: string; state: string; cursor: number; reason?: string; results: string[]; automatic?: boolean; source_ids?: string[] | null; source_version?: string | null }[];
-  budget?: { limit_usd?: string; spent_usd?: string; reserved_usd?: string; available_usd: string; unknown_charges?: number; blocked: boolean; reason?: string };
+  budget?: { limit_usd?: string; spent_usd?: string; reserved_usd?: string; available_usd: string; unknown_charges?: number; unbounded_charges?: number; blocked: boolean; reason?: string; pilot?: { deadline: number; attempts: number; maximum_calls: number; cooldown_seconds: number; within_window: boolean } | null };
 }
 
 export function useOptimizationActivity(enabled: boolean) {
@@ -60,12 +61,17 @@ export function OptimizationScheduler() {
   };
   return <section aria-label="Aprendizaje en segundo plano">
     <h3>Aprendizaje en segundo plano</h3>
-    <p className="small dim">Solo analiza memoria local cuando hay quietud y recursos. Sin agentes nuevos ni llamadas pagas.</p>
+    <p className="small dim">{status?.pilot_enabled ? "Piloto Jev de métricas con llamadas pagas acotadas; requiere quietud y recursos. Sin agentes nuevos." : "Análisis local en quietud. Piloto Jev sin habilitar; sin llamadas pagas."}</p>
     {error && <p role="alert">{error}</p>}
     {status && <>
       <p>{status.reason}</p>
       {status.automatic_scope && <p className="small dim">{status.automatic_scope}. Las hipótesis requieren veredicto humano.</p>}
       {status.budget && <p className="small">Presupuesto total USD {status.budget.limit_usd ?? "en otra PC"} · confirmado {status.budget.spent_usd ?? "desconocido"} · reservado {status.budget.reserved_usd ?? "desconocido"} · disponible {status.budget.available_usd}. {status.budget.blocked && (status.budget.reason || "Cargos previos sin conciliar; pagos bloqueados.")}</p>}
+      {!!status.budget?.unknown_charges && <p className="small">Histórico de costo real desconocido: {status.budget.unknown_charges} cargo(s). Su cota permanece reservada; no se imputa cero.</p>}
+      {status.budget?.pilot && <>
+        <p className="small">Piloto {status.budget.pilot.within_window ? "habilitado" : "vencido"} · vence {new Date(status.budget.pilot.deadline * 1000).toLocaleString("es-AR")} · intentos {status.budget.pilot.attempts}/{status.budget.pilot.maximum_calls} · cooldown {status.budget.pilot.cooldown_seconds / 60} min.</p>
+        <p className="small">{status.paid_enabled ? "Apto ahora; precio y muestra se revalidan antes de enviar." : "Sin envío automático ahora: revisar quietud, pausa, precio, cooldown, topes y presupuesto."} Confianza del modelo no mide acierto; perfil existente desconocido sin evidencia de lanzamiento.</p>
+      </>}
       <button disabled={busy} onClick={() => void command({ action: "configure", enabled: !status.enabled })}>{status.enabled ? "Pausar aprendizaje" : "Habilitar aprendizaje"}</button>
       <label>Proyecto para analizar<select value={project} onChange={e => setProject(e.target.value)}><option value="">Elegí un proyecto</option>{status.projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
       <button disabled={busy || !project} onClick={() => void command({ action: "enqueue", project })}>Encolar análisis local</button>

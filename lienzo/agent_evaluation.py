@@ -59,11 +59,16 @@ def summarize(session: dict, page: dict) -> dict:
                 "has_more": bool(page.get("has_more")), "truncated": meta.get("truncated"),
                 "tool_refs_omitted": max(0, len(refs) - 80),
                 "scope": "ultimos 10 turnos leidos; texto de resultados puede estar recortado"}
-    snapshot = hashlib.sha256(json.dumps(evidence, sort_keys=True).encode()).hexdigest()
+    # Una preferencia global actual no acredita las instrucciones de una CLI viva.
+    context = {"project": session.get("repo_key") or session.get("repo"),
+               "agent": session.get("agent"), "model": session.get("model"),
+               "version": meta.get("version"), "profile": "unknown",
+               "profile_origin": "launch_evidence_unavailable"}
+    snapshot = hashlib.sha256(json.dumps({"context": context, "evidence": evidence}, sort_keys=True).encode()).hexdigest()
     return {"session_id": session["session_id"], "agent": session["agent"],
             "pc": session.get("pc"), "project": session.get("repo"),
             "model": session.get("model"), "version": meta.get("version"),
-            "evidence": evidence, "snapshot": snapshot, "durations": durations,
+            "evidence": evidence, "context": context, "snapshot": snapshot, "durations": durations,
             "usage": usages, "usage_note": "Consumo informado por fuente; no se suma como total. Codex puede informar acumulados.",
             "quality": "sin validacion funcional; no evaluada", "note": page.get("note")}
 

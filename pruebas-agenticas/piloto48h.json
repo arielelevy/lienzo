@@ -1,0 +1,18 @@
+{
+  "nombre": "lienzo-piloto48h-frente-B",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/piloto48h",
+  "reglas": ["docs/specs/evaluador-harness/piloto48h.md; USD2 total, costo histórico desconocido reservado, sin autoconfirmar"],
+  "precondiciones": [{"nombre": "Lienzo real", "url": "http://127.0.0.1:7321/health", "debeContener": "\"ok\": true"}],
+  "casos": [{
+    "id": "piloto-guardias",
+    "comando": ["py", "-m", "pytest", "tests/test_optimization_budget.py", "tests/test_jev_quote.py", "tests/test_optimization_pilot.py", "tests/test_jev.py", "tests/test_optimization_scheduler.py", "tests/test_agent_evaluation.py", "tests/test_agent_suggestions.py", "tests/test_agent_improvements_api.py", "tests/test_optimization_memory.py", "-q", "-p", "no:cacheprovider"],
+    "timeoutMs": 120000,
+    "cubre": ["lienzo/optimization_budget.py", "lienzo/optimization_cost.py", "lienzo/optimization_pilot.py", "lienzo/jev.py", "lienzo/optimization_scheduler.py", "lienzo/agent_evaluation.py", "lienzo/agent_suggestions.py", "lienzo/optimization_memory.py"]
+  }, {
+    "id": "piloto-ui",
+    "comando": ["node", "web/node_modules/@playwright/test/cli.js", "test", "-c", "web/tests-ui/playwright.config.ts", "web/tests-ui/mejoras.spec.ts", "--workers=1"],
+    "timeoutMs": 120000,
+    "cubre": ["web/src/components/OptimizationScheduler.tsx", "web/src/components/AgentImprovements.tsx", "web/tests-ui/mejoras.spec.ts"]
+  }]
+}

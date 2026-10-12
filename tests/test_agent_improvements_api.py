@@ -103,3 +103,14 @@ def test_scheduler_get_does_not_create_ledger_or_peer(http_api):
     assert code == 503
     assert peer.read_text(encoding="utf-8") == "{corrupt" and peer.stat().st_mtime_ns == stamp
     assert len(list(root.glob("peer*"))) == 1  # no apartar/reparar identidad desde GET
+
+
+def test_pilot_activation_keeps_csrf_and_pause_stops_paid_readiness(http_api, monkeypatch):
+    calls = []
+    monkeypatch.setattr(server.optimization_scheduler.pilot, "activate", lambda: calls.append("activated"))
+    code, _ = http_api("/agent-improvements/scheduler", "PUT", {"action": "start_pilot"}, csrf=False)
+    assert code == 403 and not calls
+    code, _ = http_api("/agent-improvements/scheduler", "PUT", {"action": "start_pilot"})
+    assert code == 200 and calls == ["activated"]
+    code, result = http_api("/agent-improvements/scheduler", "PUT", {"action": "configure", "enabled": False})
+    assert code == 200 and result["enabled"] is False and result["paid_enabled"] is False

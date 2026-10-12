@@ -1,15 +1,19 @@
-"""Scheduler del servidor: análisis local acotado, sin CLI ni servicios pagos."""
+"""Scheduler local y piloto Jev explícito: sin lanzar nuevas CLI."""
 from __future__ import annotations
 
 import threading
 import time
 
+import agent_evaluation
 import conocimiento
+import jev
 import optimization_activity as activity
 import optimization_budget
 import optimization_cost
 import optimization_experiment as experiment
 import optimization_memory as memory
+import optimization_pilot as pilot
+import state
 from optimization_queue import Queue
 
 
@@ -25,8 +29,14 @@ class Scheduler:
         self.project_cursor = 0
 
     def status(self):
-        return {**self.queue.view(), "reason": self.reason, "paid_enabled": False,
-                "budget": optimization_budget.Budget().status(), "adapters": optimization_cost.status(),
+        budget = optimization_budget.Budget().status()
+        active = bool(budget.get("pilot", {}).get("within_window")) if budget.get("pilot") else False
+        adapters = optimization_cost.status()
+        ready = active and self.queue.view()["enabled"] and adapters["jev"]["enabled"] and self.good_samples >= 2
+        eligible = ready and optimization_budget.Budget().pilot_eligible("status-only") and not activity.cancellation_reason(self.last_ui)
+        return {**self.queue.view(), "reason": self.reason, "paid_enabled": bool(eligible), "pilot_enabled": active,
+                "budget": budget, "adapters": adapters,
+                "paid_scope": "piloto Jev métricas; precio y reserva revalidados antes de cada envío",
                 "automatic_scope": "hasta 30 incidentes recientes por proyecto; deduplicación por versión, cooldown 120 s, cola máxima 100",
                 "new_agents_enabled": False, "projects": [{"id": p["id"], "name": p.get("nombre", p["id"])} for p in conocimiento.proyectos()]}
 
@@ -38,6 +48,8 @@ class Scheduler:
             self.last_ui = time.monotonic()
         elif action == "configure" and set(data) == {"action", "enabled"}:
             self.queue.configure(data["enabled"])
+        elif action == "start_pilot" and set(data) == {"action"}:
+            pilot.activate()
         elif action == "enqueue" and set(data) == {"action", "project"}:
             if not isinstance(data["project"], str):
                 raise ValueError("proyecto inválido")
@@ -91,6 +103,8 @@ class Scheduler:
             return
         if job is None:
             self.reason = "sin trabajos en cola"
+            if self._pilot_tick():
+                return
             self._discover()
             return
         self.reason = "analizando memoria local; sin gasto"
@@ -99,6 +113,39 @@ class Scheduler:
         except Exception as error:
             self.reason = f"análisis detenido: {type(error).__name__}"
             self.queue.change(job["id"], state="failed", reason=self.reason)
+
+    def _pilot_tick(self):
+        budget = optimization_budget.Budget()
+        status = budget.status()
+        if status["blocked"] or not status.get("pilot") or not status["pilot"]["within_window"]:
+            return False
+        def before_send():
+            reason = activity.cancellation_reason(self.last_ui)
+            if reason or not self.queue.view()["enabled"]:
+                raise ValueError(reason or "pausado por el usuario")
+        try:
+            with state.lock:
+                sessions = [dict(s) for s in state.sessions.values()
+                            if s.get("state") == "termino" and s.get("alive") is True]
+            for session in sessions:
+                report = agent_evaluation.evaluate(session)
+                counts = report["evidence"]["counts"]
+                if not counts.get("closed") or not counts.get("tools"):
+                    continue
+                sample = pilot.sample(report, experiment.manifest())
+                if not budget.pilot_eligible("jev-pilot:" + sample["snapshot"]):
+                    continue
+                conocimiento.proyecto(session["repo"])
+                before_send()
+                decision = jev.pilot_decide(sample["state"], sample["snapshot"], before_send)
+                artifact = pilot.save(sample, decision)
+                memory.record_jev(session["repo"], artifact, decision)
+                self.reason = "Jev observado con costo; hipótesis pendiente de oráculo/veredicto"
+                return True
+        except Exception as error:
+            self.reason = f"piloto detenido: {type(error).__name__}; revisar reserva/evidencia, sin reintento"
+            return True
+        return False
 
     def _step(self, job):
         jid = job["id"]

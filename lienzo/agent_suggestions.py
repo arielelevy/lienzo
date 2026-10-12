@@ -9,7 +9,10 @@ from pathlib import Path
 import agent_evaluation
 import jev
 import jev_credentials
+import optimization_budget
 import optimization_cost
+import optimization_experiment
+import optimization_pilot
 import state
 
 JUDGE_LOCK = threading.Lock()
@@ -36,8 +39,12 @@ def report(session: dict) -> dict:
     data = agent_evaluation.evaluate(session)
     data["suggestions"] = suggestions(data)
     data["jev_max_cost_usd"] = jev.MAX_COST
-    data["jev_available"] = bool(jev_credentials.available() and optimization_cost.status()["jev"]["enabled"])
+    data["jev_available"] = False
     data["paid_block_reason"] = optimization_cost.status()["jev"]["reason"]
+    budget = optimization_budget.Budget().status()
+    if budget.get("pilot") and budget["pilot"]["within_window"]:
+        data["jev_available"] = bool(jev_credentials.available() and optimization_budget.Budget().pilot_eligible("manual-status-only"))
+        data["paid_block_reason"] = "precio/cooldown/tope y muestra se revalidan antes de enviar"
     return data
 
 
@@ -52,7 +59,12 @@ def judge(session: dict, data: dict) -> dict:
             raise ValueError("la muestra cambio; actualizala antes de consultar Jev")
         if not current["evidence"]["tools"]:
             raise ValueError("no hay herramientas observadas para consultar Jev")
-        decision = jev.decide(current["evidence"])
+        budget = optimization_budget.Budget().status()
+        if budget.get("pilot"):
+            sample = optimization_pilot.sample(current, optimization_experiment.manifest())
+            decision = jev.pilot_decide(sample["state"], sample["snapshot"])
+        else:
+            decision = jev.decide(current["evidence"])
         payload = {"session_id": session["session_id"], "snapshot": current["snapshot"],
                    "evidence": current["evidence"], "decision": decision}
         root = Path(state.LIENZO) / "improvements"

@@ -117,3 +117,19 @@ def record_local_experiment(project: str, artifact: str, profiles: list[dict]) -
             return node["id"]
     finally:
         con.close()
+
+
+def record_jev(project: str, artifact: str, decision: dict) -> str:
+    con = _connect()
+    try:
+        with con:
+            node = conocimiento.crear_nodo(project, "evidencia", "Piloto Jev: hipótesis, sin etiqueta de calidad",
+                {"clase": "piloto_jev", "referencia": artifact,
+                 "hipotesis": decision["choice"], "probabilidades": decision["probabilities"],
+                 "service_cost_usd": decision["usage"]["cost"], "usage": decision["usage"],
+                 "model": decision["model"], "generation_id": decision["id"],
+                 "calidad": "sin oráculo independiente", "requires_verdict": True},
+                autor="server", clave_ingesta="jev-pilot:" + artifact, con=con)
+            return node["id"]
+    finally:
+        con.close()
