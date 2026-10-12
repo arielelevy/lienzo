@@ -62,6 +62,28 @@ def archivo(reg) -> list:
         return json.load(f)
 
 
+@pytest.mark.parametrize(
+    "before,expected", [("muerta", "termino"), ("corriendo", "corriendo"), ("te_necesita", "te_necesita")]
+)
+def test_resume_session_start_preserves_existing_identity_and_active_work(reg, before, expected):
+    session = card(reg, agent="codex", pid=42, alive=True, state=before, coordinator=True, copycat_of=UUID2)
+    st.sessions[UUID] = session
+    ses.apply_hook(session, {"pid": 42, "session_id": UUID}, "SessionStart", created=False)
+    assert session["state"] == expected and session["alive"] is True
+    assert session["session_id"] == UUID and session["pid"] == 42
+    assert session["coordinator"] and session["copycat_of"] == UUID2
+
+
+def test_old_session_start_cannot_revive_dead_pid(reg, monkeypatch):
+    session = card(reg, agent="codex", pid=41, alive=False, state="muerta")
+    st.sessions[UUID] = session
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda value: False)
+    monkeypatch.setattr(ses, "read_transcript", lambda value: None)
+    ses.apply_event({"hook_event_name": "SessionStart", "session_id": UUID, "agent": "codex", "pid": 42})
+    assert session["alive"] is False and session["state"] == "muerta"
+    assert session["pid"] == 41 and session["session_id"] == UUID
+
+
 # --- remember: solo lo que se puede relanzar ---------------------------------------------------
 
 
@@ -269,9 +291,11 @@ def test_load_sessions_deja_registro_de_las_muertas_y_de_las_vivas(reg, monkeypa
 # --- launch.launch(resume=...) -----------------------------------------------------------------
 
 
-def _nombre(agent: str) -> str:
-    """Lo que launch agrega al final para el canal nativo: solo claude, con el titulo «t»."""
-    return " -n t --remote-control t" if agent == "claude" else ""
+def _opciones_adicionales(agent: str) -> str:
+    """Nombre nativo de Claude y título administrado por Lienzo en Codex."""
+    return {"claude": " -n t --remote-control t", "codex": " -c tui.terminal_title=[] -c tui.notifications=false"}.get(
+        agent, ""
+    )
 
 
 def _cuerpo(res) -> str:
@@ -289,9 +313,9 @@ def test_resume_agrega_el_retomar_de_cada_agente(aislado_launch, monkeypatch, ag
     res = launch.launch(str(root / "p"), "t", agent, resume=UUID)
     assert res["ok"] is True and res["resumed"] is True
     exe = os.path.join(st.HOME, ".local", "bin", launch.AGENT_EXES[agent])
-    assert _cuerpo(res).endswith(f'"{exe}"{final}{_nombre(agent)}\n')
+    assert _cuerpo(res).endswith(f'"{exe}"{final}{_opciones_adicionales(agent)}\n')
     with open(res["cmd_path"], "rb") as f:
-        assert f.read().endswith(f'"{exe}"{final}{_nombre(agent)}\r\n'.encode("cp1252"))
+        assert f.read().endswith(f'"{exe}"{final}{_opciones_adicionales(agent)}\r\n'.encode("cp1252"))
 
 
 def test_sin_resume_no_cambia_nada_ni_agrega_la_marca(aislado_launch, monkeypatch):
@@ -299,7 +323,7 @@ def test_sin_resume_no_cambia_nada_ni_agrega_la_marca(aislado_launch, monkeypatc
     con_roots(monkeypatch, root)
     res = launch.launch(str(root / "p"), "t", "claude")
     assert set(res) == {"ok", "cmd_path", "native_name"}
-    assert _cuerpo(res).splitlines()[-1].endswith('claude.exe"' + _nombre("claude"))
+    assert _cuerpo(res).splitlines()[-1].endswith('claude.exe"' + _opciones_adicionales("claude"))
 
 
 MALOS = [
@@ -326,7 +350,11 @@ def test_resume_invalido_lanza_sin_retomar_y_nunca_lo_interpola(aislado_launch, 
     assert res["ok"] is True and res["resumed"] is False
     cuerpo = _cuerpo(res)
     exe = os.path.join(st.HOME, ".local", "bin", launch.AGENT_EXES[agent])
-    assert cuerpo.splitlines()[-1] == f'"{exe}"{_nombre(agent)}' and "calc" not in cuerpo and "%PATH%" not in cuerpo
+    assert (
+        cuerpo.splitlines()[-1] == f'"{exe}"{_opciones_adicionales(agent)}'
+        and "calc" not in cuerpo
+        and "%PATH%" not in cuerpo
+    )
 
 
 def test_resume_de_pi_ignora_el_id_y_no_lo_escribe(aislado_launch, monkeypatch):
@@ -349,7 +377,15 @@ def test_resume_en_tmux_va_como_argumentos_separados(aislado_launch, monkeypatch
     monkeypatch.setattr(launch, "_exe_path", lambda n: "/usr/bin/" + n)
     res = launch.launch(str(root / "p"), "t", "codex", resume=UUID)
     assert res["ok"] is True and res["resumed"] is True
-    assert FakePopen.calls[0][-3:] == ["/usr/bin/codex", "resume", UUID]
+    assert FakePopen.calls[0][-7:] == [
+        "/usr/bin/codex",
+        "resume",
+        UUID,
+        "-c",
+        "tui.terminal_title=[]",
+        "-c",
+        "tui.notifications=false",
+    ]
     FakePopen.calls.clear()
     res = launch.launch(str(root / "p"), "t", "claude", resume="x & calc")
     assert res["resumed"] is False and FakePopen.calls[0][-5] == "/usr/bin/claude"

@@ -1,0 +1,10 @@
+{
+  "round": "lienzo-optimizacion-20261012",
+  "owner_pc": "75727ff74069",
+  "limit_usd": "2",
+  "authorization": "budget-authorization.md: user transcript lines 1444/1459 verified by coordinator; REDUCED to USD 2 by user line 1663, 2026-10-12T16:24:04.979Z",
+  "prior": [
+    {"id": "gen-dec-1791817912-L2TPZcw7ifWYEqwFFw1G", "cost_usd": "0.00002268", "source": "pruebas-agenticas/resultados/mejoras/jev-real.json"},
+    {"id": "jev-initial-http400", "cost_usd": null, "source": "jev-real.json note; no usage/cost returned"}
+  ]
+}

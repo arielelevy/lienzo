@@ -1,0 +1,11 @@
+{
+  "method": "PUT",
+  "path": "/agent-improvements/scheduler",
+  "headers": {"X-Lienzo": "1", "Content-Type": "application/json"},
+  "body": {"action": "enqueue_off_on", "project": "lienzo"},
+  "state": "preparado, no medido; encolar después de activación coordinada",
+  "scope": "dos perfiles de contratos locales, sin agentes/modelos",
+  "max_service_cost_usd": 0,
+  "condition": "inactividad real180s,2 muestras CPU/memoria aptas, sin agentes/permisos vigentes; pausa entre perfiles",
+  "result": "artifact improvement/off-on y nodo evidencia; exige veredicto humano, no demuestra ahorro/calidad Caveman"
+}

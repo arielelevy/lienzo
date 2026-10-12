@@ -1,0 +1,73 @@
+{
+  "nombre": "lienzo-scheduler-frente-B",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/scheduler",
+  "reglas": [
+    "docs/specs/evaluador-harness/requirements.md: 8.1-8.7; sin pagos ni agentes nuevos, hipótesis propuestas, desconocido bloquea.",
+    "docs/specs/evaluador-harness/acceptance-final.md: muestras y oráculos revisados; permisos vigentes/expirados/muertos, GET sin escrituras, pausa y ensayo local sin agentes."
+  ],
+  "precondiciones": [
+    {
+      "nombre": "Lienzo real activo",
+      "url": "http://127.0.0.1:7321/health",
+      "debeContener": "\"ok\": true"
+    }
+  ],
+  "casos": [
+    {
+      "id": "mejoras-backend",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_agent_improvements.py",
+        "tests/test_agent_evaluation.py",
+        "tests/test_agent_suggestions.py",
+        "tests/test_agent_improvements_api.py",
+        "tests/test_jev_credentials.py",
+        "tests/test_jev.py",
+        "tests/test_launch_improvements.py",
+        "tests/test_preparar_mejoras.py",
+        "tests/test_launch.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 120000,
+      "cubre": [
+        "lienzo/agent_improvements.py",
+        "lienzo/server.py"
+      ]
+    },
+    {
+      "id": "scheduler-focal",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_optimization_activity.py",
+        "tests/test_optimization_budget.py",
+        "tests/test_optimization_queue.py",
+        "tests/test_optimization_scheduler.py",
+        "tests/test_optimization_memory.py",
+        "tests/test_optimization_experiment.py",
+        "tests/test_agent_improvements_api.py",
+        "tests/test_jev.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 120000,
+      "cubre": [
+        "lienzo/optimization_activity.py",
+        "lienzo/optimization_budget.py",
+        "lienzo/optimization_queue.py",
+        "lienzo/optimization_scheduler.py",
+        "lienzo/optimization_memory.py",
+        "lienzo/server.py",
+        "lienzo/jev.py",
+        "lienzo/optimization_experiment.py"
+      ]
+    }
+  ]
+}

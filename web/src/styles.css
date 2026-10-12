@@ -26,6 +26,17 @@ header .menu { position: relative; }
 header .dropdown { position: absolute; right: 0; top: calc(100% + 6px); min-width: 300px; max-width: 360px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(0,0,0,.45); z-index: 25; }
 header .dropdown { max-height: calc(100dvh - 110px); overflow-y: auto; }
 header .dropdown button:hover { background: var(--card); }
+.board-context { display: flex; flex-direction: column; min-width: 210px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+.board-context button { display: block; width: 100%; padding: 7px 10px; background: transparent; border: 0; border-radius: 3px; text-align: left; white-space: nowrap; font-size: 13px; }
+.board-context button:hover, .board-context button:focus { background: var(--card); outline: none; }
+.agent-improvements { padding: 12px; max-width: 620px; }
+.agent-improvements label { display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; }
+.agent-improvements input[type="checkbox"] { width: auto; }
+.agent-improvements article { padding: 10px; margin: 10px 0; background: var(--card); border: 1px solid var(--line); border-radius: 6px; }
+.agent-improvements article p { margin: 6px 0; }
+.agent-improvements pre { max-height: 220px; overflow: auto; font-size: 11px; }
+.agent-improvements-dialog { color: var(--fg); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.gate-box .agent-improvements label { flex-direction: row; justify-content: flex-start; color: var(--fg); font-size: 13px; }
 /* menu ⋯: acciones de una linea, despues dos grupos de interruptores con switch a la derecha */
 header .dropdown { min-width: 0; width: 290px; padding: 6px; }
 header .dropdown button { background: none; border: 0; border-radius: 6px; text-align: left; flex-shrink: 0; display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 12px; row-gap: 1px; padding: 7px 10px; font-size: 13px; }

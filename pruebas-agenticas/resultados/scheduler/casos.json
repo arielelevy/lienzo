@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "casos": [
+    {
+      "id": "scheduler-focal",
+      "archivo": "tests/test_optimization_scheduler.py",
+      "requisitos": [
+        "scheduler-sin-gasto",
+        "scheduler-pausa",
+        "scheduler-lectura",
+        "scheduler-auto",
+        "permisos-vigentes"
+      ],
+      "nodos": [
+        "scheduler-local"
+      ],
+      "tipo": "positivo",
+      "datos": [
+        "recursos conocidos y desconocidos",
+        "permisos vivos/expirados/muertos",
+        "fuentes por versión",
+        "ledger temporal"
+      ],
+      "tecnica": "tabla-decision",
+      "clase": "controles locales de scheduler y memoria",
+      "oraculo": {
+        "fuente": "requisito",
+        "ref": "scheduler-pausa",
+        "auditado": true
+      },
+      "escenario": {
+        "dado": "una app local con memoria, permisos y presupuesto temporal",
+        "cuando": "se evalúan estados y fronteras de pausa",
+        "entonces": "lecturas sin escritura, propuesta solo en quietud, deduplicación y cero pagos sin cota"
+      },
+      "justificacion": "Muestras de assertions revisadas en acceptance-final.md; aprobación explícita140806, corrida80tests código0 preservada antes de fijar baseline; incluye positivos/negativos/límites en pytest",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_optimization_activity.py",
+        "tests/test_optimization_budget.py",
+        "tests/test_optimization_queue.py",
+        "tests/test_optimization_scheduler.py",
+        "tests/test_optimization_memory.py",
+        "tests/test_optimization_experiment.py",
+        "tests/test_agent_improvements_api.py",
+        "tests/test_jev.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "cubre": [
+        "lienzo/optimization_activity.py",
+        "lienzo/optimization_budget.py",
+        "lienzo/optimization_queue.py",
+        "lienzo/optimization_scheduler.py",
+        "lienzo/optimization_memory.py",
+        "lienzo/optimization_experiment.py"
+      ]
+    },
+    {
+      "id": "mejoras-backend",
+      "archivo": "tests/test_agent_improvements.py",
+      "requisitos": [
+        "scheduler-sin-gasto"
+      ],
+      "nodos": [],
+      "tipo": "negativo",
+      "datos": [
+        "contratos de mejoras/argumentos/HTTP/credenciales con proveedores simulados"
+      ],
+      "tecnica": "particion",
+      "clase": "preservación de integración inicial",
+      "oraculo": {
+        "fuente": "requisito",
+        "ref": "scheduler-sin-gasto",
+        "auditado": true
+      },
+      "escenario": {
+        "dado": "mejoras autorizadas para CLI nuevos",
+        "cuando": "se validan contratos, rechazos y errores",
+        "entonces": "no se ejecutan acciones fuera de alcance ni se inventan datos/costo"
+      },
+      "justificacion": "Caso vigente aprobado en alcance B y revisión140806;80tests código0 preservados antes de baseline; oráculos según design.md y assertions existentes, sin inferencias reales",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_agent_improvements.py",
+        "tests/test_agent_evaluation.py",
+        "tests/test_agent_suggestions.py",
+        "tests/test_agent_improvements_api.py",
+        "tests/test_jev_credentials.py",
+        "tests/test_jev.py",
+        "tests/test_launch_improvements.py",
+        "tests/test_preparar_mejoras.py",
+        "tests/test_launch.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "cubre": [
+        "lienzo/agent_improvements.py",
+        "lienzo/server.py"
+      ]
+    }
+  ],
+  "huellas": {
+    "scheduler-sin-gasto": "5113cb0f08a5d1c2",
+    "scheduler-pausa": "4ab02f18a7cccde1",
+    "scheduler-lectura": "c21b19081c432f31",
+    "scheduler-auto": "8ac5b57ce87441f3",
+    "permisos-vigentes": "f93c68f906159b97"
+  }
+}

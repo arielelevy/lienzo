@@ -21,6 +21,7 @@ import { UrlQr } from "./components/UrlQr";
 import { useLienzoData } from "./hooks/useLienzoData";
 import { useLocalFlag } from "./hooks/useLocalFlag";
 import { useNotifications } from "./hooks/useNotifications";
+import { useOptimizationActivity } from "./components/OptimizationScheduler";
 import type { Config, ConfigPut, Session, State } from "./types";
 
 /** sin /auth todavia: cada cuanto se reintenta y desde cuantas fallas seguidas se dice el motivo */
@@ -29,6 +30,7 @@ const AUTH_FAILS_SHOWN = 3;
 
 export default function App() {
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
+  useOptimizationActivity(Boolean(authInfo && (authInfo.local || authInfo.authenticated)));
   // fallas seguidas de /auth y la ultima: sin authInfo la pantalla es "conectando…", y antes un
   // /auth que fallaba al abrir (server reiniciandose, sin red) la dejaba asi para siempre, sin
   // reintentar ni decir por que
@@ -450,7 +452,6 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         }}
         onHelp={() => setShowHelp(true)}
         onKnowledge={() => { closeOverlays(true); setShowKnowledge(true); }}
-        onRescan={rescan}
         projects={
           <ProjectStrip
             groups={projectGroups}
@@ -515,6 +516,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <ConsultasBar />
       </div>
       <Board
+        onRescan={rescan}
         sessions={sessions}
         pending={pending}
         selected={selected}

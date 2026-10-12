@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import threading
 import traceback
@@ -13,26 +12,12 @@ import backend
 import state
 import subproc
 import tmux
-from tarjeta_texto import strip_control
+from work_titles import project_title
 
 INTERVAL_S = 30
 _start_lock = threading.Lock()
 _started = False
-_NAMED_WORK = re.compile(r"^.+?\s+-\s+(?:encargo\b|coordinador[ae]?\b)", re.IGNORECASE)
-
-
-def project_title(card: dict) -> str:
-    title = strip_control(str(card.get("title") or "")).strip()
-    project = strip_control(str(card.get("repo") or "")).strip()
-    if not project:
-        return title
-    if not title:
-        return project
-    if title.casefold() == project.casefold() or title.casefold().startswith(project.casefold() + " - "):
-        return title
-    if _NAMED_WORK.match(title):
-        return title  # nombres explícitos: chesstudia - encargo B, aunque la carpeta sea chess
-    return project[0].upper() + project[1:] + " - " + title
+_attempted: dict[str, tuple] = {}
 
 
 def native_title(card: dict, title: str) -> dict:
@@ -78,6 +63,10 @@ def sync_once() -> None:
             for s in state.sessions.values()
             if s.get("alive") and s.get("pid") and not s.get("no_console") and not s.get("orphan")
         ]
+        active_ids = {card["session_id"] for card in cards}
+        for sid in list(_attempted):
+            if sid not in active_ids:
+                del _attempted[sid]
     for card in cards:
         title = state.short(project_title(card), 120)
         if not title:
@@ -89,6 +78,11 @@ def sync_once() -> None:
             if current.get("title") != title:
                 current["title"] = title
                 sessions.touch(current)
+            signature = (card["pid"], title, card.get("agent"), card.get("target"), card.get("distro"))
+            if _attempted.get(card["session_id"]) == signature:
+                continue
+            # Registrar el intento antes del helper: un fallo se informa, no se repite cada ciclo.
+            _attempted[card["session_id"]] = signature
         result = native_title(card, title)
         error = None if result.get("ok") else result.get("error") or "no se pudo cambiar el título de la consola"
         state.avisar_si_cambia(f"título de consola {card['session_id'][:8]}", error)

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Arrows } from "./Arrows";
 import { Launch } from "./Launch";
+import { AgentImprovements } from "./AgentImprovements";
 import { Card, freeGroups, PICK_MS } from "./Card";
 import { pcOf } from "./PcStrip";
 import { passesProjects } from "./ProjectStrip";
@@ -25,6 +26,7 @@ export const colOf = (s: Session): ColKey => (s.orphan || s.alive === false ? "m
 const FILTER_STATE: Record<ColKey, State> = { trabajo: "corriendo", te_necesita: "te_necesita", muerta: "muerta" };
 
 interface Props {
+  onRescan: () => void;
   sessions: Record<string, Session>;
   pending: Record<string, Pending>;
   selected: string | null;
@@ -288,10 +290,11 @@ interface Move {
 /** sin proyectos elegidos: un Set estable, para no romper el useMemo del tablero en cada render */
 const NINGUNO: Set<string> = new Set();
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, onRescan, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [context, setContext] = useState<{ x: number; y: number } | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
+  const [improvementsOpen, setImprovementsOpen] = useState(false);
   useEffect(() => {
     if (!context) return;
     const close = () => setContext(null);
@@ -789,10 +792,24 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     <>
       {context && createPortal(<div role="menu" aria-label="Área libre" className="board-context"
         style={{ position: "fixed", left: context.x, top: context.y, zIndex: 1000 }}
-        onPointerDown={e => e.stopPropagation()}>
+        onPointerDown={e => e.stopPropagation()}
+        onContextMenu={e => e.preventDefault()}
+        onKeyDown={e => {
+          if (e.key === "Tab") { setContext(null); return; }
+          if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+          const current = items.indexOf(document.activeElement as HTMLButtonElement);
+          const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (current + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+          items[next]?.focus();
+        }}>
         <button role="menuitem" autoFocus onClick={() => { setContext(null); setLaunchOpen(true); }}>Lanzar CLI…</button>
+        <button role="menuitem" onClick={() => { setContext(null); onRescan(); }} title="el barrido se hace solo cada 30 s">Buscar sesiones ahora</button>
+        <button role="menuitem" onClick={() => { setContext(null); setImprovementsOpen(true); }}>Mejoras de agentes…</button>
       </div>, document.body)}
       {launchOpen && createPortal(<div className="gate"><Launch peers={peers} sessions={Object.values(sessions)} toast={toast} onClose={() => setLaunchOpen(false)} /></div>, document.body)}
+      {improvementsOpen && createPortal(<div className="gate"><dialog ref={el => { if (el && !el.open) el.showModal(); }} className="gate-box agent-improvements-dialog" aria-label="Mejoras de agentes" onKeyDown={e => e.stopPropagation()} onCancel={e => { e.preventDefault(); setImprovementsOpen(false); }}><h2>Mejoras de agentes</h2><AgentImprovements /><button onClick={() => setImprovementsOpen(false)}>Cerrar</button></dialog></div>, document.body)}
       {/* selector de columna, solo abajo de 900 px (una columna por vez). Un permiso pendiente en
           otra columna se marca con un punto: ahi no se ven las tarjetas, y sin la marca el pedido
           pasaba desapercibido hasta que vencia */}
@@ -819,7 +836,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         onContextMenu={e => {
           if (escBlocked || selected || (e.target as HTMLElement).closest("[data-sid], button, input, textarea, select, a, dialog")) return;
           e.preventDefault();
-          setContext({ x: Math.max(0, Math.min(e.clientX, window.innerWidth - 180)), y: Math.max(0, Math.min(e.clientY, window.innerHeight - 55)) });
+          setContext({ x: Math.max(0, Math.min(e.clientX, window.innerWidth - 220)), y: Math.max(0, Math.min(e.clientY, window.innerHeight - 140)) });
         }}
         // una tarjeta corrida para abajo sale del alto natural del tablero (absoluta, no lo empuja):
         // el tablero se estira hasta taparla, asi no queda media tarjeta cortada

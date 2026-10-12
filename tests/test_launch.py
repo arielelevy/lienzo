@@ -108,12 +108,24 @@ def test_launch_escribe_el_cmd_y_lo_abre_con_explorer(aislado, monkeypatch):
     with open(cmd_path, encoding="cp1252", newline="") as f:
         cuerpo = f.read()  # newline="": sin traduccion universal, para ver el CRLF tal cual se escribio
     assert "chcp 1252" in cuerpo
-    assert "title mi sesion" in cuerpo
+    assert "title proyecto ^| mi sesion" in cuerpo
     assert f'cd /d "{cwd}"' in cuerpo
     exe_esperado = os.path.join(st.HOME, ".local", "bin", "claude.exe")
     assert f'"{exe_esperado}"' in cuerpo
     assert "\r\n" in cuerpo
     assert FakePopen.calls == [["explorer.exe", cmd_path]]
+
+
+def test_codex_deja_titulo_a_lienzo_solo_en_la_invocacion(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_roots(monkeypatch, root)
+    res = launch.launch(str(root / "lienzo"), "Lienzo - Lienzo | encargo A - prueba", "codex")
+    with open(res["cmd_path"], encoding="cp1252") as archivo:
+        cuerpo = archivo.read()
+    assert "title lienzo ^| encargo A - prueba" in cuerpo
+    assert "-c tui.terminal_title=[]" in cuerpo
+    assert cuerpo.count("tui.terminal_title") == 1
+    assert "-c tui.notifications=false" in cuerpo
 
 
 @pytest.mark.parametrize(
@@ -143,7 +155,8 @@ def test_titulo_con_metacaracteres_se_limpia(aislado, monkeypatch):
     assert "&" not in linea_titulo
     assert '"' not in linea_titulo
     assert "%" not in linea_titulo
-    assert "^" not in linea_titulo
+    assert "^|" in linea_titulo  # el separador queda literal, no crea un pipeline de cmd
+    assert "^" not in linea_titulo.replace("^|", "")
 
 
 def test_titulo_vacio_no_deja_la_linea_en_blanco(aislado, monkeypatch):
@@ -153,7 +166,7 @@ def test_titulo_vacio_no_deja_la_linea_en_blanco(aislado, monkeypatch):
     assert res["ok"] is True
     with open(res["cmd_path"], encoding="cp1252") as f:
         cuerpo = f.read()
-    assert "title lienzo" in cuerpo
+    assert "title proyecto ^| sesión" in cuerpo
 
 
 def test_cwd_que_no_existe_se_rechaza(aislado, monkeypatch):
@@ -199,7 +212,7 @@ def test_fuera_de_windows_lanza_adentro_de_tmux_sin_el_entorno_de_claude(aislado
         "-s",
         res["tmux_session"],
         "-n",
-        "miapp - encargo A rm -rf",
+        "miapp | encargo A rm -rf",
         "-c",
         str(root / "proyecto"),
     ]

@@ -1,0 +1,18 @@
+# Aceptación revisada — frente B, 2026-10-12
+
+Autorización humana: adjunto 20261012-140806-e2bfaffa5fd3-mensaje.md: «Ariel insiste TERMINAR y aprobación explícita TODO» y «aplicá autorización de Ariel para baseline/propuestas revisadas sin tapar falla». Condición anterior135958: preservar corrida sin --fijar, revisar muestras contra oráculos. Se cumplió antes de fijar referencia de scheduler.json; no autorización de mutaciones no revisadas ni de pagar sin cota.
+
+Corrida original preservada 2026-10-12T17-13-44.222Z-27528: mejoras-backend80 passed, scheduler-focal80 passed; códigos0/0, fallas=[] en actual.json, logs completos leídos. Tests solapados: no sumar160 casos independientes. Runner1 por baseline ausente, no por defecto. Se informó muestra/resultados en conversación antes de --fijar. Baseline aprobado solamente para estos2 casos y esta configuración; no tocar baselines generales de A.
+
+Oráculos revisados por requisito/fuente, no por la salida actual del producto:
+
+- Permisos: requisitos del adjunto140823: fecha UTC vigente + sesión viva bloquea; expirado/muerto no; fecha desconocida y contexto vivo/incierto bloquean. test_only_current_permissions_block_without_altering_history verifica8 particiones con reloj explícito y comparación del registro intacto. No approve/deny/delete real.
+- GET: requisito10.1; tests test_scheduler_get_does_not_create_ledger_or_peer y test_status_is_readonly_before_and_after_explicit_activation verifican bytes/mtime/no archivos nuevos/identidad corrupta sin reparación; start explícito distinto de lectura.
+- Pausa:10.3; test_activity_during_sources_prevents_proposal_and_preserves_cursor y test_pause_before_write_preserves_pending_source exigen cero propuestas; test_activity_during_proposal_keeps_transaction_result_then_pauses conserva resultado/cursor después de transacción. Señales controladas en fixtures, no medición de latencia OS.
+- Autoencolado:10.2; test_auto_enqueue_new_memory_once_without_own_hypothesis_loop y test_source_version_ignores_generated_hypotheses_and_changes_for_new_incident prueban versión/fuente/incidente/cooldown. Memoria temporal real; sin hipótesis confirmadas.
+- Presupuesto:9.1-9.3; tests de autoridad/concurrencia/límite reducido/reserva persistente/timeout/invalid money/costo confirmado en respuesta inválida. Proveedor simulado, ninguna credencial real ni inferencia. Jev sin máximo comprobable no envía.
+- Encargo OFF/ON: tests de manifiesto cambiado/no subprocess, retorno de usuario entre perfiles/oráculo fallido→review. Solo contratos locales y USD0 servicios; no calidad de coding agent ni Caveman, no reintento automático.
+
+Encargo autoejecutable integrado al servidor: PUT /agent-improvements/scheduler {action:enqueue_off_on,project:<id local Lienzo>}, también botón «Comparar RTK cuando esté libre». Espera señales reales,2 muestras,180s, recursos/permisos activos; dos perfiles fijos en ticks separados. Fuentes congeladas por hash; si cambian, invalidar. Límite subprocess10s con limpieza de árbol propio; no matar agentes. Resultado en improvements/off-on-<hash>.json y nodo evidencia en memoria, requiere veredicto. Antes de ejecución profiles=[]/no medido. No ejecutar en tree compartido si hay agentes activos (señal bloquea).
+
+Sin mutaciones aprobadas en config: compuerta debe escalar por ese hueco, no inventar PASS. No mutar árbol activo; preparación aislada solo si se revisa/aprueba un conjunto concreto de mutaciones. No cambios de umbrales. UI y presupuesto/actividad real aún requieren activación coordinada de últimos cambios, y observar ensayo bajo quietud. Tope USD2 TOTAL; costo histórico desconocido y proveedor sin máximo siguen bloqueando pagos.

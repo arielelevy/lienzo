@@ -45,12 +45,12 @@ export function Launch({ peers, sessions, onClose, toast }: {
     setBusy(true);
     setError("");
     try {
-      const result = await api.post<{ ok: boolean; error?: string }>("/sessions/launch", {
+      const result = await api.post<{ ok: boolean; error?: string; aviso?: string }>("/sessions/launch", {
         cwd: directory, title: elegida?.title ?? "", agent, ...(pc ? { pc } : {}),
         ...(distro ? { distro } : {}),
       });
       if (!result.ok) throw new Error(result.error || "No se pudo lanzar la CLI");
-      toast?.("CLI lanzada");
+      toast?.(result.aviso ? `CLI lanzada. ${result.aviso}` : "CLI lanzada");
       onClose();
     } catch (e) { setError((e as Error).message); }
     finally { sending.current = false; setBusy(false); }

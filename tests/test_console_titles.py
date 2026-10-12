@@ -7,18 +7,29 @@ import sessions
 import state
 
 
+@pytest.fixture(autouse=True)
+def isolated_title_attempts(monkeypatch):
+    monkeypatch.setattr(ct, "_attempted", {})
+
+
 @pytest.mark.parametrize(
     "title,repo,expected",
     [
-        ("Agrega validaciones", "lienzo", "Lienzo - Agrega validaciones"),
-        ("Lienzo - encargo A", "lienzo", "Lienzo - encargo A"),
-        ("lienzo - revisar", "lienzo", "lienzo - revisar"),
-        ("chesstudia - encargo B - revisar", "chess", "chesstudia - encargo B - revisar"),
-        ("chesstudia - coordinadora - ECO", "chess", "chesstudia - coordinadora - ECO"),
-        ("encargo B - revisar", "chess", "Chess - encargo B - revisar"),
-        ("revisar · copycat", "lienzo", "Lienzo - revisar · copycat"),
+        ("Agrega validaciones", "lienzo", "lienzo | Agrega validaciones"),
+        ("Lienzo - encargo A", "lienzo", "lienzo | encargo A"),
+        ("lienzo - revisar", "lienzo", "lienzo | revisar"),
+        ("chesstudia - encargo B - revisar", "chess", "chesstudia | encargo B - revisar"),
+        ("chesstudia - coordinadora - ECO", "chess", "chesstudia | coordinadora - ECO"),
+        ("encargo B - revisar", "chess", "chess | encargo B - revisar"),
+        ("revisar · copycat", "lienzo", "lienzo | revisar · copycat"),
         ("Proyecto", None, "Proyecto"),
-        (None, "lienzo", "lienzo"),
+        (None, "lienzo", "lienzo | sesión"),
+        ("Lienzo - lienzo | encargo A - pruebas", "lienzo", "lienzo | encargo A - pruebas"),
+        ("Lienzo - Lienzo | encargo A - pruebas", "lienzo", "lienzo | encargo A - pruebas"),
+        ("lienzo | lienzo | tarea", "lienzo", "lienzo | tarea"),
+        ("encargo A - pruebas | lienzo", "lienzo", "lienzo | encargo A - pruebas"),
+        ("LIENZO | encargo B - Caveman RTK y Jev", "LIENZO", "lienzo | encargo B - Caveman RTK y Jev"),
+        ("CHESSTUDIA - encargo B - ECO", "chess", "chesstudia | encargo B - ECO"),
     ],
 )
 def test_project_prefix(title, repo, expected):
@@ -42,12 +53,35 @@ def test_sync_updates_card_and_console_without_sending(monkeypatch):
     monkeypatch.setattr(ct, "native_title", lambda s, title: renamed.append((s["pid"], title)) or {"ok": True})
     monkeypatch.setattr(sessions, "send_to_session", lambda *a: pytest.fail("no debe enviar teclas"))
     ct.sync_once()
-    assert card["title"] == "Lienzo - Agrega validaciones"
+    assert card["title"] == "lienzo | Agrega validaciones"
     assert card["title_source"] == "prompt"
     assert len(saved) == 1 and renamed == [(42, card["title"])]
     ct.sync_once()
     assert len(saved) == 1  # no duplicar el prefijo ni guardar otra vez la tarjeta
-    assert len(renamed) == 2  # seguir corrigiendo un título que la TUI reescriba
+    assert len(renamed) == 1  # no volver a escribir por el ciclo periódico
+    card["title"] = "lienzo | encargo A - RTK/Jev"
+    ct.sync_once()
+    assert renamed[-1] == (42, card["title"]) and len(renamed) == 2
+    card["pid"] = 43
+    ct.sync_once()
+    assert renamed[-1] == (43, card["title"]) and len(renamed) == 3
+
+
+def test_failed_title_is_visible_and_not_retried_until_change(monkeypatch):
+    card = {"session_id": "s", "pid": 42, "alive": True, "agent": "codex", "repo": "lienzo", "title": "tarea"}
+    monkeypatch.setattr(state, "sessions", {"s": card})
+    monkeypatch.setattr(sessions, "touch", lambda s: None)
+    calls, notices = [], []
+    monkeypatch.setattr(
+        ct, "native_title", lambda s, title: calls.append(title) or {"ok": False, "error": "fixture error"}
+    )
+    monkeypatch.setattr(state, "avisar_si_cambia", lambda key, error: notices.append(error))
+    ct.sync_once()
+    ct.sync_once()
+    assert calls == ["lienzo | tarea"] and notices == ["fixture error"]
+    card["title"] = "nueva tarea"
+    ct.sync_once()
+    assert calls == ["lienzo | tarea", "lienzo | nueva tarea"]
 
 
 def test_read_only_and_dead_sessions_are_not_renamed(monkeypatch):

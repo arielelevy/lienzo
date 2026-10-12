@@ -18,7 +18,6 @@ interface Props {
   onShowPairing: () => void;
   onHelp: () => void;
   onKnowledge?: () => void;
-  onRescan: () => void;
   onLogout: () => void;
   /** el menu ⋯ se acaba de abrir (no en cada toggle): abrirlo es cambiar de contexto, asi que App
    *  cierra lo que haya abierto detras (panel, dialogo de conectar, ayuda) */
@@ -45,7 +44,7 @@ const Phone = () => (
 
 /** Header minimalista: marca y estado, buscador con chips por agente, acceso desde el celular
  *  (URL del tunel y QR de Authenticator, juntos) y un menu "⋯" con el resto. */
-export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onShowPairing, onHelp, onKnowledge, onRescan, onLogout, onMenuOpen, flags, projects }: Props) {
+export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onShowPairing, onHelp, onKnowledge, onLogout, onMenuOpen, flags, projects }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -153,9 +152,6 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
               </div>
             ))}
             <div className="acciones">
-              <button role="menuitem" onClick={closeAnd(onRescan)} title="el barrido se hace solo cada 30 s">
-                <span className="nombre">Buscar sesiones ahora</span>
-              </button>
               <button role="menuitem" onClick={closeAnd(() => window.open("/docs", "_blank", "noopener"))}>
                 <span className="nombre">Referencia</span>
                 <span className="aparte">otra pestaña</span>

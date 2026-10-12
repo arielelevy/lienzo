@@ -1,0 +1,25 @@
+{
+  "nombre": "lienzo-mejoras-frente-B",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/mejoras",
+  "reglas": [
+    "docs/specs/evaluador-harness/design.md: Caveman breve sin proxy; RTK explícito; Jev no ejecuta acciones.",
+    "docs/specs/evaluador-harness/requirements.md: resultados ausentes no son éxito; costo ausente no es cero.",
+    "web/tests-ui/tablero-fijo.ts: ninguna prueba UI escribe en sesiones reales."
+  ],
+  "precondiciones": [{"nombre": "Lienzo real sirve la UI", "url": "http://127.0.0.1:7321/", "debeContener": "Lienzo"}],
+  "casos": [
+    {
+      "id": "mejoras-backend",
+      "comando": ["py", "-m", "pytest", "tests/test_agent_improvements.py", "tests/test_agent_evaluation.py", "tests/test_agent_suggestions.py", "tests/test_agent_improvements_api.py", "tests/test_jev_credentials.py", "tests/test_jev.py", "tests/test_launch_improvements.py", "tests/test_preparar_mejoras.py", "tests/test_launch.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 120000,
+      "cubre": ["lienzo/agent_improvements.py", "lienzo/agent_evaluation.py", "lienzo/agent_suggestions.py", "lienzo/jev.py", "lienzo/jev_credentials.py", "lienzo/launch.py", "lienzo/server.py", "ops/preparar-mejoras.py"]
+    },
+    {
+      "id": "mejoras-ui",
+      "comando": ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "tests-ui/playwright.config.ts", "mejoras.spec.ts", "--workers", "1"],
+      "cwd": "web", "timeoutMs": 120000,
+      "cubre": ["web/src/components/AgentImprovements.tsx", "web/src/components/Board.tsx", "web/src/components/Panel.tsx"]
+    }
+  ]
+}

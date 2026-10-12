@@ -46,6 +46,7 @@ def _sin_estado_real(tmp_path, monkeypatch):
 
     monkeypatch.setenv("CODA_HOME", str(tmp_path / "coda-home"))
     monkeypatch.setenv("LIENZO_HOME", str(tmp_path / "lienzo-home"))
+    monkeypatch.setattr(state, "LIENZO", str(tmp_path / "lienzo-home"))
     monkeypatch.setattr(state, "LOG", str(tmp_path / "lienzo.log"))
     monkeypatch.setattr(state, "CONFIG_FILE", str(tmp_path / "config.json"))
     monkeypatch.setattr(state, "SESSIONS", str(tmp_path / "sessions"))

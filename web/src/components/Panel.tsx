@@ -6,6 +6,7 @@ import { isFree, needsPiReload, periodLabel, schedLabel, stalledReason } from ".
 import { Ask, askQuestions } from "./Ask";
 import { PermissionPrompt } from "./PermissionPrompt";
 import { Digest } from "./Digest";
+import { AgentImprovements } from "./AgentImprovements";
 import { SendBox } from "./SendBox";
 import type { ConnectionRule, ConnectionsResponse, DigestResponse, OtherSession, Pending, Session } from "../types";
 
@@ -174,7 +175,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
 export function Panel({ session: s, others, transcriptTick, onClose, toast, details, anchor, pending, onDecide, onAnswer }: Props) {
   // el pendiente puede ser una pregunta con opciones y no un permiso: ahi van las opciones
   const preguntas = askQuestions(pending);
-  const [tab, setTab] = useState<"digest" | "screen" | "conn">("digest");
+  const [tab, setTab] = useState<"digest" | "screen" | "conn" | "improvements">("digest");
   const [screen, setScreen] = useState<ScreenResponse | null>(null);
   // devuelve el resultado en vez de setearlo: el efecto decide si todavia aplica (cancelled)
   const fetchScreen = useCallback((): Promise<ScreenResponse> =>
@@ -266,7 +267,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
           if (!cancelled) setScreen(r);
           return;
         }
-        if (tab === "conn") return; // ya cargado por el efecto de conexiones
+        if (tab === "conn" || tab === "improvements") return; // cargado por su propia vista
         const d = await sessionsApi.digest(s.session_id, 10);
         if (!cancelled) {
           setDigest(d);
@@ -397,6 +398,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
         <div className="tabs">
           <button className={tab === "digest" ? "on" : ""} onClick={() => setTab("digest")} title="lo que pasó en cada turno: pedido, lo que fue diciendo y la respuesta">Chat</button>
           <button className={tab === "conn" ? "on" : ""} onClick={() => setTab("conn")} title="qué mandó, qué recibió y qué conexiones siguen activas">Conexiones</button>
+          <button className={tab === "improvements" ? "on" : ""} onClick={() => setTab("improvements")}>Mejoras</button>
           {can(s.agent, "screen") && !s.orphan && (
             <button className={tab === "screen" ? "on" : ""} onClick={() => setTab("screen")} title="texto visible de la terminal, leído del buffer">Pantalla</button>
           )}
@@ -441,7 +443,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
       )}
       <div className="body" ref={bodyRef}>
         <ErrorBoundary resetKey={`${s.session_id}:${tab}:${transcriptTick}`}>
-        {tab === "screen" ? (
+        {tab === "improvements" ? <AgentImprovements key={s.session_id} sid={s.session_id} /> : tab === "screen" ? (
           <>
             <div className="row" style={{ marginBottom: 8 }}>
               <span className="small dim">Buffer de la consola ({screen?.cols ?? "?"} columnas). No es la salida en vivo: es lo que hay pintado ahora.</span>

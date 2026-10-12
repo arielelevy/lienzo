@@ -1538,7 +1538,7 @@ def apply_hook(s: dict, ev: dict, name: str, created: bool) -> None:
     if name == "SessionStart":
         if s["agent"] == "pi":
             set_state(s, "termino" if ev.get("pi_idle", True) else "corriendo")
-        elif created:
+        elif created or s.get("state") == "muerta":
             set_state(s, "termino")
     elif name == "PiBusy" and s["agent"] == "pi":
         set_state(s, "corriendo")

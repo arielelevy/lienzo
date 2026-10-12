@@ -11,7 +11,7 @@ import sys
 import procinfo
 
 
-def update(pid: int, agent: str, title: str) -> dict:
+def update(pid: int, agent: str, title: str | None) -> dict:
     if sys.platform != "win32":
         return {"ok": False, "error": "esta operación requiere Windows"}
     if procinfo.process_agent(pid) != agent:
@@ -27,6 +27,8 @@ def update(pid: int, agent: str, title: str) -> dict:
     try:
         before = ctypes.create_unicode_buffer(32768)
         k32.GetConsoleTitleW(before, len(before))
+        if title is None:
+            return {"ok": True, "pid": pid, "changed": False, "title": before.value}
         changed = before.value != title
         if changed and not k32.SetConsoleTitleW(title):
             raise ctypes.WinError(ctypes.get_last_error())
@@ -45,7 +47,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pid", type=int, required=True)
     parser.add_argument("--agent", required=True)
-    parser.add_argument("--title", required=True)
+    operation = parser.add_mutually_exclusive_group(required=True)
+    operation.add_argument("--title")
+    operation.add_argument("--read", action="store_true")
     args = parser.parse_args()
     result = update(args.pid, args.agent, args.title)
     print(json.dumps(result))  # ASCII JSON: estable aunque AttachConsole cambie la página de códigos

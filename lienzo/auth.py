@@ -51,7 +51,8 @@ def _atomic(path: str, obj) -> None:
 def _load(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
     except OSError, ValueError:
         return {}
 
@@ -227,33 +228,19 @@ def _prune(sessions: dict) -> None:
             del sessions[k]
 
 
-# sessions-web.json se relee solo cuando cambia en disco (login, logout, purga): por el tunel cada
-# request trae la cookie y antes se abria y parseaba el archivo en cada uno
-_web_cache: dict = {"mtime": None, "data": {}}
-
-
-def _web_sessions() -> dict:
-    try:
-        mtime = os.path.getmtime(WEB_SESSIONS)
-    except OSError:
-        mtime = None
-    if mtime != _web_cache["mtime"]:
-        _web_cache["data"] = _load(WEB_SESSIONS) if mtime is not None else {}
-        _web_cache["mtime"] = mtime
-    return _web_cache["data"]
-
-
 def check(token: str | None) -> bool:
     if not token:
         return False
     with _lock:
-        sessions = _web_sessions()
+        # Leer el contenido vigente: mtime/tamaño pueden conservarse tras una revocación
+        # o una edición externa. Ninguna versión anterior debe seguir autorizando acceso.
+        sessions = _load(WEB_SESSIONS)
         entry = sessions.get(_key(token))
-        if not entry:
+        if not isinstance(entry, dict):
             return False
         try:
             return dt.datetime.fromisoformat(entry["expires"]) > now()
-        except KeyError, ValueError:
+        except KeyError, ValueError, TypeError:
             return False
 
 

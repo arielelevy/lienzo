@@ -30,6 +30,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import agent_improvements
+import agent_suggestions
 import auth
 import autoaprobar
 import backend
@@ -48,6 +50,7 @@ import identity
 import kill_agent
 import launch
 import mirror
+import optimization_scheduler
 import pairing
 import pantalla_coda
 import recientes
@@ -570,6 +573,8 @@ def aprobar_coda(s: dict, d: dict) -> tuple[int, dict]:
 def session_view_response(s: dict, view: str, query: dict) -> tuple[int, dict]:
     """Las cuatro vistas de una tarjeta (SESSION_VIEWS): screen, connections, turns, digest. La usan
     Handler._session_view (local) y PeerHandler (pedida por otra PC bajo demanda, §3.3)."""
+    if view == "improvements":
+        return 200, agent_suggestions.report(s)
     if view == "connections":
         return 200, connections_of(s["session_id"])
     if view == "screen":
@@ -835,7 +840,27 @@ class QuietServer(ThreadingHTTPServer):
 
 
 # Las vistas de una tarjeta, /sessions/<id>/<vista>: las atiende _session_view con una sola busqueda.
-SESSION_VIEWS = ("screen", "connections", "turns", "digest")
+SESSION_VIEWS = ("screen", "connections", "turns", "digest", "improvements")
+
+
+def improvement_judge(sid: str, data: dict, *, from_board: bool) -> tuple[int, dict]:
+    if data.get("allow_cost") is not True or not isinstance(data.get("snapshot"), str):
+        return 400, {"error": "hay que revisar la muestra y autorizar el costo"}
+    if from_board:
+        session, owner = _route_session(sid)
+        if owner is not None:
+            return mirror.MIRROR.forward(owner, "POST", f"/sessions/{sid}/improvements/jev", data, timeout=20)
+    else:
+        with lock:
+            session = sessions.get(sid)
+    if session is None:
+        return 404, no_session()
+    try:
+        return 200, agent_suggestions.judge(dict(session), data)
+    except ValueError as error:
+        return 409, {"error": str(error)}
+    except OSError:
+        return 503, {"error": "no se pudo leer o guardar la evaluacion de esta PC"}
 
 
 class RequestError(ValueError):
@@ -1521,6 +1546,13 @@ class Handler(JsonHandler):
                 return self._file(os.path.join(DIST, "favicon.svg"), "image/svg+xml", cache="public, max-age=86400")
             if parts == ["health"]:
                 return self._json(200, salud_publica(self._authed() or self._is_local()))
+            if parts == ["agent-improvements"]:
+                return self._json(200, agent_improvements.status())
+            if parts == ["agent-improvements", "scheduler"]:
+                try:
+                    return self._json(200, optimization_scheduler.get().status())
+                except ValueError as error:
+                    return self._json(503, {"error": str(error)})
             if parts == ["auth"]:
                 return self._json(
                     200,
@@ -1702,6 +1734,9 @@ class Handler(JsonHandler):
             if parts == ["rescan"]:
                 threading.Thread(target=sweep_once, daemon=True).start()
                 return self._json(202, {"ok": True})
+            if len(parts) == 4 and parts[0] == "sessions" and parts[2:] == ["improvements", "jev"]:
+                code, res = improvement_judge(parts[1], self._json_body(), from_board=True)
+                return self._json(code, res)
             if parts == ["xfer"]:
                 # copiar a otra PC (xfer.py): {pc, origen, destino, bs_mib?, hilos?, mbps?, disco_mbps?, espejo?}
                 code, res = xfer.nuevo(self._json_body(), identity.pc_id())
@@ -1883,6 +1918,19 @@ class Handler(JsonHandler):
         try:
             if parts == ["config"]:
                 return self._put_config()
+            if parts == ["agent-improvements", "scheduler"]:
+                data = self._json_body()
+                if not self._is_local() and data != {"action": "activity"}:
+                    return self._json(403, {"error": "la cola se administra desde la PC dueña"})
+                try:
+                    return self._json(200, optimization_scheduler.get().command(data))
+                except (ValueError, conocimiento_api.k.Rechazo) as error:
+                    return self._json(400, {"error": str(error)})
+            if parts == ["agent-improvements"]:
+                try:
+                    return self._json(200, agent_improvements.configure(self._json_body()))
+                except ValueError as error:
+                    return self._json(400, {"error": str(error)})
             if parts == ["peers", "self"]:
                 return self._put_peer_self()
             if len(parts) == 3 and parts[0] == "sessions" and ("PUT", parts[2]) in ACCIONES_SESION:
@@ -2163,6 +2211,9 @@ class PeerHandler(JsonHandler):
         self._dispatch("DELETE")
 
     def _route(self, method: str, rest: list[str], raw: bytes, pc_id: str | None) -> None:
+        if method == "POST" and len(rest) == 4 and rest[0] == "sessions" and rest[2:] == ["improvements", "jev"]:
+            code, res = improvement_judge(rest[1], self._body_json(raw), from_board=False)
+            return self._json(code, res)
         if method == "POST" and rest == ["browser"]:
             code, res = browser_api.from_peer(self._body_json(raw), _peer_key(pc_id))
             return self._json(code, res)
@@ -2808,6 +2859,7 @@ def main() -> int:
     captura.arrancar()  # lo que pasa por el lienzo queda en la memoria del proyecto (anexo A de v5)
     harness_updates.start(launch.harness_executable)
     console_titles.start()
+    optimization_scheduler.start(log)
     if not a.no_sweep:
         sweep_once()
     threading.Thread(target=consume_events, daemon=True).start()

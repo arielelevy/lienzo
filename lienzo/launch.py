@@ -18,10 +18,12 @@ import shutil
 import subprocess
 import sys
 
+import agent_improvements
 import harness_updates
 import state
 import tmux
 from agentes import AGENTES
+from work_titles import project_title
 
 WINDOWS = sys.platform == "win32"
 
@@ -30,9 +32,9 @@ AGENT_EXES = {nombre: p.exe for nombre, p in AGENTES.items()}
 # las que hacen que un `claude` hijo se crea anidado y se apague solo (ver el docstring)
 _CLAUDE_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SSE_PORT")
 
-# en un .cmd, & | < > ^ % reinterpretan la linea (separan comandos o expanden variables) y " cierra
-# la comilla del titulo antes de tiempo; fuera, el titulo nunca se interpreta como comando
-_UNSAFE_TITLE_RE = re.compile(r'[&|<>^%"\r\n]')
+# en un .cmd, & < > ^ % reinterpretan la linea y " cierra la comilla del titulo.
+# El separador | se conserva y _launch_cmd lo escapa como ^|; tmux recibe argumentos literales.
+_UNSAFE_TITLE_RE = re.compile(r'[&<>^%"\r\n]')
 
 
 def _resume_args(agent: str, resume: str | None) -> list[str]:
@@ -67,7 +69,7 @@ def nombre_corto(title: str) -> str:
     import unicodedata
 
     plano = unicodedata.normalize("NFKD", title or "").encode("ascii", "ignore").decode()
-    partes = [p.strip() for p in plano.split(" - ") if p.strip()]
+    partes = [p.strip() for p in re.split(r"\s+(?:\||-)\s+", plano) if p.strip()]
     if len(partes) >= 2:
         rol = re.sub(r"^encargo\s+", "", partes[1], flags=re.IGNORECASE)
         base = f"{partes[0]}-{rol}"
@@ -204,6 +206,17 @@ def launch(
     model_args = _model_args(agent, model)
     nombre_args = _nombre_args(agent, title)
     extra = [*AGENTES[agent].iniciar, *resume_args, *model_args, *nombre_args]
+    improvement_warnings = []
+    try:
+        instructions, improvement_warnings = agent_improvements.launch_instructions(agent, distro)
+        if instructions:
+            extra += _improvement_args(agent, instructions, cwd, distro=distro)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        improvement_warnings.append(f"mejoras no aplicadas: {error}")
+    if agent == "codex":
+        # Solo esta invocación: Lienzo es dueño del título proyecto | tarea.
+        # null no es TOML válido para -c; el array vacío se verificó en Codex 0.162.1.
+        extra += ["-c", "tui.terminal_title=[]", "-c", "tui.notifications=false"]
     if distro and WINDOWS:
         # WSL: el cwd de Windows no existe adentro de la distro; se traduce a /mnt/<letra> (§WSL)
         cwd_linux = tmux.ruta_wsl(cwd)
@@ -222,9 +235,66 @@ def launch(
         # medido el 2026-10-02: coda escribe el --model en su config.json, asi que las codas que se
         # lancen despues sin modelo corren este (PENDIENTES, «--model en coda»)
         res["aviso"] = "coda guarda --model como modelo por defecto de esta PC: las proximas codas sin modelo usan este"
-    if update_error:
-        res["aviso"] = "; ".join(filter(None, [res.get("aviso"), update_error]))
+    if update_error or improvement_warnings:
+        res["aviso"] = "; ".join(filter(None, [res.get("aviso"), update_error, *improvement_warnings]))
     return res
+
+
+def _codex_config_paths(cwd: str, distro: str | None) -> list:
+    from pathlib import Path, PurePosixPath
+
+    if distro and WINDOWS:
+        env = subprocess.run(["wsl.exe", "-d", distro, "--exec", "sh", "-c",
+                              'printf "%s\\n" "${CODEX_HOME:-$HOME/.codex}"'],
+                             capture_output=True, text=True, encoding="utf-8", timeout=5, check=False)
+        home = env.stdout.strip()
+        if env.returncode or not home.startswith("/") or "\n" in home:
+            raise ValueError("no se pudo resolver la configuracion Codex de WSL; no se reemplazo")
+        unc = Path("//wsl.localhost") / distro
+        project = PurePosixPath(tmux.ruta_wsl(cwd))
+        global_config = unc / home.lstrip("/") / "config.toml"
+        if not (unc / home.lstrip("/")).is_dir():
+            raise ValueError("no se puede leer la configuracion Codex de WSL; no se reemplazo")
+        projects = [unc / str(p).lstrip("/") / ".codex" / "config.toml" for p in [*reversed(project.parents), project]]
+        return [global_config, *projects]
+    project = Path(cwd)
+    global_config = Path(os.environ.get("CODEX_HOME", str(Path(state.HOME) / ".codex"))) / "config.toml"
+    return [global_config, *[p / ".codex" / "config.toml" for p in [*reversed(project.parents), project]]]
+
+
+def _improvement_args(agent: str, instructions: str, cwd: str, *, distro: str | None = None) -> list[str]:
+    if agent == "codex":
+        import tomllib
+        # No sustituir developer_instructions del usuario/proyecto con las nuestras.
+        existing = ""
+        for path in _codex_config_paths(cwd, distro):
+            if path.is_file():
+                config = tomllib.loads(path.read_text(encoding="utf-8"))
+                if "developer_instructions" in config:
+                    if not isinstance(config["developer_instructions"], str):
+                        raise ValueError("developer_instructions no es texto")
+                    existing = config["developer_instructions"]
+        value = " ".join(filter(None, [existing, instructions]))
+        # -c admite texto literal si no es TOML; no reemplaza el prompt base del modelo.
+        args = ["-c", "developer_instructions=" + value]
+    else:
+        args = ["--append-system-prompt", instructions]
+    if WINDOWS and not distro:
+        for value in args:
+            _cmd_arg(value)
+        if sum(len(value) for value in args) > 6000:
+            raise ValueError("instrucciones demasiado largas para cmd; no se reemplazaron")
+    return args
+
+
+def _cmd_arg(value: str) -> str:
+    if any(c in value for c in '&|<>^%!"\r\n'):
+        raise ValueError("argumento de lanzamiento inseguro para cmd")
+    try:
+        value.encode("cp1252")
+    except UnicodeError:
+        raise ValueError("argumento no representable en la consola cp1252; no se modifico") from None
+    return f'"{value}"' if any(c.isspace() for c in value) else value
 
 
 def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str]) -> dict:
@@ -232,12 +302,13 @@ def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str]) -> dict:
     launch_dir = os.path.join(state.LIENZO, "launch")
     os.makedirs(launch_dir, exist_ok=True)
     cmd_path = os.path.join(launch_dir, f"{secrets.token_hex(6)}.cmd")
+    title = _sanitize_title(project_title({"repo": state.repo_of(cwd), "title": title})).replace("|", "^|")
     cuerpo = (
         "@echo off\r\n"
         "chcp 1252 >nul\r\n"
-        f"title {_sanitize_title(title)}\r\n"
+        f"title {title}\r\n"
         f'cd /d "{cwd}"\r\n'
-        f'"{exe_path}"{"".join(" " + a for a in extra)}\r\n'
+        f'"{exe_path}"{"".join(" " + _cmd_arg(a) for a in extra)}\r\n'
     )
     with open(cmd_path, "w", encoding="cp1252", errors="replace", newline="") as f:
         f.write(cuerpo)
@@ -255,7 +326,8 @@ def _launch_tmux(
     distro, y el barrido la etiqueta con ella (la tarjeta la trae del barrido, no de aca)."""
     nombre = f"lienzo-{secrets.token_hex(3)}"
     unset = [a for v in _CLAUDE_ENV for a in ("-u", v)]
-    argv = ["tmux", "new-session", "-d", "-s", nombre, "-n", _sanitize_title(title), "-c", cwd]
+    title = _sanitize_title(project_title({"repo": state.repo_of(cwd), "title": title}))
+    argv = ["tmux", "new-session", "-d", "-s", nombre, "-n", title, "-c", cwd]
     argv += ["env", *unset, exe_path, *(extra or [])]
     if distro:
         argv = ["wsl.exe", "-d", distro, *argv]

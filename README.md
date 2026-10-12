@@ -163,6 +163,59 @@ aparece sola. «Otra carpeta…» abre un proyecto nuevo dentro de las carpetas 
 
 ![Lanzar CLI: proyecto, PC y agente](docs/img/lanzar.png)
 
+### Mejoras de agentes
+
+Clic derecho en el área libre → **Mejoras de agentes** permite configurar esta PC para nuevos
+lanzamientos. El perfil de respuestas breves se inspira en [Caveman](https://github.com/JuliusBrussee/caveman):
+mantiene idioma, comandos, errores y pruebas; no instala su proxy ni comprime archivos. La preferencia
+**RTK** añade instrucciones para usar [RTK](https://github.com/rtk-ai/rtk) explícitamente en comandos
+compatibles. No modifica hooks, permisos ni `AGENTS.md`. Los agentes ya abiertos conservan su contexto.
+
+El panel de una sesión tiene **Mejoras**: muestra una ventana de turnos, recuentos y sugerencias con
+referencias. Leer mucho código o recibir texto largo no demuestra desperdicio. El consumo se conserva
+según la fuente, sin sumar contadores acumulados como si fueran consumo por turno. La calidad del
+trabajo permanece sin evaluar hasta tener validación funcional.
+
+**Consultar Jev** envía solamente la muestra visible de métricas y referencias, tras autorizar una
+consulta paga. No envía prompts, argumentos, resultados de herramientas ni credenciales. El cliente
+usa OpenRouter Decisions, modelo `typesafe/jev-1.13`, sin reintentos y con proveedor ZDR/sin recolección.
+USD 0,001 es una estimación, no una cota que habilite gasto. El ledger conserva reservas y costos
+informados; cargos desconocidos y proveedores sin máximo comprobable bloquean solicitudes nuevas.
+Jev propone una herramienta o datos insuficientes: no instala, aprueba ni ejecuta acciones.
+
+El scheduler analiza incidentes nuevos de la memoria cuando hay 180 segundos de inactividad,
+dos muestras de recursos aptas y ningún agente ocupado ni permiso vigente. Encola automáticamente
+por proyecto y versión de fuentes, con cooldown de 120 segundos y hasta 100 trabajos; sus propias
+hipótesis no generan otra ronda. Las hipótesis quedan propuestas, con evidencia y veredicto pendiente.
+Los permisos vencidos o de sesiones muertas se conservan en el historial sin bloquear este trabajo.
+
+**Comparar RTK cuando esté libre** encola dos perfiles de contratos locales, sin modelos ni gasto de
+servicios. Comprueba fuentes congeladas, conserva códigos/salidas/tiempos y pausa entre perfiles;
+no mide por sí solo ahorro de tokens ni calidad de agentes. El presupuesto de esta ronda es USD 2
+totales, incluidos costos previos. Los modelos y coding agents automáticos permanecen deshabilitados.
+
+Los títulos de tarjeta y consola usan `proyecto | tarea`, con el proyecto en minúscula. Lienzo aplica
+el título al detectar un proceso o cambiar PID/tarea; no vuelve a escribirlo si esos datos no cambian.
+Los lanzamientos y resumes de Codex desactivan su actualización propia de títulos y sus notificaciones
+sonoras mediante overrides por invocación. Los permisos siguen visibles en el tablero.
+
+Preparación explícita en Windows x64:
+
+```powershell
+py ops/preparar-mejoras.py
+py ops/importar-jev.py --distro Ubuntu
+```
+
+El primero instala RTK 0.51.0 con SHA-256 publicado y habilita las dos preferencias; no instala hooks.
+El segundo importa únicamente la clave OpenRouter de `/etc/chesstudia/nube.env` de Chesstudia a DPAPI
+del usuario, sin mostrarla. No ejecutarlo en una instalación que no tenga ese origen autorizado.
+La credencial queda bajo `LIENZO_HOME/private`; nunca en `config.json`, Git o navegador. En POSIX el
+almacenamiento exige permisos 0600. WSL necesita su propio RTK: una instalación Windows no acredita
+disponibilidad en una distro. Falta de RTK o instrucciones incompatibles se informa sin impedir lanzar.
+
+`py ops/probar-mejoras.py --rtk` comprueba códigos de salida y recuperación sin compresión con datos
+sintéticos. `--jev` hace una llamada paga para comprobar conectividad, no calidad del clasificador.
+
 Lo mismo por API: `POST /sessions/launch {pc?, cwd, agent, title?, model?}`, o
 `coordinar.lanzar_y_titular(...)` desde una coordinadora.
 
