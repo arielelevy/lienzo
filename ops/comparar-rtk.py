@@ -76,10 +76,17 @@ def main():
                     evidence["state"] = "suspendido entre perfiles: " + reason
                     break
                 argv = [sys.executable, "-m", "pytest", *FILES, "-q", "-p", "no:cacheprovider"]
-                if profile == "ON":
-                    argv = [path, "pytest", "--", *argv]
                 start = time.monotonic()
                 code, stdout, stderr = subproc.correr(argv, cwd=str(ROOT), timeout=10, max_output=200_000)
+                if profile == "ON":
+                    filter_code, filtered, filter_error = subproc.correr(
+                        [path, "pipe", "--filter", "pytest"], entrada=stdout, timeout=5, max_output=200_000,
+                    )
+                    if filter_code == 0:
+                        stdout = filtered
+                    code = code or filter_code
+                    if filter_error:
+                        stderr += "\nRTK: " + filter_error
                 evidence["profiles"].append({"profile": profile, "code": code,
                     "seconds": time.monotonic() - start, "stdout": stdout, "stderr": stderr,
                     "output_chars": len(stdout) + len(stderr), "oracle": "contratos reales: assertions de bloqueo y memoria"})

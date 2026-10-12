@@ -49,6 +49,11 @@ class Scheduler:
             for pending in self.queue.view()["jobs"]:
                 if pending["project"] == data["project"] and pending["state"] in ("queued", "running", "paused"):
                     if pending.get("kind") == "off_on_local":
+                        if pending["state"] == "queued" and pending["cursor"] == 0:
+                            version = experiment.manifest()
+                            if version != pending["source_version"]:
+                                self.queue.change(pending["id"], source_version=version,
+                                                  reason="fuentes renovadas por encolado explícito; sin perfiles ejecutados")
                         return self.status()
                     raise ValueError("hay un análisis del proyecto pendiente; no se reemplaza")
             project = conocimiento.proyecto(data["project"])

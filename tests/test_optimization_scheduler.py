@@ -153,3 +153,17 @@ def test_activity_during_proposal_keeps_transaction_result_then_pauses(monkeypat
     job = scheduler.queue.view()["jobs"][0]
     assert job["state"] == "paused" and job["cursor"] == 1
     assert job["results"] == ["confirmed-transaction-result"]
+
+
+@pytest.mark.parametrize("state,cursor,version", [("queued", 0, "new"), ("running", 0, "old"), ("paused", 1, "old")])
+def test_explicit_reenqueue_refreshes_only_unstarted_experiment(monkeypatch, state, cursor, version):
+    scheduler = s.Scheduler()
+    job = scheduler.queue.enqueue("p", kind="off_on_local", version="old", source_ids=[])
+    scheduler.queue.change(job["id"], state=state, cursor=cursor, profiles=[])
+    monkeypatch.setattr(s.experiment, "manifest", lambda: "new")
+    monkeypatch.setattr(scheduler, "status", scheduler.queue.view)
+    scheduler.command({"action": "enqueue_off_on", "project": "p"})
+    jobs = scheduler.queue.view()["jobs"]
+    assert len(jobs) == 1 and jobs[0]["id"] == job["id"]
+    assert jobs[0]["source_version"] == version
+    assert jobs[0]["state"] == state and jobs[0]["cursor"] == cursor

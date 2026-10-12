@@ -59,3 +59,9 @@ Coordinación verificó health y carga del scheduler/presupuesto; tres GET conse
 La regresión de resume mantenía una tarjeta viva como muerta cuando SessionStart reutilizaba su ID. A corrigió esa transición preservando estados activos y controles de eventos viejos, con cuatro regresiones y 151 focales aprobados. El bloqueo real «otra app» del primer relevo se recuperó mediante R y se devolvió el encargo pendiente. No se usa cierre de turno como prueba de que todas las tareas terminaron; se detuvieron los restantes relevos.
 
 Límite de aceptación: compuerta ESCALAR por mutaciones no medidas. No se cambian umbrales ni se declara PASS general para publicar. Los modelos pagos permanecen bloqueados por falta de cota y un cargo histórico desconocido. No se afirma que todas las sesiones antiguas ya se hayan retomado.
+
+## Corrección tras ensayo manual RTK
+
+La prueba real detectó ON=124 y OFF=0. Se verificó la ayuda del binario y se sustituyó el argv incompatible de rtk pytest por ejecución del intérprete fijado seguida de rtk pipe --filter pytest. No hay shell ni comandos recibidos del usuario; ambos perfiles usan los mismos tests. stdout original se conserva y el código del comando tiene prioridad sobre el filtro, que también puede hacer fallar el caso. Timeout y eliminación se limitan al árbol propio del subprocess.
+
+La renovación de una tarea pendiente exige una solicitud explícita, estado queued y cursor cero: no se cambian las fuentes de un ensayo iniciado/pausado. Se revisaron esas condiciones y sus regresiones. 23 tests aprobados, Ruff aprobado y runner completo igual al baseline. Ensayo real posterior: ambos códigos cero, 533→26 caracteres, fuentes intactas y USD0 servicios. No se deduce ahorro de tokens/calidad de un agente. Sin hallazgos bloqueantes en estos hunks; no se oculta el timeout previo ni se actualizó baseline para taparlo.
