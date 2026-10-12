@@ -506,16 +506,31 @@ def repoint_refs(old_sid: str, new_sid: str) -> tuple[int, int]:
         if n:
             cambios.append((coll, anterior, n))
 
+    referencias = []
+    for s in sessions.values():
+        anterior = {k: s[k] for k in ("copycat_of", "stopped_by") if s.get(k) == old_sid}
+        if anterior:
+            referencias.append((s, anterior))
+            s.update(dict.fromkeys(anterior, new_sid))
     guardados = []
     try:
         for coll, _, _ in cambios:
             coll.save(strict=True)
             guardados.append(coll)
+        for s, _ in referencias:
+            touch(s)
     except OSError:
         # Si falla la segunda lista, la primera ya pudo quedar en disco. Revertimos ambas en
         # memoria y compensamos la lista que alcanzó a guardarse para no dejar IDs mezclados.
         for coll, anterior, _ in cambios:
             coll.items[:] = anterior
+        for s, anterior in referencias:
+            s.update(anterior)
+        for s, _ in referencias:
+            try:
+                touch(s)
+            except OSError as e:
+                state.log(f"no se pudo revertir referencias de {s['session_id'][:8]} tras fallo al re-apuntar: {e}")
         for coll in reversed(guardados):
             try:
                 coll.save(strict=True)

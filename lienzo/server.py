@@ -38,6 +38,7 @@ import browser_api
 import browser_stream
 import captura
 import conocimiento_api
+import console_titles
 import consulta
 import cuenta_github
 import federation
@@ -1053,10 +1054,14 @@ def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
     """Despues de un envio del tablero que entro (200), local o reenviado: la flecha la deja la PC
     que envia, porque la duena no sabe de from/link_to (revision 2026-10-04, 0.11). Pegar trabajo
     (copycat) usa hand_over local o acciones reenviadas a la PC de cada tarjeta."""
+    if s is not None:
+        sid = s["session_id"]  # el primer turno puede haber reemplazado el id provisional durante el envío
     src_s = registrar_envio(sid, d)
     if s is not None and src_s is not None and d.get("copycat") is True:
         # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
         if d.get("stop_origin") is not False:
+            # El texto ya llegó: registrar su procedencia aunque queden conexiones pendientes.
+            res.update(hand_over(s, src_s, stop=False))
             code, out = accion_retarget({"old": src_s["session_id"], "new": sid, "work": True}, desde_tablero=True)
             if code != 200 or out.get("unreachable"):
                 res["handover_error"] = out.get("error") or f"conexiones pendientes en {out['unreachable']}"
@@ -1227,6 +1232,19 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     return (codigo if isinstance(codigo, int) and 400 <= codigo < 600 else 400), res
 
 
+def peers_del_traspaso(old: str, new: str) -> list[str]:
+    """PCs con reglas que se trasladan o que son dueñas de una de las tarjetas."""
+    pcs = {
+        r["pc"] for r in mirror.MIRROR.rules()
+        if r.get("pc") and r.get("enabled") and old in (r.get("from"), r.get("to"))
+    }
+    pcs.update(
+        s["pc"] for s in mirror.MIRROR.sessions()
+        if s.get("pc") and s.get("session_id") in (old, new)
+    )
+    return sorted(pcs)
+
+
 def accion_retarget(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     """POST /rules/retarget {old, new}: las reglas que avisaban a `old` pasan a `new`. Desde el
     tablero, aca y en las otras PCs; lo que pide otra PC, solo aca."""
@@ -1241,7 +1259,8 @@ def accion_retarget(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
         n = ses_retarget_rules(d["old"], d["new"])
     if not desde_tablero:
         return 200, {"ok": True, "n": n}
-    ok, fallaron = fan_out("POST", "/rules/retarget", d)
+    pcs = peers_del_traspaso(d["old"], d["new"]) if d.get("work") is True else None
+    ok, fallaron = fan_out("POST", "/rules/retarget", d, pcs=pcs)
     n += sum(int(res.get("n") or 0) for res in ok.values())
     # las PCs que no contestaron: sus reglas siguen apuntando a `old` (S14)
     return 200, {"ok": True, "n": n, "unreachable": sorted(fallaron)}
@@ -2788,6 +2807,7 @@ def main() -> int:
     clean_attachments()
     captura.arrancar()  # lo que pasa por el lienzo queda en la memoria del proyecto (anexo A de v5)
     harness_updates.start(launch.harness_executable)
+    console_titles.start()
     if not a.no_sweep:
         sweep_once()
     threading.Thread(target=consume_events, daemon=True).start()
