@@ -117,6 +117,11 @@ def _exe_path(exe_name: str) -> str | None:
     el instalador de Claude Code (~/.local/bin), despues el PATH de este server."""
     propio = os.path.join(state.HOME, ".local", "bin", exe_name)
     candidatos: list[str] = []
+    if exe_name == "codex.exe":
+        # El instalador standalone mantiene esta entrada. Una copia vieja en .local/bin
+        # no reconoce su instalación y seguiría lanzando una versión sin actualizar.
+        local = os.environ.get("LOCALAPPDATA", os.path.join(state.HOME, "AppData", "Local"))
+        candidatos.append(os.path.join(local, "Programs", "OpenAI", "Codex", "bin", exe_name))
     if exe_name == "kiro-cli.exe":
         # el instalador lo deja por usuario o, con admin, en Program Files (ar-it33940, 2026-10-09)
         for base in (

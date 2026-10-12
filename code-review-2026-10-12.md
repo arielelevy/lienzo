@@ -24,3 +24,11 @@ se verificará tras el reinicio autorizado; una sesión abierta conserva su vers
 Limitaciones: no se audita el contenido de los actualizadores externos; versiones antiguas
 que no admitan estos comandos darán aviso de error. No se certificó mutación del código nuevo
 ni se aceptaron baselines o documentos de pruebas.
+
+Verificación en vivo: el primer arranque actualizó Kiro a 2.29.1 y comprobó Claude,
+Pi y CODA sin errores. Codex tenía una copia 0.160.1 en `.local/bin` y una instalación
+oficial distinta. Se actualizó esta última a 0.162.1 y se corrigió el resolver para
+priorizar la entrada oficial en LocalAppData/Programs/OpenAI/Codex/bin.
+Una regresión crea ambas rutas y exige elegir la instalación administrada.
+Verificación del ajuste final: 162 pruebas de actualizaciones, lanzamiento, reanudación y
+WSL aprobadas; Ruff sin hallazgos. El resolver real devuelve la entrada oficial actualizada.

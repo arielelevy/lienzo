@@ -32,6 +32,7 @@ class FakePopen:
 def aislado(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "LIENZO", str(tmp_path / ".lienzo"))
     monkeypatch.setattr(st, "HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setattr(launch.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(launch, "_existe", lambda p: True)
     bin_dir = tmp_path / "home" / ".local" / "bin"
@@ -314,3 +315,15 @@ def test_exe_path_encuentra_pi_cmd_y_kiro_en_program_files(tmp_path, monkeypatch
     # un .cmd de npm en el PATH, si no hay .exe
     monkeypatch.setattr(launch.shutil, "which", lambda name: "C:/npm/codex.cmd" if name == "codex.cmd" else None)
     assert launch._exe_path("codex.exe") == "C:/npm/codex.cmd"
+
+
+def test_codex_official_installation_wins_over_old_local_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(st, "HOME", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    old = tmp_path / ".local" / "bin" / "codex.exe"
+    old.parent.mkdir(parents=True)
+    old.write_text("old")
+    managed = tmp_path / "local" / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"
+    managed.parent.mkdir(parents=True)
+    managed.write_text("managed")
+    assert launch._exe_path("codex.exe") == str(managed)

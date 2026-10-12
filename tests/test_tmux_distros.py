@@ -450,6 +450,7 @@ def aislado_launch(tmp_path, monkeypatch):
 
     monkeypatch.setattr(st, "LIENZO", str(tmp_path / ".lienzo"))
     monkeypatch.setattr(st, "HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setattr(mod_launch.subprocess, "Popen", FakePopenDistros)
     monkeypatch.setattr(mod_launch, "_existe", lambda p: True)
     bin_dir = tmp_path / "home" / ".local" / "bin"
