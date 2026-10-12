@@ -77,7 +77,7 @@ def _escribir(stdin, datos: bytes) -> None:
 
 
 def correr(
-    argv: list[str],
+    argv: list[str] | str,
     *,
     entrada: str | None = None,
     timeout: float,
@@ -96,6 +96,7 @@ def correr(
     Al vencer `timeout` mata el árbol y devuelve (VENCIDO, lo que haya salido, motivo). Si el
     programa no existe o no se puede lanzar, (NO_ARRANCO, "", motivo)."""
     entorno = {**os.environ, **(env or {}), **(ENV_SIN_PROMPTS if sin_prompts else {})}
+    programa = argv if isinstance(argv, str) else argv[0]
     extra = {"creationflags": CREATE_NO_WINDOW} if WINDOWS else {"start_new_session": True}
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         try:
@@ -109,7 +110,7 @@ def correr(
                 **extra,
             )
         except OSError as e:
-            return NO_ARRANCO, "", f"no se pudo lanzar {argv[0]}: {type(e).__name__}: {e}"
+            return NO_ARRANCO, "", f"no se pudo lanzar {programa}: {type(e).__name__}: {e}"
         if entrada is not None:
             threading.Thread(target=_escribir, args=(p.stdin, entrada.encode("utf-8")), daemon=True).start()
         try:
@@ -117,7 +118,7 @@ def correr(
             motivo = ""
         except subprocess.TimeoutExpired:
             _matar_arbol(p)
-            rc, motivo = VENCIDO, f"{argv[0]} no termino en {timeout:g} s: se mato el arbol de procesos"
+            rc, motivo = VENCIDO, f"{programa} no termino en {timeout:g} s: se mato el arbol de procesos"
 
         def leer(f) -> str:
             f.seek(0)

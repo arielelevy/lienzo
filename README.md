@@ -1,5 +1,13 @@
 # Lienzo
 
+Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
+(Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
+6 horas mientras el tablero sigue abierto. Antes de iniciar o retomar una sesión, comprueba ese
+harness si venció el intervalo y espera el resultado (hasta 120 segundos). Un error queda en el
+log y como aviso del lanzamiento; la sesión puede abrirse igual y la comprobación se reintenta
+tras 15 minutos. Las instalaciones de WSL se comprueban al lanzar en esa distro y luego también
+periódicamente. Las sesiones que ya están abiertas siguen usando el proceso con el que arrancaron.
+
 Lienzo muestra las sesiones de Claude Code, Codex CLI, Pi CLI, CODA y Kiro V3 que corren en terminales.
 Cada sesión tiene su tarjeta. Desde ahí podés leer la conversación, mandar mensajes y aprobar
 permisos. También pegar capturas con Ctrl+V, conectar sesiones entre sí, lanzar una CLI nueva y

@@ -41,6 +41,7 @@ import conocimiento_api
 import consulta
 import cuenta_github
 import federation
+import harness_updates
 import health
 import identity
 import kill_agent
@@ -2786,6 +2787,7 @@ def main() -> int:
     purge_stale_at_rules()
     clean_attachments()
     captura.arrancar()  # lo que pasa por el lienzo queda en la memoria del proyecto (anexo A de v5)
+    harness_updates.start(launch.harness_executable)
     if not a.no_sweep:
         sweep_once()
     threading.Thread(target=consume_events, daemon=True).start()

@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 
+import harness_updates
 import state
 import tmux
 from agentes import AGENTES
@@ -146,6 +147,11 @@ def _cuota_coda() -> str | None:
         return None
 
 
+def harness_executable(agent: str) -> str | None:
+    name = AGENT_EXES[agent]
+    return _exe_path(name if WINDOWS else name.removesuffix(".exe"))
+
+
 def launch(
     cwd: str, title: str, agent: str, resume: str | None = None, model: str | None = None, distro: str | None = None
 ) -> dict:
@@ -183,6 +189,12 @@ def launch(
         exe_path = _exe_path(exe_name)
     if exe_path is None:
         return {"ok": False, "error": f"no encuentro {exe_name} en esta PC"}
+    update_error = harness_updates.before_launch(agent, exe_path, distro)
+    # Los instaladores pueden cambiar la ruta; volver a resolver después de actualizar.
+    if not (distro and WINDOWS):
+        exe_path = _exe_path(exe_name)
+        if exe_path is None:
+            return {"ok": False, "error": f"no encuentro {exe_name} después de comprobar actualizaciones"}
     resume_args = _resume_args(agent, resume)
     model_args = _model_args(agent, model)
     nombre_args = _nombre_args(agent, title)
@@ -205,6 +217,8 @@ def launch(
         # medido el 2026-10-02: coda escribe el --model en su config.json, asi que las codas que se
         # lancen despues sin modelo corren este (PENDIENTES, «--model en coda»)
         res["aviso"] = "coda guarda --model como modelo por defecto de esta PC: las proximas codas sin modelo usan este"
+    if update_error:
+        res["aviso"] = "; ".join(filter(None, [res.get("aviso"), update_error]))
     return res
 
 
