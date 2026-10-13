@@ -1,6 +1,8 @@
 @echo off
 rem Interprete explicito: no usar el alias python de WindowsApps.
 set PYTHONIOENCODING=utf-8
+py -3.14 "%~dp0lienzo\startup_update.py"
+if errorlevel 1 exit /b %errorlevel%
 rem El server mira sus .py y, si cambian (git pull, edicion), sale con 75: aca se relanza en la misma ventana.
 rem Cualquier otra salida (Ctrl+C, error, matar el PID) corta el bucle.
 set LIENZO_RELOAD=1

@@ -72,6 +72,10 @@ py -3.14 install.py        # hooks de Claude/Codex/CODA y la extensión Pi (--pi
 `%USERPROFILE%\.lienzo\`. Codex pide confiar cada hook la primera vez. En Pi, `/reload` carga la
 extensión; en CODA, `/reload-hooks`.
 
+Los atajos `lienzo-server.cmd` y `lienzo-server.sh` ejecutan `git pull --ff-only` al arrancar.
+Si cambió `web/`, compilan la interfaz. Un pull rechazado avisa y usa la versión local;
+un error de compilación detiene el arranque. Los reinicios internos no repiten el pull en Windows.
+
 **Después de un `git pull`, reiniciar.** El server sigue con el código viejo hasta `POST /restart`
 (o `coordinar.reiniciar()`; con `pc`, reinicia otra PC). Comprueba que el código compile, sale con
 75 y `lienzo-server.cmd` lo relanza en la misma ventana; si algo no compila, contesta 409 y sigue

@@ -25,6 +25,7 @@ docs/video/
 # distinto o un playwright suelto los deja aca)
 web/test-results/
 web/playwright-report/
+web/.startup-build-pending
 node_modules/
 
 # evidencia regenerada por pruebas-agenticas (las propuestas requieren revisión)

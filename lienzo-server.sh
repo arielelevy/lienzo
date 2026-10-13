@@ -12,4 +12,5 @@ if [ -z "$py" ] || ! "$py" -c 'import sys; sys.exit(sys.version_info < (3, 14))'
   echo "lienzo-server: hace falta Python 3.14 o mas nuevo (${py:-ninguno}: $("${py:-false}" --version 2>&1))" >&2
   exit 1
 fi
+"$py" lienzo/startup_update.py
 exec "$py" lienzo/server.py "$@"
