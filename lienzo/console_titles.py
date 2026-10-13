@@ -54,7 +54,7 @@ def native_title(card: dict, title: str) -> dict:
     return result
 
 
-def sync_once() -> None:
+def sync_once(*, force: bool = False) -> None:
     import sessions
 
     with state.lock:
@@ -79,7 +79,7 @@ def sync_once() -> None:
                 current["title"] = title
                 sessions.touch(current)
             signature = (card["pid"], title, card.get("agent"), card.get("target"), card.get("distro"))
-            if _attempted.get(card["session_id"]) == signature:
+            if not force and _attempted.get(card["session_id"]) == signature:
                 continue
             # Registrar el intento antes del helper: un fallo se informa, no se repite cada ciclo.
             _attempted[card["session_id"]] = signature

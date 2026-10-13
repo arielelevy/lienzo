@@ -1227,6 +1227,15 @@ def accion_pending(request_id: str, d: dict, *, desde_tablero: bool) -> tuple[in
     return answer_pending(request_id, d["decision"], d.get("reason", ""), d.get("answers"))
 
 
+def rescan_once() -> None:
+    """Buscar sesiones y refrescar etiquetas y títulos de sus consolas locales."""
+    try:
+        sweep_once()
+        console_titles.sync_once(force=True)
+    except Exception:
+        log(f"buscar sesiones y actualizar títulos:\n{traceback.format_exc()}")
+
+
 def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     """POST /sessions/launch {pc, cwd, title, agent, model?} en el tablero (local con launch.launch,
     o reenviada a la PC `pc` por /peer/launch) y POST /peer/launch (siempre local)."""
@@ -1244,6 +1253,11 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
         if distro:
             cuerpo["distro"] = distro
         return mirror.MIRROR.forward(pc, "POST", "/launch", cuerpo)
+    if agent == "vscode":
+        if distro is not None:
+            return 400, {"error": "VS Code se abre en la PC elegida, sin distro"}
+        res = launch.open_vscode(cwd)
+        return (200 if res.get("ok") else 400), res
     if distro is not None and distro not in tmux.distros():
         # ante una verdad vencida se re-parsea una vez: puede haber nacido una distro hace un momento
         tmux.invalidar_distros()
@@ -1732,7 +1746,7 @@ class Handler(JsonHandler):
                 code, res = browser_api.dispatch(self._json_body())
                 return self._json(code, res)
             if parts == ["rescan"]:
-                threading.Thread(target=sweep_once, daemon=True).start()
+                threading.Thread(target=rescan_once, daemon=True).start()
                 return self._json(202, {"ok": True})
             if len(parts) == 4 and parts[0] == "sessions" and parts[2:] == ["improvements", "jev"]:
                 code, res = improvement_judge(parts[1], self._json_body(), from_board=True)

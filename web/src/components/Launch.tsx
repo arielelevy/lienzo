@@ -4,8 +4,8 @@ import { AGENTS, agentIds, type Agent } from "../agents";
 import { opcionesProyecto } from "../recientes";
 import type { Peer, Reciente, Session } from "../types";
 
-export function Launch({ peers, sessions, onClose, toast }: {
-  peers: Peer[]; sessions: Session[]; onClose: () => void; toast?: (text: string, error?: boolean) => void;
+export function Launch({ peers, sessions, onClose, toast, editor = false }: {
+  editor?: boolean; peers: Peer[]; sessions: Session[]; onClose: () => void; toast?: (text: string, error?: boolean) => void;
 }) {
   const localPc = peers.find(p => p.local)?.pc_id ?? "";
   // null: sin elegir todavía. Se deriva de lo que llegó, así un GET /peers que contesta después de
@@ -46,21 +46,21 @@ export function Launch({ peers, sessions, onClose, toast }: {
     setError("");
     try {
       const result = await api.post<{ ok: boolean; error?: string; aviso?: string }>("/sessions/launch", {
-        cwd: directory, title: elegida?.title ?? "", agent, ...(pc ? { pc } : {}),
-        ...(distro ? { distro } : {}),
+        cwd: directory, title: elegida?.title ?? "", agent: editor ? "vscode" : agent, ...(pc ? { pc } : {}),
+        ...(!editor && distro ? { distro } : {}),
       });
-      if (!result.ok) throw new Error(result.error || "No se pudo lanzar la CLI");
-      toast?.(result.aviso ? `CLI lanzada. ${result.aviso}` : "CLI lanzada");
+      if (!result.ok) throw new Error(result.error || (editor ? "No se pudo abrir VS Code" : "No se pudo lanzar la CLI"));
+      toast?.(editor ? "VS Code abierto" : result.aviso ? `CLI lanzada. ${result.aviso}` : "CLI lanzada");
       onClose();
     } catch (e) { setError((e as Error).message); }
     finally { sending.current = false; setBusy(false); }
   };
   const opcion = (o: { key: string; label: string }) => <option key={o.key} value={o.key}>{o.label}</option>;
   return <dialog ref={element => { if (element && !element.open) element.showModal(); }}
-    className="gate-box launch-box" aria-label="Lanzar CLI" onKeyDown={e => e.stopPropagation()}
+    className="gate-box launch-box" aria-label={editor ? "Abrir en VS Code" : "Lanzar CLI"} onKeyDown={e => e.stopPropagation()}
     onCancel={e => { e.preventDefault(); if (!busy) onClose(); }}>
     <form onSubmit={e => { e.preventDefault(); void launch(); }}>
-      <div className="launch-heading"><h2>Lanzar CLI</h2><button type="button" className="icon" aria-label="Cerrar lanzamiento" disabled={busy} onClick={onClose}>×</button></div>
+      <div className="launch-heading"><h2>{editor ? "Abrir en VS Code" : "Lanzar CLI"}</h2><button type="button" className="icon" aria-label="Cerrar lanzamiento" disabled={busy} onClick={onClose}>×</button></div>
       <label>Proyecto<select autoFocus aria-label="Proyecto" disabled={busy} value={elegida ? project : ""} onChange={e => {
         setProject(e.target.value); setCwd(""); setError("");
       }}>
@@ -80,10 +80,10 @@ export function Launch({ peers, sessions, onClose, toast }: {
         {!peers.length && <option value="">Esta PC</option>}
         {peers.map(p => <option key={p.pc_id} value={p.pc_id} disabled={!p.alive}>{p.name}</option>)}
       </select></label>
-      <label>Agente<select aria-label="Agente" disabled={busy} value={agent} onChange={e => setAgent(e.target.value as Agent)}>
+      {!editor && <label>Agente<select aria-label="Agente" disabled={busy} value={agent} onChange={e => setAgent(e.target.value as Agent)}>
         {agentIds.map(id => <option key={id} value={id}>{AGENTS[id].label}</option>)}
-      </select></label>
-      {distros.length > 0 && <label>Dónde<select aria-label="Distro de WSL" disabled={busy} value={distro} onChange={e => setDistro({ pc, d: e.target.value })}>
+      </select></label>}
+      {!editor && distros.length > 0 && <label>Dónde<select aria-label="Distro de WSL" disabled={busy} value={distro} onChange={e => setDistro({ pc, d: e.target.value })}>
         <option value="">Windows</option>
         {distros.map(d => <option key={d} value={d}>WSL · {d}</option>)}
       </select></label>}
@@ -91,7 +91,7 @@ export function Launch({ peers, sessions, onClose, toast }: {
       {error && <p role="alert">{error}</p>}
       {unavailable && <p role="alert">La PC elegida no está disponible.</p>}
       <div className="launch-actions"><button type="button" disabled={busy} onClick={onClose}>Cancelar</button>
-        <button className="primary" disabled={busy || !directory || unavailable}>{busy ? "Lanzando…" : "Lanzar"}</button></div>
+        <button className="primary" disabled={busy || !directory || unavailable}>{busy ? "Lanzando…" : editor ? "Abrir" : "Lanzar"}</button></div>
     </form>
   </dialog>;
 }

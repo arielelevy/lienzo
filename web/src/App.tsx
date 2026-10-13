@@ -362,7 +362,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const rescan = useCallback(async () => {
     try {
       await api.post("/rescan", {});
-      toast("Barriendo procesos…");
+      toast("Buscando sesiones y actualizando nombres y etiquetas…");
     } catch (e) {
       toast((e as Error).message, true);
     }

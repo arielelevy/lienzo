@@ -159,6 +159,28 @@ def harness_executable(agent: str) -> str | None:
     return _exe_path(name if WINDOWS else name.removesuffix(".exe"))
 
 
+def open_vscode(cwd: str) -> dict:
+    """Abre una carpeta permitida sin interpretar su ruta como un comando."""
+    if not _cwd_allowed(cwd, _allowed_roots()):
+        return {"ok": False, "error": "cwd fuera de launch_roots"}
+    candidates = [shutil.which("Code.exe" if WINDOWS else "code")]
+    if WINDOWS:
+        local = os.environ.get("LOCALAPPDATA")
+        system = os.environ.get("ProgramFiles")
+        if local:
+            candidates.append(os.path.join(local, "Programs", "Microsoft VS Code", "Code.exe"))
+        if system:
+            candidates.append(os.path.join(system, "Microsoft VS Code", "Code.exe"))
+    executable = next((p for p in candidates if p and os.path.isfile(p)), None)
+    if executable is None:
+        return {"ok": False, "error": "No encuentro VS Code en esta PC"}
+    try:
+        subprocess.Popen([executable, "--new-window", cwd])
+    except OSError as exc:
+        return {"ok": False, "error": f"No se pudo abrir VS Code: {exc}"}
+    return {"ok": True}
+
+
 def launch(
     cwd: str, title: str, agent: str, resume: str | None = None, model: str | None = None, distro: str | None = None
 ) -> dict:

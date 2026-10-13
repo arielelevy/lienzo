@@ -98,6 +98,43 @@ def test_read_only_and_dead_sessions_are_not_renamed(monkeypatch):
     ct.sync_once()
 
 
+def test_manual_sync_reapplies_title_after_cached_attempt(monkeypatch):
+    card = {"session_id": "s", "pid": 42, "alive": True, "agent": "codex", "repo": "lienzo", "title": "tarea"}
+    monkeypatch.setattr(state, "sessions", {"s": card})
+    monkeypatch.setattr(sessions, "touch", lambda s: None)
+    calls = []
+    monkeypatch.setattr(ct, "native_title", lambda s, title: calls.append(title) or {"ok": True})
+    ct.sync_once()
+    ct.sync_once()
+    ct.sync_once(force=True)
+    assert calls == ["lienzo | tarea", "lienzo | tarea"]
+    assert card["title"] == "lienzo | tarea"
+
+
+def test_manual_rescan_discovers_before_retitling(monkeypatch):
+    from lienzo import server
+
+    calls = []
+    monkeypatch.setattr(server, "sweep_once", lambda: calls.append("sweep"))
+    monkeypatch.setattr(ct, "sync_once", lambda **kwargs: calls.append(kwargs))
+    server.rescan_once()
+    assert calls == ["sweep", {"force": True}]
+
+
+def test_manual_rescan_reports_worker_failure(monkeypatch):
+    from lienzo import server
+
+    def fail():
+        raise RuntimeError("fixture rescan failure")
+
+    messages = []
+    monkeypatch.setattr(server, "sweep_once", fail)
+    monkeypatch.setattr(server, "log", messages.append)
+    monkeypatch.setattr(ct, "sync_once", lambda **kwargs: pytest.fail("no se debe retitular sin barrer"))
+    server.rescan_once()
+    assert len(messages) == 1 and "fixture rescan failure" in messages[0]
+
+
 def test_native_helper_uses_pid_and_title_as_arguments(monkeypatch):
     monkeypatch.setattr(ct.backend, "is_tmux", lambda s: False)
     monkeypatch.setattr(ct.sys, "platform", "win32")
