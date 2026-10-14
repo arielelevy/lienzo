@@ -1,11 +1,12 @@
 import os
 
 import launch
+
 from lienzo import server
 
 
 def test_vscode_rejects_unallowed_directory(monkeypatch):
-    monkeypatch.setattr(launch, "_allowed_roots", lambda: [])
+    monkeypatch.setattr(launch, "_allowed_roots", list)
     assert launch.open_vscode("D:/outside")["ok"] is False
 
 

@@ -11,7 +11,7 @@ def run_results(monkeypatch, results):
         result = results.pop(0)
         if isinstance(result, Exception):
             raise result
-        return SimpleNamespace(returncode=result[0], stdout=result[1])
+        return SimpleNamespace(returncode=result[0], stdout=result[1], stderr="")
 
     monkeypatch.setattr(updater.subprocess, "run", run)
     return calls
@@ -58,7 +58,9 @@ def test_real_git_pull_updates_checkout(tmp_path, monkeypatch):
     checkout = tmp_path / "checkout"
 
     def git(*args, cwd=tmp_path):
-        return subprocess.run(["git", *map(str, args)], cwd=cwd, check=True, capture_output=True, text=True)
+        return subprocess.run(
+            ["git", *map(str, args)], cwd=cwd, check=True, stdin=subprocess.DEVNULL, capture_output=True, text=True
+        )
 
     git("init", "--bare", remote)
     git("clone", remote, source)

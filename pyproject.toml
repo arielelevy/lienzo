@@ -20,6 +20,11 @@ Repository = "https://github.com/arielelevy/lienzo"
 line-length = 120
 target-version = ["py314"]
 
+[tool.pytest.ini_options]
+# pruebas-agenticas/resultados/ guarda reproducciones de corridas viejas (ignoradas por git) que
+# afirman bugs ya corregidos: no son parte de la suite.
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py314"

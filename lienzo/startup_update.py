@@ -1,26 +1,44 @@
 """Actualizar el checkout antes de arrancar el servidor."""
 
-from pathlib import Path
 import os
 import subprocess
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def update() -> int:
+    # Sin heredar handles para git: ningún paso pide entrada, y uno inválido (arranque sin consola) da WinError 6.
     try:
         before = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True,
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
-        result = subprocess.run(["git", "pull", "--ff-only"], cwd=ROOT, timeout=60)
+        result = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if output := (result.stdout + result.stderr).strip():
+            print(output, flush=True)
         if result.returncode:
             print(f"Lienzo: git pull falló (código {result.returncode}); arranco con la versión local.", flush=True)
             return 0
         changes = subprocess.run(
             ["git", "diff", "--name-only", before, "HEAD", "--", "web/"],
-            cwd=ROOT, capture_output=True, text=True, check=True,
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         pending = ROOT / "web" / ".startup-build-pending"
         if changes:
@@ -29,7 +47,7 @@ def update() -> int:
             command = ["npm", "run", "build"]
             if os.name == "nt":
                 command = [os.environ["COMSPEC"], "/d", "/c", "npm.cmd run build"]
-            result = subprocess.run(command, cwd=ROOT / "web")
+            result = subprocess.run(command, cwd=ROOT / "web", stdin=subprocess.DEVNULL)
             if result.returncode:
                 print("Lienzo: falló la compilación de la interfaz; no arranco.", flush=True)
             else:

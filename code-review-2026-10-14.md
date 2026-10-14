@@ -148,3 +148,43 @@ viejo puede ignorar el modo reenviado: actualizar las PCs antes de usarlo.
 No se ejecuta una auditoría global de dependencias ni se afirma cobertura
 funcional de una CLI realmente lanzada. La certificación del cambio depende
 del veredicto registrado por el runner.
+
+---
+
+# Code Review: actualización de Codex y arranque sin handles heredados
+
+**Fecha**: 2026-10-14
+**Alcance**: PR review del diff sin commitear
+**Archivos**: `lienzo/harness_updates.py`, `lienzo/startup_update.py`, `pyproject.toml`,
+`tests/test_harness_updates.py`, `tests/test_startup_update.py`, `tests/test_launch_improvements.py`
+
+## Resumen
+
+| Severidad | Cantidad | Estado |
+|-----------|----------|--------|
+| CRITICAL | 1 | Corregido |
+| HIGH | 2 | Corregidos |
+| MEDIUM | 0 | — |
+
+## CRITICAL
+
+1. **`latest_version` podía matar el hilo de actualizaciones.** `json.load(r).get(...)` sobre una
+   respuesta que no fuera objeto tiraba `AttributeError`, que no se atrapaba en `ensure` y terminaba
+   `Updater.loop`: ningún harness volvía a actualizarse hasta reiniciar. Ahora se valida el tipo.
+
+## HIGH
+
+1. **Fallo silencioso en `up_to_date`.** Un error de red o de `--version` devolvía `None` sin
+   registro. Ahora cada caso que vuelve a `codex update` deja en el log el motivo.
+2. **Comparación por igualdad.** Si el instalador publica antes que npm, la versión instalada es
+   más nueva que `latest` y se reinstalaba en cada ciclo: el mismo bug que se quería arreglar.
+   Ahora se compara como tupla y una versión igual o más nueva cuenta como al día.
+
+## Verificado sin hallazgos
+
+- `startup_update.py`: `git` ya no hereda stdin/stdout/stderr. `git pull` con stdin nulo no puede
+  pedir credenciales por consola; el Git Credential Manager pide por ventana, así que no cambia el uso real.
+  La salida del pull se imprime al terminar en vez de en vivo (tope de 60 s).
+- `testpaths = ["tests"]`: fuera de `tests/` sólo se juntaban reproducciones ignoradas por git.
+- Pruebas nuevas: al día, más nueva que npm, desactualizada, registro caído. Suite completa: 1672 passed
+  antes de estas correcciones; focal después: 16 passed. `ruff check`: sin hallazgos.

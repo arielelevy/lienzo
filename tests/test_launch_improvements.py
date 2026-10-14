@@ -21,7 +21,7 @@ def test_codex_append_preserves_user_instructions(tmp_path, monkeypatch):
 
 def test_windows_argument_quote_and_injection_boundaries():
     assert launch._cmd_arg("hello world") == '"hello world"'
-    for value in ('%PATH%', 'a&b', 'a\nb', 'a"b', '!variable!', 'unicode😀'):
+    for value in ("%PATH%", "a&b", "a\nb", 'a"b', "!variable!", "unicode😀"):
         with pytest.raises(ValueError):
             launch._cmd_arg(value)
 
@@ -29,7 +29,12 @@ def test_windows_argument_quote_and_injection_boundaries():
 def test_appended_prompt_cmd_is_one_argument_and_keeps_flags(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "LIENZO", str(tmp_path))
     monkeypatch.setattr(launch.subprocess, "Popen", lambda *a, **k: None)
-    result = launch._launch_cmd("D:/repo", "Test", "D:/bin/claude.exe", ["--resume", "s1", "--append-system-prompt", "Responde breve con pruebas"])
+    result = launch._launch_cmd(
+        "D:/repo",
+        "Test",
+        "D:/bin/claude.exe",
+        ["--resume", "s1", "--append-system-prompt", "Responde breve con pruebas"],
+    )
     body = Path(result["cmd_path"]).read_text(encoding="cp1252")
     assert '--resume s1 --append-system-prompt "Responde breve con pruebas"' in body
 
@@ -37,7 +42,7 @@ def test_appended_prompt_cmd_is_one_argument_and_keeps_flags(tmp_path, monkeypat
 def test_posix_prompt_is_data_not_shell(tmp_path, monkeypatch):
     seen = []
     monkeypatch.setattr(launch.subprocess, "Popen", lambda argv, **k: seen.append(argv))
-    prompt = 'instructions; $(must not execute)'
+    prompt = "instructions; $(must not execute)"
     result = launch._launch_tmux(str(tmp_path), "Title", "pi", ["--append-system-prompt", prompt])
     assert result["ok"] and seen[0][-1] == prompt
     assert "sh" not in seen[0]
@@ -47,9 +52,11 @@ def test_wsl_codex_reads_target_config_and_preserves_literal_text(tmp_path, monk
     config = tmp_path / "config.toml"
     config.write_text('developer_instructions = "Texto de WSL"')
     calls = []
+
     def paths(cwd, distro):
         calls.append(distro)
         return [config]
+
     monkeypatch.setattr(launch, "_codex_config_paths", paths)
     result = launch._improvement_args("codex", 'Responde breve & conserva "quotes"', "D:/repo", distro="Ubuntu")
     assert calls == ["Ubuntu"]
@@ -66,7 +73,14 @@ def test_native_cmd_delivers_one_literal_instruction_argument(tmp_path, monkeypa
     text = "developer_instructions=Responde breve; conserva pruebas y errores"
     generated = launch._launch_cmd(str(tmp_path), "Test", sys.executable, [str(script), "-c", text])
     monkeypatch.setattr(launch.subprocess, "Popen", real_popen)
-    result = subprocess.run([os.environ["COMSPEC"], "/d", "/c", generated["cmd_path"]], capture_output=True, text=True, timeout=10, check=False)
+    result = subprocess.run(
+        [os.environ["COMSPEC"], "/d", "/c", generated["cmd_path"]],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
     assert result.returncode == 0
     assert json.loads(result.stdout.strip()) == ["-c", text]
 
@@ -78,8 +92,10 @@ def test_wsl_configuration_timeout_does_not_block_launch(tmp_path, monkeypatch):
     monkeypatch.setattr(launch.harness_updates, "before_launch", lambda *a: None)
     monkeypatch.setattr(launch.agent_improvements, "launch_instructions", lambda *a: ("brief", []))
     monkeypatch.setattr(launch, "_launch_tmux", lambda *a, **k: {"ok": True})
+
     def timed_out(*args, **kwargs):
         raise subprocess.TimeoutExpired(["wsl.exe"], 5)
+
     monkeypatch.setattr(launch, "_improvement_args", timed_out)
     result = launch.launch(str(tmp_path), "Test", "codex", distro="Ubuntu")
     assert result["ok"] and "mejoras no aplicadas" in result["aviso"]

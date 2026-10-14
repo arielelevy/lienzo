@@ -24,7 +24,46 @@ def setup_updater(monkeypatch, rc=0):
         return rc, "current", "network unavailable" if rc else ""
 
     monkeypatch.setattr(hu.subproc, "correr", run)
+    monkeypatch.setattr(hu, "latest_version", lambda agent: None)
     return hu.Updater(), clock, calls
+
+
+def test_codex_up_to_date_skips_reinstall(monkeypatch):
+    updater, clock, calls = setup_updater(monkeypatch)
+    monkeypatch.setattr(hu, "latest_version", lambda agent: "0.162.1")
+    monkeypatch.setattr(hu.subproc, "correr", lambda argv, **k: (calls.append(argv), (0, "codex-cli 0.162.1", ""))[1])
+    assert updater.ensure("codex", "/bin/codex") is None
+    assert calls == [["/bin/codex", "--version"]]
+    clock[0] += hu.INTERVAL_S - 1
+    updater.ensure("codex", "/bin/codex")
+    assert len(calls) == 1
+
+
+def test_codex_newer_than_npm_counts_as_current(monkeypatch):
+    updater, _, calls = setup_updater(monkeypatch)
+    monkeypatch.setattr(hu, "latest_version", lambda agent: "0.162.0")
+    monkeypatch.setattr(hu.subproc, "correr", lambda argv, **k: (calls.append(argv), (0, "codex-cli 0.162.1", ""))[1])
+    assert updater.ensure("codex", "/bin/codex") is None
+    assert calls == [["/bin/codex", "--version"]]
+
+
+def test_codex_registry_failure_falls_back_to_update(monkeypatch):
+    updater, _, calls = setup_updater(monkeypatch)
+
+    def offline(agent):
+        raise OSError("sin red")
+
+    monkeypatch.setattr(hu, "latest_version", offline)
+    updater.ensure("codex", "/bin/codex")
+    assert calls[-1][0] == ["/bin/codex", "update"]
+
+
+def test_codex_outdated_runs_update(monkeypatch):
+    updater, _, calls = setup_updater(monkeypatch)
+    monkeypatch.setattr(hu, "latest_version", lambda agent: "0.163.0")
+    monkeypatch.setattr(hu.subproc, "correr", lambda argv, **k: (calls.append(argv), (0, "codex-cli 0.162.1", ""))[1])
+    updater.ensure("codex", "/bin/codex")
+    assert calls == [["/bin/codex", "--version"], ["/bin/codex", "update"]]
 
 
 def test_startup_and_six_hour_boundary(monkeypatch):
