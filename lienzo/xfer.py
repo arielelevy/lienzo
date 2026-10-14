@@ -73,6 +73,11 @@ ACTIVOS = ("listando", "copiando", "esperando")
 # el server lo cambia por su log; quien construye la conexion a un peer tambien lo pone el server
 log: Callable[[str], None] = lambda msg: state.log(msg)
 conn_de: Callable[[str], federation.PeerConn | None] = lambda pc: None
+# el server pone mirror.MIRROR.forward: pedirle algo firmado a otra PC (traer y su avance)
+reenviar: Callable[..., tuple[int, dict]] = lambda pc, method, path, body=None: (
+    503,
+    {"error": f"sin conexion con {pc}"},
+)
 
 
 class Pausa(Exception):
@@ -1195,6 +1200,53 @@ def nuevo(d: dict, pc_propio: str) -> tuple[int, dict]:
     t.arrancar()
     log(f"xfer {t.id}: {t.origen} -> {pc}:{t.destino} (bs {t.bs // MIB} MiB, {t.hilos} hilos)")
     return 202, {"id": t.id}
+
+
+def mas_nuevo(carpeta: str) -> str | None:
+    """El archivo más nuevo directamente en `carpeta`, sin subcarpetas, links ni temporales del canal."""
+    with os.scandir(carpeta) as it:
+        archivos = [e for e in it if e.is_file(follow_symlinks=False) and not e.name.endswith((PARTE, DIARIO))]
+    return max(archivos, key=lambda e: e.stat(follow_symlinks=False).st_mtime_ns).path if archivos else None
+
+
+def traer(d: dict, pc_propio: str) -> tuple[int, dict]:
+    """POST /xfer/traer {pc, origen, destino, ultimo?}: pide a otra PC que mande `origen` (de ella) a
+    la carpeta `destino` de esta. Copiar sigue siendo cosa del que manda: aca solo se valida el destino
+    y se reenvia; el origen lo valida la otra PC contra su copy_roots."""
+    pc = d.get("pc")
+    if not isinstance(pc, str) or not pc or pc == pc_propio:
+        return 400, {"error": "pc tiene que ser otra PC emparejada (el pc_id de GET /peers)"}
+    if not isinstance(d.get("origen"), str) or not isinstance(d.get("ultimo", False), bool):
+        return 400, {"error": "origen tiene que ser una ruta de la otra PC y ultimo, true o false"}
+    destino = permitido(d.get("destino"))
+    if destino is None:
+        return 403, {"error": "destino fuera de copy_roots de esta PC"}
+    code, res = reenviar(
+        pc, "POST", "/xfer/traer", {"origen": d["origen"], "destino": destino, "ultimo": d.get("ultimo", False)}
+    )
+    return code, {**res, "pc": pc} if code < 300 else res
+
+
+def enviar_a_pedido(d: dict, pc_que_pide: str | None, pc_propio: str) -> tuple[int, dict]:
+    """POST /peer/xfer/traer: la PC emparejada `pc_que_pide` (la de la firma) quiere `origen`. Sale
+    como cualquier envio de esta PC: origen dentro de copy_roots de aca, destino lo acepta o no ella.
+    Con `ultimo`, origen es una carpeta y va su archivo mas nuevo."""
+    if not pc_que_pide:
+        return 401, {"error": "pedido sin firma de una PC emparejada"}
+    origen = permitido(d.get("origen"))
+    if origen is None:
+        return 403, {"error": "origen fuera de copy_roots de esta PC"}
+    if d.get("ultimo") is True:
+        if not os.path.isdir(origen):
+            return 400, {"error": "con ultimo, origen tiene que ser una carpeta"}
+        try:
+            origen = mas_nuevo(origen)
+        except OSError as e:
+            return 500, {"error": f"no se pudo leer la carpeta: {e}"}
+        if origen is None:
+            return 404, {"error": "la carpeta no tiene archivos"}
+    code, res = nuevo({"pc": pc_que_pide, "origen": origen, "destino": d.get("destino")}, pc_propio)
+    return code, {**res, "origen": origen} if code < 300 else res
 
 
 def ver(tid: str) -> tuple[int, dict]:

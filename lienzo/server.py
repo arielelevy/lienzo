@@ -1658,7 +1658,12 @@ class Handler(JsonHandler):
             if parts == ["xfer"]:
                 return self._json(200, xfer.todos())
             if len(parts) == 2 and parts[0] == "xfer":
-                code, res = xfer.ver(parts[1])
+                # ?pc=: un trabajo de esa PC, por ejemplo el que arranco un POST /xfer/traer de aca
+                pc = (self.query.get("pc") or [""])[0]
+                if pc and pc != identity.pc_id():
+                    code, res = xfer.reenviar(pc, "GET", f"/xfer/{parts[1]}")
+                else:
+                    code, res = xfer.ver(parts[1])
                 return self._json(code, res)
             if parts == ["peers", "lan"]:
                 return self._get_peers_lan()
@@ -1789,6 +1794,11 @@ class Handler(JsonHandler):
             if parts == ["xfer"]:
                 # copiar a otra PC (xfer.py): {pc, origen, destino, bs_mib?, hilos?, mbps?, disco_mbps?, espejo?}
                 code, res = xfer.nuevo(self._json_body(), identity.pc_id())
+                return self._json(code, res)
+            if parts == ["xfer", "traer"]:
+                # traer de otra PC: {pc, origen, destino, ultimo?}; el trabajo vive alla (GET /xfer/<id>?pc=)
+                code, res = xfer.traer(self._json_body(), identity.pc_id())
+                log(f"xfer traer de {res.get('pc') or '?'}: {code} {res.get('origen') or res.get('error')}")
                 return self._json(code, res)
             if len(parts) == 3 and parts[0] == "xfer" and parts[2] in ("retomar", "confirmar"):
                 code, res = xfer.retomar(parts[1], confirmar=parts[2] == "confirmar")
@@ -2287,6 +2297,14 @@ class PeerHandler(JsonHandler):
             code, res = replica.atender(self._body_json(raw))
             if code >= 400:
                 log(f"peer POST /peer/conocimiento de {pc_id}: {code} {res.get('error')}")
+            return self._json(code, res)
+        if rest[:2] == ["xfer", "traer"] and method == "POST":
+            # otra PC pide que esta le mande algo (xfer.traer del otro lado): sale como un envio comun
+            code, res = xfer.enviar_a_pedido(self._body_json(raw), pc_id, identity.pc_id())
+            log(f"peer POST /peer/xfer/traer de {pc_id}: {code} {res.get('origen') or res.get('error')}")
+            return self._json(code, res)
+        if method == "GET" and len(rest) == 2 and rest[0] == "xfer":
+            code, res = xfer.ver(rest[1])
             return self._json(code, res)
         if method == "POST" and rest[:1] == ["xfer"]:
             # copia entre PCs (xfer.py): miles de pedidos por trabajo, no van uno por uno al log
@@ -2949,6 +2967,7 @@ def main() -> int:
     secretos.al_guardar_git = health.renovar_git
     xfer.log = log
     xfer.conn_de = mirror.MIRROR.conn_of
+    xfer.reenviar = mirror.MIRROR.forward
     health.xfer_resumen = xfer.resumen
     peers_guardados = federation.list_peers(PEERS_FILE)
     modo_pares = a.peers or bool(peers_guardados)

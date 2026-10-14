@@ -188,3 +188,19 @@ del veredicto registrado por el runner.
 - `testpaths = ["tests"]`: fuera de `tests/` sólo se juntaban reproducciones ignoradas por git.
 - Pruebas nuevas: al día, más nueva que npm, desactualizada, registro caído. Suite completa: 1672 passed
   antes de estas correcciones; focal después: 16 passed. `ruff check`: sin hallazgos.
+
+---
+
+# Code Review: traer archivos desde otra PC
+
+**Fecha**: 2026-10-14
+**Alcance**: PR review — `lienzo/xfer.py` (`traer`, `enviar_a_pedido`, `mas_nuevo`), `lienzo/server.py`
+(`POST /xfer/traer`, `GET /xfer/<id>?pc=`, `POST /peer/xfer/traer`, `GET /peer/xfer/<id>`), `tests/test_xfer.py`
+
+Sin hallazgos que corregir. Revisado:
+- Confianza: una PC emparejada ya podía escribir en `copy_roots`, lanzar sesiones y reiniciar. Ahora
+  también puede pedir que le manden algo, pero sólo desde `copy_roots` de la PC que manda, y con firma
+  verificada (401 sin firma). El destino lo valida la PC que pide antes de reenviar y otra vez al recibir.
+- Errores: carpeta ilegible o vacía vuelven como 500/404 con motivo; una PC con el código viejo contesta 404.
+- Pruebas: archivo más nuevo (ignora `.parte`), firma y copy_roots, validación local del destino.
+  Suite completa: 1677 passed.

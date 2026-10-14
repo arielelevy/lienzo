@@ -441,3 +441,47 @@ def test_ruta_wsl_y_soltar_la_cache_cada_tanto(monkeypatch):
     sol.sumar("C:/datos/x.bin", xfer.SOLTAR_CADA)  # fuera de WSL no cuenta
     sol.cerrar(p)
     assert sueltos == [p, p]
+
+
+def test_traer_manda_el_archivo_mas_nuevo_a_la_pc_que_lo_pide(canal):
+    viejo, nuevo = canal["origen"] / "viejo.zip", canal["origen"] / "nuevo.zip"
+    _escribir(viejo, os.urandom(3000))
+    _escribir(nuevo, os.urandom(2 * MIB + 7))
+    os.utime(viejo, ns=(1_000_000_000, 1_000_000_000))
+    _escribir(canal["origen"] / ("a" + xfer.PARTE), b"temporal mas nuevo")
+    code, res = xfer.enviar_a_pedido(
+        {"origen": str(canal["origen"]), "destino": str(canal["destino"]), "ultimo": True}, "destino-pc", "yo"
+    )
+    assert code == 202 and res["origen"] == str(nuevo), res
+    _esperar_fin(xfer.TRABAJOS[res["id"]])
+    assert (canal["destino"] / "nuevo.zip").read_bytes() == nuevo.read_bytes()
+    assert not (canal["destino"] / "viejo.zip").exists()
+
+
+def test_traer_exige_firma_y_origen_dentro_de_copy_roots(canal, tmp_path):
+    pedido = {"origen": str(canal["origen"]), "destino": str(canal["destino"]), "ultimo": True}
+    assert xfer.enviar_a_pedido(pedido, None, "yo")[0] == 401
+    afuera = tmp_path / "afuera"
+    afuera.mkdir()
+    assert xfer.enviar_a_pedido({**pedido, "origen": str(afuera)}, "destino-pc", "yo")[0] == 403
+    assert xfer.enviar_a_pedido(pedido, "destino-pc", "yo")[0] == 404  # carpeta vacia
+    assert not xfer.TRABAJOS
+
+
+def test_traer_local_valida_el_destino_antes_de_reenviar(canal, tmp_path, monkeypatch):
+    llamadas = []
+    monkeypatch.setattr(xfer, "reenviar", lambda *a: (llamadas.append(a), (202, {"id": "abc"}))[1])
+    pedido = {"pc": "otra-pc", "origen": "C:/Users/x/Downloads", "ultimo": True}
+    code, res = xfer.traer({**pedido, "destino": str(tmp_path / "afuera")}, "yo")
+    assert code == 403 and not llamadas
+    assert xfer.traer({**pedido, "pc": "yo", "destino": str(canal["destino"])}, "yo")[0] == 400
+    code, res = xfer.traer({**pedido, "destino": str(canal["destino"])}, "yo")
+    assert code == 202 and res == {"id": "abc", "pc": "otra-pc"}
+    assert llamadas == [
+        (
+            "otra-pc",
+            "POST",
+            "/xfer/traer",
+            {"origen": pedido["origen"], "destino": str(canal["destino"]), "ultimo": True},
+        )
+    ]
