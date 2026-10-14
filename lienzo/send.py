@@ -151,6 +151,24 @@ def tecla_records(key: str) -> list[INPUT_RECORD]:
     return recs
 
 
+PASTE_SETTLE_S = 1.0  # reposo entre el ultimo bloque de texto ya consumido y el Enter
+
+
+def esperar_consumo(hin, segundos: float) -> bool | None:
+    """True cuando la cola de entrada de la consola quedo vacia (la TUI leyo todo), False si no paso
+    en `segundos`, None si no se pudo consultar."""
+    deadline = time.monotonic() + segundos
+    while True:
+        pending = wt.DWORD(0)
+        if not k32.GetNumberOfConsoleInputEvents(hin, ctypes.byref(pending)):
+            return None
+        if pending.value == 0:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def inject(
     pid: int,
     text: str,
@@ -194,21 +212,23 @@ def inject(
                 if err:
                     return {"ok": False, "pid": pid, "error": err}
                 time.sleep(chunk_delay)
+            sin_consumo = False
             if enter_presses > 0:
-                if text and procs.agent_of(procs.image_path(pid)) == "codex":
-                    # No juntar Enter con el burst de texto: Codex lo puede interpretar
-                    # como un salto de linea del pegado. Esperar consumo y luego reposo.
-                    deadline = time.monotonic() + 10
-                    while True:
-                        pending = wt.DWORD(0)
-                        if not k32.GetNumberOfConsoleInputEvents(hin, ctypes.byref(pending)):
-                            return {"ok": False, "pid": pid, "error": "no pude verificar el consumo del texto"}
-                        if pending.value == 0:
-                            break
-                        if time.monotonic() >= deadline:
-                            return {"ok": False, "pid": pid, "error": "Codex no consumio el texto; Enter no enviado"}
-                        time.sleep(0.05)
-                    time.sleep(max(key_delay, 1.0))
+                if text:
+                    # No juntar Enter con el burst de texto: una TUI que todavia esta leyendo el pegado
+                    # lo toma como un salto de linea y el encargo queda en el editor sin enviar (medido
+                    # con Codex, y despues con Claude: "send ok, tarjeta corriendo, texto sin enviar",
+                    # 2026-10-14). Esperar a que consuma y despues un reposo, en todas las TUIs.
+                    codex = procs.agent_of(procs.image_path(pid)) == "codex"
+                    consumido = esperar_consumo(hin, 10.0)
+                    if consumido is None:
+                        return {"ok": False, "pid": pid, "error": "no pude verificar el consumo del texto"}
+                    if not consumido and codex:
+                        return {"ok": False, "pid": pid, "error": "Codex no consumio el texto; Enter no enviado"}
+                    # otra TUI ocupada puede no leer la consola hasta terminar: el Enter va igual (como
+                    # antes) y el server no la da por enviada hasta que el agente confirme el pedido
+                    sin_consumo = not consumido
+                    time.sleep(max(key_delay, PASTE_SETTLE_S))
                 else:
                     time.sleep(key_delay)
                 for _ in range(enter_presses):
@@ -216,7 +236,10 @@ def inject(
                     if err:
                         return {"ok": False, "pid": pid, "error": err}
                     time.sleep(key_delay)
-            return {"ok": True, "pid": pid, "chars": len(text), "enter": enter_presses}
+            out = {"ok": True, "pid": pid, "chars": len(text), "enter": enter_presses}
+            if sin_consumo:
+                out["enter_sin_consumo"] = True
+            return out
         finally:
             k32.CloseHandle(hin)
     finally:

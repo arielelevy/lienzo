@@ -124,7 +124,7 @@ export const sessionsApi = {
 
 /** Cuerpo de POST /rules: "al terminar" (on_stop) o programada (at). */
 export type NewRule =
-  | { kind: "on_stop"; from: string; to: string; text: string; repeat?: boolean; max_fires?: number }
+  | { kind: "on_stop"; from: string; to: string; text: string; repeat?: boolean; max_fires?: number; limit?: "rate" | "total" }
   | {
       kind: "at";
       /** quien la programo, para dibujar la flecha; null si es a la misma sesion */
@@ -149,6 +149,8 @@ export interface RuleEdit {
   max_fires?: number;
   skip_busy?: boolean;
   repeat?: boolean;
+  /** on_stop: "rate" (sin tope total) o "total" (con max_fires) */
+  limit?: "rate" | "total";
 }
 
 export const rulesApi = {

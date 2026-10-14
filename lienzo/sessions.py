@@ -361,7 +361,7 @@ def restore_on_drop(card: dict, muerta: bool) -> None:
     por barrido) la olvida: ya no hay nada que restaurar. Nunca levanta."""
 
     def work() -> None:
-        if muerta and not restore.ended_on_purpose(card):
+        if muerta and not card.get("external") and not restore.ended_on_purpose(card):
             restore.remember(card, ended=True)
         else:
             restore.forget(card["session_id"])
@@ -556,7 +556,7 @@ def continue_session(old: dict, new: dict) -> bool:
         except OSError as e:
             state.log(f"sesion {old_sid[:8]} no continua como {new_sid[:8]}: no se guardaron reglas/enlaces: {e}")
             return False
-        for k in ("pid", "agent_exe", "no_console", "in_vscode", "coordinator", "pc"):
+        for k in ("pid", "agent_exe", "no_console", "external", "in_vscode", "coordinator", "pc"):
             if old.get(k) is not None:
                 new[k] = old[k]
         if not new.get("cwd") and old.get("cwd"):
@@ -623,6 +623,11 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "orphan": False,
         "in_vscode": False,
         "no_console": False,
+        # ejecucion externa (un orquestador, `claude -p`): {"kind", "via", ...} o None. Se ve, no se le
+        # escribe, no se la mata ni la mueven reglas: su control es el de quien la lanzo
+        "external": None,
+        # envio del lienzo esperando el UserPromptSubmit que lo confirma: {"at", "sin_consumo"} o None
+        "envio_pendiente": None,
         "suggestion": None,
         "dialog": None,
         "limit_until": None,
@@ -1206,14 +1211,51 @@ def claim_pid(s: dict, ev: dict) -> None:
                 f"pid {pid} ya pertenece a {owner[:8]}; evento {ev.get('hook_event_name') or '?'} de {sid[:8]} no lo toma"
             )
     if not owner:
+        proceso_nuevo = s.get("pid") != pid
         s["pid"] = pid
         s["agent_exe"] = ev.get("agent_exe")
         # el panel de Claude Code de VS Code y las apps de escritorio disparan hooks pero no
         # tienen consola: se ven y se leen, no se les escribe
-        s["no_console"] = not backend.is_tui(s)
+        ext = backend.external_origin(s)
+        # un proceso nuevo decide de cero (retomar en una terminal propia una sesion que corrio en un
+        # orquestador la vuelve personal); el mismo proceso conserva la marca que puso un plugin
+        if ext or proceso_nuevo:
+            s["external"] = ext
+        s["no_console"] = bool(s.get("external")) or not backend.is_tui(s)
+
+
+ENVIO_SIN_CONFIRMAR_S = 25  # con el agente libre, lo que tarda en llegar el UserPromptSubmit de un envio
+
+
+def envio_sin_confirmar(s: dict, ahora: float) -> bool:
+    """Un envio del lienzo que el agente no confirmo con su UserPromptSubmit: pasa a "te necesita"
+    con un aviso, en vez de figurar corriendo con el texto en el editor. Mientras el agente trabaja
+    el mensaje queda en cola (Claude lo toma al cerrar el turno): se cuenta desde que quedo libre.
+    Con el lock. Devuelve si marco."""
+    p = s.get("envio_pendiente")
+    if not p:
+        return False
+    if s.get("sent_mark") is None or not s.get("alive"):
+        s["envio_pendiente"] = None  # confirmado por otro camino, o el proceso murio
+        return False
+    if s.get("state") == "corriendo":
+        return False
+    desde = max(p["at"], (parse_ts(s.get("state_since")) or dt.datetime.min.replace(tzinfo=dt.UTC)).timestamp())
+    if ahora - desde < ENVIO_SIN_CONFIRMAR_S:
+        return False
+    s["envio_pendiente"] = None
+    detalle = short(s.get("last_prompt") or "", 200)
+    set_needs(s, {"kind": "sin_enviar", "detail": detalle, "where": "terminal"})
+    state.log(
+        f"send {s['session_id'][:8]}: el agente no confirmo el encargo en {ENVIO_SIN_CONFIRMAR_S} s"
+        + (" (la consola no consumio el texto)" if p.get("sin_consumo") else "")
+        + ": puede haber quedado en el editor sin Enter"
+    )
+    return True
 
 
 def hook_prompt_submit(s: dict, ev: dict) -> None:
+    s["envio_pendiente"] = None  # el agente tomo un pedido: el envio quedo confirmado
     set_state(s, "corriendo")
     s["stopped_by"] = None  # volvio a trabajar: la marca de detenida ya no cuenta
     raw = ev.get("prompt", "")
@@ -1896,7 +1938,11 @@ def adopt_process(p: dict) -> None:
         s = sessions.get(sid) if sid else None
         if s is not None:
             s["backend"] = p.get("backend")  # la fuente que la vio es la que la maneja
-            s["no_console"] = bool(p.get("no_console"))  # suelto (sin pane) = solo lectura
+            if p.get("external"):
+                s["external"] = p["external"]
+            elif s.get("pid") != p["pid"] and (not s.get("pid") or not backend.agent_alive(s)):
+                s["external"] = None  # otro proceso (vivo y personal) toma esta tarjeta: decide de cero
+            s["no_console"] = bool(p.get("no_console") or s.get("external"))  # suelto (sin pane) = solo lectura
             if p.get("target"):
                 s["target"] = p["target"]  # en tmux el pane manda, aunque el pid siga vivo. No-op en Windows.
             if not s.get("pid") or not backend.agent_alive(s):
@@ -1919,7 +1965,8 @@ def adopt_process(p: dict) -> None:
                 "pid": p["pid"],
                 "target": p.get("target"),
                 "backend": p.get("backend"),
-                "no_console": bool(p.get("no_console")),
+                "no_console": bool(p.get("no_console") or p.get("external")),
+                "external": p.get("external"),
                 "agent_exe": p["exe"],
                 "cwd": cwd,
                 "transcript_path": tpath,
@@ -2129,6 +2176,7 @@ def check_liveness(sid: str) -> None:
         if s is None:
             return
         changed = refresh_alive(s)
+        changed = envio_sin_confirmar(s, time.time()) or changed
         if (
             s["agent"] == "coda"
             and s.get("alive")
@@ -2190,7 +2238,10 @@ def remember_live_cards() -> None:
             vivas = [
                 dict(s)
                 for s in sessions.values()
-                if s.get("hooked") and s.get("alive") and restore.live_due(s.get("session_id"))
+                if s.get("hooked")
+                and s.get("alive")
+                and not s.get("external")  # una corrida externa no se reabre en una terminal
+                and restore.live_due(s.get("session_id"))
             ]
             # carpetas abiertas estos dias (recientes.py): con o sin hooks, con debounce adentro
             con_carpeta = recientes.campos(sessions.values())
@@ -2262,8 +2313,23 @@ def save_attachment(sid: str, name: str, data: bytes) -> str:
     return path
 
 
+def external_blocked(s: dict, accion: str = "escribirle") -> tuple[int, dict] | None:
+    """409 si la tarjeta es una ejecucion externa: no se le teclea, ni se la interrumpe, ni se la
+    mata desde el lienzo. Se controla desde quien la lanzo (o desde el plugin de ese orquestador)."""
+    ext = s.get("external")
+    if not ext:
+        return None
+    if ext.get("kind") == "batch":
+        motivo = "es una corrida headless (claude -p): no tiene consola"
+    else:
+        motivo = f"es una ejecucion de {ext.get('kind')}: se controla desde su orquestador o su plugin"
+    return 409, {"ok": False, "error": f"no se puede {accion}: {motivo}", "external": ext}
+
+
 def send_blocked(s: dict) -> tuple[int, dict] | None:
     """Por que no se le puede escribir a esta sesion, o None si se puede."""
+    if bloqueo := external_blocked(s):
+        return bloqueo
     if not s.get("pid") or not backend.agent_alive(s):
         return 409, {"ok": False, "error": "la sesion no tiene un PID vivo"}
     if s.get("orphan"):
@@ -2327,6 +2393,8 @@ def run_send(s: dict, final: str, enter: bool = True, key: str | None = None) ->
     subproceso send.py por PID (un texto largo va por archivo: la linea de comando no lo aguanta).
     Sin `enter` solo se tipea (una opcion de un dialogo de la TUI se elige con la tecla del numero,
     sin confirmar); con `key="escape"` va esa tecla sola. (codigo, respuesta)."""
+    if bloqueo := external_blocked(s):
+        return bloqueo  # ultima barrera: ningun camino (dialogo, Esc, nativo) teclea en una externa
     sid, pid = s["session_id"], s["pid"]
     if backend.is_tmux(s):
         if not tmux.target_valid(s.get("target"), pid, s.get("distro")):
@@ -2669,11 +2737,18 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     with lock:
         s["last_prompt"] = nuevo
         s["prompt_via"] = "lienzo"  # encargo: este si titula la tarjeta
-        if s.get("last_event") != "SessionEnd":
+        confirmado = s.get("sent_mark") is None  # el UserPromptSubmit ya llego y consumio la marca
+        if s.get("last_event") != "SessionEnd" and not confirmado:
             # tras SessionEnd la consola ya es de otra sesion (/clear, resume): lo que se tipea
             # llega a esa, y esta tarjeta no vuelve a 'corriendo' (la continua apply_event)
-            set_state(s, "corriendo")
             s["stopped_by"] = None
+            if s.get("hooked"):
+                # 'corriendo' lo pone el pedido que confirma el agente (hook_prompt_submit), no el fin
+                # del tecleo: un Enter que la TUI tomo como salto de linea dejaba el texto en el
+                # editor con la tarjeta 'corriendo' (2026-10-14). Sin confirmacion, aviso visible
+                s["envio_pendiente"] = {"at": time.time(), "sin_consumo": bool(out.get("enter_sin_consumo"))}
+            else:
+                set_state(s, "corriendo")  # sin hooks no hay quien confirme: como antes
         touch(s)
     return 200, out
 

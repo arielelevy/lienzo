@@ -93,6 +93,30 @@ def pi_interactive(args: list[str]) -> bool:
 CODA_SUBCOMMANDS = ("configure", "install", "upgrade", "logs", "plugin", "marketplace", "checkpoints-demo", "logs-demo")
 
 
+def claude_batch(args: list[str]) -> bool:
+    """Una corrida headless de Claude Code (`claude -p` / `--print`): sin TUI ni consola donde teclear.
+    Los orquestadores la lanzan asi (`claude --print --output-format stream-json`, con el prompt por
+    stdin, que se cierra). A diferencia de codex exec, sigue siendo un agente: dispara hooks y se ve,
+    pero no se le escribe."""
+    options = args[: args.index("--")] if "--" in args else args
+    return any(a in ("-p", "--print") for a in options)
+
+
+# Lanzadores de agentes batch que el lienzo reconoce por el ejecutable de un ancestro: lo que corra
+# debajo es una ejecucion suya, con su propio control (API, aprobaciones), y no una terminal personal.
+# Ejecutable (en minusculas) -> tipo. Vacio en el repo: lo llenan los plugins locales (plugins.py).
+EXTERNAL_RUNNERS: dict[str, str] = {}
+
+
+def external_runner(exe: str | None) -> str | None:
+    """El tipo de lanzador si `exe` es uno de EXTERNAL_RUNNERS (o su renombrado por un actualizador)."""
+    name = os.path.basename(exe or "").lower()
+    for k, v in EXTERNAL_RUNNERS.items():
+        if name == k or name.startswith(k + "."):
+            return v
+    return None
+
+
 def coda_interactive(args: list[str]) -> bool:
     """La TUI de CODA; no una corrida headless (-p/--prompt/--prompt-file) ni un subcomando."""
     if args and args[0] in CODA_SUBCOMMANDS:

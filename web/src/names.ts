@@ -60,7 +60,9 @@ const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
 export function ruleSentence(r: Rule, sid: string, sessions: Record<string, Session>): string {
   const other = (id: string | null) => shortName(id ? sessions[id] : undefined, "otra sesión");
   if (r.kind === "on_stop") {
-    const count = r.max_fires > 1 ? ` Van ${r.fired} de ${r.max_fires}.` : "";
+    const sinTope = r.repeat && r.limit !== "total";
+    const espera = r.deferred?.count ? ` ${r.deferred.count} en espera por el límite de frecuencia.` : "";
+    const count = sinTope ? ` Van ${r.fired}, sin tope.${espera}` : (r.max_fires ?? 1) > 1 ? ` Van ${r.fired} de ${r.max_fires}.` : "";
     return r.from === sid
       ? `Al terminar le manda su respuesta a ${other(r.to)}.${count}`
       : `Cuando ${other(r.from)} termine, le llega su respuesta.${count}`;
@@ -275,6 +277,9 @@ export function needsLabel(needs: Needs): string {
       return "Te pide un dato";
     case "elicitation_url_dialog":
       return "Te pide abrir un enlace";
+    case "sin_enviar":
+      // el lienzo tecleo el encargo pero el agente no lo confirmo: suele quedar en el editor sin Enter
+      return "El encargo quedó sin enviar: mirá la terminal (¿falta Enter?)";
     default:
       return "Te necesita";
   }

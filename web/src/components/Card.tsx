@@ -675,7 +675,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               {s.coordinator ? "★ Quitarle el rol de coordinadora" : "☆ Coordinadora del repo"}
             </button>
           )}
-          {s.alive && s.pid && s.backend !== "tmux" && (
+          {s.alive && s.pid && s.backend !== "tmux" && !s.external && (
             <button type="button" role="menuitem" disabled={busy}
               onClick={() => { closeMenu(); void actions.kill(); }}>
               Cerrar proceso a la fuerza…
@@ -868,7 +868,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         <span>PID {s.pid ?? "?"}</span>
         <span>{s.source === "sweep" ? "barrido" : "hooks"}</span>
         {s.alive === false && <span>proceso muerto</span>}
-        {s.no_console && !s.orphan && <span className="warn" title={s.backend === "tmux" ? "corre suelto, fuera de tmux: se ve, no se le escribe (para escribirle, en tmux)" : "panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe"}>sin consola</span>}
+        {s.external && (
+          <span className="warn external" title={s.external.kind === "batch" ? "claude -p (headless): no tiene consola; se ve, no se le escribe" : `ejecución de ${s.external.kind}${s.external.run_id ? ` (corrida ${s.external.run_id})` : ""}: se controla desde su orquestador; no se le escribe ni se la cierra desde acá`}>
+            {s.external.kind === "batch" ? "headless" : s.external.kind} · solo lectura
+          </span>
+        )}
+        {s.no_console && !s.orphan && !s.external && <span className="warn" title={s.backend === "tmux" ? "corre suelto, fuera de tmux: se ve, no se le escribe (para escribirle, en tmux)" : "panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe"}>sin consola</span>}
         {s.distro && <span title="distro de WSL dueña del tmux de esta tarjeta">{s.distro}</span>}
         <span>{s.session_id.slice(0, 8)}</span>
       </div>

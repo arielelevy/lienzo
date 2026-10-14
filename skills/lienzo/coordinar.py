@@ -394,11 +394,18 @@ def titular(s, titulo):
     return pedir("PUT", f"/sessions/{s['session_id']}/title", {"title": titulo})[0]
 
 
-def regla_informe(s, texto, max_fires=30):
+def _limite(max_fires):
+    """Cuerpo del limite de una on_stop repetida: sin tope total por defecto (el server la limita por
+    frecuencia y demora lo que exceda, sin perderlo); `max_fires` solo si se pide un tope total."""
+    return {"limit": "total", "max_fires": max_fires} if max_fires else {"limit": "rate"}
+
+
+def regla_informe(s, texto, max_fires=None):
     """Regla `on_stop` del frente hacia la coordinadora, para que el informe llegue solo.
 
     `repeat` es obligatorio: sin él dispara una vez y queda apagada, y un frente que cierra dos
-    turnos avisa solo el primero.
+    turnos avisa solo el primero. Sin `max_fires` no hay tope total: con el tope de 30 de antes, en
+    una sesion larga las reglas se apagaban y la coordinadora dejaba de recibir (OpenSyync, 2026-10-14).
     """
     if not YO:
         raise ValueError(
@@ -407,11 +414,11 @@ def regla_informe(s, texto, max_fires=30):
     return pedir(
         "POST",
         "/rules",
-        {"kind": "on_stop", "from": s["session_id"], "to": YO, "text": texto, "repeat": True, "max_fires": max_fires},
+        {"kind": "on_stop", "from": s["session_id"], "to": YO, "text": texto, "repeat": True, **_limite(max_fires)},
     )[0]
 
 
-def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
+def cablear(texto=None, pc=None, solo_vivas=True, max_fires=None, filtro=None):
     """Cablea CADA frente vivo hacia la coordinadora (`YO`): una regla `on_stop` por tarjeta, para que
     el informe llegue solo cuando termine. No repite las que ya tienen regla hacia `YO`, no cablea a
     la coordinadora consigo misma. `filtro(s)` (opcional) deja afuera lo que no es de este trabajo: sin
@@ -445,7 +452,7 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=30, filtro=None):
         return sid, pedir(
             "POST",
             "/rules",
-            {"kind": "on_stop", "from": sid, "to": YO, "text": msg, "repeat": True, "max_fires": max_fires},
+            {"kind": "on_stop", "from": sid, "to": YO, "text": msg, "repeat": True, **_limite(max_fires)},
         )
 
     # en paralelo: una regla de una tarjeta de otra PC lenta o caida esperaba su timeout antes de seguir

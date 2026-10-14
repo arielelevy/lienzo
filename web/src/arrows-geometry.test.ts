@@ -164,7 +164,7 @@ test("buildItems dibuja las reglas activas con los dos extremos en el tablero, y
   const anchors = new Map([["a", A1], ["b", B1]]);
   const rules = [
     rule({ id: "r1", from: "a", to: "b" }),
-    rule({ id: "r2", from: "a", to: "b", repeat: true, fired: 2, max_fires: 5 }),
+    rule({ id: "r2", from: "a", to: "b", repeat: true, fired: 2, max_fires: 5, limit: "total" }),
     rule({ id: "r3", from: "a", to: "b", kind: "at", at: "2026-09-05T23:00:00Z", text: "Continuar" }),
     rule({ id: "r4", from: "a", to: "b", kind: "at", at: null, text: "sin hora" }),
     rule({ id: "off", from: "a", to: "b", enabled: false }),
@@ -187,6 +187,19 @@ test("buildItems dibuja las reglas activas con los dos extremos en el tablero, y
   assert.equal(items[2].title, "a las 23:00 → «Continuar» a n(b) · click para seleccionarla");
   assert.equal(items[2].desc, "A las 23:00 se le escribe «Continuar» a n(b). La programó n(a). Doble click para editarla.");
   assert.equal(items[3].desc, "Sin hora fijada, se le escribe «sin hora» a n(b). La programó n(a). Doble click para editarla.");
+});
+
+test("una on_stop repetida sin tope total dice su limite por frecuencia y lo que espera", () => {
+  const anchors = new Map([["a", A1], ["b", B1]]);
+  const base = { from: "a", to: "b", repeat: true, fired: 31, max_fires: null };
+  const [libre, espera] = buildItems([], [
+    rule({ id: "f1", ...base }),
+    rule({ id: "f2", ...base, rate_max: 3, rate_window_s: 300, deferred: { since: "2026-10-14T10:00:00Z", count: 4, until: "2026-10-14T10:05:00Z" } }),
+  ], anchors, fmt);
+  assert.equal(libre.desc, "Cada vez que n(a) cierre un turno, su respuesta se manda a n(b). Sin tope total: a lo sumo 10 cada 10 min; lo que exceda se demora y sale agrupado. Van 31. Doble click para editarla.");
+  assert.match(espera.desc, /a lo sumo 3 cada 5 min/);
+  assert.match(espera.desc, /En espera por el límite de frecuencia: 4 aviso\(s\)/);
+  assert.match(espera.title, /\(31 · 4 en espera\)/);
 });
 
 test("periodLabel: minutos, hora, horas y dia; nunca menos de un minuto", () => {

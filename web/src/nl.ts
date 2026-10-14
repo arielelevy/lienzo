@@ -28,7 +28,7 @@ export type Parsed =
       maxFires: number;
       summary: string;
     }
-  | { kind: "on_stop"; to: Session | null; toMe: boolean; repeat: boolean; maxFires: number; summary: string }
+  | { kind: "on_stop"; to: Session | null; toMe: boolean; repeat: boolean; maxFires: number; topeTotal: boolean; summary: string }
   | { kind: "now"; to: Session | null; toMe: boolean; summary: string }
   | { kind: "none"; summary: string };
 
@@ -175,12 +175,14 @@ export function parseConnection(phrase: string, from: Session, others: Session[]
     const repeat = /\bcada vez\b|\bsiempre\b/.test(n);
     const mm = n.match(/\bhasta\s+(\d+)\s*(veces)?/);
     const maxFires = mm ? Math.min(50, Math.max(1, Number(mm[1]))) : repeat ? 5 : 1;
+    // tope total solo si se dijo "hasta N veces"; si no, se repite sin tope (limite por frecuencia)
+    const topeTotal = repeat && !!mm;
     const to = target.to && !target.toSelf ? target.to : null;
     const dest = to ? name(to) : target.toMe ? "la coordinadora (no hay ninguna viva)" : null;
     return {
-      kind: "on_stop", to, toMe: target.toMe, repeat, maxFires,
+      kind: "on_stop", to, toMe: target.toMe, repeat, maxFires, topeTotal,
       summary: dest
-        ? `Cuando ${from.repo} termine → su respuesta a ${dest}${repeat ? ` (hasta ${maxFires} veces)` : " (una vez)"}`
+        ? `Cuando ${from.repo} termine → su respuesta a ${dest}${repeat ? (topeTotal ? ` (hasta ${maxFires} veces)` : " (cada vez, sin tope)") : " (una vez)"}`
         : "¿A qué sesión? Agregá “a <nombre>” al final",
     };
   }

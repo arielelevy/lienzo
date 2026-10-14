@@ -111,10 +111,64 @@ ON_STOP_SETTLE_S = (
     15  # el Stop de una coda a veces llega en un hueco (compactacion, entre herramientas) y sigue trabajando
 )
 ON_STOP_COOLDOWN_S = 30  # dos sesiones conectadas en ambos sentidos no se contestan en bucle
+# Una on_stop repetida no tiene tope total salvo que lo pida (limit="total"): se limita por frecuencia.
+# Medido en OpenSyync (2026-10-14): 7 reglas con max_fires=30 llegaron a 30 en una sesion larga, se
+# apagaron solas y la coordinadora dejo de recibir entregas sin aviso. El tope total cortaba avisos
+# para siempre; la ventana solo los demora y los agrupa.
+ON_STOP_RATE_MAX = 10  # disparos por ventana, por regla
+ON_STOP_RATE_WINDOW_S = 600
+RATE_MAX_TOPE, RATE_WINDOW_MIN_S, RATE_WINDOW_MAX_S = 60, 60, 86400
 CONTINUE_TEXT = "Continuar"
 CONTINUE_DELAY_S = 60
 RETRY_DELAY_S = 10  # error de API: se reintenta en el acto, con diez segundos para cancelarlo
 AT_NEAR_S = 120  # dos programadas a menos de 2 min son "la misma hora" (la UI guarda UTC, aca local)
+
+
+def tope_total(r: dict) -> bool:
+    """La regla se apaga al llegar a max_fires: una 'at', una on_stop de una sola vez, o una on_stop
+    repetida que lo pidio explicito (`limit: "total"`). Las demas on_stop repetidas (tambien las
+    viejas sin `limit`, que tenian el tope por defecto de quien las creo) se limitan por frecuencia."""
+    return r.get("kind") != "on_stop" or not r.get("repeat") or r.get("limit") == "total"
+
+
+def ventana(r: dict) -> tuple[int, int]:
+    """(disparos, segundos) del limite por frecuencia de una on_stop repetida."""
+    try:
+        n = min(max(int(r.get("rate_max") or ON_STOP_RATE_MAX), 1), RATE_MAX_TOPE)
+        w = min(max(int(r.get("rate_window_s") or ON_STOP_RATE_WINDOW_S), RATE_WINDOW_MIN_S), RATE_WINDOW_MAX_S)
+    except TypeError, ValueError:
+        n, w = ON_STOP_RATE_MAX, ON_STOP_RATE_WINDOW_S
+    return n, w
+
+
+def _recientes(r: dict, ahora: dt.datetime) -> list[dt.datetime]:
+    _, w = ventana(r)
+    out = [d for d in (local_dt(x) for x in r.get("recent_fires") or []) if d is not None]
+    return sorted(d for d in out if (ahora - d).total_seconds() < w)
+
+
+def proximo_permitido(r: dict, ahora: dt.datetime) -> tuple[dt.datetime | None, str]:
+    """(cuando puede volver a disparar, motivo); None = ya. El enfriamiento corta los ida y vuelta
+    inmediatos; la ventana corta el bucle largo sin apagar la regla."""
+    cands: list[tuple[dt.datetime, str]] = []
+    last = local_dt(r.get("last_fired")) if r.get("last_fired") else None
+    if last is not None and (ahora - last).total_seconds() < ON_STOP_COOLDOWN_S:
+        cands.append((last + dt.timedelta(seconds=ON_STOP_COOLDOWN_S), f"enfriamiento de {ON_STOP_COOLDOWN_S} s"))
+    if not tope_total(r):
+        n, w = ventana(r)
+        rec = _recientes(r, ahora)
+        if len(rec) >= n:
+            cands.append((rec[-n] + dt.timedelta(seconds=w), f"limite de {n} cada {w // 60} min"))
+    return max(cands, key=lambda c: c[0]) if cands else (None, "")
+
+
+def _diferir(r: dict, hasta: dt.datetime, motivo: str) -> None:
+    """Un Stop que no puede salir ahora queda en espera, visible en la regla: nunca se descarta
+    callado. Varios en espera se agrupan en una sola entrega (la del ultimo turno). Con el lock."""
+    prev = r.get("deferred") or {}
+    n = int(prev.get("count") or 0) + 1
+    r["deferred"] = {"since": prev.get("since") or now(), "count": n, "until": hasta.isoformat(timespec="seconds")}
+    r["last_result"] = f"limitada ({motivo}): {n} aviso(s) en espera, sale a las {hasta.strftime('%H:%M:%S')}"
 
 
 def at_near(r: dict, at: dt.datetime) -> bool:
@@ -146,6 +200,8 @@ def ensure_continue_rule(s: dict) -> None:
 def schedule_continue(s: dict, at: dt.datetime, motivo: str) -> None:
     """Deja programado "Continuar" para `s` a las `at`, una sola vez, si no hay ya una a esa hora.
     Con el lock; no envia nada (lo hace rules_loop, que corre cada 5 s)."""
+    if s.get("external"):
+        return  # a una ejecucion externa no se le escribe "Continuar": la retoma quien la lanzo
     at_iso = at.isoformat(timespec="seconds")
     with lock:
         for r in rules.items:
@@ -365,7 +421,9 @@ def _espejo_incompleto() -> bool:
         return False
 
 
-def fire_rule(rule: dict) -> None:
+def fire_rule(rule: dict, agrupados: int = 0) -> None:
+    """Dispara `rule`. `agrupados` > 0: es la entrega diferida de una on_stop limitada, y el texto
+    lo dice (cuantos avisos junta: va el del ultimo turno)."""
     with lock:
         src = sessions.get(rule.get("from") or "")
     dst = find_session(rule["to"])
@@ -410,13 +468,20 @@ def fire_rule(rule: dict) -> None:
         rules.publish()
         return
     text = render_template(rule.get("text") or "", src)
+    if agrupados:
+        cuantos = "un aviso demorado" if agrupados == 1 else f"{agrupados} avisos agrupados (va el del ultimo turno)"
+        text = f"[lienzo: {cuantos} por el limite de frecuencia de la regla {rule['id']}]" + chr(10) + text
     with captura.origen(clase="regla", de=src["session_id"] if src else None, rule_id=rule["id"], kind=rule["kind"]):
         code, res = send_to_session(dst, text, [])
     with lock:
         rule["fired"] = rule.get("fired", 0) + 1
         rule["last_fired"] = now()
         rule["last_result"] = "ok" if code == 200 else str(res.get("error"))
-        exhausted = rule.get("repeat") and rule["fired"] >= int(rule.get("max_fires") or 1)
+        if rule.get("kind") == "on_stop":
+            ahora = dt.datetime.now().astimezone()
+            recientes = [d.isoformat(timespec="seconds") for d in _recientes(rule, ahora)]
+            rule["recent_fires"] = [*recientes, rule["last_fired"]][-RATE_MAX_TOPE:]
+        exhausted = tope_total(rule) and rule.get("repeat") and rule["fired"] >= int(rule.get("max_fires") or 1)
         if not rule.get("repeat") or exhausted:
             rule["enabled"] = False
             rule["disabled_at"] = now()
@@ -425,7 +490,7 @@ def fire_rule(rule: dict) -> None:
         rules.save()
     state.log(f"regla {rule['id']} ({rule['kind']}) -> {rule['to'][:8]}: {rule['last_result']}")
     if exhausted:
-        state.log(f"regla {rule['id']} agotada ({rule['fired']}/{rule.get('max_fires')} disparos)")
+        state.log(f"regla {rule['id']} agotada ({rule['fired']}/{rule.get('max_fires')} disparos, tope total)")
     elif periodic:
         state.log(f"regla {rule['id']} ({rule['fired']}/{rule.get('max_fires')}) proximo disparo {rule['at']}")
     if code == 200 and src and src["session_id"] != dst["session_id"]:
@@ -459,14 +524,15 @@ def fire_on_stop(sid: str) -> None:
                 consulta.turno_cerrado(cerrada, full_reply(cerrada, consulta.TEXTO_MAX))
         except Exception:
             state.log(f"consulta, cierre de turno de {sid[:8]}:\n{traceback.format_exc()}")
+    if cerrada.get("external"):
+        # una ejecucion externa (un orquestador, un claude -p) no dispara reglas: su avance lo decide quien la
+        # lanzo, y un "cuando termine" encadenaria envios sobre una corrida ajena
+        state.log(f"on_stop de {sid[:8]} no disparado: es una ejecucion externa ({cerrada['external'].get('kind')})")
+        return
     ahora = dt.datetime.now().astimezone()
 
     def suya(r: dict) -> bool:
         return bool(r.get("enabled")) and r.get("kind") == "on_stop" and r.get("from") == sid
-
-    def enfriando(r: dict) -> bool:
-        last = local_dt(r.get("last_fired")) if r.get("last_fired") else None
-        return last is not None and (ahora - last).total_seconds() < ON_STOP_COOLDOWN_S
 
     with lock:
         s = sessions.get(sid)
@@ -482,15 +548,33 @@ def fire_on_stop(sid: str) -> None:
             if (s.get("last_reply") or "").rstrip().endswith("?"):
                 state.log(f"on_stop de {sid[:8]} no disparado: la respuesta termina en pregunta al usuario")
                 return
-        en_vuelo = [r["id"] for r in rules.items if suya(r) and r["id"] in _on_stop_en_vuelo]
-        due = [r for r in rules.items if suya(r) and not enfriando(r) and r["id"] not in _on_stop_en_vuelo]
+        due, diferidas = [], []
+        for r in rules.items:
+            if not suya(r):
+                continue
+            if r["id"] in _on_stop_en_vuelo:
+                # ya hay un envio de esta regla en curso: este turno espera su turno, no se pierde
+                _diferir(r, ahora + dt.timedelta(seconds=ON_STOP_COOLDOWN_S), "envio anterior en curso")
+                diferidas.append(r)
+                continue
+            hasta, motivo = proximo_permitido(r, ahora)
+            if hasta is None and not r.get("deferred"):
+                due.append(r)
+            else:
+                # limitada, o ya habia avisos en espera: este se suma y sale todo junto (rules_loop)
+                _diferir(r, hasta or ahora, motivo or "en espera")
+                diferidas.append(r)
+        if diferidas:
+            rules.save()
         # reservar bajo el lock ANTES de enviar: el enfriamiento sale de `last_fired`, que
         # fire_rule escribe recien despues de un envio de hasta 60 s; en ese hueco un segundo Stop
         # veia la regla fria y la disparaba otra vez (revision 2026-10-04, B11)
         for r in due:
             _on_stop_en_vuelo.add(r["id"])
-    if en_vuelo:
-        state.log(f"on_stop de {sid[:8]}: {', '.join(en_vuelo)} ya se esta enviando; no la disparo dos veces")
+    for r in diferidas:
+        state.log(f"on_stop de {sid[:8]}, regla {r['id']}: {r['last_result']}")
+    if diferidas:
+        rules.publish()
     for r in due:
         try:
             fire_rule(r)
@@ -543,11 +627,46 @@ def aviso_muerta(sid: str, prev: str) -> None:
         state.log(f"aviso de muerte de {sid[:8]} -> {to[:8]}: {'ok' if code == 200 else res.get('error')}")
 
 
+def entregas_diferidas(ahora: dt.datetime) -> list[tuple[dict, int]]:
+    """Las on_stop con avisos en espera que ya pueden salir: [(regla, cuantos)]. Las reserva en
+    _on_stop_en_vuelo bajo el lock (como fire_on_stop) y les consume la espera al reservarlas. Si
+    el limite sigue (la ventana no se libero), corre la hora y siguen esperando, sin perderse."""
+    listas: list[tuple[dict, int]] = []
+    cambio = False
+    with lock:
+        for r in rules.items:
+            d = r.get("deferred")
+            if not (d and r.get("enabled") and r.get("kind") == "on_stop") or r["id"] in _on_stop_en_vuelo:
+                continue
+            hasta = local_dt(d.get("until"))
+            if hasta is not None and hasta > ahora:
+                continue
+            nuevo, motivo = proximo_permitido(r, ahora)
+            if nuevo is not None:
+                d["until"] = nuevo.isoformat(timespec="seconds")
+                r["last_result"] = (
+                    f"limitada ({motivo}): {d.get('count')} aviso(s) en espera, sale a las {nuevo.strftime('%H:%M:%S')}"
+                )
+                cambio = True
+                continue
+            # la espera se consume al reservar: un Stop que llegue durante este envio abre otra
+            _on_stop_en_vuelo.add(r["id"])
+            r["deferred"] = None
+            listas.append((r, int(d.get("count") or 1)))
+            cambio = True
+        if cambio:
+            rules.save()
+    if cambio:
+        rules.publish()
+    return listas
+
+
 def rules_loop() -> None:
     while True:
         try:
             t = dt.datetime.now().astimezone()
             due = []
+            diferidas = entregas_diferidas(t)
             with lock:
                 for r in rules.items:
                     if not (r.get("enabled") and r.get("kind") == "at" and r.get("at")):
@@ -558,6 +677,14 @@ def rules_loop() -> None:
                         r["disabled_at"] = now()
                     elif at <= t:
                         due.append(r)
+            for r, n in diferidas:
+                try:
+                    fire_rule(r, agrupados=n)
+                except Exception:
+                    state.log(f"regla {r.get('id')}, entrega diferida:" + chr(10) + traceback.format_exc())
+                finally:
+                    with lock:
+                        _on_stop_en_vuelo.discard(r["id"])
             for r in due:
                 try:
                     fire_rule(r)

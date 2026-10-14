@@ -151,6 +151,8 @@ interface Edit {
   /** on_stop: se repite hasta maxFires; at: es periodica (every_s) hasta maxFires */
   repeat: boolean;
   maxFires: number;
+  /** on_stop repetida con tope total pedido (limit "total"); sin el, limite por frecuencia */
+  topeTotal: boolean;
   /** at periodica: "repetir cada [everyN] [everyUnit]" */
   everyN: number;
   everyUnit: EveryUnit;
@@ -266,7 +268,8 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       text: r.text,
       time: r.at ? hhmm(new Date(r.at)) : "",
       repeat: r.kind === "at" ? periodic : r.repeat,
-      maxFires: r.max_fires,
+      maxFires: r.max_fires ?? 5,
+      topeTotal: r.kind === "on_stop" && r.limit === "total",
       ...splitEvery(r.every_s),
       skipBusy: r.skip_busy ?? true,
     });
@@ -293,7 +296,8 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
       body.skip_busy = edit.skipBusy;
     } else {
       body.repeat = edit.repeat;
-      body.max_fires = edit.maxFires;
+      body.limit = edit.repeat && edit.topeTotal ? "total" : "rate";
+      if (edit.repeat && edit.topeTotal) body.max_fires = edit.maxFires;
     }
     setSaving(true);
     try {
@@ -578,8 +582,14 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         {edit.kind === "on_stop" && (
           <label className="row">
             <input type="checkbox" checked={edit.repeat} onChange={(e) => setEdit({ ...edit, repeat: e.target.checked })} />
-            repetir, hasta
-            {maxFires}
+            repetir
+          </label>
+        )}
+        {edit.kind === "on_stop" && (
+          <label className="row" title="sin tope total, si se pasa de 10 avisos cada 10 min los demás esperan y salen agrupados">
+            <input type="checkbox" disabled={!edit.repeat} checked={edit.topeTotal} onChange={(e) => setEdit({ ...edit, topeTotal: e.target.checked })} />
+            con tope total de
+            <input type="number" min={1} max={50} disabled={!edit.repeat || !edit.topeTotal} value={edit.maxFires} onChange={(e) => setEdit({ ...edit, maxFires: clampInt(e.target.value, 50) })} />
             veces
           </label>
         )}

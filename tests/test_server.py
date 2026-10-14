@@ -557,7 +557,7 @@ def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
     assert s["last_prompt"].startswith("Sos parte de la fase 1."), (
         "la tarjeta muestra el contenido, no 'Leé el archivo adjunto'"
     )
-    assert s["state"] == "corriendo"
+    assert s["envio_pendiente"] and s["state"] != "corriendo"  # lo confirma el UserPromptSubmit (2026-10-14)
     # sesion terminada por SessionEnd (/clear, resume): la consola es de otra; el envio sale pero
     # esta tarjeta no vuelve a 'corriendo'
     s.update({"state": "muerta", "last_event": "SessionEnd"})
@@ -1101,7 +1101,7 @@ def test_el_lock_esta_libre_mientras_send_py_tipea(aislado, monkeypatch):
     monkeypatch.setattr(ses.subprocess, "run", lambda cmd, **k: (visto.append(lock_libre()), _Run(4))[1])
     code, _ = ses.send_to_session(s, "hola", [])
     assert code == 200 and visto == [True], "send_to_session tenia el lock tomado mientras tipeaba"
-    assert s["state"] == "corriendo" and s["last_prompt"] == "hola"
+    assert s["envio_pendiente"] and s["last_prompt"] == "hola"  # corriendo, recien con el UserPromptSubmit
 
 
 # 12. encargo V2: la firma que quedaba colgada, el 500 que hablaba de mas, y la carrera de verdad
@@ -1493,6 +1493,9 @@ def test_las_claves_de_una_regla_nueva_no_cambian_de_orden(aislado, con_pid):
         "fired",
         "enabled",
         "created",
+        "limit",  # limite por frecuencia (2026-10-14): al final, sin mover las de antes
+        "rate_max",
+        "rate_window_s",
     ]
 
 

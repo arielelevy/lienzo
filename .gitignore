@@ -33,3 +33,9 @@ pruebas-agenticas/resultados/
 
 # carpeta de trabajo de coda (planes, olas, docs de workflows): no es del repo
 .coda/
+
+# plugins locales (lienzo/plugins.py, web/src/plugins.tsx): viven solo en la PC que los usa
+lienzo/extensiones/
+web/src/extensiones/
+tests/extensiones/
+pruebas-agenticas/extensiones/

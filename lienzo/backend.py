@@ -122,6 +122,15 @@ def is_tui(d: dict) -> bool:
     return _win.is_tui(d.get("pid"))
 
 
+def external_origin(d: dict) -> dict | None:
+    """La ejecucion externa (un orquestador, `claude -p`) a la que pertenece el agente de la tarjeta,
+    o None. En tmux todavia no se mira: queda como sesion personal (un plugin que conozca la sesion la
+    puede marcar igual por su session_id)."""
+    if is_tmux(d):
+        return None
+    return _win.external_origin(d.get("pid"))
+
+
 def cwd_of(d: dict) -> str | None:
     if is_tmux(d):
         return d.get("cwd") or _t.cwd_of(d.get("pid"))

@@ -345,7 +345,14 @@ const json = (body: unknown) => ({ status: 200, contentType: "application/json",
  *  POST perdido le escribe en la terminal a alguien. Todo lo que no sea GET se corta acá. */
 export async function bloquearEscrituras(page: Page) {
   await page.route("**/*", async (route) => {
-    if (route.request().method() === "GET") return route.fallback();
+    const req = route.request();
+    if (req.method() === "GET") return route.fallback();
+    // el aviso de actividad del scheduler (useOptimizationActivity) sale solo al cargar y con cada
+    // movimiento cuando el server tiene el scheduler prendido: se contesta acá, sin llegar al server,
+    // como la respuesta real. Cortarlo con 403 dejaba un error de consola que no es de la UI.
+    if (req.method() === "PUT" && new URL(req.url()).pathname === "/agent-improvements/scheduler" && req.postDataJSON()?.action === "activity") {
+      return route.fulfill(json({ ok: true }));
+    }
     return route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "las pruebas de interfaz no escriben" }) });
   });
 }

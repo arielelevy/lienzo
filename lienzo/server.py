@@ -53,6 +53,7 @@ import mirror
 import optimization_scheduler
 import pairing
 import pantalla_coda
+import plugins
 import recientes
 import red
 import remote_run
@@ -85,6 +86,7 @@ from sessions import (
     cuotas_de_sesiones,
     deshacer_autorizacion,
     drop_session,
+    external_blocked,
     hand_over,
     interrupt_session,
     liveness_loop,
@@ -1181,6 +1183,25 @@ ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
 }
 
 
+# Lo unico que se le puede hacer a una ejecucion externa (un orquestador, `claude -p`) desde su tarjeta:
+# ponerle nombre. Teclear, interrumpir, aprobar en su terminal, matarla, detenerla o hacerla
+# coordinadora queda afuera (se controla por quien la lanzo). Se mira en la PC duena, asi
+# vale tanto desde el tablero como desde otra PC.
+ACCIONES_EN_EXTERNAS = frozenset({"title"})
+ACCION_TEXTO = {
+    "kill": "cerrarla",
+    "send": "escribirle",
+    "native": "abrirle el canal nativo",
+    "interrupt": "interrumpirla",
+    "approve": "aprobar en su terminal",
+    "dialog": "contestar en su terminal",
+    "attach": "adjuntarle archivos",
+    "stopped": "detenerla",
+    "coordinator": "hacerla coordinadora",
+    "copycat": "marcarla copycat",
+}
+
+
 def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     """La accion `nombre` sobre la tarjeta `sid`, con el cuerpo ya decodificado, en el orden fijo:
     validar -> ubicar -> ejecutar o reenviar. Desde el tablero una tarjeta de otra PC se le pide a
@@ -1202,6 +1223,8 @@ def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero
         return 404, no_session()
     else:
         rechazo = a.antes_local_tablero(d) if desde_tablero and a.antes_local_tablero else None
+        if rechazo is None and nombre not in ACCIONES_EN_EXTERNAS:
+            rechazo = external_blocked(s, ACCION_TEXTO.get(nombre, nombre))
         if rechazo is not None:
             return rechazo
         code, res = a.ejecutar(s, d)
@@ -1274,13 +1297,11 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
 def peers_del_traspaso(old: str, new: str) -> list[str]:
     """PCs con reglas que se trasladan o que son dueñas de una de las tarjetas."""
     pcs = {
-        r["pc"] for r in mirror.MIRROR.rules()
+        r["pc"]
+        for r in mirror.MIRROR.rules()
         if r.get("pc") and r.get("enabled") and old in (r.get("from"), r.get("to"))
     }
-    pcs.update(
-        s["pc"] for s in mirror.MIRROR.sessions()
-        if s.get("pc") and s.get("session_id") in (old, new)
-    )
+    pcs.update(s["pc"] for s in mirror.MIRROR.sessions() if s.get("pc") and s.get("session_id") in (old, new))
     return sorted(pcs)
 
 
@@ -1653,6 +1674,11 @@ class Handler(JsonHandler):
                 return self._json(200, rules.snapshot() + mirror.MIRROR.rules())
             if parts == ["config"]:
                 return self._json(200, public_config())
+            if parts == ["ext"]:
+                return self._json(200, {"plugins": plugins.nombres()})
+            if len(parts) >= 2 and parts[0] == "ext":
+                code, res = plugins.get(parts[1], parts[2:], self.query)
+                return self._json(code, res)
             # el sello del bundle servido: el tablero lo consulta cada 30 s y se recarga cuando
             # cambia (ver `build_id`). Ruta propia y no el latido del SSE porque el latido sale
             # solo cuando la cola esta en silencio 15 s, y con el tablero activo casi nunca lo esta
@@ -1823,9 +1849,19 @@ class Handler(JsonHandler):
                 return self._json(code, res)
             if len(parts) == 3 and parts[0] == "sessions" and ("POST", parts[2]) in ACCIONES_SESION:
                 return self._accion_sesion("POST", parts[1], parts[2])
+            if len(parts) >= 2 and parts[0] == "ext":
+                return self._plugin_post(parts[1], parts[2:])
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:
             return self._server_error(e)
+
+    def _plugin_post(self, nombre: str, partes: list[str]) -> None:
+        """POST /ext/<plugin>/...: lo atiende el plugin local (plugins.py), con la autenticacion y el
+        CSRF de siempre ya pasados. `autor` es quien lo pide desde el tablero."""
+        autor = f"lienzo@{identity.pc_info()['name']}" + (" (tunel)" if self._via_tunnel() else "")
+        code, res = plugins.post(nombre, partes, self._json_body(), {"autor": autor})
+        log(f"plugin {nombre} POST /{'/'.join(partes)} desde {self._client_ip()}: {code}")
+        return self._json(code, res)
 
     def _secret_take(self, sid: str) -> None:
         """Lee UNA vez un secreto de destino memoria. Desde esta PC o cualquiera de la LAN (no por
@@ -2919,6 +2955,8 @@ def main() -> int:
     threading.Thread(target=replica.bucle, args=(mirror.MIRROR,), name="replica", daemon=True).start()
     threading.Thread(target=vigia_loop, name="vigia", daemon=True).start()
     threading.Thread(target=consulta_loop, name="consulta", daemon=True).start()
+    plugins.cargar()  # lienzo/extensiones/*.py, si los hay en esta PC (Git los ignora)
+    plugins.iniciar()
     if modo_pares:
         stop_beacon = threading.Event()
         beacon.start(a.peer_port, stop_beacon)

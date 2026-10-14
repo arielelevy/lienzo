@@ -119,7 +119,9 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
       }
       return r.at ? `a las ${hhmm(new Date(r.at))}` : "programada";
     }
-    const n = r.max_fires > 1 ? ` ${r.fired}/${r.max_fires}` : r.fired ? " ya disparó" : "";
+    const sinTope = r.repeat && r.limit !== "total";
+    const espera = r.deferred?.count ? ` · ${r.deferred.count} en espera` : "";
+    const n = sinTope ? ` ${r.fired} (sin tope)${espera}` : (r.max_fires ?? 1) > 1 ? ` ${r.fired}/${r.max_fires}` : r.fired ? " ya disparó" : "";
     return `esperando que termine${n}${r.last_fired ? ` · última hace ${ago(r.last_fired)}` : ""}`;
   };
   return (

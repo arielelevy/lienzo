@@ -107,6 +107,17 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
 
   const disabled = busy || !!s.pending_id || !canWrite(s);
 
+  if (s.external) {
+    return (
+      <div className="send">
+        <div className="small dim">
+          {s.external.kind === "batch"
+            ? "Esta sesión es una corrida headless (claude -p): no tiene consola, así que se puede leer pero no escribirle."
+            : `Esta tarjeta es un agente que lanzó ${s.external.kind}: no se le escribe ni se lo cierra desde acá. Se controla desde su orquestador (o desde su plugin, si esta PC lo tiene).`}
+        </div>
+      </div>
+    );
+  }
   if (s.no_console && !s.orphan) {
     return (
       <div className="send">

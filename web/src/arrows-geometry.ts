@@ -840,16 +840,23 @@ function ruleItems(rules: Rule[], anchors: Map<string, Rect>, fmt: Formatters): 
     const firma = a ? ` La programó ${a}.` : "";
     let glyph: string, title: string, desc: string;
     if (r.kind === "on_stop") {
-      const count = r.repeat ? ` Van ${r.fired} de ${r.max_fires}.` : " Una sola vez.";
+      const total = r.limit === "total";
+      const espera = r.deferred?.count ? ` En espera por el límite de frecuencia: ${r.deferred.count} aviso(s), salen ${fmt.when(r.deferred.until)}.` : "";
+      const count = !r.repeat
+        ? " Una sola vez."
+        : total
+          ? ` Van ${r.fired} de ${r.max_fires}.`
+          : ` Sin tope total: a lo sumo ${r.rate_max ?? 10} cada ${Math.round((r.rate_window_s ?? 600) / 60)} min; lo que exceda se demora y sale agrupado. Van ${r.fired}.${espera}`;
+      const cuenta = !r.repeat ? "" : total ? ` (${r.fired}/${r.max_fires})` : ` (${r.fired}${r.deferred?.count ? ` · ${r.deferred.count} en espera` : ""})`;
       glyph = "⏹";
-      title = `cuando ${self ? b : a} termine → su respuesta a ${self ? "sí misma" : b}${r.repeat ? ` (${r.fired}/${r.max_fires})` : ""}${ELEGIR}`;
+      title = `cuando ${self ? b : a} termine → su respuesta a ${self ? "sí misma" : b}${cuenta}${ELEGIR}`;
       desc = `Cada vez que ${self ? b : a} cierre un turno, su respuesta se manda a ${self ? "sí misma" : b}.${count}${tail}`;
     } else if (r.every_s) {
       // periodica: glifo ↻, y el titulo dice el periodo, cuantas veces fue y cuando es la proxima
       const next = r.at ? ` La próxima, ${fmt.when(r.at)}.` : "";
       const skip = r.skip_busy === false ? "" : " Se saltea si está trabajando.";
       glyph = "↻";
-      title = `${periodLabel(r.every_s)} → «${r.text}» a ${b} ${periodicCount(r.fired, r.max_fires, r.at ? fmt.hhmm(r.at) : null)}${ELEGIR}`;
+      title = `${periodLabel(r.every_s)} → «${r.text}» a ${b} ${periodicCount(r.fired, r.max_fires ?? 1, r.at ? fmt.hhmm(r.at) : null)}${ELEGIR}`;
       desc = `${cap(periodLabel(r.every_s))} ${quien} «${r.text}»${aQuien}. Van ${r.fired} de ${r.max_fires}.${next}${skip}${firma}${tail}`;
     } else {
       glyph = "⏰";

@@ -14,6 +14,7 @@ import { Pairing } from "./components/Pairing";
 import { Panel } from "./components/Panel";
 import { pcOf, PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
 import { ProjectStrip, expandSelected, repoGroups, useProjectFilter } from "./components/ProjectStrip";
+import { Plugins } from "./plugins";
 import { SelectionBar } from "./components/SelectionBar";
 import { Setup, TotpQr } from "./components/Setup";
 import { Toasts, useToasts } from "./components/Toasts";
@@ -515,6 +516,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onSelect={selectPc} onToggle={togglePc} onAll={showAllPcs} />
         <ConsultasBar />
       </div>
+      <Plugins toast={toast} />
       <Board
         onRescan={rescan}
         sessions={sessions}

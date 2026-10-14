@@ -29,6 +29,30 @@ def clamp_fires(value) -> int:
     return max(1, min(int(value), MAX_FIRES))
 
 
+def on_stop_limits(d: dict, current: dict | None = None) -> tuple[dict | None, str | None]:
+    """Limite de una on_stop (POST o PUT): `limit` "rate" (por defecto: sin tope total, a lo sumo
+    `rate_max` disparos cada `rate_window_s` segundos; lo que excede se demora y se agrupa, ver
+    rules.fire_on_stop) o "total" (se apaga a los `max_fires` disparos: solo si se pide explicito).
+    `current` es la regla que se edita, para no pisar lo que no vino. Devuelve (campos, error)."""
+    cur = current or {}
+    limit = d.get("limit", cur.get("limit") or "rate")
+    if limit not in ("rate", "total"):
+        return None, 'limit debe ser "rate" o "total"'
+    out = {"limit": limit}
+    for campo, minimo, maximo in (
+        ("rate_max", 1, rl.RATE_MAX_TOPE),
+        ("rate_window_s", rl.RATE_WINDOW_MIN_S, rl.RATE_WINDOW_MAX_S),
+    ):
+        v = d.get(campo, cur.get(campo))
+        if v is None:
+            out[campo] = None
+            continue
+        if isinstance(v, bool) or not isinstance(v, int) or not minimo <= v <= maximo:
+            return None, f"{campo} debe ser un entero entre {minimo} y {maximo}"
+        out[campo] = v
+    return out, None
+
+
 def parse_every_s(v) -> tuple[int | None, str | None]:
     """Periodo de una regla 'at': (segundos, error). None sin error es un solo disparo."""
     malo = "every_s debe ser un entero en segundos"
@@ -175,15 +199,20 @@ def create_on_stop(d: dict, text: str) -> tuple[int, dict]:
         max_fires = clamp_fires(d.get("max_fires") or 1)
     except TypeError, ValueError, OverflowError:
         return 400, {"error": "max_fires debe ser un numero"}
+    limites, err = on_stop_limits(d)
+    if err:
+        return 400, {"error": err}
+    if d.get("repeat") and limites["limit"] == "rate":
+        max_fires = None  # sin tope total: un max_fires que venga (coordinar.py manda 30) no corta nada
     # los chequeos contra las reglas locales y el alta, bajo UN lock (revision 2026-10-04, S11):
     # con locks separados, dos POST iguales a la vez pasaban los dos el de duplicado. `lock` es
     # reentrante, asi que find_enabled y rules.add lo vuelven a tomar sin trabarse; adentro no hay
     # red (check_global_loop y check_remote_destination quedan afuera)
     with lock:
-        return _alta_on_stop(d, text, max_fires)
+        return _alta_on_stop(d, text, max_fires, limites)
 
 
-def _alta_on_stop(d: dict, text: str, max_fires: int) -> tuple[int, dict]:
+def _alta_on_stop(d: dict, text: str, max_fires: int | None, limites: dict) -> tuple[int, dict]:
     inverse = find_enabled(
         lambda r: r.get("kind") == "on_stop" and r.get("from") == d["to"] and r.get("to") == d["from"]
     )
@@ -211,6 +240,7 @@ def _alta_on_stop(d: dict, text: str, max_fires: int) -> tuple[int, dict]:
         fired=0,
         enabled=True,
         created=now(),
+        **limites,
     )
     rules.add(rule, cap=500)
     state.log(f"regla nueva {rule['id']}: on_stop -> {rule['to'][:8]}")
@@ -308,9 +338,13 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
         r = next((x for x in rules.items if x["id"] == rule_id), None)
         if r is None:
             return 404, {"error": "conexion desconocida"}
-        extra = None
+        extra = limites = None
         if r.get("kind") == "at":
             extra, err = at_fields(d, r)
+            if err:
+                return 400, {"error": err}
+        else:
+            limites, err = on_stop_limits(d, r)
             if err:
                 return 400, {"error": err}
         # de aca en adelante no se rechaza nada mas: `extra` con algo adentro es la regla 'at' ya validada
@@ -329,6 +363,13 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
                 r["repeat"] = bool(d["repeat"])
             if max_fires is not None:
                 r["max_fires"] = max_fires
+            r.update(limites)
+            if r["repeat"] and r["limit"] == "total" and not r.get("max_fires"):
+                r["max_fires"] = 5
+            if not r.get("enabled") and r["repeat"] and r["limit"] == "rate" and r.get("disabled_at"):
+                # la apago el tope total viejo: pasar a limite por frecuencia la vuelve a prender
+                r["enabled"] = True
+                r.pop("disabled_at", None)
         rules.save()
     rules.publish()
     state.log(

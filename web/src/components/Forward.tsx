@@ -90,6 +90,8 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
   const [nativeText, setNativeText] = useState("");
   const [hhmm, setHhmm] = useState(() => fmtHhmm(new Date(Date.now() + 60 * 60 * 1000)));
   const [repeat, setRepeat] = useState(false);
+  // on_stop repetida: sin tope total por defecto (limite por frecuencia en el server); el tope solo si se pide
+  const [topeTotal, setTopeTotal] = useState(false);
   // tope compartido: "cuando termine, hasta N veces" y "cada tanto, hasta N veces"
   const [maxFires, setMaxFires] = useState(5);
   // modo programar, periodico: apagado por defecto; con every_s el backend saltea (sin contar) los
@@ -185,7 +187,15 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
         });
         toast(`${shortName(from)} va a abrir el canal con ${shortName(targetSession)}`);
       } else if (mode === "on_stop") {
-        const rule = { kind: "on_stop" as const, from: from.session_id, text: template, repeat, max_fires: repeat ? maxFires : 1 };
+        const total = repeat && topeTotal;
+        const rule = {
+          kind: "on_stop" as const,
+          from: from.session_id,
+          text: template,
+          repeat,
+          limit: total ? ("total" as const) : ("rate" as const),
+          ...(repeat ? (total ? { max_fires: maxFires } : {}) : { max_fires: 1 }),
+        };
         await rulesApi.create({ ...rule, to: targetSession.session_id });
         const alsoMe = notifyMe && me && me.session_id !== targetSession.session_id ? me : null;
         if (alsoMe) {
@@ -267,6 +277,7 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
       if (p.kind === "on_stop") {
         setRepeat(p.repeat);
         setMaxFires(p.maxFires);
+        setTopeTotal(p.topeTotal);
       }
     }
   };
@@ -407,10 +418,13 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
               <label className="small">
                 <input type="radio" checked={!repeat} onChange={() => setRepeat(false)} /> una vez
               </label>
-              <label className="small">
-                <input type="radio" checked={repeat} onChange={() => setRepeat(true)} /> cada vez que termine, hasta
+              <label className="small" title="sin tope total: si se pasa de 10 avisos cada 10 min, los demás esperan y salen agrupados">
+                <input type="radio" checked={repeat} onChange={() => setRepeat(true)} /> cada vez que termine
               </label>
-              <input type="number" min={1} max={50} value={maxFires} disabled={!repeat} onChange={(e) => setMaxFires(Number(e.target.value))} style={{ width: 60 }} />
+              <label className="small">
+                <input type="checkbox" checked={topeTotal} disabled={!repeat} onChange={(e) => setTopeTotal(e.target.checked)} /> con tope total de
+              </label>
+              <input type="number" min={1} max={50} value={maxFires} disabled={!repeat || !topeTotal} onChange={(e) => setMaxFires(Number(e.target.value))} style={{ width: 60 }} />
               <span className="small dim">veces</span>
             </div>
           )}

@@ -82,13 +82,55 @@ def is_impostor(exe: str | None, cmdline: str | None) -> bool:
 
 
 def is_tui(pid: int) -> bool:
-    """Algo a lo que tiene sentido inyectarle teclas: un agente que no es impostor. Con un pid a
-    mano solo se tiene la ruta del ejecutable, que es la que descarta la app de escritorio y las
-    extensiones; el barrido, que si lee la linea de comando, llama a is_impostor directamente."""
+    """Algo a lo que tiene sentido inyectarle teclas: un agente que no es impostor ni una corrida
+    externa (un orquestador, `claude -p`). Con un pid a mano solo se tiene la ruta del ejecutable, que es
+    la que descarta la app de escritorio y las extensiones; el barrido, que si lee la linea de
+    comando, llama a is_impostor directamente."""
     exe = image_path(pid)
     if not exe or not procinfo.process_agent(pid):
         return False
-    return not is_impostor(exe, None)
+    return not is_impostor(exe, None) and external_origin(pid) is None
+
+
+EXTERNAL_HOPS = 6  # claude.exe <- (cmd/bun) <- lanzador: alcanza con margen
+
+
+def _claude_cmd_batch(exe: str | None, cmdline: str | None) -> bool:
+    name = os.path.basename(exe or "").lower()
+    if not (name == "claude.exe" or name.startswith("claude.exe.")) or not cmdline:
+        return False
+    return procinfo.claude_batch(procinfo.command_args(cmdline)[1:])
+
+
+def external_origin(pid: int | None) -> dict | None:
+    """Si el agente `pid` es una ejecucion externa, de que tipo: `{"kind": <tipo>, "runner_pid": N,
+    "via": "proceso"}` si un ancestro es un lanzador de EXTERNAL_RUNNERS, `{"kind": "batch", "via":
+    "comando"}` si es un `claude -p` suelto. None si es una sesion personal (o no se pudo leer: no se adivina). Una
+    ejecucion externa se ve en el tablero, pero no se le teclea, ni se la mata, ni la mueven reglas."""
+    if not pid:
+        return None
+    hop, exe0 = int(pid), image_path(int(pid))
+    for _ in range(EXTERNAL_HOPS):
+        parent, _exe = proc_info(hop)
+        if not parent or parent == hop:
+            break
+        if tipo := procinfo.external_runner(proc_info(parent)[1]):
+            return {"kind": tipo, "runner_pid": parent, "via": "proceso"}
+        hop = parent
+    if _claude_cmd_batch(exe0, procinfo.command_line(int(pid))):
+        return {"kind": "batch", "via": "comando"}
+    return None
+
+
+def external_of_row(p: dict) -> dict | None:
+    """Lo mismo que external_origin para una fila del barrido, con lo que el barrido ya leyo por CIM
+    (padre, abuelo y linea de comando): sin abrir el proceso otra vez."""
+    for k in ("parent", "grandparent"):
+        if tipo := procinfo.external_runner(p.get(k)):
+            return {"kind": tipo, "runner_pid": None, "via": "proceso"}
+    if _claude_cmd_batch(p.get("exe"), p.get("cmd")):
+        return {"kind": "batch", "via": "comando"}
+    return None
 
 
 _PS = r"""
@@ -165,6 +207,7 @@ def sweep() -> list[dict]:
                 "grandparent": p.get("grandparent"),
                 "in_vscode": in_vscode,
                 "orphan": p.get("parent") is None,
+                "external": external_of_row(p),
                 **(
                     {
                         agentes.perfil(agent).identity_key: agentes.perfil(agent).identity(

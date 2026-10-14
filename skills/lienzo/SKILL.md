@@ -105,7 +105,7 @@ explícito**, o los acentos se rompen. Lo que se usa para repartir:
 | `PUT /sessions/<sid>/title` | renombrarla |
 | `PUT /sessions/<sid>/coordinator` | `{on: true}`. Una coordinadora por repo en toda la federación, independientemente de la PC |
 | `POST /sessions/<sid>/send` | escribirle, aunque esté oculta (local o remota, transparente). Con `from` y `link_to` dibuja la flecha |
-| `POST /rules` | `{kind:"on_stop", from, to, text, repeat:true, max_fires:N}`: al cerrar cada turno le manda `text` a `to`. **El informe viaja solo si `text` lleva `{respuesta}`** (la última respuesta entera, de la transcripción); sin el marcador llega únicamente el encabezado (medido el 2026-10-09). Otros marcadores: `{pedido}`, `{titulo}`, `{repo}`, `{agente}` |
+| `POST /rules` | `{kind:"on_stop", from, to, text, repeat:true}`: al cerrar cada turno le manda `text` a `to`. Sin tope total: a lo sumo 10 cada 10 min (`rate_max`, `rate_window_s`); lo que excede se demora, queda visible en la regla (`deferred`) y sale agrupado. Tope total solo explícito: `limit:"total", max_fires:N`. **El informe viaja solo si `text` lleva `{respuesta}`** (la última respuesta entera, de la transcripción); sin el marcador llega únicamente el encabezado (medido el 2026-10-09). Otros marcadores: `{pedido}`, `{titulo}`, `{repo}`, `{agente}` |
 | `GET /pending`, `POST /pending/<id>` | permisos, `{decision:"allow"\|"deny"}` |
 | `POST /rescan` | barrido de procesos ahora |
 | `GET /peers` | las PCs de la federación, la propia primero (`local: true`), con `alive` y `health` (memoria, CPU, temperatura) |

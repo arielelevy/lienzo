@@ -65,6 +65,8 @@ export interface Session {
   native_name?: string | null;
   orphan?: boolean;
   no_console?: boolean;
+  /** ejecucion externa (un orquestador, `claude -p`): solo lectura; null en una sesion personal */
+  external?: ExternalRun | null;
   /** que fuente maneja la tarjeta: "win32" (Windows) o "tmux" (Mac/Linux/WSL). Ausente = primario. */
   backend?: string;
   /** distro de WSL dueña del tmux de esta tarjeta (solo si corre en WSL). Ausente = no WSL. */
@@ -281,7 +283,15 @@ export interface Rule {
   text: string;
   at: string | null;
   repeat: boolean;
-  max_fires: number;
+  /** tope total: en una "at", o en una on_stop con limit "total". En una on_stop por frecuencia, null */
+  max_fires: number | null;
+  /** on_stop repetida: "rate" (por defecto: sin tope total, a lo sumo rate_max cada rate_window_s;
+   *  lo que excede se demora y se agrupa) o "total" (se apaga a los max_fires: solo si se pidio) */
+  limit?: "rate" | "total";
+  rate_max?: number | null;
+  rate_window_s?: number | null;
+  /** avisos de una on_stop limitada que esperan salir agrupados */
+  deferred?: { since: string; count: number; until: string } | null;
   /** regla "at" periodica: se repite cada tantos segundos (>= 60) hasta max_fires; null o ausente = una vez */
   every_s?: number | null;
   /** periodica: si el destino esta corriendo, saltear ese disparo sin contarlo (por defecto true) */
@@ -331,3 +341,17 @@ export type ServerEvent =
   | { type: "pending"; pending: Pending[] }
   | { type: "transcript"; session_id: string; size: number }
   | { type: "consulta"; consulta: ConsultaResumen };
+
+/** Ejecucion externa a la que pertenece una tarjeta de agente (un orquestador o `claude -p`): se ve
+ *  y se lee, pero no se le escribe, ni se la mata, ni la mueven reglas. `kind` es "batch" (un
+ *  `claude -p` suelto) o el tipo de orquestador que registro un plugin local. */
+export interface ExternalRun {
+  kind: string;
+  via: "proceso" | "comando" | "session_id";
+  run_key?: string;
+  run_id?: string;
+  capability?: string;
+  session?: string;
+  step?: string;
+  instance?: string;
+}

@@ -95,7 +95,10 @@ def test_cross_agent_text_transport(monkeypatch, origin, target):
     code, out = ses.send_to_session(s, text, [])
     assert code == 200 and out["ok"]
     assert typed == [text]
-    assert s["state"] == "corriendo"
+    # 'corriendo' lo confirma el agente (2026-10-14): hasta su UserPromptSubmit, el envio queda pendiente
+    assert s["state"] == "termino" and s["envio_pendiente"]
+    ses.hook_prompt_submit(s, {"prompt": text})
+    assert s["state"] == "corriendo" and s["envio_pendiente"] is None and s["prompt_via"] == "lienzo"
 
 
 def test_pi_dialog_blocks_injection(monkeypatch):

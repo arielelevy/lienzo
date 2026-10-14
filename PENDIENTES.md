@@ -8,6 +8,23 @@ Las casillas heredadas se conservan textuales. El 2026-10-10 se cerraron (con `[
 debajo) las verificadas en código, pruebas o decisión de Ariel; las demás siguen pendientes. La evidencia histórica no es una prueba
 ejecutada hoy. Las referencias de código de esta consolidación se revisaron estáticamente.
 
+## Puente con el orquestador externo, reglas por frecuencia y envío confirmado (2026-10-14)
+
+Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle en `code-review-2026-10-14.md`.
+
+- [ ] Medir con un agente real autorizado que el `session_id` del hook coincida con la sesión que el
+  orquestador ata a su corrida. Solo se probó con su ejecutor de prueba, que no lanza agentes.
+- [ ] Puente: detección por proceso en tmux/WSL, tarjetas del orquestador por el espejo entre PCs, y
+  relanzar desde Lienzo. Para relanzar faltan contratos medidos.
+- [ ] Decidir si el e2e del puente entra a la suite y si se aprueban sus mutaciones (propuesta en
+  `pruebas-agenticas/resultados/`).
+- [ ] Indicador "enviando…" en la tarjeta mientras un envío espera su `UserPromptSubmit`. Hoy queda en
+  su estado anterior hasta la confirmación; sin confirmación a los 25 s, pasa a "te necesita".
+- [ ] backend-pytest roza el timeout de 300 s del runner: 240 s aislado y más bajo carga. Una corrida dio
+  una `F` que no se reprodujo. Recalibrar el timeout con aprobación o separar la batería.
+- [ ] Reglas `on_stop` agotadas por el tope total viejo: no se reactivan solas. Se reactivan editándolas
+  con `limit:"rate"`.
+
 ## Pendientes trasladados de MEJORAS.md
 
 ### Seguridad
