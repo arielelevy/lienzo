@@ -17,13 +17,14 @@ test("área libre permite lanzar CLI y conserva el formulario si falla", async (
   await expect(dialog.getByRole("button", { name: "Lanzar", exact: true })).toBeDisabled();
   await dialog.getByRole("textbox", { name: "Carpeta", exact: true }).fill("D:/Apps/lienzo");
   await dialog.getByRole("combobox", { name: "Agente", exact: true }).selectOption("codex");
+  await dialog.getByRole("combobox", { name: "Modo de trabajo", exact: true }).selectOption("ingenieria-reversa");
   await dialog.getByRole("button", { name: "Lanzar", exact: true }).click();
   await expect(dialog.getByRole("alert")).toHaveText("carpeta inexistente");
   await expect(dialog.getByRole("textbox", { name: "Carpeta", exact: true })).toHaveValue("D:/Apps/lienzo");
   await dialog.getByRole("button", { name: "Lanzar", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(launches).toHaveLength(2);
-  expect(launches[1]).toMatchObject({ cwd: "D:/Apps/lienzo", agent: "codex", title: "" });
+  expect(launches[1]).toMatchObject({ cwd: "D:/Apps/lienzo", agent: "codex", title: "", modo: "ingenieria-reversa" });
 });
 
 test("clic derecho en tarjeta no abre lanzamiento y Escape cierra el menú libre", async ({ page }) => {

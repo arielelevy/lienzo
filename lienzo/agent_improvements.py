@@ -1,25 +1,19 @@
-"""Preferencias de esta PC; instrucciones adicionales, nunca permisos ni hooks."""
+"""Preferencias de esta PC; instrucciones adicionales, nunca permisos ni hooks. Que tools hay y que
+inyecta cada una al lanzar vive en el catalogo (lienzo/tools/)."""
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import tempfile
 import threading
 from pathlib import Path
 
 import state
-import tmux
+import tools
 
 LOCK = threading.Lock()
 DEFAULTS = {"brief": False, "rtk": False}
-BRIEF = (
-    "Responde breve y en el idioma del usuario. Primero el resultado; despues solo lo necesario. "
-    "Una idea por frase. Conserva negaciones, numeros, rutas, comandos y errores exactos. "
-    "La brevedad no reduce el trabajo, las pruebas, la revision, la seguridad ni la accesibilidad. "
-    "Respeta las instrucciones del usuario y del proyecto. No comprimas archivos ni uses un proxy Caveman."
-)
 
 
 def preferences() -> dict:
@@ -50,42 +44,14 @@ def configure(data: dict) -> dict:
     return status()
 
 
-def rtk_path(distro: str | None = None) -> str | None:
-    if distro:
-        return "rtk" if tmux.en_distro(distro, "rtk") else None
-    own = Path(state.LIENZO) / "bin" / ("rtk.exe" if os.name == "nt" else "rtk")
-    return str(own) if own.is_file() else shutil.which("rtk")
-
-
 def status() -> dict:
-    import jev_credentials
-
     return {
-        "preferences": preferences(), "rtk": {"available": bool(rtk_path())},
-        "brief": {"available": True, "mode": "instrucciones breves, sin proxy"},
-        "jev": {"available": jev_credentials.available(), "model": "typesafe/jev-1.13"},
+        "preferences": preferences(),
+        "tools": tools.resumen(),
         "scope": "esta PC; nuevas sesiones lanzadas desde Lienzo",
     }
 
 
-def launch_instructions(agent: str, distro: str | None = None) -> tuple[str, list[str]]:
-    pref = preferences()
-    text, warnings = [], []
-    if pref["brief"]:
-        text.append(BRIEF)
-    if pref["rtk"]:
-        path = rtk_path(distro)
-        if path:
-            text.append(
-                f"RTK disponible en {path}. Invocalo por esa ruta absoluta; no asumas que esta en PATH. Usa RTK explicitamente para salidas largas de comandos "
-                "compatibles, por ejemplo rtk git status o rtk git diff. Conserva los codigos de salida. "
-                "Ante un error recupera la salida original o ejecuta el comando diagnostico sin compresion. "
-                "No filtres pruebas que requieren logs completos ni cambies hooks o permisos. "
-                "En PowerShell una ruta ejecutable con espacios se invoca con el operador de llamada."
-            )
-        else:
-            warnings.append("RTK no esta instalado en el entorno elegido; se lanza sin compresion")
-    if text and agent not in ("claude", "codex", "pi", "coda"):
-        warnings.append(f"{agent} no admite estas mejoras verificadas; se lanza sin instrucciones adicionales")
-        text = []
-    return " ".join(text), warnings
+def launch_instructions(agent: str, distro: str | None = None, modo: str = "general") -> tuple[str, list[str]]:
+    """Las instrucciones de las tools del modo para un lanzamiento: (texto, avisos)."""
+    return tools.instrucciones(agent, distro, preferences(), modo)

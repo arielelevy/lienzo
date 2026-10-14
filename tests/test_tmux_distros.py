@@ -557,25 +557,27 @@ def test_accion_launch_distro_valida_llega_a_launch(monkeypatch):
     monkeypatch.setattr(tmux, "distros", lambda: ["debian"])
     recibida = {}
 
-    def launch_falso(cwd, title, agent, model=None, distro=None):
-        recibida.update(distro=distro)
+    def launch_falso(cwd, title, agent, model=None, distro=None, modo="general"):
+        recibida.update(distro=distro, modo=modo)
         return {"ok": True}
 
     monkeypatch.setattr(launch, "launch", launch_falso)
     codigo, _ = server.accion_launch({"cwd": "C:/x", "agent": "claude", "distro": "debian"}, desde_tablero=False)
     assert codigo == 200
     assert recibida["distro"] == "debian"
+    assert recibida["modo"] == "general"
 
 
 def test_accion_launch_sin_distro_llega_none(monkeypatch):
     monkeypatch.setattr(tmux, "_VIA_WSL", True)
     recibida = {}
 
-    def launch_falso(cwd, title, agent, model=None, distro=None):
-        recibida.update(distro=distro)
+    def launch_falso(cwd, title, agent, model=None, distro=None, modo="general"):
+        recibida.update(distro=distro, modo=modo)
         return {"ok": True}
 
     monkeypatch.setattr(launch, "launch", launch_falso)
     codigo, _ = server.accion_launch({"cwd": "C:/x", "agent": "claude"}, desde_tablero=False)
     assert codigo == 200
     assert recibida["distro"] is None
+    assert recibida["modo"] == "general"

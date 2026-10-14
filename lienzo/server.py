@@ -63,6 +63,7 @@ import rules as rl
 import secretos
 import state
 import tmux
+import tools
 import transcripts
 import xfer
 from beacon import DISCOVERED_TTL_S as BEACON_TTL_S
@@ -1260,12 +1261,16 @@ def rescan_once() -> None:
 
 
 def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
-    """POST /sessions/launch {pc, cwd, title, agent, model?} en el tablero (local con launch.launch,
-    o reenviada a la PC `pc` por /peer/launch) y POST /peer/launch (siempre local)."""
+    """POST /sessions/launch {pc, cwd, title, agent, model?, modo?} en el tablero (local con launch.launch,
+    o reenviada a la PC `pc` por /peer/launch) y POST /peer/launch (siempre local). `modo` elige que
+    tools de trabajo se inyectan (lienzo/tools/: "general" por defecto, "ingenieria-reversa")."""
     valid = validate_launch(d)
     if valid is None:
         return 400, {"error": "cwd y agent son obligatorios"}
     cwd, agent, title = valid
+    modo = d.get("modo") or "general"
+    if modo not in tools.MODOS:
+        return 400, {"error": f"modo desconocido: {modo!r} (validos: {', '.join(tools.MODOS)})"}
     model = d.get("model") if isinstance(d.get("model"), str) else None
     distro = d.get("distro") if isinstance(d.get("distro"), str) and d.get("distro").strip() else None
     pc = d.get("pc")
@@ -1275,6 +1280,8 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
         cuerpo = {"cwd": cwd, "title": title, "agent": agent, **({"model": model} if model else {})}
         if distro:
             cuerpo["distro"] = distro
+        if modo != "general":
+            cuerpo["modo"] = modo
         return mirror.MIRROR.forward(pc, "POST", "/launch", cuerpo)
     if agent == "vscode":
         if distro is not None:
@@ -1286,7 +1293,7 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
         tmux.invalidar_distros()
         if distro not in tmux.distros():
             return 400, {"error": f"distro desconocida: {distro}"}
-    res = launch.launch(cwd, title, agent, model=model, distro=distro)
+    res = launch.launch(cwd, title, agent, model=model, distro=distro, modo=modo)
     if res.get("ok"):
         return 200, res
     # launch dice su codigo cuando no es un pedido mal hecho (409: coda sin cuota en esta PC)
@@ -1674,6 +1681,8 @@ class Handler(JsonHandler):
                 return self._json(200, rules.snapshot() + mirror.MIRROR.rules())
             if parts == ["config"]:
                 return self._json(200, public_config())
+            if parts == ["tools"]:
+                return self._json(200, {"modos": list(tools.MODOS), "tools": tools.resumen()})
             if parts == ["ext"]:
                 return self._json(200, {"plugins": plugins.nombres()})
             if len(parts) >= 2 and parts[0] == "ext":
@@ -2669,7 +2678,11 @@ RELOAD_SETTLE_S = 1.5
 def _source_stamp() -> dict[str, tuple[int, int]]:
     """{archivo: (mtime_ns, tamano)} de todo el codigo Python que corre este server."""
     out = {}
-    for name in os.listdir(HERE):
+    names = os.listdir(HERE)
+    tools_dir = os.path.join(HERE, "tools")
+    if os.path.isdir(tools_dir):
+        names += [os.path.join("tools", name) for name in os.listdir(tools_dir)]
+    for name in names:
         if name.endswith(".py"):
             p = os.path.join(HERE, name)
             try:

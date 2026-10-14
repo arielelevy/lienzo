@@ -2,12 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { OptimizationScheduler } from "./OptimizationScheduler";
 
+/** Una integración del catálogo (lienzo/tools/): usa un repo o servicio externo. */
+interface ToolInfo {
+  id: string; nombre: string; tipo: "mejora" | "evaluacion" | "pruebas" | "trabajo"; origen: string; descripcion: string;
+  version: string | null; costo: "gratis" | "pago"; modos: string[]; preferencia: "brief" | "rtk" | null; instalar: string | null;
+  estado: { disponible: boolean; detalle?: string };
+}
 interface Settings {
   preferences: { brief: boolean; rtk: boolean };
-  rtk: { available: boolean };
-  jev: { available: boolean; model: string };
+  tools: ToolInfo[];
   scope: string;
 }
+const TIPO: Record<ToolInfo["tipo"], string> = { mejora: "mejora", evaluacion: "evaluación", pruebas: "pruebas", trabajo: "trabajo" };
+const enlace = (origen: string) => (origen.startsWith("https://") ? <a href={origen} target="_blank" rel="noreferrer">{origen.replace("https://", "")}</a> : <code>{origen}</code>);
 interface Evaluation {
   session_id: string; snapshot: string; agent: string; model: string | null; version?: string | null;
   durations?: { turn: string; seconds: number }[];
@@ -74,11 +81,15 @@ export function AgentImprovements({ sid }: { sid?: string }) {
     {!error && !settings && !report && <p>Leyendo…</p>}
     {settings && <>
       <p className="small dim">{settings.scope}. Las sesiones abiertas siguen como están.</p>
-      <label><input type="checkbox" checked={settings.preferences.brief} disabled={busy} onChange={e => void save("brief", e.target.checked)} /> Caveman · respuestas breves</label>
-      <p className="small dim">Conserva idioma, comandos, errores y pruebas. Sin proxy.</p>
-      <label><input type="checkbox" checked={settings.preferences.rtk} disabled={busy} onChange={e => void save("rtk", e.target.checked)} /> RTK · salidas de comandos</label>
-      <p className="small dim">{settings.rtk.available ? "Instalado en esta PC." : "No instalado en esta PC; la preferencia no lo instala."} WSL se verifica al lanzar.</p>
-      <p>Jev: {settings.jev.available ? "credencial configurada" : "sin credencial"}. Se consulta desde «Mejoras» de una sesión.</p>
+      <ul className="tools-catalogo" aria-label="Catálogo de tools">
+        {settings.tools.map(t => <li key={t.id}>
+          {t.preferencia ? <label><input type="checkbox" checked={settings.preferences[t.preferencia]} disabled={busy} onChange={e => void save(t.preferencia as "brief" | "rtk", e.target.checked)} /> <strong>{t.nombre}</strong></label> : <strong>{t.nombre}</strong>}
+          {" "}<span className="small dim">{TIPO[t.tipo]}{t.costo === "pago" ? " · paga" : ""}{t.modos.includes("general") ? "" : ` · solo modo ${t.modos.join(", ")}`}</span>
+          <p className="small">{t.descripcion}</p>
+          <p className="small dim">{enlace(t.origen)}{t.version ? ` · ${t.version}` : ""} · {t.estado.disponible ? "disponible" : "no disponible"}{t.estado.detalle ? ` (${t.estado.detalle})` : ""}{!t.estado.disponible && t.instalar ? ` · instalar: ${t.instalar}` : ""}</p>
+        </li>)}
+      </ul>
+      <p className="small dim">Las mejoras se prenden acá; RTK en WSL se verifica al lanzar. Jev se consulta desde «Mejoras» de una sesión.</p>
       <OptimizationScheduler />
     </>}
     {report && <>

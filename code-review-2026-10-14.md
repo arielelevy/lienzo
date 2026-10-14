@@ -100,3 +100,51 @@
 - Pruebas nuevas en verde: 8 de reglas y 8 de envío.
 - Batería backend aislada: 1651 de 1651.
 - Pruebas unitarias del front (`nl` y `arrows-geometry`) en verde.
+
+---
+
+## Addendum: catálogo de integraciones y panel de mejoras
+
+Revisión focal de todos los cambios del catálogo: `lienzo/tools/`, preferencias,
+lanzamiento local y reenviado, API, ensayo RTK, scripts operativos, panel, menú,
+selector de modo y pruebas modificadas. No se cambian dependencias ni permisos.
+
+### Hallazgos corregidos
+
+- Las mejoras generales se omitían en ingeniería reversa. RTK y respuestas breves
+  se habilitan en ambos modos; REA conserva su modo específico.
+- REA de Windows podía anunciarse para una distro. WSL queda explícitamente sin
+  verificar y no recibe una ruta de Windows.
+- RTK en WSL devolvía `rtk` pese a prometer una ruta absoluta. Ahora consulta
+  `command -v rtk` en la distro elegida y rechaza rutas relativas o múltiples.
+- La huella del ensayo RTK y la validación previa al reinicio omitían los módulos
+  nuevos. Ambas incluyen `lienzo/tools/*.py`.
+- El frontend nuevo recibía el formato anterior del servidor vivo. Se verificó
+  por API y se reinició usando `POST /restart`; el catálogo real devolvió 5 entradas.
+- El menú podía salir del viewport. Se mide su tamaño, se ajusta la posición y
+  se conserva el foco sin desplazamiento automático. Los eventos sin coordenadas
+  usan el elemento de origen. El caso del borde genera un MouseEvent real.
+- Los dobles de lanzamiento y las fixtures del panel usaban el contrato previo.
+  Se actualizan sin quitar las aserciones de error, preferencias ni distro.
+
+### Evidencia y límites
+
+- Pruebas backend focales: 151 de 151, código 0, en
+  `pruebas-agenticas/resultados/tools-backend-focal.log`.
+- Panel: 6 de 6, código 0, en `tools-mejoras-ready.log`; API paga simulada,
+  ninguna llamada a modelos ni escritura en preferencias reales.
+- Browser real: catálogo 5 de 5 y selección de modo sin lanzar agentes;
+  captura `tools-real.png` y registro `tools-explorer.json`.
+- Primera suite: 3 dobles backend desactualizados y dos errores ENOENT en trazas
+  de navegador por corridas simultáneas propias. Los intentos quedan preservados.
+- Suite final y compuerta: consultar `tools-suite-final.log`, `actual.json` y
+  `tools-compuerta.log`. No se aprueban baselines ni se reutiliza la medición
+  anterior de mutaciones como evidencia del código nuevo.
+
+Sin hallazgos de seguridad abiertos dentro de este cambio. La disponibilidad
+del catálogo comprueba presencia/configuración, no conectividad ni la versión
+ejecutada de cada binario. REA en WSL no está certificada. Una PC con backend
+viejo puede ignorar el modo reenviado: actualizar las PCs antes de usarlo.
+No se ejecuta una auditoría global de dependencias ni se afirma cobertura
+funcional de una CLI realmente lanzada. La certificación del cambio depende
+del veredicto registrado por el runner.

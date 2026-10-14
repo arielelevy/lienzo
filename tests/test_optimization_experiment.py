@@ -6,7 +6,7 @@ import pytest
 @pytest.mark.parametrize("command_code,filter_code,expected", [(0, 0, 0), (7, 0, 7), (0, 2, 2)])
 def test_on_filters_same_interpreter_output_without_losing_failure(monkeypatch, command_code, filter_code, expected):
     monkeypatch.setattr(e, "manifest", lambda: "same")
-    monkeypatch.setattr(e.agent_improvements, "rtk_path", lambda: "rtk.exe")
+    monkeypatch.setattr(e.rtk, "ruta", lambda: "rtk.exe")
     calls = []
 
     def run(argv, **kwargs):
@@ -27,6 +27,19 @@ def test_changed_manifest_does_not_execute_commands(monkeypatch):
     monkeypatch.setattr(e.subproc, "correr", lambda *a, **k: pytest.fail("must not run"))
     with pytest.raises(ValueError, match="fuentes cambiaron"):
         e.step({"source_version": "old", "cursor": 0})
+
+
+def test_manifest_incluye_tools(tmp_path, monkeypatch):
+    (tmp_path / "lienzo/tools").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    for name in ["tests/conftest.py", *e.FILES]:
+        (tmp_path / name).write_text("fixture")
+    tool = tmp_path / "lienzo/tools/rtk.py"
+    tool.write_text("antes")
+    monkeypatch.setattr(e.state, "ROOT", str(tmp_path))
+    antes = e.manifest()
+    tool.write_text("despues")
+    assert e.manifest() != antes
 
 
 def test_experiment_preserves_profile_and_pauses_before_next(monkeypatch):

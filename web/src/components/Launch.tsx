@@ -26,6 +26,8 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
   const [projectElegido, setProject] = useState<string | null>(null);
   const project = projectElegido ?? grupos.carpetas[0]?.key ?? "";
   const [agent, setAgent] = useState<Agent>("codex");
+  // modo de trabajo (lienzo/tools/): "general", o uno que suma tools de trabajo (REA en ingeniería reversa)
+  const [modo, setModo] = useState<"general" | "ingenieria-reversa">("general");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const sending = useRef(false);
@@ -48,6 +50,7 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
       const result = await api.post<{ ok: boolean; error?: string; aviso?: string }>("/sessions/launch", {
         cwd: directory, title: elegida?.title ?? "", agent: editor ? "vscode" : agent, ...(pc ? { pc } : {}),
         ...(!editor && distro ? { distro } : {}),
+        ...(!editor && modo !== "general" ? { modo } : {}),
       });
       if (!result.ok) throw new Error(result.error || (editor ? "No se pudo abrir VS Code" : "No se pudo lanzar la CLI"));
       toast?.(editor ? "VS Code abierto" : result.aviso ? `CLI lanzada. ${result.aviso}` : "CLI lanzada");
@@ -82,6 +85,10 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
       </select></label>
       {!editor && <label>Agente<select aria-label="Agente" disabled={busy} value={agent} onChange={e => setAgent(e.target.value as Agent)}>
         {agentIds.map(id => <option key={id} value={id}>{AGENTS[id].label}</option>)}
+      </select></label>}
+      {!editor && <label>Modo<select aria-label="Modo de trabajo" disabled={busy} value={modo} onChange={e => setModo(e.target.value as typeof modo)}>
+        <option value="general">General</option>
+        <option value="ingenieria-reversa">Ingeniería reversa (suma REA)</option>
       </select></label>}
       {!editor && distros.length > 0 && <label>Dónde<select aria-label="Distro de WSL" disabled={busy} value={distro} onChange={e => setDistro({ pc, d: e.target.value })}>
         <option value="">Windows</option>

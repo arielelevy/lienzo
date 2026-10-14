@@ -182,7 +182,13 @@ def open_vscode(cwd: str) -> dict:
 
 
 def launch(
-    cwd: str, title: str, agent: str, resume: str | None = None, model: str | None = None, distro: str | None = None
+    cwd: str,
+    title: str,
+    agent: str,
+    resume: str | None = None,
+    model: str | None = None,
+    distro: str | None = None,
+    modo: str = "general",
 ) -> dict:
     """Escribe el .cmd en `<LIENZO_HOME>/launch/` y lo lanza con explorer.exe. Rechaza (sin tocar
     disco ni proceso) un `cwd` fuera de `launch_roots` y un `agent` desconocido. Devuelve
@@ -230,7 +236,7 @@ def launch(
     extra = [*AGENTES[agent].iniciar, *resume_args, *model_args, *nombre_args]
     improvement_warnings = []
     try:
-        instructions, improvement_warnings = agent_improvements.launch_instructions(agent, distro)
+        instructions, improvement_warnings = agent_improvements.launch_instructions(agent, distro, modo)
         if instructions:
             extra += _improvement_args(agent, instructions, cwd, distro=distro)
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
@@ -266,9 +272,14 @@ def _codex_config_paths(cwd: str, distro: str | None) -> list:
     from pathlib import Path, PurePosixPath
 
     if distro and WINDOWS:
-        env = subprocess.run(["wsl.exe", "-d", distro, "--exec", "sh", "-c",
-                              'printf "%s\\n" "${CODEX_HOME:-$HOME/.codex}"'],
-                             capture_output=True, text=True, encoding="utf-8", timeout=5, check=False)
+        env = subprocess.run(
+            ["wsl.exe", "-d", distro, "--exec", "sh", "-c", 'printf "%s\\n" "${CODEX_HOME:-$HOME/.codex}"'],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=5,
+            check=False,
+        )
         home = env.stdout.strip()
         if env.returncode or not home.startswith("/") or "\n" in home:
             raise ValueError("no se pudo resolver la configuracion Codex de WSL; no se reemplazo")
@@ -287,6 +298,7 @@ def _codex_config_paths(cwd: str, distro: str | None) -> list:
 def _improvement_args(agent: str, instructions: str, cwd: str, *, distro: str | None = None) -> list[str]:
     if agent == "codex":
         import tomllib
+
         # No sustituir developer_instructions del usuario/proyecto con las nuestras.
         existing = ""
         for path in _codex_config_paths(cwd, distro):

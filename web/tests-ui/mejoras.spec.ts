@@ -1,7 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { SID, abrirTablero } from "./tablero-fijo";
 
-const settings = { preferences: { brief: false, rtk: false }, rtk: { available: true }, jev: { available: true, model: "typesafe/jev-1.13" }, scope: "esta PC; nuevas sesiones" };
+const settings = { preferences: { brief: false, rtk: false }, tools: [
+  { id: "breve", nombre: "Respuestas breves", tipo: "mejora", origen: "https://github.com/JuliusBrussee/caveman", descripcion: "Sin proxy ni compresión de archivos", version: null, costo: "gratis", modos: ["general", "ingenieria-reversa"], preferencia: "brief", instalar: null, estado: { disponible: true } },
+  { id: "rtk", nombre: "RTK", tipo: "mejora", origen: "https://github.com/rtk-ai/rtk", descripcion: "Salidas de comandos", version: "0.51.0", costo: "gratis", modos: ["general", "ingenieria-reversa"], preferencia: "rtk", instalar: null, estado: { disponible: true } },
+  { id: "rea", nombre: "REA", tipo: "trabajo", origen: "https://github.com/morluto/rea", descripcion: "Ingeniería reversa", version: null, costo: "gratis", modos: ["ingenieria-reversa"], preferencia: null, instalar: "rea setup", estado: { disponible: false, detalle: "no instalada" } },
+], scope: "esta PC; nuevas sesiones" };
 const report = (sid: string) => ({ session_id: sid, snapshot: "reviewed", agent: "codex", model: null, quality: "no evaluada", note: null,
   jev_available: true, jev_max_cost_usd: .001, evidence: { scope: "ultimos 10 turnos", counts: { turns: 2, closed: 1, tools: 3, errors: 1, known_results: 2, missing_results: 1 } }, suggestions: [] });
 const json = (data: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(data) });
@@ -70,14 +74,16 @@ test("menú contextual ofrece preferencias y conserva estado ante error", async 
     writes++;
     return route.fulfill(writes === 1 ? { status: 500, contentType: "application/json", body: '{"error":"no se pudo guardar"}' } : json({ ...settings, preferences: { brief: true, rtk: false } }));
   });
-  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 1435, clientY: 895 });
+  await page.locator(".board").evaluate(el => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 1435, clientY: 895 })));
   const menu = page.getByRole("menu", { name: "Área libre" });
-  await expect(menu.getByRole("menuitem")).toHaveText(["Lanzar CLI…", "Buscar sesiones ahora", "Mejoras de agentes…"]);
+  await expect(menu.getByRole("menuitem", { name: "Mejoras de agentes…", exact: true })).toBeVisible();
   const bounds = await menu.boundingBox();
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(900);
   await menu.getByRole("menuitem", { name: "Mejoras de agentes…" }).click();
   const dialog = page.getByRole("dialog", { name: "Mejoras de agentes", exact: true });
-  const brief = dialog.getByRole("checkbox", { name: /Caveman/ });
+  const brief = dialog.getByRole("checkbox", { name: "Respuestas breves" });
+  await expect(dialog.getByRole("list", { name: "Catálogo de tools" }).getByRole("listitem")).toHaveCount(3);
+  await expect(dialog.getByText(/no instalada/)).toBeVisible();
   await brief.click();
   await expect(dialog.getByRole("alert")).toHaveText("no se pudo guardar");
   await expect(brief).not.toBeChecked();

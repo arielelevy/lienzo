@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Arrows } from "./Arrows";
 import { Launch } from "./Launch";
@@ -293,6 +293,16 @@ const NINGUNO: Set<string> = new Set();
 export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, onRescan, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [context, setContext] = useState<{ x: number; y: number } | null>(null);
+  const contextRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    if (!context || !contextRef.current) return;
+    const bounds = contextRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(context.x, window.innerWidth - bounds.width));
+    const y = Math.max(0, Math.min(context.y, window.innerHeight - bounds.height));
+    contextRef.current.style.left = `${x}px`;
+    contextRef.current.style.top = `${y}px`;
+    contextRef.current.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true });
+  }, [context]);
   const [editorOpen, setEditorOpen] = useState(false);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [improvementsOpen, setImprovementsOpen] = useState(false);
@@ -303,12 +313,16 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", key, true);
     window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
+    const scroll = (event: Event) => {
+      if (event.target instanceof Node && contextRef.current?.contains(event.target)) return;
+      close();
+    };
+    window.addEventListener("scroll", scroll, true);
     return () => {
       document.removeEventListener("pointerdown", close);
       document.removeEventListener("keydown", key, true);
       window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", scroll, true);
     };
   }, [context]);
   // tira de PCs: quien es cada peer y cual es la PC local, para saber que sesiones son suyas y si
@@ -792,7 +806,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   return (
     <>
       {context && createPortal(<div role="menu" aria-label="Área libre" className="board-context"
-        style={{ position: "fixed", left: context.x, top: context.y, zIndex: 1000 }}
+        ref={contextRef} style={{ position: "fixed", left: context.x, top: context.y, zIndex: 1000, maxHeight: "100dvh", overflowY: "auto" }}
         onPointerDown={e => e.stopPropagation()}
         onContextMenu={e => e.preventDefault()}
         onKeyDown={e => {
@@ -805,7 +819,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (current + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
           items[next]?.focus();
         }}>
-        <button role="menuitem" autoFocus onClick={() => { setContext(null); setLaunchOpen(true); }}>Lanzar CLI…</button>
+        <button role="menuitem" onClick={() => { setContext(null); setLaunchOpen(true); }}>Lanzar CLI…</button>
         <button role="menuitem" onClick={() => { setContext(null); setEditorOpen(true); }}>Abrir en VS Code…</button>
         <button role="menuitem" onClick={() => { setContext(null); onRescan(); }} title="Busca sesiones y actualiza nombres de consolas y etiquetas">Buscar sesiones ahora</button>
         <button role="menuitem" onClick={() => { setContext(null); setImprovementsOpen(true); }}>Mejoras de agentes…</button>
@@ -839,7 +853,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         onContextMenu={e => {
           if (escBlocked || selected || (e.target as HTMLElement).closest("[data-sid], button, input, textarea, select, a, dialog")) return;
           e.preventDefault();
-          setContext({ x: Math.max(0, Math.min(e.clientX, window.innerWidth - 220)), y: Math.max(0, Math.min(e.clientY, window.innerHeight - 180)) });
+          const anchor = (e.target as HTMLElement).getBoundingClientRect();
+          setContext({ x: Number.isFinite(e.clientX) ? e.clientX : anchor.left, y: Number.isFinite(e.clientY) ? e.clientY : anchor.top });
         }}
         // una tarjeta corrida para abajo sale del alto natural del tablero (absoluta, no lo empuja):
         // el tablero se estira hasta taparla, asi no queda media tarjeta cortada

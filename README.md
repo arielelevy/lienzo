@@ -220,7 +220,15 @@ disponibilidad en una distro. Falta de RTK o instrucciones incompatibles se info
 `py ops/probar-mejoras.py --rtk` comprueba códigos de salida y recuperación sin compresión con datos
 sintéticos. `--jev` hace una llamada paga para comprobar conectividad, no calidad del clasificador.
 
-Lo mismo por API: `POST /sessions/launch {pc?, cwd, agent, title?, model?}`, o
+El catálogo de integraciones vive en `lienzo/tools/` y se consulta con `GET /tools`.
+El panel muestra origen, versión declarada, costo y disponibilidad local.
+RTK y respuestas breves son mejoras opcionales de los agentes. Jev evalúa, las pruebas agénticas
+verifican código y REA sirve para trabajos de ingeniería reversa.
+El modo «Ingeniería reversa» suma REA si está instalada y conserva las mejoras habilitadas.
+La instalación de REA en Windows no acredita disponibilidad en WSL: se informa esa limitación.
+El catálogo no instala herramientas ni autoriza consultas pagas.
+
+Lo mismo por API: `POST /sessions/launch {pc?, cwd, agent, title?, model?, modo?}`, o
 `coordinar.lanzar_y_titular(...)` desde una coordinadora.
 
 ### Las automatizaciones

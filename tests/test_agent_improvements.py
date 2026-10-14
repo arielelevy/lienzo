@@ -3,12 +3,13 @@ import json
 import agent_improvements as improvements
 import pytest
 import state
+from tools import rtk
 
 
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "LIENZO", str(tmp_path))
-    monkeypatch.setattr(improvements.shutil, "which", lambda name: None)
+    monkeypatch.setattr(rtk.shutil, "which", lambda name: None)
     return tmp_path
 
 
@@ -30,14 +31,14 @@ def test_bad_config_does_not_change_preferences(isolated, data):
 
 
 def test_rtk_windows_does_not_claim_wsl_availability(isolated, monkeypatch):
-    binary = isolated / "bin" / ("rtk.exe" if improvements.os.name == "nt" else "rtk")
+    binary = isolated / "bin" / ("rtk.exe" if rtk.os.name == "nt" else "rtk")
     binary.parent.mkdir()
     binary.write_bytes(b"fixture")
     improvements.configure({"rtk": True})
-    monkeypatch.setattr(improvements.tmux, "en_distro", lambda distro, name: False)
+    monkeypatch.setattr(rtk.subproc, "correr", lambda *args, **kwargs: (1, "", "no instalado"))
     text, warnings = improvements.launch_instructions("codex", "Ubuntu")
     assert not text and "RTK no esta instalado" in warnings[0]
-    assert improvements.rtk_path() == str(binary)
+    assert rtk.ruta() == str(binary)
 
 
 def test_corrupt_preferences_are_visible(isolated):

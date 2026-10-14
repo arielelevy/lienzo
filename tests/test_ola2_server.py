@@ -366,7 +366,11 @@ def test_launch_valida_igual_y_lanza_igual(entorno):
     entorno["efectos"].clear()
     p = al_peer(entorno["peer"], "POST", "/peer/launch", json.dumps(bueno).encode())
     assert t == p and t[0] == 200
-    assert ef_t == entorno["efectos"] == [("launch", "C:/x", "t", "claude", {"model": "opus", "distro": None})]
+    assert (
+        ef_t
+        == entorno["efectos"]
+        == [("launch", "C:/x", "t", "claude", {"model": "opus", "distro": None, "modo": "general"})]
+    )
 
 
 def test_launch_en_otra_pc_se_reenvia_con_el_mismo_cuerpo(entorno):

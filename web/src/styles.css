@@ -702,3 +702,7 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
 .consulta-chip .consulta-quitar { background: none; border: 0; padding: 0 0 0 4px; color: var(--dim); font-size: 14px; line-height: 1; cursor: pointer; }
 .consulta-chip .consulta-quitar:hover { color: var(--fg); }
 .warn.external { color: var(--need); }
+
+.tools-catalogo { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tools-catalogo li p { margin: 2px 0; overflow-wrap: anywhere; }
+.tools-catalogo a { color: var(--acc); }
