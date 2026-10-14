@@ -8,6 +8,28 @@ Las casillas heredadas se conservan textuales. El 2026-10-10 se cerraron (con `[
 debajo) las verificadas en código, pruebas o decisión de Ariel; las demás siguen pendientes. La evidencia histórica no es una prueba
 ejecutada hoy. Las referencias de código de esta consolidación se revisaron estáticamente.
 
+## Orquestación de encargos
+
+- [ ] **Incorporar a Lienzo las ideas de coordinación y verificación del experimento de Prime Agent**
+  (pedido de Ariel, 2026-10-12). Mantener la tecnología y arquitectura actuales; no reescribir en Rust.
+  - Etapas explícitas por encargo: pendiente → implementación → revisión → verificación. El cierre
+    de un turno o una respuesta del agente no equivale a aprobación ni completa la tarea por sí solo.
+  - Dependencias entre encargos: esperar los insumos necesarios y ejecutar en paralelo los frentes
+    independientes, con la coordinadora controlando la integración.
+  - Evaluar un `git worktree` por frente que modifica código para reducir interferencias.
+  - Límites de gasto y reintentos por encargo, con detención y aviso cuando una ronda repite errores
+    sin avanzar. Distinguir consumo medido de estimaciones y datos no disponibles.
+  - Evidencia visible junto al informe: cambios, revisión, pruebas ejecutadas, resultados y pendientes.
+    Priorizar la vinculación del encargo con su evidencia de revisión y pruebas.
+  - Reutilizar la coordinadora, los mensajes, las reglas `on_stop` y sus límites existentes.
+  - Criterio de aceptación: un encargo puede recorrerse de punta a punta con evidencia consultable;
+    una dependencia bloquea su ejecución hasta disponer del insumo; un fallo de verificación permite
+    devolverlo a implementación; los límites frenan reintentos sin avance; ninguna tarea se marca
+    completada sin pedido explícito de Ariel.
+
+  Origen: conversación con Ariel del 2026-10-12 sobre Prime Agent.
+  Referencia: https://www.primeintellect.ai/blog/prime-agent-rust.
+
 ## Puente con el orquestador externo, reglas por frecuencia y envío confirmado (2026-10-14)
 
 Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle en `code-review-2026-10-14.md`.
