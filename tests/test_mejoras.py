@@ -23,6 +23,55 @@ def test_remote_run_is_denied_without_local_allowlist(monkeypatch, tmp_path):
 
     monkeypatch.setattr(state, "load_config", lambda: {"launch_roots": [str(tmp_path)]})
     monkeypatch.setattr(remote_run.subproc, "correr", lambda *a, **k: pytest.fail("no debe ejecutar"))
+    assert remote_run.run({"command": "push", "cwd": str(tmp_path)}, "peer")[0] == 403
+
+
+@pytest.mark.parametrize("command", ["status", "log"])
+def test_paired_peer_can_query_git_without_local_allowlist(monkeypatch, tmp_path, command):
+    import subprocess
+
+    import remote_run
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "initial",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.setattr(state, "load_config", lambda: {"launch_roots": [str(tmp_path)]})
+    request = {"command": command, "cwd": str(tmp_path)}
+    assert remote_run.run(request, "")[0] == 403
+    code, result = remote_run.run(request, "paired-peer")
+    assert code == 200 and result["exit_code"] == 0
+    assert "initial" in result["stdout"] if command == "log" else "##" in result["stdout"]
+    assert remote_run.run({**request, "cwd": str(tmp_path.parent)}, "paired-peer")[0] == 403
+    assert remote_run.run({**request, "argv": ["calc"]}, "paired-peer")[0] == 400
+
+
+def test_explicit_local_denial_overrides_builtin(monkeypatch, tmp_path):
+    import remote_run
+
+    monkeypatch.setattr(
+        state,
+        "load_config",
+        lambda: {
+            "launch_roots": [str(tmp_path)],
+            "run_allowlist": {"status": None},
+        },
+    )
+    monkeypatch.setattr(remote_run.subproc, "correr", lambda *a, **k: pytest.fail("no debe ejecutar"))
     assert remote_run.run({"command": "status", "cwd": str(tmp_path)}, "peer")[0] == 403
 
 

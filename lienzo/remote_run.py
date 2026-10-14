@@ -1,4 +1,4 @@
-"""Comandos remotos nombrados y aprobados en config.json; sin shell ni argumentos del pedido."""
+"""Consultas Git para peers emparejados y comandos locales nombrados; sin shell."""
 
 import os
 import threading
@@ -9,6 +9,10 @@ import subproc
 
 TIMEOUT_S = 50
 OUTPUT_BYTES = 65536
+READ_ONLY_COMMANDS = {
+    "status": ["git", "--no-optional-locks", "status", "--short", "--branch"],
+    "log": ["git", "--no-pager", "log", "-1", "--format=%H %s"],
+}
 _busy = threading.Semaphore(2)
 
 
@@ -42,8 +46,13 @@ def run(request: dict, peer: str) -> tuple[int, dict]:
         return 400, {"error": "se espera command (nombre configurado) y cwd, sin argumentos adicionales"}
     cfg = state.load_config()
     commands = cfg.get("run_allowlist")
-    argv = commands.get(name) if isinstance(commands, dict) else None
-    if not permitted(argv):
+    if isinstance(commands, dict) and name in commands:
+        argv = commands[name]
+        allowed_command = permitted(argv)
+    else:
+        argv = READ_ONLY_COMMANDS.get(name)
+        allowed_command = argv is not None
+    if not allowed_command:
         return 403, {"error": "comando no permitido en esta PC", "code": "command_not_allowed"}
     roots = cfg.get("launch_roots")
     try:

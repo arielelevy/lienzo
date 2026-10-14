@@ -1,5 +1,11 @@
 # Code Review: puente con un orquestador externo local
 
+## Revisión adicional: consultas Git entre peers emparejados
+
+Alcance: `lienzo/remote_run.py`, `tests/test_mejoras.py`, `README.md`.
+Se incorporan `status` y `log` con argv fijos para peers autenticados; se mantienen `launch_roots`, rechazo de argumentos y precedencia del bloqueo local explícito. No hay ejecución de shell ni push incorporado.
+Hallazgo de imports corregido. Ruff pasa; 22 pruebas focales pasan tras la corrección. Runner backend-pytest: exit 0, 285365 ms, evidencia en `pruebas-agenticas/resultados/intentos/2026-10-14T19-54-01.448Z-14052/`. Compuerta ESCALAR: evidencia integral y mutación anteriores. Sin verificación del despliegue remoto. Sin nuevos hallazgos pendientes en los tres archivos.
+
 **Fecha**: 2026-10-14
 **Alcance**: PR review de cambios sin commitear
 **Archivos**:

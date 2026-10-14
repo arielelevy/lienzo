@@ -545,6 +545,11 @@ Lo medido entre dos PCs el 2026-10-04:
 
 ### Seguridad, en criollo
 
+Las consultas remotas `POST /run {pc, command, cwd}` admiten `command: "status"` y `"log"`
+entre PCs emparejadas sin configuración adicional: muestran el estado de Git y el último commit.
+La carpeta debe estar en `launch_roots`. `run_allowlist` configura los demás comandos y puede
+bloquear una consulta incorporada con un valor `null`. No se aceptan argumentos del pedido.
+
 Un peer emparejado puede teclear en los agentes de la otra PC, lanzar sesiones y copiarle archivos
 dentro de `copy_roots`. Lo mitiga: listener aparte sólo para `/peer/*`, bind a la IP de LAN, firewall
 sólo en perfil Privado, firma con ventana y nonce en cada pedido, `launch_roots` y `copy_roots`,
