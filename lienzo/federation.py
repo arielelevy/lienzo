@@ -419,7 +419,9 @@ SSE_READ_TIMEOUT_S = 35.0  # mas que dos pings: uno perdido no corta el stream
 
 
 def _backoff_exponencial(intento: int) -> float:
-    return min(0.5 * (2**intento), 10.0)
+    # el exponente se acota: con un par caido horas, 2**intento no entraba en un float y el
+    # OverflowError mataba el hilo del SSE, que ya no reconectaba (medido el 2026-10-15)
+    return min(0.5 * (2 ** min(intento, 5)), 10.0)
 
 
 def _leer_eventos_sse(resp, stop_event: threading.Event):

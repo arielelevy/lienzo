@@ -772,3 +772,13 @@ def test_beacon_acepta_por_peer_solo_un_ts_estrictamente_mayor(tmp_path, monkeyp
     assert recibir(t + 10, "10.0.0.7") == "10.0.0.7"
     assert "10.0.0.66" not in beacon.seen()["p1"]["ips"]
     assert fed.get_peer(path, "p1")["ips"] == ["10.0.0.5", "10.0.0.7"]
+
+
+def test_el_backoff_del_sse_no_desborda_con_un_par_caido_horas():
+    """Medido el 2026-10-15: tras ~1000 reintentos 2**intento no entraba en un float y el
+    OverflowError mataba el hilo del SSE, que ya no reconectaba."""
+    import federation
+
+    assert federation._backoff_exponencial(0) == 0.5
+    assert federation._backoff_exponencial(5) == 10.0
+    assert federation._backoff_exponencial(5000) == 10.0
