@@ -14,7 +14,14 @@ def test_comparison_checks_actual_server_before_any_process(monkeypatch, capsys)
     monkeypatch.setattr(module["time"], "sleep", lambda _: None)
     monkeypatch.setattr(module["rtk"], "ruta", lambda: "synthetic-rtk")
     monkeypatch.setattr(module["subproc"], "correr", lambda *a, **k: pytest.fail("must not launch commands"))
-    module["main"].__globals__["signals"] = lambda: {"idle_seconds": 200, "ui_idle_seconds": 200, "cpu_pct": 1, "mem_free_gb": 3, "pending": True, "agents_busy": False}
+    module["main"].__globals__["signals"] = lambda: {
+        "idle_seconds": 200,
+        "ui_idle_seconds": 200,
+        "cpu_pct": 1,
+        "mem_free_gb": 3,
+        "pending": True,
+        "agents_busy": False,
+    }
     module["main"]()
     assert "bloqueado" in capsys.readouterr().out
 

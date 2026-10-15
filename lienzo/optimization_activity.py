@@ -1,4 +1,5 @@
 """Señales locales sin capturar teclas, textos o ventanas del usuario."""
+
 from __future__ import annotations
 
 import ctypes
@@ -28,7 +29,7 @@ def pending_active(pending, sessions, now=None) -> bool:
             deadline = dt.datetime.fromisoformat(expiry)
             if deadline.tzinfo is not None and deadline <= moment:
                 continue
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             # Fecha desconocida no acredita vencimiento: conservar bloqueo en contexto vivo/incierto.
             deadline = None
         return True
@@ -62,9 +63,14 @@ def snapshot(last_ui: float) -> dict:
         pending = pending_active(state.pending, state.sessions)
     mem, _ = health._memoria()
     cpu = health._cpu_pct()
-    return {"idle_seconds": idle, "ui_idle_seconds": time.monotonic() - last_ui,
-            "cpu_pct": cpu, "mem_free_gb": mem, "pending": pending,
-            "agents_busy": any(s.get("state") not in ("termino", "muerta") for s in live)}
+    return {
+        "idle_seconds": idle,
+        "ui_idle_seconds": time.monotonic() - last_ui,
+        "cpu_pct": cpu,
+        "mem_free_gb": mem,
+        "pending": pending,
+        "agents_busy": any(s.get("state") not in ("termino", "muerta") for s in live),
+    }
 
 
 def block_reason(signals: dict) -> str | None:
@@ -86,6 +92,8 @@ def cancellation_reason(last_ui: float) -> str | None:
     if idle is None or idle < QUIET_SECONDS or time.monotonic() - last_ui < QUIET_SECONDS:
         return "actividad del usuario o inactividad desconocida"
     with state.lock:
-        if pending_active(state.pending, state.sessions) or any(s.get("alive") is not False and s.get("state") not in ("termino", "muerta") for s in state.sessions.values()):
+        if pending_active(state.pending, state.sessions) or any(
+            s.get("alive") is not False and s.get("state") not in ("termino", "muerta") for s in state.sessions.values()
+        ):
             return "agentes trabajando o permisos pendientes"
     return None

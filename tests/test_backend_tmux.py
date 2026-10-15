@@ -105,7 +105,9 @@ def test_run_send_pasa_enter_y_la_tecla_al_pane(aislado, monkeypatch):
     monkeypatch.setattr(
         tmux,
         "send",
-        lambda target, text, enter=True, key=None, distro=None: visto.append((target, text, enter, key)) or {"ok": True},
+        lambda target, text, enter=True, key=None, distro=None: (
+            visto.append((target, text, enter, key)) or {"ok": True}
+        ),
     )
     assert ses.run_send(s, "2", enter=False)[0] == 200
     assert ses.run_send(s, "", enter=False, key="escape")[0] == 200

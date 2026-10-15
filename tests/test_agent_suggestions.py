@@ -4,8 +4,22 @@ import state
 
 
 def sample():
-    return {"session_id": "s1", "snapshot": "digest", "evidence": {"tools": [
-        {"turn": "t1", "tool_id": "a", "tool": "exec_command", "characters": 3000, "error": False, "result_known": True}]}}
+    return {
+        "session_id": "s1",
+        "snapshot": "digest",
+        "evidence": {
+            "tools": [
+                {
+                    "turn": "t1",
+                    "tool_id": "a",
+                    "tool": "exec_command",
+                    "characters": 3000,
+                    "error": False,
+                    "result_known": True,
+                }
+            ]
+        },
+    }
 
 
 def test_suggestion_cites_tool_and_does_not_claim_savings():
@@ -54,7 +68,7 @@ def test_empty_sample_is_not_sent_to_paid_model(monkeypatch):
 def test_storage_failure_reports_that_provider_charged(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "LIENZO", str(tmp_path))
     monkeypatch.setattr(suggestions, "report", lambda s: sample())
-    monkeypatch.setattr(suggestions.jev, "decide", lambda data: {"usage": {"cost": .00001}})
+    monkeypatch.setattr(suggestions.jev, "decide", lambda data: {"usage": {"cost": 0.00001}})
     (tmp_path / "improvements").write_text("not a directory")
     with pytest.raises(ValueError, match="cobro USD"):
         suggestions.judge({"session_id": "s1"}, {"allow_cost": True, "snapshot": "digest"})

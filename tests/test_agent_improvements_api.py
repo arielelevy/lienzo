@@ -22,18 +22,21 @@ def http_api(tmp_path, monkeypatch):
     thread = threading.Thread(target=listener.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{listener.server_port}"
+
     def request(path, method="GET", data=None, csrf=True):
         headers = {"Content-Type": "application/json"}
         if csrf:
             headers["X-Lienzo"] = "1"
-        req = urllib.request.Request(base + path, method=method, headers=headers,
-                                     data=json.dumps(data).encode() if data is not None else None)
+        req = urllib.request.Request(
+            base + path, method=method, headers=headers, data=json.dumps(data).encode() if data is not None else None
+        )
         try:
             response = urllib.request.urlopen(req, timeout=5)
         except urllib.error.HTTPError as error:
             response = error
         with response:
             return response.status, json.load(response)
+
     yield request
     listener.shutdown()
     listener.server_close()
@@ -88,6 +91,7 @@ def test_scheduler_api_limits_commands_and_keeps_csrf(http_api):
 
 def test_scheduler_get_does_not_create_ledger_or_peer(http_api):
     from pathlib import Path
+
     root = Path(state.LIENZO)
     before = {str(p.relative_to(root)): (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file()}
     code, _ = http_api("/agent-improvements/scheduler")

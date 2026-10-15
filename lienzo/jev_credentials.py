@@ -31,8 +31,15 @@ def _dpapi(data: bytes, *, decrypt: bool = False) -> bytes:
         fn = crypt.CryptUnprotectData
     else:
         fn = crypt.CryptProtectData
-    fn.argtypes = [ctypes.POINTER(Blob), ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
-                   ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(Blob)]
+    fn.argtypes = [
+        ctypes.POINTER(Blob),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(Blob),
+    ]
     fn.restype = wintypes.BOOL
     if not fn(ctypes.byref(source), None, None, None, None, 1, ctypes.byref(target)):
         raise OSError("no se pudo proteger/abrir la credencial con DPAPI")

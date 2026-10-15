@@ -10,7 +10,14 @@ def known_idle_boundary(monkeypatch):
 
 
 def good():
-    return {"idle_seconds": 190, "ui_idle_seconds": 190, "cpu_pct": 10, "mem_free_gb": 3, "pending": False, "agents_busy": False}
+    return {
+        "idle_seconds": 190,
+        "ui_idle_seconds": 190,
+        "cpu_pct": 10,
+        "mem_free_gb": 3,
+        "pending": False,
+        "agents_busy": False,
+    }
 
 
 def test_two_samples_then_user_return_pauses_and_never_starts_agent(monkeypatch):
@@ -36,7 +43,15 @@ def test_two_samples_then_user_return_pauses_and_never_starts_agent(monkeypatch)
     assert scheduler.status()["new_agents_enabled"] is False
 
 
-@pytest.mark.parametrize("data", [{"action": "launch"}, {"action": "enqueue", "project": "p", "command": "whoami"}, {"action": "configure", "enabled": "yes"}, {"action": "pay", "budget": 1}])
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"action": "launch"},
+        {"action": "enqueue", "project": "p", "command": "whoami"},
+        {"action": "configure", "enabled": "yes"},
+        {"action": "pay", "budget": 1},
+    ],
+)
 def test_no_arbitrary_execution_or_budget(data):
     with pytest.raises(ValueError):
         s.Scheduler().command(data)
@@ -55,8 +70,10 @@ def test_time_limit_keeps_partial_for_review(monkeypatch):
 def test_failure_visible_without_retry(monkeypatch):
     scheduler = s.Scheduler()
     scheduler.queue.enqueue("p")
+
     def fail(p):
         raise OSError("SQLite unavailable")
+
     monkeypatch.setattr(s.memory, "sources", fail)
     scheduler.tick(good())
     scheduler.tick(good())
@@ -67,15 +84,18 @@ def test_failure_visible_without_retry(monkeypatch):
 
 def test_parallel_tick_cannot_start_second_step(monkeypatch):
     import threading
+
     scheduler = s.Scheduler()
     scheduler.queue.enqueue("p")
     entered, release = threading.Event(), threading.Event()
     calls = []
+
     def read(p):
         calls.append(p)
         entered.set()
         assert release.wait(2)
         return []
+
     monkeypatch.setattr(s.memory, "sources", read)
     monkeypatch.setattr(s.memory, "record_analysis", lambda *a: "evidence")
     scheduler.tick(good())
@@ -94,9 +114,11 @@ def test_activity_during_sources_prevents_proposal_and_preserves_cursor(monkeypa
     scheduler = s.Scheduler()
     scheduler.queue.enqueue("p")
     changed = {"active": False}
+
     def sources(_):
         changed["active"] = True
         return ["source"]
+
     monkeypatch.setattr(s.memory, "sources", sources)
     monkeypatch.setattr(s.activity, "cancellation_reason", lambda _: "usuario volvió" if changed["active"] else None)
     monkeypatch.setattr(s.memory, "propose", lambda *a: pytest.fail("must not propose"))
@@ -144,9 +166,11 @@ def test_activity_during_proposal_keeps_transaction_result_then_pauses(monkeypat
     changed = {"active": False}
     monkeypatch.setattr(s.memory, "sources", lambda _: ["source"])
     monkeypatch.setattr(s.activity, "cancellation_reason", lambda _: "usuario volvió" if changed["active"] else None)
+
     def propose(*_):
         changed["active"] = True
         return "confirmed-transaction-result"
+
     monkeypatch.setattr(s.memory, "propose", propose)
     scheduler.tick(good())
     scheduler.tick(good())

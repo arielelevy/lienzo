@@ -11,7 +11,15 @@ def policy(prior=None):
 
 
 def test_prior_unknown_blocks_and_is_not_zero():
-    budget = b.Budget(policy([{"id": "known", "cost_usd": ".00002268", "source": "verified"}, {"id": "unknown", "cost_usd": None, "source": "HTTP400"}]), "owner")
+    budget = b.Budget(
+        policy(
+            [
+                {"id": "known", "cost_usd": ".00002268", "source": "verified"},
+                {"id": "unknown", "cost_usd": None, "source": "HTTP400"},
+            ]
+        ),
+        "owner",
+    )
     budget.activate()
     status = budget.status()
     assert status["spent_usd"] == "0.00002268" and status["available_usd"] == "0"
@@ -101,6 +109,7 @@ def test_concurrent_reservations_share_five_total():
             return b.Budget(policy(), "owner").reserve("3", "test")
         except ValueError:
             return None
+
     with ThreadPoolExecutor(max_workers=2) as pool:
         reservations = list(pool.map(reserve, range(2)))
     assert sum(r is not None for r in reservations) == 1
@@ -154,6 +163,7 @@ def test_breach_below_total_still_blocks_provider():
 
 def test_jev_guard_rejects_unknown_history_before_credentials(monkeypatch):
     import jev
+
     budget = b.Budget(policy([{"id": "unknown", "cost_usd": None, "source": "HTTP400"}]), "owner")
     budget.activate()
     monkeypatch.setattr(jev.optimization_budget, "Budget", lambda: budget)
@@ -164,6 +174,7 @@ def test_jev_guard_rejects_unknown_history_before_credentials(monkeypatch):
 
 def test_jev_without_maximum_cannot_reserve_or_contact_provider(monkeypatch):
     import jev
+
     budget = b.Budget(policy(), "owner")
     budget.activate()
     monkeypatch.setattr(jev.optimization_budget, "Budget", lambda: budget)
@@ -175,13 +186,16 @@ def test_jev_without_maximum_cannot_reserve_or_contact_provider(monkeypatch):
 
 def test_jev_timeout_retains_real_reservation(monkeypatch):
     import jev
+
     budget = b.Budget(policy(), "owner")
     budget.activate()
     monkeypatch.setattr(jev.optimization_budget, "Budget", lambda: budget)
     monkeypatch.setattr(jev.optimization_cost, "maximum", lambda _: ".001")
     monkeypatch.setattr(jev.jev_credentials, "load", lambda: "synthetic")
+
     def timeout(*a, **k):
         raise TimeoutError()
+
     monkeypatch.setattr(jev, "_open", timeout)
     with pytest.raises(ValueError, match="no respondio"):
         jev.decide({"counts": {}})
@@ -194,12 +208,13 @@ def test_semantically_invalid_response_still_accounts_confirmed_cost(monkeypatch
     import json
 
     import jev
+
     budget = b.Budget(policy(), "owner")
     budget.activate()
     monkeypatch.setattr(jev.optimization_budget, "Budget", lambda: budget)
     monkeypatch.setattr(jev.optimization_cost, "maximum", lambda _: ".001")
     monkeypatch.setattr(jev.jev_credentials, "load", lambda: "synthetic")
-    monkeypatch.setattr(jev, "_open", lambda *a, **k: io.BytesIO(json.dumps({"usage": {"cost": .00005}}).encode()))
+    monkeypatch.setattr(jev, "_open", lambda *a, **k: io.BytesIO(json.dumps({"usage": {"cost": 0.00005}}).encode()))
     with pytest.raises(ValueError, match="incompletas"):
         jev.decide({"counts": {}})
     assert budget.status()["spent_usd"] == "0.00005"

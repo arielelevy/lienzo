@@ -1,4 +1,5 @@
 """Cola operacional; las hipótesis y su evidencia viven en conocimiento.sqlite."""
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,11 @@ class Queue:
         self.jobs = []
         if self.path.exists():
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            if not isinstance(data, dict) or type(data.get("enabled")) is not bool or not isinstance(data.get("jobs"), list):
+            if (
+                not isinstance(data, dict)
+                or type(data.get("enabled")) is not bool
+                or not isinstance(data.get("jobs"), list)
+            ):
                 raise ValueError("cola de optimización inválida")
             self.enabled, self.jobs = data["enabled"], data["jobs"]
             self._validate()

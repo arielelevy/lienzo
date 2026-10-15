@@ -25,8 +25,10 @@ def test_corrupt_queue_is_visible():
 def test_failed_save_does_not_enable_or_advance(monkeypatch):
     q = Queue()
     job = q.enqueue("project")
+
     def fail():
         raise OSError("disk full")
+
     monkeypatch.setattr(q, "save", fail)
     with pytest.raises(OSError):
         q.change(job["id"], cursor=1)

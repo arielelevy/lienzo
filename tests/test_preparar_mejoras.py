@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
-spec = importlib.util.spec_from_file_location("preparar_mejoras", Path(__file__).parents[1] / "ops" / "preparar-mejoras.py")
+spec = importlib.util.spec_from_file_location(
+    "preparar_mejoras", Path(__file__).parents[1] / "ops" / "preparar-mejoras.py"
+)
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 

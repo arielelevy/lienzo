@@ -1,4 +1,5 @@
 """Scheduler local y piloto Jev explícito: sin lanzar nuevas CLI."""
+
 from __future__ import annotations
 
 import threading
@@ -33,12 +34,23 @@ class Scheduler:
         active = bool(budget.get("pilot", {}).get("within_window")) if budget.get("pilot") else False
         adapters = optimization_cost.status()
         ready = active and self.queue.view()["enabled"] and adapters["jev"]["enabled"] and self.good_samples >= 2
-        eligible = ready and optimization_budget.Budget().pilot_eligible("status-only") and not activity.cancellation_reason(self.last_ui)
-        return {**self.queue.view(), "reason": self.reason, "paid_enabled": bool(eligible), "pilot_enabled": active,
-                "budget": budget, "adapters": adapters,
-                "paid_scope": "piloto Jev métricas; precio y reserva revalidados antes de cada envío",
-                "automatic_scope": "hasta 30 incidentes recientes por proyecto; deduplicación por versión, cooldown 120 s, cola máxima 100",
-                "new_agents_enabled": False, "projects": [{"id": p["id"], "name": p.get("nombre", p["id"])} for p in conocimiento.proyectos()]}
+        eligible = (
+            ready
+            and optimization_budget.Budget().pilot_eligible("status-only")
+            and not activity.cancellation_reason(self.last_ui)
+        )
+        return {
+            **self.queue.view(),
+            "reason": self.reason,
+            "paid_enabled": bool(eligible),
+            "pilot_enabled": active,
+            "budget": budget,
+            "adapters": adapters,
+            "paid_scope": "piloto Jev métricas; precio y reserva revalidados antes de cada envío",
+            "automatic_scope": "hasta 30 incidentes recientes por proyecto; deduplicación por versión, cooldown 120 s, cola máxima 100",
+            "new_agents_enabled": False,
+            "projects": [{"id": p["id"], "name": p.get("nombre", p["id"])} for p in conocimiento.proyectos()],
+        }
 
     def command(self, data):
         if not isinstance(data, dict):
@@ -64,13 +76,20 @@ class Scheduler:
                         if pending["state"] == "queued" and pending["cursor"] == 0:
                             version = experiment.manifest()
                             if version != pending["source_version"]:
-                                self.queue.change(pending["id"], source_version=version,
-                                                  reason="fuentes renovadas por encolado explícito; sin perfiles ejecutados")
+                                self.queue.change(
+                                    pending["id"],
+                                    source_version=version,
+                                    reason="fuentes renovadas por encolado explícito; sin perfiles ejecutados",
+                                )
                         return self.status()
                     raise ValueError("hay un análisis del proyecto pendiente; no se reemplaza")
             project = conocimiento.proyecto(data["project"])
             from pathlib import Path
-            if not any(Path(p.get("cwd", "")).resolve() == Path(experiment.state.ROOT).resolve() for p in project.get("carpetas", [])):
+
+            if not any(
+                Path(p.get("cwd", "")).resolve() == Path(experiment.state.ROOT).resolve()
+                for p in project.get("carpetas", [])
+            ):
                 raise ValueError("ensayo solo disponible para la carpeta local Lienzo")
             job = self.queue.enqueue(data["project"], kind="off_on_local", version=experiment.manifest(), source_ids=[])
             if job.get("kind") != "off_on_local":
@@ -119,14 +138,17 @@ class Scheduler:
         status = budget.status()
         if status["blocked"] or not status.get("pilot") or not status["pilot"]["within_window"]:
             return False
+
         def before_send():
             reason = activity.cancellation_reason(self.last_ui)
             if reason or not self.queue.view()["enabled"]:
                 raise ValueError(reason or "pausado por el usuario")
+
         try:
             with state.lock:
-                sessions = [dict(s) for s in state.sessions.values()
-                            if s.get("state") == "termino" and s.get("alive") is True]
+                sessions = [
+                    dict(s) for s in state.sessions.values() if s.get("state") == "termino" and s.get("alive") is True
+                ]
             for session in sessions:
                 report = agent_evaluation.evaluate(session)
                 counts = report["evidence"]["counts"]
@@ -158,13 +180,20 @@ class Scheduler:
             self._experiment_step(job)
             return
         if jid not in self.sources:
-            self.sources[jid] = job.get("source_ids") if job.get("source_ids") is not None else memory.sources(job["project"])
+            self.sources[jid] = (
+                job.get("source_ids") if job.get("source_ids") is not None else memory.sources(job["project"])
+            )
         if self._cancelled(job):
             return
         refs = self.sources[jid]
         if job["cursor"] >= len(refs):
             evidence = memory.record_analysis(job["project"], jid, job["cursor"], job["results"])
-            self.queue.change(jid, state="observed", evidence=evidence, reason="análisis local observado; hipótesis sin veredicto humano")
+            self.queue.change(
+                jid,
+                state="observed",
+                evidence=evidence,
+                reason="análisis local observado; hipótesis sin veredicto humano",
+            )
             self.sources.pop(jid, None)
             self.started.pop(jid, None)
             return
@@ -188,8 +217,13 @@ class Scheduler:
         elif len(profiles) == 2:
             artifact = experiment.save({**job, "profiles": profiles})
             evidence = memory.record_local_experiment(job["project"], artifact, profiles)
-            self.queue.change(job["id"], state="observed", evidence=evidence, artifact=artifact,
-                              reason="OFF/ON local observado; calidad de agentes no medida, requiere veredicto")
+            self.queue.change(
+                job["id"],
+                state="observed",
+                evidence=evidence,
+                artifact=artifact,
+                reason="OFF/ON local observado; calidad de agentes no medida, requiere veredicto",
+            )
         else:
             self._cancelled(job)
 
@@ -249,4 +283,5 @@ def start(log):
         except Exception as error:
             ERROR = f"scheduler detenido: {type(error).__name__}; revisar cola/señales"
             log(ERROR)
+
     threading.Thread(target=loop, name="optimization", daemon=True).start()

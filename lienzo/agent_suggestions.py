@@ -22,14 +22,26 @@ def suggestions(report: dict) -> list[dict]:
     refs = report["evidence"]["tools"]
     out = []
     for ref in refs:
-        if (ref["characters"] or 0) >= 2000 and any(x in ref["tool"].lower() for x in ("shell", "bash", "exec", "powershell")):
-            out.append({"tool": "rtk", "evidence": ref,
-                        "action": "Probar RTK en este comando y comparar diagnosticos y salida original",
-                        "limit": "La longitud no demuestra desperdicio ni ahorro facturado"})
+        if (ref["characters"] or 0) >= 2000 and any(
+            x in ref["tool"].lower() for x in ("shell", "bash", "exec", "powershell")
+        ):
+            out.append(
+                {
+                    "tool": "rtk",
+                    "evidence": ref,
+                    "action": "Probar RTK en este comando y comparar diagnosticos y salida original",
+                    "limit": "La longitud no demuestra desperdicio ni ahorro facturado",
+                }
+            )
         elif any(x in ref["tool"].lower() for x in ("read", "grep", "search")):
-            out.append({"tool": "codegraph", "evidence": ref,
-                        "action": "Evaluar un indice de codigo si esta exploracion se repite",
-                        "limit": "Leer codigo puede ser necesario; verificar vigencia y cobertura del indice"})
+            out.append(
+                {
+                    "tool": "codegraph",
+                    "evidence": ref,
+                    "action": "Evaluar un indice de codigo si esta exploracion se repite",
+                    "limit": "Leer codigo puede ser necesario; verificar vigencia y cobertura del indice",
+                }
+            )
         if len(out) >= 4:
             break
     return out
@@ -43,7 +55,9 @@ def report(session: dict) -> dict:
     data["paid_block_reason"] = optimization_cost.status()["jev"]["reason"]
     budget = optimization_budget.Budget().status()
     if budget.get("pilot") and budget["pilot"]["within_window"]:
-        data["jev_available"] = bool(jev_credentials.available() and optimization_budget.Budget().pilot_eligible("manual-status-only"))
+        data["jev_available"] = bool(
+            jev_credentials.available() and optimization_budget.Budget().pilot_eligible("manual-status-only")
+        )
         data["paid_block_reason"] = "precio/cooldown/tope y muestra se revalidan antes de enviar"
     return data
 
@@ -65,17 +79,24 @@ def judge(session: dict, data: dict) -> dict:
             decision = jev.pilot_decide(sample["state"], sample["snapshot"])
         else:
             decision = jev.decide(current["evidence"])
-        payload = {"session_id": session["session_id"], "snapshot": current["snapshot"],
-                   "evidence": current["evidence"], "decision": decision}
+        payload = {
+            "session_id": session["session_id"],
+            "snapshot": current["snapshot"],
+            "evidence": current["evidence"],
+            "decision": decision,
+        }
         root = Path(state.LIENZO) / "improvements"
         # Archivo propio con nombre aleatorio: el id del proveedor nunca decide una ruta.
         import secrets
+
         target = root / f"{secrets.token_hex(12)}.json"
         try:
             root.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         except OSError:
-            raise ValueError(f"Jev respondio y cobro USD {decision['usage']['cost']}, pero no se pudo guardar el informe") from None
+            raise ValueError(
+                f"Jev respondio y cobro USD {decision['usage']['cost']}, pero no se pudo guardar el informe"
+            ) from None
         return payload
     finally:
         JUDGE_LOCK.release()

@@ -44,9 +44,17 @@ def test_analysis_evidence_is_in_same_memory_and_never_quality_pass(project):
 
 
 def test_context_uses_cited_session_without_copying_prompt(project):
-    k.crear_nodo(project, "sesion", "source", {"pc": "source-pc", "modelo": "model", "prompt": "PRIVATE"},
-                 autor="server", clave_ingesta="sesion:sid")
-    source = k.crear_nodo(project, "incidente", "source", {"herramienta": "bash"}, autor="server", origen={"session_id": "sid"})
+    k.crear_nodo(
+        project,
+        "sesion",
+        "source",
+        {"pc": "source-pc", "modelo": "model", "prompt": "PRIVATE"},
+        autor="server",
+        clave_ingesta="sesion:sid",
+    )
+    source = k.crear_nodo(
+        project, "incidente", "source", {"herramienta": "bash"}, autor="server", origen={"session_id": "sid"}
+    )
     node = k.nodo(project, m.propose(project, source["id"]))
     assert node["datos"]["contexto"]["pc"] == "source-pc"
     assert "PRIVATE" not in str(node)

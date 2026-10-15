@@ -5,10 +5,30 @@ import pytest
 
 
 def good():
-    return {"idle_seconds": 180, "ui_idle_seconds": 180, "cpu_pct": 35, "mem_free_gb": 1.5, "pending": False, "agents_busy": False}
+    return {
+        "idle_seconds": 180,
+        "ui_idle_seconds": 180,
+        "cpu_pct": 35,
+        "mem_free_gb": 1.5,
+        "pending": False,
+        "agents_busy": False,
+    }
 
 
-@pytest.mark.parametrize("key,value", [("idle_seconds", None), ("cpu_pct", float("nan")), ("mem_free_gb", True), ("ui_idle_seconds", -1), ("pending", None), ("agents_busy", True), ("idle_seconds", 179.9), ("cpu_pct", 35.1), ("mem_free_gb", 1.49)])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("idle_seconds", None),
+        ("cpu_pct", float("nan")),
+        ("mem_free_gb", True),
+        ("ui_idle_seconds", -1),
+        ("pending", None),
+        ("agents_busy", True),
+        ("idle_seconds", 179.9),
+        ("cpu_pct", 35.1),
+        ("mem_free_gb", 1.49),
+    ],
+)
 def test_unknown_or_busy_blocks(key, value):
     signals = good()
     signals[key] = value
@@ -28,16 +48,19 @@ def test_unknown_live_session_blocks_snapshot(monkeypatch):
     assert a.snapshot(0)["agents_busy"] is True
 
 
-@pytest.mark.parametrize("expiry,session,expected", [
-    ("2026-10-13T00:00:00+00:00", {"alive": True}, True),
-    ("2026-10-11T00:00:00+00:00", {"alive": True}, False),
-    ("2026-10-13T00:00:00+00:00", {"alive": False}, False),
-    (None, {"state": "muerta"}, False),
-    (None, {"alive": True}, True),
-    ("bad-date", {"alive": True}, True),
-    ("2026-10-11T00:00:00+00:00", None, False),
-    (None, None, True),
-])
+@pytest.mark.parametrize(
+    "expiry,session,expected",
+    [
+        ("2026-10-13T00:00:00+00:00", {"alive": True}, True),
+        ("2026-10-11T00:00:00+00:00", {"alive": True}, False),
+        ("2026-10-13T00:00:00+00:00", {"alive": False}, False),
+        (None, {"state": "muerta"}, False),
+        (None, {"alive": True}, True),
+        ("bad-date", {"alive": True}, True),
+        ("2026-10-11T00:00:00+00:00", None, False),
+        (None, None, True),
+    ],
+)
 def test_only_current_permissions_block_without_altering_history(expiry, session, expected):
     permission = {"session_id": "s", "expires_at": expiry}
     original = dict(permission)
