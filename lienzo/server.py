@@ -2936,6 +2936,7 @@ def main() -> int:
     consulta.tarjeta, consulta.enviar = consulta_tarjeta, consulta_enviar
     consulta.cargar()
     purge_stale_at_rules()
+    rl.reactivar_agotadas_por_tope_viejo()
     clean_attachments()
     captura.arrancar()  # lo que pasa por el lienzo queda en la memoria del proyecto (anexo A de v5)
     harness_updates.start(launch.harness_executable)

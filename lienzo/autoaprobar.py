@@ -154,7 +154,12 @@ class DialogoDePermiso(ProveedorPermisos):
                 d = s.get("dialog")
                 n = s.get("needs") or {}
                 motivo = None
-                if s.get("state") == "te_necesita" and n.get("kind") == "dialog" and not s.get("pending_id"):
+                # el barrido deja en su estado (sin «te necesita») el permiso que va a contestar
+                # este proveedor: ses.lo_contesta_el_auto_aprobar
+                callado = d and not n and s.get("state") in ("termino", "corriendo")
+                if not s.get("pending_id") and (
+                    callado or (s.get("state") == "te_necesita" and n.get("kind") == "dialog")
+                ):
                     if opcion_de_permiso(d, s.get("agent")) is None:
                         motivo = motivo_omitido(d, s.get("agent"))
                     else:
@@ -162,7 +167,7 @@ class DialogoDePermiso(ProveedorPermisos):
                             Pedido(
                                 # sin el detalle: la pantalla lo redibuja (otra linea envuelta, el spinner)
                                 # y con el detalle en el id el mismo dialogo abierto se volvia a contestar
-                                f"{s['session_id']}@{n.get('since') or ''}@{d.get('question')}",
+                                f"{s['session_id']}@{n.get('since') or s.get('dialog_at') or ''}@{d.get('question')}",
                                 s["session_id"],
                                 s.get("agent") or "?",
                                 f"{d.get('question')} {str(d.get('detail') or '')[:160]}",

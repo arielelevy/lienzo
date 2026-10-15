@@ -557,6 +557,11 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               ✓
             </span>
           ) : null}
+          {s.envio_pendiente && s.alive !== false && (
+            <span className="st sending" title="mandado; espera que el agente lo tome">
+              enviando…
+            </span>
+          )}
           {consultaRol && (
             <span
               className={`rol-consulta rol-${consultaRol.rol}`}

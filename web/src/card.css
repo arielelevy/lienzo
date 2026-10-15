@@ -11,6 +11,7 @@
 /* corriendo pero quieta (sin cupo, o sin actividad hace rato): punto hueco y apagado, sin
    pulso. No es lo mismo que terminar, por eso no lleva la tilde */
 .card .top .st.idle { width: 8px; height: 8px; border-radius: 50%; background: none; border: 1.5px solid var(--dim); box-sizing: border-box; }
+.card .top .st.sending { color: var(--dim); font-size: 11px; line-height: 1; font-style: italic; }
 .card .top .st.orphan { color: var(--need); border: 1px solid var(--need); border-radius: 8px; padding: 0 6px; font-size: 11px; line-height: 1.5; }
 @keyframes st-pulse { 0% { box-shadow: 0 0 0 0 rgba(63, 185, 80, .55); } 70% { box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); } 100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0); } }
 @media (prefers-reduced-motion: reduce) { .card .top .st.run { animation: none; } }

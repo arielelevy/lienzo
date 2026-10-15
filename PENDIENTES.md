@@ -40,19 +40,25 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
   relanzar desde Lienzo. Para relanzar faltan contratos medidos.
 - [ ] Decidir si el e2e del puente entra a la suite y si se aprueban sus mutaciones (propuesta en
   `pruebas-agenticas/resultados/`).
-- [ ] Indicador "enviando…" en la tarjeta mientras un envío espera su `UserPromptSubmit`. Hoy queda en
+- [x] Indicador "enviando…" en la tarjeta mientras un envío espera su `UserPromptSubmit`. Hoy queda en
   su estado anterior hasta la confirmación; sin confirmación a los 25 s, pasa a "te necesita".
+  **Cerrado el 2026-10-15:** `envio_pendiente` se ve como «enviando…» en la cabecera de la tarjeta, sin cambiarle el alto (tests-ui/tarjeta.spec.ts).
 - [ ] backend-pytest roza el timeout de 300 s del runner: 240 s aislado y más bajo carga. Una corrida dio
   una `F` que no se reprodujo. Recalibrar el timeout con aprobación o separar la batería.
-- [ ] Reglas `on_stop` agotadas por el tope total viejo: no se reactivan solas. Se reactivan editándolas
+- [x] Reglas `on_stop` agotadas por el tope total viejo: no se reactivan solas. Se reactivan editándolas
   con `limit:"rate"`.
+  **Cerrado el 2026-10-15:** al arrancar, `rules.reactivar_agotadas_por_tope_viejo` las prende de nuevo (tests/test_rules_frecuencia.py).
 - [ ] Hook en Unix: destino por `TMUX_PANE` sin probar (falta una PC Linux). Origen: code review del 2026-10-10.
-- [ ] Un diálogo de permiso que el auto-aprobar va a contestar pasa la tarjeta a `te_necesita` unos 5 s:
+- [x] Un diálogo de permiso que el auto-aprobar va a contestar pasa la tarjeta a `te_necesita` unos 5 s:
   `answer_dialog` limpia `dialog` pero el estado vuelve recién en la pasada de pantalla siguiente. La
   columna vacía se abre y se cierra y corre el tablero. Medido el 2026-10-15: unas 36 aprobaciones en una
   hora en una sola tarjeta codex. Toca `sessions.screen_once` y `autoaprobar`.
-- [ ] `mirror._poll_health` llama a `on_change()` en cada health exitoso aunque nada cambie: el tablero
+  **Cerrado el 2026-10-15:** queda en su estado mientras el auto-aprobar lo contesta (15 s de margen; después sí pasa) y contestar un diálogo saca ya la tarjeta de «te necesita» (tests/test_autoaprobar.py).
+- [ ] Si la pantalla pasa de un diálogo a otro sin quedar sin diálogo en el medio, `dialog_at` no se renueva y el
+  segundo cae antes en «te necesita». Origen: code review del 2026-10-15. Gravedad: baja.
+- [x] `mirror._poll_health` llama a `on_change()` en cada health exitoso aunque nada cambie: el tablero
   recibe el estado completo cada 10 a 15 s y reemplaza todas las sesiones. No se ve, pero es render de más.
+  **Cerrado el 2026-10-15:** solo avisa cuando el par vuelve o cambia su diagnóstico (tests/test_mirror.py).
 
 ## Pendientes trasladados de MEJORAS.md
 
@@ -440,9 +446,10 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
   - Origen: `docs/plan-multiplataforma-2026-09-08.md` (historial de Git). Gravedad: **baja**.
   - **Cerrado el 2026-10-10:** `/health` autenticado o local trae `fuentes` (`win32`, `tmux`) (tests/test_pendientes_tanda1.py).
 
-- [ ] Descubrir y direccionar varias distros de WSL.
+- [x] Descubrir y direccionar varias distros de WSL.
   - Evidencia: lienzo/tmux.py: _PREFIX = ["wsl.exe"] en Windows, sin selección de distro; backend.proc_key distingue fuente y PID, no distro.
   - Origen: `docs/porting-linux-2026-09-08.md` (historial de Git). Gravedad: **baja**.
+  - **Cerrado el 2026-10-15:** `backend.py` consulta los panes de cada distro y `distro` va en la tarjeta (spec `docs/specs/wsl-distros`, 538ac22).
 
 - [ ] Verificar el servidor nativo en Linux y macOS, incluido emparejamiento.
   - Evidencia: lienzo/backend.py: sweep; lienzo/tmux.py: _ps_all. El documento de origen registra simulación de plataforma y pruebas desde Windows/WSL, no una corrida nativa completa; esta revisión no ejecutó esas plataformas.

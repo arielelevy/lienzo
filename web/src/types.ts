@@ -75,6 +75,8 @@ export interface Session {
   suggestion?: string | null;
   /** alguien esta escribiendo en esa terminal (lo detecta screen_loop): lo que se mande se mezcla */
   typing?: boolean;
+  /** un envio del lienzo que el agente todavia no confirmo con su UserPromptSubmit (a los 25 s libre, «sin enviar») */
+  envio_pendiente?: { at: number; sin_consumo?: boolean } | null;
   /** herramientas usadas en el turno que corre (o en el ultimo): lo que pasa adentro */
   tool_count?: number;
   /** ultimos archivos que toco en ese turno, del mas nuevo al mas viejo, solo el nombre */

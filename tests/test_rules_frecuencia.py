@@ -171,3 +171,21 @@ def test_editar_una_agotada_por_el_tope_viejo_la_reactiva(monkeypatch):
     assert code == 200 and out["enabled"] is True and "disabled_at" not in out
     code, out = rules_api.edit_rule("vieja", {"limit": "total"})
     assert code == 200 and out["limit"] == "total"
+
+
+def test_al_arrancar_se_prenden_las_agotadas_por_el_tope_viejo(monkeypatch):
+    """La que apago el tope total en su ultimo disparo vuelve sola; la apagada a mano, la que pidio
+    tope total y la estacionada sin sucesora se quedan como estan."""
+    t = "2026-10-14T10:00:00-03:00"
+    base = {"kind": "on_stop", "from": ORIGEN, "to": DESTINO, "repeat": True, "enabled": False, "max_fires": 30}
+    items = [
+        {**base, "id": "vieja", "fired": 30, "last_fired": t, "disabled_at": "2026-10-14T10:00:00.001-03:00"},
+        {**base, "id": "a_mano", "fired": 3, "last_fired": t, "disabled_at": "2026-10-14T11:00:00-03:00"},
+        {**base, "id": "total", "limit": "total", "fired": 30, "last_fired": t, "disabled_at": t},
+        {**base, "id": "estacionada", "fired": 30, "last_fired": t, "disabled_at": t, "parked_since": t},
+    ]
+    monkeypatch.setattr(rl.rules, "items", items)
+    monkeypatch.setattr(rl.rules, "save", lambda: None)
+    assert rl.reactivar_agotadas_por_tope_viejo() == 1
+    assert [r["id"] for r in items if r["enabled"]] == ["vieja"]
+    assert "disabled_at" not in items[0]

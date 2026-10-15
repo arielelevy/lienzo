@@ -748,6 +748,39 @@ def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
         state.log(f"purgadas {n} reglas 'at' viejas (disparadas o deshabilitadas hace mas de {max_age_h:g} h)")
 
 
+def reactivar_agotadas_por_tope_viejo() -> int:
+    """Al arrancar: prende las on_stop repetidas que apago el tope total de antes (2026-10-14), ahora
+    limitadas por frecuencia. Se reconocen porque se apagaron en su ultimo disparo (`disabled_at` a
+    menos de un segundo de `last_fired`: son dos now() seguidos) con `fired` >= `max_fires`; antes
+    habia que editarlas a mano con `limit:"rate"`."""
+
+    def agotada(r: dict) -> bool:
+        apagada, disparo = local_dt(r.get("disabled_at")), local_dt(r.get("last_fired"))
+        return (
+            r.get("kind") == "on_stop"
+            and bool(r.get("repeat"))
+            and not r.get("enabled")
+            and not tope_total(r)
+            and not r.get("parked_since")
+            and apagada is not None
+            and disparo is not None
+            and abs((apagada - disparo).total_seconds()) < 1
+            and int(r.get("fired") or 0) >= int(r.get("max_fires") or 1)
+        )
+
+    with lock:
+        ids = [r["id"] for r in rules.items if agotada(r)]
+        for r in rules.items:
+            if r["id"] in ids:
+                r["enabled"] = True
+                r.pop("disabled_at", None)
+        if ids:
+            rules.save()
+    if ids:
+        state.log(f"{len(ids)} reglas on_stop agotadas por el tope viejo, prendidas de nuevo: {', '.join(ids)}")
+    return len(ids)
+
+
 # sessions.py no importa este modulo: se engancha aca
 ses.on_turn_end = fire_on_stop
 ses.on_limit_notice = ensure_continue_rule

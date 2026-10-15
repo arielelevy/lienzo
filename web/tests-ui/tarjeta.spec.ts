@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { SID, abrirTablero, esperarQuietud } from "./tablero-fijo";
+import { SID, abrirTablero, esperarQuietud, sesiones } from "./tablero-fijo";
 import { altoDeTarjeta, rectsDeTarjetas } from "./medidas";
 
 /** PICK_MS de Card.tsx: el click simple espera esto antes de elegir, por si llega el segundo. */
@@ -141,4 +141,16 @@ test("Destacados no corta la respuesta: va entera y se llega al final con el scr
   await ultimo.scrollIntoViewIfNeeded();
   await expect(ultimo).toBeInViewport();
   await expect(ultimo).toContainText("Y con esto cierra el pedido.");
+});
+
+test("un envío sin confirmar se ve como «enviando…» sin cambiar el alto de la tarjeta", async ({ page }) => {
+  const sinEnvio = sesiones();
+  await abrirTablero(page, sinEnvio);
+  const alto = await altoDeTarjeta(page, SID.mapas);
+  await expect(page.locator(`${sel(SID.mapas)} .st.sending`)).toHaveCount(0);
+
+  const conEnvio = sesiones().map((s) => (s.session_id === SID.mapas ? { ...s, envio_pendiente: { at: Date.now() / 1000 } } : s));
+  await abrirTablero(page, conEnvio);
+  await expect(page.locator(`${sel(SID.mapas)} .st.sending`)).toHaveText("enviando…");
+  expect(await altoDeTarjeta(page, SID.mapas)).toBe(alto);
 });

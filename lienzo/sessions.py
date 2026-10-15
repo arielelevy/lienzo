@@ -2470,6 +2470,9 @@ def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
     state.log(f"dialogo {s['session_id'][:8]}: {short(d.get('question') or '', 60)} -> {choice}. {short(elegida, 60)}")
     with lock:
         s["dialog"] = None  # el proximo barrido de pantalla (5 s) dira si quedo algo
+        if (s.get("needs") or {}).get("kind") == "dialog":
+            # sale ya de «te necesita»: esperar al barrido la dejaba 5 s mas en esa columna
+            set_state(s, perfil(s["agent"]).after_dialog)
         touch(s)
     out["choice"] = choice
     out["text"] = elegida
@@ -2949,6 +2952,23 @@ def read_screen(s: dict) -> dict:
         return {"ok": False, "error": "no se pudo ejecutar screen.py"}
 
 
+AUTO_DIALOGO_S = 15  # un permiso que el auto-aprobar no cerro en este tiempo pasa a «te necesita»
+
+
+def lo_contesta_el_auto_aprobar(s: dict, d: dict) -> bool:
+    """Si el auto-aprobar va a contestar este dialogo: entonces la tarjeta no pasa a «te necesita».
+    Medido el 2026-10-15: cada permiso de un codex la llevaba 5 s a esa columna, que se abria y se
+    cerraba y corria el tablero (36 veces en una hora). Si no lo cierra en AUTO_DIALOGO_S, si pasa."""
+    import autoaprobar  # importa este modulo: aca ya esta cargado
+
+    if not autoaprobar.prendido():
+        return False
+    desde = parse_ts(s.get("dialog_at"))
+    if desde and (dt.datetime.now().astimezone() - desde).total_seconds() > AUTO_DIALOGO_S:
+        return False
+    return autoaprobar.opcion_de_permiso(d, s.get("agent")) is not None
+
+
 def screen_once() -> None:
     """Una pasada de lectura de pantalla. read_screen es un subproceso de 183 ms por sesion: corre
     fuera del lock, y recien despues (con el lock, y si la tarjeta sigue siendo la misma) se decide
@@ -2982,6 +3002,8 @@ def screen_once() -> None:
             # pendiente de verdad (un permiso), manda ese: la tarjeta ya lo muestra
             d = None if s.get("pending_id") else dlg
             if s.get("suggestion") != sug or bool(s.get("typing")) != typing or s.get("dialog") != d:
+                if d and not s.get("dialog"):
+                    s["dialog_at"] = now()  # cuando aparecio: identifica el dialogo para el auto-aprobar
                 s["suggestion"] = sug
                 s["typing"] = typing
                 s["dialog"] = d
@@ -2991,7 +3013,7 @@ def screen_once() -> None:
             # permiso (autoaprobar.DialogoDePermiso, 2026-10-08); la confianza en una carpeta, el
             # cambio de modelo o una pregunta de verdad los decide el humano
             needs = s.get("needs") or {}
-            if d and not needs and s["state"] in ("termino", "corriendo"):
+            if d and not needs and s["state"] in ("termino", "corriendo") and not lo_contesta_el_auto_aprobar(s, d):
                 set_needs(s, {"kind": "dialog", "detail": short(d.get("question") or "", 300), "where": "terminal"})
                 touch(s)
             elif not d and needs.get("kind") == "dialog":

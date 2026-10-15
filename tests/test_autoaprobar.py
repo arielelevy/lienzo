@@ -219,6 +219,57 @@ def test_aprueba_el_dialogo_de_permiso_de_codex_eligiendo_si_y_reintenta(monkeyp
     assert len(hechos) == 2  # sigue abierto: se vuelve a teclear
 
 
+def _barrer(monkeypatch, pantalla, prendido, **tarjeta):
+    """Un barrido de pantalla (screen_once) sobre una tarjeta codex corriendo que muestra `pantalla`."""
+    monkeypatch.setattr(st, "load_config", lambda: {"auto_aprobar": prendido})
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(ses, "touch", lambda s: True)
+    monkeypatch.setattr(ses, "read_transcript", lambda s: {})
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "area": None, "dialog": pantalla})
+    s = {"session_id": "d1", "agent": "codex", "pid": 1, "alive": True, "state": "corriendo", "dialog": None, **tarjeta}
+    monkeypatch.setattr(st, "sessions", {"d1": s})
+    monkeypatch.setattr(ses, "sessions", st.sessions)
+    ses.screen_once()
+    return s
+
+
+def test_el_permiso_que_contesta_el_auto_aprobar_no_pasa_por_te_necesita(monkeypatch):
+    """Medido el 2026-10-15: cada permiso de un codex llevaba la tarjeta 5 s a «te necesita»; la
+    columna se abria y se cerraba y corria el tablero (36 veces en una hora)."""
+    s = _barrer(monkeypatch, CODEX, prendido=True)
+    assert s["state"] == "corriendo" and s["dialog"] == CODEX and s["dialog_at"]
+    hechos = []
+    monkeypatch.setattr(au, "_intentados", {})
+    monkeypatch.setattr(st, "pending", {})
+    monkeypatch.setattr(ses, "answer_dialog", lambda s, n: (hechos.append(n), (200, {"ok": True}))[1])
+    au.ronda(ahora=100)
+    assert hechos == [1]
+
+
+def test_sin_auto_aprobar_o_si_no_lo_cierra_a_tiempo_el_permiso_va_a_te_necesita(monkeypatch):
+    assert _barrer(monkeypatch, CODEX, prendido=False)["state"] == "te_necesita"
+    viejo = "2026-01-01T00:00:00.000-03:00"
+    assert _barrer(monkeypatch, CODEX, prendido=True, dialog=CODEX, dialog_at=viejo)["state"] == "te_necesita"
+    # una pregunta que no es permiso la decide el humano aunque el auto-aprobar este prendido
+    assert _barrer(monkeypatch, _dialogo("Switch model?", ["Default", "Opus"]), prendido=True)["state"] == "te_necesita"
+
+
+def test_contestar_el_dialogo_saca_ya_la_tarjeta_de_te_necesita(monkeypatch):
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(ses, "touch", lambda s: True)
+    monkeypatch.setattr(ses, "send_blocked", lambda s: None)
+    monkeypatch.setattr(ses, "run_send", lambda s, txt, **k: (200, {}))
+    s = {
+        "session_id": "d1",
+        "agent": "claude",
+        "state": "te_necesita",
+        "needs": {"kind": "dialog", "where": "terminal"},
+        "dialog": CLAUDE,
+    }
+    assert ses.answer_dialog(s, 1)[0] == 200
+    assert s["state"] != "te_necesita" and s["dialog"] is None
+
+
 def test_el_mismo_dialogo_redibujado_no_se_vuelve_a_contestar_antes_del_reintento(monkeypatch):
     """Code review 2026-10-08: con el detalle en el id, otra linea envuelta en la pantalla hacia un
     pedido nuevo y se tecleaba otra vez a los 2 s (en Claude caia como texto en la caja de entrada)."""

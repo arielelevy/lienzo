@@ -276,6 +276,28 @@ def test_el_diagnostico_de_red_va_al_log_y_al_tablero_y_se_borra_cuando_vuelve()
     assert m.peers_status()[0]["diagnostico"] is None
 
 
+def test_poll_health_sin_novedad_no_le_reenvia_el_estado_al_tablero():
+    """Cada health exitoso mandaba el snapshot entero al tablero cada 15 s aunque nada cambiara;
+    solo avisa cuando el par vuelve de una falla."""
+    t = FakeTransport(health={"mem_free_gb": 2.0})
+    m = _mirror(t)
+    _connect(m, t, pc_id="p1")
+    llamadas: list[int] = []
+    m.on_change = lambda: llamadas.append(1)
+    m._poll_health("p1")
+    m._poll_health("p1")
+    assert llamadas == []
+    t.raise_on_health = True
+    m.diagnosticar = lambda host, e: "sin ARP"
+    m._poll_health("p1")
+    assert llamadas == [1], "el diagnostico nuevo va al tablero"
+    t.raise_on_health = False
+    m._poll_health("p1")
+    assert llamadas == [1, 1], "volvio: se avisa una vez"
+    m._poll_health("p1")
+    assert llamadas == [1, 1]
+
+
 def test_peers_status_recien_conectado_sin_salud_previa_no_esta_vivo():
     t = FakeTransport()
     m = _mirror(t)

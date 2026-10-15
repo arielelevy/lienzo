@@ -298,6 +298,10 @@ class Mirror:
             if cambio:
                 self.on_change()
             return
+        # solo se avisa al tablero si volvio o se le borra el diagnostico: el snapshot no lleva la
+        # salud (la tira de PCs la pide sola a /peers) y avisar en cada health exitoso le mandaba el
+        # estado entero cada 15 s aunque nada hubiera cambiado (medido el 2026-10-15)
+        cambio = pm.health_error is not None or pm.diagnostico is not None
         if pm.health_error is not None:
             pm.health_error = None
             self.log(f"→ {nombre} GET /health: responde de nuevo")
@@ -305,7 +309,8 @@ class Mirror:
         with self._lock:
             pm.health = h
             pm.last_seen = time.time()
-        self.on_change()
+        if cambio:
+            self.on_change()
 
         if time.monotonic() - pm.last_snapshot >= 60:
             self._poll_snapshot(pm)
