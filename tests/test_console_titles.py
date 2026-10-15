@@ -164,3 +164,50 @@ def test_tmux_checks_owner_and_renames_without_shell(monkeypatch):
     )
     assert ct.native_title({"target": "%2", "pid": 42, "distro": "Ubuntu"}, "Chess - trabajo")["ok"]
     assert calls == [(("rename-window", "-t", "%2", "Chess - trabajo"), {"distro": "Ubuntu"})]
+
+
+def test_auto_title_keeps_console_prefix(monkeypatch):
+    """El refresco de la transcripcion no le saca el prefijo que puso sync_once: antes el titulo iba
+    y venia entre «X» y «lienzo | X» cada 30 s y la tarjeta parpadeaba."""
+    card = {
+        "session_id": "s",
+        "agent": "claude",
+        "pid": 42,
+        "alive": True,
+        "repo": "lienzo",
+        "title": "Ordena el repo",
+        "title_source": "transcript",
+        "last_prompt": "ordenemos el repo",
+    }
+    monkeypatch.setattr(state, "sessions", {"s": card})
+    monkeypatch.setattr(sessions, "touch", lambda s: None)
+    monkeypatch.setattr(ct, "native_title", lambda s, title: {"ok": True})
+    ct.sync_once()
+    assert card["title"] == "lienzo | Ordena el repo"
+    sessions.choose_title(card, "Ordena el repo")
+    assert (card["title"], card["title_source"]) == ("lienzo | Ordena el repo", "transcript")
+    card["title_source"] = "prompt"
+    sessions.title_from_prompt(card)
+    assert card["title"] == "ordenemos el repo"  # otro pedido si renombra; el prefijo vuelve con sync_once
+    ct.sync_once()
+    sessions.title_from_prompt(card)
+    assert card["title"] == "lienzo | ordenemos el repo"
+    sessions.choose_title(card, "Otra tarea")
+    assert card["title"] == "Otra tarea"
+
+
+def test_bad_ai_title_does_not_ping_pong_with_typed_prompt():
+    """Un ai-title inutil («… archivos») con el pedido tipeado en la terminal: typed_here depende del
+    titulo actual y el titulo alternaba entre el del pedido y el ai-title en cada refresco."""
+    card = {
+        "agent": "claude",
+        "title": None,
+        "title_source": None,
+        "last_prompt": "ordenemos el repo",
+        "prompt_via": "terminal",
+    }
+    vistos = set()
+    for _ in range(4):
+        sessions.choose_title(card, "Parpadeo y borrado de archivos")
+        vistos.add(card["title"])
+    assert vistos == {"ordenemos el repo"}

@@ -149,6 +149,20 @@ def typed_here(s: dict) -> bool:
     return s.get("prompt_via") == "terminal" and not bad_title(s.get("title"))
 
 
+def _titular(s: dict, title: str | None, source: str | None) -> None:
+    """Pone un titulo automatico sin sacarle el prefijo «proyecto | » que le agrega console_titles:
+    si con el prefijo da el que ya tiene, queda como esta. Sin esto cada refresco de la transcripcion
+    le sacaba el prefijo, a los 30 s volvia, y la tarjeta parpadeaba (medido el 2026-10-15)."""
+    try:
+        from work_titles import project_title
+    except ImportError:
+        from .work_titles import project_title
+    cur = s.get("title")
+    if title and cur and cur != title and short(project_title({**s, "title": title}), 120) == cur:
+        title = cur
+    s["title"], s["title_source"] = title, source
+
+
 def choose_title(s: dict, transcript_title: str | None) -> None:
     """Regla unica del titulo automatico. El puesto a mano (title_source 'user') no se toca.
     Gana el ai-title / thread_name de la transcripcion, salvo que sea inutil (bad_title) y haya
@@ -160,16 +174,20 @@ def choose_title(s: dict, transcript_title: str | None) -> None:
         set_last_prompt(s, lp)  # tarjetas viejas: limpiar con el parser actual
     at = attachment_title(s)
     if at:
-        s["title"], s["title_source"] = at, "prompt"  # el pedido llego como adjunto: su encabezado manda
+        _titular(s, at, "prompt")  # el pedido llego como adjunto: su encabezado manda
         return
     pt = None if typed_here(s) else prompt_title(s)
     cur, src = s.get("title"), s.get("title_source")
     if transcript_title is None and src == "transcript" and not bad_title(cur):
         return  # el ai-title quedo fuera de la cola leida: se conserva el que ya teniamos
-    if transcript_title and (not bad_title(transcript_title) or not pt):
-        s["title"], s["title_source"] = transcript_title, "transcript"
+    if transcript_title and not bad_title(transcript_title):
+        _titular(s, transcript_title, "transcript")
     elif pt:
-        s["title"], s["title_source"] = pt, "prompt"
+        _titular(s, pt, "prompt")
+    elif transcript_title and bad_title(cur):
+        # inutil, pero no hay otro. Con un nombre que sirve no se lo pisa: typed_here depende de
+        # ese nombre y el titulo iba y venia entre el del pedido y este en cada refresco
+        _titular(s, transcript_title, "transcript")
     elif bad_title(cur):
         s["title"], s["title_source"] = None, None
 
@@ -296,7 +314,7 @@ def title_from_prompt(s: dict) -> None:
     if not (s.get("last_attachment") or bad_title(s.get("title")) or s.get("title_source") == "prompt"):
         return
     if first := prompt_title(s):
-        s["title"], s["title_source"] = first, "prompt"
+        _titular(s, first, "prompt")
 
 
 ANSWER_MAX = 2000  # techo de cada respuesta; una opcion es corta y el texto libre no es un ensayo

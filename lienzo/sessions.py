@@ -81,6 +81,7 @@ from tarjeta_texto import (  # noqa: F401
     HEADING_RE,
     USELESS_TITLE_RE,
     USELESS_TITLE_WORDS,
+    _titular,
     attachment_path,
     attachment_title,
     bad_title,

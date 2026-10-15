@@ -32,7 +32,7 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
 ## Puente con el orquestador externo, reglas por frecuencia y envío confirmado (2026-10-14)
 
-Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle en `code-review-2026-10-14.md`.
+Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code review en el historial de git (`code-review-2026-10-14.md`).
 
 - [ ] Medir con un agente real autorizado que el `session_id` del hook coincida con la sesión que el
   orquestador ata a su corrida. Solo se probó con su ejecutor de prueba, que no lanza agentes.
@@ -46,6 +46,7 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle en `code-revi
   una `F` que no se reprodujo. Recalibrar el timeout con aprobación o separar la batería.
 - [ ] Reglas `on_stop` agotadas por el tope total viejo: no se reactivan solas. Se reactivan editándolas
   con `limit:"rate"`.
+- [ ] Hook en Unix: destino por `TMUX_PANE` sin probar (falta una PC Linux). Origen: code review del 2026-10-10.
 
 ## Pendientes trasladados de MEJORAS.md
 
