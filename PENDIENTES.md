@@ -47,6 +47,12 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
 - [ ] Reglas `on_stop` agotadas por el tope total viejo: no se reactivan solas. Se reactivan editándolas
   con `limit:"rate"`.
 - [ ] Hook en Unix: destino por `TMUX_PANE` sin probar (falta una PC Linux). Origen: code review del 2026-10-10.
+- [ ] Un diálogo de permiso que el auto-aprobar va a contestar pasa la tarjeta a `te_necesita` unos 5 s:
+  `answer_dialog` limpia `dialog` pero el estado vuelve recién en la pasada de pantalla siguiente. La
+  columna vacía se abre y se cierra y corre el tablero. Medido el 2026-10-15: unas 36 aprobaciones en una
+  hora en una sola tarjeta codex. Toca `sessions.screen_once` y `autoaprobar`.
+- [ ] `mirror._poll_health` llama a `on_change()` en cada health exitoso aunque nada cambie: el tablero
+  recibe el estado completo cada 10 a 15 s y reemplaza todas las sesiones. No se ve, pero es render de más.
 
 ## Pendientes trasladados de MEJORAS.md
 
