@@ -58,3 +58,4 @@ Estas mandan sobre lo que diga `anatomy`:
 | `delegar` | Delegar trabajo como correo neumático: encargos que salen, el que trabaja, el informe que vuelve solo y la válvula cerrada entre dos sesiones |
 | `memoria` | Memoria por proyecto como fichero: un cajón por carpeta, fichas que entran solas con sello de observado y la bandeja de lo vigente con llave |
 | `scheduler` | El scheduler de mejoras como máquina con enclavamiento: arranca sólo con 180 s libres, dos muestras aptas y nadie ocupado; deja hipótesis propuestas |
+| `jev` | Consultar Jev como franqueadora con colador: sólo pasa la muestra visible, llave de una consulta autorizada, franqueo estimado y libro de cuentas |

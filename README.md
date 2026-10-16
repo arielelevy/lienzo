@@ -194,11 +194,19 @@ referencias. Leer mucho código o recibir texto largo no demuestra desperdicio. 
 según la fuente, sin sumar contadores acumulados como si fueran consumo por turno. La calidad del
 trabajo permanece sin evaluar hasta tener validación funcional.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/jev-dark.svg">
+  <img align="right" width="38%" alt="Consultar Jev dibujado como una franqueadora con colador: papeles con pestaña roja (prompts, argumentos, resultados de herramientas y credenciales de la sesión) quedan detrás de una reja; sólo pasa la muestra visible, con pestaña verde; la llave de autorización está girada, el visor reserva el máximo cotizado, sale un sobre con sello ámbar y al fondo hay un libro de cuentas" src="docs/img/infografias/jev-light.svg">
+</picture>
+
 **Consultar Jev** envía solamente la muestra visible de métricas y referencias, tras autorizar una
 consulta paga. No envía prompts, argumentos, resultados de herramientas ni credenciales. El cliente
 usa OpenRouter Decisions, modelo `typesafe/jev-1.13`, sin reintentos y con proveedor ZDR/sin recolección.
-USD 0,001 es una estimación, no una cota que habilite gasto. El ledger conserva reservas y costos
-informados; cargos desconocidos y proveedores sin máximo comprobable bloquean solicitudes nuevas.
+Una estimación no habilita gasto: antes de enviar se reserva el máximo de la cotización (tope
+USD 0,002688). El ledger conserva reservas y costos informados; un cargo sin cota y un proveedor sin
+máximo comprobable bloquean solicitudes nuevas, y un cargo desconocido pero acotado queda reservado.
+El piloto del scheduler, si está habilitado, consulta solo dentro de su ventana y su tope de
+intentos, con su propia muestra. La clave de OpenRouter viaja sólo como autorización del pedido.
 Jev propone una herramienta o datos insuficientes: no instala, aprueba ni ejecuta acciones.
 
 <picture>

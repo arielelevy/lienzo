@@ -77,3 +77,16 @@ hallazgos, todos corregidos:
 Verificación: `tsc`, ESLint, build y `tests-ui/mejoras.spec.ts` (6 de 6, la del interruptor
 ahora toca la etiqueta); casos `frontend-lint`, `frontend-build` y `frontend-playwright` de la suite
 principal; capturas a 1440 y 390 px.
+
+## Sexta ronda: Consultar Jev
+
+Revisión de `figuras/jev.mjs` contra `lienzo/jev.py`, `optimization_cost.py`, `optimization_budget.py`
+y `optimization_scheduler.py`. Nueve hallazgos; tres también corrigen el párrafo del README:
+
+- Lo que se reserva es el máximo de la cotización (`maximum_usd`, tope `MAX_COST` USD 0,002688), no USD 0,001: el visor dice «máx. cotizado» y el README lo explica.
+- La consulta autorizada a mano no es la única: el piloto del scheduler consulta solo, dentro de su ventana y su tope de intentos (`pilot_decide`): la figura dice «consulta manual» y el README lo aclara.
+- Bloquean un cargo sin cota, una infracción, un pedido en curso o pasarse del límite; un cargo desconocido pero acotado (`bounded_unknown`) queda reservado y no bloquea: corregido en figura y README.
+- La clave de OpenRouter viaja como `Authorization`: «credenciales de la sesión» en la pestaña roja, y la aclaración en la leyenda y el README.
+- Faltaba el proveedor único con ZDR y sin recolección: la placa dice «ZDR · sin reintentos».
+- La muestra cruzaba un barrote: el hueco va de -13 a 7 y la pestaña verde queda del lado que se ve.
+- Comentario de una boca de entrada que no se dibuja, y texto alternativo con la lista recortada: corregidos.
