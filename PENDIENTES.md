@@ -52,7 +52,8 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
 - [x] Dos permisos de sesiones que ya no estaban se auto-aprobaban cada hora: el hook murió sin leer la
   respuesta y el pedido quedó en disco. **Cerrado el 2026-10-15:** el auto-aprobar saltea un pedido que ya
   tiene su respuesta escrita (tests/test_autoaprobar.py). Los pedidos huérfanos siguen en
-  `~/.lienzo/pending` hasta que alguien los borre.
+  `~/.lienzo/pending` hasta que alguien los borre. **Cerrado también:** el server borra un pedido vencido
+  hace más de 2 minutos, con su respuesta (`sessions.purgar_huerfanos`, tests/test_ola1_sesiones.py).
 - [x] Reglas `on_stop` agotadas por el tope total viejo: no se reactivan solas. Se reactivan editándolas
   con `limit:"rate"`.
   **Cerrado el 2026-10-15:** al arrancar, `rules.reactivar_agotadas_por_tope_viejo` las prende de nuevo (tests/test_rules_frecuencia.py).
@@ -62,8 +63,9 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
   columna vacía se abre y se cierra y corre el tablero. Medido el 2026-10-15: unas 36 aprobaciones en una
   hora en una sola tarjeta codex. Toca `sessions.screen_once` y `autoaprobar`.
   **Cerrado el 2026-10-15:** queda en su estado mientras el auto-aprobar lo contesta (15 s de margen; después sí pasa) y contestar un diálogo saca ya la tarjeta de «te necesita» (tests/test_autoaprobar.py).
-- [ ] Si la pantalla pasa de un diálogo a otro sin quedar sin diálogo en el medio, `dialog_at` no se renueva y el
+- [x] Si la pantalla pasa de un diálogo a otro sin quedar sin diálogo en el medio, `dialog_at` no se renueva y el
   segundo cae antes en «te necesita». Origen: code review del 2026-10-15. Gravedad: baja.
+  **Cerrado el 2026-10-15:** se renueva cuando cambian la pregunta o las opciones (tests/test_autoaprobar.py).
 - [x] `mirror._poll_health` llama a `on_change()` en cada health exitoso aunque nada cambie: el tablero
   recibe el estado completo cada 10 a 15 s y reemplaza todas las sesiones. No se ve, pero es render de más.
   **Cerrado el 2026-10-15:** solo avisa cuando el par vuelve o cambia su diagnóstico (tests/test_mirror.py).

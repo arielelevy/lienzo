@@ -490,6 +490,33 @@ def test_sin_carpeta_de_pendientes_se_avisa_una_vez_y_no_se_pierden(aislado, tmp
     assert "r1" in st.pending  # no poder leer no es «no hay ninguno»
 
 
+def test_un_pendiente_vencido_sin_su_hook_se_borra_con_su_respuesta(aislado, tmp_path, monkeypatch):
+    """Medido el 2026-10-15: pedidos de septiembre seguian en ~/.lienzo/pending (el hook murio sin
+    borrarlos) y el auto-aprobar los contestaba cada hora. El vigente no se toca."""
+    import json
+    import datetime as dt
+
+    pend, resp = tmp_path / "pending", tmp_path / "answers"
+    pend.mkdir()
+    resp.mkdir()
+    futuro = (dt.datetime.now().astimezone() + dt.timedelta(minutes=5)).isoformat()
+    for rid, vence in (("viejo", "2026-09-13T09:47:11.000-03:00"), ("vigente", futuro)):
+        (pend / f"{rid}.json").write_text(json.dumps({"request_id": rid, "expires_at": vence}), encoding="utf-8")
+    (resp / "viejo.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(ses, "PENDING", str(pend))
+    monkeypatch.setattr(ses, "ANSWERS", str(resp))
+    monkeypatch.setattr(st, "pending", {})
+    monkeypatch.setattr(ses, "pending", st.pending)
+    monkeypatch.setattr(st, "sessions", {})
+    monkeypatch.setattr(ses, "sessions", st.sessions)
+    monkeypatch.setattr(st, "broadcast", lambda m: None)
+    ses.scan_pending_once()
+    assert set(st.pending) == {"vigente"}
+    assert not (pend / "viejo.json").exists() and not (resp / "viejo.json").exists()
+    assert (pend / "vigente.json").exists()
+    assert any("viejo" in m and "se borra" in m for m in aislado)
+
+
 def test_un_pendiente_corrupto_se_avisa_una_vez(aislado, tmp_path, monkeypatch):
     (tmp_path / "malo.json").write_text("{", encoding="utf-8")
     monkeypatch.setattr(ses, "PENDING", str(tmp_path))

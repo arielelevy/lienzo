@@ -1825,11 +1825,34 @@ def scan_pending() -> None:
         time.sleep(0.5)
 
 
+PENDING_HUERFANO_S = 120  # despues de expires_at: el hook ya lo hubiera borrado al vencer (hook.py, finally)
+
+
+def purgar_huerfanos(found: dict) -> None:
+    """Saca de `found` (y de disco, con su respuesta) los pedidos vencidos hace mas de
+    PENDING_HUERFANO_S: el hook los borra al vencer, asi que uno que sigue ahi es de un hook que
+    murio. Medido el 2026-10-15: tres de septiembre y octubre seguian en el tablero y el
+    auto-aprobar los contestaba cada hora."""
+    limite = dt.datetime.now().astimezone() - dt.timedelta(seconds=PENDING_HUERFANO_S)
+    for rid, d in list(found.items()):
+        vence = parse_ts(d.get("expires_at"))
+        if vence is None or vence >= limite or not REQUEST_ID.fullmatch(str(rid)):
+            continue
+        del found[rid]
+        for carpeta in (PENDING, ANSWERS):
+            try:
+                os.remove(os.path.join(carpeta, f"{rid}.json"))
+            except FileNotFoundError:
+                pass
+        state.log(f"permiso {rid[:8]} vencido el {d.get('expires_at')} sin su hook: se borra ({d.get('tool_name')})")
+
+
 def scan_pending_once() -> None:
     """Una vuelta de scan_pending. Un error se loguea cuando cambia (avisar_si_cambia), no cada
     0,5 s como antes, y deja los pendientes como estaban."""
     try:
         found = read_pending()
+        purgar_huerfanos(found)
         with lock:
             changed = set(found) != set(pending)
             pending.clear()
@@ -2952,6 +2975,15 @@ def read_screen(s: dict) -> dict:
         return {"ok": False, "error": "no se pudo ejecutar screen.py"}
 
 
+def _mismo_dialogo(antes: dict | None, ahora: dict) -> bool:
+    """El mismo dialogo redibujado (otra linea envuelta en el detalle, el spinner): misma pregunta y
+    mismas opciones. Otro dialogo que reemplaza al anterior sin pasar por «ninguno» no lo es."""
+    if not antes:
+        return False
+    opciones = [[o.get("text") for o in d.get("options") or []] for d in (antes, ahora)]
+    return antes.get("question") == ahora.get("question") and opciones[0] == opciones[1]
+
+
 AUTO_DIALOGO_S = 15  # un permiso que el auto-aprobar no cerro en este tiempo pasa a «te necesita»
 
 
@@ -3002,7 +3034,7 @@ def screen_once() -> None:
             # pendiente de verdad (un permiso), manda ese: la tarjeta ya lo muestra
             d = None if s.get("pending_id") else dlg
             if s.get("suggestion") != sug or bool(s.get("typing")) != typing or s.get("dialog") != d:
-                if d and not s.get("dialog"):
+                if d and not _mismo_dialogo(s.get("dialog"), d):
                     s["dialog_at"] = now()  # cuando aparecio: identifica el dialogo para el auto-aprobar
                 s["suggestion"] = sug
                 s["typing"] = typing

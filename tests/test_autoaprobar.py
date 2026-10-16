@@ -265,6 +265,17 @@ def test_sin_auto_aprobar_o_si_no_lo_cierra_a_tiempo_el_permiso_va_a_te_necesita
     assert _barrer(monkeypatch, _dialogo("Switch model?", ["Default", "Opus"]), prendido=True)["state"] == "te_necesita"
 
 
+def test_otro_dialogo_sin_pasar_por_ninguno_renueva_dialog_at(monkeypatch):
+    """Code review 2026-10-15: dialog_at se ponia solo al aparecer un dialogo; si otro lo reemplazaba
+    sin quedar en «ninguno», heredaba la hora del anterior y caia antes en «te necesita»."""
+    viejo = "2026-01-01T00:00:00.000-03:00"
+    s = _barrer(monkeypatch, CODEX, prendido=True, dialog=CLAUDE, dialog_at=viejo)
+    assert s["dialog_at"] != viejo and s["state"] == "corriendo"
+    redibujado = {**CODEX, "detail": "la misma orden, envuelta distinto"}
+    s = _barrer(monkeypatch, redibujado, prendido=True, dialog=CODEX, dialog_at=viejo)
+    assert s["dialog_at"] == viejo, "el mismo dialogo redibujado conserva su hora"
+
+
 def test_contestar_el_dialogo_saca_ya_la_tarjeta_de_te_necesita(monkeypatch):
     monkeypatch.setattr(st, "log", lambda m: None)
     monkeypatch.setattr(ses, "touch", lambda s: True)
