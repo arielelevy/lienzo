@@ -98,10 +98,11 @@ def coordinadora(caps: list[dict]) -> str | None:
     return destinos.most_common(1)[0][0] if destinos else None
 
 
-def medir(caps: list[dict]) -> dict:
+def medir(caps: list[dict], coord: str | None = None) -> dict:
     """Métricas de trabajo sobre capturas ordenadas por fecha: cada una {session_id, clase, origen
-    (dict), texto, bytes, hash, fecha (datetime), id}. Devuelve {metrica: {valor, ...}}."""
-    coord = coordinadora(caps)
+    (dict), texto, bytes, hash, fecha (datetime), id}. Devuelve {metrica: {valor, ...}}. `coord`: quien
+    coordina, si se sabe de una ventana mas larga (un tramo corto puede no tener avisos de regla)."""
+    coord = coord or coordinadora(caps)
     if coord is None:
         return {}
     reglas = [c for c in caps if c["clase"] == "regla"]
@@ -208,8 +209,35 @@ def hallazgos(metricas: dict) -> list[dict]:
                 "umbral": umbral,
                 "sugerencia": sugerencia,
                 "ejemplos": m.get("ejemplos") or [],
+                **({"corregido": m["corregido"]} if m.get("corregido") else {}),
             }
         )
+        if m.get("corregido"):
+            # ya se habia dado por resuelto: lo que pasa el umbral desde la correccion es una reaparicion
+            out[-1]["texto"] = f"Reaparece después de {m['corregido']['commit'] or 'la corrección'}: {out[-1]['texto']}"
+    return out
+
+
+def correcciones(proyecto: str) -> dict[str, dict]:
+    """{metrica: {hallazgo, desde, commit}}: los hallazgos de trabajo que una coordinadora o una persona
+    dio por `corregido`, con la evidencia `corregido_en` que dice desde cuando rige la correccion
+    (`datos.desde`). Desde ahi se vuelve a medir esa metrica: lo de antes ya no cuenta."""
+    con = _leer()
+    try:
+        filas = con.execute(
+            "SELECT h.id, h.datos AS hd, e.datos AS ed, h.estado_fecha FROM nodo h "
+            "JOIN vinculo v ON v.de = h.id AND v.relacion = 'corregido_en' AND v.activo = 1 "
+            "JOIN nodo e ON e.id = v.a "
+            "WHERE h.proyecto = ? AND h.tipo = 'hallazgo' AND h.estado = 'corregido' ORDER BY h.estado_fecha",
+            (proyecto,),
+        ).fetchall()
+    finally:
+        con.close()
+    out = {}
+    for f in filas:
+        hd, ed = json.loads(f["hd"] or "{}"), json.loads(f["ed"] or "{}")
+        if hd.get("clase") == "optimizacion_trabajo" and hd.get("metrica") and ed.get("desde"):
+            out[hd["metrica"]] = {"hallazgo": f["id"], "desde": ed["desde"], "commit": ed.get("commit")}
     return out
 
 
@@ -247,6 +275,12 @@ def analizar(proyecto: str, ventana_h: float = VENTANA_H) -> dict:
     """GET /trabajo/<proyecto>: las métricas de la ventana y los hallazgos que pasan su umbral. Sólo lee."""
     caps = capturas(proyecto, ventana_h)
     metricas = medir(caps)
+    for metrica, corr in correcciones(proyecto).items():
+        # una metrica dada por corregida se mide solo desde la correccion; si no pasa el umbral, no aparece
+        desde = _ts(corr["desde"])
+        tramo = [c for c in caps if c["fecha"] >= desde]
+        despues = medir(tramo, coordinadora(caps)).get(metrica) or {"valor": 0}
+        metricas[metrica] = {**despues, "corregido": corr, "antes": (metricas.get(metrica) or {}).get("valor")}
     return {
         "proyecto": proyecto,
         "ventana_h": ventana_h,
@@ -288,9 +322,20 @@ def registrar(proyecto: str, analisis: dict) -> list[str]:
                     },
                     autor="server",
                     origen={"modulo": "optimizacion_trabajo", "dia": dia},
-                    clave_ingesta=f"trabajo:{h['metrica']}:{dia}",
+                    clave_ingesta=f"trabajo:{h['metrica']}:{dia}" + (":reaparece" if h.get("corregido") else ""),
                     con=con,
                 )
+                if h.get("corregido") and nodo.get("creado", True):
+                    # la reaparicion queda atada al hallazgo resuelto: reabrirlo es un veredicto
+                    conocimiento.vincular(
+                        proyecto,
+                        nodo["id"],
+                        "mismo_que",
+                        h["corregido"]["hallazgo"],
+                        autor="server",
+                        motivo="la metrica volvio a pasar su umbral despues de la correccion",
+                        con=con,
+                    )
                 if nodo.get("creado", True):
                     ids.append(nodo["id"])
         return ids

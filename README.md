@@ -235,7 +235,10 @@ coordinadora ocupada, acuses que vuelven como aviso, avisos repetidos o intermed
 mandado a varios frentes y el pico de sesiones (este último sólo se informa). Lo que pasa su umbral queda como un `hallazgo`
 propuesto, uno por métrica y día, con el número, capturas de ejemplo y la primitiva que lo ataca; el
 beneficio no está medido y requiere veredicto. No manda mensajes ni gasta. `GET /trabajo/<proyecto>`
-(o `coordinar.trabajo`) muestra el análisis en el momento, sin escribir. Medido en OpenSyync (13 al 16
+(o `coordinar.trabajo`) muestra el análisis en el momento, sin escribir. Un hallazgo que una coordinadora
+o una persona da por `corregido`, con un vínculo `corregido_en` a una evidencia con `datos.desde`, se
+vuelve a medir sólo desde esa fecha. Si después vuelve a pasar el umbral, aparece un hallazgo nuevo
+«Reaparece después de…», vinculado `mismo_que` al resuelto; reabrirlo es un veredicto. Medido en OpenSyync (13 al 16
 de octubre): 92,8 h de frentes esperando, 4 acuses sin tarea que volvieron como aviso, 46 avisos repetidos, 118 intermedios,
 20 difusiones; el pico fue de 13 sesiones.
 Los permisos vencidos o de sesiones muertas se conservan en el historial sin bloquear este trabajo.

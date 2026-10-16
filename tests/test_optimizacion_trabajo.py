@@ -280,3 +280,61 @@ def test_sin_aviso_vencido_no_calla(reglas):
     st.sessions[ORIGEN].update(sin_aviso={"a": DESTINO, "desde": 0}, last_reply="Listo")
     rl.fire_on_stop(ORIGEN)
     assert reglas == ["Listo"]
+
+
+# --- hallazgos resueltos: se vuelven a medir desde la correccion -----------------------------------
+
+
+def test_un_hallazgo_corregido_se_mide_desde_la_correccion_y_si_reaparece_se_vincula(monkeypatch):
+    import conocimiento as k
+    import veredictos as v
+
+    monkeypatch.setattr(k.state, "log", lambda msg: None)
+    k.registrar_proyecto("ptrab", "trabajo", [])
+    h = k.crear_nodo(
+        "ptrab", "hallazgo", "difusiones", {"clase": "optimizacion_trabajo", "metrica": "difusiones"}, autor="server"
+    )
+    e = k.crear_nodo(
+        "ptrab",
+        "evidencia",
+        "corregido por abc123",
+        {"desde": "2026-10-16T12:30:00Z", "commit": "abc123"},
+        autor="persona:x",
+    )
+    v.veredicto(
+        "ptrab",
+        [
+            {"nodo": h["id"], "estado": "confirmado"},
+            {"nodo": h["id"], "estado": "corregido"},
+            {"de": h["id"], "relacion": "corregido_en", "a": e["id"]},
+        ],
+        por="persona:x",
+    )
+    assert t.correcciones("ptrab") == {
+        "difusiones": {"hallazgo": h["id"], "desde": "2026-10-16T12:30:00Z", "commit": "abc123"}
+    }
+    largo = "Subí el contrato a la versión 3 y avisá cuando esté"
+    antes = [cap("regla", COORD, 0, "x", de=A)] + [
+        cap("envio", f, 1 + i, largo, de=COORD, h=f"L{j}") for j in range(4) for i, f in enumerate((A, B))
+    ]
+    monkeypatch.setattr(t, "capturas", lambda p, ventana_h=72: sorted(antes, key=lambda c: c["fecha"]))
+    a = t.analizar("ptrab")
+    assert a["metricas"]["difusiones"]["valor"] == 0 and a["metricas"]["difusiones"]["antes"] == 4
+    assert a["hallazgos"] == []  # lo de antes de la correccion ya no cuenta
+    despues = antes + [
+        cap("envio", f, 40 + i, largo, de=COORD, h=f"D{j}") for j in range(3) for i, f in enumerate((A, B))
+    ]
+    monkeypatch.setattr(t, "capturas", lambda p, ventana_h=72: sorted(despues, key=lambda c: c["fecha"]))
+    a = t.analizar("ptrab")
+    assert [x["texto"].startswith("Reaparece después de abc123") for x in a["hallazgos"]] == [True]
+    (nuevo,) = t.registrar("ptrab", a)
+    import sqlite3
+
+    con = sqlite3.connect(k.db_path())
+    assert (
+        con.execute(
+            "SELECT count(*) FROM vinculo WHERE de=? AND relacion='mismo_que' AND a=?", (nuevo, h["id"])
+        ).fetchone()[0]
+        == 1
+    )
+    assert t.registrar("ptrab", a) == []  # la misma reaparicion no se duplica

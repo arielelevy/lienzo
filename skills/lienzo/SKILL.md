@@ -326,7 +326,10 @@ c.trabajo("miapp")  # dónde se va el tiempo de la ronda (72 h)
   varios a la vez. El sueño del lienzo deja lo mismo como hallazgos propuestos en la memoria: leelos
   con `c.preguntar(proyecto, ["optimizacion trabajo"], tipo="hallazgo")` y dales veredicto. En OpenSyync la espera fue la
   pérdida más grande, 92,8 h en 99 esperas: revisar por lotes y dejar a cada frente la tarea siguiente
-  del encargo, en vez de «quedo quieto».
+  del encargo, en vez de «quedo quieto». Al aplicar un arreglo, dalo por resuelto: veredicto
+  confirmado → corregido, con `corregido_en` hacia una evidencia con `datos.desde` (la hora del
+  despliegue). El análisis mide esa métrica sólo desde ahí, y si reaparece crea «Reaparece después
+  de…» vinculado `mismo_que`: al cierre de la ola se reabre (`corregido` → `confirmado`) o se deja.
 - **Memoria.** Bajo `mem_aviso_gb` (1,5 GB) la tira muestra la sesión quieta que conviene cerrar;
   no hay tope de sesiones por repo, salvo que `config.json` fije `max_sesiones_por_repo`.
 
