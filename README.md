@@ -25,7 +25,7 @@ Las terminales y las transcripciones siguen a cargo de los agentes.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/central-dark.svg">
-  <img align="left" width="38%" alt="El tablero dibujado como una central de comunicaciones: cada jack del panel es una sesión con su lámpara de estado, dos cordones conectan sesiones (uno cruza de la PC 1 a la PC 2), una lámpara resaltada marca un permiso pendiente y un reloj de 60 s en el estante muestra cuánto lleva esperando" src="docs/img/infografias/central-light.svg">
+  <img align="right" width="38%" alt="El tablero dibujado como una central de comunicaciones: cada jack del panel es una sesión con su lámpara de estado, dos cordones conectan sesiones (uno cruza de la PC 1 a la PC 2), una lámpara resaltada marca un permiso pendiente y un reloj de 60 s en el estante muestra cuánto lleva esperando" src="docs/img/infografias/central-light.svg">
 </picture>
 
 El tablero funciona como una central de comunicaciones. Cada jack es una sesión y su lámpara muestra el estado.
@@ -33,7 +33,7 @@ Cada cordón es una conexión entre dos sesiones, también entre PCs. La lámpar
 permiso esperando respuesta. En Claude Code, Codex y CODA, si nadie lo contesta en 60 s, vuelve
 a la terminal.
 
-<br clear="left">
+<br clear="right">
 
 Cada 30 s el server recorre los procesos de la PC y arma una tarjeta por cada agente que encuentra,
 aunque se haya abierto antes de instalar nada (descarta las apps de escritorio y las extensiones de
@@ -388,7 +388,7 @@ El diseño detallado está en [v5](docs/propuesta-memoria-2026-10-08/v5.md).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/plugins-dark.svg">
-  <img align="left" width="38%" alt="Los plugins dibujados como tarjetas de expansión en una placa: cada ranura tiene una pista hacia el server; dos tarjetas cargadas con el LED encendido, una que no cargó con el LED apagado y una cuarta en el aire sobre su ranura vacía" src="docs/img/infografias/plugins-light.svg">
+  <img align="right" width="38%" alt="Los plugins dibujados como tarjetas de expansión en una placa: cada ranura tiene una pista hacia el server; dos tarjetas cargadas con el LED encendido, una que no cargó con el LED apagado y una cuarta en el aire sobre su ranura vacía" src="docs/img/infografias/plugins-light.svg">
 </picture>
 
 Un plugin es propio de una PC y se enchufa como una tarjeta. Puede traer un módulo del server,
@@ -402,7 +402,7 @@ responden en `/ext/<nombre>/…` con la autenticación de siempre, `iniciar()` c
 frena al server; una vista con un error, en cambio, rompe el build o el tablero. Sin ningún
 plugin, todo anda igual.
 
-<br clear="left">
+<br clear="right">
 
 ## Delegar trabajo a varias sesiones
 
