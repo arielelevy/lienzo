@@ -23,6 +23,16 @@ Las terminales y las transcripciones siguen a cargo de los agentes.
 
 ## Cómo funciona
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/centralita-dark.svg">
+  <img alt="El tablero dibujado como una centralita telefónica: cada jack del panel es una sesión con su lámpara de estado, dos cordones conectan sesiones (uno cruza de la PC 1 a la PC 2), una lámpara resaltada marca un permiso pendiente y un reloj de 60 s en el estante muestra cuánto lleva esperando" src="docs/img/infografias/centralita-light.svg">
+</picture>
+
+El tablero funciona como una centralita. Cada jack es una sesión y su lámpara muestra el estado.
+Cada cordón es una conexión entre dos sesiones, también entre PCs. La lámpara resaltada es un
+permiso esperando respuesta. En Claude Code, Codex y CODA, si nadie lo contesta en 60 s, vuelve
+a la terminal.
+
 Cada 30 s el server recorre los procesos de la PC y arma una tarjeta por cada agente que encuentra,
 aunque se haya abierto antes de instalar nada (descarta las apps de escritorio y las extensiones de
 VS Code). El estado, el contenido y los envíos usan estos canales:
