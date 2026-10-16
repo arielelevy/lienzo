@@ -32,6 +32,33 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   **Estado al 2026-10-15:** sin spec. Lo de arriba ya sirve como requisitos; falta diseño y tareas con
   la skill `sdd` en `docs/specs/`: cómo encaja en `coordinar.py`, las reglas `on_stop` y las rondas.
 
+## Trabajar con Claude Desktop y Codex desktop (2026-10-16)
+
+- [ ] **Qué hace falta para que el lienzo trabaje del todo con las apps de escritorio** (pedido de
+  Ariel, 2026-10-16: «solo documentalo, investigá»). Hoy el barrido las descarta y el envío las
+  rechaza por no tener consola. El detalle, con lo verificado separado de lo inferido, está en
+  [docs/desktop-apps.md](docs/desktop-apps.md).
+  - **Claude Desktop** corre el mismo motor que la CLI: lee `~/.claude/settings.json` y sus hooks, y
+    escribe la transcripción en `~/.claude/projects` con `entrypoint: claude-desktop`. Estado,
+    contenido y permisos por hook deberían andar ya, como tarjeta de sólo lectura (sin medir). Mandar
+    un mensaje no: no hay consola ni API. Los caminos a medir son el canal nativo Claude-Claude y
+    Remote Control. Lanzar y retomar: `claude --desktop --resume <id>` lleva una sesión a la app, y
+    `claude --resume` la devuelve a la terminal.
+  - **Codex desktop** guarda sus hilos en `~/.codex/sessions` con `originator: Codex Desktop`, que el
+    lienzo hoy descarta. No hay hook confirmado en la app. El camino firme es el app-server (JSON-RPC:
+    `thread/resume`, `turn/start`, `turn/steer`, aprobaciones como pedidos al cliente), con el lienzo
+    como cliente de hilos que lanza él. `codex://new?prompt=&path=` y `codex://threads/<id>` sólo
+    abren o precargan.
+  - **Riesgos:** `~/.codex/config.toml` tiene `[features] hooks = false` desde el 2026-10-07 al menos, y
+    eso apaga los hooks de Codex también en la CLI. `is_tui` mira sólo la ruta y no reconoce el
+    `claude.exe` que trae Desktop (`\Roaming\Claude\claude-code\`) ni el `codex.exe` de la app. Dos
+    clientes en un mismo hilo de Codex no están documentados.
+  - **Próximo paso:** una sesión de medición con las dos apps abiertas en una carpeta de prueba: qué
+    eventos llegan a `~/.lienzo/events` desde Desktop y con qué proceso; contestar un permiso y una
+    pregunta desde el lienzo; probar el canal nativo hacia una sesión de Desktop; y un cliente mínimo
+    del app-server de Codex, fuera del server, que abra un hilo, mande un turno y conteste una
+    aprobación.
+
 ## Puente con el orquestador externo, reglas por frecuencia y envío confirmado (2026-10-14)
 
 Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code review en el historial de git (`code-review-2026-10-14.md`).
