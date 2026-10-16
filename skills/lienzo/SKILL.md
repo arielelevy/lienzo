@@ -109,7 +109,7 @@ explícito**, o los acentos se rompen. Lo que se usa para repartir:
 | `GET /pending`, `POST /pending/<id>` | permisos, `{decision:"allow"\|"deny"}` |
 | `POST /rescan` | barrido de procesos ahora |
 | `GET /peers` | las PCs de la federación, la propia primero (`local: true`), con `alive` y `health` (memoria, CPU, temperatura) |
-| `POST /sessions/launch` | `{pc?, cwd, agent, title, forzar?}`: lanza una sesión nueva, local o en la PC `pc`. 409 `tope_repo` con 4 vivas en el repo (`max_sesiones_por_repo`) |
+| `POST /sessions/launch` | `{pc?, cwd, agent, title, forzar?}`: lanza una sesión nueva, local o en la PC `pc`. Sin tope de sesiones por repo salvo `max_sesiones_por_repo` en config.json (409 `tope_repo`) |
 | `POST /avisos`, `POST /avisos/<id>/ack` | aviso coordinado a N frentes con confirmaciones (ver «Rondas largas») |
 | `POST`, `DELETE /turnos/<recurso>` | turno de un recurso pesado: dueño, vencimiento y cola |
 | `GET /memoria` | memoria libre, si bajó del umbral y qué sesión quieta cerrar primero |
@@ -290,7 +290,8 @@ mitad fue espera y coordinación. Lo que la acorta:
   frente. Nunca `ultra` ni ultrareview: cobran créditos.
 - **Mutación que modifica archivos en el lugar:** siempre con foto de hashes antes y después, tope de
   tiempo por corrida y nunca en paralelo con builds o revisiones del mismo árbol.
-- **Máximo 4 sesiones simultáneas** salvo memoria medida (`c.memoria()`); el lanzamiento lo frena solo.
+- **Sesiones simultáneas sin tope** (decisión de Ariel, 2026-10-16): lo que manda es la memoria. Antes
+  de lanzar más, `c.memoria()`; con `bajo`, cerrar primero las quietas que sugiere.
 
 Las primitivas que lo sostienen:
 
@@ -327,7 +328,7 @@ c.trabajo("miapp")  # dónde se va el tiempo de la ronda (72 h)
   pérdida más grande, 92,8 h en 99 esperas: revisar por lotes y dejar a cada frente la tarea siguiente
   del encargo, en vez de «quedo quieto».
 - **Memoria.** Bajo `mem_aviso_gb` (1,5 GB) la tira muestra la sesión quieta que conviene cerrar;
-  `max_sesiones_por_repo` (4) frena el lanzamiento con 409 `tope_repo` (`forzar=True` con memoria medida).
+  no hay tope de sesiones por repo, salvo que `config.json` fije `max_sesiones_por_repo`.
 
 ## CPU, memoria y temperatura
 

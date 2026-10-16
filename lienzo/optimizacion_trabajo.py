@@ -84,11 +84,6 @@ UMBRALES = {
         "El mismo texto a varios frentes casi a la vez: {valor} veces",
         "Usar c.aviso(texto, frentes): un solo aviso cuando confirmen todos, sin idas y vueltas.",
     ),
-    "pico_sesiones": (
-        5,
-        "Pico de {valor} sesiones activas en una hora",
-        "Respetar max_sesiones_por_repo (4) salvo memoria medida; cerrar las quietas que sugiere c.memoria().",
-    ),
 }
 
 

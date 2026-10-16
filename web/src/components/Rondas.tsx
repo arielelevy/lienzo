@@ -36,7 +36,7 @@ export function RondasBar({ sessions }: { sessions: Record<string, Session> }) {
   return (
     <div className="rondas-bar" role="list" aria-label="avisos coordinados, turnos y memoria">
       {bajo && (
-        <span role="listitem" className="ronda-chip memoria" title={`umbral ${bajo.umbral_gb} GB · tope ${bajo.max_sesiones_por_repo} sesiones por repo`}>
+        <span role="listitem" className="ronda-chip memoria" title={`umbral ${bajo.umbral_gb} GB${bajo.max_sesiones_por_repo ? ` · tope ${bajo.max_sesiones_por_repo} sesiones por repo` : ""}`}>
           <span aria-hidden>⚠</span>
           <span>memoria {bajo.mem_free_gb?.toFixed(1)} GB libres</span>
           {bajo.cerrar[0] && <span className="ronda-dim">· cerrar «{bajo.cerrar[0].title || bajo.cerrar[0].repo}»{bajo.cerrar[0].quieta_desde ? `, quieta desde las ${hora(bajo.cerrar[0].quieta_desde)}` : ""}</span>}

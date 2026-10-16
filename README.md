@@ -232,12 +232,12 @@ En esos mismos ratos quietos mide también **cómo se trabaja** (`lienzo/optimiz
 de Ariel del 2026-10-16). A lo sumo una vez por hora por proyecto lee las capturas de las últimas 72 h:
 pedidos, respuestas, envíos y disparos de reglas. Mide frentes que ya entregaron y esperan a una
 coordinadora ocupada, acuses que vuelven como aviso, avisos repetidos o intermedios, el mismo texto
-mandado a varios frentes y el pico de sesiones. Lo que pasa su umbral queda como un `hallazgo`
+mandado a varios frentes y el pico de sesiones (este último sólo se informa). Lo que pasa su umbral queda como un `hallazgo`
 propuesto, uno por métrica y día, con el número, capturas de ejemplo y la primitiva que lo ataca; el
 beneficio no está medido y requiere veredicto. No manda mensajes ni gasta. `GET /trabajo/<proyecto>`
 (o `coordinar.trabajo`) muestra el análisis en el momento, sin escribir. Medido en OpenSyync (13 al 16
 de octubre): 92,8 h de frentes esperando, 4 acuses sin tarea que volvieron como aviso, 46 avisos repetidos, 118 intermedios,
-20 difusiones y un pico de 13 sesiones.
+20 difusiones; el pico fue de 13 sesiones.
 Los permisos vencidos o de sesiones muertas se conservan en el historial sin bloquear este trabajo.
 
 **Comparar RTK cuando esté libre** encola dos perfiles de contratos locales, sin modelos ni gasto de
@@ -480,9 +480,10 @@ al lado de la de consultas y se guardan en `~/.lienzo/rondas.json`:
   turno espera hasta que haya esa memoria libre.
 - **Memoria.** `GET /memoria` dice la memoria libre, si bajó de `mem_aviso_gb` (1,5 GB, `config.json`)
   y qué sesiones quietas conviene cerrar: la que lleva más tiempo quieta primero, sin coordinadoras,
-  sin dueñas de un turno y sin avisos por confirmar. Sólo sugiere: no cierra nada. Lanzar desde el
-  tablero con `max_sesiones_por_repo` vivas en el repo (4 por defecto, sumando todas las PCs; 0 lo
-  apaga) contesta 409 `tope_repo` con la lista de vivas, salvo `forzar: true`.
+  sin dueñas de un turno y sin avisos por confirmar. Sólo sugiere: no cierra nada. No hay tope de
+  sesiones por repo (decisión de Ariel, 2026-10-16). Si `config.json` fija `max_sesiones_por_repo`,
+  lanzar desde el tablero con esa cantidad de vivas en el repo, sumando todas las PCs, contesta 409
+  `tope_repo` con la lista, salvo `forzar: true`.
 
 Un acuse («entrega recibida, quedate quieta») cuesta un turno al frente, y ese turno vuelve como aviso.
 `POST /sessions/<sid>/send` con `from` y `sin_aviso: true` hace que ese turno no le avise a `from`:
@@ -731,7 +732,7 @@ además la cookie de sesión.
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
 | PUT | `/sessions/<sid>/title`, `/stopped`, `/coordinator` | título; la llave stopped (`{on}`); coordinadora del repo (`{on}`) |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
-| POST | `/sessions/launch` | `{pc?, cwd, agent, title?, model?, forzar?}`; lanza una sesión, local o en otra PC; 409 `tope_repo` con `max_sesiones_por_repo` vivas en el repo |
+| POST | `/sessions/launch` | `{pc?, cwd, agent, title?, model?, forzar?}`; lanza una sesión, local o en otra PC; 409 `tope_repo` sólo si config.json fija `max_sesiones_por_repo` |
 | GET, POST | `/avisos`, `/avisos/<id>`, `/avisos/<id>/ack` | avisos coordinados con confirmaciones (`{texto, a, de?, vence_min?}`; ack `{session_id, nota?}`) |
 | GET, POST, DELETE, PUT | `/turnos`, `/turnos/<recurso>`, `/turnos/<recurso>/politica` | turnos de recursos pesados: pedir (`{session_id, ttl_min?, motivo?}`), soltar (`?session_id=`), política |
 | GET | `/memoria` | memoria libre, umbral y sesiones quietas sugeridas para cerrar |

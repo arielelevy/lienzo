@@ -163,13 +163,15 @@ def test_presion_sugiere_la_quieta_mas_vieja_sin_turno_ni_coordinar(entorno, mon
 def test_tope_de_sesiones_por_repo_en_el_lanzamiento(entorno, monkeypatch):
     monkeypatch.setattr(rondas.identity, "repo_key", lambda cwd: "opensyync")
     todas = list(st.sessions.values())
+    assert rondas.tope_repo(r"D:\Apps\opensyync", todas) is None  # por defecto no hay tope
+    monkeypatch.setattr(st, "load_config", lambda: {"max_sesiones_por_repo": 4})
     rechazo = rondas.tope_repo(r"D:\Apps\opensyync", todas)
     assert rechazo["code"] == "tope_repo" and len(rechazo["vivas"]) == 4
     assert rondas.tope_repo(r"D:\Apps\opensyync", todas[:3]) is None
     monkeypatch.setattr(st, "load_config", lambda: {"max_sesiones_por_repo": 0})
     assert rondas.tope_repo(r"D:\Apps\opensyync", todas) is None
     # por el tablero: 409 antes de lanzar nada; con forzar pasa a la validacion de siempre
-    monkeypatch.setattr(st, "load_config", dict)
+    monkeypatch.setattr(st, "load_config", lambda: {"max_sesiones_por_repo": 4})
     monkeypatch.setattr(server.mirror.MIRROR, "sessions", list)
     code, res = server.accion_launch({"cwd": r"D:\Apps\opensyync", "agent": "claude"}, desde_tablero=True)
     assert code == 409 and res["code"] == "tope_repo"

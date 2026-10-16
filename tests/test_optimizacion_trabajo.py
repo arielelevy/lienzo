@@ -65,6 +65,7 @@ def test_medir_encuentra_cada_patron():
     assert m["avisos_intermedios"]["valor"] == 1
     assert m["difusiones"]["valor"] == 1
     assert m["pico_sesiones"]["valor"] == 3
+    assert "pico_sesiones" not in t.UMBRALES  # sin tope de sesiones: se informa, no es un hallazgo
 
 
 def test_sin_coordinadora_no_mide_nada():

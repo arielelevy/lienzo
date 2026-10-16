@@ -660,7 +660,8 @@ def lanzar(pc, cwd, titulo, agent="claude", model=None, forzar=False):
     lo soporta o el id no es válido (solo `[A-Za-z0-9._/:@-]`). **En coda cambia el modelo por defecto
     de esa PC** (lo escribe en su `config.json`): avisarle al usuario antes de usarlo.
 
-    409 `tope_repo`: ya hay `max_sesiones_por_repo` (4) vivas en ese repo; trae cuáles. Cerrar una
+    409 `tope_repo`: solo si config.json fija `max_sesiones_por_repo` (por defecto no hay tope) y ya
+    hay esas vivas en el repo; trae cuáles. Cerrar una
     quieta (`memoria()` sugiere cuál) o, con memoria medida, `forzar=True`.
     """
     cuerpo = {"cwd": cwd, "agent": agent, "title": titulo}

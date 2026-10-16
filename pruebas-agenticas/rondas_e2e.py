@@ -129,10 +129,16 @@ try:
     # 4. memoria y tope por repo (con launch_roots vacio nada se lanza aunque pase el tope)
     m = c.memoria()
     paso(
-        "GET /memoria con umbral y tope", isinstance(m, dict) and "bajo" in m and m["max_sesiones_por_repo"] == 4, mem=m
+        "GET /memoria con umbral y tope", isinstance(m, dict) and "bajo" in m and m["max_sesiones_por_repo"] == 0, mem=m
     )
     code, res = c.lanzar(None, CWD, "lienzo - encargo E - prueba", "claude")
-    paso("lanzar con 5 vivas en el repo da 409 tope_repo", code == 409 and (res or {}).get("code") == "tope_repo")
+    # sin tope por defecto: pasa al lanzador, que lo rechaza porque launch_roots esta vacia (no se lanza nada)
+    paso(
+        "sin tope por repo: lanzar no da tope_repo",
+        code != 409 and "launch_roots" in str((res or {}).get("error")),
+        code=code,
+        res=res,
+    )
 
     # 5. un id desconocido sigue dando el 404 de siempre
     code, res = c.pedir("POST", f"/sessions/{uuid.uuid4()}/send", {"text": "hola"})

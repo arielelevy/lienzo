@@ -35,7 +35,7 @@ AVISO_VENCE_MIN, AVISO_VENCE_MAX_MIN = 60, 24 * 60
 AVISOS_GUARDADOS = 50  # los cerrados mas viejos se van
 TURNO_TTL_MIN, TURNO_TTL_MAX_MIN = 30, 240
 MEM_AVISO_GB = 1.5  # config.json: mem_aviso_gb
-MAX_SESIONES_POR_REPO = 4  # config.json: max_sesiones_por_repo (0 = sin tope)
+MAX_SESIONES_POR_REPO = 0  # config.json: max_sesiones_por_repo; 0 = sin tope (decision de Ariel, 2026-10-16)
 
 _datos: dict = {"avisos": {}, "turnos": {}, "politicas": {}}
 

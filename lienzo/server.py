@@ -1330,7 +1330,8 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     distro = d.get("distro") if isinstance(d.get("distro"), str) and d.get("distro").strip() else None
     pc = d.get("pc")
     if desde_tablero and agent != "vscode" and d.get("forzar") is not True:
-        # tope de sesiones vivas por repo, en todas las PCs (max_sesiones_por_repo, 4 por defecto): con 5-7
+        # tope de sesiones vivas por repo, en todas las PCs, solo si config.json fija max_sesiones_por_repo
+        # (por defecto no hay tope, decision de Ariel del 2026-10-16). Era por OpenSyync: con 5-7
         # sesiones la memoria cayo a ~0,7 GB y una mutacion se corto por OOM (OpenSyync, 2026-10-16)
         with lock:
             todas = list(sessions.values())
