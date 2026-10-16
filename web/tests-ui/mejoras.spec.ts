@@ -81,13 +81,15 @@ test("menú contextual ofrece preferencias y conserva estado ante error", async 
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(900);
   await menu.getByRole("menuitem", { name: "Mejoras de agentes…" }).click();
   const dialog = page.getByRole("dialog", { name: "Mejoras de agentes", exact: true });
-  const brief = dialog.getByRole("checkbox", { name: "Respuestas breves" });
+  const brief = dialog.getByRole("switch", { name: "Respuestas breves" });
+  // la casilla nativa está oculta: se toca el interruptor, como lo haría una persona
+  const toggle = dialog.locator("label.tool-switch").filter({ hasText: "Respuestas breves" });
   await expect(dialog.getByRole("list", { name: "Catálogo de tools" }).getByRole("listitem")).toHaveCount(3);
   await expect(dialog.getByText(/no instalada/)).toBeVisible();
-  await brief.click();
+  await toggle.click();
   await expect(dialog.getByRole("alert")).toHaveText("no se pudo guardar");
   await expect(brief).not.toBeChecked();
-  await brief.click();
+  await toggle.click();
   await expect(brief).toBeChecked();
   expect(writes).toBe(2);
   await dialog.getByRole("button", { name: "Cerrar", exact: true }).click();

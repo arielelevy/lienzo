@@ -303,7 +303,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     const onDown = (e: MouseEvent) => {
       const t = e.target as HTMLElement;
       if (!selectedRef.current) return;
-      if (t.closest(".panel") || t.closest(".card") || t.closest(".toasts") || t.closest(".gate") || t.closest("header")) return;
+      if (t.closest(".panel") || t.closest(".card") || t.closest(".toasts") || t.closest(".gate") || t.closest(".mejoras-vista") || t.closest("header")) return;
       setSelected(null);
     };
     document.addEventListener("mousedown", onDown);

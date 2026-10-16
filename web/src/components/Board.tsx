@@ -306,6 +306,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   const [editorOpen, setEditorOpen] = useState(false);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [improvementsOpen, setImprovementsOpen] = useState(false);
+  // la vista se cierra con close() antes de desmontarla, para que el navegador devuelva el foco
+  const improvementsDialog = useRef<HTMLDialogElement | null>(null);
+  const closeImprovements = () => { improvementsDialog.current?.close(); setImprovementsOpen(false); };
   useEffect(() => {
     if (!context) return;
     const close = () => setContext(null);
@@ -826,7 +829,13 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       </div>, document.body)}
       {editorOpen && createPortal(<div className="gate"><Launch editor peers={peers} sessions={Object.values(sessions)} toast={toast} onClose={() => setEditorOpen(false)} /></div>, document.body)}
       {launchOpen && createPortal(<div className="gate"><Launch peers={peers} sessions={Object.values(sessions)} toast={toast} onClose={() => setLaunchOpen(false)} /></div>, document.body)}
-      {improvementsOpen && createPortal(<div className="gate"><dialog ref={el => { if (el && !el.open) el.showModal(); }} className="gate-box agent-improvements-dialog" aria-label="Mejoras de agentes" onKeyDown={e => e.stopPropagation()} onCancel={e => { e.preventDefault(); setImprovementsOpen(false); }}><h2>Mejoras de agentes</h2><AgentImprovements /><button onClick={() => setImprovementsOpen(false)}>Cerrar</button></dialog></div>, document.body)}
+      {improvementsOpen && createPortal(<dialog ref={el => { improvementsDialog.current = el; if (el && !el.open) el.showModal(); }} className="mejoras-vista" aria-label="Mejoras de agentes" onKeyDown={e => e.stopPropagation()} onCancel={e => { e.preventDefault(); closeImprovements(); }}>
+        <div className="mejoras-vista-cabecera">
+          <div><h2>Mejoras de agentes</h2><p className="small dim">Qué se prende al lanzar en esta PC y qué aprende el lienzo cuando está libre.</p></div>
+          <button onClick={closeImprovements} title="Esc">Cerrar</button>
+        </div>
+        <AgentImprovements />
+      </dialog>, document.body)}
       {/* selector de columna, solo abajo de 900 px (una columna por vez). Un permiso pendiente en
           otra columna se marca con un punto: ahi no se ven las tarjetas, y sin la marca el pedido
           pasaba desapercibido hasta que vencia */}

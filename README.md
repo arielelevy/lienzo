@@ -181,7 +181,9 @@ aparece sola. «Otra carpeta…» abre un proyecto nuevo dentro de las carpetas 
 
 ### Mejoras de agentes
 
-Clic derecho en el área libre → **Mejoras de agentes** permite configurar esta PC para nuevos
+Clic derecho en el área libre → **Mejoras de agentes** abre una vista de pantalla completa: a la
+izquierda las integraciones (las que se prenden al lanzar, con su interruptor), a la derecha el
+aprendizaje en segundo plano, con su estado, presupuesto y trabajos. Configura esta PC para nuevos
 lanzamientos. El perfil de respuestas breves se inspira en [Caveman](https://github.com/JuliusBrussee/caveman):
 mantiene idioma, comandos, errores y pruebas; no instala su proxy ni comprime archivos. La preferencia
 **RTK** añade instrucciones para usar [RTK](https://github.com/rtk-ai/rtk) explícitamente en comandos

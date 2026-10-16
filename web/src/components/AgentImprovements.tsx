@@ -75,23 +75,47 @@ export function AgentImprovements({ sid }: { sid?: string }) {
     } catch (e) { if (token === guard.generation) setError((e as Error).message); }
     finally { pending.current = false; if (token === guard.generation) { setBusy(false); setCostAllowed(false); } }
   };
+  const actualizar = () => { setError(""); setSettings(null); setReport(null); setJudgment(null); setCostAllowed(false); setReload(x => x + 1); };
+  if (!sid) return <div className="mejoras-vista-cuerpo">
+    <section className="agent-improvements mejoras-catalogo" aria-label="Mejoras de agentes">
+      <div className="mejoras-seccion-cabecera">
+        <div>
+          <h3>Integraciones</h3>
+          <p className="small dim">{settings ? `${settings.scope}. Las sesiones abiertas siguen como están.` : "Las preferencias valen para los próximos lanzamientos de esta PC."}</p>
+        </div>
+        <button disabled={busy} onClick={actualizar}>Actualizar</button>
+      </div>
+      {error && <p role="alert">{error}</p>}
+      {!error && !settings && <p>Leyendo…</p>}
+      {settings && <>
+        <ul className="tools-catalogo" aria-label="Catálogo de tools">
+          {settings.tools.map(t => <li key={t.id} className={`tool-card${t.preferencia ? " con-preferencia" : ""}${t.preferencia && settings.preferences[t.preferencia] ? " prendida" : ""}`}>
+            <div className="tool-card-cabecera">
+              {t.preferencia
+                ? <label className="tool-switch"><input type="checkbox" role="switch" className="oculto-visual" aria-describedby={`estado-${t.id}`} checked={settings.preferences[t.preferencia]} disabled={busy} onChange={e => void save(t.preferencia as "brief" | "rtk", e.target.checked)} /><span className={`switch${settings.preferences[t.preferencia] ? " on" : ""}`} aria-hidden="true" /><strong>{t.nombre}</strong></label>
+                : <strong>{t.nombre}</strong>}
+              <span id={`estado-${t.id}`} className={`chip estado ${t.estado.disponible ? "ok" : "falta"}`}>{t.estado.disponible ? "disponible" : "no disponible"}</span>
+            </div>
+            <div className="tool-chips">
+              <span className="chip">{TIPO[t.tipo]}</span>
+              <span className={`chip${t.costo === "pago" ? " paga" : ""}`}>{t.costo === "pago" ? "paga" : "gratis"}</span>
+              {!t.modos.includes("general") && <span className="chip">solo modo {t.modos.join(", ")}</span>}
+              {t.preferencia && <span className="chip">al lanzar</span>}
+            </div>
+            <p className="small">{t.descripcion}</p>
+            <p className="small dim tool-origen">{enlace(t.origen)}{t.version ? ` · ${t.version}` : ""}{t.estado.detalle ? ` · ${t.estado.detalle}` : ""}</p>
+            {!t.estado.disponible && t.instalar && <p className="small tool-instalar">Instalar: <code>{t.instalar}</code></p>}
+          </li>)}
+        </ul>
+        <p className="small dim">RTK en WSL se verifica al lanzar. Jev se consulta desde «Mejoras» de una sesión.</p>
+      </>}
+    </section>
+    <OptimizationScheduler />
+  </div>;
   return <section className="agent-improvements" aria-label="Mejoras de agentes">
-    <button disabled={busy} onClick={() => { setError(""); setSettings(null); setReport(null); setJudgment(null); setCostAllowed(false); setReload(x => x + 1); }}>Actualizar</button>
+    <button disabled={busy} onClick={actualizar}>Actualizar</button>
     {error && <p role="alert">{error}</p>}
-    {!error && !settings && !report && <p>Leyendo…</p>}
-    {settings && <>
-      <p className="small dim">{settings.scope}. Las sesiones abiertas siguen como están.</p>
-      <ul className="tools-catalogo" aria-label="Catálogo de tools">
-        {settings.tools.map(t => <li key={t.id}>
-          {t.preferencia ? <label><input type="checkbox" checked={settings.preferences[t.preferencia]} disabled={busy} onChange={e => void save(t.preferencia as "brief" | "rtk", e.target.checked)} /> <strong>{t.nombre}</strong></label> : <strong>{t.nombre}</strong>}
-          {" "}<span className="small dim">{TIPO[t.tipo]}{t.costo === "pago" ? " · paga" : ""}{t.modos.includes("general") ? "" : ` · solo modo ${t.modos.join(", ")}`}</span>
-          <p className="small">{t.descripcion}</p>
-          <p className="small dim">{enlace(t.origen)}{t.version ? ` · ${t.version}` : ""} · {t.estado.disponible ? "disponible" : "no disponible"}{t.estado.detalle ? ` (${t.estado.detalle})` : ""}{!t.estado.disponible && t.instalar ? ` · instalar: ${t.instalar}` : ""}</p>
-        </li>)}
-      </ul>
-      <p className="small dim">Las mejoras se prenden acá; RTK en WSL se verifica al lanzar. Jev se consulta desde «Mejoras» de una sesión.</p>
-      <OptimizationScheduler />
-    </>}
+    {!error && !report && <p>Leyendo…</p>}
     {report && <>
       <p className="small dim">{report.agent} · modelo {report.model ?? "desconocido"} · versión {report.version ?? "desconocida"}</p>
       <p>{report.note || `${report.evidence.counts.turns} turnos · ${report.evidence.counts.tools} herramientas`}</p>

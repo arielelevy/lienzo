@@ -59,3 +59,21 @@ Revisión de `figuras/scheduler.mjs` contra `lienzo/optimization_*.py`. Siete ha
 - Faltaba la llave del usuario (aprendizaje no pausado): agregada al panel.
 - La figura iba al principio de la sección, junto a Caveman y RTK: pasa al párrafo del scheduler.
 - El texto alternativo omitía el permiso vigente: corregido.
+
+## Quinta ronda: «Mejoras de agentes» a pantalla completa
+
+El panel pasó de un diálogo de 420 px (unos 2900 px de alto) a una vista de pantalla completa:
+integraciones en tarjetas a la izquierda y el aprendizaje en segundo plano a la derecha. Diez
+hallazgos, todos corregidos:
+
+- Un clic dentro de la vista cerraba el panel de la sesión de atrás (`App.tsx` buscaba `.gate`): suma `.mejoras-vista`.
+- Las cabeceras eran `<header>` y heredaban el encabezado global pegajoso: pasan a `<div>`.
+- Cerrar desmontaba el `<dialog>` sin `close()`: ahora se cierra antes de desmontarlo.
+- `width: 100vw` pasaba por debajo de la barra de scroll: la vista se dimensiona con `inset: 0`.
+- El interruptor era un diseño propio sin `prefers-reduced-motion`: reusa el `.switch` del encabezado.
+- La casilla con forma de interruptor lleva `role="switch"` y `aria-describedby` hacia su estado.
+- El chip de estado estaba dentro del `<h3>`; la lista de trabajos vacía se dibujaba; cada trabajo repetía tipo e hipótesis: corregidos.
+
+Verificación: `tsc`, ESLint, build y `tests-ui/mejoras.spec.ts` (6 de 6, la del interruptor
+ahora toca la etiqueta); casos `frontend-lint`, `frontend-build` y `frontend-playwright` de la suite
+principal; capturas a 1440 y 390 px.
