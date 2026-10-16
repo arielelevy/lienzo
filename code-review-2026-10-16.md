@@ -33,3 +33,17 @@ central de comunicaciones. Diez hallazgos, todos corregidos:
 - La prueba de «no toca lo versionado» miraba la carpeta equivocada: ahora compara fechas de los SVG versionados.
 - `--check` cubría sólo una figura: ahora recorre todas.
 - «Coordinadora» como nombre del tablero chocaba con el rol de sesión: la figura dice «sesión coordinadora».
+
+## Tercera ronda: delegar trabajo y memoria por proyecto
+
+Revisión de `figuras/delegar.mjs`, `figuras/memoria.mjs`, los acentos de color de `kit.mjs` y su
+lugar en el README. Diez hallazgos:
+
+- Una cápsula ámbar (encargo) en la bandeja de vuelta y la pista «cada cápsula es un encargo» contradecían la leyenda: queda sólo la verde y la pista dice «Ámbar sale, verde vuelve».
+- Lo vigente lo decide la coordinadora o una persona (README), no sólo una persona: corregido.
+- Lo capturado es pedido, respuesta final, envío entre sesiones y disparo de regla: corregido en el `label`.
+- 64 KB es un tope, no un tamaño fijo: corregido el comentario.
+- La comprobación de anatomy miraba sólo `iso-kit.mjs`: ahora exige también `tube.mjs` y `lathe.mjs`.
+- El `SKILL.md` no mencionaba `acento`, `fillet` ni `floorSvg`: agregados.
+- La base repetida en cada figura pasó a `floorSvg` en `kit.mjs`.
+- Orden de pintado de tubos y de la bandeja: revisado en las capturas de los dos temas, sin superposiciones erróneas; no se cambia.

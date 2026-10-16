@@ -341,6 +341,11 @@ de la corrida se registran con `pruebas-agenticas`; no se fijan baselines autom�
 
 ### Memoria por proyecto
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/memoria-dark.svg">
+  <img align="right" width="38%" alt="La memoria por proyecto dibujada como un fichero de archivo: cada cajón es una carpeta, por la ranura de arriba entra sola una ficha con su sello de observado, un cajón abierto muestra las fichas en fila y la bandeja de lo vigente tiene la tapa cerrada con llave" src="docs/img/infografias/memoria-light.svg">
+</picture>
+
 El menú ⋯ → Memoria permite elegir un proyecto y consultar su briefing, buscar candidatos,
 leer una vista por tema, y ver pendientes y avisos. Las consultas son de lectura; no confirman
 hallazgos ni aceptan reglas automáticamente.
@@ -406,12 +411,19 @@ plugin, todo anda igual.
 
 ## Delegar trabajo a varias sesiones
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/delegar-dark.svg">
+  <img align="right" width="38%" alt="Delegar trabajo dibujado como un correo neumático: la estación de la coordinadora despacha cápsulas por tubos a tres escritorios; en uno llega un encargo, en otro la sesión trabaja y del tercero el informe volvió solo; entre dos escritorios un caño tiene la válvula cerrada" src="docs/img/infografias/delegar-light.svg">
+</picture>
+
 El flujo que le da sentido al tablero: una coordinadora reparte encargos a varias terminales con
 «avisarme cuando termine», cada una trabaja en lo suyo y su informe vuelve solo; la coordinadora
 verifica, commitea y reparte la ronda siguiente. Es manual a propósito (dos agentes atados en los dos
 sentidos se contestan hasta agotar los créditos). El método completo, escrito para que lo siga la
 propia coordinadora, está en el skill [`skills/lienzo`](skills/lienzo/SKILL.md); se engancha
 enlazando esa carpeta en `~/.agents/skills/`.
+
+<br clear="right">
 
 ## Acceso desde el celular
 

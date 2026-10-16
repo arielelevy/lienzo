@@ -28,8 +28,11 @@ Estas mandan sobre lo que diga `anatomy`:
 
 1. Leé `SKILL.md` de `anatomy` (pasos 2 a 8 y las reglas de oficio) y `figuras/central.mjs`,
    que es el ejemplo de referencia.
-2. Creá `figuras/<nombre>.mjs` que importe `{ k, tubePieces, tubeSvg, write }` de `../kit.mjs` y
-   exporte `build()`, que devuelve `write("<nombre>", { width, height, label, body, card })`.
+2. Creá `figuras/<nombre>.mjs` que importe de `../kit.mjs` lo que use (`k`, `tubePieces`, `tubeSvg`,
+   `fillet`, `floorSvg`, `acento`, `write`) y exporte `build()`, que devuelve
+   `write("<nombre>", { width, height, label, body, card })`. Las piezas chicas que llevan el estado
+   (un LED, una lámpara, unos contactos) van con `className: acento.verde|rojo|ambar` para que la
+   figura no quede plana; el resto sigue los tonos del kit.
 3. Armala y revisala:
    ```
    node skills/lienzo-infografias/build.mjs <nombre> --check
@@ -52,3 +55,5 @@ Estas mandan sobre lo que diga `anatomy`:
 |---|---|
 | `central` | Sesiones como jacks con lámpara de estado, conexiones como cordones (una cruza a la PC 2), un permiso esperando y el reloj de 60 s del hook |
 | `plugins` | Plugins locales como tarjetas en las ranuras de una placa: módulo del server y vista, cargado, fallido y uno por entrar; el server sigue sin ellos |
+| `delegar` | Delegar trabajo como correo neumático: encargos que salen, el que trabaja, el informe que vuelve solo y la válvula cerrada entre dos sesiones |
+| `memoria` | Memoria por proyecto como fichero: un cajón por carpeta, fichas que entran solas con sello de observado y la bandeja de lo vigente con llave |

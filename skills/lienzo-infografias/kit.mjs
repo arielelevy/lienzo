@@ -16,7 +16,8 @@ const CANDIDATES = [
   join(homedir(), ".agents", "skills", "anatomy"),
 ].filter(Boolean);
 
-export const ANATOMY = CANDIDATES.find((dir) => existsSync(join(dir, "kit", "iso-kit.mjs")));
+const KIT = ["kit/iso-kit.mjs", "kit/tube.mjs", "kit/lathe.mjs"];
+export const ANATOMY = CANDIDATES.find((dir) => KIT.every((file) => existsSync(join(dir, file))));
 if (!ANATOMY) {
   console.error(`No encuentro la skill anatomy (busqué en ${CANDIDATES.join(", ")}).\nInstalala con git clone https://github.com/wheresryan22/anatomy o fijá ANATOMY_DIR.`);
   process.exit(2);
@@ -25,6 +26,7 @@ if (!ANATOMY) {
 const load = (path) => import(pathToFileURL(join(ANATOMY, path)).href);
 export const k = await load("kit/iso-kit.mjs");
 export const { tubePieces, tubeSvg } = await load("kit/tube.mjs");
+export const { fillet } = await load("kit/lathe.mjs");
 
 // Acentos de color para piezas chicas (un LED, una lámpara, unos contactos): para que la figura
 // no quede plana. Pintan tapa, costados y borde; el resto de la pieza sigue el tono del kit.
@@ -42,6 +44,16 @@ const ACENTO_CSS =
       );
     })
     .join("");
+
+// La base sobre la que apoya cada figura: placa con borde rebajado y tornillos en las esquinas.
+export function floorSvg(plan, P) {
+  return [
+    `<path class="iso-halo" d="${k.haloOf(plan, -4, 4, P)}"/>`,
+    k.solidSvg(k.slabOf(plan, -4, 4, P, 8, 0.8), { tone: "mid" }),
+    k.lineSvg(k.planOutline(k.insetPlan(plan, 5), 0, P), { tone: "faint" }),
+    k.dotsSvg(k.corners(plan, 9).map(([x, y]) => k.iso([x, y, 0], P)), { size: 0.5 }),
+  ].join("");
+}
 
 // Escribe el SVG suelto en los dos temas (lo que usa el README) y una página con su tarjeta
 // para revisarla en el navegador. Nunca lleva script: las figuras del lienzo son estáticas.
