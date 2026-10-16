@@ -338,3 +338,16 @@ def test_un_hallazgo_corregido_se_mide_desde_la_correccion_y_si_reaparece_se_vin
         == 1
     )
     assert t.registrar("ptrab", a) == []  # la misma reaparicion no se duplica
+
+
+def test_tras_la_correccion_se_mide_con_la_coordinadora_de_ese_tramo(monkeypatch):
+    """La coordinadora puede cambiar: la de la ventana (la vieja) no ve los avisos de la nueva."""
+    monkeypatch.setattr(
+        t,
+        "correcciones",
+        lambda p: {"avisos_intermedios": {"hallazgo": "h", "desde": "2026-10-16T13:00:00Z", "commit": "x"}},
+    )
+    vieja = [cap("regla", "vieja", i, "Terminó. ok", de=A) for i in range(5)]
+    nueva = [cap("regla", "nueva", 61 + i, "Terminó B. sigo esperando la suite", de=B) for i in range(2)]
+    monkeypatch.setattr(t, "capturas", lambda p, ventana_h=72: sorted(vieja + nueva, key=lambda c: c["fecha"]))
+    assert t.analizar("p")["metricas"]["avisos_intermedios"]["valor"] == 2

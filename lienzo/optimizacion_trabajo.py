@@ -279,7 +279,8 @@ def analizar(proyecto: str, ventana_h: float = VENTANA_H) -> dict:
         # una metrica dada por corregida se mide solo desde la correccion; si no pasa el umbral, no aparece
         desde = _ts(corr["desde"])
         tramo = [c for c in caps if c["fecha"] >= desde]
-        despues = medir(tramo, coordinadora(caps)).get(metrica) or {"valor": 0}
+        # la del tramo si tiene avisos (la coordinadora puede haber cambiado); si no, la de la ventana
+        despues = medir(tramo, coordinadora(tramo) or coordinadora(caps)).get(metrica) or {"valor": 0}
         metricas[metrica] = {**despues, "corregido": corr, "antes": (metricas.get(metrica) or {}).get("valor")}
     return {
         "proyecto": proyecto,
