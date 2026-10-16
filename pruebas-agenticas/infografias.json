@@ -10,15 +10,95 @@
   "casos": [
     {
       "id": "infografias-build",
-      "comando": ["py", "-m", "pytest", "tests/test_infografias.py", "-q", "-p", "no:cacheprovider", "-k", "not sale_2 and not falla"],
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_infografias.py",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "-k",
+        "not sale_2 and not falla"
+      ],
       "timeoutMs": 300000,
-      "cubre": ["skills/lienzo-infografias/", "docs/img/infografias/"]
+      "cubre": [
+        "skills/lienzo-infografias/",
+        "docs/img/infografias/"
+      ]
     },
     {
       "id": "infografias-errores",
-      "comando": ["py", "-m", "pytest", "tests/test_infografias.py", "-q", "-p", "no:cacheprovider", "-k", "sale_2 or falla"],
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_infografias.py",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "-k",
+        "sale_2 or falla"
+      ],
       "timeoutMs": 300000,
-      "cubre": ["skills/lienzo-infografias/"]
+      "cubre": [
+        "skills/lienzo-infografias/"
+      ]
     }
-  ]
+  ],
+  "mutaciones": [
+    {
+      "id": "infografias-control-inocuo",
+      "requisito": "infografia-estatica",
+      "archivo": "skills/lienzo-infografias/build.mjs",
+      "buscar": "process.exit(failed ? 1 : 0);",
+      "reemplazar": "process.exit((failed) ? 1 : 0);",
+      "tipo": "inocua",
+      "por_que": "Control: paréntesis equivalentes; tiene que sobrevivir.",
+      "casos": [
+        "infografias-build",
+        "infografias-errores"
+      ]
+    },
+    {
+      "id": "infografias-check-ignora-lineas",
+      "requisito": "infografia-estatica",
+      "archivo": "skills/lienzo-infografias/build.mjs",
+      "buscar": "failed ||= shot.status !== 0 || !clean || lines.status !== 0;",
+      "reemplazar": "failed ||= shot.status !== 0 || !clean;",
+      "tipo": "destructiva",
+      "por_que": "--check daría por buena una figura con líneas sueltas.",
+      "casos": [
+        "infografias-errores"
+      ]
+    },
+    {
+      "id": "infografias-svg-con-script",
+      "requisito": "infografia-estatica",
+      "archivo": "skills/lienzo-infografias/kit.mjs",
+      "buscar": "k.figureSvg({ width, height, label, body, standalone: theme }) + \"\\n\"",
+      "reemplazar": "k.figureSvg({ width, height, label, body: [...body, \"<script>requestAnimationFrame(()=>{})</script>\"], standalone: theme }) + \"\\n\"",
+      "tipo": "destructiva",
+      "por_que": "El SVG del README dejaría de ser estático.",
+      "casos": [
+        "infografias-build"
+      ]
+    },
+    {
+      "id": "infografias-acepta-nombre-inexistente",
+      "requisito": "errores-claros",
+      "archivo": "skills/lienzo-infografias/build.mjs",
+      "buscar": "if (unknown.length) {",
+      "reemplazar": "if (false) {",
+      "tipo": "destructiva",
+      "por_que": "Un nombre mal escrito rompería con un error de import en vez de listar las figuras.",
+      "casos": [
+        "infografias-errores"
+      ]
+    }
+  ],
+  "compuerta": {
+    "mutacionMinima": 0.75,
+    "_por_que": "2026-10-16, aprobado por Ariel: 3 destructivas y 1 control inocuo que tiene que sobrevivir; el maximo es 3 de 4. Recalibrar con calibrar.mjs al sumar mutaciones."
+  }
 }
