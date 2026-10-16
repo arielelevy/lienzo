@@ -24,11 +24,11 @@ Las terminales y las transcripciones siguen a cargo de los agentes.
 ## Cómo funciona
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/centralita-dark.svg">
-  <img align="left" width="340" alt="El tablero dibujado como una centralita telefónica: cada jack del panel es una sesión con su lámpara de estado, dos cordones conectan sesiones (uno cruza de la PC 1 a la PC 2), una lámpara resaltada marca un permiso pendiente y un reloj de 60 s en el estante muestra cuánto lleva esperando" src="docs/img/infografias/centralita-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/coordinadora-dark.svg">
+  <img align="left" width="340" alt="El tablero dibujado como una coordinadora: cada jack del panel es una sesión con su lámpara de estado, dos cordones conectan sesiones (uno cruza de la PC 1 a la PC 2), una lámpara resaltada marca un permiso pendiente y un reloj de 60 s en el estante muestra cuánto lleva esperando" src="docs/img/infografias/coordinadora-light.svg">
 </picture>
 
-El tablero funciona como una centralita. Cada jack es una sesión y su lámpara muestra el estado.
+El tablero funciona como una coordinadora. Cada jack es una sesión y su lámpara muestra el estado.
 Cada cordón es una conexión entre dos sesiones, también entre PCs. La lámpara resaltada es un
 permiso esperando respuesta. En Claude Code, Codex y CODA, si nadie lo contesta en 60 s, vuelve
 a la terminal.

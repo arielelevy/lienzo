@@ -55,16 +55,16 @@ def _check(tmp_path: Path, *args: str, **kwargs):
 
 @con_anatomy
 def test_build_por_nombre_escribe_svg_estaticos_en_los_dos_temas(tmp_path):
-    hecho = _build(tmp_path, "centralita")
+    hecho = _build(tmp_path, "coordinadora")
     assert hecho.returncode == 0, hecho.stderr
     for tema in ("dark", "light"):
-        svg = (tmp_path / "img" / f"centralita-{tema}.svg").read_text(encoding="utf-8")
+        svg = (tmp_path / "img" / f"coordinadora-{tema}.svg").read_text(encoding="utf-8")
         assert svg.startswith("<svg") and f'data-theme="{tema}"' in svg
         assert "<style>" in svg  # suelto: lleva sus estilos para verse en GitHub
-        assert 'role="img"' in svg and "centralita telefónica" in svg
+        assert 'role="img"' in svg and "coordinadora" in svg
         assert "<script" not in svg and " onload=" not in svg and "requestAnimationFrame" not in svg
-        assert (tmp_path / "prev" / f"centralita-{tema}.html").exists()
-    assert not (VERSIONADAS.parent / "centralita-dark.svg").exists()
+        assert (tmp_path / "prev" / f"coordinadora-{tema}.html").exists()
+    assert not (VERSIONADAS.parent / "coordinadora-dark.svg").exists()
 
 
 @con_anatomy
@@ -81,13 +81,13 @@ def test_los_svg_versionados_coinciden_con_el_build(tmp_path):
 def test_nombre_inexistente_sale_2_y_lista_las_figuras(tmp_path):
     hecho = _build(tmp_path, "no-existe")
     assert hecho.returncode == 2
-    assert "No existe la figura no-existe" in hecho.stderr and "centralita" in hecho.stderr
+    assert "No existe la figura no-existe" in hecho.stderr and "coordinadora" in hecho.stderr
     assert not (tmp_path / "img").exists()
 
 
 @con_anatomy
 def test_opcion_desconocida_sale_2_sin_armar(tmp_path):
-    hecho = _build(tmp_path, "centralita", "--chek")
+    hecho = _build(tmp_path, "coordinadora", "--chek")
     assert hecho.returncode == 2
     assert "No conozco --chek" in hecho.stderr
     assert not (tmp_path / "img").exists()
@@ -103,12 +103,12 @@ def test_sin_anatomy_sale_2_con_la_instruccion(tmp_path):
 
 
 @con_anatomy
-def test_check_pasa_con_la_centralita(tmp_path):
-    hecho = _check(tmp_path, "centralita")
+def test_check_pasa_con_la_coordinadora(tmp_path):
+    hecho = _check(tmp_path, "coordinadora")
     assert hecho.returncode == 0, hecho.stdout + hecho.stderr
     for tema in ("dark", "light"):
-        assert f"centralita {tema}: console: clean · line ends: 0 " in hecho.stdout
-        assert (tmp_path / "prev" / f"centralita-{tema}.png").stat().st_size > 10_000
+        assert f"coordinadora {tema}: console: clean · line ends: 0 " in hecho.stdout
+        assert (tmp_path / "prev" / f"coordinadora-{tema}.png").stat().st_size > 10_000
 
 
 @con_anatomy

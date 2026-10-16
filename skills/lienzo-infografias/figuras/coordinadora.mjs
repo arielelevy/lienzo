@@ -1,10 +1,10 @@
-// Fig 1 del lienzo: el tablero como una centralita telefónica.
+// Fig 1 del lienzo: el tablero como una coordinadora.
 import { k, tubePieces, tubeSvg, write } from "../kit.mjs";
 
 const WIDTH = 640;
 const HEIGHT = 440;
 
-// Mundo: x a lo largo de la centralita, y hacia el operador, z arriba.
+// Mundo: x a lo largo del panel, y hacia el operador, z arriba.
 const DESK = { x: -150, y: -60, w: 300, d: 132, r: 6 };
 const SHELF = 44;
 const FOOT_H = 6;
@@ -197,21 +197,21 @@ items.push({ key: depth([TIMER.x, TIMER.y, SHELF]), svg: timer() });
 items.sort((a, b) => a.key - b.key);
 
 const label =
-  "El tablero de Lienzo dibujado como una centralita telefónica. Cada jack del panel es una sesión de un agente, con su lámpara de estado arriba. " +
+  "El tablero de Lienzo dibujado como una coordinadora. Cada jack del panel es una sesión de un agente, con su lámpara de estado arriba. " +
   "El panel tiene dos secciones, una por PC. Un cordón une a la coordinadora con una sesión de la misma PC y otro cruza a la PC 2. " +
   "Una lámpara resaltada marca un permiso esperando respuesta, y el reloj del estante muestra que lleva 23 de los 60 segundos que espera el hook.";
 
 const body = [cabinet(), panel(), shelfTop(), ...jacks, ...plugs, ...items.map((item) => item.svg)];
 
 export function build() {
-  return write("centralita", {
+  return write("coordinadora", {
     width: WIDTH,
     height: HEIGHT,
     label,
     body,
     card: {
       fig: "Fig 1",
-      title: "La centralita",
+      title: "La coordinadora",
       hint: "Cada jack es una sesión",
       readout: `1 permiso esperando · ${WAITED} s de 60`,
       keys: [
@@ -220,7 +220,7 @@ export function build() {
         { mark: "flat", label: "Reloj de 60 s: lo que espera el hook de permisos antes de volver a la terminal" },
       ],
       caption:
-        "Lienzo como centralita: cada jack es una sesión de Claude Code, Codex, Pi, CODA o Kiro, y su lámpara muestra el estado. " +
+        "Lienzo como coordinadora: cada jack es una sesión de Claude Code, Codex, Pi, CODA o Kiro, y su lámpara muestra el estado. " +
         "Un cordón conecta dos sesiones; el de la derecha cruza a la otra PC por la LAN. En Claude Code, Codex y CODA, si nadie contesta el permiso en 60 s, el pedido vuelve a la terminal.",
     },
   });
