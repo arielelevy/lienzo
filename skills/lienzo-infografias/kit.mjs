@@ -26,12 +26,30 @@ const load = (path) => import(pathToFileURL(join(ANATOMY, path)).href);
 export const k = await load("kit/iso-kit.mjs");
 export const { tubePieces, tubeSvg } = await load("kit/tube.mjs");
 
+// Acentos de color para piezas chicas (un LED, una lámpara, unos contactos): para que la figura
+// no quede plana. Pintan tapa, costados y borde; el resto de la pieza sigue el tono del kit.
+export const acento = { verde: "acento-verde", rojo: "acento-rojo", ambar: "acento-ambar" };
+const ACENTO_CSS =
+  `.iso{--acento-verde:#4cc38a;--acento-rojo:#ff6b6b;--acento-ambar:#ffb224}` +
+  `.iso[data-theme="light"]{--acento-verde:#18794e;--acento-rojo:#d93036;--acento-ambar:#c27100}` +
+  Object.values(acento)
+    .map((clase) => {
+      const color = `var(--${clase})`;
+      return (
+        `.${clase}>.iso-top{fill:${color}}` +
+        `.${clase}>.iso-shade{fill:color-mix(in srgb,${color} 70%,#000)}` +
+        `.${clase}>.iso-edge,.${clase}>.iso-crease,.iso-line.${clase}{stroke:${color}}`
+      );
+    })
+    .join("");
+
 // Escribe el SVG suelto en los dos temas (lo que usa el README) y una página con su tarjeta
 // para revisarla en el navegador. Nunca lleva script: las figuras del lienzo son estáticas.
 export function write(name, { width, height, label, body, card }) {
   mkdirSync(IMG, { recursive: true });
   mkdirSync(PREVIEW, { recursive: true });
   const written = [];
+  body = [`<style>${ACENTO_CSS}</style>`, ...[body].flat()];
   for (const theme of ["dark", "light"]) {
     const svg = join(IMG, `${name}-${theme}.svg`);
     writeFileSync(svg, k.figureSvg({ width, height, label, body, standalone: theme }) + "\n");

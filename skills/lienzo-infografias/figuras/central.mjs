@@ -1,5 +1,5 @@
 // Fig 1 del lienzo: el tablero como una central de comunicaciones.
-import { k, tubePieces, tubeSvg, write } from "../kit.mjs";
+import { acento, k, tubePieces, tubeSvg, write } from "../kit.mjs";
 
 const WIDTH = 640;
 const HEIGHT = 440;
@@ -97,7 +97,7 @@ function jack(cx, cz, { lamp = "off", plugged = false } = {}) {
   // Lámpara de estado sobre el jack.
   const lens = { x: cx - 4.5, y: FACE, w: 9, d: 3.2, r: 1.4 };
   out.push(S(k.slabOf({ x: cx - 6, y: FACE, w: 12, d: 1.2, r: 0.6 }, cz + 7, 9, P, 2), { tone: "lo", crease: "none" }));
-  out.push(S(k.slabOf(lens, cz + 8.5, 6, P, 3, 0.4), lamp === "lit" ? { tone: "hi", lit: true } : { tone: lamp === "on" ? "mid" : "lo" }));
+  out.push(S(k.slabOf(lens, cz + 8.5, 6, P, 3, 0.4), lamp === "lit" ? { tone: "hi", className: acento.ambar } : lamp === "on" ? { tone: "hi", className: acento.verde } : { tone: "lo" }));
   // Buje del jack con su boca.
   const bush = { x: cx - 5, y: FACE, w: 10, d: BUSH, r: 2.2 };
   out.push(S(k.slabOf(bush, cz - 5, 10, P, 4, 0.4), { tone: "mid" }));
@@ -166,7 +166,7 @@ function timer() {
     const a = (i / 24) * (WAITED / 60) * Math.PI * 2;
     swept.push([x + Math.sin(a) * (r - 7.5), y - Math.cos(a) * (r - 7.5)]);
   }
-  out.push(L(k.onTop(swept, top, P), { tone: "hi" }));
+  out.push(L(k.onTop(swept, top, P), { tone: "hi", className: acento.ambar }));
   const a = (WAITED / 60) * Math.PI * 2;
   out.push(`<path class="iso-line" data-tone="hi" data-free="start" d="${k.lineOnTop([x - Math.sin(a) * 3, y + Math.cos(a) * 3], [x + Math.sin(a) * (r - 4), y - Math.cos(a) * (r - 4)], top + 0.2, P)}" style="stroke-width:1.1"/>`);
   out.push(L(k.ring(x, y, 1.5, top, P, 16), { tone: "mid" }));

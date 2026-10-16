@@ -1,5 +1,5 @@
 // Fig 2 del lienzo: los plugins locales como tarjetas en las ranuras de una placa.
-import { k, write } from "../kit.mjs";
+import { acento, k, write } from "../kit.mjs";
 
 const WIDTH = 640;
 const HEIGHT = 440;
@@ -92,7 +92,7 @@ function card(x, state) {
   if (state === "lift") {
     // Peine de contactos: lo que entra en la ranura.
     for (let y = pcb.y + 4; y < pcb.y + pcb.d - 6; y += 3.2) {
-      out.push(S(k.slabOf({ x: x + 0.8, y, w: 0.3, d: 1.8, r: 0 }, z0, 4, P, 1), { tone: "hi", crease: "none" }));
+      out.push(S(k.slabOf({ x: x + 0.8, y, w: 0.3, d: 1.8, r: 0 }, z0, 4, P, 1), { tone: "hi", crease: "none", className: acento.ambar }));
     }
   }
   // Dos chips en la cara visible: el del fondo es el módulo del server, el de adelante la vista.
@@ -110,7 +110,7 @@ function card(x, state) {
   out.push(L(k.ring(x, yb + 4.5, 1.4, tabZ + 1.6, P, 14), { tone: "lo" }), D([at([x, yb + 4.5, tabZ + 1.6])], { size: 0.45 }));
   out.push(S(k.slabOf({ x: x - 3, y: yb + 1.4, w: 6, d: 1, r: 0.4 }, SLOT_TOP + dz + 10, 10, P, 2), { tone: "lo", crease: "none" }));
   const led = { x: x - 2, y: yb + 1.4, w: 4, d: 1.6, r: 0.8 };
-  const style = state === "on" ? { tone: "hi", lit: true } : { tone: "lo" };
+  const style = { tone: "hi", className: state === "on" ? acento.verde : state === "fail" ? acento.rojo : undefined };
   out.push(S(k.slabOf(led, CARD_TOP + dz - 8, 4, P, 3), style));
   return out.join("");
 }
