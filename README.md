@@ -199,6 +199,11 @@ USD 0,001 es una estimación, no una cota que habilite gasto. El ledger conserva
 informados; cargos desconocidos y proveedores sin máximo comprobable bloquean solicitudes nuevas.
 Jev propone una herramienta o datos insuficientes: no instala, aprueba ni ejecuta acciones.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/scheduler-dark.svg">
+  <img align="right" width="38%" alt="El scheduler de mejoras dibujado como una máquina con enclavamiento: una tolva con los incidentes recientes de un proyecto, un panel todo en verde: el reloj de 180 segundos cumplido, CPU y memoria aptas, ningún agente ocupado ni permiso vigente y la llave del usuario habilitada; la luz de marcha en verde y una bandeja con hipótesis propuestas selladas en ámbar" src="docs/img/infografias/scheduler-light.svg">
+</picture>
+
 El scheduler analiza incidentes nuevos de la memoria cuando hay 180 segundos de inactividad,
 dos muestras de recursos aptas y ningún agente ocupado ni permiso vigente. Encola automáticamente
 por proyecto y versión de fuentes, con cooldown de 120 segundos y hasta 100 trabajos; sus propias

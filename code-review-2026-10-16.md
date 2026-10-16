@@ -47,3 +47,15 @@ lugar en el README. Diez hallazgos:
 - El `SKILL.md` no mencionaba `acento`, `fillet` ni `floorSvg`: agregados.
 - La base repetida en cada figura pasó a `floorSvg` en `kit.mjs`.
 - Orden de pintado de tubos y de la bandeja: revisado en las capturas de los dos temas, sin superposiciones erróneas; no se cambia.
+
+## Cuarta ronda: scheduler de mejoras
+
+Revisión de `figuras/scheduler.mjs` contra `lienzo/optimization_*.py`. Siete hallazgos, todos corregidos:
+
+- El 100 es el tope de trabajos en cola; cada trabajo toma los 30 incidentes más recientes de un proyecto (`optimization_memory.py`): la tolva dice «30 / proyecto».
+- Un cambio en los incidentes recientes encola otro análisis de los 30, no sólo de los nuevos: lo dice la leyenda.
+- Los dos medidores son CPU ≤ 35 % (`MAX_CPU`) y memoria libre ≥ 1,5 GB (`RESERVA_GB`), y todo tiene que cumplirse en dos muestras seguidas (`good_samples`).
+- La luz de «nadie ocupado ni permiso vigente» estaba apagada mientras la pista decía «todo en verde»: ahora es verde.
+- Faltaba la llave del usuario (aprendizaje no pausado): agregada al panel.
+- La figura iba al principio de la sección, junto a Caveman y RTK: pasa al párrafo del scheduler.
+- El texto alternativo omitía el permiso vigente: corregido.

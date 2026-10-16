@@ -57,3 +57,4 @@ Estas mandan sobre lo que diga `anatomy`:
 | `plugins` | Plugins locales como tarjetas en las ranuras de una placa: módulo del server y vista, cargado, fallido y uno por entrar; el server sigue sin ellos |
 | `delegar` | Delegar trabajo como correo neumático: encargos que salen, el que trabaja, el informe que vuelve solo y la válvula cerrada entre dos sesiones |
 | `memoria` | Memoria por proyecto como fichero: un cajón por carpeta, fichas que entran solas con sello de observado y la bandeja de lo vigente con llave |
+| `scheduler` | El scheduler de mejoras como máquina con enclavamiento: arranca sólo con 180 s libres, dos muestras aptas y nadie ocupado; deja hipótesis propuestas |
