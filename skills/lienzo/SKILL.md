@@ -302,6 +302,8 @@ c.pedir_turno("navegador", sid, ttl_min=30, motivo="agénticas")  # 200 tuyo · 
 c.liberar_turno("navegador", sid)  # el siguiente lo recibe solo
 c.politica_turno("motores", ttl_max_min=60, mem_min_gb=3)  # lo decide la coordinadora
 c.memoria()  # {bajo, mem_free_gb, cerrar: [la quieta más vieja primero]}
+c.enviar(s, "entrega recibida", sin_aviso=True)  # el acuse no vuelve como aviso
+c.trabajo("miapp")  # dónde se va el tiempo de la ronda (72 h)
 ```
 
 - **Avisos sin duplicados.** Una regla no reentrega el mismo turno (misma respuesta al mismo pedido),
@@ -316,6 +318,14 @@ c.memoria()  # {bajo, mem_free_gb, cerrar: [la quieta más vieja primero]}
   una cola visible. Se suelta solo al vencer o al cerrarse la sesión dueña, y el siguiente recibe un
   mensaje. Con `mem_min_gb` no se otorga mientras falte memoria. En el encargo, decirle al frente:
   «pedí el turno de `<recurso>` antes de usarlo y soltalo al terminar».
+- **Acuses sin vuelta.** Un «entrega recibida» le cuesta un turno al frente y ese turno vuelve como
+  aviso (en OpenSyync, 4 veces en tres días). Mandalo con `sin_aviso=True`, o no lo mandes.
+- **Mirar cómo se trabaja.** Al cerrar una ola, `c.trabajo(proyecto)` dice cuántas horas esperaron los
+  frentes a la coordinadora, cuántos avisos fueron repetidos o intermedios y qué textos se mandaron a
+  varios a la vez. El sueño del lienzo deja lo mismo como hallazgos propuestos en la memoria: leelos
+  con `c.preguntar(proyecto, ["optimizacion trabajo"], tipo="hallazgo")` y dales veredicto. En OpenSyync la espera fue la
+  pérdida más grande, 92,8 h en 99 esperas: revisar por lotes y dejar a cada frente la tarea siguiente
+  del encargo, en vez de «quedo quieto».
 - **Memoria.** Bajo `mem_aviso_gb` (1,5 GB) la tira muestra la sesión quieta que conviene cerrar;
   `max_sesiones_por_repo` (4) frena el lanzamiento con 409 `tope_repo` (`forzar=True` con memoria medida).
 

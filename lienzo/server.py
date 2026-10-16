@@ -18,6 +18,7 @@ import re
 import secrets
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -39,6 +40,7 @@ import beacon
 import browser_api
 import browser_stream
 import captura
+import conocimiento
 import conocimiento_api
 import console_titles
 import consulta
@@ -50,6 +52,7 @@ import identity
 import kill_agent
 import launch
 import mirror
+import optimizacion_trabajo
 import optimization_scheduler
 import pairing
 import pantalla_coda
@@ -1008,6 +1011,11 @@ def validar_send(d: dict) -> tuple[int, dict] | None:
         or any(not isinstance(a, str) for a in attachments)
     ):
         return _rechazo("text debe ser texto y attachments una lista de rutas")
+    sin_aviso = d.get("sin_aviso")
+    if sin_aviso is not None and not (
+        (sin_aviso is True and isinstance(d.get("from"), str)) or (isinstance(sin_aviso, str) and sin_aviso)
+    ):
+        return _rechazo("sin_aviso es true (con from) o el session_id al que no hay que avisar")
     return None
 
 
@@ -1044,6 +1052,14 @@ def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     # «Autorizar y que reintente»: corre en la PC duena (el cuerpo viaja entero), que es la que relee la
     # transcripcion. Se anota ANTES de teclear: el hook del pedido puede llegar antes de que el envio vuelva
     antes = autorizar_denegado(s) if d.get("autoriza_denegado") is True else None
+    # un acuse («entrega recibida»): el turno que dispara no vuelve como aviso a quien lo mando
+    # (cada acuse le cuesta un turno al frente, y ese turno le costaba otro a la coordinadora)
+    pedido = d.get("sin_aviso")
+    quien = d.get("from") if pedido is True else pedido if isinstance(pedido, str) else None
+    previo, silenciar = s.get("sin_aviso"), bool(quien)
+    if silenciar:
+        with lock:
+            s["sin_aviso"] = {"a": quien, "desde": time.time(), "texto": rl.normal_acuse(d.get("text", ""))}
     with captura.origen(
         de=d.get("from") if isinstance(d.get("from"), str) else None,
         kind="native" if d.get("native") else ("send" if d.get("from") else "user"),
@@ -1052,6 +1068,9 @@ def accion_send(s: dict, d: dict) -> tuple[int, dict]:
         code, res = send_to_session(s, d.get("text", ""), d.get("attachments") or [])
     if code != 200 and antes is not None:
         deshacer_autorizacion(s, antes)
+    if code != 200 and silenciar:
+        with lock:
+            s["sin_aviso"] = previo
     return code, res
 
 
@@ -1726,6 +1745,16 @@ class Handler(JsonHandler):
                 return self._json(200, {"turnos": v["turnos"], "politicas": v["politicas"]})
             if parts == ["memoria"]:
                 return self._json(200, rondas.presion())
+            if len(parts) == 2 and parts[0] == "trabajo":
+                # como se trabaja en un proyecto (optimizacion_trabajo): solo lee la memoria
+                pid = urllib.parse.unquote(parts[1])
+                try:
+                    if pid not in {p["id"] for p in conocimiento.proyectos()}:
+                        return self._json(404, {"error": "proyecto desconocido"})
+                    return self._json(200, optimizacion_trabajo.analizar(pid))
+                except (sqlite3.Error, ValueError, TypeError) as e:
+                    log(f"GET /trabajo/{pid}: {type(e).__name__}: {e}")
+                    return self._json(503, {"error": f"no se pudo analizar: {type(e).__name__}"})
             if parts == ["consultas"]:
                 return self._json(200, consulta.listar())
             if len(parts) == 2 and parts[0] == "consultas":

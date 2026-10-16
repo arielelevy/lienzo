@@ -227,6 +227,17 @@ El scheduler analiza incidentes nuevos de la memoria cuando hay 180 segundos de 
 dos muestras de recursos aptas y ningún agente ocupado ni permiso vigente. Encola automáticamente
 por proyecto y versión de fuentes, con cooldown de 120 segundos y hasta 100 trabajos; sus propias
 hipótesis no generan otra ronda. Las hipótesis quedan propuestas, con evidencia y veredicto pendiente.
+
+En esos mismos ratos quietos mide también **cómo se trabaja** (`lienzo/optimizacion_trabajo.py`, pedido
+de Ariel del 2026-10-16). A lo sumo una vez por hora por proyecto lee las capturas de las últimas 72 h:
+pedidos, respuestas, envíos y disparos de reglas. Mide frentes que ya entregaron y esperan a una
+coordinadora ocupada, acuses que vuelven como aviso, avisos repetidos o intermedios, el mismo texto
+mandado a varios frentes y el pico de sesiones. Lo que pasa su umbral queda como un `hallazgo`
+propuesto, uno por métrica y día, con el número, capturas de ejemplo y la primitiva que lo ataca; el
+beneficio no está medido y requiere veredicto. No manda mensajes ni gasta. `GET /trabajo/<proyecto>`
+(o `coordinar.trabajo`) muestra el análisis en el momento, sin escribir. Medido en OpenSyync (13 al 16
+de octubre): 92,8 h de frentes esperando, 4 acuses sin tarea que volvieron como aviso, 46 avisos repetidos, 118 intermedios,
+20 difusiones y un pico de 13 sesiones.
 Los permisos vencidos o de sesiones muertas se conservan en el historial sin bloquear este trabajo.
 
 **Comparar RTK cuando esté libre** encola dos perfiles de contratos locales, sin modelos ni gasto de
@@ -473,6 +484,10 @@ al lado de la de consultas y se guardan en `~/.lienzo/rondas.json`:
   tablero con `max_sesiones_por_repo` vivas en el repo (4 por defecto, sumando todas las PCs; 0 lo
   apaga) contesta 409 `tope_repo` con la lista de vivas, salvo `forzar: true`.
 
+Un acuse («entrega recibida, quedate quieta») cuesta un turno al frente, y ese turno vuelve como aviso.
+`POST /sessions/<sid>/send` con `from` y `sin_aviso: true` hace que ese turno no le avise a `from`:
+calla una sola vez, y el pedido vence a los 30 min (`coordinar.enviar(s, texto, sin_aviso=True)`).
+
 El método está en la skill, en la sección «Rondas largas».
 
 ## Acceso desde el celular
@@ -708,7 +723,7 @@ además la cookie de sesión.
 |---|---|---|
 | GET | `/sessions` | todas las tarjetas, las de esta PC y las de las demás (`pc`) |
 | GET | `/sessions/<sid>/turns?n=10`, `/digest?n=10`, `/screen`, `/connections` | turnos, destacados por turno, pantalla de la terminal, conexiones |
-| POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío; con `copycat: true` es pegar trabajo. Un id viejo da 404 con `sucesora` |
+| POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío; con `copycat: true` es pegar trabajo; con `from` y `sin_aviso: true` el turno no le avisa a `from`. Un id viejo da 404 con `sucesora` |
 | POST | `/sessions/<sid>/interrupt` | un Esc: corta el turno (409 si no está corriendo) |
 | POST | `/sessions/<sid>/kill` | `{confirm: session_id}`; cierre forzado de una CLI Windows identificada, también en otra PC; no cierra agentes tmux |
 | POST | `/sessions/<sid>/dialog` | `{choice: n}`; elige una opción del diálogo de la TUI |
@@ -720,6 +735,7 @@ además la cookie de sesión.
 | GET, POST | `/avisos`, `/avisos/<id>`, `/avisos/<id>/ack` | avisos coordinados con confirmaciones (`{texto, a, de?, vence_min?}`; ack `{session_id, nota?}`) |
 | GET, POST, DELETE, PUT | `/turnos`, `/turnos/<recurso>`, `/turnos/<recurso>/politica` | turnos de recursos pesados: pedir (`{session_id, ttl_min?, motivo?}`), soltar (`?session_id=`), política |
 | GET | `/memoria` | memoria libre, umbral y sesiones quietas sugeridas para cerrar |
+| GET | `/trabajo/<proyecto>` | cómo se trabaja en las últimas 72 h: métricas y hallazgos sobre el umbral (sólo lee) |
 | POST | `/consultas` | `{pregunta, investigadores, vueltas?, revisor?, coordinador?, espera_min?, enfoques?, vuelta1?, revisar_sintesis?}`; abre una consulta entre investigadores, devuelve `{id, tope_turnos}` |
 | GET | `/consultas`, `/consultas/<id>` | las últimas consultas (resumen); una entera, con las respuestas por vuelta |
 | POST | `/consultas/<id>/cancelar` | la deja cancelada; lo respondido queda guardado |
@@ -776,6 +792,7 @@ lienzo/
   rules.py, rules_api.py   reglas «cuando termine» y programadas
   consulta.py      consulta entre investigadores: vueltas, síntesis, revisión y vigilancia
   rondas.py        avisos coordinados con ack, turnos de recursos pesados y presión de memoria
+  optimizacion_trabajo.py   cómo se trabaja: esperas, acuses, avisos y difusiones, para el sueño
   state.py         estado compartido, config, log
   federation.py    firma HMAC, peers.json, beacon, cliente SSE, transporte HTTP
   pairing.py       emparejamiento con SPAKE2

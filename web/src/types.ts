@@ -95,6 +95,8 @@ export interface Session {
   /** la llave stopped: session_id de la copia que se llevo su trabajo, o "user" si la detuvieron desde
    *  el tablero. Prendida no recibe mensajes ni reglas; se apaga desde la etiqueta o con su proximo pedido */
   stopped_by?: string | null;
+  /** un envío con sin_aviso: el próximo cierre de turno no le avisa a esa sesión (lienzo/rules.py) */
+  sin_aviso?: { a: string; desde: number } | null;
   /** pc_id de la PC dueña de esta sesion (frente B, ronda multi-PC). Ausente: PC local de siempre,
    *  o un server que todavia no lo publica. */
   pc?: string | null;

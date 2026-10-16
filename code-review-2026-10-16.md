@@ -116,3 +116,24 @@ Además: el comentario de `SUCESION_MAX_S` decía que la sucesión no sobrevive 
 Verificación: `pytest tests` 1730 passed, 3 skipped; `pruebas-agenticas/rondas_e2e.py` 17 de 17 contra
 un server propio (7393, `LIENZO_HOME` temporal); Playwright `humo` y `salud` 3 de 3 contra un server
 nuevo. Contra el 7321 sin reiniciar fallan por 404 de `/avisos` y `/memoria`: es entorno, se va al reiniciar.
+
+# Code review 2026-10-16: el sueño mide cómo se trabaja
+
+Revisión con `code-review` (nivel alto) de `lienzo/optimizacion_trabajo.py`, su enganche al scheduler,
+`GET /trabajo/<proyecto>` y el envío `sin_aviso`. Diez hallazgos, todos válidos y corregidos, con
+regresión en `tests/test_optimizacion_trabajo.py`.
+
+| # | Hallazgo | Estado |
+|---|---|---|
+| 1 | `sin_aviso` se consumía en el próximo Stop cualquiera: un acuse mandado en medio de la entrega la callaba | Corregido: calla sólo el turno cuyo pedido es el texto del acuse |
+| 2 | Tres salidas tempranas (compactando, error, pregunta) dejaban el flag vivo para un turno real | Corregido por el mismo cambio: un turno con otro pedido nunca se calla |
+| 3 | El scheduler contaba como nuevos los hallazgos que ya existían | Corregido: `registrar` devuelve sólo los creados |
+| 4 | «Perfecto, ahora implementá…» contaba como acuse, y la sugerencia habría callado entregas reales | Corregido: un acuse no trae tarea (regex `TAREA`) y pesa menos de 300 B |
+| 5 | Difusiones agrupadas por hash en 72 h: perdía las reales y contaba dos «ok» | Corregido: tandas a menos de 2 min y textos de 40 B o más |
+| 6 | `sin_aviso=True` en coordinar forzaba `from` y la flecha aunque `enlazar=False`; sin `YO` se ignoraba callado | Corregido: manda el id en `sin_aviso`; sin `YO`, ValueError |
+| 7 | `/trabajo` no decodificaba el id, daba 200 vacío para un proyecto inexistente y 500 ante fechas sin zona | Corregido: `unquote`, 404, fechas sin zona como UTC y 503 con motivo |
+| 8 | La conexión no tenía el tope de tiempo ni las claves foráneas del resto del análisis | Corregido: lectura con tope de 3 s; escritura por `optimization_memory._connect` |
+| 9 | Traía el texto entero de cada captura | Corregido: principio y final de los textos de más de 1000 caracteres |
+| 10 | La hora se marcaba antes de analizar: una cancelación lo postergaba una hora | Corregido: se marca después; cancelado, se retoma en el próximo rato quieto |
+
+Verificación: `pytest tests` 1745 passed, 3 skipped; `rondas_e2e.py` OK; ruff limpio.

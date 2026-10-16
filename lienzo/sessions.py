@@ -710,6 +710,7 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "title_source": None,
         "copycat_of": None,
         "stopped_by": None,
+        "sin_aviso": None,  # {a, desde}: el proximo Stop no le avisa a `a` (un acuse, rules.fire_on_stop)
         "transcript_path": None,
         "transcript_bytes": None,
         "model": None,

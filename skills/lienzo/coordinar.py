@@ -105,25 +105,33 @@ def frentes(proyecto, todas=False, pc=None):
     return out
 
 
-def _cuerpo_envio(sid, texto, enlazar):
-    """El JSON de `POST /sessions/<sid>/send`; con `enlazar` (y `YO`) el tablero dibuja la flecha."""
+def _cuerpo_envio(sid, texto, enlazar, sin_aviso=False):
+    """El JSON de `POST /sessions/<sid>/send`; con `enlazar` (y `YO`) el tablero dibuja la flecha. Con
+    `sin_aviso` (un acuse) el turno que dispara no le vuelve como aviso a `YO`."""
     cuerpo = {"text": texto}
     if enlazar and YO:
         cuerpo.update({"from": YO, "link_to": sid})
+    if sin_aviso:
+        if not YO:
+            raise ValueError("sin_aviso necesita c.YO: es a quien no hay que avisar")
+        cuerpo["sin_aviso"] = YO  # el id, no `from`: sin `enlazar` no se dibuja la flecha
     return cuerpo
 
 
-def enviar(s, texto, enlazar=True):
-    """Escribe en la terminal de esa sesión. Con `enlazar`, el tablero dibuja la flecha.
+def enviar(s, texto, enlazar=True, sin_aviso=False):
+    """Escribe en la terminal de esa sesión. Con `enlazar`, el tablero dibuja la flecha. Con `sin_aviso`
+    (un acuse, «entrega recibida»), el turno que eso le cuesta al frente no vuelve como aviso a `YO`.
 
     Un id viejo (la sesión se restauró o se reabrió con otro) contesta 404 con `sucesora`: se manda
     una vez a esa, y `s["session_id"]` queda actualizado para los envíos siguientes."""
-    code, res = pedir("POST", f"/sessions/{s['session_id']}/send", _cuerpo_envio(s["session_id"], texto, enlazar))
+    code, res = pedir(
+        "POST", f"/sessions/{s['session_id']}/send", _cuerpo_envio(s["session_id"], texto, enlazar, sin_aviso)
+    )
     nueva = _sucesora(code, res)
     if nueva and nueva != s["session_id"]:
         print(f"enviar: {s['session_id'][:8]} ahora es {nueva[:8]} (sucesora)", file=sys.stderr)
         s["session_id"] = nueva
-        code = pedir("POST", f"/sessions/{nueva}/send", _cuerpo_envio(nueva, texto, enlazar))[0]
+        code = pedir("POST", f"/sessions/{nueva}/send", _cuerpo_envio(nueva, texto, enlazar, sin_aviso))[0]
     return code
 
 
@@ -556,6 +564,13 @@ def politica_turno(recurso, ttl_max_min=None, mem_min_gb=None):
 
 def turnos():
     return pedir("GET", "/turnos")[1]
+
+
+def trabajo(proyecto):
+    """Cómo se trabaja en el proyecto (últimas 72 h): esperas de frentes, acuses que vuelven, avisos
+    repetidos o intermedios, difusiones y pico de sesiones, con los hallazgos que pasan su umbral.
+    Es lo mismo que el sueño del lienzo deja como hallazgos propuestos en la memoria."""
+    return pedir("GET", f"/trabajo/{urllib.parse.quote(proyecto)}", timeout=60)[1]
 
 
 def memoria():

@@ -153,6 +153,14 @@ def filtrada(r: dict, completa: str | None, h: str, espera: bool = True) -> str 
 ON_STOP_SETTLE_S = (
     15  # el Stop de una coda a veces llega en un hueco (compactacion, entre herramientas) y sigue trabajando
 )
+SIN_AVISO_MAX_S = 1800  # un sin_aviso que nadie consumio no calla un turno de horas despues
+
+
+def normal_acuse(texto: str) -> str:
+    """El texto de un acuse como se compara con el pedido del turno: espacios colapsados, 200 caracteres."""
+    return " ".join((texto or "").split())[:200]
+
+
 ON_STOP_COOLDOWN_S = 30  # dos sesiones conectadas en ambos sentidos no se contestan en bucle
 # Una on_stop repetida no tiene tope total salvo que lo pida (limit="total"): se limita por frecuencia.
 # Medido en OpenSyync (2026-10-14): 7 reglas con max_fires=30 llegaron a 30 en una sesion larga, se
@@ -627,8 +635,22 @@ def fire_on_stop(sid: str) -> None:
                 state.log(f"on_stop de {sid[:8]} no disparado: la respuesta termina en pregunta al usuario")
                 return
         due, diferidas, salteadas = [], [], []
+        # un envio con sin_aviso (un acuse): calla SOLO el turno que ese acuse empezo, el que tiene su
+        # texto como pedido. Un acuse que llego en medio de otro turno no calla ese turno (que puede ser
+        # la entrega), y uno que nunca fue su propio turno vence a los SIN_AVISO_MAX_S
+        callar = (s or {}).get("sin_aviso") or {}
+        if callar and time.time() - float(callar.get("desde") or 0) > SIN_AVISO_MAX_S:
+            s["sin_aviso"], callar = None, {}
+        elif callar and normal_acuse(s.get("last_prompt") or "") != callar.get("texto"):
+            callar = {}  # otro turno: el pedido de silencio sigue esperando el suyo
+        elif callar:
+            s["sin_aviso"] = None
         for r in rules.items:
             if not suya(r):
+                continue
+            if callar and r.get("to") == callar.get("a"):
+                r["last_result"] = "salteado: el turno respondía un envío sin_aviso"
+                salteadas.append(r)
                 continue
             filtro = filtrada(r, turno["completa"], turno["huella"])
             if filtro:

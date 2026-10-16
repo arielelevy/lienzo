@@ -8,6 +8,7 @@ import time
 import agent_evaluation
 import conocimiento
 import jev
+import optimizacion_trabajo as trabajo
 import optimization_activity as activity
 import optimization_budget
 import optimization_cost
@@ -28,6 +29,7 @@ class Scheduler:
         self.started = {}
         self.tick_lock = threading.Lock()
         self.project_cursor = 0
+        self.trabajo_visto = {}  # proyecto -> monotonic del ultimo analisis de como se trabaja
 
     def status(self):
         budget = optimization_budget.Budget().status()
@@ -47,7 +49,8 @@ class Scheduler:
             "budget": budget,
             "adapters": adapters,
             "paid_scope": "piloto Jev métricas; precio y reserva revalidados antes de cada envío",
-            "automatic_scope": "hasta 30 incidentes recientes por proyecto; deduplicación por versión, cooldown 120 s, cola máxima 100",
+            "automatic_scope": "hasta 30 incidentes recientes por proyecto; deduplicación por versión, cooldown 120 s, cola máxima 100; "
+            "cómo se trabaja (esperas, acuses, avisos repetidos o intermedios, difusiones, pico de sesiones) cada hora por proyecto",
             "new_agents_enabled": False,
             "projects": [{"id": p["id"], "name": p.get("nombre", p["id"])} for p in conocimiento.proyectos()],
         }
@@ -253,7 +256,26 @@ class Scheduler:
                     self.reason = "evidencia nueva encolada automáticamente; sin gasto"
         except Exception as error:
             self.reason = f"descubrimiento local bloqueado: {type(error).__name__}"
+        self._trabajo(project)
 
+    def _trabajo(self, project):
+        """Cómo se trabaja en el proyecto (optimizacion_trabajo): a lo sumo cada TRABAJO_CADA_S, en un
+        rato quieto, y sólo deja hallazgos propuestos. Lee la memoria; no manda nada ni gasta."""
+        if time.monotonic() - self.trabajo_visto.get(project, -1e9) < TRABAJO_CADA_S:
+            return
+        try:
+            analisis = trabajo.analizar(project)
+            if activity.cancellation_reason(self.last_ui) or not self.queue.view()["enabled"]:
+                return  # sin marcar la hora: lo retoma el proximo rato quieto
+            ids = trabajo.registrar(project, analisis)
+            if ids:
+                self.reason = f"cómo se trabaja: {len(ids)} hallazgo(s) nuevo(s) en {project}; sin gasto"
+        except Exception as error:
+            self.reason = f"análisis de cómo se trabaja bloqueado: {type(error).__name__}"
+        self.trabajo_visto[project] = time.monotonic()
+
+
+TRABAJO_CADA_S = 3600
 
 INSTANCE = None
 ERROR = None
