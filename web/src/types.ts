@@ -342,7 +342,43 @@ export type ServerEvent =
   | { type: "removed"; session_id: string }
   | { type: "pending"; pending: Pending[] }
   | { type: "transcript"; session_id: string; size: number }
-  | { type: "consulta"; consulta: ConsultaResumen };
+  | { type: "consulta"; consulta: ConsultaResumen }
+  | ({ type: "rondas" } & RondasEstado);
+
+/** Aviso coordinado (lienzo/rondas.py): el mismo texto a varios frentes con su confirmación. */
+export interface AvisoDestino {
+  estado: "enviando" | "enviado" | "fallo" | "confirmado";
+  ts: string;
+  nota: string | null;
+}
+export interface Aviso {
+  id: string;
+  texto: string;
+  de: string | null;
+  creado: string;
+  vence: string;
+  cerrado?: string;
+  estado: "abierto" | "completo" | "vencido";
+  destinos: Record<string, AvisoDestino>;
+}
+/** Turno de un recurso pesado: un dueño con vencimiento y una cola. */
+export interface Turno {
+  dueno: { session_id: string; motivo: string | null; desde: string; vence: string } | null;
+  cola: { session_id: string; ttl_min: number; motivo: string | null; pedido: string }[];
+}
+export interface RondasEstado {
+  avisos: Aviso[];
+  turnos: Record<string, Turno>;
+  politicas: Record<string, { ttl_max_min: number; mem_min_gb: number }>;
+}
+/** GET /memoria: memoria libre de esta PC y qué sesión quieta conviene cerrar. */
+export interface PresionMemoria {
+  mem_free_gb: number | null;
+  umbral_gb: number;
+  bajo: boolean;
+  cerrar: { session_id: string; title: string | null; repo: string | null; quieta_desde: string | null }[];
+  max_sesiones_por_repo: number;
+}
 
 /** Ejecucion externa a la que pertenece una tarjeta de agente (un orquestador o `claude -p`): se ve
  *  y se lee, pero no se le escribe, ni se la mata, ni la mueven reglas. `kind` es "batch" (un

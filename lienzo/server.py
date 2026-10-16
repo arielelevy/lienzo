@@ -59,8 +59,10 @@ import red
 import remote_run
 import replica
 import restore
+import rondas
 import rules as rl
 import secretos
+import sessions as ses
 import state
 import tmux
 import tools
@@ -491,7 +493,10 @@ def conservar_regla(r: dict) -> bool:
     ninguna, las `at`) y van a una tarjeta conocida o a otra PC (`xpc`). La de otra PC se conserva
     aunque su destino todavia no se vea: el espejo llega despues, y si el destino ya no existe la
     purga la estaciona (`purge_stale_xpc`) en vez de perderla."""
-    return (r.get("to") in sessions or bool(r.get("xpc"))) and (not r.get("from") or r["from"] in sessions)
+    esperan = ses.DEAD_TARGETS  # las estacionadas de una muerta que espera sucesora (sucesion.json)
+    destino = r.get("to") in sessions or bool(r.get("xpc")) or (r.get("parked_to") or "") in esperan
+    origen = not r.get("from") or r["from"] in sessions or (r.get("parked_from") or "") in esperan
+    return destino and origen
 
 
 def salud_publica(autorizado: bool) -> dict:
@@ -764,6 +769,27 @@ def restore_capacity(n: int) -> tuple[int, dict]:
     return (n if fit is None else min(n, fit)), snap
 
 
+def preparar_sucesion(e: dict) -> None:
+    """Antes de relanzar la restaurable `e`: si su tarjeta muerta sigue en el tablero (se restaura
+    antes de los 60 s), se da de baja como muerta, asi sus reglas se estacionan; y la entrada de
+    sucesion queda marcada `restaurada`, para que la sesion que nazca (con el mismo id o con otro)
+    herede reglas y titulo antes que otra del mismo agente en la carpeta (sessions._prioridad_sucesora)."""
+    sid = e["session_id"]
+    with lock:
+        vieja = sessions.get(sid)
+        muerta = vieja is not None and (not vieja.get("alive") or vieja.get("state") == "muerta")
+    if muerta:
+        ses.drop_session(sid, "restaurada", muerta=True)
+    with lock:
+        entrada = ses.DEAD_TARGETS.setdefault(
+            sid, {"cwd": e["cwd"], "agent": e["agent"], "title": e.get("title"), "since": time.time()}
+        )
+        entrada["restaurada"] = time.time()
+        if e.get("title") and not entrada.get("title"):
+            entrada["title"] = e["title"]
+        ses.guardar_sucesion()
+
+
 def restore_local(d: dict) -> tuple[int, dict]:
     """Relanza en ESTA PC una sesion (`session_id`) o todas (`all: true`), una por una con
     RESTORE_GAP_S entre cada una. Las relanzadas se olvidan del registro. `all` respeta la memoria:
@@ -797,6 +823,7 @@ def restore_local(d: dict) -> tuple[int, dict]:
         for i, e in enumerate(items):
             if i:
                 time.sleep(RESTORE_GAP_S)
+            preparar_sucesion(e)
             try:
                 res = launch.launch(e["cwd"], e.get("title") or e.get("repo") or "", e["agent"], resume=e["session_id"])
             except Exception:
@@ -813,6 +840,12 @@ def restore_local(d: dict) -> tuple[int, dict]:
                 )
                 log(f"restaurar: {e['agent']} {e['session_id'][:8]} en {e['cwd']}")
             else:
+                # no nacio nada: sin la marca, otra sesion que se abra en la carpeta no le gana a una
+                # sucesora real ni se queda con reglas y titulo ajenos
+                with lock:
+                    if e["session_id"] in ses.DEAD_TARGETS:
+                        ses.DEAD_TARGETS[e["session_id"]].pop("restaurada", None)
+                        ses.guardar_sucesion()
                 failed.append({"session_id": e["session_id"], "error": res.get("error") or "no se pudo lanzar"})
         return (400 if failed and not restored else 200), {"restored": restored, "failed": failed, **extra}
     finally:
@@ -1221,7 +1254,10 @@ def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero
     if owner is not None:
         code, res = mirror.MIRROR.forward(owner, metodo, f"/sessions/{sid}/{nombre}", a.reenvio(d))
     elif s is None:
-        return 404, no_session()
+        # un id viejo (la sesion se restauro o se reabrio con otro): el 404 de siempre, con la pista de
+        # quien la sucedio para que el cliente reintente (coordinar.enviar lo hace solo); no se redirige
+        nueva = ses.sucesora_de(sid)
+        return 404, {**no_session(), **({"sucesora": nueva} if nueva else {})}
     else:
         rechazo = a.antes_local_tablero(d) if desde_tablero and a.antes_local_tablero else None
         if rechazo is None and nombre not in ACCIONES_EN_EXTERNAS:
@@ -1274,6 +1310,14 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     model = d.get("model") if isinstance(d.get("model"), str) else None
     distro = d.get("distro") if isinstance(d.get("distro"), str) and d.get("distro").strip() else None
     pc = d.get("pc")
+    if desde_tablero and agent != "vscode" and d.get("forzar") is not True:
+        # tope de sesiones vivas por repo, en todas las PCs (max_sesiones_por_repo, 4 por defecto): con 5-7
+        # sesiones la memoria cayo a ~0,7 GB y una mutacion se corto por OOM (OpenSyync, 2026-10-16)
+        with lock:
+            todas = list(sessions.values())
+        rechazo = rondas.tope_repo(cwd, todas + mirror.MIRROR.sessions())
+        if rechazo is not None:
+            return 409, rechazo
     if desde_tablero and pc and pc != identity.pc_id():
         # la distro la valida la PC duena, contra SUS distros (revision 2026-10-10: se validaba aca, contra
         # las de esta PC, y un lanzamiento en otra PC con una distro que esta no tiene daba 400)
@@ -1672,6 +1716,16 @@ class Handler(JsonHandler):
             if parts == ["auth", "sessions"]:
                 # las sesiones web abiertas (pentest B4), para revisarlas y cerrar las que no son propias
                 return self._json(200, auth.sesiones_web(auth.parse_cookie(self.headers.get("Cookie"))))
+            if parts == ["avisos"]:
+                return self._json(200, rondas.vista())
+            if len(parts) == 2 and parts[0] == "avisos":
+                a = rondas.vista_aviso(parts[1])
+                return self._json(200, a) if a else self._json(404, {"error": "aviso desconocido"})
+            if parts == ["turnos"]:
+                v = rondas.vista()
+                return self._json(200, {"turnos": v["turnos"], "politicas": v["politicas"]})
+            if parts == ["memoria"]:
+                return self._json(200, rondas.presion())
             if parts == ["consultas"]:
                 return self._json(200, consulta.listar())
             if len(parts) == 2 and parts[0] == "consultas":
@@ -1823,6 +1877,13 @@ class Handler(JsonHandler):
                     return self._json(403, {"error": "el conocimiento se escribe desde una PC de la LAN"})
                 code, res = conocimiento_api.dispatch("POST", parts[1:], self._json_body(), self.query)
                 return self._json(code, res)
+            if parts == ["avisos"]:
+                return self._json(*rondas.crear_aviso(self._json_body()))
+            if len(parts) == 3 and parts[0] == "avisos" and parts[2] == "ack":
+                d = self._json_body()
+                return self._json(*rondas.ack(parts[1], d.get("session_id"), d.get("nota")))
+            if len(parts) == 2 and parts[0] == "turnos":
+                return self._json(*rondas.pedir_turno(parts[1], self._json_body()))
             if parts == ["consultas"]:
                 d = self._json_body()
                 code, res = consulta.abrir(d)
@@ -1987,6 +2048,8 @@ class Handler(JsonHandler):
         try:
             if parts == ["config"]:
                 return self._put_config()
+            if len(parts) == 3 and parts[0] == "turnos" and parts[2] == "politica":
+                return self._json(*rondas.fijar_politica(parts[1], self._json_body()))
             if parts == ["agent-improvements", "scheduler"]:
                 data = self._json_body()
                 if not self._is_local() and data != {"action": "activity"}:
@@ -2131,6 +2194,9 @@ class Handler(JsonHandler):
                 if not drop_session(sid, "borrada desde la UI"):
                     restore.forget(sid)
                 return self._json(200, {"ok": True})
+            if len(parts) == 2 and parts[0] == "turnos":
+                sid = (self.query.get("session_id") or [None])[0] or self._json_body().get("session_id")
+                return self._json(*rondas.liberar_turno(parts[1], sid))
             if len(parts) == 2 and parts[0] == "peers":
                 return self._delete_peer(parts[1])
             if len(parts) == 2 and parts[0] == "xfer":
@@ -2931,6 +2997,8 @@ def main() -> int:
         log(f"no se pudo tomar {a.host}:{a.port} ({e}): ya hay un lienzo-server corriendo?")
         return 1
     purged, retitled = load_sessions()
+    ses.cargar_sucesion()  # antes que las reglas: conservar_regla mira quien espera sucesora
+    rondas.cargar()
     links.load(lambda l: l.get("to") in sessions and (not l.get("from") or l["from"] in sessions))
     rules.load(conservar_regla)
     consulta.tarjeta, consulta.enviar = consulta_tarjeta, consulta_enviar

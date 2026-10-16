@@ -376,12 +376,93 @@ def restore_on_drop(card: dict, muerta: bool) -> None:
 #
 # Se lee y se escribe SOLO con state.lock tomado (plan de refactor 1.3, E2): la escriben drop_session
 # (liveness, borrado) y la consumen los hilos de adopt_dead_target, y dos sucesoras que nacian juntas
-# heredaban las dos. Vive en memoria: la sucesion NO sobrevive a un reinicio del server. Las reglas
-# quedan estacionadas en rules.json (parked_to) pero, reiniciado el server, ya no hay quien las
-# reasigne solas: quedan deshabilitadas hasta un POST /rules/retarget a mano, o hasta que la purga
-# de las estacionadas hace mas de SUCESION_MAX_S (rules.purge_stale_xpc) se las lleva.
+# heredaban las dos. Desde el 2026-10-16 se guarda en sucesion.json (guardar_sucesion) y sobrevive a
+# un reinicio del server; las reglas quedan estacionadas en rules.json (parked_to / parked_from, con
+# el estado que tenian en parked_was_enabled) hasta que una sucesora las hereda o la purga de las
+# estacionadas hace mas de SUCESION_MAX_S (rules.purge_stale_xpc) se las lleva.
 SUCESION_MAX_S = 24 * 3600
 DEAD_TARGETS: dict[str, dict] = {}
+# old_sid -> {"new", "ts"}: quien sucedio a quien, para resolver un envio a un id viejo (404 con
+# `sucesora`). Desde el 2026-10-16 las dos tablas se guardan en ~/.lienzo/sucesion.json: en OpenSyync,
+# tras reiniciar la PC, las reglas se perdieron y hubo que recablear todo a mano.
+SUCESORAS: dict[str, dict] = {}
+
+
+def _sucesion_path() -> str:
+    return os.path.join(state.LIENZO, "sucesion.json")
+
+
+def guardar_sucesion() -> None:
+    """Escribe DEAD_TARGETS y SUCESORAS, sin lo vencido. Con el lock tomado; nunca levanta."""
+    ahora = time.time()
+    for tabla, clave in ((DEAD_TARGETS, "since"), (SUCESORAS, "ts")):
+        for k in [k for k, v in tabla.items() if ahora - float(v.get(clave) or 0) > SUCESION_MAX_S]:
+            tabla.pop(k, None)
+    try:
+        state.atomic_write(
+            _sucesion_path(), json.dumps({"muertas": DEAD_TARGETS, "sucesoras": SUCESORAS}, ensure_ascii=False)
+        )
+    except OSError as e:
+        state.log(f"no se pudo guardar sucesion.json: {e}")
+
+
+def cargar_sucesion() -> int:
+    """Al arrancar: vuelve a la memoria la sucesion guardada. Devuelve cuantas muertas esperan."""
+    d, err = state.leer_json(_sucesion_path())
+    if err is not None or not isinstance(d, dict):
+        return 0
+    with lock:
+        for tabla, clave in ((DEAD_TARGETS, "muertas"), (SUCESORAS, "sucesoras")):
+            datos = d.get(clave)
+            if isinstance(datos, dict):
+                tabla.update({k: v for k, v in datos.items() if isinstance(k, str) and isinstance(v, dict)})
+        guardar_sucesion()
+        return len(DEAD_TARGETS)
+
+
+def sucesora_de(sid: str) -> str | None:
+    """La sesion que hoy ocupa el lugar de `sid` (siguiendo la cadena), o None."""
+    vistos = set()
+    with lock:
+        while sid in SUCESORAS and sid not in vistos:
+            vistos.add(sid)
+            sid = SUCESORAS[sid].get("new") or sid
+    return sid if vistos else None
+
+
+def park_rules_from(sid: str) -> int:
+    """Deshabilita y marca (parked_from) las reglas cuyo ORIGEN es `sid`: su «cuando termine» vuelve
+    a andar si la sesion se restaura. Antes se borraban al morir la tarjeta."""
+    with lock:
+        suyas = [r for r in rules.items if r.get("from") == sid and not r.get("parked_from")]
+        for r in suyas:
+            if not r.get("parked_to"):  # la que ya esperaba al destino guarda su estado de antes
+                r["parked_was_enabled"] = bool(r.get("enabled"))
+            r["parked_from"], r["parked_since"], r["enabled"] = sid, now(), False
+        if suyas:
+            rules.save()
+    if suyas:
+        rules.publish()
+    return len(suyas)
+
+
+def retake_rules_from(old: str, new: str) -> int:
+    """Las reglas estacionadas con origen `old` pasan a salir de `new`, habilitadas."""
+    with lock:
+        suyas = [r for r in rules.items if r.get("parked_from") == old]
+        for r in suyas:
+            r["from"] = new
+            r.pop("parked_from", None)
+            if not r.get("parked_to"):  # con el destino tambien muerto, sigue esperando a la otra
+                # vuelve como estaba: una de un solo disparo que ya salio, o apagada a mano, sigue apagada
+                r["enabled"] = r.pop("parked_was_enabled", True)
+                r.pop("parked_since", None)
+        if suyas:
+            rules.save()
+    if suyas:
+        rules.publish()
+        state.log(f"{len(suyas)} reglas de {old[:8]} ahora salen de {new[:8]}")
+    return len(suyas)
 
 
 def park_rules_to(sid: str) -> int:
@@ -389,6 +470,8 @@ def park_rules_to(sid: str) -> int:
     with lock:
         suyas = [r for r in rules.items if r.get("to") == sid and not r.get("parked_to")]
         for r in suyas:
+            if not r.get("parked_from"):
+                r["parked_was_enabled"] = bool(r.get("enabled"))
             r["parked_to"], r["parked_since"], r["enabled"] = sid, now(), False
         if suyas:
             rules.save()
@@ -402,10 +485,13 @@ def retarget_rules(old: str, new: str) -> int:
     with lock:
         suyas = [r for r in rules.items if old in (r.get("to"), r.get("parked_to"))]
         for r in suyas:
-            r["to"], r["enabled"] = new, True
+            r["to"] = new
             r.pop("to_pc", None)  # se vuelve a identificar con el snapshot del destino nuevo
             r.pop("parked_to", None)
-            r.pop("parked_since", None)
+            if not r.get("parked_from"):
+                # la que sigue con el origen estacionado espera a su sucesora (retake_rules_from)
+                r["enabled"] = r.pop("parked_was_enabled", True)
+                r.pop("parked_since", None)
         if suyas:
             rules.save()
     if suyas:
@@ -417,34 +503,52 @@ def retarget_rules(old: str, new: str) -> int:
 _norm_cwd = identity.norm_cwd
 
 
+def _prioridad_sucesora(old: str, v: dict, s: dict) -> tuple | None:
+    """Orden para elegir de quien es sucesora `s` (mayor gana), o None si no puede serlo. Con varios
+    frentes del mismo agente en la misma carpeta (las rondas de OpenSyync) «la mas nueva» elegia mal:
+    primero el mismo id (un resume que lo conserva), despues una restaurada desde el lienzo (la mas
+    vieja primero: se relanzan de a una), despues el mismo titulo, y al final la muerta mas nueva."""
+    if v.get("agent") != s.get("agent") or _norm_cwd(v.get("cwd")) != _norm_cwd(s.get("cwd")):
+        return None
+    mismo_id = old == s["session_id"]
+    restaurada = float(v.get("restaurada") or 0)
+    mismo_titulo = bool(v.get("title")) and v.get("title") == s.get("title")
+    return (mismo_id, restaurada > 0, -restaurada, mismo_titulo, float(v.get("since") or 0))
+
+
 def adopt_dead_target(s: dict) -> str | None:
-    """Si `s` (recien nacida) es la sucesora de una sesion que murio siendo destino de reglas (mismo
-    agente, misma carpeta, hace menos de SUCESION_MAX_S), hereda sus reglas aca y en las otras PCs.
-    Devuelve el id viejo, o None."""
+    """Si `s` (recien nacida) es la sucesora de una sesion que murio con reglas (mismo agente, misma
+    carpeta, hace menos de SUCESION_MAX_S; ver _prioridad_sucesora), hereda sus reglas aca y en las
+    otras PCs, las que le avisaban y las suyas, y su titulo. Devuelve el id viejo, o None."""
     ahora = time.time()
     with lock:
         for k in [k for k, v in DEAD_TARGETS.items() if ahora - v["since"] > SUCESION_MAX_S]:
             DEAD_TARGETS.pop(k, None)
-        candidatas = [
-            (v["since"], old)
-            for old, v in DEAD_TARGETS.items()
-            if v.get("agent") == s.get("agent")
-            and _norm_cwd(v.get("cwd")) == _norm_cwd(s.get("cwd"))
-            and old != s["session_id"]
-        ]
+        candidatas = [(p, old) for old, v in DEAD_TARGETS.items() if (p := _prioridad_sucesora(old, v, s)) is not None]
         if not candidatas:
             return None
         old = max(candidatas)[1]
         # la elegida se reserva antes de soltar el lock: si otra sucesora ya se la llevo, esta no
         # hereda (con un pop a secas las dos seguian adelante y las dos re-apuntaban las reglas)
-        if DEAD_TARGETS.pop(old, None) is None:
+        muerta = DEAD_TARGETS.pop(old, None)
+        if muerta is None:
             return None
-    retarget_rules(old, s["session_id"])  # toma el lock por dentro; el forward a otras PCs, no
+        new = s["session_id"]
+        if old != new:
+            SUCESORAS[old] = {"new": new, "ts": ahora}
+        guardar_sucesion()
+        real = sessions.get(new)
+        if real is not None and muerta.get("title") and real.get("title_source") != "user":
+            real["title"], real["title_source"] = muerta["title"], "user"
+            touch(real)
+    retarget_rules(old, new)  # toma el lock por dentro; el forward a otras PCs, no
+    retake_rules_from(old, new)
     if mirror:
         for pc in mirror.MIRROR.peer_ids():
-            code, res = mirror.MIRROR.forward(pc, "POST", "/rules/retarget", {"old": old, "new": s["session_id"]})
+            code, res = mirror.MIRROR.forward(pc, "POST", "/rules/retarget", {"old": old, "new": new})
             if code != 200:
                 state.log(f"heredar reglas de {old[:8]} en {pc}: {code} {(res or {}).get('error')}")
+    state.log(f"sesion {new[:8]} sucede a {old[:8]} ({muerta.get('title') or muerta.get('cwd')})")
     return old
 
 
@@ -456,16 +560,23 @@ def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
         if not forget_session(sid):
             return False
     links.remove(lambda l: sid in (l["from"], l["to"]))
-    rules.remove(lambda r: r.get("from") == sid)  # las suyas mueren con ella
     if muerta and card:
-        # las que le AVISABAN quedan estacionadas: si vuelve a abrirse una sesion igual en esa
-        # carpeta (la coordinadora que se cerro y se reabrio), las hereda (adopt_dead_target)
-        n = park_rules_to(sid)
+        # las que le AVISABAN y las SUYAS quedan estacionadas: si vuelve a abrirse una sesion igual en
+        # esa carpeta (la coordinadora que se reabrio, un frente restaurado tras reiniciar la PC), las
+        # hereda (adopt_dead_target). Antes las suyas se borraban: al restaurar, ningun frente avisaba
+        n = park_rules_to(sid) + park_rules_from(sid)
         if n:
             with lock:
-                DEAD_TARGETS[sid] = {"cwd": card.get("cwd"), "agent": card.get("agent"), "since": time.time()}
-            state.log(f"{n} reglas que avisaban a {sid[:8]} quedan en espera de una sucesora")
+                DEAD_TARGETS[sid] = {
+                    "cwd": card.get("cwd"),
+                    "agent": card.get("agent"),
+                    "title": card.get("title") if card.get("title_source") == "user" else None,
+                    "since": time.time(),
+                }
+                guardar_sucesion()
+            state.log(f"{n} reglas de y hacia {sid[:8]} quedan en espera de una sucesora")
     else:
+        rules.remove(lambda r: r.get("from") == sid)  # las suyas mueren con ella
         rules.remove(lambda r: r["to"] == sid)
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
     restore_on_drop(card, muerta)

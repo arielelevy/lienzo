@@ -1496,6 +1496,8 @@ def test_las_claves_de_una_regla_nueva_no_cambian_de_orden(aislado, con_pid):
         "limit",  # limite por frecuencia (2026-10-14): al final, sin mover las de antes
         "rate_max",
         "rate_window_s",
+        "solo_si",  # filtro de avisos (2026-10-16): tambien al final
+        "dedupe",
     ]
 
 

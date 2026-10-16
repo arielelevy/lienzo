@@ -65,7 +65,8 @@ def _sin_enfriamiento(r):
 
 def test_regla_vieja_sin_limit_no_se_apaga_por_el_tope(entorno):
     r = regla()  # como las de OpenSyync: repeat, max_fires chico, sin `limit`
-    for _ in range(5):
+    for i in range(5):
+        st.sessions[ORIGEN]["last_reply"] = f"turno {i}"
         rl.fire_on_stop(ORIGEN)
         _sin_enfriamiento(r)
     assert len(entorno) == 5 and r["enabled"] is True and r["fired"] == 5
@@ -73,7 +74,8 @@ def test_regla_vieja_sin_limit_no_se_apaga_por_el_tope(entorno):
 
 def test_tope_total_solo_si_se_pide(entorno):
     r = regla(limit="total")
-    for _ in range(4):
+    for i in range(4):
+        st.sessions[ORIGEN]["last_reply"] = f"turno {i}"
         rl.fire_on_stop(ORIGEN)
         if r.get("last_fired"):
             _sin_enfriamiento(r)
@@ -101,7 +103,8 @@ def test_stop_en_enfriamiento_queda_en_espera_y_sale_agrupado(entorno):
 
 def test_la_ventana_corta_el_bucle_sin_apagar_la_regla(entorno):
     r = regla(rate_max=3, rate_window_s=600)
-    for _ in range(6):
+    for i in range(6):
+        st.sessions[ORIGEN]["last_reply"] = f"turno {i}"
         rl.fire_on_stop(ORIGEN)
         if r.get("last_fired") and not r.get("deferred"):
             _sin_enfriamiento(r)

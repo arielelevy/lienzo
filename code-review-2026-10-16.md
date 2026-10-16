@@ -90,3 +90,29 @@ y `optimization_scheduler.py`. Nueve hallazgos; tres también corrigen el párra
 - Faltaba el proveedor único con ZDR y sin recolección: la placa dice «ZDR · sin reintentos».
 - La muestra cruzaba un barrote: el hueco va de -13 a 7 y la pestaña verde queda del lado que se ve.
 - Comentario de una boca de entrada que no se dibuja, y texto alternativo con la lista recortada: corregidos.
+
+# Code review 2026-10-16: rondas largas
+
+Revisión con el skill `code-review` (nivel alto) del cambio de rondas largas: filtro de avisos en
+`lienzo/rules.py`, sucesión persistente en `lienzo/sessions.py` y `lienzo/server.py`, `lienzo/rondas.py`,
+`skills/lienzo/coordinar.py` y la tira del tablero. Diez hallazgos, todos válidos y corregidos, cada uno
+con su regresión en `tests/test_rondas_revision.py`.
+
+| # | Hallazgo | Estado |
+|---|---|---|
+| 1 | Los avisos de rondas (completo, vencido, turno que pasa o vence) se mandaban dentro del bucle de reglas, hasta 60 s cada uno | Corregido: `_avisar` los manda en un hilo |
+| 2 | `solo_si` se buscaba en la respuesta recortada a 6000 caracteres: un `ESTADO:` al final de un informe largo se perdía | Corregido: se busca en la respuesta entera (`FILTRO_CAP`); `{respuesta}` sigue recortada |
+| 3 | Al restaurar, las reglas apagadas (un solo disparo ya salido, apagada a mano) volvían prendidas | Corregido: se guarda y se repone `parked_was_enabled` |
+| 4 | `coordinar.pedir_turno` mandaba siempre `ttl_min=30` y una política menor lo rechazaba | Corregido: sin `ttl_min` decide el server |
+| 5 | El dedupe descartaba el mismo texto de otra tarea («Listo.») | Corregido: la huella es pedido + respuesta |
+| 6 | Un relanzado fallido dejaba la marca `restaurada` 24 h | Corregido: se saca al fallar |
+| 7 | `enviar_seguro` gastaba un intento al saltar a la sucesora; con `reintentos=0` no llegaba a mandar | Corregido: el salto no gasta intento (hasta 3) |
+| 8 | Una dueña de turno restaurada con otro id no podía soltarlo ni renovarlo | Corregido: se compara por id vigente y la revisión reescribe el id |
+| 9 | El tope por repo, lanzando en otra PC, comparaba una clave local que no coincide | Corregido: cuenta también por carpeta |
+| 10 | Un id viejo y su sucesora en el mismo aviso recibían el texto dos veces | Corregido: 400 |
+
+Además: el comentario de `SUCESION_MAX_S` decía que la sucesión no sobrevive al reinicio; actualizado.
+
+Verificación: `pytest tests` 1730 passed, 3 skipped; `pruebas-agenticas/rondas_e2e.py` 17 de 17 contra
+un server propio (7393, `LIENZO_HOME` temporal); Playwright `humo` y `salud` 3 de 3 contra un server
+nuevo. Contra el 7321 sin reiniciar fallan por 404 de `/avisos` y `/memoria`: es entorno, se va al reiniciar.

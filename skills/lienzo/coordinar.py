@@ -114,8 +114,22 @@ def _cuerpo_envio(sid, texto, enlazar):
 
 
 def enviar(s, texto, enlazar=True):
-    """Escribe en la terminal de esa sesión. Con `enlazar`, el tablero dibuja la flecha."""
-    return pedir("POST", f"/sessions/{s['session_id']}/send", _cuerpo_envio(s["session_id"], texto, enlazar))[0]
+    """Escribe en la terminal de esa sesión. Con `enlazar`, el tablero dibuja la flecha.
+
+    Un id viejo (la sesión se restauró o se reabrió con otro) contesta 404 con `sucesora`: se manda
+    una vez a esa, y `s["session_id"]` queda actualizado para los envíos siguientes."""
+    code, res = pedir("POST", f"/sessions/{s['session_id']}/send", _cuerpo_envio(s["session_id"], texto, enlazar))
+    nueva = _sucesora(code, res)
+    if nueva and nueva != s["session_id"]:
+        print(f"enviar: {s['session_id'][:8]} ahora es {nueva[:8]} (sucesora)", file=sys.stderr)
+        s["session_id"] = nueva
+        code = pedir("POST", f"/sessions/{nueva}/send", _cuerpo_envio(nueva, texto, enlazar))[0]
+    return code
+
+
+def _sucesora(code, res):
+    """El id de la sucesora que trae un 404 de una sesión vieja, o None."""
+    return res.get("sucesora") if code == 404 and isinstance(res, dict) else None
 
 
 def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, reintentos=2):
@@ -130,6 +144,7 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
     - 404 con `gone` (la tarjeta ya no existe allá): se vuelve a buscar el frente por nombre
       (`proyecto` + `letra`) en la misma PC y se manda al id nuevo, una vez. Sin `proyecto`/`letra`
       no se adivina.
+    - 404 con `sucesora` (el id quedó viejo tras restaurar): se manda a la sucesora.
     - 503 con `no_llego` (el pedido no salió: PC desconocida o conexión rechazada) o el lienzo local
       que rechaza la conexión: se espera y se reintenta, hasta `reintentos` veces. Un timeout o un
       503 sin esa marca (corte a mitad) pudo haberse tecleado del otro lado: NO se reintenta.
@@ -147,7 +162,8 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
             "motivo": f"el texto trae caracteres de control {raros} (¿una ruta de Windows sin escapar?)",
             "sid": s["session_id"],
         }
-    for intento in range(reintentos + 1):
+    intento, saltos = 0, 0  # saltos: redirecciones a una sucesora, que no gastan un intento
+    while intento <= reintentos:
         s = reubicar(s, sesiones()) or s
         sid = s["session_id"]
         if s.get("stopped_by"):
@@ -179,10 +195,15 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
                 else f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)"
             )
             return {"ok": False, "code": 200, "motivo": motivo, "sid": sid}
+        if (nueva := _sucesora(code, res)) and nueva != sid and saltos < 3:
+            saltos += 1
+            s = next((x for x in sesiones() if x["session_id"] == nueva), {**s, "session_id": nueva})
+            continue
         if code == 404 and isinstance(res, dict) and res.get("gone") and proyecto and letra:
             nuevo = frentes(proyecto, pc=s.get("pc")).get(letra)
             if nuevo and nuevo["session_id"] != sid:
                 s = nuevo
+                intento += 1
                 continue
         # solo se reintenta lo que no salio: un 503 con `no_llego` o el lienzo local rechazando la
         # conexion. Un timeout (0) o un 503 sin la marca (corte a mitad) pudo haberse tecleado del
@@ -192,6 +213,7 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
         )
         if no_salio and intento < reintentos:
             time.sleep(3 * (intento + 1))
+            intento += 1
             continue
         motivo = str(res.get("error") if isinstance(res, dict) and res.get("error") else res)[:200]
         if code in (0, 503) and not no_salio:
@@ -400,12 +422,15 @@ def _limite(max_fires):
     return {"limit": "total", "max_fires": max_fires} if max_fires else {"limit": "rate"}
 
 
-def regla_informe(s, texto, max_fires=None):
+def regla_informe(s, texto, max_fires=None, solo_si=None):
     """Regla `on_stop` del frente hacia la coordinadora, para que el informe llegue solo.
 
     `repeat` es obligatorio: sin él dispara una vez y queda apagada, y un frente que cierra dos
     turnos avisa solo el primero. Sin `max_fires` no hay tope total: con el tope de 30 de antes, en
     una sesion larga las reglas se apagaban y la coordinadora dejaba de recibir (OpenSyync, 2026-10-14).
+    Con `solo_si` (p. ej. "ESTADO:") avisa solo los turnos cuya respuesta trae ese marcador; los
+    intermedios («sigo esperando») no le cuestan un turno a la coordinadora. El mismo turno (misma
+    respuesta al mismo pedido) no se entrega dos veces (dedupe del server).
     """
     if not YO:
         raise ValueError(
@@ -414,14 +439,22 @@ def regla_informe(s, texto, max_fires=None):
     return pedir(
         "POST",
         "/rules",
-        {"kind": "on_stop", "from": s["session_id"], "to": YO, "text": texto, "repeat": True, **_limite(max_fires)},
+        {
+            "kind": "on_stop",
+            "from": s["session_id"],
+            "to": YO,
+            "text": texto,
+            "repeat": True,
+            **_limite(max_fires),
+            **({"solo_si": solo_si} if solo_si else {}),
+        },
     )[0]
 
 
-def cablear(texto=None, pc=None, solo_vivas=True, max_fires=None, filtro=None):
+def cablear(texto=None, pc=None, solo_vivas=True, max_fires=None, filtro=None, solo_si=None):
     """Cablea CADA frente vivo hacia la coordinadora (`YO`): una regla `on_stop` por tarjeta, para que
     el informe llegue solo cuando termine. No repite las que ya tienen regla hacia `YO`, no cablea a
-    la coordinadora consigo misma. `filtro(s)` (opcional) deja afuera lo que no es de este trabajo: sin
+    la coordinadora consigo misma. `solo_si` como en `regla_informe`. `filtro(s)` (opcional) deja afuera lo que no es de este trabajo: sin
     él se cablea TODO lo vivo, incluidas sesiones de otros proyectos. Devuelve
     {"creadas": [...], "ya_estaban": [...], "fallaron": [{"sid", "code", "error"}]}.
 
@@ -452,7 +485,15 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=None, filtro=None):
         return sid, pedir(
             "POST",
             "/rules",
-            {"kind": "on_stop", "from": sid, "to": YO, "text": msg, "repeat": True, **_limite(max_fires)},
+            {
+                "kind": "on_stop",
+                "from": sid,
+                "to": YO,
+                "text": msg,
+                "repeat": True,
+                **_limite(max_fires),
+                **({"solo_si": solo_si} if solo_si else {}),
+            },
         )
 
     # en paralelo: una regla de una tarjeta de otra PC lenta o caida esperaba su timeout antes de seguir
@@ -472,6 +513,54 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=None, filtro=None):
                     }
                 )
     return out
+
+
+def aviso(texto, destinos, vence_min=60):
+    """Cambio coordinado: el mismo `texto` a varios frentes (tarjetas o session_id) con lista de
+    confirmaciones. Cada frente confirma cerrando su respuesta con `ACK <id>`; a `YO` le llega UN aviso
+    cuando confirmaron todos (o cuando vence, con quiénes faltan). Devuelve (code, aviso con `id`)."""
+    ids = [d["session_id"] if isinstance(d, dict) else d for d in destinos]
+    return pedir("POST", "/avisos", {"texto": texto, "a": ids, "de": YO or None, "vence_min": vence_min}, timeout=30)
+
+
+def aviso_estado(aviso_id):
+    """El aviso con el estado de cada destino: enviando, enviado, fallo o confirmado (con su nota)."""
+    return pedir("GET", f"/avisos/{aviso_id}")[1]
+
+
+def ack(aviso_id, session_id, nota=None):
+    """Confirma un aviso a mano (lo normal es la línea `ACK <id>` al final de la respuesta)."""
+    return pedir("POST", f"/avisos/{aviso_id}/ack", {"session_id": session_id, "nota": nota})
+
+
+def pedir_turno(recurso, session_id, ttl_min=None, motivo=None):
+    """Turno de un recurso pesado (navegador, suite, motores, pago). 200: es tuyo hasta `vence`;
+    202: en cola (`posicion`), y el lienzo te escribe cuando te toca. Pedirlo siendo dueño lo renueva.
+    Sin `ttl_min` el server usa 30 min, o el máximo de la política si es menor."""
+    cuerpo = {"session_id": session_id, "motivo": motivo}
+    if ttl_min is not None:
+        cuerpo["ttl_min"] = ttl_min
+    return pedir("POST", f"/turnos/{recurso}", cuerpo)
+
+
+def liberar_turno(recurso, session_id):
+    """Suelta el turno (o sale de la cola); el siguiente lo recibe solo."""
+    return pedir("DELETE", f"/turnos/{recurso}?session_id={urllib.parse.quote(session_id)}")
+
+
+def politica_turno(recurso, ttl_max_min=None, mem_min_gb=None):
+    """Lo que decide la coordinadora: el máximo de un turno y la memoria libre mínima para otorgarlo."""
+    cuerpo = {k: v for k, v in (("ttl_max_min", ttl_max_min), ("mem_min_gb", mem_min_gb)) if v is not None}
+    return pedir("PUT", f"/turnos/{recurso}/politica", {**cuerpo, "por": YO or None})
+
+
+def turnos():
+    return pedir("GET", "/turnos")[1]
+
+
+def memoria():
+    """Memoria libre de esta PC, si bajó del umbral y qué sesiones quietas conviene cerrar primero."""
+    return pedir("GET", "/memoria")[1]
 
 
 def borrar_reglas_hacia_mi():
@@ -545,7 +634,7 @@ def tablero(proyecto, pc=None):
         )
 
 
-def lanzar(pc, cwd, titulo, agent="claude", model=None):
+def lanzar(pc, cwd, titulo, agent="claude", model=None, forzar=False):
     """POST /sessions/launch: lanza una sesión nueva, local si `pc` es None (o la propia), o en la
     PC `pc` (`pc_id` de `GET /peers`) si se da. `cwd` tiene que caer dentro de `launch_roots` de esa
     PC (`config.json`; vacía o ausente ahí es NINGUNA carpeta, no todas). La tarjeta nueva aparece
@@ -555,12 +644,17 @@ def lanzar(pc, cwd, titulo, agent="claude", model=None):
     `globant_dgx/GLM-5.3-Flash` para coda. La respuesta trae `model_applied`: falso si el agente no
     lo soporta o el id no es válido (solo `[A-Za-z0-9._/:@-]`). **En coda cambia el modelo por defecto
     de esa PC** (lo escribe en su `config.json`): avisarle al usuario antes de usarlo.
+
+    409 `tope_repo`: ya hay `max_sesiones_por_repo` (4) vivas en ese repo; trae cuáles. Cerrar una
+    quieta (`memoria()` sugiere cuál) o, con memoria medida, `forzar=True`.
     """
     cuerpo = {"cwd": cwd, "agent": agent, "title": titulo}
     if pc:
         cuerpo["pc"] = pc
     if model:
         cuerpo["model"] = model
+    if forzar:
+        cuerpo["forzar"] = True
     return pedir("POST", "/sessions/launch", cuerpo)
 
 

@@ -32,6 +32,21 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
   **Estado al 2026-10-15:** sin spec. Lo de arriba ya sirve como requisitos; falta diseño y tareas con
   la skill `sdd` en `docs/specs/`: cómo encaja en `coordinar.py`, las reglas `on_stop` y las rondas.
 
+## Rondas largas: lo que quedó afuera (2026-10-16)
+
+Lo hecho está en el README («Rondas largas») y en `code-review-2026-10-16.md`.
+
+- [ ] Reiniciar el server de 7321 entre olas de OpenSyync: lo coordina su coordinadora (pedido del
+  2026-10-16, no reiniciar mientras esté en ronda). Hasta entonces el tablero nuevo pide `/avisos` y
+  `/memoria` y recibe 404, y Playwright `humo` y `salud` fallan contra 7321 por esos errores de consola.
+- [ ] Aprobar o descartar `pruebas-agenticas/resultados/casos-rondas.nuevo.json` (rondas-focal,
+  rondas-e2e) y `mutaciones-rondas.nuevo.json` (5 destructivas, 3 de control); después correr
+  `mutar.mjs --sin-cache` y la compuerta sobre el estado commiteado.
+- [ ] Medir con dos PCs: un aviso a un frente de otra PC se confirma leyendo `last_reply` del espejo,
+  sin probar todavía con la otra PC real; `POST /avisos/<id>/ack` se manda al lienzo de quien creó el aviso.
+- [ ] Medir con una restauración real tras reiniciar la PC que Claude y Codex hereden reglas y título
+  (cubierto con pruebas sobre el registro; no con agentes reales).
+
 ## Trabajar con Claude Desktop y Codex desktop (2026-10-16)
 
 - [ ] **Qué hace falta para que el lienzo trabaje del todo con las apps de escritorio** (pedido de

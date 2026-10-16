@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, isMissingRoute, pendingApi, rulesApi, sessionsApi, type AuthInfo } from "./api";
 import { Board, colOf, norm, passesFilters } from "./components/Board";
 import { ConsultasBar } from "./components/Consulta";
+import { RondasBar } from "./components/Rondas";
 import { RemoteBrowser } from "./components/RemoteBrowser";
 import { allAgents } from "./agents";
 import { canWrite, hasConsole, shortName, toggled } from "./names";
@@ -515,6 +516,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       <div className="tiras">
         <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onSelect={selectPc} onToggle={togglePc} onAll={showAllPcs} />
         <ConsultasBar />
+        <RondasBar sessions={sessions} />
       </div>
       <Plugins toast={toast} />
       <Board

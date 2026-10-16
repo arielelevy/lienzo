@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { setConsultas, upsertConsulta } from "../consultas";
-import type { ConsultaResumen, Link, Pending, Rule, ServerEvent, Session } from "../types";
+import { setRondas } from "../rondas";
+import type { ConsultaResumen, Link, Pending, RondasEstado, Rule, ServerEvent, Session } from "../types";
 
 interface Options {
   /** se llama al abrir o cortar el stream: la URL del tunel o la cookie pueden haber cambiado */
@@ -44,8 +45,11 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
     // evento SSE durante la carga y `load` descarta todo lo suyo; el snapshot del stream no las trae.
     // Un server sin la ruta (otra PC sin actualizar) no traba nada
     const loadConsultas = () => api.get<ConsultaResumen[]>("/consultas").then((cs) => !disposed && setConsultas(cs), () => null);
+    // los avisos y turnos de rondas largas, igual que las consultas: aparte y tolerando un server viejo
+    const loadRondas = () => api.get<RondasEstado>("/avisos").then((r) => !disposed && setRondas(r), () => null);
     const load = async () => {
       loadConsultas();
+      loadRondas();
       if (loading) return;
       loading = true;
       const startedAt = revision;
@@ -130,6 +134,7 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
           if (m.links) setLinks(boardLinks(m.links));
           if (m.rules) setRules(m.rules);
           loadConsultas();
+          loadRondas();
           setTranscriptTick((t) => t + 1);
           break;
         case "links":
@@ -137,6 +142,9 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
           break;
         case "consulta":
           upsertConsulta(m.consulta);
+          break;
+        case "rondas":
+          setRondas(m);
           break;
         case "rules":
           setRules(m.rules);

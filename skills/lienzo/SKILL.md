@@ -109,7 +109,10 @@ explícito**, o los acentos se rompen. Lo que se usa para repartir:
 | `GET /pending`, `POST /pending/<id>` | permisos, `{decision:"allow"\|"deny"}` |
 | `POST /rescan` | barrido de procesos ahora |
 | `GET /peers` | las PCs de la federación, la propia primero (`local: true`), con `alive` y `health` (memoria, CPU, temperatura) |
-| `POST /sessions/launch` | `{pc?, cwd, agent, title}`: lanza una sesión nueva, local o en la PC `pc` |
+| `POST /sessions/launch` | `{pc?, cwd, agent, title, forzar?}`: lanza una sesión nueva, local o en la PC `pc`. 409 `tope_repo` con 4 vivas en el repo (`max_sesiones_por_repo`) |
+| `POST /avisos`, `POST /avisos/<id>/ack` | aviso coordinado a N frentes con confirmaciones (ver «Rondas largas») |
+| `POST`, `DELETE /turnos/<recurso>` | turno de un recurso pesado: dueño, vencimiento y cola |
+| `GET /memoria` | memoria libre, si bajó del umbral y qué sesión quieta cerrar primero |
 
 El canal nativo Claude a Claude va por afuera: `ListAgents` lista las sesiones vivas y
 `SendMessage` les habla. El lienzo lo dibuja como flecha doble pero no lo intermedia. Ve las de
@@ -154,7 +157,7 @@ tres investigadores de modelos de frontera, con esfuerzo alto, y un revisor.
 ```python
 cid = c.consulta("¿…?", [sid_claude, sid_codex], vueltas=2, revisor=sid_revisor)
 c.consulta_estado(cid)
-c.consulta_replica(cid, para, de, vuelta)   # reenvía a `para` la respuesta de `de` que no le llegó
+c.consulta_replica(cid, para, de, vuelta)  # reenvía a `para` la respuesta de `de` que no le llegó
 ```
 
 El lienzo manda la vuelta 1 a todos a la vez, después le pasa a cada uno las respuestas de los otros
@@ -247,6 +250,12 @@ medido desde el lienzo; mientras tanto, pedirle al usuario que lo cierre o cerra
 
 ## Restaurar sesiones tras un reinicio
 
+**El cableado sobrevive** (desde el 2026-10-16): al morir una tarjeta, sus reglas (las suyas y las
+que le avisaban) quedan estacionadas en `~/.lienzo/sucesion.json`, también tras reiniciar el server.
+La sesión restaurada las hereda con su título, aunque cambie de `session_id`; con varios frentes en
+la misma carpeta gana la que se restauró desde el lienzo. Un envío al id viejo contesta 404 con
+`sucesora`, y `c.enviar` / `c.enviar_seguro` reintentan solos ahí. No hace falta recablear.
+
 Al reiniciar la PC mueren todos los agentes y las tarjetas se borran a los 60 s. Cada PC guarda en
 `~/.lienzo/restaurar.json` dónde estaba cada sesión (agente, carpeta, título, id) y las relanza
 con el retomar de cada agente (`claude --resume <id>`, `codex resume <id>`, `pi --resume`,
@@ -266,6 +275,49 @@ c.restaurar(todas=True, pc=None)  # todas las de esa PC, una por una (~2 s entre
   `launch_roots`.
 - Antes de relanzar todas, mirar `restaurables()`: tras un `/clear` o un cierre raro puede haber
   entradas que ya no interesan; se descartan con `DELETE /sessions/<id>`.
+
+## Rondas largas
+
+Aprendido en OpenSyync (olas 21–22, 2026-10-15/16, 4–7 frentes): cerrar una entrega llevó ~2 h y la
+mitad fue espera y coordinación. Lo que la acorta:
+
+- **Congelar el alcance después del gate.** Lo nuevo que aparece va a la versión siguiente, no a esta ola.
+- **Un frente por funcionalidad, de punta a punta** (contrato + backend + UI). Repartir una funcionalidad
+  en tres frentes convierte cada cambio de contrato en un handshake a tres bandas.
+- **Pruebas por niveles.** Texto o CSS: la prueba focal. Lógica: focal + mutación del delta. Cierre de
+  ola: suite global, mutación amplia, clon limpio y agénticas, una sola vez.
+- **Revisión:** una independiente por ola, más `/code-review` local y la skill `code-audit` en cada
+  frente. Nunca `ultra` ni ultrareview: cobran créditos.
+- **Mutación que modifica archivos en el lugar:** siempre con foto de hashes antes y después, tope de
+  tiempo por corrida y nunca en paralelo con builds o revisiones del mismo árbol.
+- **Máximo 4 sesiones simultáneas** salvo memoria medida (`c.memoria()`); el lanzamiento lo frena solo.
+
+Las primitivas que lo sostienen:
+
+```python
+c.cablear(solo_si="ESTADO:")  # sólo avisan los turnos que cierran con ESTADO:
+a = c.aviso("Subí el contrato a v3: …", [fa, fb, fc])[1]  # 1 aviso a YO cuando confirmen todos
+c.aviso_estado(a["id"])  # quién confirmó, con su nota
+c.pedir_turno("navegador", sid, ttl_min=30, motivo="agénticas")  # 200 tuyo · 202 en cola
+c.liberar_turno("navegador", sid)  # el siguiente lo recibe solo
+c.politica_turno("motores", ttl_max_min=60, mem_min_gb=3)  # lo decide la coordinadora
+c.memoria()  # {bajo, mem_free_gb, cerrar: [la quieta más vieja primero]}
+```
+
+- **Avisos sin duplicados.** Una regla no reentrega el mismo turno (misma respuesta al mismo pedido),
+  ni el que ya espera; `dedupe: false` lo apaga. Con `solo_si` los turnos intermedios («sigo esperando») no
+  avisan; los frentes cierran cada entrega con una línea `ESTADO: …`. Lo demorado sale en un aviso,
+  con la foto del último turno que pasó el filtro.
+- **Cambio coordinado.** El frente confirma cerrando su respuesta con `ACK <id>` (y una nota en la
+  misma línea), sin hablarles a los otros. El aviso vence (60 min por defecto) y entonces dice quién
+  falta. Va en la tira del tablero con `n/N ack`. Es el reemplazo del canal par a par: los frentes
+  siguen sin hablarse entre sí, y por eso no hay bucles.
+- **Turno pesado.** Navegador, suite, motores o pago: un dueño con vencimiento (30 min por defecto) y
+  una cola visible. Se suelta solo al vencer o al cerrarse la sesión dueña, y el siguiente recibe un
+  mensaje. Con `mem_min_gb` no se otorga mientras falte memoria. En el encargo, decirle al frente:
+  «pedí el turno de `<recurso>` antes de usarlo y soltalo al terminar».
+- **Memoria.** Bajo `mem_aviso_gb` (1,5 GB) la tira muestra la sesión quieta que conviene cerrar;
+  `max_sesiones_por_repo` (4) frena el lanzamiento con 409 `tope_repo` (`forzar=True` con memoria medida).
 
 ## CPU, memoria y temperatura
 

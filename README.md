@@ -55,7 +55,9 @@ retoma por `--resume-id`. Todas las CLI pueden marcarse como coordinadora median
 del tablero.
 
 Una consola que cambia de `session_id` sin cambiar de proceso (un `/clear`, un resume) le pasa sus
-conexiones a la tarjeta nueva.
+conexiones a la tarjeta nueva. Una tarjeta que muere deja estacionadas sus reglas, las suyas y las que
+le avisaban, en `~/.lienzo/sucesion.json`. La sesión que la retoma (restaurada, con el mismo id o con
+otro) las hereda junto con el título, también después de reiniciar el server.
 
 Al pegar trabajo en otra tarjeta y detener la original, las reglas pendientes en ambas
 direcciones pasan a la copia, junto con la marca de coordinadora. También funciona al copiar
@@ -162,6 +164,13 @@ mandale a demo». Modos: *Ahora*, *Cuando termine*, *Programar* (a una hora o ca
 *Canal nativo* (Claude a Claude, `SendMessage`). Toda regla tiene tope; el server rechaza el bucle
 A↔B, la regla repetida y dos programadas al mismo minuto hacia la misma sesión. Cada conexión se
 dibuja como flecha (las de envío viven 10 minutos).
+
+Una regla «cuando termine» no vuelve a entregar el mismo turno: la misma respuesta al mismo pedido,
+ya entregada o en espera (`dedupe`, prendido por defecto). El mismo «Listo.» a otra tarea sí avisa. Con
+`solo_si: "ESTADO:"`, o cualquier marcador de hasta 64 caracteres, sólo avisa los turnos cuya
+respuesta lo trae. El marcador se busca en la respuesta entera, aunque `{respuesta}` lleve los
+primeros 6000 caracteres. Los intermedios quedan como «salteado» en la regla y en el log. Los avisos demorados por el límite de frecuencia
+salen juntos con la respuesta del último turno que pasó el filtro.
 
 ![Conectar escribiendo una frase](docs/img/conectar.png)
 
@@ -440,6 +449,32 @@ enlazando esa carpeta en `~/.agents/skills/`.
 
 <br clear="right">
 
+### Rondas largas
+
+Pedido de Ariel del 2026-10-16, medido en OpenSyync con 4 a 7 frentes: la mitad de las ~2 h de una
+entrega fue espera y coordinación. Tres primitivas aditivas, en `lienzo/rondas.py`, se ven en una tira
+al lado de la de consultas y se guardan en `~/.lienzo/rondas.json`:
+
+- **Aviso coordinado.** `POST /avisos {texto, a: [sid…], de?, vence_min?}` manda el mismo texto a
+  hasta 12 frentes. Cada uno confirma cerrando su respuesta con `ACK <id>`, más una nota opcional en la
+  misma línea, o con `POST /avisos/<id>/ack {session_id, nota?}`. Un `ACK` en un turno que sigue
+  corriendo no cuenta. Quien lo mandó recibe un solo mensaje cuando confirmaron todos, o al vencer
+  (60 min por defecto) con quiénes faltan. Los frentes no se hablan entre sí: no hay canal par a par
+  ni bucles.
+- **Turno de un recurso pesado.** `POST /turnos/<recurso> {session_id, ttl_min?, motivo?}` contesta
+  200 si el turno es tuyo hasta `vence`, o 202 con tu posición en la cola. Pedirlo siendo dueño lo
+  renueva. `DELETE /turnos/<recurso>?session_id=` lo suelta. El turno se libera solo al vencer o al
+  cerrarse la sesión dueña, y el siguiente de la cola recibe un mensaje. La coordinadora fija la
+  política con `PUT /turnos/<recurso>/politica {ttl_max_min?, mem_min_gb?}`; con `mem_min_gb`, el
+  turno espera hasta que haya esa memoria libre.
+- **Memoria.** `GET /memoria` dice la memoria libre, si bajó de `mem_aviso_gb` (1,5 GB, `config.json`)
+  y qué sesiones quietas conviene cerrar: la que lleva más tiempo quieta primero, sin coordinadoras,
+  sin dueñas de un turno y sin avisos por confirmar. Sólo sugiere: no cierra nada. Lanzar desde el
+  tablero con `max_sesiones_por_repo` vivas en el repo (4 por defecto, sumando todas las PCs; 0 lo
+  apaga) contesta 409 `tope_repo` con la lista de vivas, salvo `forzar: true`.
+
+El método está en la skill, en la sección «Rondas largas».
+
 ## Acceso desde el celular
 
 Opcional: `.\lienzo-server.cmd --remote`. En la PC, Acceso remoto genera una clave TOTP y dos QR
@@ -530,7 +565,10 @@ Por qué no llega una PC: el chip de la tira dice el motivo cuando una PC está 
   reinicios. `coordinar.cablear()` cablea cada frente vivo hacia la coordinadora.
 - Restaurar: cada PC guarda en `~/.lienzo/restaurar.json` cómo relanzar sus agentes tras un
   reinicio (no lo que se cerró a propósito). `POST /restaurar {session_id | all: true, pc?}` los
-  relanza retomando la conversación, de a uno, mirando la memoria libre.
+  relanza retomando la conversación, de a uno, mirando la memoria libre. La restaurada hereda reglas
+  y título aunque cambie de `session_id`. Con varios frentes del mismo agente en la carpeta gana el
+  mismo id, después la restaurada desde el lienzo (en orden), después el mismo título. Un envío al id
+  viejo contesta 404 con `sucesora` (no se redirige solo); `coordinar.enviar` reintenta ahí.
 
 ### La tira de PCs
 
@@ -670,7 +708,7 @@ además la cookie de sesión.
 |---|---|---|
 | GET | `/sessions` | todas las tarjetas, las de esta PC y las de las demás (`pc`) |
 | GET | `/sessions/<sid>/turns?n=10`, `/digest?n=10`, `/screen`, `/connections` | turnos, destacados por turno, pantalla de la terminal, conexiones |
-| POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío; con `copycat: true` es pegar trabajo |
+| POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío; con `copycat: true` es pegar trabajo. Un id viejo da 404 con `sucesora` |
 | POST | `/sessions/<sid>/interrupt` | un Esc: corta el turno (409 si no está corriendo) |
 | POST | `/sessions/<sid>/kill` | `{confirm: session_id}`; cierre forzado de una CLI Windows identificada, también en otra PC; no cierra agentes tmux |
 | POST | `/sessions/<sid>/dialog` | `{choice: n}`; elige una opción del diálogo de la TUI |
@@ -678,7 +716,10 @@ además la cookie de sesión.
 | POST | `/sessions/<sid>/attach` | sube un archivo (header `X-Filename`), devuelve la ruta |
 | PUT | `/sessions/<sid>/title`, `/stopped`, `/coordinator` | título; la llave stopped (`{on}`); coordinadora del repo (`{on}`) |
 | DELETE | `/sessions/<sid>` | saca la tarjeta |
-| POST | `/sessions/launch` | `{pc?, cwd, agent, title?, model?}`; lanza una sesión, local o en otra PC |
+| POST | `/sessions/launch` | `{pc?, cwd, agent, title?, model?, forzar?}`; lanza una sesión, local o en otra PC; 409 `tope_repo` con `max_sesiones_por_repo` vivas en el repo |
+| GET, POST | `/avisos`, `/avisos/<id>`, `/avisos/<id>/ack` | avisos coordinados con confirmaciones (`{texto, a, de?, vence_min?}`; ack `{session_id, nota?}`) |
+| GET, POST, DELETE, PUT | `/turnos`, `/turnos/<recurso>`, `/turnos/<recurso>/politica` | turnos de recursos pesados: pedir (`{session_id, ttl_min?, motivo?}`), soltar (`?session_id=`), política |
+| GET | `/memoria` | memoria libre, umbral y sesiones quietas sugeridas para cerrar |
 | POST | `/consultas` | `{pregunta, investigadores, vueltas?, revisor?, coordinador?, espera_min?, enfoques?, vuelta1?, revisar_sintesis?}`; abre una consulta entre investigadores, devuelve `{id, tope_turnos}` |
 | GET | `/consultas`, `/consultas/<id>` | las últimas consultas (resumen); una entera, con las respuestas por vuelta |
 | POST | `/consultas/<id>/cancelar` | la deja cancelada; lo respondido queda guardado |
@@ -688,7 +729,7 @@ además la cookie de sesión.
 | DELETE | `/peers/<pc_id>` | revoca el peer |
 | POST | `/restart` | `{pc?}`; reinicia el server de esta PC o de otra |
 | GET, POST | `/restaurables`, `/restaurar` | sesiones para relanzar tras un reinicio; relanzarlas |
-| GET, POST, PUT, DELETE | `/rules`, `/rules/<id>` | conexiones: `{kind: on_stop\|at, from, to, text, at, repeat, max_fires, every_s?, skip_busy?}`; 409 ante bucle, duplicada o choque de horario |
+| GET, POST, PUT, DELETE | `/rules`, `/rules/<id>` | conexiones: `{kind: on_stop\|at, from, to, text, at, repeat, max_fires, every_s?, skip_busy?, solo_si?, dedupe?}`; 409 ante bucle, duplicada o choque de horario |
 | POST | `/rules/retarget` | `{old, new}`; las reglas que avisaban a `old` pasan a `new`, en todas las PCs |
 | GET, DELETE | `/links`, `/links/<id>` | envíos hechos (flechas) |
 | GET, POST | `/pending`, `/pending/<id>` | permisos esperando; `{decision: allow\|deny}` |
@@ -734,6 +775,7 @@ lienzo/
   send.py, screen.py   escribir en la consola de un proceso y leer su buffer
   rules.py, rules_api.py   reglas «cuando termine» y programadas
   consulta.py      consulta entre investigadores: vueltas, síntesis, revisión y vigilancia
+  rondas.py        avisos coordinados con ack, turnos de recursos pesados y presión de memoria
   state.py         estado compartido, config, log
   federation.py    firma HMAC, peers.json, beacon, cliente SSE, transporte HTTP
   pairing.py       emparejamiento con SPAKE2
@@ -796,11 +838,14 @@ plugin sigue sin certificar: falta baseline aprobado y no se ejecutaron las muta
   adjuntos/                   archivos y textos largos enviados a las sesiones
   sessions/                   una tarjeta por sesión
   links.json, rules.json      envíos hechos y conexiones
-  config.json                 auto_*, launch_roots, copy_roots, git_check, auto_reload
+  config.json                 auto_*, launch_roots, copy_roots, git_check, auto_reload,
+                              mem_aviso_gb, max_sesiones_por_repo
   auth.json                   clave TOTP del acceso remoto
   peer.json, peers.json       identidad de esta PC y PCs emparejadas (con la clave del par)
   launch/                     un .cmd por sesión lanzada desde el tablero
   restaurar.json              sesiones para relanzar tras un reinicio
+  sucesion.json               muertas con reglas estacionadas y quién sucedió a quién
+  rondas.json                 avisos coordinados, turnos y sus políticas
   conocimiento.sqlite         la memoria de todos los proyectos (una base por instancia, replicada entre PCs)
   proyectos/<proyecto>/       cuerpos de encargos e informes y evidencia de cada proyecto
   xfer/                       copias entre PCs (trabajos/) y hashes de lo recibido (hashes.db)

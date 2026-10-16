@@ -50,6 +50,16 @@ def on_stop_limits(d: dict, current: dict | None = None) -> tuple[dict | None, s
         if isinstance(v, bool) or not isinstance(v, int) or not minimo <= v <= maximo:
             return None, f"{campo} debe ser un entero entre {minimo} y {maximo}"
         out[campo] = v
+    # filtro de avisos (rules.filtrada): `solo_si` es el marcador que tiene que traer la respuesta
+    # ("" o null lo saca); `dedupe` en False vuelve a entregar una respuesta repetida
+    marca = d.get("solo_si", cur.get("solo_si"))
+    if marca is not None and (not isinstance(marca, str) or len(marca) > rl.SOLO_SI_MAX):
+        return None, f"solo_si debe ser un texto de hasta {rl.SOLO_SI_MAX} caracteres"
+    out["solo_si"] = marca or None
+    dedupe = d.get("dedupe", cur.get("dedupe", True))
+    if not isinstance(dedupe, bool):
+        return None, "dedupe debe ser true o false"
+    out["dedupe"] = dedupe
     return out, None
 
 

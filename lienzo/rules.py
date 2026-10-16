@@ -8,6 +8,7 @@ rellenan al final de este modulo."""
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import os
 import secrets
 import threading
@@ -18,6 +19,7 @@ import captura
 import conocimiento
 import consulta
 import identity
+import rondas
 import sessions as ses
 import state
 import transcripts
@@ -95,16 +97,57 @@ def full_reply(s: dict, cap: int = 6000) -> str:
     return short(tarjeta, cap) if tarjeta else ""
 
 
-def render_template(tpl: str, s: dict | None) -> str:
+def render_template(tpl: str, s: dict | None, respuesta: str | None = None) -> str:
+    """`respuesta`: la del turno que se avisa, ya recortada, si ya se leyo (la foto de la espera)."""
     if not s:
         return tpl
+    if "{respuesta}" in tpl and respuesta is None:
+        respuesta = full_reply(s)
     return (
         tpl.replace("{repo}", s.get("repo") or "")
         .replace("{agente}", s.get("agent") or "")
         .replace("{titulo}", s.get("title") or "")
         .replace("{pedido}", s.get("last_prompt") or "")
-        .replace("{respuesta}", full_reply(s) if "{respuesta}" in tpl else "")
+        .replace("{respuesta}", respuesta or "")
     )
+
+
+SOLO_SI_MAX = 64
+REPLY_CAP = 6000  # lo que lleva {respuesta}
+FILTRO_CAP = 200_000  # el marcador se busca en la respuesta entera: el recorte guarda el principio
+
+
+def huella(texto: str, pedido: str = "") -> str:
+    """Hash corto de un turno: su respuesta y el pedido que la origino. Dos avisos con la misma huella
+    son el mismo aviso (un Stop doble, una espera sin turno nuevo); el mismo «Listo.» a otra tarea, no."""
+    if not texto:
+        return ""
+    return hashlib.sha256(f"{pedido}\x00{texto}".encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def turno_de(s: dict) -> dict:
+    """{completa, huella} del ultimo turno de la sesion: la respuesta sin el recorte de {respuesta}."""
+    completa = full_reply(s, FILTRO_CAP)
+    return {"completa": completa, "huella": huella(completa, str(s.get("prompt_id") or s.get("last_prompt") or ""))}
+
+
+def filtrada(r: dict, completa: str | None, h: str, espera: bool = True) -> str | None:
+    """Por que una on_stop NO avisa este turno, o None si avisa (pedido de Ariel, 2026-10-16: en
+    OpenSyync la coordinadora gastaba un turno por cada aviso repetido o sin novedad):
+    - `solo_si`: la respuesta entera (`completa`) no trae el marcador (p. ej. "ESTADO:"): es un turno
+      intermedio. `completa` None: ya se filtro (la foto de una espera) y no se mira de nuevo;
+    - la huella es la de lo ultimo que entrego esta regla (`last_hash`), salvo `dedupe: false`, o la
+      de lo que ya esta en espera (`espera`: al recibir el Stop, no al entregar). Sin huella (respuesta
+      vacia) no se compara."""
+    marca = r.get("solo_si")
+    if marca and completa is not None and marca not in completa:
+        return f"salteado: la respuesta no trae «{marca}» (turno intermedio)"
+    if r.get("dedupe", True) and h:
+        if r.get("last_hash") == h:
+            return "salteado: misma respuesta que la ya entregada"
+        if espera and (r.get("deferred") or {}).get("huella") == h:
+            return "salteado: misma respuesta que la que ya está en espera"
+    return None
 
 
 ON_STOP_SETTLE_S = (
@@ -162,12 +205,18 @@ def proximo_permitido(r: dict, ahora: dt.datetime) -> tuple[dt.datetime | None, 
     return max(cands, key=lambda c: c[0]) if cands else (None, "")
 
 
-def _diferir(r: dict, hasta: dt.datetime, motivo: str) -> None:
+def _diferir(r: dict, hasta: dt.datetime, motivo: str, foto: dict | None = None) -> None:
     """Un Stop que no puede salir ahora queda en espera, visible en la regla: nunca se descarta
-    callado. Varios en espera se agrupan en una sola entrega (la del ultimo turno). Con el lock."""
+    callado. Varios en espera se agrupan en una sola entrega (la del ultimo turno que paso el
+    filtro: `foto` {texto, huella} es la suya, para que un turno intermedio posterior no la
+    reemplace). Con el lock."""
     prev = r.get("deferred") or {}
     n = int(prev.get("count") or 0) + 1
     r["deferred"] = {"since": prev.get("since") or now(), "count": n, "until": hasta.isoformat(timespec="seconds")}
+    if foto is not None:
+        r["deferred"].update(respuesta=foto["texto"], huella=foto["huella"])
+    elif prev.get("respuesta") is not None:
+        r["deferred"].update(respuesta=prev["respuesta"], huella=prev.get("huella"))
     r["last_result"] = f"limitada ({motivo}): {n} aviso(s) en espera, sale a las {hasta.strftime('%H:%M:%S')}"
 
 
@@ -423,9 +472,11 @@ def _espejo_incompleto() -> bool:
 
 def fire_rule(rule: dict, agrupados: int = 0) -> None:
     """Dispara `rule`. `agrupados` > 0: es la entrega diferida de una on_stop limitada, y el texto
-    lo dice (cuantos avisos junta: va el del ultimo turno)."""
+    lo dice (cuantos avisos junta: va el del ultimo turno). Una on_stop avisa la foto del turno que
+    le reservaron (`_fotos`: la de la espera o la que leyo fire_on_stop); sin foto, el ultimo turno."""
     with lock:
         src = sessions.get(rule.get("from") or "")
+        foto = _fotos.pop(rule["id"], None)
     dst = find_session(rule["to"])
     if dst is None:
         # antes se borraba aca mismo y sin log: al arrancar, con el espejo vacio, una regla hacia
@@ -467,7 +518,25 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
         )
         rules.publish()
         return
-    text = render_template(rule.get("text") or "", src)
+    on_stop = rule.get("kind") == "on_stop"
+    respuesta = h = None
+    if on_stop and src is not None:
+        if foto is not None:  # ya paso el marcador al cerrar el turno: solo se mira si se repite
+            respuesta, h, completa = foto["texto"], foto["huella"], None
+        else:
+            t = turno_de(src)
+            respuesta, h, completa = short(t["completa"], REPLY_CAP), t["huella"], t["completa"]
+        motivo = filtrada(rule, completa, h, espera=False)
+        if motivo:
+            # el mismo aviso otra vez (un Stop doble, una diferida sin turno nuevo) o un turno sin
+            # el marcador: no se manda ni se gasta el disparo, y queda dicho en la regla y el log
+            with lock:
+                rule["last_result"] = motivo
+                rules.save()
+            state.log(f"regla {rule['id']} (on_stop) -> {rule['to'][:8]}: {motivo}")
+            rules.publish()
+            return
+    text = render_template(rule.get("text") or "", src, respuesta)
     if agrupados:
         cuantos = "un aviso demorado" if agrupados == 1 else f"{agrupados} avisos agrupados (va el del ultimo turno)"
         text = f"[lienzo: {cuantos} por el limite de frecuencia de la regla {rule['id']}]" + chr(10) + text
@@ -477,6 +546,8 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
         rule["fired"] = rule.get("fired", 0) + 1
         rule["last_fired"] = now()
         rule["last_result"] = "ok" if code == 200 else str(res.get("error"))
+        if on_stop and code == 200 and h:
+            rule["last_hash"] = h
         if rule.get("kind") == "on_stop":
             ahora = dt.datetime.now().astimezone()
             recientes = [d.isoformat(timespec="seconds") for d in _recientes(rule, ahora)]
@@ -499,6 +570,7 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
 
 
 _on_stop_en_vuelo: set[str] = set()  # ids de reglas on_stop con un envio en curso; bajo `lock`
+_fotos: dict[str, dict] = {}  # rule_id -> {texto, huella} del turno a avisar, reservada con la regla; bajo `lock`
 
 
 def fire_on_stop(sid: str) -> None:
@@ -535,6 +607,12 @@ def fire_on_stop(sid: str) -> None:
         return bool(r.get("enabled")) and r.get("kind") == "on_stop" and r.get("from") == sid
 
     with lock:
+        hay = any(suya(r) for r in rules.items)
+    # la respuesta del turno, leida una vez y afuera del lock (puede leer la transcripcion): con ella
+    # se filtra (marcador, repetida) antes de diferir y se saca la foto de la espera
+    turno = turno_de(cerrada) if hay and cerrada else {"completa": "", "huella": ""}
+    foto = {"texto": short(turno["completa"], REPLY_CAP), "huella": turno["huella"]}
+    with lock:
         s = sessions.get(sid)
         if s and any(suya(r) for r in rules.items):
             if ses.compacting(s):
@@ -548,13 +626,18 @@ def fire_on_stop(sid: str) -> None:
             if (s.get("last_reply") or "").rstrip().endswith("?"):
                 state.log(f"on_stop de {sid[:8]} no disparado: la respuesta termina en pregunta al usuario")
                 return
-        due, diferidas = [], []
+        due, diferidas, salteadas = [], [], []
         for r in rules.items:
             if not suya(r):
                 continue
+            filtro = filtrada(r, turno["completa"], turno["huella"])
+            if filtro:
+                r["last_result"] = filtro
+                salteadas.append(r)
+                continue
             if r["id"] in _on_stop_en_vuelo:
                 # ya hay un envio de esta regla en curso: este turno espera su turno, no se pierde
-                _diferir(r, ahora + dt.timedelta(seconds=ON_STOP_COOLDOWN_S), "envio anterior en curso")
+                _diferir(r, ahora + dt.timedelta(seconds=ON_STOP_COOLDOWN_S), "envio anterior en curso", foto)
                 diferidas.append(r)
                 continue
             hasta, motivo = proximo_permitido(r, ahora)
@@ -562,18 +645,19 @@ def fire_on_stop(sid: str) -> None:
                 due.append(r)
             else:
                 # limitada, o ya habia avisos en espera: este se suma y sale todo junto (rules_loop)
-                _diferir(r, hasta or ahora, motivo or "en espera")
+                _diferir(r, hasta or ahora, motivo or "en espera", foto)
                 diferidas.append(r)
-        if diferidas:
+        if diferidas or salteadas:
             rules.save()
         # reservar bajo el lock ANTES de enviar: el enfriamiento sale de `last_fired`, que
         # fire_rule escribe recien despues de un envio de hasta 60 s; en ese hueco un segundo Stop
         # veia la regla fria y la disparaba otra vez (revision 2026-10-04, B11)
         for r in due:
             _on_stop_en_vuelo.add(r["id"])
-    for r in diferidas:
+            _fotos[r["id"]] = foto
+    for r in diferidas + salteadas:
         state.log(f"on_stop de {sid[:8]}, regla {r['id']}: {r['last_result']}")
-    if diferidas:
+    if diferidas or salteadas:
         rules.publish()
     for r in due:
         try:
@@ -585,6 +669,7 @@ def fire_on_stop(sid: str) -> None:
         finally:
             with lock:
                 _on_stop_en_vuelo.discard(r["id"])
+                _fotos.pop(r["id"], None)
 
 
 def aviso_muerta(sid: str, prev: str) -> None:
@@ -652,6 +737,8 @@ def entregas_diferidas(ahora: dt.datetime) -> list[tuple[dict, int]]:
             # la espera se consume al reservar: un Stop que llegue durante este envio abre otra
             _on_stop_en_vuelo.add(r["id"])
             r["deferred"] = None
+            if d.get("respuesta") is not None:
+                _fotos[r["id"]] = {"texto": d["respuesta"], "huella": d.get("huella") or ""}
             listas.append((r, int(d.get("count") or 1)))
             cambio = True
         if cambio:
@@ -685,6 +772,7 @@ def rules_loop() -> None:
                 finally:
                     with lock:
                         _on_stop_en_vuelo.discard(r["id"])
+                        _fotos.pop(r["id"], None)
             for r in due:
                 try:
                     fire_rule(r)
@@ -692,6 +780,7 @@ def rules_loop() -> None:
                     # una regla rota no frena a las demas vencidas (antes cortaba la pasada entera,
                     # y en cada vuelta otra vez, si la rota seguia vencida)
                     state.log(f"regla {r.get('id')}:\n{traceback.format_exc()}")
+            rondas.revisar()  # avisos coordinados y turnos: confirma, vence y pasa el turno
         except Exception:
             state.log(traceback.format_exc())
         time.sleep(5)
