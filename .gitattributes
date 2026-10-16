@@ -1,2 +1,5 @@
 # los scripts de bash corren en WSL/Linux/Mac: con CRLF (el checkout de Windows) bash no los lee
 *.sh text eol=lf
+
+# las infografías se comparan byte a byte con su build (tests/test_infografias.py): sin CRLF
+docs/img/infografias/*.svg text eol=lf

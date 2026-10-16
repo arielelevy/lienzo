@@ -695,6 +695,8 @@ lienzo/
   kill_agent.py    cierre forzado de CLI Windows con verificación del proceso
 web/               interfaz (Vite + React + TypeScript); npm run build deja web/dist
 skills/lienzo/     skill para coordinar agentes; coordinar.py es el cliente de la API
+skills/lienzo-infografias/   infografías SVG estáticas del lienzo con el kit de anatomy;
+                   build.mjs las escribe en docs/img/infografias
 tests/             pytest
 pruebas-agenticas/ configuración del plugin; resultados locales ignorados por Git
 install.py         hooks y regla de firewall (--peer)

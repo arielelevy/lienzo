@@ -1,0 +1,24 @@
+{
+  "nombre": "lienzo-infografias",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/infografias",
+  "reglas": [
+    "Pedido de Ariel, 2026-10-16: infografías del lienzo con anatomy, «sin animacion», dejadas como herramienta del lienzo aunque sea clonada y cambiada en local.",
+    "skills/lienzo-infografias/SKILL.md: SVG estático en dos temas en docs/img/infografias, datos verdaderos, chequeo de líneas del kit en cero."
+  ],
+  "precondiciones": [],
+  "casos": [
+    {
+      "id": "infografias-build",
+      "comando": ["py", "-m", "pytest", "tests/test_infografias.py", "-q", "-p", "no:cacheprovider", "-k", "not sale_2 and not falla"],
+      "timeoutMs": 300000,
+      "cubre": ["skills/lienzo-infografias/", "docs/img/infografias/"]
+    },
+    {
+      "id": "infografias-errores",
+      "comando": ["py", "-m", "pytest", "tests/test_infografias.py", "-q", "-p", "no:cacheprovider", "-k", "sale_2 or falla"],
+      "timeoutMs": 300000,
+      "cubre": ["skills/lienzo-infografias/"]
+    }
+  ]
+}
