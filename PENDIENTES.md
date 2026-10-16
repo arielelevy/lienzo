@@ -38,13 +38,21 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
   orquestador ata a su corrida. Solo se probó con su ejecutor de prueba, que no lanza agentes.
 - [ ] Puente: detección por proceso en tmux/WSL, tarjetas del orquestador por el espejo entre PCs, y
   relanzar desde Lienzo. Para relanzar faltan contratos medidos.
-- [ ] Decidir si el e2e del puente entra a la suite y si se aprueban sus mutaciones (propuesta en
+- [x] Decidir si el e2e del puente entra a la suite y si se aprueban sus mutaciones (propuesta en
   `pruebas-agenticas/resultados/`).
+  **Cerrado el 2026-10-15 (Ariel lo dejó a criterio):** no entra. Prueba el plugin Stepwise, que vive en
+  `lienzo/extensiones/` fuera de git, con un binario y fixtures de esta PC; en la suite del repo fallaría
+  en cualquier otra. Si hace falta, va con el plugin.
 - [x] Indicador "enviando…" en la tarjeta mientras un envío espera su `UserPromptSubmit`. Hoy queda en
   su estado anterior hasta la confirmación; sin confirmación a los 25 s, pasa a "te necesita".
   **Cerrado el 2026-10-15:** `envio_pendiente` se ve como «enviando…» en la cabecera de la tarjeta, sin cambiarle el alto (tests-ui/tarjeta.spec.ts).
-- [ ] backend-pytest roza el timeout de 300 s del runner: 240 s aislado y más bajo carga. Una corrida dio
+- [x] backend-pytest roza el timeout de 300 s del runner: 240 s aislado y más bajo carga. Una corrida dio
   una `F` que no se reprodujo. Recalibrar el timeout con aprobación o separar la batería.
+  **Cerrado el 2026-10-15:** Ariel aprobó subirlo a 450 s en `pruebas-agenticas.json`.
+- [x] Dos permisos de sesiones que ya no estaban se auto-aprobaban cada hora: el hook murió sin leer la
+  respuesta y el pedido quedó en disco. **Cerrado el 2026-10-15:** el auto-aprobar saltea un pedido que ya
+  tiene su respuesta escrita (tests/test_autoaprobar.py). Los pedidos huérfanos siguen en
+  `~/.lienzo/pending` hasta que alguien los borre.
 - [x] Reglas `on_stop` agotadas por el tope total viejo: no se reactivan solas. Se reactivan editándolas
   con `limit:"rate"`.
   **Cerrado el 2026-10-15:** al arrancar, `rules.reactivar_agotadas_por_tope_viejo` las prende de nuevo (tests/test_rules_frecuencia.py).
@@ -465,7 +473,7 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
   - Evidencia: lienzo/browser_window.py no implementa clipboard. web/src/components/RemoteBrowser.tsx: onPaste manda texto local, pero eso no sincroniza el portapapeles remoto; el copy por CDP es otro modo.
   - Origen: `docs/code-review-2026-10-07.md` (historial de Git). Gravedad: **media**.
 
-- [ ] Evaluar transporte no ordenado para movimientos mediante WebRTC/UDP, sólo como idea pendiente de decisión.
+- [ ] *(Opcional, 2026-10-15: Ariel lo descartó por ahora, el canal WebSocket anda bien.)* Evaluar transporte no ordenado para movimientos mediante WebRTC/UDP.
   - Evidencia: lienzo/browser_stream.py y lienzo/ws.py usan WebSocket ordenado; no hay transporte WebRTC/UDP para la entrada.
   - Origen: `docs/code-review-2026-10-07.md, Canal vivo` (historial de Git). Gravedad: **baja**.
 

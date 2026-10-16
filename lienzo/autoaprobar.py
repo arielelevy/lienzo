@@ -25,6 +25,7 @@ aprobacion queda en el log con «AUTO-APROBADO», para poder ver despues que pas
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -72,6 +73,10 @@ class PendientesDeHook(ProveedorPermisos):
         for d in items:
             if ses.is_question(d):
                 continue  # pide elegir una opcion, no permitir
+            if os.path.exists(os.path.join(state.ANSWERS, f"{d['request_id']}.json")):
+                # ya contestado y el hook no lo leyo (su proceso murio): el pedido queda en disco y
+                # se volvia a aprobar cada hora, al vencer _intentados (medido el 2026-10-15)
+                continue
             inp = d.get("tool_input") or {}
             detalle = inp.get("command") or inp.get("file_path") or inp.get("url") or ""
             sesion = state.sessions.get(d.get("session_id") or "") or {}

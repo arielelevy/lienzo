@@ -35,7 +35,7 @@
         "-p",
         "no:cacheprovider"
       ],
-      "timeoutMs": 300000,
+      "timeoutMs": 450000,
       "cubre": [
         "lienzo/",
         "install.py",

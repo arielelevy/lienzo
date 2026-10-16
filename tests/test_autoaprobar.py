@@ -56,6 +56,17 @@ def _armar(monkeypatch, prendido):
     return hechos
 
 
+def test_un_pedido_ya_contestado_que_el_hook_no_leyo_no_se_vuelve_a_aprobar(monkeypatch, tmp_path):
+    """Medido el 2026-10-15: dos permisos de sesiones que ya no estaban se aprobaban cada hora (el
+    hook murio sin leer la respuesta, el pedido quedo en disco y _intentados lo olvida a la hora)."""
+    hechos = _armar(monkeypatch, True)
+    monkeypatch.setattr(st, "ANSWERS", str(tmp_path))
+    (tmp_path / "r1.json").write_text("{}", encoding="utf-8")
+    au.ronda(ahora=100)
+    au.ronda(ahora=100 + 3601)
+    assert [h for h in hechos if h[0] == "hook"] == []
+
+
 def test_apagado_no_aprueba_nada(monkeypatch):
     hechos = _armar(monkeypatch, False)
     assert au.ronda(ahora=100) == [] and hechos == []
