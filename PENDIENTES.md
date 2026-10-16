@@ -29,6 +29,8 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: conversación con Ariel del 2026-10-12 sobre Prime Agent.
   Referencia: https://www.primeintellect.ai/blog/prime-agent-rust.
+  **Estado al 2026-10-15:** sin spec. Lo de arriba ya sirve como requisitos; falta diseño y tareas con
+  la skill `sdd` en `docs/specs/`: cómo encaja en `coordinar.py`, las reglas `on_stop` y las rondas.
 
 ## Puente con el orquestador externo, reglas por frecuencia y envío confirmado (2026-10-14)
 
@@ -101,6 +103,9 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
     pasando).
 
   Origen: conversación con Ariel del 2026-10-10. Gravedad: **alta, prioridad** (Ariel, 2026-10-10).
+  **Estado al 2026-10-15:** sin spec; es la próxima a encarar. Primer paso: medir lo de hoy (bytes de un
+  ciclo vacío y de uno con capturas, latencia hasta que la otra PC ve un cambio) y con eso escribir la spec
+  con `sdd`. La medición entre PCs necesita ar-it33940 prendida.
 
 - [ ] Integración uniforme de CLI y hallazgos del code review: capacidades compartidas entre
   Python/TypeScript, proveedores de identidad/transcripción/modelo/diálogo/reanudación, Kiro V3
@@ -108,6 +113,8 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
   Evidencia inicial: 190 pruebas focales pasan y build del frontend pasa (2026-10-07).
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 3. Gravedad: media.
+  **Estado al 2026-10-15:** sin spec y poco definido. Antes de especificar, contrastar con el código: los
+  perfiles de `agentes.py` (permisos, diálogos, transcripciones por agente) pueden cubrir buena parte.
 
 ### Federación
 
