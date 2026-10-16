@@ -6,7 +6,7 @@ description: Dibujar infografías estáticas del lienzo (SVG isométrico, tema o
 # Infografías del lienzo
 
 Las figuras explican un mecanismo del lienzo con un objeto físico que funciona igual: el tablero es
-una coordinadora, cada sesión un jack con su lámpara, cada conexión un cordón. Se dibujan con el kit
+una central de comunicaciones, cada sesión un jack con su lámpara, cada conexión un cordón. Se dibujan con el kit
 de la skill `anatomy` (`~/.claude/skills/anatomy`, o `ANATOMY_DIR`), sin copiarlo al repo.
 
 Es opcional: el lienzo no la usa para nada. Sin `anatomy`, o sin Chrome para `--check`, el
@@ -26,7 +26,7 @@ Estas mandan sobre lo que diga `anatomy`:
 
 ## Cómo se agrega una
 
-1. Leé `SKILL.md` de `anatomy` (pasos 2 a 8 y las reglas de oficio) y `figuras/coordinadora.mjs`,
+1. Leé `SKILL.md` de `anatomy` (pasos 2 a 8 y las reglas de oficio) y `figuras/central.mjs`,
    que es el ejemplo de referencia.
 2. Creá `figuras/<nombre>.mjs` que importe `{ k, tubePieces, tubeSvg, write }` de `../kit.mjs` y
    exporte `build()`, que devuelve `write("<nombre>", { width, height, label, body, card })`.
@@ -50,4 +50,5 @@ Estas mandan sobre lo que diga `anatomy`:
 
 | Figura | Qué explica |
 |---|---|
-| `coordinadora` | Sesiones como jacks con lámpara de estado, conexiones como cordones (una cruza a la PC 2), un permiso esperando y el reloj de 60 s del hook |
+| `central` | Sesiones como jacks con lámpara de estado, conexiones como cordones (una cruza a la PC 2), un permiso esperando y el reloj de 60 s del hook |
+| `plugins` | Plugins locales como tarjetas en las ranuras de una placa: módulo del server y vista, cargado, fallido y uno por entrar; el server sigue sin ellos |

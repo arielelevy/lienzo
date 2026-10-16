@@ -17,3 +17,19 @@ Revisión con el skill `code-review` (nivel medio) de la skill nueva de infograf
 
 Verificación: `pytest tests/test_infografias.py` 7 de 7; `build.mjs --check` con consola limpia y
 0 líneas sueltas en los dos temas; suite `pruebas-agenticas/infografias.json` con los dos casos OK.
+
+## Segunda ronda: figura de plugins y renombre
+
+Revisión de `figuras/plugins.mjs`, la sección «Plugins locales» del README y el renombre a
+central de comunicaciones. Diez hallazgos, todos corregidos:
+
+- Los SVG nuevos sin versionar y los viejos borrados: se commitean juntos.
+- La ruta `/ext/<nombre>` existe sólo si el módulo define `get` o `post`: lo dicen el README y la leyenda.
+- Un archivo con nombre fuera de `[a-z][a-z0-9_]{0,31}` se ignora sin aviso: documentado.
+- Una vista `.tsx` con error rompe el build o el tablero (sin ErrorBoundary en `App.tsx`): documentado; «no frena» queda sólo para el módulo del server.
+- Módulo y vista son independientes y opcionales: lo dicen la figura y el README.
+- Cuatro carpetas `extensiones/` fuera de Git, no dos: corregido.
+- `RUNNERS_EXTERNOS` e `iniciar()` faltaban en el README: agregados.
+- La prueba de «no toca lo versionado» miraba la carpeta equivocada: ahora compara fechas de los SVG versionados.
+- `--check` cubría sólo una figura: ahora recorre todas.
+- «Coordinadora» como nombre del tablero chocaba con el rol de sesión: la figura dice «sesión coordinadora».

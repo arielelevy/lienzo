@@ -24,11 +24,11 @@ Las terminales y las transcripciones siguen a cargo de los agentes.
 ## Cómo funciona
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/coordinadora-dark.svg">
-  <img align="left" width="340" alt="El tablero dibujado como una coordinadora: cada jack del panel es una sesión con su lámpara de estado, dos cordones conectan sesiones (uno cruza de la PC 1 a la PC 2), una lámpara resaltada marca un permiso pendiente y un reloj de 60 s en el estante muestra cuánto lleva esperando" src="docs/img/infografias/coordinadora-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/central-dark.svg">
+  <img align="left" width="50%" alt="El tablero dibujado como una central de comunicaciones: cada jack del panel es una sesión con su lámpara de estado, dos cordones conectan sesiones (uno cruza de la PC 1 a la PC 2), una lámpara resaltada marca un permiso pendiente y un reloj de 60 s en el estante muestra cuánto lleva esperando" src="docs/img/infografias/central-light.svg">
 </picture>
 
-El tablero funciona como una coordinadora. Cada jack es una sesión y su lámpara muestra el estado.
+El tablero funciona como una central de comunicaciones. Cada jack es una sesión y su lámpara muestra el estado.
 Cada cordón es una conexión entre dos sesiones, también entre PCs. La lámpara resaltada es un
 permiso esperando respuesta. En Claude Code, Codex y CODA, si nadie lo contesta en 60 s, vuelve
 a la terminal.
@@ -383,6 +383,26 @@ demás los cambios nacidos allá, los proyectos se unen por remote, y los choque
 para la coordinadora ([anexo C](docs/propuesta-memoria-2026-10-08/anexo-c-replica.md)). Las bases no
 se suben a Git.
 El diseño detallado está en [v5](docs/propuesta-memoria-2026-10-08/v5.md).
+
+### Plugins locales
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/plugins-dark.svg">
+  <img align="left" width="50%" alt="Los plugins dibujados como tarjetas de expansión en una placa: cada ranura tiene una pista hacia el server; dos tarjetas cargadas con el LED encendido, una que no cargó con el LED apagado y una cuarta en el aire sobre su ranura vacía" src="docs/img/infografias/plugins-light.svg">
+</picture>
+
+Un plugin es propio de una PC y se enchufa como una tarjeta. Puede traer un módulo del server,
+una vista del tablero o los dos, que son independientes. El módulo va en
+`lienzo/extensiones/<nombre>.py`, con un nombre en minúsculas (letras, números y `_`, hasta 32);
+un archivo con otro nombre se ignora sin aviso. Todo lo que define es opcional: `get` y `post`
+responden en `/ext/<nombre>/…` con la autenticación de siempre, `iniciar()` corre al arrancar y
+`RUNNERS_EXTERNOS` marca procesos cuyos agentes se ven pero no se tocan. La vista va en
+`web/src/extensiones/<nombre>.tsx` y entra en el build. Ninguna carpeta `extensiones/` va a Git
+(tampoco las de `tests/` y `pruebas-agenticas/`). Un módulo que no carga queda en el log y no
+frena al server; una vista con un error, en cambio, rompe el build o el tablero. Sin ningún
+plugin, todo anda igual.
+
+<br clear="left">
 
 ## Delegar trabajo a varias sesiones
 
