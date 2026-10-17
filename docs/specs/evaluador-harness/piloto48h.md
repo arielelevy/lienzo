@@ -1,5 +1,10 @@
 # Piloto48h autorizado, pendiente de evaluación
 
+Registro histórico del 2026-10-12. Sus estados, importes y autorizaciones corresponden a esa ronda;
+no son un estado operativo verificado hoy ni una autorización nueva.
+Contrato actual: [Aprendizaje](../../APRENDIZAJE.md). Las specs intermedias citadas en el cuerpo
+se retiraron al consolidar; sus versiones originales permanecen en Git.
+
 2026-10-12. USD2 TOTAL de la misma ronda, incluye manual/automático/histórico. Sin agentes CLI nuevos, sin modificar clave compartida, sin git/restart autónomo. Nuevas sesiones pueden recibir preferencias reversibles; perfil de CLI existentes desconocido sin evidencia de lanzamiento. No se declara ahorro causal entre tareas distintas ni se acepta una tarea por fin de turno.
 
 ## Histórico

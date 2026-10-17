@@ -16,10 +16,13 @@ import subprocess
 import threading
 import time
 import traceback
+from copy import deepcopy
 
 import backend
 import captura
+import claude_pipe_runtime
 import coda
+import codex_queue
 import conocimiento
 import consulta
 import identity
@@ -35,6 +38,7 @@ import transcripts
 # (monkeypatch.setattr(ses, "guess_transcript", ...)).
 from agentes import (  # noqa: F401
     BIRTH_MARGIN_S,
+    codex_desktop_threads,
     guess_claude,
     guess_codex,
     guess_pi,
@@ -107,6 +111,102 @@ from tarjeta_texto import (  # noqa: F401
 )
 
 last_sweep = 0.0
+
+# Sólo presentación: nunca se persiste ni se calcula con el lock global tomado.
+_envio_publico: dict[str, tuple[str, dict]] = {}
+ENVIO_POLL_S = 5
+ENVIO_POLL_MAX = 8
+_envio_poll_at = -1e9
+_envio_poll_cursor = 0
+
+
+def _envio_firma(s: dict) -> str:
+    campos = ("session_id", "agent", "pid", "transcript_path", "external", "stopped_by",
+              "pending_id", "orphan", "no_console", "backend", "target", "distro", "alive", "envio_claude")
+    return json.dumps({k: s.get(k) for k in campos}, sort_keys=True, ensure_ascii=False)
+
+
+def public_session(s: dict, *, calcular: bool = False) -> dict:
+    """Recibe una copia local. Calcular sólo fuera del lock; eventos usan la última lectura válida.
+    Las sesiones del espejo no pasan por acá: su PC dueña publica su capacidad."""
+    firma = _envio_firma(s)
+    sid = s["session_id"]
+    if calcular:
+        plan = puede_enviar(s)
+        with lock:
+            _envio_publico[sid] = (firma, dict(plan))
+    else:
+        cached = _envio_publico.get(sid)
+        plan = cached[1] if cached and cached[0] == firma else {
+            "puede": False, "motivo": "capacidad de envío pendiente de comprobar", "transporte": None,
+        }
+    view = {**s, "envio": dict(plan)}
+    ext = s.get("external") or {}
+    if ext.get("kind") == "claude-desktop":
+        # Presentación derivada; cwd/identidad de memoria y título persistido quedan intactos.
+        # Desktop se identifica por metadatos validados, nunca por el nombre scratch del cwd.
+        if (s.get("repo") or "").startswith("scratch-"):
+            view["repo"] = "Claude Desktop"
+        if s.get("title_source") != "user" or not s.get("title"):
+            view["title"] = ext.get("canal") or s.get("native_name") or "Sesión de Claude Desktop"
+    return view
+
+
+def refresh_envios() -> None:
+    """A lo sumo 8 tarjetas por 5 s, rotativas. Sólo consulta; nunca encola ni reintenta.
+    IO de capacidad/rollout fuera del lock. Una respuesta tardía no pisa otra tarjeta/envío."""
+    global _envio_poll_at, _envio_poll_cursor
+    tick = time.monotonic()
+    with lock:
+        if tick - _envio_poll_at < ENVIO_POLL_S:
+            return
+        _envio_poll_at = tick
+        cards = list(sessions.values())
+        vivos = set(sessions)
+        for sid in list(_envio_publico):
+            if sid not in vivos:
+                del _envio_publico[sid]
+        start = _envio_poll_cursor % len(cards) if cards else 0
+        elegidas = (cards[start:] + cards[:start])[:ENVIO_POLL_MAX]
+        _envio_poll_cursor = (start + len(elegidas)) % len(cards) if cards else 0
+        work = [(s, deepcopy(s)) for s in elegidas]
+        local_cards = [dict(s) for s in cards]
+    try:
+        claude_pipe_runtime.reap(local_cards)
+        state.avisar_si_cambia("claude pipe cleanup", None)
+    except Exception:
+        state.avisar_si_cambia("claude pipe cleanup", traceback.format_exc())
+    for card, snap in work:
+        try:
+            before = public_session(snap)["envio"]
+            view = public_session(snap, calcular=True)
+            field = "envio_claude" if snap.get("agent") == "claude" else "envio_codex"
+            old = snap.get(field) or {}
+            result = None
+            # Expirado es terminal para el sondeo; confirmar() sigue disponible explícitamente.
+            if (old.get("envio_id") and not old.get("confirmacion_final")
+                    and old.get("estado") in ("pendiente", "encolado", "sin_confirmacion")):
+                result = (claude_pipe_runtime.confirm if field == "envio_claude" else codex_queue.confirmar)(old["envio_id"])
+                if result["estado"] == "desconocido" and time.time() - old.get("at", time.time()) > 600:
+                    result = {**old, "estado": "sin_confirmacion", "motivo": "confirmación no disponible tras reinicio; no se reintenta"}
+            with lock:
+                if sessions.get(snap["session_id"]) is not card:
+                    continue
+                changed = False
+                if result and result["estado"] != "desconocido" and card.get(field) == old:
+                    final = result["estado"] == "entregado" or (
+                        result["estado"] == "sin_confirmacion"
+                        and time.time() - old.get("at", time.time()) > codex_queue.CONFIRM_LIMIT_S
+                    )
+                    updated = {**old, **result, "confirmacion_final": final}
+                    if updated != old:
+                        card[field] = updated
+                        changed = True
+                if changed or (before != view["envio"] and _envio_firma(card) == _envio_firma(snap)):
+                    touch(card)
+            state.avisar_si_cambia(f"envio {snap['session_id']}", None)
+        except Exception:
+            state.avisar_si_cambia(f"envio {snap['session_id']}", traceback.format_exc())
 
 
 def en_hilo(fn, *args) -> threading.Thread:
@@ -832,7 +932,7 @@ def touch(s: dict) -> bool:
         if sessions.get(s.get("session_id")) is not s:
             return False
         save_session(s)
-        state.broadcast({"type": "session", "session": s})
+        state.broadcast({"type": "session", "session": public_session(deepcopy(s))})
         captura.vista(s)  # la primera vez con carpeta: su proyecto y su sesion (anexo A de v5)
     return True
 
@@ -1293,6 +1393,14 @@ def claim_pid(s: dict, ev: dict) -> None:
     duena y este evento no se lo lleva (una prueba manual del hook con otro session_id no debe
     borrar la sesion real ni sus reglas). Se llama con el lock tomado."""
     pid, sid = ev["pid"], s["session_id"]
+    if s.get("pid") and s["pid"] != pid and not s.get("external") and backend.agent_alive(s):
+        ext = backend.external_origin(ev)
+        if ext and ext.get("desktop"):
+            # Claude Desktop comparte ~/.claude/projects y muestra las sesiones de la CLI: si un motor
+            # suyo emite con el mismo session_id mientras la CLI vive, la tarjeta sigue siendo la de
+            # la CLI (no cambia de origen por haberse visto en la app)
+            state.log(f"{sid[:8]}: evento de Claude Desktop (pid {pid}) con la CLI viva (pid {s['pid']}): sigue la CLI")
+            return
     owner = None
     if s.get("pid") != pid:
         for other_sid, other in list(sessions.items()):
@@ -2158,6 +2266,74 @@ def sweep_once() -> None:
     for p in found:
         if backend.proc_key(p) not in known:
             adopt_process(p)
+        elif (p.get("external") or {}).get("desktop"):
+            marcar_desktop(p)
+    adopt_desktop_threads()
+
+
+def marcar_desktop(p: dict) -> None:
+    """Una tarjeta que ya existia (de antes de reconocer las apps, o sin un hook desde entonces) y
+    cuyo proceso el barrido ve como de la app de escritorio: pasa a solo lectura, y el nombre del
+    canal se actualiza. No pisa la marca de un orquestador."""
+    with lock:
+        for s in sessions.values():
+            ext = s.get("external") or {}
+            # El registro validado del mismo proceso prevalece sobre el fallback -p.
+            registered_desktop = (p["external"].get("kind") == "claude-desktop"
+                                  and p["external"].get("via") == "registro")
+            generic_batch = ext.get("kind") == "batch" and ext.get("via") == "comando" and not ext.get("runner_pid")
+            if backend.proc_key(s) != backend.proc_key(p) or (ext and not ext.get("desktop")
+                                                           and not (registered_desktop and generic_batch)):
+                continue
+            if ext != p["external"] or not s.get("no_console"):
+                s["external"], s["no_console"] = dict(p["external"]), True
+                touch(s)
+                state.log(f"{s['session_id'][:8]}: es de {p['external']['kind']} (pid {p['pid']}): solo lectura")
+
+
+DESKTOP_THREAD_TTL_S = 2 * 3600  # un hilo de la app de Codex que no escribe su rollout en este tiempo deja de verse
+CODEX_DESKTOP = {"kind": "codex-desktop", "via": "rollout", "desktop": True}
+
+
+def es_hilo_desktop(s: dict) -> bool:
+    """Tarjeta de un hilo de la app de Codex: sin proceso, la arma y la retira adopt_desktop_threads."""
+    ext = s.get("external") or {}
+    return ext.get("kind") == "codex-desktop" and ext.get("via") == "rollout"
+
+
+def adopt_desktop_threads() -> None:
+    """Los hilos de la app de escritorio de Codex como tarjetas de solo lectura. La app no tiene un
+    proceso por hilo ni hooks (medido 2026-10-17: `[features] hooks = false` y un app-server
+    compartido), asi que la tarjeta no tiene pid: estado, pedido y respuesta salen del rollout, que la
+    liveness relee cuando crece. Se retira cuando su rollout lleva DESKTOP_THREAD_TTL_S sin escribirse.
+    Mandarle un mensaje no se puede desde aca (seria por el app-server de la app: paso siguiente)."""
+    hilos = codex_desktop_threads(time.time() - DESKTOP_THREAD_TTL_S)
+    vigentes = {h["id"] for h in hilos}
+    nuevas = []
+    with lock:
+        viejas = [sid for sid, s in sessions.items() if es_hilo_desktop(s) and sid not in vigentes]
+        for h in hilos:
+            if h["id"] in sessions:
+                continue  # ya tiene tarjeta (la del hilo, o una TUI que lo retomo: esa manda)
+            s = new_session(h["id"], "codex", "desktop")
+            s.update(
+                {
+                    "no_console": True,
+                    "external": dict(CODEX_DESKTOP),
+                    "cwd": h["cwd"],
+                    "transcript_path": h["path"],
+                    "started": h["started"] or now(),
+                }
+            )
+            apply_repo(s, h["cwd"])
+            sessions[s["session_id"]] = s
+            nuevas.append(s)
+    for sid in viejas:
+        drop_session(sid, f"hilo de Codex desktop sin actividad en {DESKTOP_THREAD_TTL_S // 3600} h")
+    for s in nuevas:
+        refresh_from_transcript(s)
+        touch(s)
+        state.log(f"codex desktop: hilo {s['session_id'][:8]} cwd={s['cwd']} (solo lectura, sin proceso)")
 
 
 def refresh_alive(s: dict) -> bool:
@@ -2404,6 +2580,7 @@ def liveness_pass(sweep_every: float) -> None:
             state.avisar_si_cambia(clave, None)
         except Exception:
             state.avisar_si_cambia(clave, f"{clave} fallo:\n{traceback.format_exc()}")
+    refresh_envios()  # capacidades y confirmaciones sin IO bajo el lock global
     remember_live_cards()  # nunca levanta (restore_guard)
     if sweep_every and time.time() - last_sweep > sweep_every:
         try:
@@ -2457,6 +2634,15 @@ def external_blocked(s: dict, accion: str = "escribirle") -> tuple[int, dict] | 
         return None
     if ext.get("kind") == "batch":
         motivo = "es una corrida headless (claude -p): no tiene consola"
+    elif ext.get("kind") == "claude-desktop":
+        # medido 2026-10-17: su entrada es un pipe de la app (no se toca) y el canal nativo si le llega
+        canal = f"«{ext['canal']}»" if ext.get("canal") else "su nombre en ListAgents"
+        motivo = (
+            "es una sesion de la app de escritorio (Claude Desktop): el lienzo no le teclea; "
+            f"escribile por el canal nativo desde una sesion de Claude (SendMessage a {canal})"
+        )
+    elif ext.get("desktop"):
+        motivo = "es un hilo de la app de escritorio (Codex desktop): se ve, pero el lienzo todavia no le escribe"
     else:
         motivo = f"es una ejecucion de {ext.get('kind')}: se controla desde su orquestador o su plugin"
     return 409, {"ok": False, "error": f"no se puede {accion}: {motivo}", "external": ext}
@@ -2493,6 +2679,52 @@ def send_blocked(s: dict) -> tuple[int, dict] | None:
             return 409, {"ok": False, "error": "esa sesion te esta preguntando algo; elegi una opcion primero"}
         return 409, {"ok": False, "error": "hay un permiso pendiente; contestalo primero"}
     return None
+
+
+def queue_blocked(s: dict) -> tuple[int, dict] | None:
+    """Guardias de un envío por `codex queue`: las de toda tarjeta que no dependen de una consola (externa
+    ajena, detenida, permiso o pregunta pendiente). Un hilo de la app de Codex sí pasa: no se le teclea, pero
+    `codex queue` le escribe por su id de rollout (medido 2026-10-17). Claude Desktop y orquestadores, no."""
+    ext = s.get("external") or {}
+    if ext and not codex_queue.es_desktop(s):
+        return external_blocked(s)
+    if s.get("stopped_by"):
+        return 409, {
+            "ok": False,
+            "error": "esa sesion esta detenida (stopped): no recibe mensajes hasta que la habilites desde su tarjeta",
+        }
+    if s.get("pending_id"):
+        if is_question(pending.get(s["pending_id"]) or {}):
+            return 409, {"ok": False, "error": "esa sesion te esta preguntando algo; elegi una opcion primero"}
+        return 409, {"ok": False, "error": "hay un permiso pendiente; contestalo primero"}
+    return None
+
+
+def puede_enviar(s: dict) -> dict:
+    """`{puede, motivo, transporte}` (contrato de D, revision-arquitectura-informe.md 12:1x): cómo se le escribe
+    a la tarjeta. Codex de CLI o app → `codex_queue` si se puede; una CLI sin cola posible (id de hilo o rollout
+    todavía desconocidos, sin codex.exe) vuelve al tecleo; la app nunca se teclea. Claude Desktop → canal nativo
+    (no lo envía el lienzo)."""
+    if s.get("agent") == "claude":
+        ext = s.get("external") or {}
+        if not ext or ext.get("kind") == "claude-desktop":
+            if s.get("stopped_by") or s.get("pending_id"):
+                return {"puede": False, "motivo": "sesión detenida o con permiso/pregunta pendiente", "transporte": "claude_pipe"}
+            pipe = claude_pipe_runtime.availability(s)
+            if pipe["puede"] or (s.get("envio_claude") or {}).get("estado") in ("pendiente", "encolado", "sin_confirmacion"):
+                return pipe
+    if s.get("agent") == "codex" and (codex_queue.es_desktop(s) or not s.get("external")):
+        if bloqueo := queue_blocked(s):
+            return {"puede": False, "motivo": bloqueo[1]["error"], "transporte": None}
+        plan = codex_queue.puede_enviar(s)
+        if plan["puede"] or codex_queue.es_desktop(s):
+            return plan  # la app nunca se teclea; una CLI sin cola posible sigue con el tecleo de siempre
+    if (s.get("external") or {}).get("kind") == "claude-desktop":
+        return {"puede": False, "motivo": external_blocked(s)[1]["error"], "transporte": "canal_nativo"}
+    bloqueo = send_blocked(s)
+    if bloqueo:
+        return {"puede": False, "motivo": bloqueo[1]["error"], "transporte": None}
+    return {"puede": True, "motivo": None, "transporte": "tecleo"}
 
 
 def _under_adjuntos(path: str) -> bool:
@@ -2843,6 +3075,14 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     owner = _mirror_owner(sid)
     if owner is not None:
         return _mirror_forward(owner, "POST", f"/sessions/{sid}/send", {"text": text, "attachments": attachments})
+    if s.get("agent") == "claude" and puede_enviar(s).get("transporte") == "claude_pipe":
+        return send_claude_pipe(s, text, attachments)
+    if s.get("agent") == "codex":
+        plan = puede_enviar(s)
+        if plan["transporte"] == "codex_queue":
+            return send_codex_queue(s, text, attachments)
+        if codex_queue.es_desktop(s):
+            return 409, {"ok": False, "error": plan["motivo"], "envio": plan}
     if frenado := send_blocked(s):
         return frenado
     if frenado := dialogo_abierto(s):
@@ -2890,6 +3130,75 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
                 set_state(s, "corriendo")  # sin hooks no hay quien confirme: como antes
         touch(s)
     return 200, out
+
+
+def _stale_send_result(previous: dict, result: dict) -> bool:
+    same = previous.get("envio_id") == result.get("envio_id") and previous.get("at") == result.get("at")
+    return previous.get("at", 0) > result["at"] or (same and previous.get("estado") == "entregado")
+
+
+def send_codex_queue(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
+    """Envío a un hilo de Codex por `codex queue`: sin tecleo. Un texto de más de codex_queue.MAX_MESSAGE va
+    como adjunto. «entregado» sólo si el texto ya está en el rollout del hilo; si no, «encolado»."""
+    attachments_pedidos = [a for a in (attachments or []) if _under_adjuntos(a)]  # M5: confinar al buzon
+    orig = (text or "").replace("\r", "").strip()
+    if not orig and not attachments_pedidos:
+        return 400, {"ok": False, "error": "texto vacio"}
+    body = orig
+    if not codex_queue.message_fits(s, "\n".join([body] + [f"Adjunto: {a}" for a in attachments_pedidos])):
+        body = ATTACH_WRAPPER
+        attachments_pedidos = [
+            save_attachment(s["session_id"], "mensaje.md", orig.encode("utf-8")),
+            *attachments_pedidos,
+        ]
+    final = "\n".join([body] + [f"Adjunto: {a}" for a in attachments_pedidos]).strip()
+    res = codex_queue.enviar(s, final)
+    result_at = res.get("at", time.time())
+    res = {**res, "at": result_at}
+    with lock:
+        previous = s.get("envio_codex") or {}
+        if sessions.get(s.get("session_id")) is s and not _stale_send_result(previous, res):
+            s["envio_codex"] = {**res, "at": result_at}
+            touch(s)
+    if res["estado"] == "rechazado":
+        return 409, {"ok": False, "error": res["motivo"], "envio": res}
+    captura.envio(s, text, adjuntos=attachments_pedidos, **captura.origen_actual())
+    with lock:
+        current = s.get("envio_codex") or {}
+        if (sessions.get(s.get("session_id")) is s and current.get("envio_id") == res.get("envio_id")
+                and current.get("at") == result_at):
+            s["last_prompt"] = short(orig, 500) if orig else short(final, 500)
+            s["prompt_via"] = "lienzo"
+            touch(s)
+    return 200, {"ok": True, "chars": len(orig), "transporte": "codex_queue", **res}
+
+
+def send_claude_pipe(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
+    """Sólo bridge propio vivo; sin tecleo Desktop ni reenvío ante incertidumbre."""
+    plan = puede_enviar(s)
+    if not plan["puede"] or plan["transporte"] != "claude_pipe":
+        return 409, {"error": plan["motivo"], "envio": plan}
+    orig = (text or "").replace("\r", "").strip()
+    files = [a for a in attachments or [] if _under_adjuntos(a)]
+    final = "\n".join([orig] + [f"Adjunto: {a}" for a in files]).strip()
+    if not final:
+        return 400, {"error": "texto vacío"}
+    if len(final.encode("utf-8")) > claude_pipe_runtime.MAX_TEXT:
+        files = [save_attachment(s["session_id"], "mensaje.md", orig.encode("utf-8")), *files]
+        final = "\n".join([ATTACH_WRAPPER] + [f"Adjunto: {a}" for a in files])
+    result = claude_pipe_runtime.send(dict(s), final)
+    result = {**result, "at": result.get("at", time.time())}
+    with lock:
+        old = s.get("envio_claude") or {}
+        if sessions.get(s["session_id"]) is s and not _stale_send_result(old, result):
+            s["envio_claude"] = dict(result)
+            if result["estado"] != "rechazado":
+                s["last_prompt"], s["prompt_via"] = short(orig, 500), "lienzo"
+            touch(s)
+    if result["estado"] == "rechazado":
+        return 409, {"error": result["motivo"], "envio": result}
+    captura.envio(s, text, adjuntos=files, **captura.origen_actual())
+    return 200, {"ok": True, "chars": len(orig), **result}
 
 
 def _name(s: dict) -> str:

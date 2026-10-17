@@ -115,8 +115,10 @@ contempla).
   impida (el cuerpo admite hasta 8 MB). Un archivo en el repo solo para lo que el agente de esa PC
   produce él mismo en su carpeta (p. ej. el `tasks.md` que escribió ahí): los demás lo leen sin pull.
   Un agente lento (coda) puede tardar en leer el adjunto: eso es el modelo, no la entrega.
-- Metodología SDD (spec → clarificar → plan → tareas → análisis → código): un commit local por
-  paso, y los módulos se reparten recién con `tasks.md` commiteado, cada uno en su carpeta.
+- Proceso flexible (decisión del 2026-10-16): acordar arquitectura, plan y tareas según el alcance.
+  Repartir con contratos e insumos disponibles, cada frente en su carpeta cuando corresponda.
+  No exigir SDD, un `tasks.md` ni commits por etapa como condiciones universales; conservar calidad
+  y evidencia de revisión y pruebas.
 
 Los dos lienzos tienen que correr el mismo código. Con `lienzo-server.cmd` el server se
 reinicia solo cuando cambia un `.py` (un `git pull`), pero hay que haberlo levantado así una vez

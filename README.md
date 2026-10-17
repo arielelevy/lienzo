@@ -1,5 +1,8 @@
 # Lienzo
 
+Versión **0.2.0**: envío a Codex por cola y a Claude Desktop mediante un adaptador propio autenticado,
+con estados de entrega visibles. [Novedades y validación](docs/releases/0.2.0.md).
+
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
 6 horas mientras el tablero sigue abierto. Antes de iniciar o retomar una sesión, comprueba ese
@@ -17,7 +20,8 @@ Corre en `127.0.0.1:7321`. Lee el historial de cada agente y escribe en su termi
 Las terminales y las transcripciones siguen a cargo de los agentes.
 
 [Arquitectura, diseño y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/) ·
-[Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](MEJORAS.md)
+[Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](MEJORAS.md) ·
+[Documentación y decisiones de producto](docs/README.md)
 
 ![Tablero](docs/img/tablero.png)
 
@@ -246,7 +250,9 @@ Los permisos vencidos o de sesiones muertas se conservan en el historial sin blo
 **Comparar RTK cuando esté libre** encola dos perfiles de contratos locales, sin modelos ni gasto de
 servicios. Comprueba fuentes congeladas, conserva códigos/salidas/tiempos y pausa entre perfiles;
 no mide por sí solo ahorro de tokens ni calidad de agentes. El presupuesto de esta ronda es USD 2
-totales, incluidos costos previos. Los modelos y coding agents automáticos permanecen deshabilitados.
+totales, incluidos costos previos; es la autorización histórica del piloto, no un presupuesto nuevo.
+El piloto Jev, si está habilitado, sigue sus condiciones; los coding agents automáticos permanecen
+deshabilitados. El contrato consolidado y las propuestas de evolución están en [Aprendizaje](docs/APRENDIZAJE.md).
 
 Los títulos de tarjeta y consola usan `proyecto | tarea`, con el proyecto en minúscula. Lienzo aplica
 el título al detectar un proceso o cambiar PID/tarea; no vuelve a escribirlo si esos datos no cambian.
@@ -277,6 +283,8 @@ verifican código y REA sirve para trabajos de ingeniería reversa.
 El modo «Ingeniería reversa» suma REA si está instalada y conserva las mejoras habilitadas.
 La instalación de REA en Windows no acredita disponibilidad en WSL: se informa esa limitación.
 El catálogo no instala herramientas ni autoriza consultas pagas.
+La ampliación del catálogo y la distinción entre tools, plugins, integraciones y formas de trabajo
+están en [Producto](docs/PRODUCTO.md) y [Plugins](docs/PLUGINS.md).
 
 Lo mismo por API: `POST /sessions/launch {pc?, cwd, agent, title?, model?, modo?}`, o
 `coordinar.lanzar_y_titular(...)` desde una coordinadora.
@@ -716,7 +724,7 @@ c.consulta_estado(cid)
 
 Los investigadores tienen que estar quietos al abrir (si no, 409); el revisor no, porque muchas veces
 es la misma sesión que abre la consulta. `vuelta1={sid: respuesta}` sigue una vuelta 1 hecha a mano. El
-diseño está en [`docs/specs/consulta-investigadores/`](docs/specs/consulta-investigadores/design.md).
+diseño está en [`docs/CONSULTAS.md`](docs/CONSULTAS.md).
 
 ## API
 

@@ -19,7 +19,8 @@ def aislado(tmp_path, monkeypatch):
 def test_catalogo_ids_unicos_tipos_y_origen():
     cat = tools.catalogo()
     ids = [t.id for t in cat]
-    assert ids == ["breve", "rtk", "jev", "pruebas-agenticas", "rea"] and len(set(ids)) == len(ids)
+    assert ids == ["breve", "rtk", "jev", "pruebas-agenticas", "rea", "anatomy", "commit"]
+    assert len(set(ids)) == len(ids)
     assert all(t.origen and t.tipo in tools.TIPOS for t in cat)
     assert {t.id: t.tipo for t in cat} == {
         "breve": "mejora",
@@ -27,6 +28,8 @@ def test_catalogo_ids_unicos_tipos_y_origen():
         "jev": "evaluacion",
         "pruebas-agenticas": "pruebas",
         "rea": "trabajo",
+        "anatomy": "documentacion",
+        "commit": "trabajo",
     }
     assert tools.por_id("jev").costo == "pago" and tools.por_id("rtk").version == rtk.VERSION
     with pytest.raises(ValueError):
@@ -70,7 +73,15 @@ def test_agente_sin_instrucciones_verificadas(aislado):
 def test_status_de_mejoras_trae_el_catalogo(aislado):
     st = improvements.status()
     assert st["preferences"] == {"brief": False, "rtk": False}
-    assert [t["id"] for t in st["tools"]] == ["breve", "rtk", "jev", "pruebas-agenticas", "rea"]
+    assert [t["id"] for t in st["tools"]] == [
+        "breve",
+        "rtk",
+        "jev",
+        "pruebas-agenticas",
+        "rea",
+        "anatomy",
+        "commit",
+    ]
     assert next(t for t in st["tools"] if t["id"] == "rea")["modos"] == ["ingenieria-reversa"]
 
 

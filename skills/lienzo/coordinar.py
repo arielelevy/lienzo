@@ -187,6 +187,15 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
             }
         code, res = pedir("POST", f"/sessions/{sid}/send", _cuerpo_envio(sid, texto, enlazar), timeout=80)
         if code == 200:
+            if isinstance(res, dict) and "estado" in res:
+                delivered = res["estado"] == "entregado"
+                return {
+                    "ok": delivered, "code": code, "sid": sid,
+                    "estado": res["estado"], "envio_id": res.get("envio_id"),
+                    "motivo": "entrega confirmada por el transporte" if delivered else (
+                        res.get("motivo") or "entrega no confirmada; no se reintenta"
+                    ),
+                }
             fin = time.time() + espera
             while time.time() < fin:
                 time.sleep(1)
@@ -369,18 +378,23 @@ def lanzar_y_titular(
     `cablear_al_lanzar=False` se la deja sin regla (solo para una sesión de prueba descartable).
 
     Con `proyecto` y `encargo` (el id que devolvió `encargo(...)`), la tarjeta queda vinculada al
-    encargo apenas aparece (`encargo_enviado`): v5 §7.2 pide que el lanzamiento admita la ronda."""
+    encargo apenas aparece (`encargo_enviado`): v5 §7.2 pide que el lanzamiento admita la ronda.
+
+    `agent="auto"`: el server elige entre Claude y Codex el de más margen semanal (`cuotas()`); sin
+    elegible contesta 409 y no lanza. El aviso de cuota de un lanzamiento manual se imprime, no frena."""
 
     def norm(c):
         # con barra o contrabarra, y con o sin barra final, es la misma carpeta (antes no coincidian y
         # la tarjeta nueva no se encontraba: devolvia None con la sesion abierta y sin regla)
         return (c or "").replace(chr(92), "/").rstrip("/").lower()
 
+    candidatos = {"claude", "codex"} if agent == "auto" else {agent}
+
     def en_carpeta():
         return {
             x["session_id"]: x
             for x in sesiones()
-            if x.get("agent") == agent and norm(x.get("cwd")) == norm(cwd) and (pc is None or x.get("pc") == pc)
+            if x.get("agent") in candidatos and norm(x.get("cwd")) == norm(cwd) and (pc is None or x.get("pc") == pc)
         }
 
     if cablear_al_lanzar and not YO:
@@ -390,6 +404,12 @@ def lanzar_y_titular(
     if code != 200:
         print(f"lanzar_y_titular: no se lanzo ({code}): {res}", file=sys.stderr)
         return None
+    if agent == "auto":
+        agent = res.get("agent")
+        candidatos = {agent}
+        print(f"lanzar_y_titular: elegido {agent} ({res.get('motivo')})", file=sys.stderr)
+    if res.get("aviso"):
+        print(f"lanzar_y_titular: aviso de cuota: {res['aviso']}", file=sys.stderr)
     fin = time.time() + espera
     while time.time() < fin:
         time.sleep(3)
@@ -649,6 +669,13 @@ def tablero(proyecto, pc=None):
         )
 
 
+def cuotas(refrescar=False):
+    """GET /cuotas: uso de 5 h y semanal de Claude y Codex (lo de /usage y /status), con `sugerido` y
+    `motivo`. Cacheado hasta 5 min por agente; `refrescar=True` fuerza una lectura nueva. Una lectura
+    fallida viene con `ok: false` y `error`, sin números inventados."""
+    return pedir("GET", "/cuotas?refrescar=1" if refrescar else "/cuotas", timeout=30)
+
+
 def lanzar(pc, cwd, titulo, agent="claude", model=None, forzar=False):
     """POST /sessions/launch: lanza una sesión nueva, local si `pc` es None (o la propia), o en la
     PC `pc` (`pc_id` de `GET /peers`) si se da. `cwd` tiene que caer dentro de `launch_roots` de esa
@@ -659,6 +686,9 @@ def lanzar(pc, cwd, titulo, agent="claude", model=None, forzar=False):
     `globant_dgx/GLM-5.3-Flash` para coda. La respuesta trae `model_applied`: falso si el agente no
     lo soporta o el id no es válido (solo `[A-Za-z0-9._/:@-]`). **En coda cambia el modelo por defecto
     de esa PC** (lo escribe en su `config.json`): avisarle al usuario antes de usarlo.
+
+    `agent="auto"` elige por cuota entre Claude y Codex (la respuesta trae `agent` y `motivo`); 409 con
+    `error` y `motivo` si ninguno es elegible. Toda respuesta trae `cuotas` y, si conviene el otro agente, `aviso` (no bloquea).
 
     409 `tope_repo`: solo si config.json fija `max_sesiones_por_repo` (por defecto no hay tope) y ya
     hay esas vivas en el repo; trae cuáles. Cerrar una

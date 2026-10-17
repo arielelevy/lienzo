@@ -9,6 +9,7 @@ escritorio de Codex (ambos `app-server`), y el claude.exe de la extension de VS 
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 
@@ -95,6 +96,52 @@ def is_tui(pid: int) -> bool:
 EXTERNAL_HOPS = 6  # claude.exe <- (cmd/bun) <- lanzador: alcanza con margen
 
 
+def desktop_app(exe: str | None) -> str | None:
+    """"claude-desktop" / "codex-desktop" si el ejecutable es de una app de escritorio. El motor de
+    Claude Desktop no esta bajo WindowsApps: corre desde su carpeta de datos, que el hook ve con la ruta
+    real del paquete (medido 2026-09-14: ...\\Packages\\Claude_<id>\\LocalCache\\Roaming\\Claude\\
+    claude-code\\2.1.260\\claude.exe) y otros con la virtualizada (%APPDATA%\\Claude\\claude-code\\...).
+    La app de Claude y la de Codex (Electron) si estan bajo WindowsApps."""
+    e = (exe or "").lower().replace("/", "\\")
+    if "\\roaming\\claude\\claude-code\\" in e or "\\windowsapps\\claude_" in e:
+        return "claude-desktop"
+    if "\\windowsapps\\openai.codex_" in e or "\\packages\\openai.codex_" in e:
+        return "codex-desktop"
+    return None
+
+
+def creation_filetime(pid: int | None) -> int | None:
+    """Hora de creacion del proceso como FILETIME (100 ns desde 1601), la que Claude Code guarda como
+    `procStart` en su registro de sesiones: distingue un pid reciclado. None fuera de Windows o sin acceso."""
+    if not pid or not procinfo._WIN:
+        return None
+    h = procinfo.open_process(int(pid))
+    if not h:
+        return None
+    try:
+        tiempos = [ctypes.c_ulonglong() for _ in range(4)]  # creacion, salida, kernel, usuario
+        ok = ctypes.windll.kernel32.GetProcessTimes(h, *(ctypes.byref(t) for t in tiempos))
+        return tiempos[0].value if ok else None
+    finally:
+        procinfo.close_handle(h)
+
+
+def desktop_por_registro(pid: int | None) -> dict | None:
+    """La marca de Claude Desktop segun el registro de Claude Code (`~/.claude/sessions/<pid>.json`,
+    medido 2026-10-17): `entrypoint: claude-desktop` es la señal exacta, y `name` es el nombre con que
+    la sesion figura en el canal nativo. Solo si el registro es de ESTE proceso (procStart)."""
+    reg = agentes.claude_registro(pid, creation_filetime(pid)) if pid else None
+    if not reg or reg.get("entrypoint") != "claude-desktop":
+        return None
+    return {**_desktop("claude-desktop", "registro"), "canal": reg.get("name")}
+
+
+def _desktop(kind: str, via: str) -> dict:
+    """La marca de una sesion de app de escritorio: va en `external` porque se trata igual que una
+    corrida externa (se ve, no se le teclea, ni se la mata, ni la mueven reglas)."""
+    return {"kind": kind, "via": via, "desktop": True}
+
+
 def _claude_cmd_batch(exe: str | None, cmdline: str | None) -> bool:
     name = os.path.basename(exe or "").lower()
     if not (name == "claude.exe" or name.startswith("claude.exe.")) or not cmdline:
@@ -105,16 +152,24 @@ def _claude_cmd_batch(exe: str | None, cmdline: str | None) -> bool:
 def external_origin(pid: int | None) -> dict | None:
     """Si el agente `pid` es una ejecucion externa, de que tipo: `{"kind": <tipo>, "runner_pid": N,
     "via": "proceso"}` si un ancestro es un lanzador de EXTERNAL_RUNNERS, `{"kind": "batch", "via":
-    "comando"}` si es un `claude -p` suelto. None si es una sesion personal (o no se pudo leer: no se adivina). Una
+    "comando"}` si es un `claude -p` suelto; `{"kind": "claude-desktop" | "codex-desktop", "desktop": True}` si es
+    el motor de una app de escritorio. None si es una sesion personal (o no se pudo leer: no se adivina). Una
     ejecucion externa se ve en el tablero, pero no se le teclea, ni se la mata, ni la mueven reglas."""
     if not pid:
         return None
+    if reg := desktop_por_registro(int(pid)):
+        return reg  # la señal exacta, con el nombre del canal nativo
     hop, exe0 = int(pid), image_path(int(pid))
+    if kind := desktop_app(exe0):
+        return _desktop(kind, "ruta")
     for _ in range(EXTERNAL_HOPS):
         parent, _exe = proc_info(hop)
         if not parent or parent == hop:
             break
-        if tipo := procinfo.external_runner(proc_info(parent)[1]):
+        parent_exe = proc_info(parent)[1]
+        if kind := desktop_app(parent_exe):
+            return _desktop(kind, "proceso")  # un motor de la app fuera de su carpeta: lo delata el padre
+        if tipo := procinfo.external_runner(parent_exe):
             return {"kind": tipo, "runner_pid": parent, "via": "proceso"}
         hop = parent
     if _claude_cmd_batch(exe0, procinfo.command_line(int(pid))):
@@ -124,7 +179,14 @@ def external_origin(pid: int | None) -> dict | None:
 
 def external_of_row(p: dict) -> dict | None:
     """Lo mismo que external_origin para una fila del barrido, con lo que el barrido ya leyo por CIM
-    (padre, abuelo y linea de comando): sin abrir el proceso otra vez."""
+    (padre, abuelo y linea de comando): sin abrir el proceso otra vez. Del padre y el abuelo el barrido
+    solo trae el nombre. El registro de Claude se valida contra PID/FILETIME antes de las heurísticas."""
+    if (p.get("pid") and agent_of(p.get("exe") or "", p.get("cmd")) == "claude"
+            and (reg := desktop_por_registro(p["pid"]))):
+        return reg
+    for k in ("exe", "parent_exe"):
+        if kind := desktop_app(p.get(k)):
+            return _desktop(kind, "ruta" if k == "exe" else "proceso")
     for k in ("parent", "grandparent"):
         if tipo := procinfo.external_runner(p.get(k)):
             return {"kind": tipo, "runner_pid": None, "via": "proceso"}
@@ -144,7 +206,7 @@ foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -l
   $out += [pscustomobject]@{
     pid = $a.ProcessId; exe = $a.ExecutablePath; cmd = $a.CommandLine
     created = if ($a.CreationDate) { $a.CreationDate.ToString('o') } else { $null }
-    parent = if ($par) { $par.Name } else { $null }; parent_pid = $a.ParentProcessId
+    parent = if ($par) { $par.Name } else { $null }; parent_pid = $a.ParentProcessId; parent_exe = if ($par) { $par.ExecutablePath } else { $null }
     grandparent = if ($gp) { $gp.Name } else { $null }; grandparent_cmd = if ($gp) { $gp.CommandLine } else { $null }
     children = @($all | Where-Object { $_.ParentProcessId -eq $a.ProcessId -and $_.Name -in @('bash.exe', 'pwsh.exe', 'powershell.exe', 'cmd.exe') } | ForEach-Object { $_.ProcessId })
   }
@@ -207,6 +269,7 @@ def sweep() -> list[dict]:
                 "grandparent": p.get("grandparent"),
                 "in_vscode": in_vscode,
                 "orphan": p.get("parent") is None,
+                # el registro de Claude Code (si es de este proceso) antes que la ruta y los padres
                 "external": external_of_row(p),
                 **(
                     {

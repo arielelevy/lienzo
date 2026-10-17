@@ -174,6 +174,7 @@ def agente_falso(pid, target, comm="claude", command=None):
 def test_el_barrido_etiqueta_cada_agente_con_su_distro(monkeypatch):
     """Con dos distros, una llamada a all_agents por distro y cada tarjeta con su distro."""
     monkeypatch.setattr(tmux, "distros", lambda: ["ubuntu", "debian"])
+    monkeypatch.setattr(tmux, "distros_corriendo", lambda: ["ubuntu", "debian"])
     vistos = []
 
     def all_agents_falso(distro=None):
@@ -199,6 +200,7 @@ def test_el_barrido_con_una_sola_distro_tambien_etiqueta(monkeypatch):
     """Con una sola distro es el camino de hoy (una llamada a all_agents, en serie), y la tarjeta
     lleva igual el nombre de la distro —tambien la default— (criterio 2.2)."""
     monkeypatch.setattr(tmux, "distros", lambda: ["ubuntu"])
+    monkeypatch.setattr(tmux, "distros_corriendo", lambda: ["ubuntu"])
     vistos = []
 
     def all_agents_falso(distro=None):
@@ -212,8 +214,9 @@ def test_el_barrido_con_una_sola_distro_tambien_etiqueta(monkeypatch):
 
 
 def test_el_barrido_nativo_va_sin_distro(monkeypatch):
-    """En Mac/Linux (o WSL ilegible) no hay distros: all_agents cae al default y las tarjetas van
-    sin campo distro (criterio 2.3)."""
+    """En Mac/Linux no hay distros: all_agents cae al default y las tarjetas van sin campo distro
+    (criterio 2.3). En Windows, sin distros que corran, el barrido no entra a ninguna."""
+    monkeypatch.setattr(tmux, "VIA_WSL", False)
     monkeypatch.setattr(tmux, "distros", list)
     vistos = []
 

@@ -11,14 +11,17 @@ mismo desacople del entorno lo hace `env -u` con las variables de Claude Code.""
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
 import shutil
 import subprocess
 import sys
+import uuid
 
 import agent_improvements
+import claude_pipe_runtime
 import harness_updates
 import state
 import tmux
@@ -26,6 +29,25 @@ from agentes import AGENTES
 from work_titles import project_title
 
 WINDOWS = sys.platform == "win32"
+
+_CLAUDE_PIPE_ERRORS = frozenset({
+    "el enlace Claude se está cerrando",
+    "límite de enlaces Claude alcanzado; cerrá los enlaces sin uso",
+    "no se pudo verificar el proceso de esta sesión Claude",
+    "protocolo Claude desconocido o incompatible: se requiere peerProtocol entero 1",
+    "versión Claude desconocida o inválida",
+    "versión Claude anterior al mínimo Windows 2.1.234",
+    "el proceso Claude cambió durante el registro",
+    "el proceso de la sesión cambió: cerrá el enlace anterior",
+    "bootstrap Claude finalizado sin conexión vigente; cerrá el enlace y registrá de nuevo",
+})
+
+
+def claude_pipe_error(error: Exception) -> str:
+    """Sólo motivos públicos controlados; nunca mensajes arbitrarios del SO o transporte."""
+    if isinstance(error, ValueError) and str(error) in _CLAUDE_PIPE_ERRORS:
+        return str(error)
+    return f"no se pudo abrir el enlace local Claude ({type(error).__name__})"
 
 # los ejecutables salen del registro de agentes (agentes.py); el nombre queda porque lo leen otros
 AGENT_EXES = {nombre: p.exe for nombre, p in AGENTES.items()}
@@ -189,6 +211,7 @@ def launch(
     model: str | None = None,
     distro: str | None = None,
     modo: str = "general",
+    claude_pipe: bool = False,
 ) -> dict:
     """Escribe el .cmd en `<LIENZO_HOME>/launch/` y lo lanza con explorer.exe. Rechaza (sin tocar
     disco ni proceso) un `cwd` fuera de `launch_roots` y un `agent` desconocido. Devuelve
@@ -245,12 +268,42 @@ def launch(
         # Solo esta invocación: Lienzo es dueño del título proyecto | tarea.
         # null no es TOML válido para -c; el array vacío se verificó en Codex 0.162.1.
         extra += ["-c", "tui.terminal_title=[]", "-c", "tui.notifications=false"]
+    pipe_sid = None
+    if claude_pipe:
+        if agent != "claude" or not WINDOWS or distro or resume:
+            return {"ok": False, "error": "claude_pipe requiere una sesión Claude nueva en Windows nativo"}
+        pipe_sid = str(uuid.uuid4())
+        try:
+            prepared = claude_pipe_runtime.prepare_launch(pipe_sid)
+        except (ValueError, OSError, RuntimeError) as error:
+            return {"ok": False, "code": 409, "error": claude_pipe_error(error)}
+        launch_dir = os.path.join(state.LIENZO, "launch")
+        settings = os.path.join(launch_dir, f"{pipe_sid}.claude-settings.json")
+        try:
+            os.makedirs(launch_dir, exist_ok=True)
+            with open(settings, "w", encoding="utf-8") as stream:
+                json.dump(prepared["hook_settings"], stream)  # sólo comando público; nunca environment()
+        except OSError:
+            claude_pipe_runtime.close(pipe_sid)
+            raise
+        extra += ["--session-id", pipe_sid, "--settings", settings]
     if distro and WINDOWS:
         # WSL: el cwd de Windows no existe adentro de la distro; se traduce a /mnt/<letra> (§WSL)
         cwd_linux = tmux.ruta_wsl(cwd)
         res = _launch_tmux(cwd_linux, title, exe_path, extra, distro=distro)
     else:
-        res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
+        try:
+            res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
+        except Exception:
+            if pipe_sid:
+                claude_pipe_runtime.close(pipe_sid)
+            raise
+    if pipe_sid:
+        if res.get("ok"):
+            res["session_id"] = pipe_sid
+            res["claude_pipe"] = "esperando adaptador; entrega aún no habilitada"
+        else:
+            claude_pipe_runtime.close(pipe_sid)
     if distro and res.get("ok"):
         res["distro"] = distro
     if nombre_args and res.get("ok"):

@@ -493,3 +493,66 @@ def test_la_denegacion_grave_manda_aunque_venga_antes_y_lejos_en_el_comando(monk
     ses.apply_turn(s, turno, force_state=False)
     assert "rm -r" in s["last_denied"]["detalle"] and s["last_denied"]["grave"] is True
     assert s["last_denied"]["n"] == 2 and len(s["last_denied"]["todas"]) == 2
+
+
+def _fin_de_turno(ts):
+    return {"type": "system", "subtype": "turn_duration", "timestamp": ts}
+
+
+def test_task_notification_reabre_el_turno_cerrado(tmp_path):
+    """Secuencia medida en b6d0399d el 2026-10-16: turno intermedio cerrado, un <task-notification>
+    pone al agente a trabajar sin UserPromptSubmit, y recien el turn_duration siguiente lo cierra."""
+    filas = [
+        {"type": "user", "timestamp": "2026-10-17T02:48:00.000Z", "message": {"role": "user", "content": "Segui"}},
+        _asistente(texto="Sigo esperando el aviso de la suite.", ts="2026-10-17T02:51:55.621Z"),
+        _fin_de_turno("2026-10-17T02:51:55.742Z"),
+        {
+            "type": "user",
+            "timestamp": "2026-10-17T02:55:13.700Z",
+            "message": {"role": "user", "content": "<task-notification>\n<task-id>be92qfpv8</task-id>"},
+        },
+        _asistente(tool="Bash", ts="2026-10-17T02:55:18.220Z"),
+    ]
+    ruta = _jsonl(tmp_path, filas)
+    t = tr.turns("claude", ruta, 1)["turns"][-1]
+    assert t["ended"] is False, "trabaja por el aviso: no esta terminado"
+    filas += [
+        _asistente(texto="ESTADO: listo.", ts="2026-10-17T02:56:12.978Z"),
+        _fin_de_turno("2026-10-17T02:56:13.058Z"),
+    ]
+    t = tr.turns("claude", _jsonl(tmp_path, filas), 1)["turns"]
+    assert len(t) == 1 and t[-1]["ended"] is True and "ESTADO:" in t[-1]["final"]
+
+
+def test_otros_avisos_del_sistema_no_reabren(tmp_path):
+    filas = [
+        {"type": "user", "timestamp": "2026-10-17T02:48:00.000Z", "message": {"role": "user", "content": "Segui"}},
+        _asistente(texto="Listo.", ts="2026-10-17T02:49:00.000Z"),
+        _fin_de_turno("2026-10-17T02:49:00.100Z"),
+        {
+            "type": "user",
+            "timestamp": "2026-10-17T02:50:00.000Z",
+            "message": {"role": "user", "content": "<local-command-stdout>ok"},
+        },
+    ]
+    assert tr.turns("claude", _jsonl(tmp_path, filas), 1)["turns"][-1]["ended"] is True
+
+
+def test_interrumpido_tras_reabrir_queda_cerrado(tmp_path):
+    filas = [
+        {"type": "user", "timestamp": "2026-10-17T02:48:00.000Z", "message": {"role": "user", "content": "Segui"}},
+        _asistente(texto="Espero.", ts="2026-10-17T02:49:00.000Z"),
+        _fin_de_turno("2026-10-17T02:49:00.100Z"),
+        {
+            "type": "user",
+            "timestamp": "2026-10-17T02:50:00.000Z",
+            "message": {"role": "user", "content": "<task-notification>x"},
+        },
+        _asistente(tool="Bash", ts="2026-10-17T02:50:01.000Z"),
+        {
+            "type": "user",
+            "timestamp": "2026-10-17T02:50:05.000Z",
+            "message": {"role": "user", "content": "[Request interrupted by user]"},
+        },
+    ]
+    assert tr.turns("claude", _jsonl(tmp_path, filas), 1)["turns"][-1]["ended"] is True

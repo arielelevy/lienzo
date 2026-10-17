@@ -1,0 +1,116 @@
+{
+  "nombre": "entrega-reglas",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/entrega-reglas",
+  "reglas": [
+    "PENDIENTES.md P0 continuidad: un informe final con el marcador llega aunque el Stop no cambie el estado; sin duplicados ni bucles; recuperación tras reinicio.",
+    "Un <task-notification> reabre el turno cerrado hasta su próximo turn_duration; una interrupción lo cierra.",
+    "El tablero no cambia tarjetas de lugar por cambios de estado o de altura (orden estable, grilla por filas).",
+    "El server detiene los plugins al salir con un tope; uno colgado no traba el reinicio."
+  ],
+  "casos": [
+    {
+      "id": "entrega-contratos",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_rules.py",
+        "tests/test_transcripts.py",
+        "tests/test_rules_frecuencia.py",
+        "tests/test_rules_federadas.py",
+        "tests/test_sucesion_reglas.py",
+        "tests/test_rondas.py",
+        "tests/test_consulta.py",
+        "tests/test_plugin_manifest.py",
+        "tests/test_plugins.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 180000,
+      "cubre": [
+        "lienzo/rules.py",
+        "lienzo/transcripts.py",
+        "lienzo/server.py",
+        "lienzo/plugins.py"
+      ]
+    },
+    {
+      "id": "tablero-interfaz",
+      "comando": [
+        "node",
+        "web/node_modules/@playwright/test/cli.js",
+        "test",
+        "--config",
+        "web/tests-ui/playwright.config.ts",
+        "tablero.spec.ts",
+        "mover.spec.ts",
+        "tarjeta.spec.ts",
+        "seleccion.spec.ts",
+        "acciones.spec.ts",
+        "mejoras.spec.ts",
+        "--workers",
+        "2"
+      ],
+      "timeoutMs": 240000,
+      "cubre": [
+        "web/src/components/Board.tsx",
+        "web/src/card.css",
+        "web/src/components/OptimizationScheduler.tsx"
+      ]
+    }
+  ],
+  "mutaciones": [
+    {
+      "id": "sin-reconciliacion",
+      "archivo": "lienzo/rules.py",
+      "buscar": "            elif ahora - desde >= RECONCILIA_S:",
+      "reemplazar": "            elif False:",
+      "por_que": "Un Stop sin transicion vuelve a perder la entrega",
+      "casos": [
+        "entrega-contratos"
+      ]
+    },
+    {
+      "id": "sin-marca-visto",
+      "archivo": "lienzo/rules.py",
+      "buscar": "            r[\"turno_visto\"], cambio = clave, True",
+      "reemplazar": "            cambio = True",
+      "por_que": "El turno evaluado no queda marcado",
+      "casos": [
+        "entrega-contratos"
+      ]
+    },
+    {
+      "id": "cruza-evaluaciones",
+      "archivo": "lienzo/rules.py",
+      "buscar": "            if not reconciliable(s) or sid in _evaluando:",
+      "reemplazar": "            if not reconciliable(s):",
+      "por_que": "La reconciliacion se cruza con un Stop en curso",
+      "casos": [
+        "entrega-contratos"
+      ]
+    },
+    {
+      "id": "notificacion-no-reabre",
+      "archivo": "lienzo/transcripts.py",
+      "buscar": "                        cur[\"ended\"] = cur[\"_ended_real\"] = False",
+      "reemplazar": "                        pass",
+      "por_que": "El turno reabierto por <task-notification> se da por terminado",
+      "casos": [
+        "entrega-contratos"
+      ]
+    },
+    {
+      "id": "parada-sin-tope",
+      "archivo": "lienzo/server.py",
+      "buscar": "    hilo.join(espera)",
+      "reemplazar": "    hilo.join()",
+      "por_que": "Un plugin colgado traba la salida del server",
+      "casos": [
+        "entrega-contratos"
+      ]
+    }
+  ]
+}

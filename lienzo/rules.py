@@ -554,6 +554,10 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
         rule["fired"] = rule.get("fired", 0) + 1
         rule["last_fired"] = now()
         rule["last_result"] = "ok" if code == 200 else str(res.get("error"))
+        if code == 200 and res.get("estado"):
+            rule["last_envio"] = {k: res.get(k) for k in ("estado", "motivo", "envio_id", "transporte", "at")}
+            if res["estado"] != "entregado":
+                rule["last_result"] = f"{res['estado']}: {res.get('motivo') or 'entrega sin confirmar; no se reintenta'}"
         if on_stop and code == 200 and h:
             rule["last_hash"] = h
         if rule.get("kind") == "on_stop":
@@ -583,7 +587,22 @@ _fotos: dict[str, dict] = {}  # rule_id -> {texto, huella} del turno a avisar, r
 
 def fire_on_stop(sid: str) -> None:
     """La sesion `sid` cerro un turno: disparar sus reglas 'cuando termine' (las que no esten
-    enfriando, ver ON_STOP_COOLDOWN_S)."""
+    enfriando, ver ON_STOP_COOLDOWN_S). La sesion queda reservada desde ya, tambien durante el
+    asentamiento de coda: la reconciliacion no evalua el mismo turno en paralelo."""
+    with lock:
+        _evaluando[sid] = _evaluando.get(sid, 0) + 1
+    try:
+        _fire_on_stop(sid)
+    finally:
+        with lock:
+            n = _evaluando.get(sid, 1) - 1
+            if n > 0:
+                _evaluando[sid] = n
+            else:
+                _evaluando.pop(sid, None)
+
+
+def _fire_on_stop(sid: str) -> None:
     with lock:
         s0 = sessions.get(sid)
         desde = s0.get("state_since") if s0 and s0.get("agent") == "coda" else None
@@ -596,6 +615,11 @@ def fire_on_stop(sid: str) -> None:
                 return
     with lock:
         cerrada = dict(sessions.get(sid) or {})
+        _marcar_visto(sid, cerrada)
+    _evaluar_on_stop(sid, cerrada)
+
+
+def _evaluar_on_stop(sid: str, cerrada: dict) -> None:
     if cerrada:
         captura.respuesta(cerrada)  # la respuesta final queda en la memoria del proyecto (anexo A de v5)
         try:
@@ -694,6 +718,101 @@ def fire_on_stop(sid: str) -> None:
                 _fotos.pop(r["id"], None)
 
 
+# --- reconciliacion: un turno cerrado que ninguna on_stop evaluo -------------------------------
+# Medido el 2026-10-16 (regla 2054b0dd7f28): una <task-notification> reabrio el trabajo de A sin
+# UserPromptSubmit; la transcripcion lo dio por terminado con la respuesta anterior (salteada por
+# solo_si) y el Stop real, con «ESTADO:», ya no cambio el estado: set_state no vio transicion y la
+# regla nunca evaluo la entrega. Sin depender de esa transicion, rules_loop compara el turno que
+# muestra la tarjeta con el ultimo que cada regla evaluo y, si cambio y se quedo quieto, lo evalua.
+RECONCILIA_S = 10  # el turno nuevo tiene que estar quieto este rato antes de evaluarlo
+_evaluando: dict[str, int] = {}  # evaluaciones en curso por sesion (Stop y reconciliacion): no se cruzan
+_pendientes: dict[str, tuple[str, float]] = {}  # sid -> (clave vista, desde cuando), sin evaluar
+
+
+def clave_turno(s: dict) -> str:
+    """Identidad barata del turno que muestra la tarjeta: su pedido y su respuesta. No lee la
+    transcripcion; la evaluacion (turno_de) si, y solo cuando esta clave cambia."""
+    pedido = str(s.get("prompt_id") or s.get("last_prompt") or "")
+    return huella(s.get("last_reply") or "", pedido) or f"vacio:{pedido}"
+
+
+def _marcar_visto(sid: str, s: dict) -> None:
+    """Con el lock tomado: las on_stop de `sid` evaluaron (o descartaron) el turno de `s`. Queda en
+    disco: tras un reinicio no se reevalua lo ya visto."""
+    clave = clave_turno(s) if s else ""
+    cambio = False
+    for r in rules.items:
+        if r.get("kind") == "on_stop" and r.get("from") == sid and r.get("turno_visto") != clave:
+            r["turno_visto"], cambio = clave, True
+    _pendientes.pop(sid, None)
+    if cambio:
+        rules.save()
+
+
+def reconciliable(s: dict | None) -> bool:
+    """La carrera Stop/transcripcion es de las sesiones de Claude con hooks: su respuesta la trae el
+    Stop. Las demas cierran turno desde la transcripcion (sin hooks) o con su propio asentamiento
+    (coda), y su `last_reply` cambia con cada lectura: reconciliarlas reevaluaria turnos viejos."""
+    return bool(s) and s.get("agent") == "claude" and bool(s.get("hooked")) and not s.get("external")
+
+
+def reconciliar(ahora: float | None = None) -> list[str]:
+    """Sesiones en `termino` cuyo turno ninguna on_stop evaluo, quieto hace RECONCILIA_S: se evaluan
+    con fire_on_stop, que aplica los mismos filtros, la dedupe y el enfriamiento. Una regla sin
+    marca toma como visto el turno que encuentra (asi un despliegue no reevalua lo ya entregado);
+    mientras la sesion corre, esa marca es la del turno en curso, y su cierre si se evalua.
+    Devuelve las sesiones que se mandaron a evaluar."""
+    ahora = time.time() if ahora is None else ahora
+    listas, marcadas = [], False
+    with lock:
+        origenes = {r.get("from") for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop"}
+        for sid in origenes:
+            s = sessions.get(sid)
+            if not reconciliable(s) or sid in _evaluando:
+                _pendientes.pop(sid, None)
+                continue
+            clave = clave_turno(s)
+            suyas = [r for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid]
+            for r in suyas:
+                if "turno_visto" not in r:
+                    r["turno_visto"], marcadas = clave, True
+            if s.get("state") != "termino" or all(r["turno_visto"] == clave for r in suyas):
+                _pendientes.pop(sid, None)
+                continue
+            vista, desde = _pendientes.get(sid, (None, ahora))
+            if vista != clave:
+                _pendientes[sid] = (clave, ahora)
+            elif ahora - desde >= RECONCILIA_S:
+                listas.append(sid)
+                _evaluando[sid] = _evaluando.get(sid, 0) + 1  # reservada hasta que termine su evaluacion
+                _pendientes.pop(sid, None)
+        if marcadas:
+            rules.save()
+    for sid in listas:
+        state.log(f"on_stop de {sid[:8]}: turno cerrado sin evaluar (Stop sin transicion); se evalua ahora")
+        _lanzar(sid)
+    return listas
+
+
+def _lanzar(sid: str) -> None:
+    """La evaluacion va en otro hilo: fire_on_stop puede enviar (hasta 60 s)."""
+    threading.Thread(target=_reconciliar_una, args=(sid,), name=f"reconcilia-{sid[:8]}", daemon=True).start()
+
+
+def _reconciliar_una(sid: str) -> None:
+    try:
+        fire_on_stop(sid)
+    except Exception:
+        state.log(f"reconciliacion on_stop de {sid[:8]}:\n{traceback.format_exc()}")
+    finally:
+        with lock:  # suelta la reserva que tomo reconciliar
+            n = _evaluando.get(sid, 1) - 1
+            if n > 0:
+                _evaluando[sid] = n
+            else:
+                _evaluando.pop(sid, None)
+
+
 def aviso_muerta(sid: str, prev: str) -> None:
     """La sesion `sid` murio (desaparecio su proceso) mientras estaba {prev}: con un encargo a medias.
     No hubo Stop, asi que sus reglas «cuando termine» nunca dispararian: se avisa a cada destino de
@@ -772,6 +891,11 @@ def entregas_diferidas(ahora: dt.datetime) -> list[tuple[dict, int]]:
 
 def rules_loop() -> None:
     while True:
+        try:
+            # primero y aparte: un envio lento o una regla rota de abajo no la posterga
+            reconciliar()  # turnos cerrados que ninguna on_stop evaluo (un Stop sin transicion)
+        except Exception:
+            state.log(traceback.format_exc())
         try:
             t = dt.datetime.now().astimezone()
             due = []

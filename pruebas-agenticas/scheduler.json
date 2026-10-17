@@ -3,7 +3,7 @@
   "raiz": "..",
   "resultados": "pruebas-agenticas/resultados/scheduler",
   "reglas": [
-    "docs/specs/evaluador-harness/requirements.md: 8.1-8.7; sin pagos ni agentes nuevos, hipótesis propuestas, desconocido bloquea.",
+    "docs/APRENDIZAJE.md: análisis local sin pagos ni agentes nuevos, hipótesis propuestas y desconocido bloquea; piloto Jev explícito sujeto a sus guardias.",
     "docs/specs/evaluador-harness/acceptance-final.md: muestras y oráculos revisados; permisos vigentes/expirados/muertos, GET sin escrituras, pausa y ensayo local sin agentes."
   ],
   "precondiciones": [

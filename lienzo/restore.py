@@ -90,12 +90,16 @@ def eligible(card: dict) -> bool:
 
 
 def _read() -> list[dict]:
-    try:
-        with open(path(), encoding="utf-8") as f:
-            d = json.load(f)
-    except OSError, ValueError:
-        return []
+    d, error = state.leer_json(path())
+    if error == "ilegible":
+        raise OSError("restaurar.json no se pudo leer; no se guarda encima")
+    if error == "corrupto" and os.path.exists(path()):
+        raise OSError("restaurar.json corrupto no se pudo preservar; no se guarda encima")
     if not isinstance(d, list):
+        if d is not None:
+            state.apartar_corrupto(path(), "no es una lista")
+            if os.path.exists(path()):
+                raise OSError("restaurar.json inválido no se pudo preservar; no se guarda encima")
         return []
     return [e for e in d if isinstance(e, dict) and isinstance(e.get("session_id"), str) and e.get("agent")]
 

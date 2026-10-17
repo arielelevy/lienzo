@@ -1,6 +1,6 @@
 [project]
 name = "lienzo"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tablero para sesiones de Claude Code, Codex CLI, Pi y CODA en terminales Windows"
 readme = "README.md"
 license = { file = "LICENSE" }

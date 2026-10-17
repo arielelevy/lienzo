@@ -1,5 +1,10 @@
 # Aceptación revisada — frente B, 2026-10-12
 
+Registro histórico del 2026-10-12. Sus estados, importes y autorizaciones corresponden a esa ronda;
+no son un estado operativo verificado hoy ni una autorización nueva.
+Contrato actual: [Aprendizaje](../../APRENDIZAJE.md). Las specs intermedias citadas en el cuerpo
+se retiraron al consolidar; sus versiones originales permanecen en Git.
+
 Autorización humana: adjunto 20261012-140806-e2bfaffa5fd3-mensaje.md: «Ariel insiste TERMINAR y aprobación explícita TODO» y «aplicá autorización de Ariel para baseline/propuestas revisadas sin tapar falla». Condición anterior135958: preservar corrida sin --fijar, revisar muestras contra oráculos. Se cumplió antes de fijar referencia de scheduler.json; no autorización de mutaciones no revisadas ni de pagar sin cota.
 
 Corrida original preservada 2026-10-12T17-13-44.222Z-27528: mejoras-backend80 passed, scheduler-focal80 passed; códigos0/0, fallas=[] en actual.json, logs completos leídos. Tests solapados: no sumar160 casos independientes. Runner1 por baseline ausente, no por defecto. Se informó muestra/resultados en conversación antes de --fijar. Baseline aprobado solamente para estos2 casos y esta configuración; no tocar baselines generales de A.

@@ -1,0 +1,35 @@
+{
+  "nombre": "integracion-envio-release",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/integracion-envio",
+  "reglas": [
+    "Encargo de Ariel 2026-10-17: publicar envio en GET /sessions, snapshots local/peer/SSE y eventos; no recalcular capacidad remota ni hacer IO pesado bajo lock; conservar estado persistido.",
+    "Confirmar periódicamente con límites, sin encolar ni reintentar; entrega y expiración visibles; una respuesta tardía no pisa otro envío.",
+    "Reserva atómica de codex queue; pendiente o incierto no se reencola al vencer la ventana de repetición de entregados.",
+    "UI Codex desktop: puede escribir según envio sin abrir kill/Esc/consola; resultado y motivo accesibles; API/SSE fixture declarados, sockets SSE reales aislados en pytest.",
+    "Copycat incierto/pendiente/encolado no detiene el origen ni transfiere propiedad; consumidores distinguen aceptación de entrega y pendientes de éxito.",
+    "Claude requiere opt-in por lanzamiento o registro explícito por sesión; comando bootstrap público sin secretos; sólo adaptador vivo con proceso verificado habilita envío; pipe_written no es entrega; gestor de F probado por separado."
+  ],
+  "casos": [
+    {
+      "id": "publicacion-confirmacion-reserva",
+      "comando": ["py", "-m", "pytest", "tests/test_envio_publicacion.py", "tests/test_codex_queue.py", "tests/test_claude_pipe_cableado.py", "tests/test_envio_confirmado.py", "tests/test_ejecuciones_externas.py", "tests/test_integration_guards.py", "tests/test_ola2_server.py", "tests/test_copycat_handover.py", "tests/test_copycat_connections.py", "tests/test_launch.py", "tests/test_launch_improvements.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 180000,
+      "cubre": ["lienzo/server.py", "lienzo/sessions.py", "lienzo/launch.py", "lienzo/codex_queue.py", "tests/conftest.py"]
+    },
+    {
+      "id": "ui-envio-desktop",
+      "comando": ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "tests-ui/playwright.config.ts", "tests-ui/envio-codex.spec.ts", "tests-ui/envio-claude.spec.ts", "tests-ui/escritorio.spec.ts", "tests-ui/seleccion.spec.ts", "tests-ui/pi.spec.ts", "tests-ui/trabajo.spec.ts", "tests-ui/flechas.spec.ts", "tests-ui/acciones.spec.ts", "--workers=1"],
+      "cwd": "web",
+      "timeoutMs": 180000,
+      "cubre": ["web/src/types.ts", "web/src/api.ts", "web/src/names.ts", "web/src/components/SendBox.tsx", "web/src/components/Card.tsx", "web/src/components/Launch.tsx", "web/src/components/SelectionBar.tsx", "web/src/components/WorkClipboard.tsx", "web/src/components/Forward.tsx", "web/src/components/Arrows.tsx", "web/src/hooks/useCardActions.ts"]
+    },
+    {
+      "id": "etiqueta-resultado-envio",
+      "comando": ["node", "--experimental-transform-types", "--test", "src/send-result.test.ts"],
+      "cwd": "web",
+      "timeoutMs": 30000,
+      "cubre": ["web/src/api.ts"]
+    }
+  ]
+}

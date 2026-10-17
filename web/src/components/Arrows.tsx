@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ago, rulesApi, sessionsApi, type RuleEdit } from "../api";
+import { ago, rulesApi, sendNotice, sessionsApi, type RuleEdit } from "../api";
 import { everySeconds, hhmm, nextAt, splitEvery, type EveryUnit } from "../nl";
 import { canWrite, periodLabel, shortName, whenLabel } from "../names";
 import { GLYPH_HIT, computeSegs, laneHeight, type Band, type Rect, type Seg } from "../arrows-geometry";
@@ -344,7 +344,8 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     setResending(true);
     try {
       const r = await sessionsApi.send(view.to, { text: viewLinks[0].text, attachments: [] });
-      toast?.(`Reenviado a ${nameOf(view.to)} (${r.chars} caracteres)`);
+      const notice = sendNotice(r, nameOf(view.to));
+      toast?.(r.estado === undefined ? `Reenviado a ${nameOf(view.to)} (${r.chars} caracteres)` : notice.text, notice.attention);
       setView(null);
     } catch (e) {
       toast?.(`No se pudo reenviar: ${(e as Error).message}`, true);

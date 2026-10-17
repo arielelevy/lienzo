@@ -9,6 +9,7 @@ import tempfile
 import threading
 from pathlib import Path
 
+import plugins
 import state
 import tools
 
@@ -48,6 +49,7 @@ def status() -> dict:
     return {
         "preferences": preferences(),
         "tools": tools.resumen(),
+        "plugins": plugins.resumen(),
         "scope": "esta PC; nuevas sesiones lanzadas desde Lienzo",
     }
 

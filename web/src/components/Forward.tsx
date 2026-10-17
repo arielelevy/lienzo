@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, ago, rulesApi, sessionsApi } from "../api";
+import { ApiError, ago, rulesApi, sendNotice, sessionsApi } from "../api";
 import { coordinatorOf, everySeconds, fmtEvery, hhmm as fmtHhmm, nextAt, parseConnection, splitEvery, type EveryUnit } from "../nl";
 import type { Session } from "../types";
 import { REPLY_TEMPLATE, shortName } from "../names";
@@ -176,16 +176,18 @@ export function Forward({ from, others, initialTarget, toast, onDone }: Props) {
           attachments: [],
           from: from.session_id,
         });
-        toast(`Enviado a ${shortName(targetSession)} (${r.chars} caracteres)`);
+        const notice = sendNotice(r, shortName(targetSession));
+        toast(notice.text, notice.attention);
       } else if (mode === "native") {
         // se le habla a A (esta sesion) para que abra el canal con B; la flecha doble es A <-> B
-        await sessionsApi.send(from.session_id, {
+        const result = await sessionsApi.send(from.session_id, {
           text: nativeInstruction(targetSession, nativeText),
           attachments: [],
           link_to: targetSession.session_id,
           native: true,
         });
-        toast(`${shortName(from)} va a abrir el canal con ${shortName(targetSession)}`);
+        const notice = sendNotice(result, shortName(from));
+        toast(notice.confirmed ? `${shortName(from)} va a abrir el canal con ${shortName(targetSession)}` : notice.text, notice.attention);
       } else if (mode === "on_stop") {
         const total = repeat && topeTotal;
         const rule = {

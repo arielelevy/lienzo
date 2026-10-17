@@ -1,0 +1,32 @@
+{
+  "nombre": "codex-queue-frente-A",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/codex-queue",
+  "reglas": [
+    ".temp/coordinacion/2026-10-17/A-codex-queue.md: a un hilo de Codex (CLI o app) se le escribe con `codex queue` por argv sin shell; «entregado» sólo si el texto aparece en el rollout como mensaje de usuario, antes «encolado»; sin confirmación, estado visible sin reintentos; nunca encolar dos veces el mismo envío; la app de escritorio nunca por tecleo.",
+    "Medido 2026-10-17: con el proceso del hilo cerrado, codex queue igual ejecuta el turno en segundo plano; un hilo de CLI sin proceso vivo o de la app cerrada se rechaza con motivo. Contrato de D: puede_enviar {puede, motivo, transporte} y enviar {estado, motivo, referencia}.",
+    "Las guardias de tecleo (external_blocked, send_blocked) siguen iguales para Claude Desktop y orquestadores; sólo el envío de Codex por cola las evita, con sus propias guardias (detenida, pendiente)."
+  ],
+  "casos": [
+    {
+      "id": "codex-queue-contratos",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_codex_queue.py",
+        "tests/test_envio_confirmado.py",
+        "tests/test_ejecuciones_externas.py",
+        "tests/test_integration_guards.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "lienzo/codex_queue.py",
+        "lienzo/sessions.py"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,10 @@
 # Frente B: entrega revisable
 
+Registro histórico del 2026-10-12. Sus estados, importes y autorizaciones corresponden a esa ronda;
+no son un estado operativo verificado hoy ni una autorización nueva.
+Contrato actual: [Aprendizaje](../../APRENDIZAJE.md). Las specs intermedias citadas en el cuerpo
+se retiraron al consolidar; sus versiones originales permanecen en Git.
+
 Fecha: 2026-10-12. Sin add, commit, push, reinicio del servidor principal, aprobación de baseline ni tareas marcadas completadas.
 
 ## Cambios

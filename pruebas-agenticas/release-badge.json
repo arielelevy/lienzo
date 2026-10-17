@@ -1,0 +1,14 @@
+{
+  "nombre": "release-badge",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/release-badge",
+  "reglas": ["Pedido de Ariel: mostrar el número de release abajo a la izquierda de Lienzo; usar versión del proyecto y no tapar las cuotas."],
+  "precondiciones": [{"nombre": "Vite aislado", "url": "http://127.0.0.1:7433/", "debeContener": "Lienzo"}],
+  "casos": [{
+    "id": "version-visible-desktop-mobile",
+    "comando": ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "tests-ui/playwright.config.ts", "tests-ui/release.spec.ts", "--workers=1"],
+    "cwd": "web",
+    "timeoutMs": 90000,
+    "cubre": ["web/src/components/ReleaseBadge.tsx", "web/src/components/ReleaseBadge.css", "web/src/App.tsx"]
+  }]
+}

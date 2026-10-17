@@ -1,0 +1,162 @@
+{
+  "nombre": "evaluador-background-frente-A",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/evaluador-background",
+  "reglas": [
+    "docs/APRENDIZAJE.md: el investigador complementa a Jev (Jev filtra y prioriza), trabaja en sólo lectura, valida fuentes, deja evidencia y propuestas en estado propuesta; nunca promueve, instala ni aplica.",
+    "Política de Ariel del 2026-10-16: Codex usa la suscripción mientras quede >= 20 % del semanal (uso <= 80 %), sin créditos cobrables, leído en vivo; coda-dgx sólo para proyectos de la regla local y con autorización firmada. Sin máximo acreditado, bloqueado.",
+    "Actividad del usuario, pausa, memoria insuficiente, cuota o cancelación detienen el proceso propio y conservan evidencia; nunca se mata un proceso ajeno ni un PID recuperado tras reinicio; sin reintento automático de fallos.",
+    "Pedido de Ariel del 2026-10-17: el investigador evalúa unidades de trabajo completas (ronda, ola o feature) desde carpetas de coordinación y capturas, sin transcripciones crudas; preguntas de reparto, paralelismo, reacción de la coordinadora, elección de agente, retrabajo y capacidades de Lienzo como coordinador."
+  ],
+  "casos": [
+    {
+      "id": "investigador-contratos",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_optimization_research.py",
+        "tests/test_optimization_research_unit.py",
+        "tests/test_optimization_research_runner.py",
+        "tests/test_optimization_queue.py",
+        "tests/test_optimization_cost.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 180000,
+      "cubre": [
+        "lienzo/optimization_research.py",
+        "lienzo/optimization_research_policy.py",
+        "lienzo/optimization_research_quota.py",
+        "lienzo/optimization_research_runner.py",
+        "lienzo/optimization_queue.py",
+        "lienzo/optimization_cost.py",
+        "lienzo/optimization_scheduler.py",
+        "lienzo/optimization_research_unit.py"
+      ]
+    },
+    {
+      "id": "scheduler-regresion",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_optimization_scheduler.py",
+        "tests/test_optimization_activity.py",
+        "tests/test_optimization_budget.py",
+        "tests/test_optimization_memory.py",
+        "tests/test_optimization_experiment.py",
+        "tests/test_optimization_pilot.py",
+        "tests/test_agent_improvements_api.py",
+        "tests/test_jev.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 180000,
+      "cubre": [
+        "lienzo/optimization_scheduler.py",
+        "lienzo/optimization_queue.py",
+        "lienzo/optimization_cost.py",
+        "lienzo/optimization_budget.py",
+        "lienzo/server.py"
+      ]
+    },
+    {
+      "id": "cuota-real-sin-inferencia",
+      "comando": [
+        "py",
+        "-c",
+        "import sys; sys.path.insert(0, 'lienzo'); import optimization_research_quota as q, optimization_research_policy as p; r = q.read_codex(); b, why = q.assess(r, p.CODEX_AUTHORIZATION['uso_semanal_max_pct']); print({k: r.get(k) for k in ('ok', 'used_pct', 'credits_has', 'credits_balance', 'spend_control_reached', 'error')}); print('habilitado' if b else 'bloqueado: ' + '; '.join(why)); sys.exit(0 if r.get('ok') else 1)"
+      ],
+      "timeoutMs": 60000,
+      "cubre": [
+        "lienzo/optimization_research_quota.py"
+      ]
+    }
+  ],
+  "mutaciones": [
+    {
+      "id": "cuota-sin-tope",
+      "archivo": "lienzo/optimization_research_quota.py",
+      "buscar": "    if max_used_pct is not None and quota[\"used_pct\"] > max_used_pct:",
+      "reemplazar": "    if False:",
+      "casos": [
+        "investigador-contratos"
+      ]
+    },
+    {
+      "id": "creditos-ignorados",
+      "archivo": "lienzo/optimization_research_quota.py",
+      "buscar": "        reasons.append(\"hay créditos cobrables o desconocidos: un exceso podría cobrarse\")",
+      "reemplazar": "        pass",
+      "casos": [
+        "investigador-contratos"
+      ]
+    },
+    {
+      "id": "fuente-inventada-aceptada",
+      "archivo": "lienzo/optimization_research.py",
+      "buscar": "            (kind == \"memoria\" and ref in memory_ids)",
+      "reemplazar": "            (kind == \"memoria\")",
+      "casos": [
+        "investigador-contratos"
+      ]
+    },
+    {
+      "id": "caso-repetido",
+      "archivo": "lienzo/optimization_queue.py",
+      "buscar": "            if any(j[\"case\"][\"case_key\"] == case[\"case_key\"] for j in research):",
+      "reemplazar": "            if False:",
+      "casos": [
+        "investigador-contratos"
+      ]
+    },
+    {
+      "id": "cancelacion-ignorada",
+      "archivo": "lienzo/optimization_scheduler.py",
+      "buscar": "            return RESEARCH_CANCELLED",
+      "reemplazar": "            return None",
+      "casos": [
+        "investigador-contratos"
+      ]
+    },
+    {
+      "id": "tope-salida-ignorado",
+      "archivo": "lienzo/optimization_research_runner.py",
+      "buscar": "                        self.exceeded.set()  # dejar de leer: el proceso se traba en su write",
+      "reemplazar": "                        pass",
+      "casos": [
+        "investigador-contratos"
+      ]
+    },
+    {
+      "id": "texto-sin-redactar",
+      "archivo": "lienzo/optimization_research.py",
+      "buscar": "                    \"texto\": redact(row[\"texto\"][:800], counts),",
+      "reemplazar": "                    \"texto\": row[\"texto\"][:800],",
+      "casos": [
+        "investigador-contratos"
+      ]
+    },
+    {
+      "id": "respuesta-sin-redactar",
+      "archivo": "lienzo/optimization_research.py",
+      "buscar": "    result = redact_deep(result, counts)  # la CLI pudo leer un secreto fuera del paquete",
+      "reemplazar": "    pass",
+      "casos": [
+        "investigador-contratos"
+      ]
+    },
+    {
+      "id": "como-sin-redactar",
+      "archivo": "lienzo/optimization_research.py",
+      "buscar": "                    \"inicio\": redact(\" \".join(row[\"inicio\"].split()), counts),",
+      "reemplazar": "                    \"inicio\": \" \".join(row[\"inicio\"].split()),",
+      "casos": [
+        "investigador-contratos"
+      ]
+    }
+  ]
+}

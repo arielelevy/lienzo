@@ -1,8 +1,182 @@
 # Pendientes del lienzo
 
-Esta es la única lista de pendientes; lo hecho está en MEJORAS.md y en DISENO.es.md.
+Esta es la única lista de pendientes. MEJORAS.md conserva hechos históricos; DISENO.es.md
+describe la arquitectura y docs/PRODUCTO.md las decisiones de producto.
 
 Fecha: 2026-10-10.
+
+Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las specs.
+
+## Producto, aprendizaje y extensiones (2026-10-16)
+
+Checklist único de esta conversación. Todo queda pendiente; el estado técnico no cierra una tarea.
+**Prioridad indicada por Ariel: primero el evaluador que usa Codex en segundo plano.**
+
+### Release en preparación — envío a Codex y Claude (2026-10-17)
+
+- [ ] Dejar operativa en este release la integración de envío con Codex y Claude, pedido de Ariel.
+  Codex usa `codex queue`; Claude se prueba mediante pipe autenticado con adaptador hijo de la
+  propia sesión. No confundir escritura al pipe con entrega al modelo ni respuesta.
+  Estado: A entregó cola Codex con prueba real y suite reportada de 2022 passed, 3 skipped;
+  C entregó detección y tarjeta desktop. Sus procesos fueron cerrados conservando informes,
+  código y logs. D integra publicación de capacidades, confirmaciones, formulario y estados UI;
+  E implementa puente Claude con pruebas aisladas. La coordinadora es Codex, sucesora de B.
+  Prueba Claude verificada: versión 2.1.302, un mensaje peer con token válido y un ACK exacto;
+  cero filas con el marcador de token inválido; proceso y registro de prueba cerrados.
+  Esto verifica hijo → sesión propia, todavía no Lienzo → Claude Desktop.
+  Pendiente: corregir concurrencia/deduplicación y estados inciertos de Codex; registrar y
+  comprobar vida del adaptador Claude; probar circuito real desde Lienzo, incluida Desktop;
+  revisión, pruebas agénticas integradas y activación coordinada. Sin baseline aprobado ni
+  PASS certificado. No se reinició el servidor principal.
+  Evidencia y reparto: `.temp/coordinacion/2026-10-17/orden-release.md`, informes A/C/D/E y
+  `claude-pipe-prueba/verification.json`. Hallazgos: `code-review-2026-10-17.md`.
+
+### P0 — Falla grave de continuidad de la coordinadora (2026-10-17)
+
+- [ ] **Garantizar que la entrega de un frente reanude la coordinación hasta integrar y verificar,
+  sin esperar a que Ariel pregunte por el avance.** Pedido explícito de Ariel tras esta ronda.
+  Evidencia en vivo: B entregó y su regla `c887b7b25512` registró `fired: 1`,
+  `last_result: ok`, `last_fired: 2026-10-16T23:49:50.814-03:00`; el aviso llegó a esta
+  conversación, pero la coordinadora respondió con estado y no continuó la integración autorizada.
+  A también entregó con `ESTADO:` visible en `last_reply`, pero su regla `2054b0dd7f28`
+  seguía en `fired: 0`, con `last_result: salteado: la respuesta no trae «ESTADO:» (turno intermedio)`.
+  Investigar por separado la entrega fiable del informe final y la continuidad tras recibirlo;
+  no atribuir ambos síntomas a una causa todavía no comprobada.
+  Criterio: probar entrega mientras la coordinadora está ocupada y quieta, entrega simultánea de
+  dos frentes, respuesta intermedia seguida de final y recuperación tras reinicio. Conservar
+  informe pendiente hasta acuse de recepción y procesamiento; recuperar avisos perdidos sin
+  duplicar encargos ni generar bucles. Mostrar entregado, recibido e integrado por separado.
+  Registrar evidencia de que la coordinadora retoma revisión/integración/pruebas o comunica un
+  bloqueo concreto, sin completar tareas ni aprobar baselines automáticamente.
+  Estado (2026-10-17): causa de A comprobada con la transcripción y el log. Una `<task-notification>`
+  reabrió el trabajo sin UserPromptSubmit; transcripts.py lo dio por terminado (23:55:20) con la
+  respuesta intermedia y el Stop real con «ESTADO:» (23:56:13) no cambió el estado, así que la regla
+  nunca evaluó la entrega. Corregido en local: la notificación reabre el turno (transcripts.py) y
+  rules.py reconcilia turnos cerrados sin evaluar (marca persistida, sin duplicados ni bucles).
+  Pruebas: tests/test_rules.py y test_transcripts.py, más la transcripción real de A cortada en
+  02:55:20 (abierto) y 02:56:14 (cerrado con ESTADO:). Falta reinicio del backend, aceptación,
+  la vista entregado/recibido/integrado y la continuidad de la coordinadora (síntoma de B, aparte).
+
+### P0 — Evaluador e investigación en segundo plano
+
+- [ ] **Implementar el evaluador con Codex/CLI en background, complementando a Jev.**
+  Jev conserva el filtro barato y la priorización. Codex investiga los casos elegidos, relaciona
+  código y trazas, identifica causas y propone mejoras. No reemplazar Jev por llamadas CLI para todo.
+  Criterio: recorrer selección → investigación CLI → resultado estructurado → evidencia en memoria
+  → propuesta visible, con un caso positivo y fallos reproducibles.
+  Estado (2026-10-17): implementado localmente (optimization_research*, cola y scheduler) con
+  pruebas y casos del runner; la vista del panel muestra cuota, bloqueos, candidatos y cancelación.
+  Falta reiniciar el backend (puede lanzar `codex exec` real con la cuota de Ariel), primera
+  ejecución real, aceptación, baseline y mutaciones aprobados.
+- [ ] Integrar el investigador a la cola y al scheduler de Lienzo: un trabajo controlado,
+  límites de duración/consumo, condiciones de inactividad y recursos, pausa, cancelación,
+  recuperación y deduplicación. No afectar sesiones ajenas ni habilitar reintentos infinitos.
+  Criterio: actividad del usuario o un fallo detiene/pospone según el contrato, conservando evidencia.
+- [ ] Definir y comprobar la política de autonomía y consumo del investigador.
+  Distinguir investigación de sólo lectura, experimentos aislados y aplicación de cambios.
+  La conversación no concede un presupuesto monetario nuevo ni autoriza instalar lo que recomiende.
+  Criterio: mostrar límites y motivos de bloqueo; ninguna ejecución puede saltarse las guardias.
+- [ ] Ampliar las preguntas del evaluador al flujo completo: herramientas, contexto, memoria,
+  arquitectura, planificación, tareas/features, construcción, iteraciones entre olas, coordinación,
+  esperas, pruebas, review, auditoría, retrabajo, documentación y capacidades que faltan.
+  Criterio: cada propuesta identifica problema, fuentes, alcance, alternativa y forma de comprobarla.
+
+### Ciclo aparte — Tres niveles de registro (pedido de Ariel, 2026-10-17)
+
+- [ ] **Guardar lo que pasa en Lienzo en tres niveles y que cada consumidor lea el suyo.**
+  1. Crudo: todo (transcripciones, salidas completas, eventos). Se depura cada tanto con una retención que
+     decide Ariel; depurar es borrar, no se automatiza sin esa decisión.
+  2. Cómo se hizo el trabajo: llamadas, tiempos, esperas, quién hizo qué. Es para el investigador.
+  3. Qué pasó: qué se hizo y en qué proyectos, resumido y limpio, sin cosas internas ni ruido. Es para todas
+     las sesiones y para los sistemas externos que reciben información de Lienzo.
+  El investigador usa los niveles 2 y 3 para optimizar. Hoy su paquete trae el 3 (nodos de memoria) y sólo
+  ids de sesión del 2; las capturas (`captura`) son la fuente natural del nivel 2.
+  Criterio: un consumidor externo recibe sólo el nivel 3; el investigador recibe el 2 y el 3 sin
+  transcripciones; el crudo se puede recuperar hasta su depuración.
+  Estado (2026-10-17): nivel 2 del investigador desde capturas hecho (por sesión y hasta 60 eventos
+  recientes, redactados; el crudo no viaja). Faltan las llamadas a herramientas por paso, el nivel 3
+  para sistemas externos y la depuración del crudo.
+- [ ] Llevar la instrucción de RTK de la base agéntica (`lienzo/tools/rtk.py`) a todo lo que lee un agente
+  (`rtk read`, `rtk rg`, `rtk find`, `rtk git`, `rtk recall`), no sólo a las salidas largas. La base la
+  comparten las sesiones y el investigador.
+
+### P1 — Memoria, creencias, patrones y decisión
+
+- [ ] Integrar la base de creencias en la memoria existente, con fuentes, contexto, confianza,
+  excepciones, vigencia y posibilidad de refutar/reemplazar sin borrar historia.
+  Estado: código y contratos locales; falta aceptación y activación.
+- [ ] Entregar el checklist contextual como vista de creencias respaldadas, corto y ajustado al trabajo.
+  Excluir propuestas sin validar, vencimientos, refutaciones y apoyos retirados.
+  Estado: implementación local sin reglas duplicadas; falta integración de uso y activación.
+- [ ] Detectar y contrastar patrones de desarrollo sin tratar todo igual.
+  Separar bugfix, feature, refactor, investigación, documentación y arquitectura, conservando
+  proyecto, tecnología, área, fase, agente/modelo/versiones y condiciones relevantes.
+  Estado: agrupación por etiquetas explícitas; falta investigación de patrones desde flujos reales.
+- [ ] Incorporar evidencia de pruebas, review local de Claude y auditoría mediante skill.
+  Distinguir controles declarados, ejecutados, hallazgos, correcciones verificadas y pendientes.
+  Una revisión ejecutada o un turno cerrado no prueba calidad ni completa una tarea.
+- [ ] Mostrar en Lienzo observaciones, investigaciones, propuestas, evidencia, creencias y checklist.
+  Permitir que Ariel revise y decida adopción; no promover una recomendación del modelo por sí sola.
+  Criterio: se puede seguir una propuesta hasta sus fuentes y conocer qué no fue medido.
+
+### P1 — Catálogo y contrato de plugins
+
+- [ ] Activar y verificar el catálogo ampliado: Anatomy y Commit (Image Preview y Sub Meter quedaron
+  fuera de Lienzo por decisión de Ariel, 2026-10-17; siguen instalados en Claude Code).
+  Estado: fichas implementadas y UI compilada/probada; backend activo observado con cinco fichas
+  anteriores. La activación debe coordinarse: había dos sesiones corriendo y tres con turno terminado.
+- [ ] Instalar y comprobar Better Claude en el entorno autorizado.
+  Verificar manifiestos, activación y compatibilidad de Image Preview/Sub Meter/Commit en Claude Code.
+  Mantener visible que Image Preview necesita verificación Windows, Sub Meter depende de suscripción,
+  y Commit puede hacer commit/push en modo no interactivo. No ejecutar /commit como prueba automática.
+  Estado (2026-10-17): instalados por pedido de Ariel en scope user (image-preview 0.1.1, sub-meter 0.1.0,
+  commit 0.2.0); el catálogo vivo los ve habilitados. Falta verificar en una sesión nueva de Claude Code
+  el hover de Image Preview en Windows (fullscreen) y la barra de Sub Meter. /commit no se ejecutó.
+  Ariel confirmó el 2026-10-17 que Better Claude anda.
+- [ ] Mostrar tools, integraciones y formas de trabajo sin confundir función con empaquetado.
+  Estado: metadatos de formato/compatibilidad/límites e inventario de plugins locales implementados.
+  Un plugin puede no tener tools ni GitHub. Cargado no equivale a conectado o sano.
+- [ ] Implementar el contrato uniforme de incorporación de plugins:
+  identidad/versión, compatibilidad, capacidades, configuración, permisos, ciclo de vida, estado,
+  evidencia y relaciones opcionales. El manifiesto no obliga a tener endpoints, interfaz o tools.
+  Criterio: validar un plugin mínimo y uno inválido, sin romper las extensiones existentes.
+  Estado (2026-10-17): contrato v1 implementado localmente (plugin_manifest.py, plugins.py, fichas
+  en el panel, parada al salir del server). Mínimo, inválido y Stepwise legacy probados. Falta
+  reinicio del backend, aceptación y decidir el manifiesto propio de Stepwise.
+- [ ] Conservar Stepwise como integración local existente entre sistemas y formas de trabajo.
+  No copiar ni publicar su código en GitHub para registrarlo; verificar ficha y disponibilidad local.
+- [ ] Conservar Anatomy como herramienta existente de documentación visual y reutilizar su integración.
+  Su aporte documental se evalúa por claridad/utilidad; no sustituye controles de calidad del código.
+
+### P2 — Investigación de comunidad
+
+- [ ] Preparar investigación periódica de tools, integraciones y formas de trabajo de la comunidad.
+  Relacionar cada candidata con necesidades observadas y guardar fuentes, fecha, alternativas,
+  costos, permisos, mantenimiento y riesgos relevantes.
+- [ ] Definir frecuencia y presupuesto de esa investigación, con propuestas para decisión de Ariel.
+  Descubrir o recomendar no autoriza instalar, activar ni modificar proyectos.
+
+### Transversal — Diseño, Markdown, calidad y entrega
+
+- [ ] Mantener arquitectura, plan y tareas/features según alcance y riesgo, sin imponer SDD.
+  Proceso flexible y calidad no negociable: no reducir revisión, pruebas o información necesaria
+  para producir un número mejor de tiempo, longitud o tokens.
+- [ ] Mantener alineados Producto, Arquitectura, Aprendizaje y Plugins con lo construido.
+  Unificar y eliminar documentos intermedios/obsoletos preservando decisiones y evidencia útil.
+  Estado: 13 specs retiradas; 26 Markdown revisados por enlaces, sin enlaces locales rotos.
+- [ ] Mantener esta lista como única fuente de tareas; no cerrar casillas sin pedido explícito.
+  Distinguir implementación, prueba local, aceptación, activación y medición en uso real.
+- [ ] Aplicar Explorer → Analyser → Designer → Executor → Detective y code-audit a los cambios.
+  Conservar logs/errores y el veredicto real; no aprobar baselines ni mutaciones por cuenta propia.
+  Estado medido: 45 contratos del catálogo, 7 recorridos UI y 52 pruebas de creencias/patrones pasan;
+  build/lint verificados. Compuertas código 1 por baseline ausente; no hay PASS certificado.
+- [ ] Verificar el circuito integrado en una instancia aislada antes de activar el backend principal.
+  Revalidar las áreas afectadas de consultas, WSL y memoria sin pisar cambios de otras sesiones.
+  Retirar las specs no equivale a haber ejecutado sus verificaciones pendientes.
+
+Referencias: [Producto](docs/PRODUCTO.md), [Arquitectura local](DISENO.es.md),
+[Aprendizaje](docs/APRENDIZAJE.md), [Plugins](docs/PLUGINS.md) e
+[índice documental](docs/README.md). Estas prioridades no conceden consumos nuevos ni aceptación de referencias.
 
 Las casillas heredadas se conservan textuales. El 2026-10-10 se cerraron (con `[x]` y su evidencia
 debajo) las verificadas en código, pruebas o decisión de Ariel; las demás siguen pendientes. La evidencia histórica no es una prueba
@@ -29,8 +203,9 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
   Origen: conversación con Ariel del 2026-10-12 sobre Prime Agent.
   Referencia: https://www.primeintellect.ai/blog/prime-agent-rust.
-  **Estado al 2026-10-15:** sin spec. Lo de arriba ya sirve como requisitos; falta diseño y tareas con
-  la skill `sdd` en `docs/specs/`: cómo encaja en `coordinar.py`, las reglas `on_stop` y las rondas.
+  **Actualización del 2026-10-16:** lo de arriba sirve como requisitos. Falta definir arquitectura,
+  plan y tareas según el alcance: cómo encaja en `coordinar.py`, las reglas `on_stop` y las rondas.
+  No exige un recorrido SDD obligatorio.
 
 ## Rondas largas: lo que quedó afuera (2026-10-16)
 
@@ -145,9 +320,9 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
     pasando).
 
   Origen: conversación con Ariel del 2026-10-10. Gravedad: **alta, prioridad** (Ariel, 2026-10-10).
-  **Estado al 2026-10-15:** sin spec; es la próxima a encarar. Primer paso: medir lo de hoy (bytes de un
-  ciclo vacío y de uno con capturas, latencia hasta que la otra PC ve un cambio) y con eso escribir la spec
-  con `sdd`. La medición entre PCs necesita ar-it33940 prendida.
+  **Actualización del 2026-10-16:** primer paso: medir bytes de un ciclo vacío y de uno con capturas,
+  y latencia hasta que la otra PC ve un cambio. Con esos datos definir arquitectura, plan y tareas
+  según el alcance, sin exigir SDD. La medición entre PCs necesita ar-it33940 prendida.
 
 - [ ] Integración uniforme de CLI y hallazgos del code review: capacidades compartidas entre
   Python/TypeScript, proveedores de identidad/transcripción/modelo/diálogo/reanudación, Kiro V3
@@ -508,7 +683,7 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
 - [x] Descubrir y direccionar varias distros de WSL.
   - Evidencia: lienzo/tmux.py: _PREFIX = ["wsl.exe"] en Windows, sin selección de distro; backend.proc_key distingue fuente y PID, no distro.
   - Origen: `docs/porting-linux-2026-09-08.md` (historial de Git). Gravedad: **baja**.
-  - **Cerrado el 2026-10-15:** `backend.py` consulta los panes de cada distro y `distro` va en la tarjeta (spec `docs/specs/wsl-distros`, 538ac22).
+  - **Cerrado el 2026-10-15:** `backend.py` consulta los panes de cada distro y `distro` va en la tarjeta (spec `docs/WSL.md`, 538ac22).
 
 - [ ] Verificar el servidor nativo en Linux y macOS, incluido emparejamiento.
   - Evidencia: lienzo/backend.py: sweep; lienzo/tmux.py: _ps_all. El documento de origen registra simulación de plataforma y pruebas desde Windows/WSL, no una corrida nativa completa; esta revisión no ejecutó esas plataformas.

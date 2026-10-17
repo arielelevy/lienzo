@@ -100,6 +100,8 @@ def test_registrar_es_idempotente_por_metrica_y_dia(monkeypatch):
 
     monkeypatch.setattr(t.conocimiento, "crear_nodo", crear_nodo)
     monkeypatch.setattr(t.optimization_memory, "_connect", lambda: Con())
+    propuestas = []
+    monkeypatch.setattr(t.creencias, "proponer", lambda pid, data, **kw: propuestas.append(data))
     analisis = {
         "ventana_h": 72,
         "capturas": 12,
@@ -114,6 +116,8 @@ def test_registrar_es_idempotente_por_metrica_y_dia(monkeypatch):
     assert creados["trabajo:difusiones:2026-10-16"]["tipo"] == "hallazgo"
     assert creados["trabajo:difusiones:2026-10-16"]["datos"]["requiere_veredicto"] is True
     assert t.registrar("p", {**analisis, "hallazgos": []}) == []
+    assert propuestas[0]["fuentes"] == ["n0"]
+    assert propuestas[0]["dimension"] == "coordinacion"
 
 
 def test_el_scheduler_analiza_como_se_trabaja_a_lo_sumo_cada_hora(monkeypatch):

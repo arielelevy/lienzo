@@ -73,6 +73,11 @@ def _tmux_sweep() -> list[dict]:
     sola llamada a all_agents, en serie. Los sueltos van en solo lectura (no_console): se ven y se
     leen, pero no se les escribe (no hay pane; ver docs/porting-linux-2026-09-08.md)."""
     ds = _t.distros()
+    if _t.VIA_WSL:  # solo las distros que ya corren: preguntarle a una apagada la despierta
+        corriendo = set(_t.distros_corriendo())
+        ds = [d for d in ds if d in corriendo]
+        if not ds:
+            return []
     if len(ds) <= 1:
         distro = ds[0] if ds else None
         return [_tarjeta_tmux(a, distro) for a in _t.all_agents(distro)]

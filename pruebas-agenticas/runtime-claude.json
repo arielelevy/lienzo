@@ -1,0 +1,33 @@
+{
+  "nombre": "runtime-claude-F",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/runtime-claude",
+  "reglas": [
+    "identidad: Preservar UUID e identidad de sesión/proceso.",
+    "confirmacion: Confirmación sólo por type=user + sessionId correcto + origin.kind=peer + origin.msg_id exacto en transcript.",
+    "limites: Revisar carreras, reservas, resultados tardíos, crecimiento sin límite, limpieza, fallo de bootstrap, separación de permisos.",
+    "compatibilidad: Guardia explícita peerProtocol==1 y diagnóstico de versión; desconocido se rechaza con motivo claro.",
+    "secretos: No llamadas a modelos ni sesiones reales: dobles de transporte declarados y archivos temporales.",
+    "vida: Conservar transferencia hasta expires_at antes del primer poll; después del primer poll cerrar por heartbeat de 30 s o dueño muerto/cambiado. Sin capacidad con heartbeat viejo, sin reconectar ni replay."
+  ],
+  "casos": [
+    {
+      "id": "runtime-contratos",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_claude_pipe_runtime.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 120000,
+      "cubre": [
+        "lienzo/claude_pipe_runtime.py",
+        "lienzo/agentes.py"
+      ],
+      "evidencia": []
+    }
+  ]
+}

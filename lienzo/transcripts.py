@@ -368,6 +368,18 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                 if is_system_prompt(human) or human.startswith("[Request interrupted"):
                     turn = ensure_turn(ts)
                     turn["blocks"].append({"kind": "user_text", "text": _short(human, 300)})
+                    if cur is not None and human.startswith("[Request interrupted") and cur.get("_reabierto"):
+                        # interrumpido despues de reabrirlo: no habra turn_duration que lo cierre
+                        cur["ended"] = cur["_ended_real"] = True
+                    if cur is not None and human.lstrip().startswith("<task-notification>"):
+                        # el aviso de una tarea en background pone a trabajar al agente sin
+                        # UserPromptSubmit: el turno cerrado se reabre hasta su proximo
+                        # turn_duration. Sin esto la transcripcion lo daba por terminado con la
+                        # respuesta anterior, el lienzo pasaba la tarjeta a termino y el Stop
+                        # real ya no cambiaba el estado (regla 2054b0dd7f28, 2026-10-16)
+                        cur["ended"] = cur["_ended_real"] = False
+                        cur["_reabierto"] = True
+                        cur["ts_end"] = ts or cur["ts_end"]
                     continue
                 if cur is not None:
                     # un pedido nuevo cierra el anterior aunque no haya turn_duration
@@ -442,6 +454,7 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
         # sigue solo. Medido el 2026-09-09 en 88182904: el aviso quedo 170 lineas antes del final y
         # la tarjeta mostraba el error en rojo (y el reintento automatico mandaba un "Continuar" de
         # mas) mientras la sesion trabajaba. El error vale solo si es lo ultimo que hay.
+        tr.pop("_reabierto", None)
         at, real = tr.pop("_error_at", None), tr.pop("_ended_real", False)
         if at is not None and len(tr["blocks"]) > at:
             tr["error"] = None

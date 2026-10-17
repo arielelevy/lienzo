@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 import conocimiento
+import creencias
 import optimization_memory
 
 VENTANA_H = 72
@@ -339,6 +340,13 @@ def registrar(proyecto: str, analisis: dict) -> list[str]:
                     )
                 if nodo.get("creado", True):
                     ids.append(nodo["id"])
+                creencias.proponer(
+                    proyecto,
+                    {"texto": h["texto"], "accion": h["sugerencia"], "dimension": "coordinacion",
+                     "fuentes": [nodo["id"]], "contexto": {},
+                     "excepciones": "Patrón observado; beneficio de la acción todavía no medido"},
+                    autor="server", con=con,
+                )
         return ids
     finally:
         con.close()

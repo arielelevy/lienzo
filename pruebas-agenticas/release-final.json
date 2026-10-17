@@ -1,0 +1,18 @@
+{
+  "nombre": "release-0.2.0",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/release-final",
+  "reglas": [
+    "Corte autorizado por Ariel: cerrar release con envío Codex y Claude Desktop operativo, sin perder sesiones o evidencia.",
+    "Sólo entrega correlacionada permite estado entregado; incierto no se reenvía ni transfiere propiedad.",
+    "Los casos UI usan fixtures de API y bloquean escrituras reales. La prueba Desktop real se conserva por separado.",
+    "Sin aceptar baseline, requisitos ni mutaciones por cuenta del agente. Un caso verde no equivale a PASS certificado."
+  ],
+  "casos": [
+    {"id":"backend-global","comando":["py","-m","pytest","tests","-q","-p","no:cacheprovider"],"timeoutMs":600000,"cubre":["lienzo/","tests/","install.py","skills/lienzo/"]},
+    {"id":"frontend-lint","comando":["node","node_modules/eslint/bin/eslint.js",".","--max-warnings=0"],"cwd":"web","timeoutMs":120000,"cubre":["web/src/","web/tests-ui/"]},
+    {"id":"frontend-unit","comando":["node","--experimental-transform-types","--test","src/nl.test.ts","src/arrows-geometry.test.ts","src/docs-parse.test.ts","src/recientes.test.ts","src/send-result.test.ts"],"cwd":"web","timeoutMs":120000,"cubre":["web/src/"]},
+    {"id":"frontend-ui-global","comando":["node","node_modules/@playwright/test/cli.js","test","--config","tests-ui/playwright.config.ts","--workers=2"],"cwd":"web","timeoutMs":600000,"cubre":["web/src/","web/tests-ui/"],"evidencia":["web/node_modules/.playwright-artifacts"]},
+    {"id":"frontend-build","comando":["pwsh.exe","-NoProfile","-Command","npm.cmd run build"],"cwd":"web","timeoutMs":120000,"cubre":["web/src/","web/package.json","web/tsconfig.json","web/vite.config.ts"]}
+  ]
+}

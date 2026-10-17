@@ -581,3 +581,48 @@ def test_accion_launch_sin_distro_llega_none(monkeypatch):
     assert codigo == 200
     assert recibida["distro"] is None
     assert recibida["modo"] == "general"
+
+
+# --- no despertar WSL: el barrido solo pregunta adentro de las distros que ya corren ---
+
+
+def test_distros_corriendo_lista_sin_entrar_a_la_distro(wsl, wsl_llamadas):
+    vistos, estado = wsl_llamadas
+    estado["out"] = _utf16("Ubuntu\r\n")
+    assert tmux.distros_corriendo() == ["Ubuntu"]
+    assert vistos[0]["argv"] == ["wsl.exe", "-l", "--running", "-q"]
+
+
+def test_distros_corriendo_nativo_sin_llamar_a_wsl(nativo, wsl_llamadas):
+    vistos, _estado = wsl_llamadas
+    assert tmux.distros_corriendo() == []
+    assert vistos == []
+
+
+def test_available_con_wsl_apagado_no_corre_tmux_adentro(wsl, monkeypatch):
+    monkeypatch.setattr(tmux, "distros_corriendo", list)
+    monkeypatch.setattr(tmux, "distros", lambda: ["Ubuntu"])
+    monkeypatch.setattr(tmux, "_tmux", lambda *a, **k: pytest.fail("tmux -V despierta WSL"))
+    assert tmux.available() is True
+
+
+def test_barrido_con_wsl_apagado_no_entra_a_ninguna_distro(wsl, monkeypatch):
+    import backend
+
+    monkeypatch.setattr(tmux, "VIA_WSL", True)
+    monkeypatch.setattr(tmux, "distros", lambda: ["Ubuntu", "Debian"])
+    monkeypatch.setattr(tmux, "distros_corriendo", list)
+    monkeypatch.setattr(tmux, "all_agents", lambda distro=None: pytest.fail(f"entro a {distro}"))
+    assert backend._tmux_sweep() == []
+
+
+def test_barrido_mira_solo_las_distros_que_corren(wsl, monkeypatch):
+    import backend
+
+    vistas = []
+    monkeypatch.setattr(tmux, "VIA_WSL", True)
+    monkeypatch.setattr(tmux, "distros", lambda: ["Ubuntu", "Debian"])
+    monkeypatch.setattr(tmux, "distros_corriendo", lambda: ["Debian"])
+    monkeypatch.setattr(tmux, "all_agents", lambda distro=None: vistas.append(distro) or [])
+    assert backend._tmux_sweep() == []
+    assert vistas == ["Debian"]

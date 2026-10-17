@@ -13,6 +13,7 @@ JEV_MODEL = "typesafe/jev-1.13"
 JEV_ENDPOINT = "TypeSafe | typesafe/jev-1.13-20260917"
 JEV_METADATA_URL = "https://openrouter.ai/api/v1/models/typesafe/jev-1.13/endpoints"
 LAST_QUOTE = None
+CLI_BLOCK = "CLI bloqueada: adaptador sin máximo comprobable ni pausa segura"
 
 
 def jev_quote(metadata: dict) -> dict:
@@ -91,7 +92,23 @@ def maximum(adapter: str) -> str:
         return "0"
     if adapter == "jev":
         raise ValueError("Jev bloqueado: USD .001 es estimación, falta máximo comprobable del proveedor")
-    raise ValueError("CLI bloqueada: adaptador sin máximo comprobable ni pausa segura")
+    raise ValueError(CLI_BLOCK)
+
+
+def cli_maximum(limits: dict) -> str:
+    """Máximo de costo de servicio de una ejecución CLI, sólo si el adaptador lo acredita antes de enviar.
+
+    Se acredita USD 0 sólo con fundamento leído antes de enviar (p. ej. suscripción sin créditos
+    cobrables, leída en vivo). Tokens o créditos informados después de la ejecución no son un máximo;
+    una clave compartida tampoco. No hay ledger CLI para montos mayores que cero."""
+    bound = limits.get("consumption_bound") if isinstance(limits, dict) else None
+    if not isinstance(bound, dict) or bound.get("verified") is not True:
+        raise ValueError(CLI_BLOCK + ": consumo sin máximo comprobable antes de enviar")
+    if bound.get("unit") != "usd" or bound.get("maximum") != "0" or not bound.get("basis"):
+        raise ValueError(CLI_BLOCK + ": sólo se acredita USD 0 con fundamento; no hay ledger CLI")
+    if not limits.get("cancellable") or not limits.get("timeout"):
+        raise ValueError(CLI_BLOCK + ": falta cancelación propia o timeout")
+    return "0"
 
 
 def status() -> dict:
@@ -104,6 +121,10 @@ def status() -> dict:
             else "cotización pendiente/expirada; requiere preflight",
             "requires_price_preflight": True,
         },
-        "cli": {"enabled": False, "reason": "sin máximo comprobable ni pausa segura"},
+        "cli": {
+            "enabled": False,
+            "reason": "sin máximo comprobable ni pausa segura; el investigador evalúa su política por ejecución",
+            "policy": "optimization_research_policy: sólo lectura, autorización explícita, máximo verificado",
+        },
         "local": {"enabled": True, "max_service_cost_usd": "0", "scope": "análisis y contratos locales, no agentes"},
     }

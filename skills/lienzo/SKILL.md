@@ -109,7 +109,8 @@ explícito**, o los acentos se rompen. Lo que se usa para repartir:
 | `GET /pending`, `POST /pending/<id>` | permisos, `{decision:"allow"\|"deny"}` |
 | `POST /rescan` | barrido de procesos ahora |
 | `GET /peers` | las PCs de la federación, la propia primero (`local: true`), con `alive` y `health` (memoria, CPU, temperatura) |
-| `POST /sessions/launch` | `{pc?, cwd, agent, title, forzar?}`: lanza una sesión nueva, local o en la PC `pc`. Sin tope de sesiones por repo salvo `max_sesiones_por_repo` en config.json (409 `tope_repo`) |
+| `POST /sessions/launch` | `{pc?, cwd, agent, title, forzar?}`: lanza una sesión nueva, local o en la PC `pc`. Sin tope de sesiones por repo salvo `max_sesiones_por_repo` en config.json (409 `tope_repo`). Con `agent: "auto"` elige entre Claude y Codex el de más margen semanal (respuesta `agent`, `motivo`; 409 `{error, motivo}` si ninguno tiene margen). Todo lanzamiento trae `cuotas` y, si el otro agente tiene más margen, un `aviso` que no bloquea |
+| `GET /cuotas` | uso de Claude y Codex como `/usage` y `/status`: `five_hour` y `weekly` (`used_pct`, `resets_at`), `read_at`, `ok`/`error`, más `sugerido` y `motivo`. Caché de 5 min por agente; `?refrescar=1` mide de nuevo. Codex con plan sin ventana de 5 h da `five_hour: null`. En Python: `coordinar.cuotas()` |
 | `POST /avisos`, `POST /avisos/<id>/ack` | aviso coordinado a N frentes con confirmaciones (ver «Rondas largas») |
 | `POST`, `DELETE /turnos/<recurso>` | turno de un recurso pesado: dueño, vencimiento y cola |
 | `GET /memoria` | memoria libre, si bajó del umbral y qué sesión quieta cerrar primero |
@@ -151,7 +152,7 @@ evita los bucles.
 ## Consulta entre investigadores
 
 Para un problema difícil cuyas respuestas se pueden criticar (una conjetura, una decisión de
-arquitectura, un bug que nadie entiende), no un trabajo con archivos (eso es SDD o un frente): dos o
+arquitectura, un bug que nadie entiende), no un trabajo con archivos (eso va como encargo, con plan según alcance): dos o
 tres investigadores de modelos de frontera, con esfuerzo alto, y un revisor.
 
 ```python
@@ -199,9 +200,13 @@ Tres reglas que evitan el desastre con varias sesiones en un solo working tree:
 
 ## Cómo se arma una ronda
 
-Un encargo común con las reglas del entorno, y un encargo por frente en archivos `.md` en el
-scratchpad. El mensaje que se manda es corto y apunta a los dos archivos: los encargos largos por la
-caja se cortan.
+Un encargo común con las reglas del entorno, y un encargo por frente en archivos `.md`. El mensaje
+que se manda es corto y apunta a los dos archivos: los encargos largos por la caja se cortan.
+
+Los archivos de la ronda (encargos, planes, informes, scripts de coordinación) van en
+`<repo>/.temp/coordinacion/<AAAA-MM-DD>/`, que Git ignora. Nunca en la carpeta de un agente
+(`.coda`, `.claude`, `.codex`): coda es un agente real con su propia carpeta, y Lienzo no depende de
+qué agente corre cada frente (pedido de Ariel, 2026-10-17).
 
 Un encargo bueno tiene, en este orden: tu carpeta y solo esta; el insumo, con los documentos
 y las secciones exactas; qué hacer, numerado, con el orden cuando importa; qué medir, con el

@@ -1,0 +1,71 @@
+{
+  "nombre": "diseno-correcciones-F",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/diseno-correcciones-F",
+  "reglas": [
+    "B1: Un resultado tardío no degrada entregado ni reemplaza otro envío o tarjeta.",
+    "B2: Un estado explícito no confirmado nunca se confirma por last_prompt ni se reenvía.",
+    "B3: Un stream SSE expulsado termina y una conexión nueva recibe snapshot.",
+    "P1-P3: Reservar investigadores atómicamente, cerrar SQLite aun con error y no pisar restauración ilegible.",
+    "P4-P5: Conservar estado del transporte; el pedido de aviso se arma al aceptar el envío sin afirmar entrega.",
+    "P6: Rechazar junction/symlink dentro de copy_roots antes de leer o escribir fuera; no tocar sesiones reales."
+  ],
+  "casos": [
+    {
+      "id": "backend-diseno-regresiones",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_diseno_regresiones.py",
+        "tests/test_coordinar.py",
+        "tests/test_consulta.py",
+        "tests/test_consulta_replica.py",
+        "tests/test_consulta_reapuntar.py",
+        "tests/test_restore.py",
+        "tests/test_conocimiento.py",
+        "tests/test_rules.py",
+        "tests/test_rules_frecuencia.py",
+        "tests/test_rules_federadas.py",
+        "tests/test_xfer.py",
+        "tests/test_claude_pipe_cableado.py",
+        "tests/test_envio_publicacion.py",
+        "tests/test_claude_pipe_runtime.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 240000,
+      "cubre": [
+        "lienzo/sessions.py",
+        "lienzo/server.py",
+        "skills/lienzo/coordinar.py",
+        "lienzo/consulta.py",
+        "lienzo/conocimiento.py",
+        "lienzo/restore.py",
+        "lienzo/rules.py",
+        "lienzo/xfer.py"
+      ]
+    },
+    {
+      "id": "ui-avisos-diferidos",
+      "comando": [
+        "node",
+        "node_modules/@playwright/test/cli.js",
+        "test",
+        "--config",
+        "tests-ui/playwright.config.ts",
+        "tests-ui/diseno-avisos.spec.ts",
+        "tests-ui/envio-codex.spec.ts",
+        "tests-ui/envio-claude.spec.ts",
+        "--workers=1"
+      ],
+      "cwd": "web",
+      "timeoutMs": 180000,
+      "cubre": [
+        "web/src/components/SendBox.tsx",
+        "web/src/api.ts"
+      ]
+    }
+  ]
+}

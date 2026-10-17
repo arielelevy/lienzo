@@ -21,6 +21,15 @@ def _sin_tmux_real(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _sin_codex_queue_real(monkeypatch):
+    """La cola puede consumir cuota aun con la app cerrada. Los casos del transporte ponen su doble
+    explícito después de este autouse; ninguno descubre codex.exe real por accidente."""
+    import codex_queue
+
+    monkeypatch.setattr(codex_queue, "codex_exe", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _restaurar_en_tmp(tmp_path, monkeypatch):
     """Ningun test toca el ~/.lienzo/restaurar.json de verdad: sessions.drop_session y el barrido lo
     escriben solos. test_restore.py usa este mismo archivo temporal."""
@@ -35,6 +44,31 @@ def _restaurar_en_tmp(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _cuotas_sin_lectura_real(monkeypatch):
+    """Ninguna prueba lee la cuota real de Claude o Codex: cada lanzamiento exitoso consulta cuotas
+    (medido: una prueba de lanzamiento leia el 48 % real de Codex). test_cuotas_cuenta.py pone sus lectores."""
+    import cuotas
+
+    cuotas.olvidar()
+    monkeypatch.setattr(
+        cuotas, "READERS", {a: (lambda a=a: cuotas._failure("sin lectura real en pruebas")) for a in cuotas.AGENTS}
+    )
+
+
+@pytest.fixture(autouse=True)
+def _plugins_limpios(monkeypatch):
+    """Cada prueba arranca sin plugins cargados ni fichas: plugins.cargar() registra modulos, fichas y
+    ejecutables externos a nivel de modulo, y una prueba que carga uno roto dejaba su ficha en el
+    inventario de las siguientes."""
+    import plugins
+    import procinfo
+
+    monkeypatch.setattr(plugins, "_cargados", {})
+    monkeypatch.setattr(plugins, "_fichas", {})
+    monkeypatch.setattr(procinfo, "EXTERNAL_RUNNERS", dict(procinfo.EXTERNAL_RUNNERS))
+
+
+@pytest.fixture(autouse=True)
 def _sin_estado_real(tmp_path, monkeypatch):
     """Ninguna prueba lee ni escribe el ~/.lienzo ni el ~/.coda de verdad (medido el 2026-10-04: las
     de health leian el config.json real y salian a la red con un git ls-remote; las de launch veian
@@ -45,6 +79,8 @@ def _sin_estado_real(tmp_path, monkeypatch):
     import state
 
     monkeypatch.setenv("CODA_HOME", str(tmp_path / "coda-home"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))  # los hilos de Codex desktop del barrido
     monkeypatch.setenv("LIENZO_HOME", str(tmp_path / "lienzo-home"))
     monkeypatch.setattr(state, "LIENZO", str(tmp_path / "lienzo-home"))
     monkeypatch.setattr(state, "LOG", str(tmp_path / "lienzo.log"))

@@ -26,6 +26,7 @@ import time
 import traceback
 import urllib.parse
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -45,6 +46,7 @@ import conocimiento_api
 import console_titles
 import consulta
 import cuenta_github
+import cuotas
 import federation
 import harness_updates
 import health
@@ -214,12 +216,14 @@ def _local_state() -> dict:
     que arranca /peer/events. Nunca lo que esta PC espeja de otra (evitaria una malla de 3+ PCs
     reenviando lo mismo en circulo)."""
     with lock:
-        return {
-            "sessions": list(sessions.values()),
-            "pending": public_pending(),
-            "links": links.snapshot(),
-            "rules": rules.snapshot(),
+        local = {
+            "sessions": deepcopy(list(sessions.values())),
+            "pending": deepcopy(public_pending()),
+            "links": deepcopy(links.snapshot()),
+            "rules": deepcopy(rules.snapshot()),
         }
+    local["sessions"] = [ses.public_session(s, calcular=True) for s in local["sessions"]]
+    return local
 
 
 def _peer_key(pc_id: str) -> bytes | None:
@@ -642,9 +646,8 @@ def snapshot_json(*, con_espejo: bool) -> str:
     ademas lo de las otras PCs; sin el (lo que lee otra PC por /peer/events) solo lo de esta, para
     no reenviar en circulo en una malla de 3+ PCs.
 
-    `_local_state` serializa con el lock tomado: `sessions.values()` son los dicts vivos, y armar
-    el JSON afuera podia leer una tarjeta a medio escribir (o reventar si el dict cambia de
-    tamaño). El espejo no necesita el lock: mirror.py tiene el suyo."""
+    `_local_state` copia bajo lock y calcula capacidades afuera, sin compartir dicts vivos.
+    Las capacidades remotas se conservan tal como las publica su PC dueña."""
     local = _local_state()
     estado = _with_mirror(local) if con_espejo else local
     return json.dumps({"type": "snapshot", **estado, "build": build_id()}, ensure_ascii=False)
@@ -709,17 +712,28 @@ def _stream_sse(handler: BaseHTTPRequestHandler, initial_json: str, extra_client
         handler.wfile.write(f"{len(payload):x}\r\n".encode("ascii") + payload + b"\r\n")
         handler.wfile.flush()
 
+    def registered() -> bool:
+        with lock:
+            return q in clients and all(q in lst for lst in extra_client_lists)
+
     try:
         chunk(f"data: {initial_json}\n\n".encode())
-        while True:
+        while registered():
             try:
                 data = q.get(timeout=15)
+                if not registered():
+                    break
                 chunk(f"data: {data}\n\n".encode())
             except queue.Empty:
+                if not registered():
+                    break
                 chunk(f'data: {{"type": "ping", "build": "{build_id()}"}}\n\n'.encode())
+        handler.wfile.write(b"0\r\n\r\n")
+        handler.wfile.flush()
     except BrokenPipeError, ConnectionError, OSError:
         pass
     finally:
+        handler.close_connection = True  # EventSource reconnects and receives a fresh snapshot.
         with lock:
             if q in clients:
                 clients.remove(q)
@@ -1046,6 +1060,18 @@ def sin_validar(d: dict) -> None:
     return None
 
 
+def accion_claude_pipe(s: dict, d: dict) -> tuple[int, dict]:
+    """Registro explícito de UNA sesión; sólo devuelve comando público con identidad."""
+    import claude_pipe_runtime
+
+    try:
+        result = claude_pipe_runtime.register(dict(s))
+    except (OSError, ValueError, RuntimeError) as error:
+        return 409, {"error": launch.claude_pipe_error(error)}
+    public = {k: result[k] for k in ("command", "session_id", "expires_at", "connected") if k in result}
+    return 200, {**public, "envio": claude_pipe_runtime.availability(dict(s))}
+
+
 def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     """POST /sessions/<id>/send: inyecta el texto en la consola. La flecha y copycat son del
     tablero (envio_del_tablero): la PC duena solo teclea."""
@@ -1137,6 +1163,9 @@ def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
     if s is not None:
         sid = s["session_id"]  # el primer turno puede haber reemplazado el id provisional durante el envío
     src_s = registrar_envio(sid, d)
+    if d.get("copycat") is True and res.get("estado") not in (None, "entregado"):
+        res["handover_error"] = "traspaso pendiente: entrega no confirmada; el origen conserva su trabajo. No reenvíes el texto"
+        return
     if s is not None and src_s is not None and d.get("copycat") is True:
         # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
         if d.get("stop_origin") is not False:
@@ -1153,6 +1182,9 @@ def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
 
 def remote_hand_over(sid: str, origin: dict | None, d: dict, res: dict) -> None:
     """El texto ya llego: un fallo de metadatos se informa sin volver a enviarlo."""
+    if res.get("estado") not in (None, "entregado"):
+        res["handover_error"] = "traspaso pendiente: entrega no confirmada; el origen conserva su trabajo. No reenvíes el texto"
+        return
     origin = origin or next((s for s in mirror.MIRROR.sessions() if s["session_id"] == d.get("from")), None)
     if origin is None:
         res["handover_error"] = "el origen desaparecio; no se pudo terminar el traspaso"
@@ -1222,6 +1254,7 @@ class AccionSesion:
 
 
 ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
+    ("POST", "claude-pipe"): AccionSesion(sin_validar, accion_claude_pipe),
     ("PUT", "copycat"): AccionSesion(validar_copycat, accion_copycat),
     ("POST", "kill"): AccionSesion(sin_validar, accion_kill),
     ("POST", "send"): AccionSesion(validar_send, accion_send, despues_tablero=envio_del_tablero),
@@ -1240,7 +1273,7 @@ ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
 # ponerle nombre. Teclear, interrumpir, aprobar en su terminal, matarla, detenerla o hacerla
 # coordinadora queda afuera (se controla por quien la lanzo). Se mira en la PC duena, asi
 # vale tanto desde el tablero como desde otra PC.
-ACCIONES_EN_EXTERNAS = frozenset({"title"})
+ACCIONES_EN_EXTERNAS = frozenset({"title", "claude-pipe"})
 ACCION_TEXTO = {
     "kill": "cerrarla",
     "send": "escribirle",
@@ -1280,7 +1313,11 @@ def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero
     else:
         rechazo = a.antes_local_tablero(d) if desde_tablero and a.antes_local_tablero else None
         if rechazo is None and nombre not in ACCIONES_EN_EXTERNAS:
-            rechazo = external_blocked(s, ACCION_TEXTO.get(nombre, nombre))
+            if nombre == "send" and (s.get("external") or {}).get("kind") in ("codex-desktop", "claude-desktop"):
+                plan = ses.puede_enviar(s)
+                rechazo = None if plan["puede"] else (409, {"error": plan["motivo"], "envio": plan})
+            else:
+                rechazo = external_blocked(s, ACCION_TEXTO.get(nombre, nombre))
         if rechazo is not None:
             return rechazo
         code, res = a.ejecutar(s, d)
@@ -1323,6 +1360,23 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     if valid is None:
         return 400, {"error": "cwd y agent son obligatorios"}
     cwd, agent, title = valid
+    elegido = {}
+    if agent == "auto":
+        # el de más margen semanal entre Claude y Codex (cuotas.sugerir); sin elegible no se lanza nada
+        agent, status = cuotas.resolver_auto()
+        if agent is None:
+            motivo = status["motivo"]
+            return 409, {"error": f"sin agente elegible por cuota: {motivo}", "motivo": motivo, "cuotas": status}
+        elegido = {"agent": agent, "motivo": status["motivo"]}  # nombres que asume la UI (C, 2026-10-17)
+    code, res = _lanzar_validado(d, cwd, agent, title, desde_tablero=desde_tablero)
+    if agent != "vscode" and isinstance(res, dict) and (elegido or code == 200):
+        # cada lanzamiento de una CLI consulta las cuotas (caché <= 5 min, tope de espera): avisa, nunca bloquea
+        extra = cuotas.para_lanzar(agent)
+        res = {**res, **elegido, "cuotas": extra["cuotas"], **({"aviso": extra["aviso"]} if extra["aviso"] else {})}
+    return code, res
+
+
+def _lanzar_validado(d: dict, cwd: str, agent: str, title: str, *, desde_tablero: bool) -> tuple[int, dict]:
     modo = d.get("modo") or "general"
     if modo not in tools.MODOS:
         return 400, {"error": f"modo desconocido: {modo!r} (validos: {', '.join(tools.MODOS)})"}
@@ -1346,6 +1400,10 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
             cuerpo["distro"] = distro
         if modo != "general":
             cuerpo["modo"] = modo
+        if d.get("claude_pipe") is True:
+            cuerpo["claude_pipe"] = True
+        if agent != "vscode":
+            cuotas.iniciar()  # las lecturas de cuota corren mientras se lanza
         return mirror.MIRROR.forward(pc, "POST", "/launch", cuerpo)
     if agent == "vscode":
         if distro is not None:
@@ -1357,7 +1415,9 @@ def accion_launch(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
         tmux.invalidar_distros()
         if distro not in tmux.distros():
             return 400, {"error": f"distro desconocida: {distro}"}
-    res = launch.launch(cwd, title, agent, model=model, distro=distro, modo=modo)
+    cuotas.iniciar()  # las lecturas de cuota corren mientras se lanza (tablero y peers, misma caché)
+    pipe_options = {"claude_pipe": True} if d.get("claude_pipe") is True else {}
+    res = launch.launch(cwd, title, agent, model=model, distro=distro, modo=modo, **pipe_options)
     if res.get("ok"):
         return 200, res
     # launch dice su codigo cuando no es un pedido mal hecho (409: coda sin cuota en esta PC)
@@ -1654,6 +1714,9 @@ class Handler(JsonHandler):
                 return self._json(200, salud_publica(self._authed() or self._is_local()))
             if parts == ["agent-improvements"]:
                 return self._json(200, agent_improvements.status())
+            if parts == ["cuotas"]:
+                # uso de Claude y Codex (lo de /usage y /status) y la sugerencia; ?refrescar=1 fuerza leer
+                return self._json(200, cuotas.estado(refrescar=self.query.get("refrescar") == ["1"]))
             if parts == ["agent-improvements", "scheduler"]:
                 try:
                     return self._json(200, optimization_scheduler.get().status())
@@ -1706,11 +1769,7 @@ class Handler(JsonHandler):
                 code, res = conocimiento_api.dispatch("GET", parts[1:], None, self.query)
                 return self._json(code, res)
             if parts == ["sessions"]:
-                # serializar con el lock (es CPU pura) y escribir afuera: es el cuerpo mas grande
-                # que manda el server, y antes se escribia al socket con el lock tomado. El espejo
-                # (sesiones de otras PCs, plan §3.3) se agrega afuera: mirror.py tiene su propio lock
-                with lock:
-                    local = sorted(sessions.values(), key=lambda s: (s["repo"], s["started"]))
+                local = sorted(_local_state()["sessions"], key=lambda s: (s["repo"], s["started"]))
                 tablero = json.dumps(local + mirror.MIRROR.sessions(), ensure_ascii=False).encode("utf-8")
                 return self._send_json(200, tablero)
             if len(parts) == 2 and parts[0] == "docs" and parts[1] in DOCS:
@@ -2821,6 +2880,33 @@ def _syntax_error(changed: list[str]) -> str | None:
     return None
 
 
+DETENER_MAX_S = 3.0  # lo que se le espera a los plugins al salir: uno colgado no traba el reinicio
+
+
+def detener_plugins(espera: float = DETENER_MAX_S) -> list[str]:
+    """Llama a `detener()` de los plugins que lo declaran, en otro hilo y con tope: un plugin que no
+    vuelve no deja el server sin salir. Devuelve los parados, o [] si la parada no termino a tiempo."""
+    hecho: list[str] = []
+    def parar():
+        try:
+            hecho.extend(plugins.detener())
+        finally:
+            ses.claude_pipe_runtime.close_all()
+
+    hilo = threading.Thread(target=parar, name="detener-plugins", daemon=True)
+    hilo.start()
+    hilo.join(espera)
+    if hilo.is_alive():
+        log(f"plugins: detener no termino en {espera:g} s; salgo igual")
+    return hecho
+
+
+def _salir(code: int) -> None:
+    """os._exit salta los finally y los atexit: la parada de los plugins va antes, explicita."""
+    detener_plugins()
+    os._exit(code)
+
+
 def reiniciar() -> tuple[int, dict]:
     """Reinicio explicito: sale con RELOAD_EXIT para que lienzo-server.cmd lo relance en la misma
     ventana, medio segundo despues de contestar. No sale si no corre bajo ese .cmd (nadie lo
@@ -2831,7 +2917,7 @@ def reiniciar() -> tuple[int, dict]:
     if err:
         return 409, {"error": f"no reinicio: hay codigo que no compila ({err})"}
     log("reinicio pedido explicitamente")
-    threading.Timer(0.5, lambda: os._exit(RELOAD_EXIT)).start()
+    threading.Timer(0.5, lambda: _salir(RELOAD_EXIT)).start()
     return 202, {"ok": True, "reinicia": True}
 
 
@@ -2865,7 +2951,7 @@ def reload_loop() -> None:
             base = now
             continue
         log(f"recarga: cambio en {', '.join(sorted(os.path.basename(p) for p in changed))}; reinicio")
-        os._exit(RELOAD_EXIT)
+        _salir(RELOAD_EXIT)
 
 
 def xpc_purge_loop(every_s: float = 60.0, arranque_s: float = 120.0) -> None:
@@ -3108,6 +3194,7 @@ def main() -> int:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    detener_plugins()
     return 0
 
 

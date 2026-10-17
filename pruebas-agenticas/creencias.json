@@ -1,0 +1,23 @@
+{
+  "nombre": "creencias-y-patrones-desarrollo",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/creencias",
+  "reglas": [
+    "Una propuesta no entra al checklist. La validación requiere persona, evidencia del proyecto y vigencia.",
+    "Una creencia refutada o vencida no es aplicable. No mezclar tipos de desarrollo ni confundir controles declarados con calidad."
+  ],
+  "casos": [{
+    "id": "ciclo-creencias-y-patrones",
+    "comando": ["py", "-m", "pytest", "tests/test_creencias.py", "tests/test_optimizacion_trabajo.py", "tests/test_optimization_memory.py", "tests/test_optimization_scheduler.py", "-q", "-p", "no:cacheprovider"],
+    "timeoutMs": 120000,
+    "cubre": ["lienzo/creencias.py", "lienzo/patrones_desarrollo.py", "lienzo/conocimiento_api.py", "lienzo/optimizacion_trabajo.py", "lienzo/optimization_scheduler.py"]
+  }],
+  "mutaciones": [
+    {"id": "refutar-sin-historia", "archivo": "lienzo/creencias.py", "buscar": "        k.cambiar_estado(pid, nid, \"vigente\" if result == \"validada\" else \"revertida\", por=por, motivo=motive, con=con)", "reemplazar": "        if result == \"validada\":\n            k.cambiar_estado(pid, nid, \"vigente\", por=por, motivo=motive, con=con)\n        else:\n            con.execute(\"UPDATE nodo SET estado='revertida' WHERE id=?\", (nid,))", "casos": ["ciclo-creencias-y-patrones"]},
+    {"id": "checklist-acepta-vencida", "archivo": "lienzo/creencias.py", "buscar": "return expires.tzinfo is not None and expires > dt.datetime.now(dt.UTC)", "reemplazar": "return expires.tzinfo is not None", "casos": ["ciclo-creencias-y-patrones"]},
+    {"id": "checklist-acepta-no-vigente", "archivo": "lienzo/creencias.py", "buscar": "\"WHERE b.proyecto=? AND b.tipo='decision' AND b.estado='vigente' \"", "reemplazar": "\"WHERE b.proyecto=? AND b.tipo='decision' \"", "casos": ["ciclo-creencias-y-patrones"]},
+    {"id": "promocion-sin-persona", "archivo": "lienzo/creencias.py", "buscar": "if not por.startswith(\"persona:\") or not por[8:].strip():", "reemplazar": "if not por.strip():", "casos": ["ciclo-creencias-y-patrones"]},
+    {"id": "checklist-acepta-otro-respaldo", "archivo": "lienzo/creencias.py", "buscar": "\"AND v.a=json_extract(b.datos,'$.evidencia_veredicto') \"", "reemplazar": "\"\"", "casos": ["ciclo-creencias-y-patrones"]},
+    {"id": "patrones-mezclan-tipos", "archivo": "lienzo/patrones_desarrollo.py", "buscar": "        key = json.dumps(context, sort_keys=True)", "reemplazar": "        key = json.dumps({x: v for x, v in context.items() if x != \"tipo_trabajo\"}, sort_keys=True)", "casos": ["ciclo-creencias-y-patrones"]}
+  ]
+}

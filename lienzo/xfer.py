@@ -120,6 +120,24 @@ def roots() -> list[str]:
     return [_norm(x) for x in r if isinstance(x, str) and x.strip()]
 
 
+def _dentro_sin_enlaces(root: str, path: str) -> bool:
+    """Confina la ruta física y rechaza enlaces bajo la raíz configurada por el usuario."""
+    try:
+        real_root, real_path = _norm(os.path.realpath(root)), _norm(os.path.realpath(path))
+        if os.path.commonpath([real_root, real_path]) != real_root:
+            return False
+        cursor = root
+        for part in os.path.relpath(path, root).split(os.sep):
+            if part == ".":
+                continue
+            cursor = os.path.join(cursor, part)
+            if os.path.islink(cursor) or os.path.isjunction(cursor):
+                return False
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def permitido(path: object) -> str | None:
     """La ruta absoluta normalizada si cae dentro de `copy_roots`; None si no. Un `:` despues de la
     unidad (un stream alternativo de NTFS) o un byte de control no pasan."""
@@ -129,7 +147,7 @@ def permitido(path: object) -> str | None:
         return None
     norm = _norm(path)
     for root in roots():
-        if norm == root or norm.startswith(root.rstrip(os.sep) + os.sep):
+        if (norm == root or norm.startswith(root.rstrip(os.sep) + os.sep)) and _dentro_sin_enlaces(root, path):
             return os.path.normpath(path)
     return None
 
@@ -148,6 +166,8 @@ def unir(raiz: str, rel: str) -> str:
     p = os.path.normpath(os.path.join(raiz, *rel.split("/")))
     if not _norm(p).startswith(_norm(raiz).rstrip(os.sep) + os.sep):
         raise Rechazo(400, "ruta relativa fuera del destino")
+    if not _dentro_sin_enlaces(raiz, p):
+        raise Rechazo(400, "ruta relativa con enlace o fuera del destino físico")
     return p
 
 

@@ -33,6 +33,8 @@ pruebas-agenticas/resultados/
 
 # carpeta de trabajo de coda (planes, olas, docs de workflows): no es del repo
 .coda/
+# coordinacion de rondas y monitoreos: archivos de trabajo, nunca en la carpeta de un agente
+.temp/
 
 # plugins locales (lienzo/plugins.py, web/src/plugins.tsx): viven solo en la PC que los usa
 lienzo/extensiones/

@@ -664,11 +664,13 @@ class _Conexion:
         return self.con
 
     def __exit__(self, et, ev, tb):
-        if et is None:
-            self.con.commit()
-        else:
-            self.con.rollback()
-        self.con.close()
+        try:
+            if et is None:
+                self.con.commit()
+            else:
+                self.con.rollback()
+        finally:
+            self.con.close()
         return False
 
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, rulesApi, sessionsApi } from "../api";
+import { api, rulesApi, sendNotice, sessionsApi } from "../api";
 import { AGENTS } from "../agents";
 import { coordinatorOf } from "../nl";
 import type { Session } from "../types";
@@ -24,6 +24,8 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [connection, setConnection] = useState<{ command: string; session_id: string; expires_at: number } | null>(null);
+  const [connecting, setConnecting] = useState(false);
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -51,7 +53,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
       toast(`Cuando ${shortName(s)} termine, su respuesta va a ${shortName(me)}`);
     } catch (e) {
       // 409: ya existe esa regla, o la inversa (seria un bucle). El envio ya se hizo; se avisa y listo
-      toast(`El mensaje salió, pero la regla "cuando termine" no: ${(e as Error).message}`, true);
+      toast(`No se pudo crear la regla "cuando termine": ${(e as Error).message}`, true);
     }
   };
 
@@ -94,10 +96,13 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     setBusy(true);
     try {
       const r = await sessionsApi.send(s.session_id, { text: t, attachments });
-      toast(`Enviado (${r.chars} caracteres)`);
+      const notice = sendNotice(r);
+      toast(notice.text, notice.attention);
       setText("");
       setAttachments([]);
-      await notifyRule();
+      // La regla expresa el pedido de aviso, no acredita entrega. Armarla al aceptar
+      // el envío evita perderla si el panel se cierra antes de la confirmación SSE.
+      if (r.estado !== "rechazado") await notifyRule();
     } catch (e) {
       toast(`No se pudo enviar: ${(e as Error).message}`, true);
     } finally {
@@ -107,7 +112,30 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
 
   const disabled = busy || !!s.pending_id || !canWrite(s);
 
-  if (s.external) {
+  const queue = s.envio?.puede && canWrite(s) && (
+    (s.agent === "codex" && s.envio.transporte === "codex_queue") ||
+    (s.agent === "claude" && s.envio.transporte === "claude_pipe")
+  );
+  if (s.agent === "claude" && s.external?.kind === "claude-desktop" && !queue) {
+    return <div className="send">
+      <p role="status">{s.envio?.motivo || "Falta conectar el adaptador de esta sesión Claude"}</p>
+      <button disabled={connecting || !s.alive || !s.pid} onClick={async () => {
+        setConnecting(true);
+        try { setConnection(await sessionsApi.claudePipe(s.session_id)); }
+        catch (e) { toast(`No se pudo conectar: ${(e as Error).message}`, true); }
+        finally { setConnecting(false); }
+      }}>Conectar esta sesión Claude</button>
+      {connection?.session_id === s.session_id && <div>
+        <p>Ejecutá este comando público desde esta sesión Claude y aprobalo allí. No contiene secretos.</p>
+        <textarea readOnly aria-label="Comando público para conectar Claude" value={connection.command} />
+        <p>Válido hasta {new Date(connection.expires_at * 1000).toLocaleTimeString()}. La escritura se habilita sólo al confirmar el adaptador vivo.</p>
+      </div>}
+    </div>;
+  }
+  if (s.envio && !s.envio.puede) {
+    return <div className="send"><div className="small dim" role="status">{s.envio.motivo || "No se puede enviar a esta sesión"}</div></div>;
+  }
+  if (s.external && !queue) {
     return (
       <div className="send">
         <div className="small dim">
@@ -118,7 +146,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
       </div>
     );
   }
-  if (s.no_console && !s.orphan) {
+  if (s.no_console && !s.orphan && !queue) {
     return (
       <div className="send">
         <div className="small dim">
@@ -129,7 +157,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
       </div>
     );
   }
-  if (s.orphan) {
+  if (s.orphan && !queue) {
     return (
       <div className="send">
         <div className="small dim">

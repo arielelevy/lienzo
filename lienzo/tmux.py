@@ -63,7 +63,11 @@ def _tmux(*args: str, stdin: str | None = None, distro: str | None = None) -> su
 
 
 def available() -> bool:
-    """Hay un tmux utilizable (binario presente y un server al que hablarle no hace falta todavia)."""
+    """Hay un tmux utilizable (binario presente y un server al que hablarle no hace falta todavia).
+    Via WSL sin ninguna distro corriendo no se pregunta adentro (eso despertaria WSL): alcanza con que
+    haya distros instaladas, y el barrido mira solo las que esten corriendo."""
+    if _VIA_WSL and not distros_corriendo():
+        return bool(distros())
     try:
         return _tmux("-V").returncode == 0
     except OSError, subprocess.SubprocessError:
@@ -89,18 +93,33 @@ def distros() -> list[str]:
     with _distros_lock:
         if _distros_cache is not None and time.monotonic() - _distros_cache["ts"] < DISTROS_TTL_S:
             return list(_distros_cache["vals"])
-    rc, out, _err = subproc.correr(["wsl.exe", "-l", "-q"], timeout=15)
-    vals: list[str] = []
-    if rc == 0:
-        text = out
-        if "\x00" in text:
-            text = out.encode("utf-8", "surrogateescape").decode("utf-16-le", "replace")
-        vals = [line.strip() for line in text.splitlines() if line.strip() and line.strip() != _PLACEHOLDER_DISTROS]
-    else:
-        logging.getLogger(__name__).info("wsl.exe -l -q no contesto (rc %s): sin distros", rc)
+    vals = _lista_wsl("-l", "-q")
     with _distros_lock:
         _distros_cache = {"ts": time.monotonic(), "vals": vals}
     return list(vals)
+
+
+def _lista_wsl(*args: str) -> list[str]:
+    """Las distros que lista `wsl.exe <args>` (directo, sin _PREFIX). La salida es UTF-16: si el texto
+    trae \\x00 se re-decodifica. Nunca levanta: ante binario ausente o error devuelve []."""
+    rc, out, _err = subproc.correr(["wsl.exe", *args], timeout=15)
+    if rc != 0:
+        logging.getLogger(__name__).info("wsl.exe %s no contesto (rc %s): sin distros", " ".join(args), rc)
+        return []
+    text = out
+    if "\x00" in text:
+        text = out.encode("utf-8", "surrogateescape").decode("utf-16-le", "replace")
+    return [line.strip() for line in text.splitlines() if line.strip() and line.strip() != _PLACEHOLDER_DISTROS]
+
+
+def distros_corriendo() -> list[str]:
+    """Las distros de WSL que estan corriendo ahora (`wsl.exe -l --running -q`), sin caché: el barrido la
+    pide cada vez. Listar no despierta la VM; cualquier comando adentro de una distro (un `ps`, un
+    `tmux`) si, y arranca sus servicios: con el barrido preguntando adentro, un `wsl --shutdown` duraba
+    15 s y WSL volvia a ocupar ~3 GB (medido el 2026-10-16). En Mac/Linux, [] sin llamar a wsl.exe."""
+    if not _VIA_WSL:
+        return []
+    return _lista_wsl("-l", "--running", "-q")
 
 
 def en_distro(distro: str, programa: str) -> bool:

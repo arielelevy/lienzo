@@ -78,9 +78,28 @@ export interface SendBody {
 
 export interface SendResult {
   chars: number;
+  estado?: "pendiente" | "encolado" | "entregado" | "sin_confirmacion" | "rechazado";
+  motivo?: string | null;
+  referencia?: string | null;
+  envio_id?: string | null;
+  transporte?: string | null;
   /** pegar trabajo: el origen estaba corriendo y recibio el Esc */
   interrupted?: boolean;
   handover_error?: string;
+}
+
+/** Aceptación del transporte no es entrega. Legacy conserva su texto sin inventar confirmación. */
+export function sendNotice(r: SendResult, target = ""): { text: string; attention: boolean; confirmed: boolean } {
+  const to = target ? ` a ${target}` : "";
+  const confirmed = r.estado === "entregado" || r.estado === undefined;
+  const text = r.estado === "entregado" ? `Entregado${to}`
+    : r.estado === "encolado" ? `Encolado${to}; espera confirmación`
+    : r.estado === "pendiente" ? `Envío pendiente${to}; no se reenvía`
+    : r.estado === "sin_confirmacion" ? `Sin confirmación${to}: ${r.motivo || "resultado incierto; no se reintenta"}`
+    : r.estado === "rechazado" ? `Rechazado${to}: ${r.motivo || "no se pudo enviar"}`
+    : r.estado === undefined ? `Enviado${to} (${r.chars} caracteres)`
+    : `Resultado sin confirmar${to}; no se reintenta`;
+  return { text, attention: !confirmed || !!r.handover_error, confirmed };
 }
 
 export type Decision = "allow" | "deny";
@@ -103,6 +122,7 @@ export interface ScreenResponse {
 const ses = (sid: string, rest: string) => `/sessions/${sid}/${rest}`;
 
 export const sessionsApi = {
+  claudePipe: (sid: string) => api.post<{ command: string; session_id: string; expires_at: number; connected: boolean }>(ses(sid, "claude-pipe"), {}),
   send: (sid: string, body: SendBody) => api.post<SendResult>(ses(sid, "send"), body),
   interrupt: (sid: string) => api.post(ses(sid, "interrupt"), {}),
   kill: (sid: string) => api.post(ses(sid, "kill"), { confirm: sid }),
@@ -165,6 +185,61 @@ export const pendingApi = {
   decide: (requestId: string, decision: Decision) => api.post(`/pending/${requestId}`, { decision }),
   answer: (requestId: string, answers: Record<string, string>) => api.post(`/pending/${requestId}`, { decision: "allow", answers }),
 };
+
+/** GET /cuotas (ronda 2026-10-17): lo mismo que `/usage` de Claude y `/status` de Codex. Una lectura
+ *  fallida trae `ok: false`, `error` y las ventanas en null: nunca hay números inventados. */
+export interface VentanaCuota {
+  used_pct: number;
+  /** ISO */
+  resets_at: string | null;
+}
+
+export interface CuotaAgente {
+  ok: boolean;
+  plan: string | null;
+  five_hour: VentanaCuota | null;
+  weekly: VentanaCuota | null;
+  /** ISO: cuándo se midió */
+  read_at: string | null;
+  error: string | null;
+}
+
+export type AgenteCuota = "claude" | "codex";
+
+export interface CuotasResponse {
+  claude: CuotaAgente;
+  codex: CuotaAgente;
+  /** el de menor uso semanal entre los que tienen lectura y 5 h < 90 %; null si ninguno */
+  sugerido: AgenteCuota | null;
+  motivo: string;
+}
+
+/** Lo leído vale 5 min: el indicador y el diálogo de lanzamiento comparten la lectura, así abrir
+ *  «Lanzar CLI» no pide /cuotas otra vez. Sólo un click la fuerza. */
+export const CUOTAS_VIGENCIA_MS = 5 * 60_000;
+let cuotasCache: { t: number; data: CuotasResponse } | null = null;
+let cuotasEnCurso: Promise<CuotasResponse> | null = null;
+
+const esCuota = (c: unknown): c is CuotaAgente => !!c && typeof c === "object" && typeof (c as CuotaAgente).ok === "boolean";
+
+/** La lectura vigente, o una nueva. `forzar` mide de nuevo (`?refrescar=1`) en vez de usar la caché
+ *  del server. Pedidos simultáneos sin forzar comparten el mismo fetch. */
+export function leerCuotas(forzar = false): Promise<CuotasResponse> {
+  // vence 10 s antes: el tick de 5 min del indicador llega apenas antes de cumplirse los 5 min de la lectura
+  // y, con el borde exacto, se salteaba un refresco
+  if (!forzar && cuotasCache && Date.now() - cuotasCache.t < CUOTAS_VIGENCIA_MS - 10_000) return Promise.resolve(cuotasCache.data);
+  if (!forzar && cuotasEnCurso) return cuotasEnCurso;
+  const inicio = Date.now();
+  const pedido = api.get<CuotasResponse>(forzar ? "/cuotas?refrescar=1" : "/cuotas").then(d => {
+    if (!d || !esCuota(d.claude) || !esCuota(d.codex)) throw new Error("respuesta de /cuotas con otra forma");
+    // una lectura pedida antes que la que ya está (un click mientras esta volvía) no la pisa
+    if (cuotasCache && cuotasCache.t > inicio) return cuotasCache.data;
+    cuotasCache = { t: inicio, data: d };
+    return d;
+  }).finally(() => { if (cuotasEnCurso === pedido) cuotasEnCurso = null; });
+  cuotasEnCurso = pedido;
+  return pedido;
+}
 
 export interface AuthInfo {
   configured: boolean;

@@ -3,8 +3,8 @@
   "raiz": "..",
   "resultados": "pruebas-agenticas/resultados/mejoras",
   "reglas": [
-    "docs/specs/evaluador-harness/design.md: Caveman breve sin proxy; RTK explícito; Jev no ejecuta acciones.",
-    "docs/specs/evaluador-harness/requirements.md: resultados ausentes no son éxito; costo ausente no es cero.",
+    "docs/APRENDIZAJE.md: Caveman breve sin proxy; RTK explícito; Jev no ejecuta acciones.",
+    "docs/APRENDIZAJE.md: resultados ausentes no son éxito; costo ausente no es cero.",
     "web/tests-ui/tablero-fijo.ts: ninguna prueba UI escribe en sesiones reales."
   ],
   "precondiciones": [{"nombre": "Lienzo real sirve la UI", "url": "http://127.0.0.1:7321/", "debeContener": "Lienzo"}],

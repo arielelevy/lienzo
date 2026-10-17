@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { failMsg, rulesApi, sessionsApi, type Decision } from "../api";
+import { failMsg, rulesApi, sendNotice, sessionsApi, type Decision } from "../api";
 import { hhmm } from "../nl";
 import { shortName } from "../names";
 import type { Session } from "../types";
@@ -50,11 +50,15 @@ export function useCardActions(s: Session, toast: ToastFn) {
       return decision === "allow" ? "Permitido en su terminal" : "Denegado en su terminal";
     }, failMsg("contestar"));
 
-  const quickSend = (text: string, extra: { autoriza_denegado?: boolean } = {}) =>
-    act(async () => {
+  const quickSend = async (text: string, extra: { autoriza_denegado?: boolean } = {}) => {
+    setBusy(true);
+    try {
       const r = await sessionsApi.send(s.session_id, { text, attachments: [], ...extra });
-      return `Enviado (${r.chars} caracteres)`;
-    }, failMsg("enviar"));
+      const notice = sendNotice(r);
+      toast(notice.text, notice.attention);
+    } catch (e) { toast(failMsg("enviar")(e), true); }
+    finally { setBusy(false); }
+  };
 
   /** le avisa al agente que el humano autoriza lo que se le denego, para que lo reintente */
   const autorizarDenegado = () => {

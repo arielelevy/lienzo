@@ -137,3 +137,120 @@ regresión en `tests/test_optimizacion_trabajo.py`.
 | 10 | La hora se marcaba antes de analizar: una cancelación lo postergaba una hora | Corregido: se marca después; cancelado, se retoma en el próximo rato quieto |
 
 Verificación: `pytest tests` 1745 passed, 3 skipped; `rondas_e2e.py` OK; ruff limpio.
+
+## Catálogo de comunidad, plugins locales y creencias
+
+Revisión estática del delta propio, aplicando code-audit en esta sesión. No es una revisión
+independiente de Claude. No incluye los cambios ajenos de backend.py, tmux.py y sus pruebas.
+
+Alcance: tools/__init__.py, tools/anatomy.py, tools/better_claude.py, plugins.resumen,
+agent_improvements.status, AgentImprovements.tsx, creencias.py, patrones_desarrollo.py,
+sus rutas/integración y pruebas focales. Sin dependencias nuevas ni cambios de hooks/permisos.
+
+| Hallazgo | Corrección |
+|---|---|
+| Marcar disponible por una entrada del registro ocultaría archivos faltantes o manifiesto equivocado | Comprueba scope user, ruta absoluta, archivo y nombre del manifiesto, y habilitación explícita; corrupción visible |
+| Tests del catálogo podían leer la configuración real de Claude | CLAUDE_CONFIG_DIR temporal en conftest; pruebas de sólo lectura comparan bytes antes/después |
+| Una regla derivada podía quedar vigente tras refutar/vencer su creencia | Se eliminó la regla materializada; checklist como vista sobre creencias y apoyo activo del mismo proyecto |
+| Consulta de apoyo por cada item del checklist | JOIN tipado de evidencia en la consulta, sin N+1 |
+| Confundir plugin local cargado con sistema conectado o con colección de tools | Inventario separado; no invoca funciones de extensiones ni exige tools; estado explícito cargado, salud no acreditada |
+| Aplicar instalación Windows a una distro o a otro agente | No disponibilidad WSL sin verificar; Better Claude declara compatibilidad sólo Claude y no inyecta instrucciones |
+| Commit podía interpretarse como una acción automática de Lienzo | Ficha informa commit/push no interactivo; catálogo sólo muestra instrucciones, no ejecuta /commit |
+
+No se observaron bloqueantes pendientes en los cambios focales revisados. La validación local
+no acredita compatibilidad real de los mods de Better Claude, su instalación, el render de Anatomy
+ni una conexión real de Stepwise. El estado humano del veredicto sigue el contrato existente de
+autores declarados de la API; no se incorpora un sistema nuevo de autenticación de roles.
+
+Verificación reproducible: runners catalogo-comunidad.json y creencias.json; sus resultados y
+veredictos están en pruebas-agenticas/resultados, con logs completos y correcciones conservadas.
+Build frontend, ESLint, Ruff y Black revisados. Se conserva el aviso Vite de bundle >500 kB.
+Sin aprobar baselines/mutaciones. El investigador CLI y el manifiesto uniforme siguen pendientes.
+
+# Code review 2026-10-16: investigador CLI en background (frente A)
+
+**Fecha**: 2026-10-16 · **Alcance**: revisión de PR, sólo archivos del frente A · **Revisor**: Claude Opus 5.5 (skill code-audit)
+**Archivos**: `lienzo/optimization_research.py`, `optimization_research_policy.py`, `optimization_research_quota.py`,
+`optimization_research_runner.py`; cambios en `optimization_scheduler.py`, `optimization_queue.py`, `optimization_cost.py`.
+
+### Resumen
+
+| Severidad | Encontradas | Corregidas | Abiertas |
+|---|---|---|---|
+| CRÍTICA | 0 | 0 | 0 |
+| ALTA | 2 | 2 | 0 |
+| MEDIA | 5 | 4 | 1 abierta |
+| BAJA | 2 | 1 | 1 |
+
+### ALTA (corregidas)
+
+1. **Autocancelación por hooks de Lienzo.** `codex exec` cargaría `~/.codex/hooks.json`, que llama a `lienzo/hook.py`.
+   Si los hooks se activan, el investigador aparecería como sesión ocupada y `_research_stop` lo cortaría al instante.
+   Hoy `features.hooks = false`, pero eso depende de una configuración ajena. Corrección: `--disable hooks` y
+   `-c notify=[]` en el argv. Verificado sin inferencia: `codex -c notify=[] --disable hooks features list` → 0.
+2. **Lector de cuota imposible de reemplazar.** `CodexAdapter(quota_reader=quota.read_codex)` ataba la función
+   como argumento por defecto: una prueba que parcheara el módulo igual lanzaría el `app-server` real. Corrección:
+   resolverla al llamar. Las pruebas fallan explícitamente si se intenta leer la cuota real.
+
+### MEDIA
+
+3. **Inyección de prompt desde la memoria** (mitigada). Los textos de las sesiones entran al prompt. Mitigaciones:
+   el prompt declara el caso como dato, sandbox read-only sin red, esquema estricto y validación de fuentes antes
+   de escribir. Residual: el sandbox no impide leer archivos fuera del repo.
+4. **Secretos dentro de valores** (corregida en la ronda 2, 2026-10-17). `redact()` cubre una lista cerrada de
+   formatos en el paquete, en la respuesta antes de guardarla y en los errores, con conteo por tipo. No es una
+   detección universal. Hay pruebas por formato y de no falsos positivos. Bug encontrado y corregido: `DB_PASSWORD=`.
+5. **`pid` registrado tras un error al guardar** (corregida). Se limpia `pid` en cuanto termina el proceso propio.
+6. **`_research_step` de ~70 líneas** (abierta). Supera el máximo de 50. Se mantuvo lineal (evaluar → iniciar →
+   resultado) para que el orden de las transiciones quede legible; se puede extraer `_research_outcome`.
+
+9. **Salida sin tope durante la ejecución** (señalada por la coordinadora; corregida en la ronda 2). Los archivos
+   temporales podían crecer 900 s. Ahora la lectura es por tuberías con un tope total en vivo y se mata el árbol
+   propio al pasarlo. `result.json` también tiene tope (200 kB).
+
+### BAJA
+
+7. `fuentes` no-lista en `select` iteraba caracteres (corregida).
+8. `check()` dentro de `validate` usa `return errors.append(...)` como corte (estilo; abierta).
+
+### Verificación
+
+- Silencios: ningún `except` vacío. `read_codex` y `runner.run` devuelven fallos explícitos y matan sólo su propio
+  árbol. Tras un reinicio, el PID registrado nunca se mata (cubierto por pruebas).
+- Sin `getenv` con valores por defecto, sin código muerto (ruff limpio), sin dependencias nuevas.
+- Mutación sobre una copia: ronda 1, 5 de 5; ronda 2, **8 de 8** muertos por aserción, control vivo (`mutacion-copia.json`).
+
+# Code review 2026-10-16: contrato uniforme de plugins (frente B)
+
+Alcance: lienzo/plugin_manifest.py, plugins.py, tools/better_claude.py, PluginCard de
+AgentImprovements.tsx y sus pruebas. Skill code-review (10 hallazgos) y code-audit en la sesión B.
+
+| Hallazgo | Estado |
+|---|---|
+| Configuración en la raíz de config.json chocaba con claves de Lienzo (`wait`, `ejemplos`) | Corregido: `config.json["plugins"][<id>]` |
+| Un plugin deshabilitado con manifiesto roto se informaba como error | Corregido: deshabilitado tiene precedencia |
+| Rutas de un plugin cuyo `iniciar()` falló seguían atendiendo | Corregido: 503 para plugins con manifiesto; legacy igual que antes |
+| `get` leía fichas sin lock | Corregido |
+| Un registro viejo de Better Claude tapaba uno válido | Corregido |
+| Estado desconocido rompía el render; `conectado: false` se veía «sano»; salud vieja tras «Actualizar» | Corregidos en la UI |
+| `validar` (30) y `cargar` (18) sobre el umbral de complejidad; `except` silencioso | Corregidos (≤ 10; ahora va al log) |
+| `detener()` no se invocaba al cerrar | Corregido en la integración: `server._salir` lo llama con tope de 3 s antes de `os._exit` |
+| Un módulo incoherente ya ejecutó su import antes de rechazarlo | Abierto, documentado en docs/PLUGINS.md |
+
+# Code review 2026-10-17: entrega de informes y tablero (coordinación)
+
+Alcance: reconciliación de on_stop en rules.py, reapertura por `<task-notification>` en
+transcripts.py, orden y grilla del tablero (Board.tsx, card.css, styles.css), parada de plugins en
+server.py, aislamiento de plugins en conftest.py y la vista del investigador. Skill code-review
+(10 hallazgos sobre la primera versión).
+
+| Hallazgo | Estado |
+|---|---|
+| Asentamiento de coda (15 s) y reconciliación (10 s) podían evaluar el mismo turno dos veces | Corregido: la sesión queda reservada (contador) desde el inicio de fire_on_stop |
+| Reglas sin marca reevaluaban el último turno al desplegar | Corregido: toman como visto el turno que encuentran |
+| La marca `turno_visto` no se guardaba en salidas tempranas | Corregido: se guarda al cambiar |
+| `last_reply` reescrito por la transcripción disparaba reevaluaciones | Corregido: sólo se reconcilian sesiones Claude con hooks |
+| Turno reabierto por una notificación y después interrumpido quedaba abierto | Corregido: la interrupción lo cierra |
+| La reconciliación compartía `try` con los envíos lentos | Corregido: corre primero y aparte |
+| Comentario del orden y CSS muerto de la multicolumna | Corregidos |
+| La grilla deja huecos bajo tarjetas cortas | Abierto: precio de que no salten de columna; decisión de Ariel |

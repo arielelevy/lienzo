@@ -1,0 +1,7 @@
+{
+  "nombre": "clasificacion-desktop-D",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/clasificacion-desktop-D",
+  "reglas": ["Registro Claude validado por PID/FILETIME prevalece sobre batch/comando; no acepta PID reciclado ni identidad no verificada.", "Una respuesta tardia no degrada entregado ni reemplaza un envio mas nuevo; no debilitar _owner."],
+  "casos": [{"id": "clasificacion-y-resultados-tardios", "comando": ["py", "-m", "pytest", "tests/test_desktop_clasificacion_D.py", "tests/test_claude_pipe_cableado.py", "tests/test_envio_publicacion.py", "tests/test_ejecuciones_externas.py", "-q", "-p", "no:cacheprovider"], "timeoutMs": 60000, "cubre": ["lienzo/procs.py", "lienzo/sessions.py"]}]
+}

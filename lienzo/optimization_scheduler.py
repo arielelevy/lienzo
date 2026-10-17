@@ -1,4 +1,4 @@
-"""Scheduler local y piloto Jev explícito: sin lanzar nuevas CLI."""
+"""Scheduler local, piloto Jev explícito e investigador CLI bajo su política (optimization_research_policy)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import time
 
 import agent_evaluation
 import conocimiento
+import health
 import jev
 import optimizacion_trabajo as trabajo
 import optimization_activity as activity
@@ -15,6 +16,9 @@ import optimization_cost
 import optimization_experiment as experiment
 import optimization_memory as memory
 import optimization_pilot as pilot
+import optimization_research as research
+import optimization_research_policy as research_policy
+import patrones_desarrollo
 import state
 from optimization_queue import Queue
 
@@ -30,6 +34,10 @@ class Scheduler:
         self.tick_lock = threading.Lock()
         self.project_cursor = 0
         self.trabajo_visto = {}  # proyecto -> monotonic del ultimo analisis de como se trabaja
+        self.research_cancel = set()  # ids de trabajos de investigación con cancelación pedida
+        self.research_adapter = research.adapter_for  # proyecto -> adaptador; las pruebas lo reemplazan
+        self.research_view = None  # última evaluación de política; un GET no lee la cuota
+        self.research_visto = {}  # proyecto -> monotonic de la última selección automática
 
     def status(self):
         budget = optimization_budget.Budget().status()
@@ -51,7 +59,15 @@ class Scheduler:
             "paid_scope": "piloto Jev métricas; precio y reserva revalidados antes de cada envío",
             "automatic_scope": "hasta 30 incidentes recientes por proyecto; deduplicación por versión, cooldown 120 s, cola máxima 100; "
             "cómo se trabaja (esperas, acuses, avisos repetidos o intermedios, difusiones, pico de sesiones) cada hora por proyecto",
-            "new_agents_enabled": False,
+            "new_agents_enabled": bool(self.research_view and self.research_view["enabled"]),
+            "research": {
+                "last_evaluation": self.research_view,
+                "areas": research.AREAS,
+                "ceilings": research_policy.CEILINGS,
+                "enable_path": research_policy.ENABLE_PATH,
+                "scope": "sólo lectura; propuestas sin promoción; Jev filtra y prioriza; sin reintento automático",
+                "note": "sin evaluar en este proceso" if self.research_view is None else None,
+            },
             "projects": [{"id": p["id"], "name": p.get("nombre", p["id"])} for p in conocimiento.proyectos()],
         }
 
@@ -70,10 +86,44 @@ class Scheduler:
                 raise ValueError("proyecto inválido")
             conocimiento.proyecto(data["project"])
             self.queue.enqueue(data["project"])
+        elif action in ("research_check", "enqueue_research") and set(data) == {"action", "project"}:
+            if not isinstance(data["project"], str):
+                raise ValueError("proyecto inválido")
+            conocimiento.proyecto(data["project"])
+            decision = self._research_evaluate(data["project"])
+            taken = {j["case"]["case_key"] for j in self.queue.view()["jobs"] if j.get("kind") == "research"}
+            cases = research.select(data["project"], exclude=taken)
+            if action == "research_check":
+                return {**self.status(), "research_preview": cases}
+            if not decision["enabled"]:
+                raise ValueError("investigador bloqueado: " + "; ".join(decision["reasons"]))
+            if not cases or not self.queue.enqueue_research(data["project"], cases[0]):
+                raise ValueError("sin casos nuevos o hay una investigación activa en el proyecto")
+        elif action == "enqueue_research_unit" and set(data) == {"action", "project", "folders"}:
+            # una ronda, ola o feature que abarca varias carpetas de coordinación (p. ej. dos días)
+            if not isinstance(data["project"], str):
+                raise ValueError("proyecto inválido")
+            conocimiento.proyecto(data["project"])
+            root, folders = research.unit.resolve_folders(data["project"], data["folders"])
+            decision = self._research_evaluate(data["project"])
+            if not decision["enabled"]:
+                raise ValueError("investigador bloqueado: " + "; ".join(decision["reasons"]))
+            if not self.queue.enqueue_research(data["project"], research.unit.case(data["project"], root, folders)):
+                raise ValueError("esa unidad ya se investigó o hay una investigación activa en el proyecto")
+        elif action == "cancel_research" and set(data) == {"action", "job"}:
+            job = next((j for j in self.queue.view()["jobs"] if j["id"] == data["job"]), None)
+            if job is None or job.get("kind") != "research" or job["state"] not in ("queued", "running", "paused"):
+                raise ValueError("no hay una investigación activa con ese id")
+            if job["state"] == "running":
+                self.research_cancel.add(job["id"])  # el runner corta su propio proceso en el próximo sondeo
+            else:
+                self.queue.change(job["id"], state="cancelled", reason="cancelado por el usuario antes de ejecutar")
         elif action == "enqueue_off_on" and set(data) == {"action", "project"}:
             if not isinstance(data["project"], str):
                 raise ValueError("proyecto inválido")
             for pending in self.queue.view()["jobs"]:
+                if pending.get("kind") == "research":
+                    continue
                 if pending["project"] == data["project"] and pending["state"] in ("queued", "running", "paused"):
                     if pending.get("kind") == "off_on_local":
                         if pending["state"] == "queued" and pending["cursor"] == 0:
@@ -98,7 +148,9 @@ class Scheduler:
             if job.get("kind") != "off_on_local":
                 raise ValueError("hay un análisis pendiente; no se reemplaza")
         else:
-            raise ValueError("solo actividad, pausa o análisis local; sin comandos, agentes ni pagos")
+            raise ValueError(
+                "solo actividad, pausa, análisis local o investigador bajo política; sin comandos ni pagos"
+            )
         return self.status()
 
     def tick(self, signals=None):
@@ -174,6 +226,9 @@ class Scheduler:
 
     def _step(self, job):
         jid = job["id"]
+        if job.get("kind") == "research":
+            self._research_step(job)
+            return
         self.started.setdefault(jid, time.monotonic())
         if time.monotonic() - self.started[jid] >= 30:
             self.queue.change(jid, state="review", reason="plazo local agotado; revisar muestra parcial")
@@ -240,6 +295,107 @@ class Scheduler:
             return True
         return False
 
+    def _research_evaluate(self, project):
+        since = time.time() - 86400  # tope diario en 24 h móviles
+        _, decision = research.evaluate(
+            project, self.research_adapter(project), runs_today=self.queue.research_runs_since(since)
+        )
+        self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
+        return decision
+
+    def _research_stop(self, jid):
+        if jid in self.research_cancel:
+            return RESEARCH_CANCELLED
+        if not self.queue.view()["enabled"]:
+            return "pausado por el usuario"
+        reason = activity.cancellation_reason(self.last_ui)
+        if reason:
+            return reason
+        free, _ = health._memoria()
+        if free is None or free < health.RESERVA_GB:
+            return "recursos insuficientes o memoria desconocida"
+        return None
+
+    def _research_step(self, job):
+        jid, project = job["id"], job["project"]
+        if jid in self.research_cancel:
+            self.research_cancel.discard(jid)
+            self.queue.change(jid, state="cancelled", reason=RESEARCH_CANCELLED)
+            return
+        if job["attempts"] >= research_policy.CEILINGS["max_starts_per_case"]:
+            self.queue.change(jid, state="review", reason="intentos agotados; sin reintento automático")
+            return
+        since = time.time() - 86400
+        adapter, decision = research.evaluate(
+            project, self.research_adapter(project), runs_today=self.queue.research_runs_since(since)
+        )
+        self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
+        if not decision["enabled"]:
+            reason = "investigador bloqueado: " + "; ".join(decision["reasons"])
+            self.reason = reason
+            self.queue.change(jid, state="paused", reason=reason, not_before=time.time() + RESEARCH_BACKOFF_S)
+            return
+        if self._cancelled(job):
+            return
+        attempts = job["attempts"] + 1
+        self.queue.change(
+            jid, state="running", attempts=attempts, runs=[*job["runs"], time.time()], reason="investigando", pid=None
+        )
+        self.reason = f"investigando con {adapter.name} (sólo lectura)"
+        try:
+            outcome = research.investigate(
+                {**job, "attempts": attempts},
+                adapter,
+                decision,
+                should_stop=lambda: self._research_stop(jid),
+                on_start=lambda pid: self.queue.change(jid, pid=pid),
+            )
+        finally:
+            self.research_cancel.discard(jid)
+        self.queue.change(jid, pid=None)  # el proceso propio ya terminó; un error al registrar no lo deja colgado
+        meta, why = outcome.get("meta"), outcome.get("reason")
+        if outcome["status"] == "ok":
+            saved = research.record(project, job["case"], outcome["result"], meta)
+            self.queue.change(
+                jid,
+                state="observed",
+                pid=None,
+                evidence=saved["evidence"],
+                results=saved["proposals"],
+                last_run=meta,
+                reason="investigación observada; propuestas sin veredicto",
+            )
+            self.reason = "investigación registrada; propuestas pendientes de veredicto"
+        elif outcome["status"] == "stopped" and why == RESEARCH_CANCELLED:
+            evidence = research.record_failure(project, job["case"], meta, why)
+            self.queue.change(jid, state="cancelled", pid=None, evidence=evidence, last_run=meta, reason=why)
+        elif outcome["status"] == "stopped":
+            later = {"not_before": time.time() + RESEARCH_BACKOFF_S} if why.startswith("cuota") else {}
+            self.queue.change(jid, state="paused", pid=None, last_run=meta, reason=why, **later)
+            self.reason, self.good_samples = why, 0
+        else:
+            evidence = research.record_failure(project, job["case"], meta, why)
+            self.queue.change(jid, state="failed", pid=None, evidence=evidence, last_run=meta, reason=why)
+            self.reason = f"investigación fallida: {why}; sin reintento"
+
+    def _research_discover(self, project):
+        """A lo sumo cada RESEARCH_EVERY_S por proyecto: elegir el mejor caso nuevo y encolarlo si la
+        política lo habilita. Evaluar lee la cuota (sin inferencia)."""
+        if time.monotonic() - self.research_visto.get(project, -1e9) < RESEARCH_EVERY_S:
+            return
+        self.research_visto[project] = time.monotonic()
+        try:
+            taken = {j["case"]["case_key"] for j in self.queue.view()["jobs"] if j.get("kind") == "research"}
+            cases = research.select(project, limit=1, exclude=taken)
+            if not cases or activity.cancellation_reason(self.last_ui) or not self.queue.view()["enabled"]:
+                return
+            if self._research_evaluate(project)["enabled"] and self.queue.enqueue_research(
+                project, cases[0], automatic=True
+            ):
+                self.reason = f"caso de investigación encolado ({cases[0]['area']})"
+        except Exception as error:
+            self.reason = f"selección de investigación bloqueada: {type(error).__name__}"
+
     def _discover(self):
         projects = conocimiento.proyectos()
         if not projects or activity.cancellation_reason(self.last_ui):
@@ -257,6 +413,7 @@ class Scheduler:
         except Exception as error:
             self.reason = f"descubrimiento local bloqueado: {type(error).__name__}"
         self._trabajo(project)
+        self._research_discover(project)
 
     def _trabajo(self, project):
         """Cómo se trabaja en el proyecto (optimizacion_trabajo): a lo sumo cada TRABAJO_CADA_S, en un
@@ -268,6 +425,7 @@ class Scheduler:
             if activity.cancellation_reason(self.last_ui) or not self.queue.view()["enabled"]:
                 return  # sin marcar la hora: lo retoma el proximo rato quieto
             ids = trabajo.registrar(project, analisis)
+            patrones_desarrollo.registrar(project, patrones_desarrollo.analizar(project))
             if ids:
                 self.reason = f"cómo se trabaja: {len(ids)} hallazgo(s) nuevo(s) en {project}; sin gasto"
         except Exception as error:
@@ -276,6 +434,9 @@ class Scheduler:
 
 
 TRABAJO_CADA_S = 3600
+RESEARCH_EVERY_S = 1800
+RESEARCH_BACKOFF_S = 1800
+RESEARCH_CANCELLED = "cancelado por el usuario"
 
 INSTANCE = None
 ERROR = None

@@ -1,20 +1,180 @@
 # Lienzo con Claude Desktop y Codex desktop
 
 Investigación del 2026-10-16, pedida por Ariel: qué hace falta para que el lienzo trabaje del todo
-con las apps de escritorio de Claude y de Codex, en vez de con las terminales. Sólo documenta:
-no se implementó ni se probó nada en vivo con las apps abiertas.
+con las apps de escritorio de Claude y de Codex, en vez de con las terminales. El 2026-10-17 se midió
+en vivo con las dos apps abiertas y se implementó el monitoreo: ver la sección siguiente, que manda
+sobre lo inferido más abajo.
 
 Cada afirmación lleva su marca:
 
 - **[V]** verificado: en el código del repo, en un archivo de esta PC o en la documentación oficial.
 - **[I]** inferido: deducido de lo anterior, sin medir. Hay que probarlo antes de construir encima.
 
-## Cómo está hoy el lienzo
+## Medido e implementado el 2026-10-17
 
-- El barrido arma tarjetas sólo de agentes cuyo padre es un shell, y descarta por ruta la app de
-  Claude (`\WindowsApps\Claude_`), todo lo que corre bajo `\.vscode\extensions\`, cualquier proceso
-  con `app-server` en la línea de comando y los procesos Electron (`--type=`)
-  (`lienzo/procs.py:70`, `is_impostor`). [V]
+### Estado del corte de integración (13:31)
+
+Claude Desktop tiene envío directo probado desde el servidor principal: registro explícito por
+sesión, adaptador hijo autenticado, un mensaje peer y un ACK exacto, ambos contados una vez.
+La API publicó el mismo UUID como `entregado`, con confirmación final. Versión receptora
+Claude Code 2.1.299; pruebas propias previas en 2.1.302. Evidencia de coordinación:
+`.temp/coordinacion/2026-10-17/verificacion-tablero-desktop.md` y
+`claude-pipe-prueba/desktop-tablero-real-result.json`.
+
+Para conectar una sesión Desktop existente, usar su acción de conexión en Lienzo y pegar el
+comando público vigente directamente en esa conversación. El bootstrap vence a los 120 s.
+La conexión no exige autorizar cada mensaje. Una sesión nueva o un cierre del adaptador requiere
+conectar de nuevo. Automatización del inicio y un Claude Code como puente quedan fuera de este
+release. No se agregan reglas de permisos ni se desactiva auto mode.
+
+Codex usa `codex queue`; la UI distingue aceptación, incertidumbre y entrega confirmada.
+Recibir por estos canales no habilita matar/interrumpir procesos Desktop. La verificación integrada
+de Claude acredita HTTP/transporte/confirmación, no un click de UI ni aceptación global de release.
+La revisión de diseño y las pruebas finales del corte se registran por separado.
+
+### Antecedente histórico del corte de las 12:44
+
+La implementación local y el servidor principal activo todavía difieren. A entregó `codex queue`
+con pruebas reales de TUI quieta/ocupada y deduplicación, más 2022 pruebas backend y 3 omitidas.
+D integra la publicación de capacidad y estado, la confirmación periódica y el formulario de
+envío para tarjetas sin consola. No basta con mostrar el transporte en la tarjeta.
+
+Para Claude, se verificó un envío autenticado al named pipe de una sesión propia de prueba:
+un mensaje peer válido y un ACK exacto; el marcador con token inválido no apareció. La sesión
+terminó y retiró su registro. El token se tomó del entorno del hijo, sin leer archivos de claves.
+Esta prueba no demuestra todavía el envío desde el servidor independiente de Lienzo ni a Desktop.
+E implementa el puente con adaptador hijo y confirmación por transcript; su integración y prueba
+Desktop siguen pendientes. La decisión anterior de no implementar ningún cliente de pipe queda
+reemplazada por este alcance autorizado. No se usa el stdin privado del motor de Desktop.
+
+Evidencia: `.temp/coordinacion/2026-10-17/claude-pipe-prueba/verification.json`, informes A/C/E
+y `orden-release.md`. No se reinició el servidor principal ni se aprobó un baseline.
+
+### Compatibilidad de las interfaces y límites (revisión pedida por Ariel)
+
+- `codex queue` figura **Stable** en la [referencia oficial](https://learn.chatgpt.com/docs/developer-commands?surface=cli#codex-queue).
+  Se usa el comando del harness, con UUID de hilo y argv sin shell. No se abre el app-server privado
+  de la app ni se manipulan sus locks. Las pruebas reales de A acreditan CLI; la medición previa de
+  la coordinadora acredita el hilo de la app. No extiende soporte a chats generales de ChatGPT.
+- Claude documenta el [pipe y la autenticación del hijo](https://code.claude.com/docs/en/cross-session-messaging#the-sessions-inbox-socket).
+  El formato de entrega utilizado sigue siendo interno: prueba real propia en 2.1.302, guardia
+  `peerProtocol == 1` y versión mínima Windows 2.1.234. No se garantiza compatibilidad futura.
+- El adaptador conserva el token Claude en memoria. El bootstrap sólo entrega la credencial del
+  enlace al hijo validado por Windows; comandos y settings contienen dirección e identidad públicas.
+  No se leen archivos de claves ni se comparten credenciales entre cuentas.
+- Entrega y ejecución del pedido siguen las reglas de la sesión receptora. La autorización de un
+  par no reemplaza el consentimiento del usuario: Desktop pidió confirmación directa y no ejecutó.
+  La autorización directa posterior permitió la prueba integrada positiva de las 13:31; los rechazos
+  anteriores no se eludieron ni se usaron como motivo para cambiar permisos.
+- Un envío puede iniciar un turno y consumir la cuota del plan. En Codex, una cola hacia un hilo
+  sin proceso puede incluso activar trabajo en segundo plano; el transporte de Lienzo lo rechaza.
+  En una prueba Claude, el costo informado superó `--max-budget-usd 0.50`; ese flag no se trata como
+  techo monetario estricto. No se repiten llamadas de modelo para eludir un bloqueo.
+
+Esto es una revisión técnica de esta implementación y de las interfaces documentadas. No constituye
+una garantía sobre la cuenta, condiciones de uso o versiones que no fueron probadas.
+
+### Qué se midió
+
+- **Claude Desktop** `Claude` 2.42304.0.0 (se actualizó sola desde 2.16120). La app Electron es
+  `WindowsApps\Claude_…\app\claude.exe`, con unos diez hijos del mismo ejecutable. El motor de cada
+  sesión es otro `claude.exe`, hijo de la app, en `%APPDATA%\Claude\claude-code\<ver>\<hash>\claude.exe`.
+  El hook lo ve con la ruta real del paquete: `…\Packages\Claude_<id>\LocalCache\Roaming\Claude\claude-code\…`.
+  Corre con `--input-format stream-json --output-format stream-json --permission-prompt-tool=stdio`:
+  la app le habla por un pipe, sin consola. [V]
+- Esa sesión dispara los hooks del lienzo (`SessionStart` del 2026-09-14 y la tarjeta 5d0f9e6b del
+  17, `hooked: true`). Antes del cambio el lienzo la tomaba como CLI con consola: un envío habría
+  intentado teclearle. [V]
+- **Registro de Claude Code** `~/.claude/sessions/<pid>.json` (respeta `CLAUDE_CONFIG_DIR`). Hay uno
+  por proceso vivo, de la CLI y del motor de Desktop. Trae `sessionId`, `entrypoint` (`cli` o
+  `claude-desktop`), `name` (el nombre en el canal nativo), `kind`, `status` y `procStart`.
+  `procStart` es la creación del proceso como FILETIME: coincidió exacto con `GetProcessTimes` del
+  pid 3568. Al lado hay un `<pid>.<hash>.key` y el campo `messagingSocketPath` (un pipe): no se leen. [V]
+- **Canal nativo:** `ListAgents` lista la sesión de Desktop («Claude Desktop session»), y un `SendMessage`
+  desde una sesión de Claude le llega y vuelve. Lo midió la coordinadora, y este frente lo repitió:
+  respondió «medición C ok» a los 20 s. [V]
+- **Desktop muestra las sesiones de la CLI** porque comparte `~/.claude/projects` (observado por Ariel).
+  Verlas no crea un proceso. Retomar una sesión en la app (`claude --desktop --resume`) cierra la CLI,
+  y la retoma un motor de la app con el mismo `session_id` [V doc]. No se midió en vivo para no cortar
+  una CLI de trabajo. [I]
+- **Codex desktop** se instala con el instalador de ChatGPT, en el paquete `OpenAI.Codex` 26.1007.9446.0.
+  La app es `ChatGPT.exe`; los procesos `--type=` son de Electron. Su motor es
+  `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe … app-server`, hijo de la app y por stdio, sin
+  `--listen`: es privado de la app. [V]
+- Los rollouts de la app traen `originator: Codex Desktop` (el hilo vivo 01a14a5d del 17) o
+  `codex_work_desktop` (los del 12 al 14). Los otros 90 «Codex Desktop» de esta PC son transcripciones
+  de Claude importadas, listadas en `external_agent_session_imports.json`, y no son trabajo de la app.
+  `[features] hooks = false` sigue, así que de la app no llega ningún hook. [V]
+- **Un solo escritor por hilo:** `~/.codex/thread-writer-locks/<hilo>.lock`, tomado por el proceso dueño.
+  Ariel observó que la app no deja escribir en un hilo abierto por la CLI. [V]
+- **¿Un segundo cliente sobre los hilos de la app?** Se investigó sólo leyendo: la ayuda de codex-cli
+  0.163.0 y los archivos de `~/.codex`. No se conectó nada, ni a sockets ni a pipes, ni se tocaron los
+  `.lock`.
+  - `codex app-server daemon start|stop|…` levanta un app-server local **compartido**, con socket de
+    control en `~/.codex/app-server-control/app-server-control.sock`. A ese daemon se enganchan varios
+    clientes: `codex --remote`, `codex agents` («Browse all agent sessions on the shared local
+    app-server daemon») y `codex app-server proxy`. Corrió del 12 al 14 (su log muestra turnos) y hoy
+    no está vivo (daemon.pid 29996). [V]
+  - La app no usa ese daemon: su app-server es suyo, por stdio. `\\.\pipe\codex-ipc` es de la app y
+    su protocolo no está documentado. [V]
+  - Ni el daemon ni el socket de control dan acceso a los hilos de la app, porque la app no los usa. [V]
+- **Escribirle a un hilo de la app sí se puede, con `codex queue`.** Lo midió la coordinadora a las 12:12,
+  con codex-cli 0.163.0: `codex queue --thread <id> --message <texto>` (documentado en `codex queue
+  --help`) encoló un mensaje para el hilo 01a14a5d, que tenía abierto la app.
+  - Salió con exit 0 y sin dejar procesos. Usa `~/.codex/queue_1.sqlite`.
+  - La app lo tomó en 1 s como turno nuevo (`task_started`, el mensaje, la respuesta, `task_complete`).
+  - No necesitó el daemon ni tocó el lock del hilo. [V]
+  - Esto corrige la conclusión anterior de este documento: «no hay camino soportado para escribir en
+    hilos de la app». La cola es el camino soportado; el app-server de la app sigue siendo privado.
+  - A implementa ese transporte en el lienzo (`lienzo/codex_queue.py`), con confirmación por el rollout.
+    Que también entregue a una TUI viva lo está midiendo A.
+
+### Qué hace el lienzo ahora
+
+- **Detección de Claude Desktop** (`lienzo/procs.py`), en orden:
+  1. El registro: `entrypoint: claude-desktop`, sólo si su `procStart` es el del proceso (un pid reciclado no cuenta).
+  2. La ruta del motor (`\Roaming\Claude\claude-code\`).
+  3. Un padre bajo `WindowsApps\Claude_` u `OpenAI.Codex_`.
+
+  La sesión queda `external = {kind: "claude-desktop", via, desktop: true, canal}` y `no_console`.
+  Con eso no se le teclea, no se la mata, no la mueven reglas y no se reabre en una terminal. Los
+  procesos Electron siguen descartados por `is_impostor`.
+- La detección vale para la tarjeta que nace por hook (`claim_pid`) y para la del barrido. Además, el
+  barrido reclasifica una tarjeta que ya existía, como la 5d0f9e6b, sin pisar la marca de un orquestador.
+- **Sin duplicados:** si un motor de Desktop emite con el `session_id` de una CLI viva, la tarjeta
+  sigue con la CLI. Cuando la CLI muere (retomada en Desktop), el motor la toma y la tarjeta pasa a
+  sólo lectura. Un `claude --resume` en terminal la vuelve personal.
+- **Envío a Claude Desktop:** con adaptador propio conectado se habilita `claude_pipe`. Sin enlace
+  vigente se informa el motivo y no se degrada a tecleo. El formato interno y la guardia de protocolo
+  se verifican por versión; ver el corte integrado de las 13:31. El canal nativo desde otra sesión
+  Claude sigue siendo una alternativa, sujeta a permisos y cuota del receptor.
+- **Hilos de Codex desktop** (`agentes.codex_desktop_threads`, `sessions.adopt_desktop_threads`):
+  - En cada barrido se toman los rollouts escritos en las últimas 2 h, con originator de la app y que
+    no sean importados. Respeta `CODEX_HOME`.
+  - Cada hilo es una tarjeta sin pid, `source: desktop`, con
+    `external = {kind: "codex-desktop", via: "rollout", desktop: true}`. Estado, pedido y respuesta
+    salen del rollout, que la liveness relee cuando crece.
+  - Se retira a las 2 h sin escritura. No pisa una tarjeta que ya tenga ese id.
+  - Sus permisos no llegan (sin hooks), y la tarjeta lo dice.
+- **La marca de envío de la tarjeta** sale del server, no de un texto fijo. Cada sesión trae
+  `envio: {puede, motivo, transporte}`, el resultado de `puede_enviar` del contrato de D, acordado con A.
+  - Con `puede`: «· se le escribe por codex queue» (o el transporte que venga).
+  - Sin `puede`: «· solo lectura», con el motivo en el tooltip.
+  - Si el server todavía no lo manda: en Codex desktop, «envío sin informar»; en Claude Desktop, la
+    indicación del canal nativo.
+  - Falta cablear `envio` en `GET /sessions` (`server.py`), que pidió A.
+- Medido en vivo con el código nuevo, en un proceso aislado y sin reiniciar el server:
+  - El barrido real mostró 5 CLI personales.
+  - El motor 3568 salió `claude-desktop` por registro, con canal «Sesión de prueba».
+  - El hilo 01a14a5d salió de sólo lectura, con pedido y respuesta reales.
+  - La tarjeta de Desktop se actualizó con un mensaje enviado por el canal: el pedido a los 8 s y la respuesta a los 20 s. [V]
+
+## Cómo estaba el lienzo el 2026-10-16
+
+- El barrido descarta por ruta la app de Claude (`\WindowsApps\Claude_`), todo lo que corre bajo
+  `\.vscode\extensions\`, cualquier proceso con `app-server` en la línea de comando y los procesos
+  Electron (`--type=`) (`is_impostor`). No exige un padre shell: por eso adoptó el motor de Desktop
+  como una sesión más (barrido del 2026-09-14 16:35, pid 34840). [V; corrige lo escrito el 16]
 - Una sesión que llega por hook sin consola queda marcada `no_console`: se ve y se lee, pero no se le
   escribe (`lienzo/sessions.py:1217`). El comentario del código ya cuenta que las apps de escritorio
   disparan hooks. El envío la rechaza con «esta sesion no tiene consola (panel de VS Code o app de
@@ -121,7 +281,7 @@ Fuentes: [App Server](https://learn.chatgpt.com/docs/app-server.md),
 |---|---|---|---|
 | Detectar la sesión y su estado | Los rollouts de la app están en `~/.codex/sessions` con `originator` `Codex Desktop` [V]. | Un lector de rollouts por `originator` que arme tarjetas de sólo lectura sin proceso, con estado por el rollout (turno abierto o cerrado). Medir si los hooks corren en la app. | Los hooks hoy están apagados en `config.toml` [V]. Si el hook corriera, subiría hasta un `codex.exe app-server` que `is_tui` (sólo ruta) podría dar por TUI [I]. |
 | Leer el contenido | El formato del rollout es el mismo que lee `transcripts.py` [V]. | Dejar de descartar `Codex Desktop` cuando no se busca una TUI (`agentes.py:375`). | — |
-| Mandar un mensaje | Nada hoy [V]. | Un cliente del app-server en el lienzo: `thread/resume` + `turn/start` o `turn/steer`. | Con la app abierta en ese hilo, dos clientes escribiendo a la vez: sin documentar [V]; la app podría no mostrar lo que llegó por otro cliente hasta recargar [I]. |
+| Mandar un mensaje | Nada el 16 [V]. El 17: `codex queue --thread <id> --message …` entrega al hilo de la app (ver arriba) [V]. | Lo implementa A con confirmación por rollout. El cliente de app-server de abajo ya no hace falta para esto. | Con la app abierta en ese hilo, dos clientes escribiendo a la vez: sin documentar [V]; la app podría no mostrar lo que llegó por otro cliente hasta recargar [I]. |
 | Permisos y preguntas | Si el lienzo es el cliente, las aprobaciones le llegan a él como pedidos JSON-RPC [V]. | Mapear esos pedidos a la tarjeta y a `pending/` con su `answer`. | Las aprobaciones de un hilo que maneja la app van a la app, no a un segundo cliente [I]. El hook `PermissionRequest` en la app: sin confirmar. |
 | Lanzar | `codex://new?prompt=...&path=...` [V]. O el lienzo arranca su propio `codex app-server` y crea el hilo [V]. | Saber qué `thread_id` nació cuando lanza el enlace (leerlo del rollout nuevo). | El enlace sólo precarga, no manda [V]. |
 | Retomar | `codex://threads/<id>` abre el hilo en la app; `codex resume <id>` en la terminal [V]. | Un botón «abrir en Codex» en la tarjeta. | — |

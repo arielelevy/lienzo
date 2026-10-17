@@ -4,16 +4,42 @@ import { OptimizationScheduler } from "./OptimizationScheduler";
 
 /** Una integración del catálogo (lienzo/tools/): usa un repo o servicio externo. */
 interface ToolInfo {
-  id: string; nombre: string; tipo: "mejora" | "evaluacion" | "pruebas" | "trabajo"; origen: string; descripcion: string;
+  id: string; nombre: string; tipo: "mejora" | "evaluacion" | "pruebas" | "trabajo" | "documentacion"; origen: string; descripcion: string;
   version: string | null; costo: "gratis" | "pago"; modos: string[]; preferencia: "brief" | "rtk" | null; instalar: string | null;
-  estado: { disponible: boolean; detalle?: string };
+  estado: { disponible: boolean; detalle?: string; version_instalada?: string | null };
+  formato?: "tool" | "skill" | "plugin-claude";
+  compatible_con?: string[];
+  limitaciones?: string[];
+}
+type Permiso = "lectura" | "escritura" | "ejecucion" | "red" | "efectos_externos";
+interface PluginHealth { ok: boolean; detalle: string; conectado: boolean | null; ts: number }
+/** Ficha de plugins.resumen(). Los campos opcionales faltan en un backend anterior al manifiesto. */
+interface LocalPlugin {
+  id: string; nombre: string; origen: string; cargado: boolean; capacidades: string[]; detalle: string;
+  version?: string | null; descripcion?: string | null; url?: string | null;
+  manifiesto?: "valido" | "ausente" | "invalido";
+  estado?: "cargado" | "declarado" | "sin-configurar" | "deshabilitado" | "incompatible" | "error";
+  puntos?: string[]; ciclo_de_vida?: string[];
+  permisos?: Record<Permiso, string[]> | null;
+  configuracion?: { completa: boolean; faltan: string[]; errores: string[] } | null;
+  relaciones?: { tools: string[]; sistemas: string[] };
+  errores?: string[]; advertencias?: string[];
+  salud?: PluginHealth | null;
 }
 interface Settings {
   preferences: { brief: boolean; rtk: boolean };
   tools: ToolInfo[];
+  plugins?: LocalPlugin[];
   scope: string;
 }
-const TIPO: Record<ToolInfo["tipo"], string> = { mejora: "mejora", evaluacion: "evaluación", pruebas: "pruebas", trabajo: "trabajo" };
+const TIPO: Record<ToolInfo["tipo"], string> = { mejora: "mejora", evaluacion: "evaluación", pruebas: "pruebas", trabajo: "trabajo", documentacion: "documentación" };
+const PERMISO: Record<Permiso, string> = { lectura: "lectura", escritura: "escritura", ejecucion: "ejecución", red: "red", efectos_externos: "efectos externos" };
+const ESTADO_PLUGIN: Record<NonNullable<LocalPlugin["estado"]>, [string, string]> = {
+  cargado: ["cargado", ""], declarado: ["declarado", ""], "sin-configurar": ["sin configurar", " pausa"],
+  deshabilitado: ["deshabilitado", " pausa"], incompatible: ["incompatible", " falta"], error: ["con error", " falta"],
+};
+const CAPACIDAD: Record<string, string> = { integracion: "integración", "forma-de-trabajo": "forma de trabajo", tools: "tools", documentacion: "documentación", evaluacion: "evaluación" };
+const PUNTO: Record<string, string> = { get: "lectura HTTP", post: "acciones HTTP", runners_externos: "procesos externos", vista: "vista", iniciar: "inicio", salud: "salud", detener: "parada" };
 const enlace = (origen: string) => (origen.startsWith("https://") ? <a href={origen} target="_blank" rel="noreferrer">{origen.replace("https://", "")}</a> : <code>{origen}</code>);
 interface Evaluation {
   session_id: string; snapshot: string; agent: string; model: string | null; version?: string | null;
@@ -98,15 +124,24 @@ export function AgentImprovements({ sid }: { sid?: string }) {
             </div>
             <div className="tool-chips">
               <span className="chip">{TIPO[t.tipo]}</span>
+              {t.formato === "plugin-claude" && <span className="chip">plugin de Claude Code</span>}
+              {t.formato === "skill" && <span className="chip">skill</span>}
+              {!!t.compatible_con?.length && <span className="chip">{t.compatible_con.join(", ")}</span>}
               <span className={`chip${t.costo === "pago" ? " paga" : ""}`}>{t.costo === "pago" ? "paga" : "gratis"}</span>
               {!t.modos.includes("general") && <span className="chip">solo modo {t.modos.join(", ")}</span>}
               {t.preferencia && <span className="chip">al lanzar</span>}
             </div>
             <p className="small">{t.descripcion}</p>
-            <p className="small dim tool-origen">{enlace(t.origen)}{t.version ? ` · ${t.version}` : ""}{t.estado.detalle ? ` · ${t.estado.detalle}` : ""}</p>
+            {!!t.limitaciones?.length && <ul aria-label={`Límites de ${t.nombre}`} className="small">{t.limitaciones.map(limit => <li key={limit}>{limit}</li>)}</ul>}
+            <p className="small dim tool-origen">{enlace(t.origen)}{t.version ? ` · ${t.version}` : ""}{t.estado.version_instalada ? ` · instalada ${t.estado.version_instalada}` : ""}{t.estado.detalle ? ` · ${t.estado.detalle}` : ""}</p>
             {!t.estado.disponible && t.instalar && <p className="small tool-instalar">Instalar: <code>{t.instalar}</code></p>}
           </li>)}
         </ul>
+        {!!settings.plugins?.length && <section aria-label="Plugins locales de Lienzo">
+          <h4>Plugins locales de Lienzo</h4>
+          <p className="small dim">Integraciones y formas de trabajo. Pueden funcionar sin aportar tools.</p>
+          <ul className="tools-catalogo">{settings.plugins.map(plugin => <PluginCard key={plugin.id} plugin={plugin} />)}</ul>
+        </section>}
         <p className="small dim">RTK en WSL se verifica al lanzar. Jev se consulta desde «Mejoras» de una sesión.</p>
       </>}
     </section>
@@ -131,4 +166,44 @@ export function AgentImprovements({ sid }: { sid?: string }) {
       {judgment && <article><strong>Jev sugiere: {judgment.decision.choice}</strong><p>{judgment.decision.note}</p><small>{judgment.decision.model} · USD {judgment.decision.usage.cost}</small>{judgment.decision.budget_exceeded && <p role="alert">El proveedor informó un costo superior a la cota; revisar antes de otra consulta.</p>}</article>}
     </>}
   </section>;
+}
+
+/** Ficha de un plugin local. La salud se consulta solo a pedido: cargado no es conectado ni sano. */
+function PluginCard({ plugin }: { plugin: LocalPlugin }) {
+  const [checked, setChecked] = useState<PluginHealth | null>(null);
+  // la más nueva entre la que trajo el inventario (un «Actualizar») y la pedida desde esta ficha
+  const health = [plugin.salud, checked].reduce<PluginHealth | null>((a, b) => (b && (!a || b.ts >= a.ts) ? b : a), null);
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState("");
+  const [label, tone] = (plugin.estado && ESTADO_PLUGIN[plugin.estado]) || [plugin.estado ?? (plugin.cargado ? "cargado" : "no cargado"), ""];
+  const mechanisms = [...(plugin.puntos ?? []), ...(plugin.ciclo_de_vida ?? [])].map(p => PUNTO[p] ?? p);
+  const permits = plugin.permisos ? (Object.keys(PERMISO) as Permiso[]).filter(k => plugin.permisos![k]?.length) : [];
+  const check = async () => {
+    setChecking(true); setError("");
+    try { setChecked((await api.get<{ salud: PluginHealth }>(`/ext/${encodeURIComponent(plugin.id)}/_salud`)).salud); }
+    catch (e) { setError((e as Error).message); }
+    finally { setChecking(false); }
+  };
+  return <li className="tool-card" aria-label={`Plugin ${plugin.nombre}`}>
+    <div className="tool-card-cabecera"><strong>{plugin.nombre}</strong><span className={`chip estado${tone}`}>{label}</span></div>
+    <div className="tool-chips">
+      {plugin.capacidades.map(c => <span key={c} className="chip">{CAPACIDAD[c] ?? c}</span>)}
+      {plugin.manifiesto === "ausente" && <span className="chip">sin manifiesto</span>}
+      {plugin.manifiesto === "invalido" && <span className="chip estado falta">manifiesto inválido</span>}
+      {health && <span className={`chip estado ${!health.ok ? "falta" : health.conectado === false ? "pausa" : "ok"}`}>{!health.ok ? "comprobación fallida" : health.conectado === false ? "sin conexión" : health.conectado ? "conectado" : "sano"}</span>}
+    </div>
+    {plugin.descripcion && <p className="small">{plugin.descripcion}</p>}
+    <p className="small">{plugin.detalle}</p>
+    {!!plugin.errores?.length && <ul aria-label={`Errores de ${plugin.nombre}`} className="small">{plugin.errores.map(e => <li key={e}>{e}</li>)}</ul>}
+    {plugin.configuracion && !plugin.configuracion.completa && <p className="small">Configuración: {[...plugin.configuracion.faltan.map(f => `falta ${f}`), ...plugin.configuracion.errores].join("; ")}</p>}
+    {plugin.permisos === null && <p className="small dim">Permisos no declarados.</p>}
+    {plugin.permisos && <p className="small dim">{permits.length
+      ? <>Permisos declarados, no aplicados por Lienzo: {permits.map(k => `${PERMISO[k]} (${plugin.permisos![k].join(", ")})`).join("; ")}</>
+      : "No declara permisos ni efectos externos."}</p>}
+    {!!plugin.advertencias?.length && <p className="small dim">{plugin.advertencias.join(" · ")}</p>}
+    <p className="small dim">Origen: {plugin.url ? enlace(plugin.url) : plugin.origen}{plugin.version ? ` · ${plugin.version}` : ""}{mechanisms.length ? ` · ${mechanisms.join(", ")}` : ""}</p>
+    {health && <p className="small">Salud: {health.detalle || (health.ok ? "sin detalle" : "sin motivo")}</p>}
+    {plugin.cargado && plugin.ciclo_de_vida?.includes("salud") && <button disabled={checking} onClick={() => void check()}>{checking ? "Comprobando…" : "Comprobar salud"}</button>}
+    {error && <p role="alert">{error}</p>}
+  </li>;
 }

@@ -130,7 +130,8 @@ function useLaneBudget(ref: React.RefObject<HTMLElement | null>): number {
       const libre = caja && ccs ? caja.clientWidth - parseFloat(ccs.paddingLeft || "0") - parseFloat(ccs.paddingRight || "0") : el.clientWidth;
       const u = libre - pad;
       util += u;
-      cajas.push({ el, u, pad, n: parseInt(cs.columnCount) || 1 });
+      // las pistas que **aplica** la grilla (en movil el CSS fuerza una), no --lanes
+      cajas.push({ el, u, pad, n: cs.gridTemplateColumns.split(" ").filter(Boolean).length || 1 });
     }
     if (util <= 0) return; // todas colapsadas: se queda con el reparto que tenia
     // Techo del ancho de tarjeta: lo que sobra despues de darle ANCHO_TARJETA a cada subcolumna
@@ -139,7 +140,7 @@ function useLaneBudget(ref: React.RefObject<HTMLElement | null>): number {
     // subcolumnas le entrarian: con dos tarjetas en 1920 el reparto da dos subcolumnas (el tope es
     // una por tarjeta), la columna igual se estira a todo el tablero y el canal se iba a ~1200 px,
     // con una tarjeta contra cada borde y un agujero en el medio (lo reporto Ariel el 2026-09-08).
-    // Se usa el column-count que **aplica** el CSS, no --lanes.
+    // Se usan las subcolumnas que **aplica** el CSS, no --lanes.
     for (const c of cajas) {
       const necesita = c.n * ANCHO_TARJETA + (c.n - 1) * gap;
       // pantalla angosta (el CSS fuerza una sola subcolumna y no entran dos tarjetas): sin techo,
@@ -483,17 +484,15 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       if (!passesFilters(s, filtros, q)) continue;
       g[colOf(s)].push(s);
     }
-    // lo que esta trabajando de verdad va primero; lo que termino, despues; lo que figura corriendo
-    // pero esta quieto (sin cupo, o sin actividad hace rato), al final. Con las tarjetas repartidas
-    // en subcolumnas, "al final" es "a la derecha"
-    // el permiso pendiente va primero de todo: vence a los 60 s
-    const rank = (s: Session) => (s.pending_id && pending[s.pending_id] ? -1 : stalledReason(s) ? 2 : s.state === "termino" ? 1 : 0);
+    // orden estable: cada tarjeta conserva su lugar (repo + inicio) y el estado se ve en su color.
+    // Ordenar por corriendo/termino y por state_since hacia saltar la grilla entera en cada cambio
+    // de turno: con varias sesiones mandandose mensajes, el tablero pestañeaba (Ariel, 2026-10-17;
+    // medido: la misma tarjeta cambiaba de lugar y volvia en 1-3 s). Solo se mueve lo que pide
+    // algo: el permiso pendiente va primero de todo (vence a los 60 s) y lo que figura corriendo
+    // pero esta quieto (sin cupo, o sin actividad hace rato) al final: la ultima fila de la grilla.
+    const rank = (s: Session) => (s.pending_id && pending[s.pending_id] ? -1 : stalledReason(s) ? 1 : 0);
     for (const k of COLS.map(([k]) => k)) {
-      g[k].sort((a, b) => {
-        if (rank(a) !== rank(b)) return rank(a) - rank(b);
-        if (rank(a) > 0) return b.state_since.localeCompare(a.state_since);
-        return (a.repo + a.started).localeCompare(b.repo + b.started);
-      });
+      g[k].sort((a, b) => rank(a) - rank(b) || (a.repo + a.started).localeCompare(b.repo + b.started));
     }
     return g;
   }, [sessions, pending, query, agents, pcFilter, selectedRepos, coordOnly, localPcId]);
@@ -954,7 +953,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   </h2>
                   {list.length === 0 && !sinTarjetas && <div className="empty">nada acá</div>}
                   <div className="cards">
-                  {/* columna ancha: subcolumnas por CSS (column-count: var(--lanes) en .col.wide .cards),
+                  {/* columna ancha: subcolumnas por CSS (grilla de var(--lanes) en .col.wide .cards),
                       no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
                       y perderia su estado (pedido expandido, input de renombrar, toast) */}
                   {list.map((s) => {

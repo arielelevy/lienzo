@@ -162,11 +162,9 @@ details.fold > summary,
 /* columna ancha (pocas abiertas): las tarjetas en dos subcolumnas */
 /* dos subcolumnas independientes (no una grilla por filas): el aire vertical entre tarjetas es
    siempre el mismo que en una columna simple (8 px), aunque la de al lado sea mas alta */
-/* dos subcolumnas por CSS: cada tarjeta se apoya en la de arriba con el mismo aire aunque la de al
-   lado sea mas alta, y todas siguen siendo hijas del mismo nodo (React no las remonta al reordenar).
-   El hueco de 24 px es el canal para el glifo de las flechas. */
-.col.wide .cards { column-count: 2; column-gap: var(--col-gap, 35px); }
-.col.wide .cards > div { break-inside: avoid; margin-bottom: var(--card-gap-y, 15px); }
+/* subcolumnas por CSS: la grilla vive en card.css (.board .col.wide .cards). Todas las tarjetas
+   siguen siendo hijas del mismo nodo (React no las remonta al reordenar). */
+.col.wide .cards > div { margin-bottom: var(--card-gap-y, 15px); }
 .col.wide .cards .card { margin-bottom: 0; }
 .col.collapsed .vlabel { cursor: pointer; border-radius: 8px; min-width: 20px; }
 .col.collapsed .vlabel:hover { background: var(--card); color: var(--fg); }
@@ -605,7 +603,6 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
   .col.show { display: block; flex: 1 1 auto; padding: 0; background: transparent; border: 0; min-height: 0; }
   .col.show h2 { display: none; }
   .col.show .vlabel { display: none; }
-  .col.wide .cards { column-count: 1; }
   .col.wide .cards > div { margin-bottom: 0; }
   .col.wide .cards .card { margin-bottom: 10px; }
   .col.collapsed.show .empty { display: block; }

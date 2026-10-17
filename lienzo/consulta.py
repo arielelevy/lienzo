@@ -171,6 +171,13 @@ def _rechazo(msg: str, code: int = 400) -> tuple[int, dict]:
     return code, {"ok": False, "error": msg}
 
 
+def _participante_ocupado(participantes: list[str]) -> str | None:
+    with lock:
+        ocupados = {p for current in CONSULTAS.values() if current["estado"] in ABIERTAS for p in _participantes(current)}
+        comunes = ocupados.intersection(participantes)
+        return min(comunes) if comunes else None
+
+
 def abrir(d: dict) -> tuple[int, dict]:
     """POST /consultas. Valida todo antes de mandar nada (1.2, 1.3) y manda la vuelta 1 a la vez."""
     pregunta = d.get("pregunta")
@@ -209,10 +216,8 @@ def abrir(d: dict) -> tuple[int, dict]:
         if s.get("stopped_by"):
             return _rechazo(f"{sid[:8]} está detenida")
         tarjetas[sid] = s
-    with lock:
-        ocupadas = {p for c in CONSULTAS.values() if c["estado"] in ABIERTAS for p in _participantes(c)}
-    if ocupadas & set(todos):
-        return _rechazo(f"{min(ocupadas & set(todos))[:8]} ya está en otra consulta abierta")
+    if ocupado := _participante_ocupado(todos):
+        return _rechazo(f"{ocupado[:8]} ya está en otra consulta abierta")
     # solo los investigadores: el revisor recibe su pedido recien en la sintesis, y muchas veces es la
     # misma sesion que abre la consulta, que al abrirla figura corriendo (prueba de Teorema, 2026-10-10)
     corriendo = [sid for sid in inv if tarjetas[sid].get("state") == "corriendo"]
@@ -255,6 +260,8 @@ def abrir(d: dict) -> tuple[int, dict]:
     # el revisor que no es investigador se marca aparte; si no hay revisor, sintetiza el primero
     c["revisor_aparte"] = bool(revisor)
     with lock:
+        if ocupado := _participante_ocupado(todos):
+            return _rechazo(f"{ocupado[:8]} ya está en otra consulta abierta")
         CONSULTAS[cid] = c
         _guardar(c)
     if previa:

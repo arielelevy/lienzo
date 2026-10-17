@@ -1,5 +1,10 @@
 # Presupuesto autorizado por Ariel
 
+Registro histórico del 2026-10-12. Sus estados, importes y autorizaciones corresponden a esa ronda;
+no son un estado operativo verificado hoy ni una autorización nueva.
+Contrato actual: [Aprendizaje](../../APRENDIZAJE.md). Las specs intermedias citadas en el cuerpo
+se retiraron al consolidar; sus versiones originales permanecen en Git.
+
 Tope total vigente de esta ronda: USD 2 para Jev y experimentos CLI, reducido por Ariel el 2026-10-12: «entocne spdoes seguir, te bajo el rpesupeestoa  2usd». Reemplaza la autorización original USD 5, incluye costos previos y no es un saldo por proyecto o por PC.
 
 Fuente verificada en transcripción original de esta sesión (solo mensajes con role=user):

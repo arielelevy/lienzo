@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { sessionsApi } from "../api";
+import { sendNotice, sessionsApi, type SendResult } from "../api";
 import { shortName } from "../names";
 import type { Session } from "../types";
 
@@ -13,6 +13,7 @@ interface Result {
   what: string;
   ok: number;
   fails: Fail[];
+  pending: Fail[];
 }
 
 interface Props {
@@ -55,18 +56,27 @@ export function SelectionBar({ sids, sessions, onClear, visibleToMark, onMarkVis
     setBusy(true);
     setResult(null);
     const fails: Fail[] = [];
+    const pending: Fail[] = [];
     let ok = 0;
     for (const sid of sids) {
       try {
-        await call(sid);
+        const response = await call(sid);
+        if (what === "Envío") {
+          const notice = sendNotice(response as SendResult);
+          if (!notice.confirmed) {
+            const list = (response as SendResult).estado === "rechazado" ? fails : pending;
+            list.push({ sid, name: shortName(sessions[sid]), reason: `${notice.text}. No reenvíes el texto.` });
+            continue;
+          }
+        }
         ok++;
       } catch (e) {
         fails.push({ sid, name: shortName(sessions[sid]), reason: (e as Error).message });
       }
     }
     setBusy(false);
-    setResult({ what, ok, fails });
-    return fails.length === 0;
+    setResult({ what, ok, fails, pending });
+    return fails.length === 0 && pending.length === 0;
   };
 
   const send = async () => {
@@ -141,11 +151,11 @@ export function SelectionBar({ sids, sessions, onClear, visibleToMark, onMarkVis
         {result && (
           <>
             <b>
-              {result.what}: {result.ok} ok / {result.fails.length} fallaron
+              {result.what}: {result.ok} ok / {result.pending.length > 0 ? `${result.pending.length} pendientes / ` : ""}{result.fails.length} fallaron
             </b>
-            {result.fails.length > 0 && (
+            {result.fails.length + result.pending.length > 0 && (
               <ul>
-                {result.fails.map((f) => (
+                {[...result.pending, ...result.fails].map((f) => (
                   <li key={f.sid}>
                     {f.name}: {f.reason}
                   </li>

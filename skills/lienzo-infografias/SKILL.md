@@ -9,8 +9,9 @@ Las figuras explican un mecanismo del lienzo con un objeto físico que funciona 
 una central de comunicaciones, cada sesión un jack con su lámpara, cada conexión un cordón. Se dibujan con el kit
 de la skill `anatomy` (`~/.claude/skills/anatomy`, o `ANATOMY_DIR`), sin copiarlo al repo.
 
-Es opcional: el lienzo no la usa para nada. Sin `anatomy`, o sin Chrome para `--check`, el
-lienzo funciona igual y sus pruebas de esta herramienta se saltean.
+Es una herramienta opcional de documentación visual de Lienzo. El núcleo funciona sin ella.
+Sin `anatomy`, o sin Chrome para `--check`, sus pruebas se saltean y no acreditan verificación.
+La integración y su ficha de catálogo existen; el estado de activación está en docs/PRODUCTO.md.
 
 ## Reglas propias del lienzo
 

@@ -41,7 +41,9 @@ import binascii
 
 import aprendizaje_api
 import conocimiento as k
+import creencias
 import identity
+import patrones_desarrollo
 import sessions as ses
 import veredictos_api
 from conocimiento import Rechazo
@@ -152,6 +154,18 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
     autor = d.get("autor") or "coordinadora"
     if not resto and metodo == "GET":
         return 200, k.resumen(pid)
+    if resto == ["creencias"]:
+        if metodo == "GET":
+            return 200, creencias.listar(pid)
+        if metodo == "POST":
+            return 200, creencias.proponer(pid, d, autor=autor)
+    if len(resto) == 3 and resto[0] == "creencias" and resto[2] == "veredicto" and metodo == "POST":
+        return 200, creencias.resolver(pid, resto[1], d)
+    if resto == ["checklist"] and metodo == "GET":
+        contexto = {key: _q(query, key) for key in creencias.CONTEXTO if _q(query, key) is not None}
+        return 200, creencias.checklist(pid, contexto, limite=_entero(_q(query, "limite"), "limite", 8))
+    if resto == ["patrones-desarrollo"] and metodo == "GET":
+        return 200, patrones_desarrollo.analizar(pid)
     if resto == ["rondas"] and metodo == "POST":
         return 200, k.abrir_ronda(
             pid,

@@ -5,7 +5,7 @@ import { avance, rolDe, useConsultas } from "../consultas";
 import { continueAt, useCardActions } from "../hooks/useCardActions";
 import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
-import { canWrite, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
+import { canWrite, displayRepo, displayTitle, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { CardNeeds } from "./CardNeeds";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
@@ -109,6 +109,37 @@ function CardWords({ sid, rules, links, sessions, onDelete }: { sid: string; rul
       )}
     </div>
   );
+}
+
+/** Sesiones de las apps de escritorio (ronda 2026-10-17): `external.kind` las nombra. Qué se ve sale
+ *  de acá; si se le puede escribir y por dónde lo dice el server en `envio` (puede_enviar). */
+const APP_DESKTOP: Record<string, { nombre: string; lectura: string } | undefined> = {
+  "claude-desktop": {
+    nombre: "Claude Desktop",
+    lectura: "Sesión de la app Claude Desktop: se ven su estado, el último pedido y la respuesta, y los permisos que pide por hook. El lienzo no le teclea ni la cierra: su entrada es de la app.",
+  },
+  "codex-desktop": {
+    nombre: "Codex desktop",
+    lectura: "Hilo de la app de Codex, leído de su rollout y sin proceso propio: se ven su estado, el último pedido y la respuesta. Sus permisos no llegan acá (la app no corre hooks) y no se lo cierra desde acá.",
+  },
+};
+
+const TRANSPORTE: Record<string, string> = { codex_queue: "codex queue", claude_pipe: "adaptador Claude", canal_nativo: "canal nativo", tecleo: "teclado" };
+
+/** Lo que la marca dice del envío. Sin `envio` (un server anterior a puede_enviar) se dice lo que se
+ *  sabe: a Claude Desktop se le escribe por el canal nativo desde otra sesión de Claude; de Codex
+ *  desktop, nada. Nunca un «no se le puede escribir» fijo. */
+function envioDesktop(s: Session, kind: string): { etiqueta: string; texto: string } {
+  const e = s.envio;
+  if (e?.puede) {
+    const por = e.transporte ? TRANSPORTE[e.transporte] ?? e.transporte : null;
+    return { etiqueta: por ? `se le escribe por ${por}` : "se le puede escribir", texto: `Envío: sí${por ? `, por ${por}` : ""}.${e.motivo ? ` ${e.motivo}` : ""}` };
+  }
+  if (e) return { etiqueta: "solo lectura", texto: `Envío: no. ${e.motivo ?? "El server no dio el motivo."}` };
+  if (kind === "claude-desktop") {
+    return { etiqueta: "solo lectura", texto: "Para escribirle: canal nativo, con SendMessage desde una sesión de Claude." };
+  }
+  return { etiqueta: "envío sin informar", texto: "El server no informa si se le puede escribir." };
 }
 
 /** Cuatro sesiones recien abiertas del mismo repo dicen exactamente lo mismo ("Libre · sin pedidos
@@ -344,6 +375,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
   const working = WORKING_RE.test(s.last_reply || "");
   const suggestion = s.suggestion && !s.suggestion.trim().startsWith(ATTACH_WRAPPER) ? s.suggestion : null;
   const writable = canWrite(s);
+  const lastSend = s.agent === "claude" ? s.envio_claude : s.envio_codex;
   const withConsole = hasConsole(s);
   /* con el panel abierto, el doble click sobre el titulo ya no abre nada (el panel ya esta): ahi
      renombra en el lugar, que es lo que uno espera al hacerle doble click a un nombre. Cerrada,
@@ -392,7 +424,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         style={pcColor ? ({ "--pc-color": pcColor } as React.CSSProperties) : undefined}
         role="button"
         tabIndex={0}
-        aria-label={`${s.repo}: ${s.title || s.last_prompt || "sin título"} · sin conexión`}
+        aria-label={`${displayRepo(s)}: ${displayTitle(s)} · sin conexión`}
         aria-pressed={picked || selected}
         data-sid={s.session_id}
         onClick={(e) => {
@@ -409,12 +441,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       >
         <div className="top">
           <span className={`badge ${s.agent}`}>{s.agent}</span>
-          <span className="repo" title={s.repo}>
-            {s.repo}
+          <span className="repo" title={displayRepo(s)}>
+            {displayRepo(s)}
           </span>
           <span className="right">{ago(s.state_since)}</span>
         </div>
-        <div className="title">{s.title || s.last_prompt || "(sin título)"}</div>
+        <div className="title">{displayTitle(s)}</div>
         <div className="down small dim">sin conexión hace {ago(peerDown.since)}</div>
         <div className="meta">
           <span>{s.session_id.slice(0, 8)}</span>
@@ -442,7 +474,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       style={pcColor ? ({ "--pc-color": pcColor } as React.CSSProperties) : undefined}
       role="button"
       tabIndex={0}
-      aria-label={`${s.repo}: ${s.title || s.last_prompt || (free ? "libre, sin pedidos todavía" : "sin título")}`}
+      aria-label={`${displayRepo(s)}: ${displayTitle(s)}`}
       aria-pressed={picked || selected || marked}
       /* un click elige la tarjeta, pero recién a los PICK_MS: si llega el segundo click no se elige
          nada y el doble click abre el panel, sin el parpadeo ni el cambio de alto del medio.
@@ -528,8 +560,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     >
       <div className="top">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
-        <span className="repo" title={s.repo}>
-          {s.repo}
+        <span className="repo" title={displayRepo(s)}>
+          {displayRepo(s)}
         </span>
         {s.branch && (
           <span className="branch" title={`rama ${s.branch}`}>
@@ -714,9 +746,15 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               {freeText}
             </span>
           ) : (
-            s.title || s.last_prompt || "(sin título)"
+            displayTitle(s)
           ))}
       </div>
+      {lastSend && (
+        <div className="small" role="status" aria-live="polite" aria-atomic="true">
+          Último envío: {{ pendiente: "pendiente", encolado: "encolado", entregado: "entregado", sin_confirmacion: "sin confirmación", rechazado: "rechazado" }[lastSend.estado]}
+          {lastSend.motivo ? ` · ${lastSend.motivo}` : ""}
+        </div>
+      )}
       {needsPiReload(s) && <div className="small dim">Falta vincular el log: ejecutá /reload en Pi al terminar el turno.</div>}
       {free && s.title && (
         <div className="freeline" title={freeTitle}>
@@ -873,7 +911,15 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         <span>PID {s.pid ?? "?"}</span>
         <span>{s.source === "sweep" ? "barrido" : "hooks"}</span>
         {s.alive === false && <span>proceso muerto</span>}
-        {s.external && (
+        {s.external && APP_DESKTOP[s.external.kind] && (() => {
+          const app = APP_DESKTOP[s.external.kind]!;
+          const canal = s.external.canal;
+          const envio = envioDesktop(s, s.external.kind);
+          return <span className="warn external desktop" title={`${app.lectura} ${envio.texto}${canal ? ` Nombre en el canal: «${canal}».` : ""}`}>
+            app de escritorio · {app.nombre}{canal ? ` · canal «${canal}»` : ""} · {envio.etiqueta}
+          </span>;
+        })()}
+        {s.external && !APP_DESKTOP[s.external.kind] && (
           <span className="warn external" title={s.external.kind === "batch" ? "claude -p (headless): no tiene consola; se ve, no se le escribe" : `ejecución de ${s.external.kind}${s.external.run_id ? ` (corrida ${s.external.run_id})` : ""}: se controla desde su orquestador; no se le escribe ni se la cierra desde acá`}>
             {s.external.kind === "batch" ? "headless" : s.external.kind} · solo lectura
           </span>

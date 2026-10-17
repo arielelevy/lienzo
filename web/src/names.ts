@@ -9,6 +9,14 @@ import type { Link, Needs, Rule, Session } from "./types";
  *  arrows-geometry (modulo puro con tests) y se reexporta desde aca. */
 export { periodLabel };
 
+/** El workspace scratch de Desktop no es el proyecto. El canal ya viene validado por proceso
+ * en el backend; nunca se deduce Desktop del cwd ni se reemplaza un título del usuario. */
+export const displayRepo = (s: Session): string => s.external?.kind === "claude-desktop" ? "Claude Desktop" : s.repo;
+export const displayTitle = (s: Session): string => {
+  if (s.external?.kind !== "claude-desktop" || (s.title_source === "user" && s.title)) return s.title || s.last_prompt || "(sin título)";
+  return s.external.canal || s.native_name || "Sesión de Claude Desktop";
+};
+
 /** Plantilla de "cuando termine": la respuesta completa, con quien la manda. La usan Conectar
  *  (la que se ofrece hasta que el usuario la edita) y el "avisarme cuando termine" del SendBox;
  *  antes cada uno tenia su copia del mismo texto. */
@@ -17,13 +25,20 @@ export const REPLY_TEMPLATE = "Mensaje de {repo} ({agente}) sobre '{titulo}':\n{
 /** Nombre corto de una sesion: "repo · titulo" (titulo cortado a 24) o "repo · id" si no tiene. */
 export function shortName(o: Session | undefined, fallback = "otra sesión"): string {
   if (!o) return fallback;
-  const t = (o.title || "").trim();
-  if (!t) return `${o.repo} · ${o.session_id.slice(0, 8)}`;
-  return `${o.repo} · ${t.length > 24 ? t.slice(0, 23).trimEnd() + "…" : t}`;
+  const t = (o.external?.kind === "claude-desktop" ? displayTitle(o) : o.title || "").trim();
+  if (!t) return `${displayRepo(o)} · ${o.session_id.slice(0, 8)}`;
+  return `${displayRepo(o)} · ${t.length > 24 ? t.slice(0, 23).trimEnd() + "…" : t}`;
 }
 
 /** viva, con terminal propia, no huerfana y no detenida (stopped): se le puede escribir */
-export const canWrite = (s: Session): boolean => hasConsole(s) && !s.stopped_by && s.needs?.kind !== "pi_dialog";
+export const canWrite = (s: Session): boolean => {
+  if (s.stopped_by || s.pending_id || s.needs?.kind === "pi_dialog") return false;
+  const desktopQueue = s.agent === "codex" && s.external?.kind === "codex-desktop" && s.external.via === "rollout";
+  const desktopPipe = s.agent === "claude" && s.external?.kind === "claude-desktop";
+  if (s.external && !desktopQueue && !desktopPipe) return false;
+  if (s.envio) return s.envio.puede && (s.envio.transporte === "codex_queue" || s.envio.transporte === "claude_pipe" || (s.envio.transporte === "tecleo" && hasConsole(s)));
+  return !s.external && hasConsole(s);
+};
 /** viva con terminal, aunque este detenida: lo que no es escribirle (renombrar, la llave stopped) */
 export const hasConsole = (s: Session): boolean => !!s.alive && !!s.pid && !s.orphan && !s.no_console;
 

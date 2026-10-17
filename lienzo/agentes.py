@@ -383,6 +383,97 @@ def guess_codex(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str 
     return best or (None, None)
 
 
+# Registro de sesiones vivas de Claude Code (medido 2026-10-17): `<config>/sessions/<pid>.json`, uno por
+# proceso, para la CLI y para el motor de Claude Desktop. De ahi solo salen estos campos: el `.key` de
+# al lado y `messagingSocketPath` (el pipe del canal) no se leen ni se exponen.
+CLAUDE_REGISTRO_CAMPOS = ("sessionId", "entrypoint", "name", "kind", "status", "version", "peerProtocol")
+
+
+def claude_registro(pid: int, proc_start: int | None) -> dict | None:
+    """Lo que Claude Code anota de la sesion del proceso `pid`, o None. Exige `proc_start` (la creacion
+    del proceso como FILETIME) igual al `procStart` anotado: el archivo de un proceso muerto puede quedar
+    y su pid reciclarse. Respeta CLAUDE_CONFIG_DIR, como Claude Code."""
+    if not pid or proc_start is None:
+        return None
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
+    try:
+        with open(os.path.join(base, "sessions", f"{int(pid)}.json"), encoding="utf-8") as f:
+            reg = json.load(f)
+    except OSError, ValueError:
+        return None
+    if not isinstance(reg, dict) or reg.get("pid") != int(pid) or str(reg.get("procStart")) != str(proc_start):
+        return None
+    return {k: reg.get(k) for k in CLAUDE_REGISTRO_CAMPOS}
+
+
+# Hilos de la app de escritorio de Codex (medido 2026-10-17 sobre ~/.codex/sessions): la app no tiene
+# un proceso por hilo (su codex.exe es un app-server compartido), asi que el hilo se ve por su rollout.
+# Los reales dicen `codex_work_desktop`; los `Codex Desktop` de esta PC son todos transcripciones de
+# Claude importadas (external_agent_session_imports.json), que no son trabajo en curso.
+DESKTOP_ORIGINATORS = ("codex_work_desktop", "Codex Desktop")
+_cabeceras: dict[str, dict | None] = {}  # rollout -> cabecera del hilo de la app, o None si no es de la app
+_importados: tuple[float, frozenset[str]] = (-1.0, frozenset())
+
+
+def _cabecera_desktop(path: str) -> dict | None:
+    """La cabecera del rollout si es un hilo de la app, o None. Se lee una vez por archivo: la
+    cabecera no cambia aunque el rollout crezca."""
+    if path in _cabeceras:
+        return _cabeceras[path]
+    try:
+        with open(path, "rb") as f:
+            pl = json.loads(f.readline().decode("utf-8", errors="replace")).get("payload") or {}
+    except OSError, ValueError, AttributeError:
+        return None  # a medio escribir: se reintenta en la proxima vuelta
+    cab = None
+    if pl.get("originator") in DESKTOP_ORIGINATORS and (pl.get("id") or pl.get("session_id")):
+        cab = {
+            "id": pl.get("id") or pl.get("session_id"),
+            "cwd": pl.get("cwd"),
+            "originator": pl["originator"],
+            "started": pl.get("timestamp"),
+        }
+    _cabeceras[path] = cab
+    return cab
+
+
+def _ids_importados(codex_home: str) -> frozenset[str]:
+    """Hilos que Codex armo importando transcripciones de otro agente: no son trabajo de la app."""
+    global _importados
+    path = os.path.join(codex_home, "external_agent_session_imports.json")
+    mtime = _mtime(path)
+    if mtime is None:
+        return frozenset()
+    if mtime != _importados[0]:
+        try:
+            with open(path, encoding="utf-8") as f:
+                records = json.load(f).get("records") or []
+            ids = frozenset(
+                r["imported_thread_id"] for r in records if isinstance(r, dict) and r.get("imported_thread_id")
+            )
+        except OSError, ValueError, AttributeError, TypeError:
+            ids = _importados[1]  # ilegible ahora: el ultimo conjunto bueno
+        _importados = (mtime, ids)
+    return _importados[1]
+
+
+def codex_desktop_threads(since: float, codex_home: str | None = None) -> list[dict]:
+    """Hilos de la app de Codex con actividad desde `since` (epoch): `{id, path, cwd, originator,
+    started, mtime}`. Solo stat de cada rollout; abre la cabecera de los nuevos, una vez. Respeta
+    CODEX_HOME, como Codex (y las pruebas, que lo apuntan a una carpeta temporal)."""
+    codex_home = codex_home or os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
+    importados = _ids_importados(codex_home)
+    hilos = []
+    for p in glob.glob(os.path.join(codex_home, "sessions", "*", "*", "*", "rollout-*.jsonl")):
+        mtime = _mtime(p)
+        if mtime is None or mtime < since:
+            continue
+        cab = _cabecera_desktop(p)
+        if cab and cab["id"] not in importados:
+            hilos.append({**cab, "path": p, "mtime": mtime})
+    return hilos
+
+
 def guess_pi(cwd: str, born: float) -> tuple[str | None, str | None]:
     """Respaldo para una unica Pi en el proyecto, sin extension ni shell hijo observable.
 

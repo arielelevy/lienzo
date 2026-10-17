@@ -1,0 +1,108 @@
+{
+  "nombre": "catalogo-comunidad",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/catalogo-comunidad",
+  "reglas": [
+    "docs/PRODUCTO.md: una tool aporta una tarea; un plugin puede integrar sistemas y no tener tools.",
+    "docs/PLUGINS.md: cargar una extensión no acredita su salud ni autoriza efectos externos.",
+    "Better Claude: sólo Commit es ficha de Lienzo (Image Preview y Sub Meter no), con límites visibles, sin ejecución automática de commit/push.",
+    "docs/PLUGINS.md: contrato uniforme v1; manifiesto inválido, incompatible o deshabilitado no se importa; legacy sin manifiesto carga igual; salud solo a pedido; permisos declarados no se aplican."
+  ],
+  "casos": [
+    {
+      "id": "catalogo-contratos",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_tools.py",
+        "tests/test_catalogo_comunidad.py",
+        "tests/test_plugin_manifest.py",
+        "tests/test_plugins.py",
+        "tests/test_agent_improvements.py",
+        "tests/test_agent_improvements_api.py",
+        "tests/test_launch_improvements.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 120000,
+      "cubre": [
+        "lienzo/tools/",
+        "lienzo/plugins.py",
+        "lienzo/agent_improvements.py",
+        "lienzo/plugin_manifest.py"
+      ]
+    },
+    {
+      "id": "catalogo-interfaz",
+      "comando": [
+        "node",
+        "web/node_modules/@playwright/test/cli.js",
+        "test",
+        "--config",
+        "web/tests-ui/playwright.config.ts",
+        "mejoras.spec.ts",
+        "--workers",
+        "1"
+      ],
+      "timeoutMs": 120000,
+      "cubre": [
+        "web/src/components/AgentImprovements.tsx",
+        "web/tests-ui/mejoras.spec.ts"
+      ]
+    }
+  ],
+  "mutaciones": [
+    {
+      "id": "importa-manifiesto-invalido",
+      "archivo": "lienzo/plugins.py",
+      "buscar": "    if leido[\"errores\"]:",
+      "reemplazar": "    if False:",
+      "por_que": "Un manifiesto invalido deja importar el modulo",
+      "casos": [
+        "catalogo-contratos"
+      ]
+    },
+    {
+      "id": "sin-coherencia",
+      "archivo": "lienzo/plugins.py",
+      "buscar": "    errores = _incoherencias(mod, manifiesto) if manifiesto else []",
+      "reemplazar": "    errores = []",
+      "por_que": "Lo exportado no se compara con lo declarado",
+      "casos": [
+        "catalogo-contratos"
+      ]
+    },
+    {
+      "id": "secreto-sin-variable",
+      "archivo": "lienzo/plugin_manifest.py",
+      "buscar": "    elif tipo == \"secreto\" and not entorno.get(valor):",
+      "reemplazar": "    elif False:",
+      "por_que": "Un secreto sin variable se da por configurado",
+      "casos": [
+        "catalogo-contratos"
+      ]
+    },
+    {
+      "id": "salud-sin-tope",
+      "archivo": "lienzo/plugins.py",
+      "buscar": "    hilo.join(SALUD_TIMEOUT_S)",
+      "reemplazar": "    hilo.join()",
+      "por_que": "Una salud colgada bloquea el pedido",
+      "casos": [
+        "catalogo-contratos"
+      ]
+    },
+    {
+      "id": "extrapolar-windows-a-wsl",
+      "archivo": "lienzo/tools/better_claude.py",
+      "buscar": "        return {\"disponible\": False, \"detalle\": \"plugin de Claude Code en WSL no verificado\"}",
+      "reemplazar": "        pass",
+      "por_que": "Extrapola instalación Windows al entorno WSL sin evidencia",
+      "casos": [
+        "catalogo-contratos"
+      ]
+    }
+  ]
+}

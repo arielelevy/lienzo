@@ -1,0 +1,48 @@
+{
+  "nombre": "cuotas-claude-codex-frente-A",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/cuotas",
+  "reglas": [
+    ".temp/coordinacion/2026-10-17/comun-cuotas.md: GET /cuotas con claude y codex (ok, plan, five_hour, weekly, read_at, error), sugerido y motivo; lectura fallida = ok false sin números; ventanas por windowDurationMins (300 cinco horas, 10080 semanal).",
+    "Balance: entre los agentes con lectura ok y 5 h < 90 %, el de menor uso semanal; empate, menor 5 h; sin elegible, sugerido null. agent auto lanza el sugerido o 409 sin lanzar. Todo lanzamiento de una CLI trae cuotas y un aviso que nunca bloquea.",
+    "El token OAuth de Claude va sólo a api.anthropic.com y nunca aparece en logs, respuestas ni errores. El investigador conserva su lectura de cuota y su política."
+  ],
+  "casos": [
+    {
+      "id": "cuotas-contratos",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_cuotas_cuenta.py",
+        "tests/test_cuotas.py",
+        "tests/test_ola2_server.py",
+        "tests/test_tools.py",
+        "tests/test_optimization_research.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "lienzo/cuotas.py",
+        "lienzo/optimization_research_quota.py",
+        "lienzo/server.py",
+        "skills/lienzo/coordinar.py"
+      ]
+    },
+    {
+      "id": "cuotas-lectura-real",
+      "comando": [
+        "py",
+        "-c",
+        "import json, sys; sys.path.insert(0, 'lienzo'); import cuotas; s = cuotas.estado(refrescar=True); out = json.dumps(s, ensure_ascii=False); print(out); keys = {'ok', 'plan', 'five_hour', 'weekly', 'read_at', 'error'}; assert set(s) == {'claude', 'codex', 'sugerido', 'motivo'}; assert all(set(s[a]) == keys for a in cuotas.AGENTS); assert all(s[a]['ok'] == (s[a]['weekly'] is not None) for a in cuotas.AGENTS); cred = json.loads(cuotas.credentials_path().read_text(encoding='utf-8')); tok = cred['claudeAiOauth']['accessToken']; assert tok not in out, 'token en la salida'; print('token ausente de la salida: ok'); sys.exit(0 if all(s[a]['ok'] for a in cuotas.AGENTS) else 1)"
+      ],
+      "timeoutMs": 60000,
+      "cubre": [
+        "lienzo/cuotas.py",
+        "lienzo/optimization_research_quota.py"
+      ]
+    }
+  ]
+}

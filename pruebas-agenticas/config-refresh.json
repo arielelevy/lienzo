@@ -1,0 +1,13 @@
+{
+  "nombre": "config-refresh-fixture",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/config-refresh",
+  "reglas": ["F1 vigente: la configuración se refresca cada 20 segundos; un error pasajero no apaga la barra de auto-aprobar. El ensayo sólo simula GET /config y bloquea escrituras reales."],
+  "casos": [{
+    "id": "config-fases-explicitas",
+    "comando": ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "tests-ui/playwright.config.ts", "tests-ui/acciones.spec.ts", "--grep", "la config se refresca sola", "--workers=1"],
+    "cwd": "web",
+    "timeoutMs": 60000,
+    "cubre": ["web/tests-ui/acciones.spec.ts", "web/src/App.tsx"]
+  }]
+}

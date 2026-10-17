@@ -1,0 +1,53 @@
+{
+  "nombre": "claude-entrypoint-F",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/claude-entrypoint-F",
+  "reglas": [
+    "Importar como script con Python aislado y cwd externo no debe depender del directorio raíz en sys.path.",
+    "--help debe finalizar con código 0 sin iniciar otro servidor; la rama bootstrap del adaptador se prueba con transferencia y Popen dobles.",
+    "Los focales de E y runtime verifican credenciales privadas, rechazo de dueño ajeno, timeout y limpieza; ningún modelo ni sesión real."
+  ],
+  "casos": [
+    {
+      "id": "entrypoints-aislados",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_diseno_regresiones.py",
+        "-k",
+        "entrypoint",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 60000,
+      "cubre": [
+        "lienzo/server.py",
+        "lienzo/claude_pipe_bootstrap.py",
+        "lienzo/claude_pipe_adapter.py"
+      ]
+    },
+    {
+      "id": "focal-E-runtime",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_claude_pipe.py",
+        "tests/test_claude_pipe_bootstrap.py",
+        "tests/test_claude_pipe_runtime.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 120000,
+      "cubre": [
+        "lienzo/claude_pipe.py",
+        "lienzo/claude_pipe_bootstrap.py",
+        "lienzo/claude_pipe_adapter.py",
+        "lienzo/claude_pipe_runtime.py"
+      ]
+    }
+  ]
+}

@@ -57,7 +57,8 @@ export interface Session {
   started: string;
   last_event: string | null;
   alive: boolean;
-  source: "hook" | "sweep";
+  /** "desktop": hilo de la app de Codex, leido de su rollout (sin proceso) */
+  source: "hook" | "sweep" | "desktop";
   /** La extension/hook ya publico la identidad exacta de esta sesion. */
   hooked?: boolean;
   pending_id: string | null;
@@ -67,6 +68,19 @@ export interface Session {
   no_console?: boolean;
   /** ejecucion externa (un orquestador, `claude -p`): solo lectura; null en una sesion personal */
   external?: ExternalRun | null;
+  /** si se le puede escribir y por donde (puede_enviar del server); ausente en un server anterior */
+  envio?: EnvioEstado | null;
+  /** Resultado del último envío; la capacidad `envio` no confirma su entrega. */
+  envio_codex?: {
+    estado: "pendiente" | "encolado" | "entregado" | "sin_confirmacion" | "rechazado";
+    motivo?: string | null;
+    referencia?: string | null;
+    envio_id?: string | null;
+    transporte?: string | null;
+    at?: number;
+    confirmacion_final?: boolean;
+  } | null;
+  envio_claude?: Session["envio_codex"];
   /** que fuente maneja la tarjeta: "win32" (Windows) o "tmux" (Mac/Linux/WSL). Ausente = primario. */
   backend?: string;
   /** distro de WSL dueña del tmux de esta tarjeta (solo si corre en WSL). Ausente = no WSL. */
@@ -384,10 +398,27 @@ export interface PresionMemoria {
 
 /** Ejecucion externa a la que pertenece una tarjeta de agente (un orquestador o `claude -p`): se ve
  *  y se lee, pero no se le escribe, ni se la mata, ni la mueven reglas. `kind` es "batch" (un
- *  `claude -p` suelto) o el tipo de orquestador que registro un plugin local. */
+ *  `claude -p` suelto), el tipo de orquestador que registro un plugin local, o una app de escritorio
+ *  ("claude-desktop" / "codex-desktop", con `desktop: true`). */
+/** Resultado de puede_enviar para una tarjeta (contrato de D, 2026-10-17): `motivo` siempre que
+ *  `puede` sea false. */
+export interface EnvioEstado {
+  puede: boolean;
+  motivo: string | null;
+  /** claude_pipe reservado: no habilita escritura sin adaptador vivo registrado. */
+  transporte: "tecleo" | "codex_queue" | "canal_nativo" | "claude_pipe" | null;
+}
+
 export interface ExternalRun {
   kind: string;
-  via: "proceso" | "comando" | "session_id";
+  /** como se supo: el arbol de procesos, la linea de comando, un plugin por session_id; en las apps,
+   *  el registro de Claude Code, la ruta del ejecutable o el rollout del hilo de Codex */
+  via: "proceso" | "comando" | "session_id" | "registro" | "ruta" | "rollout";
+  /** sesion de una app de escritorio */
+  desktop?: boolean;
+  /** Claude Desktop: el nombre con que figura en ListAgents (registro de Claude Code) */
+  canal?: string | null;
+  runner_pid?: number | null;
   run_key?: string;
   run_id?: string;
   capability?: string;

@@ -14,6 +14,8 @@ es el del lanzamiento: REA no aparece en un lanzamiento normal.
 
 Este paquete es distinto de los plugins locales (plugins.py): las tools van en Git y viajan a todas
 las PCs; un plugin vive solo en la PC que lo tiene.
+Las fichas pueden describir una tool distribuida como skill o plugin de un harness. Su formato no
+convierte a las extensiones de Lienzo en colecciones de tools: se inventarían por separado.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-TIPOS = ("mejora", "evaluacion", "pruebas", "trabajo")
+TIPOS = ("mejora", "evaluacion", "pruebas", "trabajo", "documentacion")
 MODOS = ("general", "ingenieria-reversa")
 AGENTES_CON_INSTRUCCIONES = ("claude", "codex", "pi", "coda")
 
@@ -41,16 +43,21 @@ class Tool:
     estado: Callable[[str | None], dict] = field(default=lambda distro: {"disponible": True})
     # (agente, distro) -> (instruccion o None, aviso o None). Solo las que se inyectan al lanzar.
     instruccion: Callable[[str, str | None], tuple[str | None, str | None]] | None = None
+    formato: str = "tool"
+    compatible_con: tuple[str, ...] = ()
+    limitaciones: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.tipo not in TIPOS or not set(self.modos) <= set(MODOS):
             raise ValueError(f"tool {self.id}: tipo o modo desconocido")
+        if self.formato not in ("tool", "skill", "plugin-claude"):
+            raise ValueError(f"tool {self.id}: formato desconocido")
 
 
 def _catalogo() -> list[Tool]:
-    from . import breve, jev, pruebas_agenticas, rea, rtk
+    from . import anatomy, better_claude, breve, jev, pruebas_agenticas, rea, rtk
 
-    return [breve.TOOL, rtk.TOOL, jev.TOOL, pruebas_agenticas.TOOL, rea.TOOL]
+    return [breve.TOOL, rtk.TOOL, jev.TOOL, pruebas_agenticas.TOOL, rea.TOOL, anatomy.TOOL, *better_claude.TOOLS]
 
 
 def catalogo() -> list[Tool]:
@@ -83,6 +90,9 @@ def resumen(distro: str | None = None) -> list[dict]:
                 "preferencia": t.preferencia,
                 "instalar": t.instalar,
                 "estado": estado,
+                "formato": t.formato,
+                "compatible_con": list(t.compatible_con),
+                "limitaciones": list(t.limitaciones),
             }
         )
     return out

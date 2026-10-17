@@ -70,30 +70,37 @@ test("F7: un doble click en Permitir manda un solo POST, en la tarjeta y en el p
   expect(posts).toEqual([{ decision: "deny" }]);
 });
 
-/** /config servido por la prueba: `valores` se consume de a uno por GET (el ultimo se repite); un
- *  numero es un status de error */
-async function configServida(page: Page, valores: (Record<string, boolean> | number)[]) {
-  let i = 0;
+/** Fases explícitas: los GET duplicados al montar no adelantan el estado simulado. */
+async function configServida(page: Page) {
+  let valor: Record<string, boolean> | number = { auto_continue: false, auto_retry: false, auto_aprobar: false };
+  let pedidos = 0;
   await page.route("**/config", (route) => {
     if (route.request().method() !== "GET") return route.fallback();
-    const v = valores[Math.min(i++, valores.length - 1)];
+    pedidos++;
+    const v = valor;
     return route.fulfill(typeof v === "number" ? json(v, { error: "reiniciando" }) : json(200, v));
   });
+  return { cambiar: (nuevo: Record<string, boolean> | number) => { valor = nuevo; }, pedidos: () => pedidos };
 }
 
 test("F1: la config se refresca sola y un error pasajero no apaga la barra de auto-aprobar", async ({ page }) => {
   await page.clock.install();
   await bloquearEscrituras(page);
   await instalarTablero(page);
-  await configServida(page, [{ auto_continue: false, auto_retry: false, auto_aprobar: false }, { auto_continue: false, auto_retry: false, auto_aprobar: true }, 502]);
+  const config = await configServida(page);
   await page.goto(BASE);
   await expect(page.locator(".card").first()).toBeVisible();
+  await expect.poll(config.pedidos).toBeGreaterThan(0);
   await expect(page.locator(".auto-aprobar-aviso")).toHaveCount(0);
   // otra PC lo prendio: al siguiente refresco aparece la barra, sin recargar
+  config.cambiar({ auto_continue: false, auto_retry: false, auto_aprobar: true });
   await page.clock.fastForward(20_000);
   await expect(page.locator(".auto-aprobar-aviso")).toBeVisible();
   // el server se esta reiniciando: la barra se queda (antes volvia a null y desaparecia)
+  const anteriores = config.pedidos();
+  config.cambiar(502);
   await page.clock.fastForward(20_000);
+  await expect.poll(config.pedidos).toBeGreaterThan(anteriores);
   await page.clock.fastForward(20_000);
   await expect(page.locator(".auto-aprobar-aviso")).toBeVisible();
 });

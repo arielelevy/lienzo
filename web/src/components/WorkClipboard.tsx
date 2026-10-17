@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { rulesApi, sessionsApi } from "../api";
+import { rulesApi, sendNotice, sessionsApi } from "../api";
 import { canWrite, shortName } from "../names";
 import type { Session } from "../types";
 
@@ -60,9 +60,10 @@ export function useWorkClipboard(s: Session, pending: boolean, toast: (text: str
       const r = await sessionsApi.send(s.session_id, {
         text: draft.text, from: draft.from, attachments: [], copycat: true, stop_origin: !duplicate,
       });
-      if (r.handover_error) {
+      const notice = sendNotice(r, shortName(s));
+      if (r.handover_error || !notice.confirmed) {
         setDraft(null);
-        toast(`El mensaje llegó, pero el traspaso quedó pendiente: ${r.handover_error}. No reenvíes el texto.`, true);
+        toast(`${notice.text}. Traspaso pendiente: ${r.handover_error || "el origen conserva su trabajo"}. No reenvíes el texto.`, true);
         return;
       }
       let extra = "";
@@ -77,7 +78,7 @@ export function useWorkClipboard(s: Session, pending: boolean, toast: (text: str
         extra = r?.interrupted ? `; ${draft.name} detenida` : `; ${draft.name} no estaba corriendo, no se tocó`;
       }
       setDraft(null);
-      toast(`Trabajo enviado a ${shortName(s)}${extra}`);
+      toast(`${r.estado === undefined ? `Trabajo enviado a ${shortName(s)}` : notice.text}${extra}`);
     } catch (e) {
       toast(`No se pudo pegar el trabajo: ${(e as Error).message}`, true);
     } finally { sending.current = false; setBusy(false); }
