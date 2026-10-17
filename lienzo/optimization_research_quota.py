@@ -138,6 +138,8 @@ def assess(quota: dict, max_used_pct: int | None) -> tuple[dict | None, list[str
         reasons.append("control de gasto alcanzado o desconocido")
     if quota.get("rate_limit_reached_type") is not None:
         reasons.append("límite de uso alcanzado")
+    if quota.get("five_hour_used_pct") is not None and quota["five_hour_used_pct"] >= 100:
+        reasons.append("ventana de 5 h agotada")
     if quota.get("credits_unlimited") is not False or (
         quota.get("credits_has") is not False and quota.get("credits_balance") != "0"
     ):

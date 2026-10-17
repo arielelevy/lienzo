@@ -156,7 +156,8 @@ def _campo_valido(campo: object) -> bool:
         isinstance(campo, dict)
         and isinstance(campo.get("clave"), str)
         and bool(_ENV_RE.fullmatch(campo["clave"]))
-        and campo.get("tipo") in TIPOS_CAMPO
+        and isinstance(campo.get("tipo"), str)
+        and campo["tipo"] in TIPOS_CAMPO
         and type(campo.get("obligatorio", False)) is bool
         and ("descripcion" not in campo or _texto(campo["descripcion"], 300))
         and not set(campo) - {"clave", "tipo", "obligatorio", "descripcion"}

@@ -1,4 +1,4 @@
-"""Identidad Codex por el rollout abierto en el proceso Windows, sin elegir por cwd.
+"""Diagnóstico del rollout abierto; no acredita el hilo visible de la TUI.
 
 Un resultado sólo vale para la consulta actual. No guardar como prueba de hilo activo.
 """
@@ -92,7 +92,7 @@ def _snapshot(pid):
 
 
 def probe(pid: int) -> dict:
-    """PID/incarnación e hilo de un único rollout abierto por una TUI, o motivo explícito."""
+    """Rechaza identidad incierta aunque un rollout siga abierto tras /new o /clear."""
     no = lambda reason: {"verified": False, "reason": reason}
     if not procinfo._WIN:
         return no("identidad por handles no disponible fuera de Windows")
@@ -124,6 +124,11 @@ def probe(pid: int) -> dict:
         current_start, current_paths = _snapshot(pid)
         if current_start != start or current_paths != paths:
             return no("identidad Codex cambió durante la lectura del rollout")
-        return {"verified": True, "pid": pid, "process_start": start, "thread": thread, "path": path}
+        # Repro real 2026-10-17: /new conservó el handle del hilo anterior.
+        # queue lo aceptó y ejecutó un turno oculto; ni un ACK ni dos snapshots
+        # estables acreditan que ese hilo siga visible. No hay aquí un vínculo
+        # autoritativo TUI/hilo ni una operación atómica de envío condicionada a él.
+        return no("rollout abierto estable, pero sin prueba del hilo visible de la TUI; "
+                  "/new o /clear pueden conservar el hilo anterior; envío CLI deshabilitado")
     except (OSError, ValueError, AttributeError, TypeError) as exc:
         return no(f"no se pudo verificar identidad Codex: {exc}")

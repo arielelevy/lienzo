@@ -22,7 +22,8 @@ def conservar(rule, foto, timestamp):
 def resultado(informe, code, res, timestamp):
     informe["codigo"] = code
     informe["transporte"] = dict(res)
-    if informe["estado"] in ("recibido", "integrado"):
+    # Una notificacion tardia no revoca una entrega ya confirmada ni su fecha.
+    if informe["estado"] in ("entregado", "recibido", "integrado"):
         return
     informe["estado"] = "entregado" if code == 200 and res.get("estado") == "entregado" else "pendiente"
     if informe["estado"] == "entregado":

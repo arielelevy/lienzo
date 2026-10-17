@@ -229,7 +229,7 @@ def _incidentes_origen(con, pid: str, regla: str) -> list[str]:
     ]
 
 
-def _episodios_posteriores(con, pid: str, regla: dict, origen: list[str]) -> list[dict] | None:
+def _episodios_posteriores(con, pid: str, regla: dict, origen: list[str], grupos=None) -> list[dict] | None:
     """Los episodios del grupo de recurrencia de los incidentes de origen con `fecha` posterior a
     `datos.vigente_desde`, sin los de origen. None si la regla no tiene contador: sin incidente de
     origen (derivada solo de una decision) o sin `vigente_desde` (v5 §6.2)."""
@@ -237,8 +237,13 @@ def _episodios_posteriores(con, pid: str, regla: dict, origen: list[str]) -> lis
     if not origen or not isinstance(desde, str) or not desde.strip():
         return None
     vistos: dict[str, dict] = {}
+    grupos = {} if grupos is None else grupos
     for i in origen:
-        for g in _grupo(con, pid, i):
+        if i not in grupos:
+            miembros = _grupo(con, pid, i)
+            for miembro in miembros:
+                grupos[miembro["id"]] = miembros
+        for g in grupos[i]:
             if g["id"] not in origen and g["fecha"] > desde:
                 vistos[g["id"]] = g
     return sorted((_episodio(g) for g in vistos.values()), key=lambda e: (e["fecha"], e["id"]))
@@ -294,6 +299,8 @@ def reglas_cuestionadas(pid: str) -> list[dict]:
     consulta 4): si la coordinadora retiro un `repite`, el contador baja (hasta cero) pero la regla
     sigue cuestionada hasta su veredicto. `episodios_posteriores` es lo guardado al cuestionarla."""
     with k._abrir(pid) as con:
+        con.execute("BEGIN")
+        grupos = {}
         filas = con.execute(
             "SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'regla' AND estado = 'cuestionada' ORDER BY fecha, id",
             (pid,),
@@ -302,7 +309,7 @@ def reglas_cuestionadas(pid: str) -> list[dict]:
         for r in filas:
             regla = k._fila(r)
             out.append(
-                _ficha(regla, _episodios_posteriores(con, pid, regla, _incidentes_origen(con, pid, regla["id"])))
+                _ficha(regla, _episodios_posteriores(con, pid, regla, _incidentes_origen(con, pid, regla["id"]), grupos))
             )
     return out
 
@@ -311,13 +318,15 @@ def por_cuestionar(pid: str) -> list[tuple[dict, list[dict]]]:
     """Solo lectura: las reglas `vigente` que `cuestionar` pasaria a cuestionada, cada una con sus
     episodios posteriores. Una sola conexion para todas."""
     with k._abrir(pid) as con:
+        con.execute("BEGIN")
+        grupos = {}
         filas = con.execute(
             "SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'regla' AND estado = 'vigente' ORDER BY fecha, id", (pid,)
         ).fetchall()
         out = []
         for r in filas:
             regla = k._fila(r)
-            eps = _episodios_posteriores(con, pid, regla, _incidentes_origen(con, pid, regla["id"]))
+            eps = _episodios_posteriores(con, pid, regla, _incidentes_origen(con, pid, regla["id"]), grupos)
             if eps:
                 out.append((regla, eps))
     return out
@@ -332,13 +341,14 @@ def cuestionar(pid: str) -> list[dict]:
     nuevas = set()
     with k._abrir(pid) as con:
         con.execute("BEGIN IMMEDIATE")
+        grupos = {}
         filas = con.execute(
             "SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'regla' AND estado = 'vigente' ORDER BY fecha, id",
             (pid,),
         ).fetchall()
         for fila in filas:
             regla = k._fila(fila)
-            eps = _episodios_posteriores(con, pid, regla, _incidentes_origen(con, pid, regla["id"]))
+            eps = _episodios_posteriores(con, pid, regla, _incidentes_origen(con, pid, regla["id"]), grupos)
             if eps:
                 _aplicar_cuestionada(con, pid, regla, eps)
                 nuevas.add(regla["id"])

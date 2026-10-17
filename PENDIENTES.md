@@ -12,6 +12,21 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 Checklist único de esta conversación. Todo queda pendiente; el estado técnico no cierra una tarea.
 **Prioridad indicada por Ariel: primero el evaluador que usa Codex en segundo plano.**
 
+### Cinco CLI Codex — cierre de integración 0.3.1 (2026-10-17)
+
+Se lanzaron cinco CLI reales A–E por Lienzo, con archivos separados y reglas de retorno a
+`01a14bf6-70e4-7c03-b9ae-7f3ad2bb5c0c`. Entregas, inventarios y logs completos en
+`.temp/coordinacion/2026-10-17/ronda-cinco-final/`. La integración corrige cuota corta agotada,
+retroceso de informes entregados, recorridos repetidos en memoria, tipo inválido de manifiesto
+y validación/liberación de cuadros en Chrome remoto. La P0 de identidad recibe mitigación:
+los handles no habilitan envío CLI; Desktop conserva su contrato. No es reidentificación resuelta.
+
+Focales de raíz: 64 identidad, 94 cuota/informes y 83 memoria/plugins aprobadas; 18 UI en copia
+aislada de E. Los conjuntos se solapan; la verificación global se documenta en
+`code-review-2026-10-17-cinco.md`. No se cerraron casillas ni se aprobaron referencias. A–E
+entregaron y se cerraron sus procesos propios; se conservaron informes pendientes y reglas
+retiradas. Reinicio y mediciones reales siguen sujetos a las dependencias indicadas debajo.
+
 ### Ronda de cuatro Codex — avance y P0 reproducida (2026-10-17)
 
 Cierre Desktop para 0.3.0: reconexión explícita de adaptador inactivo del mismo proceso,

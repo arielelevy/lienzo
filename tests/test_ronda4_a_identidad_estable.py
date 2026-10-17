@@ -57,7 +57,8 @@ def test_stable_identity_keeps_both_snapshots_intact(header, monkeypatch):
     paths = {path}
     calls = []
     monkeypatch.setattr(identity, "_snapshot", lambda pid: calls.append(pid) or (123, paths))
-    assert identity.probe(4242) == {
-        "verified": True, "pid": 4242, "process_start": 123, "thread": THREAD, "path": path}
+    result = identity.probe(4242)
+    assert result["verified"] is False
+    assert "sin prueba del hilo visible" in result["reason"]
     assert calls == [4242, 4242]
     assert paths == {path}

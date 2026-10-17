@@ -178,7 +178,14 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       ws.onmessage = event => {
         if (cancelled) return;
         if (typeof event.data === 'string') {
-          const m = JSON.parse(event.data) as StreamMessage;
+          let m: StreamMessage;
+          try {
+            const value: unknown = JSON.parse(event.data);
+            if (!value || typeof value !== 'object' || !('t' in value) || typeof value.t !== 'string') throw new Error('Mensaje de Chrome remoto inválido');
+            if ('message' in value && typeof value.message !== 'string') throw new Error('Mensaje de Chrome remoto inválido');
+            if ('cursor' in value && typeof value.cursor !== 'string') throw new Error('Mensaje de Chrome remoto inválido');
+            m = value as StreamMessage;
+          } catch { report(new Error('Mensaje de Chrome remoto inválido')); return; }
           if (m.t === 'opened') { attempts = 0; setNotice(''); }
           else if (m.t === 'cursor' && m.cursor && ['default', 'pointer', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'progress', 'help'].includes(m.cursor)) setCursor(m.cursor);
           else if (m.t === 'input') {
@@ -197,17 +204,26 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
           }
           return;
         }
-        const data = new DataView(event.data as ArrayBuffer);
+        if (!(event.data instanceof ArrayBuffer) || event.data.byteLength <= FRAME_HEADER) {
+          report(new Error('Cuadro de Chrome remoto incompleto')); return;
+        }
+        const data = new DataView(event.data);
         const seq = data.getUint32(0), x = data.getUint16(4), y = data.getUint16(6);
         const fullWidth = data.getUint16(12), fullHeight = data.getUint16(14), full = data.getUint8(16) & 1;
+        const width = data.getUint16(8), height = data.getUint16(10);
+        if (!width || !height || !fullWidth || !fullHeight || x + width > fullWidth || y + height > fullHeight) {
+          report(new Error('Dimensiones de Chrome remoto inválidas')); return;
+        }
         const blob = new Blob([new Uint8Array(event.data as ArrayBuffer, FRAME_HEADER)], {type: 'image/png'});
         bytes += blob.size;
         drawing = drawing.then(async () => {
-          const bitmap = await createImageBitmap(blob);
           if (cancelled) return;
-          if (full || canvas.width !== fullWidth || canvas.height !== fullHeight) { canvas.width = fullWidth; canvas.height = fullHeight; }
-          canvas.getContext('2d')?.drawImage(bitmap, x, y);
-          bitmap.close();
+          const bitmap = await createImageBitmap(blob);
+          try {
+            if (cancelled) return;
+            if (full || canvas.width !== fullWidth || canvas.height !== fullHeight) { canvas.width = fullWidth; canvas.height = fullHeight; }
+            canvas.getContext('2d')?.drawImage(bitmap, x, y);
+          } finally { bitmap.close(); }
           if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({t: 'ack', n: seq}));
           setSize(s => s && s.width === fullWidth && s.height === fullHeight ? s : {width: fullWidth, height: fullHeight});
           frames += 1;

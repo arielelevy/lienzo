@@ -2151,8 +2151,18 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
         return
     codex_proof = None
     if s["agent"] == "codex":
-        codex_proof = codex_identity.probe(s["pid"])
-        if not codex_proof["verified"] or (sid, tpath) != (codex_proof["thread"], codex_proof["path"]):
+        probe_pid = s["pid"]
+        codex_proof = codex_identity.probe(probe_pid)
+        if not codex_proof["verified"]:
+            with lock:
+                if sessions.get(s["session_id"]) is s and s.get("pid") == probe_pid:
+                    previous = s.pop("codex_process_start", None)
+                    reason = codex_proof["reason"]
+                    if previous is not None or s.get("codex_identity_reason") != reason:
+                        s["codex_identity_reason"] = reason
+                        touch(s)
+            return
+        if (sid, tpath) != (codex_proof["thread"], codex_proof["path"]):
             return
     with lock:
         if s.get("hooked") and s["agent"] != "codex":
@@ -2180,6 +2190,7 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
                 links.publish()
         if codex_proof:
             s["codex_process_start"] = codex_proof["process_start"]
+            s.pop("codex_identity_reason", None)
         s["transcript_path"] = tpath
         s["cwd"] = s.get("cwd") or cwd
         apply_repo(s, s["cwd"])
@@ -2258,6 +2269,8 @@ def adopt_process(p: dict) -> None:
         )
         if codex_proof and codex_proof["verified"]:
             s["codex_process_start"] = codex_proof["process_start"]
+        elif codex_proof:
+            s["codex_identity_reason"] = codex_proof["reason"]
         apply_repo(s, cwd)
         if not tpath:
             s["title"] = "sesion sin transcripcion identificada"

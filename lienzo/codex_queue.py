@@ -8,8 +8,9 @@ Medido el 2026-10-17 (codex-cli 0.163.0, informe-A-codex-queue.md):
 - Con el proceso del hilo CERRADO también «entrega»: el app-server compartido de Codex ejecuta el turno en
   segundo plano, sin terminal ni app visibles. Por eso un hilo de CLI sin proceso vivo, o de la app cerrada,
   se rechaza con motivo en vez de encolar. Una CLI viva también se rechaza: su PID no prueba que
-  conserve el hilo después de /new o /clear. La CLI requiere un único rollout abierto por el proceso
-  y su fecha de creación registrada (ni cwd ni PID solos sustituyen esa evidencia).
+  conserve el hilo después de /new o /clear. Un rollout abierto estable y la fecha de creación tampoco
+  prueban el hilo visible: la reproducción real de /new conservó ambos. El sondeo rechaza esa
+  identidad incierta; no se habilita queue CLI hasta disponer de una vinculación autoritativa.
 
 Estados de un envío: `rechazado` (con motivo), `encolado` (codex lo aceptó), `entregado` (el texto aparece en el
 rollout del hilo como mensaje de usuario) y `sin_confirmacion` (pasó el plazo sin verlo; visible, sin reintento).
