@@ -48,6 +48,22 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
 
 ### P0 — Falla grave de continuidad de la coordinadora (2026-10-17)
 
+- [ ] **Reidentificar el hilo activo de una Codex CLI después de `/new` o `/clear`, y rechazar
+  el envío por cola si no puede vincularse al proceso actual.** Reportado por la coordinadora
+  de opensyync `48befe79`, después de publicar 0.2.0. No se reprodujo todavía en una CLI propia.
+  Caso reportado: PID31904 conservó tarjeta `01a14774-aa3f-7062-b3f3-aa996a33ff35` y rollout
+  del 2026-10-16, aunque `/new` abrió `01a14a6b-1acc-7db2-9dbb-b7faf4033e22` el 17 a las 12:11.
+  POST /send siguió aceptando codex_queue como encolado, sin recepción en la terminal actual;
+  referencia de ejemplo `01a14ab6-ef97-73d2-a019-2f067e87f26d`, 13:34. Se confundió aceptación
+  con trabajo efectivo durante unos 30 minutos. Mitigación de esa coordinadora: cerrar sólo su
+  PID afectado y lanzar otra CLI; no repetir esa intervención sobre sus sesiones desde Lienzo.
+  La guardia leída en codex_queue verifica UUID, rollout existente y PID vivo; eso no demuestra
+  que el hilo siga siendo el activo de ese PID. No elegir simplemente el rollout más nuevo por cwd.
+  Repro pendiente: CLI propia → `/new` → «Use current Git worktree» → POST /send; también /clear,
+  dos CLI del mismo repo, codex exec paralelo y PID reciclado. Exigir nueva identidad comprobada
+  o rechazo con motivo, preservando reglas/estado y sin reenviar automáticamente los mensajes
+  inciertos del hilo anterior. La prueba anterior de entrega de 0.2.0 no cubre esta transición.
+
 - [ ] **Garantizar que la entrega de un frente reanude la coordinación hasta integrar y verificar,
   sin esperar a que Ariel pregunte por el avance.** Pedido explícito de Ariel tras esta ronda.
   Evidencia en vivo: B entregó y su regla `c887b7b25512` registró `fired: 1`,
