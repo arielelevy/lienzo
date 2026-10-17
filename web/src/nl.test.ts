@@ -70,14 +70,22 @@ assert.equal(q.kind, "now");
 q = P("qué onda");
 assert.equal(q.kind, "none"); assert.match(q.summary, /quedan como estaban/);
 
-// coordinatorOf: la marcada gana, si no la primera Claude del repo; nunca la excluida
+// coordinatorOf: la marcada gana, si no la primera coordinable del repo; nunca la excluida
 const c1 = S("lienzo", "c1c1c1c1c1c1", "primera claude");
 const c2 = { ...S("lienzo", "c2c2c2c2c2c2", "marcada"), coordinator: true };
 const cx = { ...S("demo", "cxcxcxcxcxcx", "otro repo"), coordinator: true };
 assert.equal(coordinatorOf("lienzo", [demo, c1, c2, cx], from.session_id)?.session_id, c2.session_id);
 assert.equal(coordinatorOf("lienzo", [demo, c1], from.session_id)?.session_id, c1.session_id);
 assert.equal(coordinatorOf("lienzo", [demo, c2], c2.session_id), undefined);
-assert.equal(coordinatorOf("lienzo", [demo, { ...c1, agent: "codex" }], from.session_id), undefined);
+for (const agent of ["codex", "pi", "coda", "kiro"]) {
+  const candidate = { ...c1, agent };
+  assert.equal(coordinatorOf("lienzo", [demo, candidate], from.session_id), candidate);
+  const connection = parseConnection("cuando termine avisame", from, [demo, candidate]);
+  assert.equal(connection.kind, "on_stop");
+  assert.equal((connection as any).to, candidate);
+  assert.equal(coordinatorOf("lienzo", [candidate, c2], from.session_id), c2);
+}
+assert.equal(coordinatorOf("lienzo", [{ ...c1, agent: "unknown" }], from.session_id), undefined);
 // el parser resuelve "avisame" con la misma funcion y nombra con opts.name
 const nm = (s: any) => `${s.repo} · ${s.title}`;
 q = parseConnection("cuando termine avisame", from, [demo, c1, c2], { name: nm });

@@ -13,12 +13,12 @@ import json
 import conocimiento as k
 
 DIMENSIONES = {"herramientas", "contexto", "memoria", "olas", "pruebas", "coordinacion", "capacidades"}
-CONTEXTO = {"agente", "modelo", "fase", "tipo_trabajo", "tecnologia", "area"}
+CONTEXTO = {"agente", "modelo", "fase", "tipo_trabajo", "tecnologia", "area", "version_agente", "version_modelo"}
 
 
 def _contexto(value):
     if not isinstance(value, dict) or set(value) - CONTEXTO:
-        raise k.Rechazo("contexto admite agente, modelo, fase, tipo_trabajo, tecnologia y area")
+        raise k.Rechazo("contexto admite agente, modelo, fase, tipo_trabajo, tecnologia, area, version_agente y version_modelo")
     return {key: k._texto(val, key, 100) for key, val in value.items()}
 
 
@@ -75,7 +75,8 @@ def resolver(pid, nid, data):
             raise k.Rechazo("el veredicto requiere un nodo evidencia")
         if result == "validada" and node["estado"] not in ("propuesta", "vigente"):
             raise k.Rechazo("una creencia refutada requiere una propuesta nueva", 409)
-        k.vincular(pid, nid, "apoya", evidence["id"], autor=por, motivo=motive, con=con)
+        if result == "validada":
+            k.vincular(pid, nid, "apoya", evidence["id"], autor=por, motivo=motive, con=con)
         fields = {
             "resultado": result,
             "evidencia_veredicto": evidence["id"],

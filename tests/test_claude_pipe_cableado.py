@@ -103,7 +103,8 @@ def test_desktop_registry_can_replace_only_generic_batch(card, monkeypatch, orig
 
 def test_explicit_registration_returns_public_command_for_chosen_card_only(card, monkeypatch):
     seen = []
-    def register(chosen):
+    def register(chosen, *, reconnect=False):
+        assert reconnect is False
         seen.append(chosen["session_id"])
         return {"command": "public --bootstrap id sid pid start", "session_id": SID, "expires_at": time.time() + 120, "private": "must-not-be-published"}
     monkeypatch.setattr(runtime, "register", register)
@@ -158,7 +159,7 @@ def test_server_shutdown_closes_only_owned_bridges(monkeypatch):
     "bootstrap Claude finalizado sin conexión vigente; cerrá el enlace y registrá de nuevo",
 ])
 def test_registration_preserves_controlled_public_reason(card, monkeypatch, message):
-    monkeypatch.setattr(runtime, "register", lambda s: (_ for _ in ()).throw(ValueError(message)))
+    monkeypatch.setattr(runtime, "register", lambda s, *, reconnect=False: (_ for _ in ()).throw(ValueError(message)))
     code, result = server.accion_claude_pipe(card, {})
     assert code == 409 and result["error"] == message
 

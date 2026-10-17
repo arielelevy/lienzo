@@ -164,7 +164,7 @@ def crear_aviso(d: dict) -> tuple[int, dict]:
     if len({sid for sid, _ in vigentes}) != len(vigentes):
         # un id viejo y su sucesora son la misma sesion: recibiria el aviso dos veces
         return 400, {"error": "a: dos ids son la misma sesion (una es la sucesora de la otra)"}
-    if de is not None and de in {sid for sid, _ in vigentes}:
+    if de is not None and _vigente(de) in {sid for sid, _ in vigentes}:
         return 400, {"error": "quien manda el aviso no puede ser destino"}
     aid = "av-" + secrets.token_hex(4)
     aviso = {

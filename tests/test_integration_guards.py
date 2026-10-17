@@ -90,6 +90,9 @@ def test_cross_agent_text_transport(monkeypatch, origin, target):
     monkeypatch.setattr(ses.subprocess, "run", run)
     s = ses.new_session("destination", target, "hook")
     s.update(pid=42, state="termino", last_event="Stop")
+    if target == "codex":
+        # Una CLI inicial se escribe por PID antes de tener hilo. Un hilo usado exige identidad.
+        s.update(session_id="pid-42", source="sweep")
     st.sessions[s["session_id"]] = s
     text = f"Mensaje de {origin}: revisión lista, código y acentos."
     code, out = ses.send_to_session(s, text, [])

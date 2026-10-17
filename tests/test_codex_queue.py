@@ -10,6 +10,7 @@ import sessions as ses
 
 THREAD = "01a14a70-1105-73b3-87ce-7a60b4b925fd"
 QUEUE_ID = "01a14a71-0eac-73b1-a211-162a130dca2f"
+PROCESS_START = 134367484919993003
 
 
 def iso_now():
@@ -42,13 +43,24 @@ def card(tmp_path, monkeypatch):
     rollout.write_text(json.dumps({"type": "session_meta", "payload": {"id": THREAD}}) + "\n", encoding="utf-8")
     monkeypatch.setattr(cq, "codex_exe", lambda: r"C:\codex\codex.exe")
     monkeypatch.setattr(cq.procinfo, "alive", lambda pid: pid == 4242)
+    # Prueba independiente de la tarjeta: cambiar su hilo/PID/FILETIME debe rechazar.
+    proof = {"verified": True, "pid": 4242, "process_start": PROCESS_START,
+             "thread": THREAD, "path": str(rollout)}
+
+    def probe(pid):
+        assert pid == 4242, "el transporte consultó otro proceso"
+        return dict(proof)
+
+    monkeypatch.setattr(cq.codex_identity, "probe", probe)
+    monkeypatch.setattr(cq, "store_path", lambda: tmp_path / "queue.json")
     monkeypatch.setattr(cq, "app_running", lambda: True)
     logs = []
     monkeypatch.setattr(cq.state, "log", logs.append)
     import os
 
     os.makedirs(ses.state.SESSIONS, exist_ok=True)  # touch() guarda la tarjeta ahí
-    s = {"session_id": THREAD, "agent": "codex", "pid": 4242, "transcript_path": str(rollout), "external": None}
+    s = {"session_id": THREAD, "agent": "codex", "pid": 4242, "transcript_path": str(rollout), "external": None,
+         "codex_process_start": PROCESS_START}
     return {"s": s, "rollout": rollout, "logs": logs}
 
 
@@ -189,17 +201,33 @@ def test_sessions_facade_chooses_transport(card):
     }
     plan = ses.puede_enviar(claude_desktop)
     assert (
-        plan == {"puede": False, "motivo": plan["motivo"], "transporte": "canal_nativo"}
-        and "lienzo-C" in plan["motivo"]
+        plan == {"puede": False, "motivo": plan["motivo"], "transporte": "claude_pipe"}
+        and "adaptador" in plan["motivo"]
     )
     orchestrated = ses.puede_enviar({**s, "external": {"kind": "stepwise"}})
     assert not orchestrated["puede"] and "stepwise" in orchestrated["motivo"]
 
 
-def test_cli_without_known_thread_falls_back_to_typing(card, monkeypatch):
+def test_cli_without_known_thread_rejects_without_typing(card, monkeypatch):
     monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
-    plan = ses.puede_enviar({**card["s"], "session_id": "pid-4242", "transcript_path": None})
-    assert plan == {"puede": True, "motivo": None, "transporte": "tecleo"}
+    monkeypatch.setattr(ses, "run_send", lambda *a, **k: pytest.fail("identidad incierta no habilita tecleo"))
+    monkeypatch.setattr(cq.subproc, "correr", lambda *a, **k: pytest.fail("identidad incierta no habilita cola"))
+    s = {**card["s"], "session_id": "pid-4242", "transcript_path": None}
+    plan = ses.puede_enviar(s)
+    assert plan == {"puede": False, "motivo": plan["motivo"], "transporte": None}
+    assert "id de hilo" in plan["motivo"]
+    code, body = ses.send_to_session(s, "hola", [])
+    assert code == 409 and "id de hilo" in body["error"]
+
+
+@pytest.mark.parametrize("change,reason", [
+    ({"codex_process_start": PROCESS_START + 1}, "PID reciclado"),
+    ({"session_id": QUEUE_ID}, "otro rollout activo"),
+])
+def test_verified_double_does_not_follow_changes_to_the_card(card, monkeypatch, change, reason):
+    monkeypatch.setattr(cq.subproc, "correr", lambda *a, **k: pytest.fail("no debe encolar"))
+    result = cq.enviar({**card["s"], **change}, "hola")
+    assert result["estado"] == "rechazado" and reason in result["motivo"]
 
 
 def test_send_to_desktop_thread_goes_by_queue_never_by_typing(card, monkeypatch):

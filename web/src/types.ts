@@ -320,6 +320,16 @@ export interface Rule {
   enabled: boolean;
   last_fired?: string;
   last_result?: string;
+  informes?: {
+    id: string;
+    respuesta: string;
+    created: string;
+    estado: "pendiente" | "entregado" | "recibido" | "integrado";
+    entregado_at?: string;
+    recibido_at?: string;
+    integrado_at?: string;
+    transporte?: { estado?: string; motivo?: string; envio_id?: string };
+  }[];
 }
 
 /** GET /sessions/<sid>/connections: lo que esa sesion mando/recibio y las reglas que la tocan.

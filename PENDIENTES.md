@@ -12,6 +12,83 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 Checklist único de esta conversación. Todo queda pendiente; el estado técnico no cierra una tarea.
 **Prioridad indicada por Ariel: primero el evaluador que usa Codex en segundo plano.**
 
+### Ronda de cuatro Codex — avance y P0 reproducida (2026-10-17)
+
+Cierre Desktop para 0.3.0: reconexión explícita de adaptador inactivo del mismo proceso,
+caducidad visible del comando, descarte de respuesta tardía al cambiar de tarjeta y retiro
+de coordinación aunque se pierda el canal. Claude y Codex Desktop mantienen las restricciones
+de control de consola. Focal Desktop: 116 backend y 21 UI; contratos adicionales: 44 backend;
+movimiento/autorización después de aislar avisos del servidor real: 15 UI. Los conjuntos se
+solapan. Primera global fallida conservada; validación final y límites en
+`code-review-2026-10-17-desktop.md`. Sin reconexión real nueva confirmada ni reinicio del backend
+durante este cierre. No se cerraron casillas ni se aceptaron referencias.
+
+Cuatro CLI propias recibieron encargos y reglas de retorno a la coordinadora
+`01a14bf6-70e4-7c03-b9ae-7f3ad2bb5c0c`. Inventario de todos los tramos y evidencia en
+`.temp/coordinacion/2026-10-17/ronda-cuatro/`. No se cerraron casillas ni se aprobaron referencias.
+
+Cambios locales nuevos: UUID canónico y segunda observación de proceso/rollout en identidad
+Codex (154 pruebas focales); evidencia ejecutada/verificada por lote en patrones (89 focales);
+rechazo de aviso hacia la propia coordinadora mediante su ID anterior/restaurado (25 focales);
+cliente de lanzamiento que no confunde el cambio de ID de una tarjeta previa con proceso nuevo
+(20 focales). Las cifras son conjuntos focales con solapamiento, no una suma de cobertura global.
+Los módulos nuevos posteriores al reinicio de 19:43 requieren activación coordinada; no se
+reinició el backend durante esta ronda.
+
+**P0 /new reproducida en CLI propia:** el 17 a las 19:53, después de `/new` y elegir
+«Use current Git worktree», la consola quedó vacía pero el proceso conservó el único handle
+del rollout anterior `01a14c08-d12a-7282-9801-a7a40719158d`. Incluso el probe corregido lo
+dio por verificado. `/send` marcó entregado en ese hilo; se contaron un mensaje de usuario y
+un ACK exacto en el rollout anterior, sin aparecer en la consola nueva. Un handle abierto y
+dos snapshots estables no prueban que el hilo sea el visible. La P0 sigue abierta: se necesita
+una fuente autoritativa del hilo actual o un transporte que no dirija al hilo abandonado.
+No reinterpretar ese ACK como continuidad de la TUI. `/clear` real sigue sin medir.
+Evidencia: `raiz/new-envio.json`, `new-verificacion.json` y `new-conteo.json` de la ronda.
+
+Costo medido del probe nuevo: 372,83–489,63 ms por PID, una muestra en cada una de las cuatro
+CLI propias bajo carga concurrente; no es benchmark en reposo ni justifica caché de identidad
+para autorizar envíos. La medición dentro del sandbox no pudo abrir procesos; se midió afuera
+con autorización. A/B fueron cerradas tras entregar y se comprobó que sus PID dejaron de existir.
+
+UI integrada: Memoria del proyecto permite consultar creencias, checklist contextual y patrones
+con estado y respaldo; sólo GET, contexto explícito y descarte de respuestas tardías. Se corrigió
+el fixture de catálogo para que la recuperación dependa del gesto de reintento, no del número
+de peticiones de montaje de React. La integración focal final `2026-10-17T22-57-09.839Z-33400`
+dio 247 backend y 16 UI aprobados, más ESLint, build y unitarias con código 0. Runner y compuerta
+salieron 1 por baseline ausente en la configuración aislada: no es PASS global ni aceptación.
+La revisión está en `code-review-2026-10-17-ronda4.md`. Las cuatro CLI propias entregaron,
+se cerraron y se comprobó la ausencia de sus PID. Sus reglas quedaron desactivadas, con
+informes pendientes conservados; no se acusaron como integradas ni se completaron tareas.
+
+### Ronda de cinco Codex — integración activada (2026-10-17, 19:43)
+
+Se integraron identidad Codex por proceso/FILETIME/rollout abierto; conservación y acuses de informes;
+guardias de cuota, decisión y cancelación del investigador; pasos de herramientas y vista externa
+agregada; refutaciones y evidencia de controles separada por nivel. Codex Desktop puede ser
+coordinadora si tiene transporte disponible. Este chat quedó con `coordinator: true` en la API viva.
+
+Corrida global `2026-10-17T22-32-46.991Z-37680`: 7 de 7 casos con código 0,
+2244 pruebas backend aprobadas y 3 omitidas, 136 recorridos UI aprobados; lint/build/unitarias y
+memoria focal/e2e con código 0. El recorrido UI nuevo de recepción → integración pasó por separado.
+Los 32 archivos de código/pruebas inventariados no cambiaron durante la medición.
+Compuerta **ESCALAR (3)**: las mutaciones del 10/10 son de otro estado, no certifican este corte.
+No se fijaron baselines ni se aceptaron propuestas nuevas. Revisión en `code-review-2026-10-17.md`.
+
+Reinicio supervisado verificado: los siete PID de otras CLI presentes antes seguían vivos y con
+tarjeta después. Lectura viva de `/conocimiento/lienzo/registro-externo`: nivel 3, 18 grupos,
+sólo campos `nivel`, `proyecto`, `actividad`. Las cinco CLI de esta ronda entregaron y se cerraron.
+Esta activación sustituye las notas históricas de «falta reiniciar» para estos módulos; no cierra casillas.
+
+Siguen pendientes: `/new` y `/clear` reales y su carrera con encolado; medición de costo del sondeo
+de handles; continuidad formal de coordinadora ocupada/quieta con dos frentes y reinicio; mutaciones
+vigentes y aceptación de propuestas; primera investigación real y calidad causal; narrativa externa
+curada, duración individual de herramientas, integración de productores/UI de controles y los
+pendientes de hardware, otras PCs, presupuesto y decisiones humanas de las secciones siguientes.
+
+API incorporada: acuse humano desde PC/LAN en `/rules/<r>/informes/<i>/acuse` (`recibido` antes de
+`integrado`); `/conocimiento/<p>/registro-externo`; `/conocimiento/<p>/encargos/<id>/controles`.
+El acuse no autentica una CLI mediante su UUID ni acredita por sí mismo calidad del trabajo.
+
 ### Release 0.2.0 — estado observado y pendientes (2026-10-17)
 
 Publicado por pedido explícito de Ariel: `main` y tag `v0.2.0`, commit `98e65f7`.

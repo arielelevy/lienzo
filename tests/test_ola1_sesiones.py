@@ -265,18 +265,13 @@ def test_guess_claude_saltea_una_transcripcion_que_desaparece(tmp_path, monkeypa
     assert sid == "viva"
 
 
-def test_guess_codex_saltea_un_rollout_que_desaparece(tmp_path, monkeypatch):
+def test_guess_codex_no_adjudica_ni_consulta_rollouts_sin_proceso(tmp_path, monkeypatch):
     d = tmp_path / ".codex" / "sessions" / "2026" / "10" / "04"
     d.mkdir(parents=True)
     (d / "rollout-borrado.jsonl").write_text("{}")
-    real = os.path.getmtime
+    import agentes
 
-    def mtime(p):
-        if str(p).endswith("rollout-borrado.jsonl"):
-            raise FileNotFoundError(p)
-        return real(p)
-
-    monkeypatch.setattr(ses.os.path, "getmtime", mtime)
+    monkeypatch.setattr(agentes.glob, "glob", lambda *a: pytest.fail("cwd/fecha no prueban identidad"))
     assert ses.guess_codex(r"D:\x", 0, str(tmp_path)) == (None, None)
 
 

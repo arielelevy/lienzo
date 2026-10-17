@@ -64,14 +64,15 @@ test("selección explícita, navegación, recarga y cierre sin escrituras", asyn
 });
 
 test("catálogo fallido y vacío se muestran y permiten reintentar", async ({ page }) => {
-  let attempt = 0;
-  await page.route("**/conocimiento/proyectos", route => json(route, ++attempt === 1 ? { error: "base inaccesible" } : [], attempt === 1 ? 503 : 200));
+  let recovered = false;
+  await page.route("**/conocimiento/proyectos", route => json(route, recovered ? [] : { error: "base inaccesible" }, recovered ? 200 : 503));
   // Este caso monta el tablero sin el catálogo por defecto de prepare.
   await bloquearEscrituras(page); await instalarTablero(page);
   await page.goto(BASE);
   await page.getByRole("button", { name: "más opciones", exact: true }).click();
   await page.getByRole("menuitem", { name: /Memoria/ }).click();
   await expect(page.getByRole("alert")).toContainText("base inaccesible");
+  recovered = true;
   await page.getByRole("button", { name: "Actualizar proyectos" }).click();
   await expect(page.getByText(/No hay proyectos registrados/)).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);

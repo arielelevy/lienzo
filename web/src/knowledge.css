@@ -78,3 +78,8 @@
 .knowledge-pagination { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 14px; }
 .knowledge-pagination p { color: var(--dim); font-size: 12px; }
 .knowledge-pagination > div { display: flex; justify-content: space-between; gap: 12px; }
+
+.knowledge-context { min-width: 0; padding: 0; border: 0; margin: 0; }
+.knowledge-context legend { font-weight: 600; }
+.knowledge-context input { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: inherit; }
+.knowledge-context input:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }

@@ -69,6 +69,10 @@ def run(argv, *, stdin_text, cwd, timeout, should_stop, max_output, on_start=Non
         "output_exceeded": False,
         "pid": None,
     }
+    reason = should_stop()
+    if reason:
+        result.update(stopped=reason, seconds=round(time.monotonic() - started, 3))
+        return result
     try:
         p = subprocess.Popen(
             argv,

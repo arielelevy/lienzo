@@ -78,7 +78,15 @@ from rules import connections_of, purge_stale_at_rules, rules_loop
 
 # la API de reglas (validar, alta y edicion) vive en rules_api.py; se reexporta lo que las pruebas
 # todavia toman de `server` (find_enabled, at_fields, check_rule)
-from rules_api import _known_session, at_fields, check_rule, create_rule, edit_rule, find_enabled  # noqa: F401
+from rules_api import (  # noqa: F401
+    _known_session,
+    acuse_informe,
+    at_fields,
+    check_rule,
+    create_rule,
+    edit_rule,
+    find_enabled,
+)
 from sessions import (
     ADJUNTOS_CUOTA,
     add_link,
@@ -1065,11 +1073,17 @@ def accion_claude_pipe(s: dict, d: dict) -> tuple[int, dict]:
     import claude_pipe_runtime
 
     try:
-        result = claude_pipe_runtime.register(dict(s))
+        result = claude_pipe_runtime.register(dict(s), reconnect=d.get("reconnect", False))
     except (OSError, ValueError, RuntimeError) as error:
         return 409, {"error": launch.claude_pipe_error(error)}
     public = {k: result[k] for k in ("command", "session_id", "expires_at", "connected") if k in result}
     return 200, {**public, "envio": claude_pipe_runtime.availability(dict(s))}
+
+
+def validar_claude_pipe(d: dict) -> tuple[int, dict] | None:
+    if "reconnect" in d and type(d["reconnect"]) is not bool:
+        return _rechazo("reconnect debe ser booleano")
+    return None
 
 
 def accion_send(s: dict, d: dict) -> tuple[int, dict]:
@@ -1254,7 +1268,7 @@ class AccionSesion:
 
 
 ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
-    ("POST", "claude-pipe"): AccionSesion(sin_validar, accion_claude_pipe),
+    ("POST", "claude-pipe"): AccionSesion(validar_claude_pipe, accion_claude_pipe),
     ("PUT", "copycat"): AccionSesion(validar_copycat, accion_copycat),
     ("POST", "kill"): AccionSesion(sin_validar, accion_kill),
     ("POST", "send"): AccionSesion(validar_send, accion_send, despues_tablero=envio_del_tablero),
@@ -1315,6 +1329,13 @@ def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero
         if rechazo is None and nombre not in ACCIONES_EN_EXTERNAS:
             if nombre == "send" and (s.get("external") or {}).get("kind") in ("codex-desktop", "claude-desktop"):
                 plan = ses.puede_enviar(s)
+                rechazo = None if plan["puede"] else (409, {"error": plan["motivo"], "envio": plan})
+            elif nombre == "coordinator" and (s.get("agent"), (s.get("external") or {}).get("kind")) in {
+                ("codex", "codex-desktop"), ("claude", "claude-desktop")
+            }:
+                # The role routes replies, not console control. Require a usable channel to enable;
+                # removing the role must still work after the desktop app or its queue is gone.
+                plan = ses.puede_enviar(s) if d["on"] else {"puede": True}
                 rechazo = None if plan["puede"] else (409, {"error": plan["motivo"], "envio": plan})
             else:
                 rechazo = external_blocked(s, ACCION_TEXTO.get(nombre, nombre))
@@ -1993,6 +2014,18 @@ class Handler(JsonHandler):
             if parts == ["rules"]:
                 code, res = create_rule(self._json_body())
                 return self._json(code, res)
+            if len(parts) == 5 and parts[0] == "rules" and parts[2] == "informes" and parts[4] == "acuse":
+                # Acuse explícito del usuario de esta PC/LAN, como los veredictos de memoria.
+                # No se admite por túnel ni por el listener peer ni se autentica una CLI por su UUID.
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "el acuse se registra desde una PC de la LAN"})
+                body = self._json_body()
+                with lock:
+                    rule = next((r for r in rules.items if r["id"] == parts[1]), None)
+                    target = rule.get("to") if rule else None
+                if target is None:
+                    return self._json(404, {"error": "conexion desconocida"})
+                return self._json(*acuse_informe(parts[1], parts[3], {"estado": body.get("estado"), "session_id": target}))
             if parts == ["rules", "retarget"]:
                 # a mano: las reglas que avisaban a `old` pasan a `new`, aca y en las otras PCs
                 code, res = accion_retarget(self._json_body(), desde_tablero=True)
@@ -2299,7 +2332,9 @@ class Handler(JsonHandler):
                     return self._json(code, res)
             if len(parts) == 2 and parts[0] in ("links", "rules"):
                 log(f"{parts[0][:-1]} {parts[1]} borrada desde la UI ({self._client_ip()})")
-                (links if parts[0] == "links" else rules).remove(lambda x: x["id"] == parts[1])
+                if parts[0] == "rules":
+                    return self._json(200, {"ok": True, "conservada": rl.retirar_regla(parts[1])})
+                links.remove(lambda x: x["id"] == parts[1])
                 return self._json(200, {"ok": True})
             return self._json(404, {"error": "ruta desconocida"})
         except Exception as e:
@@ -2536,7 +2571,7 @@ class PeerHandler(JsonHandler):
         if len(rest) == 3 and rest[0] == "sessions" and method == "PUT":
             return self._accion_sesion(method, rest[1], rest[2], raw)
         if len(rest) == 2 and rest[0] == "rules" and method == "DELETE":
-            rules.remove(lambda x: x["id"] == rest[1])
+            rl.retirar_regla(rest[1])
             return self._json(200, {"ok": True})
         if len(rest) == 2 and rest[0] == "sessions" and method == "DELETE":
             drop_session(rest[1], "borrada desde otra PC")

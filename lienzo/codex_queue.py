@@ -7,7 +7,9 @@ Medido el 2026-10-17 (codex-cli 0.163.0, informe-A-codex-queue.md):
 - Un id inexistente sale con código 1 y «no rollout found for thread id».
 - Con el proceso del hilo CERRADO también «entrega»: el app-server compartido de Codex ejecuta el turno en
   segundo plano, sin terminal ni app visibles. Por eso un hilo de CLI sin proceso vivo, o de la app cerrada,
-  se rechaza con motivo en vez de encolar.
+  se rechaza con motivo en vez de encolar. Una CLI viva también se rechaza: su PID no prueba que
+  conserve el hilo después de /new o /clear. La CLI requiere un único rollout abierto por el proceso
+  y su fecha de creación registrada (ni cwd ni PID solos sustituyen esa evidencia).
 
 Estados de un envío: `rechazado` (con motivo), `encolado` (codex lo aceptó), `entregado` (el texto aparece en el
 rollout del hilo como mensaje de usuario) y `sin_confirmacion` (pasó el plazo sin verlo; visible, sin reintento).
@@ -28,6 +30,7 @@ import threading
 import time
 from pathlib import Path
 
+import codex_identity
 import procinfo
 import procs
 import state
@@ -113,6 +116,14 @@ def puede_enviar(s: dict, contexto: dict | None = None) -> dict:
             return _no("la app de Codex no está abierta: codex queue ejecutaría el turno en segundo plano, sin la app")
     elif not s.get("pid") or not procinfo.alive(s["pid"]):
         return _no("el proceso del hilo terminó: codex queue ejecutaría el turno en segundo plano, sin terminal")
+    else:
+        identity = codex_identity.probe(s["pid"])
+        if not identity["verified"]:
+            return _no(f"identidad de hilo CLI sin verificar: {identity['reason']}")
+        if identity["process_start"] != s.get("codex_process_start"):
+            return _no("identidad de hilo CLI sin verificar: creación del proceso distinta o no registrada (PID reciclado)")
+        if identity["thread"] != thread or os.path.normcase(os.path.realpath(identity["path"])) != os.path.normcase(os.path.realpath(rollout)):
+            return _no("identidad de hilo CLI sin verificar: el proceso tiene otro rollout activo; esperar reidentificación")
     return {"puede": True, "motivo": None, "transporte": "codex_queue"}
 
 

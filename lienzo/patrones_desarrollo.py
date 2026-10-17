@@ -19,6 +19,8 @@ CONTROLES = {"pruebas", "claude_review_local", "auditoria_skill"}
 
 def analizar(pid):
     """Cuenta encargos declarados, separados por tipo, tecnología y área; máximo 500."""
+    import patrones_evidencia
+
     with k._abrir(pid) as con:
         rows = con.execute(
             "SELECT * FROM nodo WHERE proyecto=? AND tipo='encargo' " "ORDER BY fecha DESC,id DESC LIMIT 501", (pid,)
@@ -38,6 +40,7 @@ def analizar(pid):
         context = creencias._contexto(context)
         key = json.dumps(context, sort_keys=True)
         groups[key].append(node)
+    respaldos = patrones_evidencia.controles_lote(pid, [node for nodes in groups.values() for node in nodes])
     patterns = []
     for key, nodes in sorted(groups.items()):
         declared = collections.Counter()
@@ -51,6 +54,7 @@ def analizar(pid):
                 "encargos": len(nodes),
                 "fuentes": [n["id"] for n in nodes[:30]],
                 "controles_declarados": dict(declared),
+                "controles_evidencia": [respaldos[node['id']] for node in nodes],
                 "calidad": "no inferida; requiere resultados y revisión de evidencia",
             }
         )

@@ -158,6 +158,7 @@ def _dialogo_plano(dialog: dict | None) -> tuple[str, list[tuple[int | None, str
 
 
 class Codex(Perfil):
+    identity_key = "codex_session"
     after_dialog = "corriendo"
     live_dialog_with_hooks = True
     # «Would you like to run the following command?» con «Yes, proceed (y)» / «Yes, and don't ask
@@ -172,7 +173,15 @@ class Codex(Perfil):
     )
 
     def guess(self, cwd: str, born, home: str):
-        return guess_codex(cwd, born.timestamp() - BIRTH_MARGIN_S if born else 0, home)
+        return None, None  # cwd y fecha no vinculan un rollout al proceso
+
+    def identity(self, process: dict, readers: dict):
+        try:
+            import codex_identity
+        except ImportError:
+            from . import codex_identity
+        proof = codex_identity.probe(process["pid"])
+        return (proof["thread"], proof["path"]) if proof["verified"] else None
 
     def row_model(self, row: dict) -> str | None:
         payload = row.get("payload")
@@ -355,32 +364,12 @@ def _mtime(path: str) -> float | None:
 
 
 def guess_codex(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str | None]:
-    """Codex mezcla todos los rollouts en un arbol por fecha, asi que hay que abrirlos: entre los
-    de la TUI con el mismo cwd, gana el que arranco mas cerca del nacimiento del proceso. "El mas
-    nuevo" se equivoca si despues de abrir la TUI corrio un `codex exec` en el mismo directorio."""
-    nacio = t0 + BIRTH_MARGIN_S  # t0 ya viene con el margen restado
-    best, best_gap = None, None
-    for p in glob.glob(os.path.join(home, ".codex", "sessions", "*", "*", "*", "rollout-*.jsonl")):
-        mtime = _mtime(p)
-        if mtime is None or mtime < t0:
-            continue
-        try:
-            with open(p, "rb") as f:
-                first = json.loads(f.readline().decode("utf-8", errors="replace"))
-        except OSError, ValueError:
-            continue
-        pl = first.get("payload") or {}
-        if (pl.get("cwd") or "").lower() != cwd.lower():
-            continue
-        if pl.get("originator") not in (None, "codex-tui", "codex_cli_rs"):
-            continue  # Codex Desktop (importados), codex_exec, app-server: no son la TUI
-        birth = parse_ts(pl.get("timestamp") or first.get("timestamp"))
-        gap = (birth.timestamp() if birth else mtime) - nacio
-        if gap < -BIRTH_MARGIN_S:
-            continue  # arranco antes que el proceso: no es suyo
-        if best_gap is None or abs(gap) < abs(best_gap):
-            best, best_gap = (pl.get("id") or pl.get("session_id"), p), gap
-    return best or (None, None)
+    """Sin PID no hay identidad comprobable: no adjudicar por fecha ni cwd.
+
+    Conserva el contrato público. El descubrimiento usa Codex.identity con
+    evidencia actual vinculada al proceso, incluso si el rollout es anterior.
+    """
+    return None, None
 
 
 # Registro de sesiones vivas de Claude Code (medido 2026-10-17): `<config>/sessions/<pid>.json`, uno por
@@ -403,7 +392,7 @@ def claude_registro(pid: int, proc_start: int | None) -> dict | None:
         return None
     if not isinstance(reg, dict) or reg.get("pid") != int(pid) or str(reg.get("procStart")) != str(proc_start):
         return None
-    return {k: reg.get(k) for k in CLAUDE_REGISTRO_CAMPOS}
+    return {k: reg[k] for k in CLAUDE_REGISTRO_CAMPOS if k in reg}
 
 
 # Hilos de la app de escritorio de Codex (medido 2026-10-17 sobre ~/.codex/sessions): la app no tiene

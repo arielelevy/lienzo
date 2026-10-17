@@ -106,7 +106,7 @@ def prepare_launch(session_id):
     }
 
 
-def register(card):
+def register(card, *, reconnect=False):
     owner = _owner(card)
     if owner is None:
         raise ValueError("no se pudo verificar el proceso de esta sesión Claude")
@@ -114,6 +114,13 @@ def register(card):
     if reason:
         raise ValueError(reason)
     with _lifecycle:
+        if reconnect:
+            with _lock:
+                previous = _entries.get(card["session_id"])
+                if previous and previous["owner"] not in (None, owner):
+                    raise ValueError("el proceso de la sesión cambió: cerrá el enlace anterior")
+            if previous and not previous["bridge"].available:
+                _close(card["session_id"], expected=previous)
         entry = _prepare(card["session_id"])
         with _lock:
             if _owner(card) != owner:

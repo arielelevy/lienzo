@@ -211,10 +211,27 @@ def main():
     run_adapter(metadata)
 
 
-if __name__ == "__main__":
+def cli():
     try:
         main()
-    except OSError, ValueError, KeyError, urllib.error.URLError:
+    except (OSError, ValueError, KeyError, urllib.error.URLError) as error:
         # Do not print exception bodies: HTTP/environment errors can contain secrets.
-        print("claude_pipe_adapter_failed", file=sys.stderr)
-        sys.exit(2)
+        message = "claude_pipe_adapter_failed"
+        if sys.argv[1:2] == ["--bootstrap"]:
+            stale_identity = isinstance(error, ValueError) and error.args in (
+                ("bootstrap_server_identity_mismatch",),
+                ("bootstrap_server_recycled",),
+                ("bootstrap_server_process_unavailable",),
+            )
+            missing_pipe = isinstance(error, OSError) and getattr(error, "winerror", None) in (2, 3, 109, 231)
+            if stale_identity or missing_pipe or isinstance(error, TimeoutError):
+                message += ": bootstrap vencido o servidor reiniciado. Generá un comando nuevo con «Conectar esta sesión Claude» y ejecutalo en esa conversación de Claude."
+            else:
+                message += ": no se pudo validar la conexión. Generá un comando nuevo con «Conectar esta sesión Claude» y ejecutalo en esa conversación de Claude."
+        print(message, file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

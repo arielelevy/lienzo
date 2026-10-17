@@ -385,6 +385,28 @@ def test_agente_desconocido_es_un_error_explicito(tmp_path):
 
 # --- paso 2: las guess_* en un modulo hoja ------------------------------------------------------
 
+
+def test_codex_identifica_por_pid_sin_heredar_el_rollout_del_mismo_cwd(monkeypatch):
+    import agentes
+    import codex_identity
+
+    proofs = {34228: {"verified": True, "thread": "hilo-A", "path": "rollout-A"},
+              17840: {"verified": True, "thread": "hilo-B", "path": "rollout-B"}}
+    calls = []
+
+    def probe(pid):
+        calls.append(pid)
+        return proofs[pid]
+
+    monkeypatch.setattr(codex_identity, "probe", probe)
+    profile = agentes.perfil("codex")
+    assert profile.identity_key == "codex_session"
+    assert profile.identity({"pid": 34228, "cwd": "D:/repo"}, {}) == ("hilo-A", "rollout-A")
+    assert profile.identity({"pid": 17840, "cwd": "D:/repo"}, {}) == ("hilo-B", "rollout-B")
+    proofs[17840] = {"verified": False, "reason": "snapshot incompleto"}
+    assert profile.identity({"pid": 17840, "cwd": "D:/repo"}, {}) is None
+    assert calls == [34228, 17840, 17840]
+
 LIENZO_DIR = str(Path(__file__).resolve().parents[1] / "lienzo")
 
 

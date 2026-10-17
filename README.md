@@ -1,7 +1,7 @@
 # Lienzo
 
-Versión **0.2.0**: envío a Codex por cola y a Claude Desktop mediante un adaptador propio autenticado,
-con estados de entrega visibles. [Novedades y validación](docs/releases/0.2.0.md).
+Versión **0.3.0**: coordinación desde Claude y Codex Desktop, reconexión explícita de Claude
+y comandos de conexión con vencimiento visible. [Novedades, validación y límites](docs/releases/0.3.0.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
@@ -735,6 +735,9 @@ además la cookie de sesión.
 |---|---|---|
 | GET | `/sessions` | todas las tarjetas, las de esta PC y las de las demás (`pc`) |
 | GET | `/sessions/<sid>/turns?n=10`, `/digest?n=10`, `/screen`, `/connections` | turnos, destacados por turno, pantalla de la terminal, conexiones |
+| POST | `/rules/<r>/informes/<i>/acuse` | `{estado: "recibido"\|"integrado"}`; acuse explícito del usuario PC/LAN, sin túnel. Integrar exige recepción previa; no autentica una CLI por su UUID |
+| GET | `/conocimiento/<p>/registro-externo` | nivel 3 agregado por proyecto, tipo y estado; sin prosa interna, rutas ni transcripciones |
+| GET | `/conocimiento/<p>/encargos/<id>/controles` | declaraciones y evidencia ejecutada/verificada con sus referencias; no infiere calidad ni completa tareas |
 | POST | `/sessions/<sid>/send` | `{text, attachments}`; con `from` y `link_to` registra el envío; con `copycat: true` es pegar trabajo; con `from` y `sin_aviso: true` el turno no le avisa a `from`. Un id viejo da 404 con `sucesora` |
 | POST | `/sessions/<sid>/interrupt` | un Esc: corta el turno (409 si no está corriendo) |
 | POST | `/sessions/<sid>/kill` | `{confirm: session_id}`; cierre forzado de una CLI Windows identificada, también en otra PC; no cierra agentes tmux |

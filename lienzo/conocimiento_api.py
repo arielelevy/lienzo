@@ -44,6 +44,8 @@ import conocimiento as k
 import creencias
 import identity
 import patrones_desarrollo
+import patrones_evidencia
+import registro_niveles
 import sessions as ses
 import veredictos_api
 from conocimiento import Rechazo
@@ -154,6 +156,10 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
     autor = d.get("autor") or "coordinadora"
     if not resto and metodo == "GET":
         return 200, k.resumen(pid)
+    if resto == ["registro-externo"] and metodo == "GET":
+        return 200, registro_niveles.externo(pid)
+    if len(resto) == 3 and resto[0] == "encargos" and resto[2] == "controles" and metodo == "GET":
+        return 200, patrones_evidencia.controles(pid, resto[1])
     if resto == ["creencias"]:
         if metodo == "GET":
             return 200, creencias.listar(pid)

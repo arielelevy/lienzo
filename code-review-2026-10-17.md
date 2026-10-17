@@ -1,5 +1,51 @@
 # Revisión de integración Codex / Claude
 
+## Adenda de coordinación — ronda A–E, activada a las 19:43
+
+Revisión de los cambios de esta ronda y su integración, conservando las revisiones históricas.
+Se contrastaron los cinco informes con el árbol y la ejecución global, sin sumar suites solapadas.
+Corregidos: identidad de cola desligada del PID; asignación por proximidad temporal; bloqueo del primer
+prompt de una CLI nueva; pérdida de informes al retirar/reemplazar/purgar reglas o alcanzar el cupo;
+memoria sin restaurar ante fallo de persistencia; regresión de `dedupe=false`; metadatos opcionales
+ausentes emitidos como claves inventadas; dobles de transporte incompatibles con identidad comprobada.
+El envío incierto del hilo anterior se conserva separado y no se reenvía al nuevo.
+
+Los acuses nuevos son acciones explícitas del usuario PC/LAN y rechazan el túnel. El servidor resuelve
+el destino: un UUID aportado por el cliente no autentica a un agente. Recibido e integrado permanecen
+separados; una regla inactiva conserva y muestra sus informes. Las consultas externas agregadas no
+exponen prosa, rutas ni transcripciones. La evidencia verificada de controles es una declaración con
+persona/referencia, no una comprobación automática de identidad o calidad.
+
+Verificación final: corrida `2026-10-17T22-32-46.991Z-37680`, estado `4fa8609f21cb945a`;
+7/7 casos código 0, backend 2244 aprobadas/3 omitidas, UI 136 aprobadas; prueba UI adicional de
+acuse explícito aprobada. Ruff focal, ESLint, build y pruebas Node correctos. Inventario de 32 fuentes
+y pruebas sin diferencias durante la corrida. Compuerta 3, ESCALAR: `mutacion.json` pertenece a otro
+estado. Sus 5/6 históricos no se cuentan como medición actual. No hubo --fijar ni --aceptar.
+
+Activación: reinicio por wrapper, health OK, siete PID ajenos a esta ronda conservaron proceso y tarjeta;
+PUT de coordinadora al chat Desktop devolvió true y GET lo confirmó, con codex_queue disponible.
+Vista externa viva: nivel 3, 18 grupos, sólo nivel/proyecto/actividad. Un sondeo de identidad incompleto
+se rechazó explícitamente; una lectura posterior comprobó la identidad sin enviar mensajes ni forzarla.
+
+Límites abiertos: transición real /new y /clear, atomicidad consulta/cola, costo del sondeo, continuidad
+formal con coordinadora ocupada/quieta, mutaciones vigentes, nuevas aceptaciones y calidad causal del
+investigador. Sin auditoría global de dependencias ni métricas de complejidad no medidas. No se cierra
+el backlog ni se declara PASS formal. Evidencia y roles en
+`.temp/coordinacion/2026-10-17/backlog-codex/raiz/`; logs globales en `pruebas-agenticas/resultados/`.
+Las adendas documentales se escriben después de medir; las fuentes de ejecución permanecen idénticas.
+
+Cambios concurrentes de coordinación frontend observados: `nl.ts`, su test y comentario de SendBox
+se editaron a las 19:37, antes de las etapas frontend de la corrida global; no se atribuyen al frente
+A–E ni al inventario inicial de 32 archivos. Revisión focal separada en
+`code-review-2026-10-17-codex-coordinadora.md`. Raíz ejecutó además los dos casos nuevos de Codex
+CLI/Desktop con salida exclusiva `.playwright-raiz-coordinadora`: ambos pasan. La prueba nueva
+`test_ronda4_a_continuidad.py`, creada después de la global, se verificó por separado: 5 pasan.
+No se suman esas corridas ni las fallidas de la otra sesión al resultado global de raíz.
+
+## Adenda R — permiso coordinadora Codex Desktop
+
+Revisión focal autorizada por Ariel. lienzo/server.py permite el rol de coordinadora a una tarjeta Codex Desktop sólo si ses.puede_enviar confirma transporte; la revocación no necesita una cola disponible. Conserva validación del cuerpo, unicidad por repo y bloqueo de acciones de consola para externas. tests/test_codex_desktop_coordinator_R.py y regresiones existentes: 26 passed. Ampliada: 49 passed y 5 failed; las mismas cinco fallas de reserva de cola se reproducen con función anterior en memoria (25 passed, 5 failed). No se afirma verde global. Runner focal ejecuta código 0, salida 1 por baseline ausente; compuerta 2, no PASS. Sin nuevos hallazgos propios; activación coordinada pendiente. Evidencia y cinco roles en .temp/coordinacion/2026-10-17/coordinadora-desktop-R/informe.md.
+
 Alcance: cambios del transporte Codex y publicación de capacidad/estado para este release. Revisión estática focal de la coordinadora; no es auditoría de todo el árbol compartido. Fecha: 2026-10-17.
 
 ## Hallazgos pendientes de corrección y verificación

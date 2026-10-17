@@ -401,6 +401,11 @@ export async function instalarTablero(page: Page, sessionList: Session[] = sesio
     if (p === "/pending") return route.fulfill(json(board.pending));
     if (p === "/links") return route.fulfill(json(board.links));
     if (p === "/rules") return route.fulfill(json(board.rules));
+    // Las tiras también forman parte del layout: nunca mezclar avisos de sesiones reales
+    // que llegan después del snapshot fijo y desplazan las tarjetas durante una medición.
+    if (p === "/avisos") return route.fulfill(json({ avisos: [], turnos: {}, politicas: {} }));
+    if (p === "/consultas") return route.fulfill(json([]));
+    if (p === "/memoria") return route.fulfill(json({ bajo: false, cerrar: [] }));
     if (p === "/events") return route.fulfill({ status: 200, contentType: "text/event-stream", body: `retry: 86400000\n\ndata: ${JSON.stringify(snapshot)}\n\n` });
     const panel = respuestaDePanel(p);
     if (panel) return route.fulfill(json(panel));

@@ -102,6 +102,34 @@ function headLine(s: Session): string {
   return parts.join(" · ");
 }
 
+function Informe({ rule, informe }: { rule: string; informe: NonNullable<ConnectionRule["informes"]>[number] }) {
+  const [estado, setEstado] = useState(informe.estado);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const acknowledge = async (next: "recibido" | "integrado") => {
+    setSaving(true);
+    setError(null);
+    try {
+      await rulesApi.acknowledgeReport(rule, informe.id, next);
+      setEstado(next);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <details className="conn">
+    <summary>Informe {informe.id.slice(0, 8)} · {estado}</summary>
+    <p className="small">{informe.created}{informe.transporte?.estado ? ` · transporte: ${informe.transporte.estado}` : ""}</p>
+    {informe.transporte?.motivo && <p>{informe.transporte.motivo}</p>}
+    <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{informe.respuesta}</pre>
+    {estado !== "integrado" && <button disabled={saving} onClick={() => acknowledge(estado === "recibido" ? "integrado" : "recibido")}>
+      {estado === "recibido" ? "Confirmar integración verificada" : "Confirmar recepción"}
+    </button>}
+    {error && <p role="alert">{error}</p>}
+  </details>;
+}
+
 /** Pestana "Conexiones": dos listas, lo que paso (links) y lo que sigue armado (rules). */
 function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "old" | null }) {
   if (conn === null) return <div className="empty">leyendo…</div>;
@@ -109,7 +137,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
   const links = [...conn.links].sort((a, b) => b.ts.localeCompare(a.ts));
   const rules = [...conn.rules].sort((a, b) => Number(b.enabled) - Number(a.enabled));
   const ruleState = (r: ConnectionsResponse["rules"][number]) => {
-    if (!r.enabled) return "cumplida";
+    if (!r.enabled) return "inactiva";
     if (r.kind === "at") {
       if (r.every_s) {
         // periodica: proxima hora, cuenta de disparos y si saltea al destino ocupado
@@ -164,6 +192,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
                 <span className="who">{label}</span>
                 <span className="dim small">{ruleState(r)}</span>
               </div>
+              {r.informes?.map((informe) => <Informe key={`${informe.id}:${informe.estado}`} rule={r.id} informe={informe} />)}
             </div>
           );
         })

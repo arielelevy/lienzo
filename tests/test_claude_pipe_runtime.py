@@ -282,6 +282,39 @@ def test_finished_bootstrap_never_creates_second_writer_implicitly(card):
     assert entry["bridge"].closed and SID not in runtime._entries
 
 
+def test_explicit_reconnect_replaces_failed_adapter_after_closing_it(card):
+    runtime.register(card)
+    old = runtime._entries[SID]
+    old["bridge"].available = False
+    old["bridge"].registered.clear()
+    old["bootstrap"].closed = True
+    old["bootstrap"].result = "error"
+    result = runtime.register(card, reconnect=True)
+    assert old["bridge"].closed
+    assert runtime._entries[SID] is not old
+    assert result["connected"] is True
+
+
+def test_reconnect_keeps_healthy_adapter_and_delivery_history(card):
+    runtime.register(card)
+    entry = runtime._entries[SID]
+    sent = runtime.send(card, "preservar historial")
+    runtime.register(card, reconnect=True)
+    assert runtime._entries[SID] is entry
+    assert not entry["bridge"].closed
+    assert runtime.confirm(sent["envio_id"])["estado"] == "encolado"
+
+
+def test_reconnect_cannot_replace_a_different_process(card):
+    runtime.register(card)
+    entry = runtime._entries[SID]
+    entry["bridge"].available = False
+    entry["owner"] = (123, 999)
+    with pytest.raises(ValueError, match="proceso de la sesión cambió"):
+        runtime.register(card, reconnect=True)
+    assert runtime._entries[SID] is entry and not entry["bridge"].closed
+
+
 def test_reap_stale_snapshot_does_not_close_replacement(card, monkeypatch):
     runtime.register(card)
     old = runtime._entries[SID]

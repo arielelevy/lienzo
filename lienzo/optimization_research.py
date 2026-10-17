@@ -23,6 +23,7 @@ import optimization_research_policy as policy
 import optimization_research_quota as quota
 import optimization_research_runner as runner
 import optimization_research_unit as unit
+import registro_niveles
 import state
 from atomico import atomic_write
 
@@ -343,6 +344,7 @@ def _tools_of(sid: str) -> dict:
     return {
         "disponible": True,
         "conteos": evidence["counts"],
+        "detalle_pasos": registro_niveles.herramientas(session, limite=HOW_TOOLS),
         "llamadas": [
             {k: ref[k] for k in ("tool", "characters", "error", "result_known")}
             for ref in evidence["tools"][-HOW_TOOLS:]
@@ -672,7 +674,11 @@ class CodexAdapter:
 
     def limits(self, auth, project):
         self.exe = shutil.which("codex")
-        self.max_used = (auth or {}).get("uso_semanal_max_pct") if (auth or {}).get("adaptador") == self.name else None
+        self.max_used = (
+            min(policy.CODEX_AUTHORIZATION["uso_semanal_max_pct"], auth["uso_semanal_max_pct"])
+            if auth and auth.get("adaptador") == self.name
+            else None
+        )
         reading = self.quota_reader() if self.exe else {"ok": False, "error": "codex no encontrado"}
         bound, reasons = quota.assess(reading, self.max_used)
         return {
@@ -823,6 +829,8 @@ def evaluate(project: str, adapter=None, runs_today: int = 0, now=None) -> tuple
 
 def investigate(job: dict, adapter, decision: dict, *, should_stop, on_start=None, root=None) -> dict:
     """Una ejecución. Devuelve {"status": ok|stopped|failed, ...}; no toca la cola ni reintenta."""
+    if decision.get("enabled") is not True:
+        raise ValueError("investigador bloqueado por política; no se lanza la CLI")
     case = job["case"]
     root = Path(root or case_root(case))
     limits = decision["limits"]

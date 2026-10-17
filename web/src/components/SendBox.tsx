@@ -5,6 +5,7 @@ import { coordinatorOf } from "../nl";
 import type { Session } from "../types";
 import { canWrite, needsPiReload, REPLY_TEMPLATE, shortName } from "../names";
 import { useLocalFlag } from "../hooks/useLocalFlag";
+import { ClaudeConnection } from "./ClaudeConnection";
 import "../card.css";
 
 const QUICK = ["Continuá", "sí", "no", "dale"];
@@ -24,8 +25,6 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [connection, setConnection] = useState<{ command: string; session_id: string; expires_at: number } | null>(null);
-  const [connecting, setConnecting] = useState(false);
   const [drag, setDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -35,7 +34,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
   }, [autoFocus, s.session_id]);
   // "avisarme cuando termine": delegar en un gesto. Tras enviar, se crea la regla on_stop desde
   // esta sesion hacia la coordinadora (coordinatorOf: la marcada con estrella del mismo repo, o la
-  // primera Claude del repo; igual que Conectar y el "avisame" del parser). Recordado por navegador;
+  // primera coordinable del repo; igual que Conectar y el "avisame" del parser). Recordado por navegador;
   // apagado por defecto.
   const me = useMemo(() => coordinatorOf(s.repo, others, s.session_id), [others, s.repo, s.session_id]);
   const [notifyMe, , toggleNotify] = useLocalFlag(NOTIFY_KEY, false);
@@ -117,20 +116,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
     (s.agent === "claude" && s.envio.transporte === "claude_pipe")
   );
   if (s.agent === "claude" && s.external?.kind === "claude-desktop" && !queue) {
-    return <div className="send">
-      <p role="status">{s.envio?.motivo || "Falta conectar el adaptador de esta sesión Claude"}</p>
-      <button disabled={connecting || !s.alive || !s.pid} onClick={async () => {
-        setConnecting(true);
-        try { setConnection(await sessionsApi.claudePipe(s.session_id)); }
-        catch (e) { toast(`No se pudo conectar: ${(e as Error).message}`, true); }
-        finally { setConnecting(false); }
-      }}>Conectar esta sesión Claude</button>
-      {connection?.session_id === s.session_id && <div>
-        <p>Ejecutá este comando público desde esta sesión Claude y aprobalo allí. No contiene secretos.</p>
-        <textarea readOnly aria-label="Comando público para conectar Claude" value={connection.command} />
-        <p>Válido hasta {new Date(connection.expires_at * 1000).toLocaleTimeString()}. La escritura se habilita sólo al confirmar el adaptador vivo.</p>
-      </div>}
-    </div>;
+    return <ClaudeConnection key={s.session_id} session={s} toast={toast} />;
   }
   if (s.envio && !s.envio.puede) {
     return <div className="send"><div className="small dim" role="status">{s.envio.motivo || "No se puede enviar a esta sesión"}</div></div>;

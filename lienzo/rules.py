@@ -18,6 +18,7 @@ import traceback
 import captura
 import conocimiento
 import consulta
+import entregas_informes as informes
 import identity
 import rondas
 import sessions as ses
@@ -75,6 +76,45 @@ def connections_of(sid: str) -> dict:
     return {"links": ls, "rules": rs}
 
 
+def retirar_regla(rule_id: str) -> bool:
+    """Desactiva sin borrar informes pendientes; True si quedó conservada."""
+    with lock:
+        rule = next((r for r in rules.items if r["id"] == rule_id), None)
+        if rule is not None and informes.pendientes(rule):
+            anterior = dict(rule)
+            rule["enabled"] = False
+            try:
+                rules.save(strict=True)
+            except Exception:
+                rule.clear()
+                rule.update(anterior)
+                raise
+            rules.publish()
+            return True
+        rules.remove(lambda r: r["id"] == rule_id)
+        return False
+
+
+def agregar_regla(rule: dict, cap: int = 500) -> None:
+    """Recorta sólo reglas sin informes pendientes; la retención prevalece sobre el cupo."""
+    with lock:
+        previous = list(rules.items)
+        excess = max(0, len(previous) + 1 - cap)
+        retained = []
+        for existing in previous:
+            if excess and not informes.pendientes(existing):
+                excess -= 1
+            else:
+                retained.append(existing)
+        rules.items[:] = [*retained, rule]
+        try:
+            rules.save(strict=True)
+        except Exception:
+            rules.items[:] = previous
+            raise
+    rules.publish()
+
+
 def full_reply(s: dict, cap: int = 6000) -> str:
     """Ultima respuesta completa: la mas larga entre la de la transcripcion y la de la tarjeta.
 
@@ -100,7 +140,7 @@ def full_reply(s: dict, cap: int = 6000) -> str:
 def render_template(tpl: str, s: dict | None, respuesta: str | None = None) -> str:
     """`respuesta`: la del turno que se avisa, ya recortada, si ya se leyo (la foto de la espera)."""
     if not s:
-        return tpl
+        return tpl.replace("{respuesta}", respuesta) if respuesta is not None else tpl
     if "{respuesta}" in tpl and respuesta is None:
         respuesta = full_reply(s)
     return (
@@ -215,12 +255,20 @@ def proximo_permitido(r: dict, ahora: dt.datetime) -> tuple[dt.datetime | None, 
 
 def _diferir(r: dict, hasta: dt.datetime, motivo: str, foto: dict | None = None) -> None:
     """Un Stop que no puede salir ahora queda en espera, visible en la regla: nunca se descarta
-    callado. Varios en espera se agrupan en una sola entrega (la del ultimo turno que paso el
-    filtro: `foto` {texto, huella} es la suya, para que un turno intermedio posterior no la
-    reemplace). Con el lock."""
+    callado. Con solo_si, cada informe sale en orden; las reglas sin marcador conservan
+    su agrupacion historica. Todos los informes quedan persistidos. Con el lock."""
+    if foto is not None and foto.get("huella"):
+        informes.conservar(r, foto, now())
     prev = r.get("deferred") or {}
+    queue = list(prev.get("queue") or [])
+    if not queue and prev.get("respuesta") is not None:
+        queue.append({"texto": prev["respuesta"], "huella": prev.get("huella") or ""})
+    if foto is not None and not any(x["huella"] == foto["huella"] for x in queue):
+        queue.append(dict(foto))
     n = int(prev.get("count") or 0) + 1
     r["deferred"] = {"since": prev.get("since") or now(), "count": n, "until": hasta.isoformat(timespec="seconds")}
+    if queue and r.get("solo_si"):
+        r["deferred"]["queue"] = queue
     if foto is not None:
         r["deferred"].update(respuesta=foto["texto"], huella=foto["huella"])
     elif prev.get("respuesta") is not None:
@@ -279,7 +327,7 @@ def schedule_continue(s: dict, at: dt.datetime, motivo: str) -> None:
             "auto": True,
             "pc": identity.pc_id(),
         }
-        rules.add(rule, cap=500)
+        agregar_regla(rule)
     state.log(
         f"regla automatica {rule['id']}: {s['agent']} {s['session_id'][:8]} {motivo}; '{CONTINUE_TEXT}' a las {at_iso}"
     )
@@ -499,6 +547,11 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
                     rule["last_result"] = motivo
                 state.log(f"regla {rule['id']} ({rule.get('kind')}) -> {rule['to'][:8]}: {motivo}")
             return
+        if rule.get("informes"):
+            with lock:
+                rule["last_result"] = "en espera: destino desconocido; informes conservados"
+                rules.save()
+            return
         rules.remove(lambda r: r["id"] == rule["id"])
         state.log(f"regla {rule['id']} ({rule.get('kind')}) -> {rule['to'][:8]}: borrada, el destino ya no existe")
         return
@@ -528,9 +581,9 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
         return
     on_stop = rule.get("kind") == "on_stop"
     respuesta = h = None
-    if on_stop and src is not None:
+    if on_stop and (src is not None or foto is not None):
         if foto is not None:  # ya paso el marcador al cerrar el turno: solo se mira si se repite
-            respuesta, h, completa = foto["texto"], foto["huella"], None
+            respuesta, h, completa = short(foto["texto"], REPLY_CAP), foto["huella"], None
         else:
             t = turno_de(src)
             respuesta, h, completa = short(t["completa"], REPLY_CAP), t["huella"], t["completa"]
@@ -546,11 +599,32 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
             return
     text = render_template(rule.get("text") or "", src, respuesta)
     if agrupados:
-        cuantos = "un aviso demorado" if agrupados == 1 else f"{agrupados} avisos agrupados (va el del ultimo turno)"
+        if rule.get("solo_si"):
+            cuantos = f"informe demorado; {agrupados} aviso(s) en la espera"
+        else:
+            cuantos = "un aviso demorado" if agrupados == 1 else f"{agrupados} avisos agrupados (va el del ultimo turno)"
         text = f"[lienzo: {cuantos} por el limite de frecuencia de la regla {rule['id']}]" + chr(10) + text
+    informe = None
+    if on_stop and h:
+        with lock:
+            informe = informes.conservar(rule, {"texto": foto["texto"] if foto else completa, "huella": h}, now())
+            if informe["intentos"] or informe["estado"] != "pendiente":
+                return  # un reinicio no autoriza duplicar un envio incierto
+            informe["intentos"] += 1
+            informe["intento_at"] = now()
+            try:
+                if rules.save() is False:
+                    raise OSError("no se pudo conservar el informe antes del envio")
+            except Exception:
+                informe["intentos"] -= 1
+                informe.pop("intento_at", None)
+                raise
+        text = text.replace("{informe_id}", h).replace("{regla_id}", rule["id"])
     with captura.origen(clase="regla", de=src["session_id"] if src else None, rule_id=rule["id"], kind=rule["kind"]):
         code, res = send_to_session(dst, text, [])
     with lock:
+        if informe is not None:
+            informes.resultado(informe, code, res, now())
         rule["fired"] = rule.get("fired", 0) + 1
         rule["last_fired"] = now()
         rule["last_result"] = "ok" if code == 200 else str(res.get("error"))
@@ -643,7 +717,7 @@ def _evaluar_on_stop(sid: str, cerrada: dict) -> None:
     # la respuesta del turno, leida una vez y afuera del lock (puede leer la transcripcion): con ella
     # se filtra (marcador, repetida) antes de diferir y se saca la foto de la espera
     turno = turno_de(cerrada) if hay and cerrada else {"completa": "", "huella": ""}
-    foto = {"texto": short(turno["completa"], REPLY_CAP), "huella": turno["huella"]}
+    foto = {"texto": turno["completa"], "huella": turno["huella"]}
     with lock:
         s = sessions.get(sid)
         if s and any(suya(r) for r in rules.items):
@@ -672,6 +746,8 @@ def _evaluar_on_stop(sid: str, cerrada: dict) -> None:
         for r in rules.items:
             if not suya(r):
                 continue
+            foto_regla = ({**foto, "huella": foto["huella"] + "-" + secrets.token_hex(6)}
+                          if r.get("dedupe") is False else foto)
             if callar and r.get("to") == callar.get("a"):
                 r["last_result"] = "salteado: el turno respondía un envío sin_aviso"
                 salteadas.append(r)
@@ -681,17 +757,22 @@ def _evaluar_on_stop(sid: str, cerrada: dict) -> None:
                 r["last_result"] = filtro
                 salteadas.append(r)
                 continue
+            if foto.get("huella"):
+                informes.conservar(r, foto_regla, now())
+                if rules.save() is False:
+                    raise OSError("no se pudo conservar el informe del turno")
             if r["id"] in _on_stop_en_vuelo:
                 # ya hay un envio de esta regla en curso: este turno espera su turno, no se pierde
-                _diferir(r, ahora + dt.timedelta(seconds=ON_STOP_COOLDOWN_S), "envio anterior en curso", foto)
+                _diferir(r, ahora + dt.timedelta(seconds=ON_STOP_COOLDOWN_S), "envio anterior en curso", foto_regla)
                 diferidas.append(r)
                 continue
             hasta, motivo = proximo_permitido(r, ahora)
             if hasta is None and not r.get("deferred"):
                 due.append(r)
+                _fotos[r["id"]] = foto_regla
             else:
                 # limitada, o ya habia avisos en espera: este se suma y sale todo junto (rules_loop)
-                _diferir(r, hasta or ahora, motivo or "en espera", foto)
+                _diferir(r, hasta or ahora, motivo or "en espera", foto_regla)
                 diferidas.append(r)
         if diferidas or salteadas:
             rules.save()
@@ -700,7 +781,6 @@ def _evaluar_on_stop(sid: str, cerrada: dict) -> None:
         # veia la regla fria y la disparaba otra vez (revision 2026-10-04, B11)
         for r in due:
             _on_stop_en_vuelo.add(r["id"])
-            _fotos[r["id"]] = foto
     for r in diferidas + salteadas:
         state.log(f"on_stop de {sid[:8]}, regla {r['id']}: {r['last_result']}")
     if diferidas or salteadas:
@@ -877,15 +957,50 @@ def entregas_diferidas(ahora: dt.datetime) -> list[tuple[dict, int]]:
                 continue
             # la espera se consume al reservar: un Stop que llegue durante este envio abre otra
             _on_stop_en_vuelo.add(r["id"])
-            r["deferred"] = None
-            if d.get("respuesta") is not None:
+            cantidad = int(d.get("count") or 1)
+            queue = list(d.get("queue") or [])
+            if queue:
+                primera = queue.pop(0)
+                _fotos[r["id"]] = primera
+                if queue:
+                    d["queue"], d["count"] = queue, len(queue)
+                    d["until"] = (ahora + dt.timedelta(seconds=ON_STOP_COOLDOWN_S)).isoformat()
+                    r["deferred"] = d
+                else:
+                    r["deferred"] = None
+            else:
+                r["deferred"] = None
+            if not queue and r["id"] not in _fotos and d.get("respuesta") is not None:
                 _fotos[r["id"]] = {"texto": d["respuesta"], "huella": d.get("huella") or ""}
-            listas.append((r, int(d.get("count") or 1)))
+            listas.append((r, cantidad))
             cambio = True
         if cambio:
             rules.save()
     if cambio:
         rules.publish()
+    return listas
+
+
+def recuperar_informes() -> list[dict]:
+    """Recupera fotos conservadas sin intento; los envios inciertos requieren conciliacion.
+
+    No crea reglas ni despierta por acuses. Conserva limites, destino y reserva por regla.
+    """
+    listas = []
+    with lock:
+        for r in rules.items:
+            if not r.get("enabled") or r.get("kind") != "on_stop":
+                continue
+            if r.get("deferred") or r["id"] in _on_stop_en_vuelo:
+                continue
+            if proximo_permitido(r, dt.datetime.now().astimezone())[0] is not None:
+                continue
+            informe = next((x for x in r.get("informes", [])
+                            if x["estado"] == "pendiente" and not x["intentos"]), None)
+            if informe is not None:
+                _on_stop_en_vuelo.add(r["id"])
+                _fotos[r["id"]] = {"texto": informe["respuesta"], "huella": informe["id"]}
+                listas.append(r)
     return listas
 
 
@@ -910,6 +1025,7 @@ def rules_loop() -> None:
                         r["disabled_at"] = now()
                     elif at <= t:
                         due.append(r)
+            diferidas.extend((r, 0) for r in recuperar_informes())
             for r, n in diferidas:
                 try:
                     fire_rule(r, agrupados=n)
@@ -952,7 +1068,9 @@ def purge_stale_xpc(known_remote, known_local, *, peer_id: str | None = None) ->
         for r in rotas:
             r["parked_to"], r["parked_since"], r["enabled"] = r["to"], now(), False
         viejas = {
-            r["id"] for r in rules.items if r.get("parked_since") and (local_dt(r["parked_since"]) or limite) < limite
+            r["id"] for r in rules.items
+            if r.get("parked_since") and (local_dt(r["parked_since"]) or limite) < limite
+            and not any(x.get("estado") != "integrado" for x in r.get("informes", []))
         }
         if viejas:
             rules.items[:] = [r for r in rules.items if r["id"] not in viejas]
@@ -969,6 +1087,8 @@ def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
     limit = dt.datetime.now().astimezone() - dt.timedelta(hours=max_age_h)
 
     def stale(r: dict) -> bool:
+        if informes.pendientes(r):
+            return False
         if r.get("kind") != "at" or r.get("enabled"):
             return False
         ref = local_dt(r.get("disabled_at") or r.get("last_fired") or r.get("created"))

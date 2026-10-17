@@ -697,7 +697,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               {s.stopped_by ? "▶ Habilitar (quitar stopped)" : "⏹ Detener (stopped)"}
             </button>
           )}
-          {can(s.agent, "coordinable") && writable && (
+          {can(s.agent, "coordinable") && (writable || s.coordinator) && (
             <button
               type="button"
               role="menuitem"

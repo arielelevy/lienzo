@@ -36,7 +36,7 @@ def _instruccion(agent: str, distro: str | None) -> tuple[str | None, str | None
     if not path:
         return None, "RTK no esta instalado en el entorno elegido; se lanza sin compresion"
     return (
-        f"RTK disponible en {path}. Invocalo por esa ruta absoluta; no asumas que esta en PATH. Usa RTK explicitamente para salidas largas de comandos "
+        f"RTK disponible en {path}. Invocalo por esa ruta absoluta; no asumas que esta en PATH. Usa RTK explicitamente para lecturas y busquedas con rtk read, rtk rg, rtk find, rtk git y rtk recall, cuando sean compatibles. Tambien para salidas largas de comandos "
         "compatibles, por ejemplo rtk git status o rtk git diff. Conserva los codigos de salida. "
         "Ante un error recupera la salida original o ejecuta el comando diagnostico sin compresion. "
         "No filtres pruebas que requieren logs completos ni cambies hooks o permisos. "

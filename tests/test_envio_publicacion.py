@@ -201,7 +201,9 @@ def queue_card(tmp_path, monkeypatch):
     rollout.write_text("", encoding="utf-8")
     monkeypatch.setattr(cq, "codex_exe", lambda: "C:/fake/codex.exe")
     monkeypatch.setattr(cq.procinfo, "alive", lambda pid: True)
-    return {"agent": "codex", "session_id": SID, "pid": 42, "transcript_path": str(rollout)}
+    monkeypatch.setattr(cq.codex_identity, "probe", lambda pid: {
+        "verified": True, "pid": pid, "process_start": 1234, "thread": SID, "path": str(rollout)})
+    return {"agent": "codex", "session_id": SID, "pid": 42, "transcript_path": str(rollout), "codex_process_start": 1234}
 
 
 def test_atomic_reservation_blocks_parallel_queue_calls(queue_card, monkeypatch):

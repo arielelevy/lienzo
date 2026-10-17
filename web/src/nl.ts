@@ -1,4 +1,5 @@
 import type { Session } from "./types";
+import capabilities from "../../lienzo/agent-capabilities.json" with { type: "json" };
 
 /** Interpretar una frase corta como conexion. Sin modelo: patrones de castellano rioplatense.
  *
@@ -35,12 +36,12 @@ export type Parsed =
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 /** La coordinadora de un repo: la sesion marcada `coordinator` (estrella en la tarjeta) del mismo
- *  repo; si no hay ninguna, la primera sesion de Claude del mismo repo. `exclude` es la sesion que
+ *  repo; si no hay ninguna, la primera sesion coordinable del mismo repo. `exclude` es la sesion que
  *  pregunta (no se coordina a si misma). Lo usan el checkbox "avisarme" del SendBox, el `me` de
  *  Conectar y el "avisame" del parser: una sola definicion. */
 export function coordinatorOf(repo: string, sessions: Session[], exclude?: string): Session | undefined {
   const same = sessions.filter((o) => o.repo === repo && o.session_id !== exclude);
-  return same.find((o) => o.coordinator) ?? same.find((o) => o.agent === "claude");
+  return same.find((o) => o.coordinator) ?? same.find((o) => capabilities[o.agent as keyof typeof capabilities]?.coordinable);
 }
 
 /** Ajustes del resumen: `current` es como se llama el destino que ya tiene el dialogo (para las frases

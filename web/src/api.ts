@@ -122,7 +122,7 @@ export interface ScreenResponse {
 const ses = (sid: string, rest: string) => `/sessions/${sid}/${rest}`;
 
 export const sessionsApi = {
-  claudePipe: (sid: string) => api.post<{ command: string; session_id: string; expires_at: number; connected: boolean }>(ses(sid, "claude-pipe"), {}),
+  claudePipe: (sid: string, reconnect = false) => api.post<{ command: string; session_id: string; expires_at: number; connected: boolean }>(ses(sid, "claude-pipe"), { reconnect }),
   send: (sid: string, body: SendBody) => api.post<SendResult>(ses(sid, "send"), body),
   interrupt: (sid: string) => api.post(ses(sid, "interrupt"), {}),
   kill: (sid: string) => api.post(ses(sid, "kill"), { confirm: sid }),
@@ -178,6 +178,8 @@ export const rulesApi = {
   create: (r: NewRule) => api.post("/rules", r),
   update: (id: string, r: RuleEdit) => api.put(`/rules/${id}`, r),
   remove: (id: string) => api.del(`/rules/${id}`),
+  acknowledgeReport: (id: string, report: string, estado: "recibido" | "integrado") =>
+    api.post(`/rules/${encodeURIComponent(id)}/informes/${encodeURIComponent(report)}/acuse`, { estado }),
 };
 
 /** Contestar un pendiente de hook: permiso, o pregunta con opciones (`answers`). */

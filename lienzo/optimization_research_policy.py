@@ -219,7 +219,7 @@ def evaluate(adapter_limits: dict, *, mode: str = "read_only", runs_today: int =
             limits["max_runs_per_day"], auth.get("max_ejecuciones_dia", limits["max_runs_per_day"])
         )
         if "uso_semanal_max_pct" in auth:
-            limits["max_weekly_used_pct"] = auth["uso_semanal_max_pct"]
+            limits["max_weekly_used_pct"] = min(CODEX_AUTHORIZATION["uso_semanal_max_pct"], auth["uso_semanal_max_pct"])
     if type(runs_today) is not int or runs_today < 0:
         reasons.append("conteo de ejecuciones del día desconocido")
     elif runs_today >= limits["max_runs_per_day"]:

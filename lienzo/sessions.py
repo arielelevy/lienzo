@@ -22,6 +22,7 @@ import backend
 import captura
 import claude_pipe_runtime
 import coda
+import codex_identity
 import codex_queue
 import conocimiento
 import consulta
@@ -202,6 +203,15 @@ def refresh_envios() -> None:
                     if updated != old:
                         card[field] = updated
                         changed = True
+                    import entregas_informes
+
+                    reconciled = False
+                    for rule in rules.items:
+                        if rule.get("to") == snap["session_id"]:
+                            reconciled |= entregas_informes.confirmar_envio(rule, old["envio_id"], result, now())
+                    if reconciled:
+                        rules.save(strict=True)
+                        rules.publish()
                 if changed or (before != view["envio"] and _envio_firma(card) == _envio_firma(snap)):
                     touch(card)
             state.avisar_si_cambia(f"envio {snap['session_id']}", None)
@@ -676,8 +686,14 @@ def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
                 guardar_sucesion()
             state.log(f"{n} reglas de y hacia {sid[:8]} quedan en espera de una sucesora")
     else:
-        rules.remove(lambda r: r.get("from") == sid)  # las suyas mueren con ella
-        rules.remove(lambda r: r["to"] == sid)
+        with lock:
+            for rule in rules.items:
+                if sid in (rule.get("from"), rule.get("to")) and any(
+                        informe.get("estado") != "integrado" for informe in rule.get("informes", [])):
+                    rule["enabled"] = False
+            rules.save(strict=True)
+        rules.remove(lambda r: sid in (r.get("from"), r.get("to")) and not any(
+            informe.get("estado") != "integrado" for informe in r.get("informes", [])))
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
     restore_on_drop(card, muerta)
     state.broadcast({"type": "removed", "session_id": sid})
@@ -2133,8 +2149,13 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
     )
     if not tpath:
         return
+    codex_proof = None
+    if s["agent"] == "codex":
+        codex_proof = codex_identity.probe(s["pid"])
+        if not codex_proof["verified"] or (sid, tpath) != (codex_proof["thread"], codex_proof["path"]):
+            return
     with lock:
-        if s.get("hooked"):
+        if s.get("hooked") and s["agent"] != "codex":
             return  # la extension tiene prioridad sobre el entorno de un comando anterior
         if sid and sid != s["session_id"] and sid in sessions:
             return  # no vincular un archivo cuya sesion ya tiene otra tarjeta
@@ -2147,6 +2168,8 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
             except OSError as e:
                 state.log(f"barrido: no cambio {viejo[:8]} a {sid[:8]}: no se guardaron reglas/enlaces: {e}")
                 return
+            if s["agent"] == "codex" and s.get("envio_codex"):
+                s.setdefault("envios_codex_anteriores", {})[viejo] = s.pop("envio_codex")
             forget_session(viejo)
             state.broadcast({"type": "removed", "session_id": viejo})
             s["session_id"] = sid
@@ -2155,6 +2178,8 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
                 rules.publish()
             if n_links:
                 links.publish()
+        if codex_proof:
+            s["codex_process_start"] = codex_proof["process_start"]
         s["transcript_path"] = tpath
         s["cwd"] = s.get("cwd") or cwd
         apply_repo(s, s["cwd"])
@@ -2169,7 +2194,12 @@ def adopt_process(p: dict) -> None:
     """Agente vivo que ninguna tarjeta reclama: si su transcripcion ya tiene tarjeta, esa recupera
     el pid (venia de una corrida anterior); si no, se abre una nueva."""
     cwd = p.get("cwd") or backend.cwd_of(p)  # en tmux el cwd viene del pane; en win32, del backend
-    if p["agent"] == "pi" and not p.get("pi_guess_allowed"):
+    codex_proof = None
+    if p["agent"] == "codex":
+        codex_proof = codex_identity.probe(p["pid"])
+        sid, tpath = ((codex_proof["thread"], codex_proof["path"])
+                      if codex_proof["verified"] else (None, None))
+    elif p["agent"] == "pi" and not p.get("pi_guess_allowed"):
         sid, tpath = p.get("pi_session") or (None, None)
     else:
         sid, tpath = (
@@ -2181,6 +2211,9 @@ def adopt_process(p: dict) -> None:
     with lock:
         s = sessions.get(sid) if sid else None
         if s is not None:
+            if codex_proof and s.get("pid") != p["pid"] and s.get("pid") and backend.agent_alive(s):
+                state.log(f"barrido: hilo Codex {sid[:8]} observado en dos procesos; no se reasigna")
+                return
             s["backend"] = p.get("backend")  # la fuente que la vio es la que la maneja
             if p.get("external"):
                 s["external"] = p["external"]
@@ -2202,6 +2235,10 @@ def adopt_process(p: dict) -> None:
                 if s["state"] == "muerta":
                     set_state(s, "termino")
                 touch(s)
+            if codex_proof and codex_proof["verified"] and s.get("pid") == p["pid"]:
+                s["codex_process_start"] = codex_proof["process_start"]
+                s["transcript_path"] = codex_proof["path"]
+                touch(s)
             return
         s = new_session(sid or f"{'tmux' if p.get('backend') == 'tmux' else 'pid'}-{p['pid']}", p["agent"], "sweep")
         s.update(
@@ -2219,6 +2256,8 @@ def adopt_process(p: dict) -> None:
                 "orphan": p.get("orphan"),
             }
         )
+        if codex_proof and codex_proof["verified"]:
+            s["codex_process_start"] = codex_proof["process_start"]
         apply_repo(s, cwd)
         if not tpath:
             s["title"] = "sesion sin transcripcion identificada"
@@ -2242,7 +2281,7 @@ def sweep_once() -> None:
         sin_transcripcion = [
             s
             for s in sessions.values()
-            if s.get("source") == "sweep"
+            if (s.get("source") == "sweep" or s["agent"] == "codex")
             and s.get("pid")
             and (not s.get("transcript_path") or perfil(s["agent"]).identity_key is not None)
         ]
@@ -2259,7 +2298,8 @@ def sweep_once() -> None:
         elif perfil(s["agent"]).identity_key is not None:
             # un /new o un resume en la TUI cambian la sesion del mismo proceso
             identity = observed.get(perfil(s["agent"]).identity_key)
-            if identity and identity != (s["session_id"], s.get("transcript_path")):
+            if identity and (identity != (s["session_id"], s.get("transcript_path"))
+                             or (s["agent"] == "codex" and not s.get("codex_process_start"))):
                 attach_transcript(s, identity)
         else:
             attach_transcript(s)
@@ -2702,8 +2742,9 @@ def queue_blocked(s: dict) -> tuple[int, dict] | None:
 
 def puede_enviar(s: dict) -> dict:
     """`{puede, motivo, transporte}` (contrato de D, revision-arquitectura-informe.md 12:1x): cómo se le escribe
-    a la tarjeta. Codex de CLI o app → `codex_queue` si se puede; una CLI sin cola posible (id de hilo o rollout
-    todavía desconocidos, sin codex.exe) vuelve al tecleo; la app nunca se teclea. Claude Desktop → canal nativo
+    a la tarjeta. Codex de CLI o app exige identidad para la cola. Sólo una CLI nueva sin hilo ni
+    pedidos admite su primer prompt por consola; una identidad de hilo incierta no habilita fallback.
+    Claude Desktop → canal nativo
     (no lo envía el lienzo)."""
     if s.get("agent") == "claude":
         ext = s.get("external") or {}
@@ -2711,14 +2752,19 @@ def puede_enviar(s: dict) -> dict:
             if s.get("stopped_by") or s.get("pending_id"):
                 return {"puede": False, "motivo": "sesión detenida o con permiso/pregunta pendiente", "transporte": "claude_pipe"}
             pipe = claude_pipe_runtime.availability(s)
-            if pipe["puede"] or (s.get("envio_claude") or {}).get("estado") in ("pendiente", "encolado", "sin_confirmacion"):
+            if ext.get("kind") == "claude-desktop" or pipe["puede"] or (s.get("envio_claude") or {}).get("estado") in ("pendiente", "encolado", "sin_confirmacion"):
                 return pipe
     if s.get("agent") == "codex" and (codex_queue.es_desktop(s) or not s.get("external")):
         if bloqueo := queue_blocked(s):
             return {"puede": False, "motivo": bloqueo[1]["error"], "transporte": None}
+        if (s.get("source") == "sweep" and s.get("session_id") == f"pid-{s.get('pid')}"
+                and not s.get("transcript_path") and not s.get("last_prompt")
+                and not s.get("envio_codex") and not s.get("envios_codex_anteriores")):
+            bloqueo = send_blocked(s)
+            return ({"puede": False, "motivo": bloqueo[1]["error"], "transporte": None} if bloqueo
+                    else {"puede": True, "motivo": None, "transporte": "tecleo"})
         plan = codex_queue.puede_enviar(s)
-        if plan["puede"] or codex_queue.es_desktop(s):
-            return plan  # la app nunca se teclea; una CLI sin cola posible sigue con el tecleo de siempre
+        return plan  # identidad incierta no habilita tecleo alternativo
     if (s.get("external") or {}).get("kind") == "claude-desktop":
         return {"puede": False, "motivo": external_blocked(s)[1]["error"], "transporte": "canal_nativo"}
     bloqueo = send_blocked(s)
@@ -3081,7 +3127,7 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
         plan = puede_enviar(s)
         if plan["transporte"] == "codex_queue":
             return send_codex_queue(s, text, attachments)
-        if codex_queue.es_desktop(s):
+        if not plan["puede"]:
             return 409, {"ok": False, "error": plan["motivo"], "envio": plan}
     if frenado := send_blocked(s):
         return frenado

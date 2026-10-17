@@ -399,7 +399,7 @@ def lanzar_y_titular(
 
     if cablear_al_lanzar and not YO:
         print("lanzar_y_titular: c.YO esta vacio, la tarjeta nueva queda SIN regla de aviso", file=sys.stderr)
-    antes = set(en_carpeta())
+    antes = list(en_carpeta().values())
     code, res = lanzar(pc, cwd, titulo, agent, model)
     if code != 200:
         print(f"lanzar_y_titular: no se lanzo ({code}): {res}", file=sys.stderr)
@@ -413,7 +413,9 @@ def lanzar_y_titular(
     fin = time.time() + espera
     while time.time() < fin:
         time.sleep(3)
-        nuevas = [x for sid, x in en_carpeta().items() if sid not in antes]
+        # El primer turno cambia pid-N por UUID sin crear otro proceso. Esa
+        # transición de una tarjeta previa no es el lanzamiento que esperamos.
+        nuevas = [x for x in en_carpeta().values() if reubicar(x, antes) is None]
         if nuevas:
             nueva = nuevas[0]
             titular(nueva, titulo)

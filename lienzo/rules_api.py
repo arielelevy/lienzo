@@ -9,6 +9,7 @@ las pruebas las importen de ahi."""
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import math
 import secrets
@@ -252,7 +253,7 @@ def _alta_on_stop(d: dict, text: str, max_fires: int | None, limites: dict) -> t
         created=now(),
         **limites,
     )
-    rules.add(rule, cap=500)
+    rl.agregar_regla(rule)
     state.log(f"regla nueva {rule['id']}: on_stop -> {rule['to'][:8]}")
     return 200, rule
 
@@ -285,13 +286,13 @@ def _alta_at(d: dict, text: str, at: dt.datetime, extra: dict) -> tuple[int, dic
                 "text": clash.get("text") or "",
                 "replace": True,
             }
-        rules.remove(lambda r: r["id"] == clash["id"])
+        rl.retirar_regla(clash["id"])
         state.log(
             f"regla {clash['id']} ({clash.get('at')} {short(clash.get('text') or '', 40)!r}) reemplazada por una nueva a la misma hora"
         )
     # de at_fields salen every_s, max_fires, skip_busy y repeat=bool(every_s)
     rule = new_rule(d, text, at=at.isoformat(timespec="seconds"), fired=0, enabled=True, created=now(), **extra)
-    rules.add(rule, cap=500)
+    rl.agregar_regla(rule)
     cada = f" cada {rule['every_s']} s x{rule['max_fires']}" if rule.get("every_s") else ""
     state.log(f"regla nueva {rule['id']}: at -> {rule['to'][:8]} {rule['at']}{cada}")
     return 200, rule
@@ -386,3 +387,24 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
         f"regla {r['id']} editada: {r['kind']} -> {r['to'][:8]} {r.get('at') or ''} {short(r.get('text') or '', 60)!r}"
     )
     return 200, r
+
+
+def acuse_informe(rule_id: str, informe_id: str, d: dict) -> tuple[int, dict]:
+    """POST /rules/<id>/informes/<huella>/acuse; actor resuelto por el handler."""
+    with lock:
+        rule = next((x for x in rules.items if x["id"] == rule_id), None)
+        if rule is None:
+            return 404, {"error": "conexion desconocida"}
+        anterior = copy.deepcopy(rule.get("informes", []))
+        code, body = rl.informes.acusar(rule, informe_id, d.get("estado"), d.get("session_id"), now())
+        if code == 200:
+            try:
+                rules.save(strict=True)
+            except Exception:
+                for actual, previo in zip(rule["informes"], anterior):
+                    actual.clear()
+                    actual.update(previo)
+                raise
+    if code == 200:
+        rules.publish()
+    return code, body
