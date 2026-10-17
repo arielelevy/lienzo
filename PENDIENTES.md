@@ -12,24 +12,39 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 Checklist único de esta conversación. Todo queda pendiente; el estado técnico no cierra una tarea.
 **Prioridad indicada por Ariel: primero el evaluador que usa Codex en segundo plano.**
 
-### Release en preparación — envío a Codex y Claude (2026-10-17)
+### Release 0.2.0 — estado observado y pendientes (2026-10-17)
 
-- [ ] Dejar operativa en este release la integración de envío con Codex y Claude, pedido de Ariel.
-  Codex usa `codex queue`; Claude se prueba mediante pipe autenticado con adaptador hijo de la
-  propia sesión. No confundir escritura al pipe con entrega al modelo ni respuesta.
-  Estado: A entregó cola Codex con prueba real y suite reportada de 2022 passed, 3 skipped;
-  C entregó detección y tarjeta desktop. Sus procesos fueron cerrados conservando informes,
-  código y logs. D integra publicación de capacidades, confirmaciones, formulario y estados UI;
-  E implementa puente Claude con pruebas aisladas. La coordinadora es Codex, sucesora de B.
-  Prueba Claude verificada: versión 2.1.302, un mensaje peer con token válido y un ACK exacto;
-  cero filas con el marcador de token inválido; proceso y registro de prueba cerrados.
-  Esto verifica hijo → sesión propia, todavía no Lienzo → Claude Desktop.
-  Pendiente: corregir concurrencia/deduplicación y estados inciertos de Codex; registrar y
-  comprobar vida del adaptador Claude; probar circuito real desde Lienzo, incluida Desktop;
-  revisión, pruebas agénticas integradas y activación coordinada. Sin baseline aprobado ni
-  PASS certificado. No se reinició el servidor principal.
-  Evidencia y reparto: `.temp/coordinacion/2026-10-17/orden-release.md`, informes A/C/D/E y
-  `claude-pipe-prueba/verification.json`. Hallazgos: `code-review-2026-10-17.md`.
+Publicado por pedido explícito de Ariel: `main` y tag `v0.2.0`, commit `98e65f7`.
+Build, ESLint global y pruebas Node terminaron con código 0. Correcciones de diseño:
+367 backend +13 UI; clasificación/respuestas tardías: 68 focales; bridge/bootstrap: 8 +6.
+La prueba real por API principal a Claude Desktop contó un peer y un ACK exacto, y la API
+publicó el mismo UUID como entregado con confirmación final. No se confunde con el self-test.
+El servidor se reinició a las 13:44 con PID nuevo, conservando transcripciones e informes.
+Sesiones de trabajo D/F cerradas después de leer sus entregas; reglas de retorno retiradas.
+La sesión Desktop y las sesiones de otros proyectos no se cerraron.
+
+La corrida global larga se interrumpió por pedido de simplificar el cierre; no tiene resultado
+completo y no se declara aprobada. Baselines y mutaciones no se aprobaron automáticamente.
+Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
+
+- [ ] Reconectar el adaptador de Claude Desktop después del reinicio del servidor: generar
+  un bootstrap nuevo en la tarjeta y autorizar ese comando directamente en esa conversación.
+  La conexión anterior probada caduca al cerrar el servidor; no reutilizar comandos vencidos.
+  Conectado el adaptador, no hay autorización por cada mensaje.
+- [ ] Retomar, si se prioriza, la automatización de conexión de sesiones Desktop nuevas o
+  evaluar Claude Code como puente. Prototipo y pruebas conservados íntegros fuera del release
+  en `.temp/coordinacion/2026-10-17/automatizacion-diferida`; sin cambiar hooks instalados,
+  permisos ni modos para eludir rechazos. Exige una prueba real de sesión nueva.
+- [ ] Ejecutar una batería global completa cuando se retome esa validación; aceptar baseline
+  y mutaciones sólo tras revisión humana. Las pruebas focales no se publican como globales.
+- [ ] Arrancar habitualmente mediante `lienzo-server.cmd` para disponer del relanzamiento.
+  El proceso iniciado directamente con Python rechaza POST /restart de forma segura; este
+  reinicio requirió detener el PID identificado y levantar un proceso nuevo.
+- [ ] Revisar continuidad de mensajes Codex encolados al cerrar una CLI, y la sucesión de
+  títulos/reglas cuando una sesión Desktop nueva comparte repo con un encargo CLI cerrado.
+  No reutilizar el proceso ni el nombre de un emisor auxiliar como identidad de sesión.
+- [ ] Evaluar handles fijados en copias si se necesita resistir sustituciones hostiles de
+  rutas entre validación y uso; el rechazo actual de junctions existentes no elimina TOCTOU.
 
 ### P0 — Falla grave de continuidad de la coordinadora (2026-10-17)
 
