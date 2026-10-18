@@ -3,13 +3,17 @@ import type { Session } from "../src/types";
 import { BASE, SID, instalarTablero, sesiones } from "./tablero-fijo";
 
 /** UI real servida por Vite; API y SSE son fixtures explícitos. SSE de sockets reales se mide en pytest. */
-for (const result of ["encolado", "entregado", "sin_confirmacion"] as const) {
-  test(`abrir app Codex, enviar y observar ${result} y actualización SSE`, async ({ page }) => {
+for (const { result, desktop } of [
+  { result: "encolado", desktop: false },
+  ...(["encolado", "entregado", "sin_confirmacion"] as const).map(result => ({ result, desktop: true })),
+] as const) {
+  test(`abrir Codex ${desktop ? "Desktop" : "CLI"}, enviar y observar ${result} y actualización SSE`, async ({ page }) => {
+    const transport = desktop ? "codex_queue" : "tecleo";
     const lista = sesiones().map((s): Session => s.session_id !== SID.capas ? s : {
-      ...s, agent: "codex", pid: null, source: "desktop", no_console: true,
+      ...s, agent: "codex", pid: desktop ? null : 4242, source: desktop ? "desktop" : "sweep", no_console: desktop,
       pending_id: null, needs: null, stopped_by: null,
-      external: { kind: "codex-desktop", via: "rollout", desktop: true },
-      envio: { puede: true, motivo: null, transporte: "codex_queue" },
+      external: desktop ? { kind: "codex-desktop", via: "rollout", desktop: true } : null,
+      envio: { puede: true, motivo: null, transporte: transport },
     });
     await page.addInitScript((sessions) => {
       let deliver: ((ev: unknown) => void) | undefined;
@@ -34,7 +38,7 @@ for (const result of ["encolado", "entregado", "sin_confirmacion"] as const) {
     const requests: unknown[] = [];
     await page.route(`**/sessions/${SID.capas}/send`, async (route) => {
       requests.push(route.request().postDataJSON());
-      await route.fulfill({ json: { ok: true, chars: 4, estado: result, motivo: result === "sin_confirmacion" ? "resultado incierto; no se reintenta" : null, transporte: "codex_queue" } });
+      await route.fulfill({ json: { ok: true, chars: 4, estado: result, motivo: result === "sin_confirmacion" ? "resultado incierto; no se reintenta" : null, transporte: transport } });
     });
     await page.goto(BASE);
     const card = page.locator(`.card[data-sid="${SID.capas}"]`);
@@ -51,11 +55,12 @@ for (const result of ["encolado", "entregado", "sin_confirmacion"] as const) {
     const s = lista.find((s) => s.session_id === SID.capas)!;
     await page.evaluate((session) => {
       (window as unknown as { __envioEvent: (ev: unknown) => void }).__envioEvent({ type: "session", session });
-    }, { ...s, envio_codex: { estado: "entregado", motivo: null, transporte: "codex_queue" } });
+    }, { ...s, envio_codex: { estado: "entregado", motivo: null, transporte: transport } });
     await expect(card.getByRole("status")).toHaveText("Último envío: entregado");
     // La capacidad de enviar no habilita operaciones de consola.
     await card.locator("button.kebab").click();
-    await expect(card.getByRole("menuitem", { name: "Cerrar proceso a la fuerza…" })).toHaveCount(0);
+    if (desktop) await expect(card.getByRole("menuitem", { name: "Cerrar proceso a la fuerza…" })).toHaveCount(0);
+    else await expect(card.getByRole("menuitem", { name: "Cerrar proceso a la fuerza…" })).toBeVisible();
   });
 }
 

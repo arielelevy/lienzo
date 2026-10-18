@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import glob
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,7 @@ import codex_queue
 import conocimiento
 import consulta
 import identity
+import procs
 import recientes
 import restore
 import screen
@@ -185,7 +187,7 @@ def refresh_envios() -> None:
             old = snap.get(field) or {}
             result = None
             # Expirado es terminal para el sondeo; confirmar() sigue disponible explícitamente.
-            if (old.get("envio_id") and not old.get("confirmacion_final")
+            if (old.get("transporte") != "tecleo" and old.get("envio_id") and not old.get("confirmacion_final")
                     and old.get("estado") in ("pendiente", "encolado", "sin_confirmacion")):
                 result = (claude_pipe_runtime.confirm if field == "envio_claude" else codex_queue.confirmar)(old["envio_id"])
                 if result["estado"] == "desconocido" and time.time() - old.get("at", time.time()) > 600:
@@ -1091,6 +1093,13 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
             # sin hooks, el pedido sale de la transcripcion; el que tecleo el lienzo ya quedo como envio
             via = "lienzo" if s.get("sent_mark") and prompt_mark(p) == s["sent_mark"] else None
             captura.pedido(s, p, via, turno=t.get("id"))
+            receipt = s.get("envio_codex") or {}
+            started = parse_ts(t.get("ts_start"))
+            if (via == "lienzo" and receipt.get("transporte") == "tecleo" and started
+                    and started.timestamp() >= receipt["at"]
+                    and hashlib.sha256(p.encode()).hexdigest() == receipt.get("prompt_sha256")):
+                receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
+                s["sent_mark"] = s["envio_pendiente"] = None
     if t.get("final") or not t.get("ended"):
         s["last_reply"] = turn_say(t) or s["last_reply"]
     if not turn_say(t) and (waiting := perfil(s["agent"]).waiting_text(t)):
@@ -1474,6 +1483,9 @@ def envio_sin_confirmar(s: dict, ahora: float) -> bool:
         return False
     if s.get("sent_mark") is None or not s.get("alive"):
         s["envio_pendiente"] = None  # confirmado por otro camino, o el proceso murio
+        receipt = s.get("envio_codex") or {}
+        if not s.get("alive") and receipt.get("transporte") == "tecleo" and receipt.get("estado") in ("pendiente", "encolado"):
+            receipt.update(estado="sin_confirmacion", motivo="el proceso Codex terminó sin confirmar; no se reintenta")
         return False
     if s.get("state") == "corriendo":
         return False
@@ -1481,6 +1493,9 @@ def envio_sin_confirmar(s: dict, ahora: float) -> bool:
     if ahora - desde < ENVIO_SIN_CONFIRMAR_S:
         return False
     s["envio_pendiente"] = None
+    receipt = s.get("envio_codex") or {}
+    if receipt.get("transporte") == "tecleo" and receipt.get("estado") in ("pendiente", "encolado"):
+        receipt.update(estado="sin_confirmacion", motivo="Codex no confirmó el mensaje; no se reintenta")
     detalle = short(s.get("last_prompt") or "", 200)
     set_needs(s, {"kind": "sin_enviar", "detail": detalle, "where": "terminal"})
     state.log(
@@ -1498,6 +1513,10 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
     raw = ev.get("prompt", "")
     sistema = transcripts.is_system_prompt(raw)
     via = None if sistema else prompt_origin(s, raw)
+    receipt = s.get("envio_codex") or {}
+    if (via == "lienzo" and receipt.get("transporte") == "tecleo"
+            and hashlib.sha256(raw.encode()).hexdigest() == receipt.get("prompt_sha256")):
+        receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
     # el pedido que es el propio mensaje de autorizacion (lo tecleo el lienzo con `autorizando`) no
     # olvida lo autorizado: si no, la relectura del turno volvia a mostrar la misma denegacion
     autorizacion = via == "lienzo" and s.get("autorizando")
@@ -2165,6 +2184,8 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
         if (sid, tpath) != (codex_proof["thread"], codex_proof["path"]):
             return
     with lock:
+        if codex_proof and s.get("pid") != probe_pid:
+            return
         if s.get("hooked") and s["agent"] != "codex":
             return  # la extension tiene prioridad sobre el entorno de un comando anterior
         if sid and sid != s["session_id"] and sid in sessions:
@@ -2178,7 +2199,7 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
             except OSError as e:
                 state.log(f"barrido: no cambio {viejo[:8]} a {sid[:8]}: no se guardaron reglas/enlaces: {e}")
                 return
-            if s["agent"] == "codex" and s.get("envio_codex"):
+            if s["agent"] == "codex" and s.get("envio_codex") and s["envio_codex"].get("transporte") != "tecleo":
                 s.setdefault("envios_codex_anteriores", {})[viejo] = s.pop("envio_codex")
             forget_session(viejo)
             state.broadcast({"type": "removed", "session_id": viejo})
@@ -2194,6 +2215,8 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
         elif codex_proof:
             s.pop("codex_process_start", None)
             s["codex_identity_reason"] = codex_proof["reason"]
+        if codex_proof:
+            s["codex_console_start"] = codex_proof["process_start"]
         s["transcript_path"] = tpath
         s["cwd"] = s.get("cwd") or cwd
         apply_repo(s, s["cwd"])
@@ -2253,6 +2276,8 @@ def adopt_process(p: dict) -> None:
                 s["codex_process_start"] = codex_proof["process_start"]
                 s["transcript_path"] = codex_proof["path"]
                 touch(s)
+            if codex_proof and s.get("pid") == p["pid"]:
+                s["codex_console_start"] = procs.creation_filetime(p["pid"])
             return
         s = new_session(sid or f"{'tmux' if p.get('backend') == 'tmux' else 'pid'}-{p['pid']}", p["agent"], "sweep")
         s.update(
@@ -2274,6 +2299,8 @@ def adopt_process(p: dict) -> None:
             s["codex_process_start"] = codex_proof["process_start"]
         elif codex_proof:
             s["codex_identity_reason"] = codex_proof["reason"]
+        if codex_proof:
+            s["codex_console_start"] = procs.creation_filetime(p["pid"])
         apply_repo(s, cwd)
         if not tpath:
             s["title"] = "sesion sin transcripcion identificada"
@@ -2758,8 +2785,7 @@ def queue_blocked(s: dict) -> tuple[int, dict] | None:
 
 def puede_enviar(s: dict) -> dict:
     """`{puede, motivo, transporte}` (contrato de D, revision-arquitectura-informe.md 12:1x): cómo se le escribe
-    a la tarjeta. Codex de CLI o app exige identidad para la cola. Sólo una CLI nueva sin hilo ni
-    pedidos admite su primer prompt por consola; una identidad de hilo incierta no habilita fallback.
+    a la tarjeta. Codex CLI recibe por su consola; Desktop utiliza la cola por hilo.
     Claude Desktop → canal nativo
     (no lo envía el lienzo)."""
     if s.get("agent") == "claude":
@@ -2773,14 +2799,12 @@ def puede_enviar(s: dict) -> dict:
     if s.get("agent") == "codex" and (codex_queue.es_desktop(s) or not s.get("external")):
         if bloqueo := queue_blocked(s):
             return {"puede": False, "motivo": bloqueo[1]["error"], "transporte": None}
-        if (s.get("source") == "sweep" and s.get("session_id") == f"pid-{s.get('pid')}"
-                and not s.get("transcript_path") and not s.get("last_prompt")
-                and not s.get("envio_codex") and not s.get("envios_codex_anteriores")):
+        if not codex_queue.es_desktop(s):
             bloqueo = send_blocked(s)
             return ({"puede": False, "motivo": bloqueo[1]["error"], "transporte": None} if bloqueo
                     else {"puede": True, "motivo": None, "transporte": "tecleo"})
         plan = codex_queue.puede_enviar(s)
-        return plan  # identidad incierta no habilita tecleo alternativo
+        return plan
     if (s.get("external") or {}).get("kind") == "claude-desktop":
         return {"puede": False, "motivo": external_blocked(s)[1]["error"], "transporte": "canal_nativo"}
     bloqueo = send_blocked(s)
@@ -2809,7 +2833,11 @@ def compose_send(
     attachments = [a for a in (attachments or []) if _under_adjuntos(a)]  # M5: confinar al buzon
     text = (text or "").replace("\r", "")
     orig = text.strip()  # lo que escribio el usuario: es lo que se cuenta y lo que muestra la tarjeta
-    if len(text) > LONG_TEXT or "\n" in orig:
+    if agent == "codex" and any(ord(ch) > 0xFFFF for ch in text + "".join(attachments)):
+        payload = "\n".join([text, *[f"Adjunto: {path}" for path in attachments]])
+        attachments = [save_attachment(sid, "mensaje.md", payload.encode("utf-8"))]
+        text = ATTACH_WRAPPER
+    elif len(text) > LONG_TEXT or "\n" in orig:
         attachments = [save_attachment(sid, "mensaje.md", text.encode("utf-8"))] + list(attachments)
         text = ATTACH_WRAPPER_SHELL if agent in SHELL_READERS else ATTACH_WRAPPER
     parts = [strip_control(text).strip()] if text.strip() else []  # A4: sin teclas de control
@@ -2839,6 +2867,11 @@ def run_send(s: dict, final: str, enter: bool = True, key: str | None = None) ->
         return 200, r
     tf = save_attachment(sid, ".send.txt", final.encode("utf-8")) if len(final) > 2000 else None
     cmd = [PYTHON, os.path.join(HERE, "send.py"), "--pid", str(pid)]
+    if s.get("agent") == "codex":
+        start = s.get("codex_console_start")
+        if type(start) is not int or procs.creation_filetime(pid) != start:
+            return 409, {"ok": False, "error": "el proceso Codex cambió o aún no se verificó: esperá el próximo barrido"}
+        cmd += ["--expected-start", str(start)]
     cmd += ["--text-file", tf] if tf else ["--text", final]
     if not enter:
         cmd.append("--no-enter")
@@ -3155,17 +3188,42 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     if frenado := dialogo_abierto(s):
         return frenado
     attachments_pedidos = list(attachments or [])
+    console_receipt = None
+    if s.get("agent") == "codex":
+        digest = hashlib.sha256(json.dumps([text, attachments_pedidos], ensure_ascii=False).encode()).hexdigest()
+        with lock:
+            previous = s.get("envio_codex") or {}
+            if (previous.get("transporte") == "tecleo" and previous.get("digest") == digest
+                    and (previous.get("estado") in ("pendiente", "encolado", "sin_confirmacion")
+                         or (previous.get("estado") == "entregado" and time.time() - previous["at"] < 60))):
+                return 200, {"ok": True, "chars": len(text), **previous}
+            if previous.get("transporte") == "tecleo" and previous.get("estado") == "pendiente":
+                return 409, {"ok": False, "error": "hay un envío a la consola Codex en curso; esperá a que termine"}
+            if previous and previous.get("transporte") != "tecleo":
+                s.setdefault("envios_codex_anteriores", {})[previous.get("envio_id") or sid] = previous
+            console_receipt = {"envio_id": secrets.token_hex(12), "at": time.time(), "estado": "pendiente",
+                               "transporte": "tecleo", "motivo": "esperando escritura en la consola de Codex", "digest": digest}
+            s["envio_codex"] = console_receipt
     final, orig, attachments = compose_send(
         sid, text, attachments, agent=s.get("agent"), wsl=backend.is_tmux(s) and tmux.VIA_WSL
     )
     if not final:
+        if console_receipt is not None:
+            console_receipt.update(estado="rechazado", motivo="texto vacio")
         return 400, {"ok": False, "error": "texto vacio"}
     with lock:
         mark_sent(s, final)  # antes de teclear: el hook del pedido puede llegar antes que este vuelva
+        if console_receipt is not None:
+            console_receipt["prompt_sha256"] = hashlib.sha256(final.encode()).hexdigest()
+            touch(s)  # Persist the reservation before any console input.
     code, out = run_send(s, final)
     if code != 200:
         with lock:
             s["sent_mark"] = None  # no entro: lo que se tipee despues es del usuario
+            if console_receipt is not None and console_receipt.get("estado") != "entregado":
+                console_receipt.update(estado="rechazado" if code == 409 else "sin_confirmacion",
+                                       motivo=out.get("error"))
+                touch(s)
         return code, out
     # la memoria del proyecto de la carpeta de `s` (anexo A de v5): el texto entero, no el envoltorio
     captura.envio(s, text, adjuntos=attachments_pedidos, **captura.origen_actual())
@@ -3188,7 +3246,7 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
             # tras SessionEnd la consola ya es de otra sesion (/clear, resume): lo que se tipea
             # llega a esa, y esta tarjeta no vuelve a 'corriendo' (la continua apply_event)
             s["stopped_by"] = None
-            if s.get("hooked"):
+            if s.get("hooked") or console_receipt is not None:
                 # 'corriendo' lo pone el pedido que confirma el agente (hook_prompt_submit), no el fin
                 # del tecleo: un Enter que la TUI tomo como salto de linea dejaba el texto en el
                 # editor con la tarjeta 'corriendo' (2026-10-14). Sin confirmacion, aviso visible
@@ -3196,6 +3254,10 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
             else:
                 set_state(s, "corriendo")  # sin hooks no hay quien confirme: como antes
         touch(s)
+        if console_receipt is not None:
+            if console_receipt["estado"] == "pendiente":
+                console_receipt.update(estado="encolado", motivo="escrito en la consola; espera confirmación de Codex")
+            out.update(console_receipt)
     return 200, out
 
 

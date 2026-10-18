@@ -76,3 +76,9 @@ def test_enter_de_dialogo_no_espera_consumo_de_texto(monkeypatch):
     events = consola(monkeypatch, [])
     assert send.inject(123, "", key="enter")["ok"]
     assert events == [("write", "\r")]
+
+
+def test_native_keys_preserve_non_bmp_unicode():
+    message = "revisión 🙂"
+    units = "".join(r.Event.KeyEvent.uChar.UnicodeChar for r in send.key_records(message) if r.Event.KeyEvent.bKeyDown)
+    assert units.encode("utf-16-le", errors="surrogatepass").decode("utf-16-le") == message

@@ -47,7 +47,7 @@ VS Code). El estado, el contenido y los envíos usan estos canales:
 |---|---|
 | Estado | Hooks en `~/.lienzo/events`, procesos y fuentes propias de cada agente. Algunos diálogos de permisos se reconocen en el buffer de consola. |
 | Contenido | Las transcripciones que los agentes ya escriben (`.jsonl`; en CODA, su base local), leídas por la cola. |
-| Mandar un mensaje | Los agentes de consola compatibles usan teclas por PID (`AttachConsole` + `WriteConsoleInputW`), sin foco. Codex Desktop usa su cola de hilo; Claude Desktop, el adaptador autorizado. Codex CLI con identidad basada sólo en handles queda bloqueado en 0.3.1: ese dato no prueba el hilo visible tras `/new` o `/clear`. Lo largo puede viajar como `.md` adjunto. |
+| Mandar un mensaje | Los agentes de consola compatibles usan teclas por PID (`AttachConsole` + `WriteConsoleInputW`), sin foco. Codex CLI fija la encarnación del proceso y escribe en su consola visible, también después de `/new` o `/clear`. Codex Desktop usa su cola de hilo; Claude Desktop, el adaptador autorizado. La escritura espera confirmación del agente antes de figurar entregada. Lo largo puede viajar como `.md` adjunto. |
 | Contestar un permiso | El hook `PermissionRequest` espera hasta 60 s la respuesta del tablero; si nadie contesta, el prompt aparece en la terminal como siempre. En CODA, Permitir y Denegar se teclean en su diálogo. |
 | Contestar una pregunta | `AskUserQuestion` llega por el mismo hook; la opción elegida vuelve en la decisión. |
 
@@ -55,8 +55,7 @@ Kiro V3 en Windows usa su historial `~/.kiro/sessions/*/sess_*/messages.jsonl`, 
 de su motor mediante el lock de sesión y el proceso CLI padre. Sus permisos y los de Codex se
 muestran como diálogos en las tarjetas; se responden con flechas y Enter, verificando antes que el
 pedido siga abierto. Kiro se lanza por su ruta instalada en `%LOCALAPPDATA%/Kiro-Cli` con `--v3` y
-retoma por `--resume-id`. El rol de coordinadora requiere un canal de envío disponible;
-una identidad CLI incierta no lo habilita.
+retoma por `--resume-id`. El rol de coordinadora requiere un canal de envío disponible.
 
 Una consola que cambia de `session_id` sin cambiar de proceso (un `/clear`, un resume) le pasa sus
 conexiones a la tarjeta nueva. Una tarjeta que muere deja estacionadas sus reglas, las suyas y las que

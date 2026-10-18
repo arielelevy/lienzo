@@ -27,7 +27,8 @@ La conexión no exige autorizar cada mensaje. Una sesión nueva o un cierre del 
 conectar de nuevo. Automatización del inicio y un Claude Code como puente quedan fuera de este
 release. No se agregan reglas de permisos ni se desactiva auto mode.
 
-Codex usa `codex queue`; la UI distingue aceptación, incertidumbre y entrega confirmada.
+Codex Desktop usa `codex queue`; Codex CLI escribe en su consola con el proceso fijado por PID y FILETIME.
+La UI distingue aceptación, incertidumbre y entrega confirmada.
 Recibir por estos canales no habilita matar/interrumpir procesos Desktop. La verificación integrada
 de Claude acredita HTTP/transporte/confirmación, no un click de UI ni aceptación global de release.
 La revisión de diseño y las pruebas finales del corte se registran por separado.

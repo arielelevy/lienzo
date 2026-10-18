@@ -21,6 +21,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import procinfo
 import procs
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -84,6 +85,10 @@ k32.WriteConsoleInputW.restype = wt.BOOL
 k32.GetNumberOfConsoleInputEvents.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
 k32.GetNumberOfConsoleInputEvents.restype = wt.BOOL
 k32.CloseHandle.argtypes = [wt.HANDLE]
+k32.GetProcessTimes.argtypes = [wt.HANDLE] + [ctypes.POINTER(wt.FILETIME)] * 4
+k32.WaitForSingleObject.argtypes = [wt.HANDLE, wt.DWORD]
+k32.GetConsoleProcessList.argtypes = [ctypes.POINTER(wt.DWORD), wt.DWORD]
+k32.GetConsoleProcessList.restype = wt.DWORD
 u32.VkKeyScanW.argtypes = [wt.WCHAR]
 u32.VkKeyScanW.restype = ctypes.c_short
 u32.MapVirtualKeyW.argtypes = [wt.UINT, wt.UINT]
@@ -109,7 +114,9 @@ def key_records(text: str) -> list[INPUT_RECORD]:
             k.dwControlKeyState = state
             recs.append(r)
 
-    for ch in text:
+    encoded = text.encode("utf-16-le")
+    for offset in range(0, len(encoded), 2):
+        ch = chr(int.from_bytes(encoded[offset:offset + 2], "little"))
         if ch in ("\r", "\n"):
             push(VK_RETURN, "\r", 0)
             continue
@@ -169,7 +176,7 @@ def esperar_consumo(hin, segundos: float) -> bool | None:
         time.sleep(0.05)
 
 
-def inject(
+def _inject(
     pid: int,
     text: str,
     enter_presses: int = 1,
@@ -177,6 +184,7 @@ def inject(
     chunk: int = 200,
     chunk_delay: float = 0.05,
     key: str | None = None,
+    owner_alive=None,
 ) -> dict:
     """Teclea `text` (mas Enter) en la consola de `pid`. Con `key` (una de TECLAS) no se tipea texto:
     va esa tecla sola (Esc interrumpe el turno; flechas y Enter contestan un dialogo sin numeros)."""
@@ -184,11 +192,20 @@ def inject(
         return {"ok": False, "pid": pid, "error": "el proceso no existe"}
     if not procs.is_tui(pid):
         return {"ok": False, "pid": pid, "error": "el PID no es una TUI de Claude Code, Codex, Pi o CODA"}
+    if procs.agent_of(procs.image_path(pid)) == "codex" and any(ord(ch) > 0xFFFF for ch in text):
+        return {"ok": False, "pid": pid, "error": "Codex requiere un adjunto UTF-8 para caracteres fuera del BMP"}
 
     k32.FreeConsole()
     if not k32.AttachConsole(pid):
         return {"ok": False, "pid": pid, "error": f"AttachConsole fallo (error {ctypes.get_last_error()})"}
     try:
+        if owner_alive is not None:
+            members = (wt.DWORD * 256)()
+            count = k32.GetConsoleProcessList(members, len(members))
+            if not 0 < count <= len(members) or pid not in members[:count]:
+                return {"ok": False, "pid": pid, "error": "no se pudo verificar el dueño de la consola Codex"}
+            if any(other != pid and procs.is_tui(other) for other in members[:count]):
+                return {"ok": False, "pid": pid, "error": "hay otra TUI en la misma consola; no se escribe"}
         hin = k32.CreateFileW(
             "CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None
         )
@@ -197,6 +214,8 @@ def inject(
         try:
 
             def write(recs: list[INPUT_RECORD]) -> str | None:
+                if owner_alive is not None and not owner_alive():
+                    return "el proceso Codex terminó; no se escriben más teclas"
                 arr = (INPUT_RECORD * len(recs))(*recs)
                 written = wt.DWORD(0)
                 ok = k32.WriteConsoleInputW(hin, arr, len(recs), ctypes.byref(written))
@@ -246,9 +265,29 @@ def inject(
         k32.FreeConsole()
 
 
+def inject(pid, text, enter_presses=1, key_delay=0.3, chunk=200, chunk_delay=0.05, key=None, expected_start=None):
+    """Pin a Codex process incarnation for all console writes, including the final Enter."""
+    args = (pid, text, enter_presses, key_delay, chunk, chunk_delay, key)
+    if expected_start is None:
+        return _inject(*args)
+    handle = procinfo.open_process(pid, 0x101000)
+    if not handle:
+        return {"ok": False, "pid": pid, "error": "no se pudo fijar el proceso Codex"}
+    try:
+        times = [wt.FILETIME() for _ in range(4)]
+        ok = k32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times))
+        start = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+        if not ok or start != expected_start or procinfo.process_agent(pid) != "codex":
+            return {"ok": False, "pid": pid, "error": "el proceso Codex cambió; no se escribe"}
+        return _inject(*args, owner_alive=lambda: k32.WaitForSingleObject(handle, 0) == 258)
+    finally:
+        procinfo.close_handle(handle)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(prog="lienzo-send")
     p.add_argument("--pid", type=int, required=True)
+    p.add_argument("--expected-start", type=int, default=None)
     p.add_argument("--text", default=None)
     p.add_argument("--text-file", default=None, help="leer el texto de un archivo utf-8")
     p.add_argument("--enter-presses", type=int, default=1)
@@ -260,7 +299,7 @@ def main() -> int:
     p.add_argument("--key", choices=list(TECLAS), default=None, help="una tecla sola en vez de texto: Esc interrumpe")
     a = p.parse_args()
     if a.key:
-        res = inject(a.pid, "", 0, key=a.key)
+        res = inject(a.pid, "", 0, key=a.key, expected_start=a.expected_start)
         print(json.dumps(res, ensure_ascii=False))
         return 0 if res.get("ok") else 1
     text = a.text
@@ -272,7 +311,8 @@ def main() -> int:
         return 2
     if not a.keep_newlines:
         text = " ".join(text.replace("\r", "").split("\n")).strip()
-    res = inject(a.pid, text, 0 if a.no_enter else a.enter_presses, a.key_delay, a.chunk, a.chunk_delay)
+    res = inject(a.pid, text, 0 if a.no_enter else a.enter_presses, a.key_delay, a.chunk, a.chunk_delay,
+                 expected_start=a.expected_start)
     print(json.dumps(res, ensure_ascii=False))
     return 0 if res.get("ok") else 1
 

@@ -187,9 +187,10 @@ def test_enviar_rechecks_the_target(card, monkeypatch):
 # ------------------------------------------------------------------ sessions: elección de transporte y envío
 
 
-def test_sessions_facade_chooses_transport(card):
+def test_sessions_facade_chooses_transport(card, monkeypatch):
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
     s = card["s"]
-    assert ses.puede_enviar(s)["transporte"] == "codex_queue"
+    assert ses.puede_enviar(s)["transporte"] == "tecleo"
     assert ses.puede_enviar(desktop(card))["transporte"] == "codex_queue"
     stopped = ses.puede_enviar({**s, "stopped_by": "coord"})
     assert not stopped["puede"] and "detenida" in stopped["motivo"]
@@ -208,16 +209,17 @@ def test_sessions_facade_chooses_transport(card):
     assert not orchestrated["puede"] and "stepwise" in orchestrated["motivo"]
 
 
-def test_cli_without_known_thread_rejects_without_typing(card, monkeypatch):
+def test_cli_without_known_thread_uses_its_console_not_a_guessed_queue(card, monkeypatch):
     monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
-    monkeypatch.setattr(ses, "run_send", lambda *a, **k: pytest.fail("identidad incierta no habilita tecleo"))
+    calls = []
+    monkeypatch.setattr(ses, "run_send", lambda s, text: calls.append((s["pid"], text)) or (200, {"ok": True}))
     monkeypatch.setattr(cq.subproc, "correr", lambda *a, **k: pytest.fail("identidad incierta no habilita cola"))
     s = {**card["s"], "session_id": "pid-4242", "transcript_path": None}
     plan = ses.puede_enviar(s)
-    assert plan == {"puede": False, "motivo": plan["motivo"], "transporte": None}
-    assert "id de hilo" in plan["motivo"]
+    assert plan == {"puede": True, "motivo": None, "transporte": "tecleo"}
     code, body = ses.send_to_session(s, "hola", [])
-    assert code == 409 and "id de hilo" in body["error"]
+    assert code == 200 and body["estado"] == "encolado"
+    assert calls == [(4242, "hola")]
 
 
 @pytest.mark.parametrize("change,reason", [
@@ -256,7 +258,7 @@ def test_long_text_goes_as_attachment_by_queue(card, monkeypatch):
     monkeypatch.setattr(cq.subproc, "correr", fake)
     monkeypatch.setattr(ses.captura, "envio", lambda *a, **k: None)
     monkeypatch.setattr(ses, "_mirror_owner", lambda sid: None)
-    s = dict(card["s"])
+    s = desktop(card)
     with ses.lock:
         ses.sessions[THREAD] = s
     try:

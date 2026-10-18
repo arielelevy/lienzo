@@ -1,20 +1,18 @@
-"""El arranque inicial no autoriza volver al tecleo de un hilo ya usado."""
+"""Codex CLI usa su consola; las guardas de proceso y los informes siguen vigentes."""
 
 import pytest
 import sessions as ses
 
 
 @pytest.mark.parametrize("used", [False, True])
-def test_bootstrap_only_for_new_process_card(monkeypatch, used):
+def test_cli_console_remains_available_after_prior_turns(monkeypatch, used):
     card = {"session_id": "pid-4242", "pid": 4242, "agent": "codex", "source": "sweep",
             "last_prompt": "pedido previo" if used else "", "transcript_path": None}
     monkeypatch.setattr(ses, "queue_blocked", lambda s: None)
     monkeypatch.setattr(ses, "send_blocked", lambda s: None)
-    monkeypatch.setattr(ses.codex_queue, "puede_enviar", lambda s: {
-        "puede": False, "motivo": "identidad incierta", "transporte": None})
+    monkeypatch.setattr(ses.codex_queue, "puede_enviar", lambda s: pytest.fail("CLI no debe consultar queue"))
     plan = ses.puede_enviar(card)
-    assert plan["puede"] is (not used)
-    assert plan["transporte"] == (None if used else "tecleo")
+    assert plan == {"puede": True, "motivo": None, "transporte": "tecleo"}
 
 
 def test_bootstrap_keeps_process_guard(monkeypatch):

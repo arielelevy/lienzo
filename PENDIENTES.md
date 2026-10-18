@@ -155,6 +155,10 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   dos CLI del mismo repo, codex exec paralelo y PID reciclado. Exigir nueva identidad comprobada
   o rechazo con motivo, preservando reglas/estado y sin reenviar automáticamente los mensajes
   inciertos del hilo anterior. La prueba anterior de entrega de 0.2.0 no cubre esta transición.
+  Actualización 2026-10-17: el envío de Codex CLI pasa a su consola visible, con PID/FILETIME fijados
+  durante la escritura; Desktop conserva la cola. La CLI descartable de prueba cambió de hilo tras
+  `/new` y `/clear`, y `/status` siguió llegando a la consola actual sin invocar al modelo. La
+  identidad autoritativa del hilo para `queue` sigue sin acreditarse. Esta casilla permanece pendiente.
 
 - [ ] **Garantizar que la entrega de un frente reanude la coordinación hasta integrar y verificar,
   sin esperar a que Ariel pregunte por el avance.** Pedido explícito de Ariel tras esta ronda.
