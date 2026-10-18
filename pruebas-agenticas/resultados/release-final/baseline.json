@@ -1,0 +1,7 @@
+[
+  {"id": "backend-global", "codigo": 0},
+  {"id": "frontend-lint", "codigo": 0},
+  {"id": "frontend-unit", "codigo": 0},
+  {"id": "frontend-ui-global", "codigo": 0},
+  {"id": "frontend-build", "codigo": 0}
+]
