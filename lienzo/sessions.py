@@ -1009,6 +1009,8 @@ def transcript_state(s: dict, t: dict) -> str | None:
 
 
 REFRESH_KEYS = (
+    "needs",
+    "prompt_ts",
     "last_denied",
     "title",
     "branch",
@@ -1072,7 +1074,7 @@ def apply_turn_hooked(s: dict, t: dict) -> None:
     la transcripcion se toma lo que el agente viene diciendo mientras corre, y el estado solo
     cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido, o un
     permiso contestado en la terminal, que no deja hook de cierre)."""
-    if clear_stale_send_notice(s):
+    if clear_stale_send_notice(s, t):
         set_state(s, "termino" if t.get("ended") else "corriendo")
     if s.get("agent") != "pi" and needs_answered(s, t):
         state.log(
@@ -1108,6 +1110,11 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
     if p := turn_prompt(t):
         set_last_prompt(s, p)
         if not s.get("hooked"):
+            entered = parse_ts(t.get("prompt_ts") if "prompt_ts" in t else t.get("ts_start"))
+            previous = parse_ts(s.get("prompt_ts"))
+            if (s.get("agent") == "codex" and not transcripts.is_system_prompt(p) and entered
+                    and (previous is None or entered > previous)):
+                s["prompt_ts"] = entered.isoformat()
             # sin hooks, el pedido sale de la transcripcion; el que tecleo el lienzo ya quedo como envio
             via = "lienzo" if s.get("sent_mark") and prompt_mark(p) == s["sent_mark"] else None
             captura.pedido(s, p, via, turno=t.get("id"))
@@ -1118,7 +1125,7 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
                     and hashlib.sha256(p.encode()).hexdigest() == receipt.get("prompt_sha256")):
                 receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
                 s["sent_mark"] = s["envio_pendiente"] = None
-    clear_stale_send_notice(s)
+    clear_stale_send_notice(s, t)
     if t.get("final") or not t.get("ended"):
         s["last_reply"] = turn_say(t) or s["last_reply"]
     if not turn_say(t) and (waiting := perfil(s["agent"]).waiting_text(t)):
@@ -1492,8 +1499,8 @@ def claim_pid(s: dict, ev: dict) -> None:
 ENVIO_SIN_CONFIRMAR_S = 25  # con el agente libre, lo que tarda en llegar el UserPromptSubmit de un envio
 
 
-def stale_send_notice(s: dict) -> bool:
-    """Detecta solo un sin_enviar anterior a un envío Codex confirmado posterior.
+def stale_send_notice(s: dict, turn: dict | None = None) -> bool:
+    """Un pedido humano posterior o una entrega exacta posterior dejan viejo el aviso.
 
     El acuse conserva su correlación/hash original. No prueba fin de turno: el estado
     se reconstruye con la transcripción, sin inventarlo a partir de last_reply.
@@ -1502,13 +1509,21 @@ def stale_send_notice(s: dict) -> bool:
     notice = s.get("needs") or {}
     receipt = s.get("envio_codex") or {}
     if (s.get("agent") != "codex" or not s.get("alive") or s.get("state") == "muerta"
-            or notice.get("kind") != "sin_enviar" or s.get("pending_id")
-            or receipt.get("estado") != "entregado" or receipt.get("confirmacion_final") is not True
-            or not receipt.get("envio_id")):
+            or notice.get("kind") != "sin_enviar" or s.get("pending_id")):
         return False
     since = parse_ts(notice.get("since"))
+    if since is None:
+        return False
+    if turn is not None:
+        prompt = turn_prompt(turn)
+        entered = parse_ts(turn.get("prompt_ts") if "prompt_ts" in turn else turn.get("ts_start"))
+        if prompt and not transcripts.is_system_prompt(prompt) and entered and entered > since:
+            return True  # Retirar el aviso no confirma el recibo del envío.
+    if (receipt.get("estado") != "entregado" or receipt.get("confirmacion_final") is not True
+            or not receipt.get("envio_id")):
+        return False
     sent_at = receipt.get("at")
-    if since is None or type(sent_at) not in (int, float):
+    if type(sent_at) not in (int, float):
         return False
     try:
         sent = dt.datetime.fromtimestamp(sent_at, dt.UTC)
@@ -1517,9 +1532,9 @@ def stale_send_notice(s: dict) -> bool:
     return sent > since  # sin orden causal probado, conservar el aviso más nuevo
 
 
-def clear_stale_send_notice(s: dict) -> bool:
+def clear_stale_send_notice(s: dict, turn: dict | None = None) -> bool:
     """Con transcripción disponible, retira el aviso sin modificar el acuse ni reenviar."""
-    if not stale_send_notice(s):
+    if not stale_send_notice(s, turn):
         return False
     s["needs"] = None
     return True
@@ -1539,7 +1554,8 @@ def envio_sin_confirmar(s: dict, ahora: float) -> bool:
         if not s.get("alive") and receipt.get("transporte") == "tecleo" and receipt.get("estado") in ("pendiente", "encolado"):
             receipt.update(estado="sin_confirmacion", motivo="el proceso Codex terminó sin confirmar; no se reintenta")
         return False
-    if s.get("state") == "corriendo":
+    if (s.get("state") == "corriendo" or s.get("pending_id")
+            or (s.get("needs") or {}).get("kind") in ("permission", "question", "denied")):
         return False
     desde = max(p["at"], (parse_ts(s.get("state_since")) or dt.datetime.min.replace(tzinfo=dt.UTC)).timestamp())
     if ahora - desde < ENVIO_SIN_CONFIRMAR_S:
@@ -1548,6 +1564,9 @@ def envio_sin_confirmar(s: dict, ahora: float) -> bool:
     receipt = s.get("envio_codex") or {}
     if receipt.get("transporte") == "tecleo" and receipt.get("estado") in ("pendiente", "encolado"):
         receipt.update(estado="sin_confirmacion", motivo="Codex no confirmó el mensaje; no se reintenta")
+    entered = parse_ts(s.get("prompt_ts"))
+    if s.get("agent") == "codex" and entered and entered.timestamp() >= p["at"]:
+        return True  # hubo otro pedido real: conservar la incertidumbre, sin pedir Enter otra vez
     detalle = short(s.get("last_prompt") or "", 200)
     set_needs(s, {"kind": "sin_enviar", "detail": detalle, "where": "terminal"})
     state.log(
@@ -2625,7 +2644,6 @@ def check_liveness(sid: str) -> None:
         changed = refresh_alive(s)
         if stale_send_notice(s):
             transcript_stat.pop(sid, None)  # reparar también tarjetas ya persistidas, sin crecimiento nuevo
-        changed = envio_sin_confirmar(s, time.time()) or changed
         if (
             s["agent"] == "coda"
             and s.get("alive")
@@ -2659,8 +2677,10 @@ def check_liveness(sid: str) -> None:
         crecio = sig is not None and transcript_stat.get(sid) != sig
         if crecio:
             transcript_stat[sid] = sig
-        elif changed:
-            touch(s)
+        else:
+            changed = envio_sin_confirmar(s, time.time()) or changed
+            if changed:
+                touch(s)
     if mirar_pantalla:
         coda_dialogo_en_pantalla(s)  # un subproceso: sin el lock
     if fondo:
@@ -2673,6 +2693,7 @@ def check_liveness(sid: str) -> None:
             return  # la borraron (o la reemplazaron) mientras leiamos: no revivirla
         if r is not None and apply_transcript(s, r):
             changed = True
+        changed = envio_sin_confirmar(s, time.time()) or changed
         if changed:
             touch(s)
     state.broadcast({"type": "transcript", "session_id": sid, "size": st.st_size})

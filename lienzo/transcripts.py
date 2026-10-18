@@ -278,10 +278,12 @@ def add_text(turn: dict, text: str, phase=None) -> None:
         turn["final"] = text
 
 
-def set_prompt(turn: dict, text: str) -> None:
-    """Pedido humano; si el turno ya tenia prompt (varios UserMessage), lo acumula."""
+def set_prompt(turn: dict, text: str, ts: str | None = None) -> None:
+    """Acumula pedidos; ts identifica la última entrada humana, no la actividad del agente."""
     text = text or ""
     turn["prompt"] = (turn["prompt"] + "\n" + text).strip() if turn["prompt"] else text
+    if ts and text.strip() and not is_system_prompt(text):
+        turn["prompt_ts"] = ts
 
 
 # --- por que los dos parsers no comparten el armado del turno -------------------
@@ -546,7 +548,7 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
             item = p.get("item") or {}
             it = item.get("type")
             if it == "UserMessage":
-                set_prompt(turn, _content_text(item.get("content")))
+                set_prompt(turn, _content_text(item.get("content")), ts)
             elif it == "AgentMessage":
                 add_text(turn, _content_text(item.get("content")), item.get("phase"))
             elif it == "Reasoning":
@@ -592,7 +594,7 @@ def parse_codex(path: str, max_bytes: int = TAIL_BYTES) -> dict:
             elif it == "Extension":  # web.search y similares: se cuentan, sin bloque
                 turn["extensions"] += 1
         elif pt == "user_message":  # forma vieja / importada
-            set_prompt(turn_for(tid, ts), p.get("message", ""))
+            set_prompt(turn_for(tid, ts), p.get("message", ""), ts)
         elif pt == "agent_message":
             add_text(turn_for(tid, ts), p.get("message", ""), p.get("phase"))
         elif pt == "task_complete":
