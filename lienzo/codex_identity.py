@@ -50,7 +50,7 @@ def _file_handles(pid, reference):
     raise OSError("tabla de handles excede 64 MiB")
 
 
-def _snapshot(pid):
+def _snapshot(pid, *, observation=False):
     k32 = procinfo._k32
     k32.GetCurrentProcess.restype = wt.HANDLE
     k32.DuplicateHandle.argtypes = [wt.HANDLE, wt.HANDLE, wt.HANDLE,
@@ -70,6 +70,8 @@ def _snapshot(pid):
         for source in _handles(pid):
             copied = wt.HANDLE()
             if not k32.DuplicateHandle(h, source, k32.GetCurrentProcess(), ctypes.byref(copied), 0, False, 2):
+                if observation:
+                    continue  # A partial inventory can locate a transcript, never authorize sending.
                 raise OSError("no se pudo duplicar un handle: snapshot incompleto")
             try:
                 if k32.GetFileType(copied) != 1:  # sólo disco; nunca consultar pipes
@@ -77,6 +79,8 @@ def _snapshot(pid):
                 buf = ctypes.create_unicode_buffer(32768)
                 length = k32.GetFinalPathNameByHandleW(copied, buf, len(buf), 0)
                 if not 0 < length < len(buf):
+                    if observation:
+                        continue
                     raise OSError("no se pudo resolver un handle de disco: snapshot incompleto")
                 path = buf.value
                 if os.path.basename(path).startswith("rollout-") and path.endswith(".jsonl"):
@@ -91,7 +95,7 @@ def _snapshot(pid):
         procinfo.close_handle(h)
 
 
-def probe(pid: int) -> dict:
+def _probe(pid: int, *, observation=False) -> dict:
     """Rechaza identidad incierta aunque un rollout siga abierto tras /new o /clear."""
     no = lambda reason: {"verified": False, "reason": reason}
     if not procinfo._WIN:
@@ -99,7 +103,7 @@ def probe(pid: int) -> dict:
     if procinfo.process_agent(pid) != "codex":
         return no("el proceso no es una TUI Codex verificable")
     try:
-        start, paths = _snapshot(pid)
+        start, paths = _snapshot(pid, observation=True) if observation else _snapshot(pid)
         if len(paths) != 1:
             return no(f"se observaron {len(paths)} rollouts abiertos: identidad incierta")
         path = next(iter(paths))
@@ -121,9 +125,15 @@ def probe(pid: int) -> dict:
             return no("rollout con id de hilo inválido")
         # La lectura de la cabecera puede coincidir con /new, /clear o la salida del proceso.
         # Una segunda observación debe conservar la misma incarnación y el único rollout.
-        current_start, current_paths = _snapshot(pid)
+        current_start, current_paths = _snapshot(pid, observation=True) if observation else _snapshot(pid)
         if current_start != start or current_paths != paths:
             return no("identidad Codex cambió durante la lectura del rollout")
+        if observation:
+            return {
+                "verified": False, "observed": True, "pid": pid,
+                "process_start": start, "thread": thread, "path": path,
+                "reason": "transcripción observada por handles del proceso; el hilo visible de la TUI sigue sin verificar",
+            }
         # Repro real 2026-10-17: /new conservó el handle del hilo anterior.
         # queue lo aceptó y ejecutó un turno oculto; ni un ACK ni dos snapshots
         # estables acreditan que ese hilo siga visible. No hay aquí un vínculo
@@ -132,3 +142,17 @@ def probe(pid: int) -> dict:
                   "/new o /clear pueden conservar el hilo anterior; envío CLI deshabilitado")
     except (OSError, ValueError, AttributeError, TypeError) as exc:
         return no(f"no se pudo verificar identidad Codex: {exc}")
+
+
+def probe(pid: int) -> dict:
+    """Authorization probe: an observed transcript is never sufficient."""
+    return _probe(pid)
+
+
+def transcript_identity(pid: int) -> dict:
+    """Read-only discovery, also usable when unrelated handles cannot be copied."""
+    proof = probe(pid)
+    if proof["verified"]:
+        return proof
+    observed = _probe(pid, observation=True)
+    return observed if observed.get("observed") else proof

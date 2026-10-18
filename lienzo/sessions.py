@@ -2152,8 +2152,8 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
     codex_proof = None
     if s["agent"] == "codex":
         probe_pid = s["pid"]
-        codex_proof = codex_identity.probe(probe_pid)
-        if not codex_proof["verified"]:
+        codex_proof = codex_identity.transcript_identity(probe_pid)
+        if not codex_proof["verified"] and not codex_proof.get("observed"):
             with lock:
                 if sessions.get(s["session_id"]) is s and s.get("pid") == probe_pid:
                     previous = s.pop("codex_process_start", None)
@@ -2188,9 +2188,12 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
                 rules.publish()
             if n_links:
                 links.publish()
-        if codex_proof:
+        if codex_proof and codex_proof["verified"]:
             s["codex_process_start"] = codex_proof["process_start"]
             s.pop("codex_identity_reason", None)
+        elif codex_proof:
+            s.pop("codex_process_start", None)
+            s["codex_identity_reason"] = codex_proof["reason"]
         s["transcript_path"] = tpath
         s["cwd"] = s.get("cwd") or cwd
         apply_repo(s, s["cwd"])
@@ -2207,9 +2210,9 @@ def adopt_process(p: dict) -> None:
     cwd = p.get("cwd") or backend.cwd_of(p)  # en tmux el cwd viene del pane; en win32, del backend
     codex_proof = None
     if p["agent"] == "codex":
-        codex_proof = codex_identity.probe(p["pid"])
+        codex_proof = codex_identity.transcript_identity(p["pid"])
         sid, tpath = ((codex_proof["thread"], codex_proof["path"])
-                      if codex_proof["verified"] else (None, None))
+                      if codex_proof["verified"] or codex_proof.get("observed") else (None, None))
     elif p["agent"] == "pi" and not p.get("pi_guess_allowed"):
         sid, tpath = p.get("pi_session") or (None, None)
     else:
@@ -3134,6 +3137,11 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     owner = _mirror_owner(sid)
     if owner is not None:
         return _mirror_forward(owner, "POST", f"/sessions/{sid}/send", {"text": text, "attachments": attachments})
+    if s.get("agent") in ("codex", "pi") and text.strip().lower() in ("/exit", "/quit"):
+        return 400, {
+            "ok": False,
+            "error": "send no cierra esta sesión con /exit ni /quit. Usá la acción de cerrar del tablero o el comando en su terminal.",
+        }
     if s.get("agent") == "claude" and puede_enviar(s).get("transporte") == "claude_pipe":
         return send_claude_pipe(s, text, attachments)
     if s.get("agent") == "codex":

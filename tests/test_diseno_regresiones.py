@@ -304,12 +304,15 @@ sys.path.insert(0, sys.argv[1])
 import claude_pipe_bootstrap as bootstrap
 sid = "99ba9409-9b60-405b-a771-6d475e41f4e6"
 bootstrap.receive_environment = lambda *args: {"LIENZO_CLAUDE_BRIDGE_SESSION": sid}
+os.environ["CLAUDE_CODE_MESSAGING_TOKEN"] = "synthetic"
+os.environ["CLAUDE_CODE_MESSAGING_SOCKET"] = "synthetic"
 scope = runpy.run_path(os.path.join(sys.argv[1], "claude_pipe_adapter.py"), run_name="probe")
 writes = []
 class Sink:
     def write(self, data): writes.append(json.loads(data))
     def close(self): pass
-scope["subprocess"].Popen = lambda *args, **kwargs: SimpleNamespace(stdin=Sink())
+import io
+scope["subprocess"].Popen = lambda *args, **kwargs: SimpleNamespace(stdin=Sink(), stdout=io.BytesIO(b"claude_pipe_adapter_ready\\n"))
 sys.argv = ["adapter", "--bootstrap", sid, sid, "1", "2"]
 scope["main"]()
 assert writes == [{"session_id": sid}]

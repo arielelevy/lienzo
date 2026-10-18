@@ -3,8 +3,10 @@
 import ctypes
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
 import uuid
@@ -155,12 +157,16 @@ def run_adapter(metadata):
     kernel, owner = owner_handle(expected)
     kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    ready = False
     try:
         # Poll failures terminate this private adapter; no reconnect/replay loop.
         while kernel.WaitForSingleObject(owner, 0) == 258:
             job = request("/poll", {"adapter_pid": os.getpid()})
             if job.get("stop"):
                 return
+            if not ready:
+                print("claude_pipe_adapter_ready", flush=True)
+                ready = True
             if not job:
                 continue
             if kernel.WaitForSingleObject(owner, 0) != 258:
@@ -175,12 +181,46 @@ def run_adapter(metadata):
         kernel.CloseHandle(owner)
 
 
+def launch_adapter(metadata, timeout=8):
+    """Success means the child authenticated its first poll, not merely Popen."""
+    child = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--serve"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    responses = queue.Queue(maxsize=1)
+    reader = threading.Thread(target=lambda: responses.put(child.stdout.readline(128)), daemon=True)
+    reader.start()
+    try:
+        child.stdin.write(json.dumps(metadata).encode())
+        child.stdin.close()
+        try:
+            response = responses.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError("adapter_start_timeout") from None
+        if response != b"claude_pipe_adapter_ready\n" and response != b"claude_pipe_adapter_ready\r\n":
+            raise ValueError("adapter_start_failed")
+    except BaseException:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+        raise
+    finally:
+        reader.join(5)
+        child.stdin.close()
+        child.stdout.close()
+
+
 def main():
     if sys.argv[1:2] == ["--bootstrap"] and len(sys.argv) != 6:
         raise ValueError("bootstrap_requires_server_identity")
     if len(sys.argv) == 6 and sys.argv[1] == "--bootstrap":
         from claude_pipe_bootstrap import receive_environment
 
+        if not all(os.environ.get(key) for key in ("CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_MESSAGING_SOCKET")):
+            raise ValueError("claude_messaging_environment_missing")
         public_id = str(uuid.UUID(sys.argv[2]))
         received = receive_environment(
             "\\\\.\\pipe\\LOCAL\\lienzo-bootstrap-" + public_id, int(sys.argv[4]), int(sys.argv[5])
@@ -196,15 +236,7 @@ def main():
     if launch_child:
         if metadata["session_id"] != os.environ.get("LIENZO_CLAUDE_BRIDGE_SESSION"):
             raise ValueError("session_mismatch")
-        child = subprocess.Popen(
-            [sys.executable, os.path.abspath(__file__), "--serve"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        child.stdin.write(json.dumps(metadata).encode())
-        child.stdin.close()
+        launch_adapter(metadata)
         return
     if sys.argv[1:] != ["--serve"]:
         raise ValueError("invalid_mode")
@@ -218,6 +250,9 @@ def cli():
         # Do not print exception bodies: HTTP/environment errors can contain secrets.
         message = "claude_pipe_adapter_failed"
         if sys.argv[1:2] == ["--bootstrap"]:
+            if isinstance(error, ValueError) and error.args == ("claude_messaging_environment_missing",):
+                print(message + ": esta ejecución no heredó el canal de Claude. Ejecutá el comando desde una herramienta de esa conversación de Claude; abrir el canal en otra consola no lo conecta.", file=sys.stderr)
+                return 2
             stale_identity = isinstance(error, ValueError) and error.args in (
                 ("bootstrap_server_identity_mismatch",),
                 ("bootstrap_server_recycled",),

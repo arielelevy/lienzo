@@ -180,8 +180,8 @@ class Codex(Perfil):
             import codex_identity
         except ImportError:
             from . import codex_identity
-        proof = codex_identity.probe(process["pid"])
-        return (proof["thread"], proof["path"]) if proof["verified"] else None
+        proof = codex_identity.transcript_identity(process["pid"])
+        return (proof["thread"], proof["path"]) if proof["verified"] or proof.get("observed") else None
 
     def row_model(self, row: dict) -> str | None:
         payload = row.get("payload")
