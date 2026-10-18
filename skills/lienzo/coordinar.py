@@ -190,10 +190,15 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
             if isinstance(res, dict) and "estado" in res:
                 delivered = res["estado"] == "entregado"
                 return {
-                    "ok": delivered, "code": code, "sid": sid,
-                    "estado": res["estado"], "envio_id": res.get("envio_id"),
-                    "motivo": "entrega confirmada por el transporte" if delivered else (
-                        res.get("motivo") or "entrega no confirmada; no se reintenta"
+                    "ok": delivered,
+                    "code": code,
+                    "sid": sid,
+                    "estado": res["estado"],
+                    "envio_id": res.get("envio_id"),
+                    "motivo": (
+                        "entrega confirmada por el transporte"
+                        if delivered
+                        else (res.get("motivo") or "entrega no confirmada; no se reintenta")
                     ),
                 }
             fin = time.time() + espera
@@ -496,7 +501,15 @@ def cablear(texto=None, pc=None, solo_vivas=True, max_fires=None, filtro=None, s
         )
     r = pedir("GET", "/rules")[1]
     r = r if isinstance(r, list) else (r or {}).get("rules", []) or []
-    ya = {x.get("from") for x in r if x.get("to") == YO and x.get("kind") == "on_stop"}
+    ya = {
+        x.get("from")
+        for x in r
+        if x.get("to") == YO
+        and x.get("kind") == "on_stop"
+        and x.get("enabled")
+        and not x.get("parked_since")
+        and not x.get("archived_at")
+    }
     out = {"creadas": [], "ya_estaban": [], "fallaron": []}
     pendientes = []
     for s in sesiones():

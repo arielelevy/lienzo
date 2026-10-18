@@ -333,6 +333,8 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
     repeticion. Una programada que ya disparo se puede reprogramar: vuelve a quedar vigente.
     Devuelve (codigo, cuerpo), como create_rule. Primero valida todo y despues escribe: un 400 a
     mitad de camino dejaria la regla editada por partes."""
+    if "enabled" in d and type(d["enabled"]) is not bool:
+        return 400, {"error": "enabled debe ser booleano"}
     at = None
     if d.get("at") is not None:
         try:
@@ -349,6 +351,14 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
         r = next((x for x in rules.items if x["id"] == rule_id), None)
         if r is None:
             return 404, {"error": "conexion desconocida"}
+        if d.get("enabled") is True:
+            missing = [
+                r[key]
+                for key in ("parked_from", "parked_to")
+                if r.get(key) and not (sessions.get(r[key]) or {}).get("alive")
+            ]
+            if missing:
+                return 409, {"error": "regla estacionada: falta una sesión viva", "sesiones": missing}
         extra = limites = None
         if r.get("kind") == "at":
             extra, err = at_fields(d, r)
@@ -365,7 +375,7 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
             r.update(extra)  # every_s (null = un disparo), max_fires, skip_busy, repeat
             if at is not None:
                 r["at"] = at.isoformat(timespec="seconds")
-                if not r.get("enabled"):
+                if not r.get("enabled") and not r.get("parked_since") and not r.get("archived_at"):
                     r["enabled"] = True
                     r["fired"] = 0
                     r.pop("disabled_at", None)
@@ -377,10 +387,30 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
             r.update(limites)
             if r["repeat"] and r["limit"] == "total" and not r.get("max_fires"):
                 r["max_fires"] = 5
-            if not r.get("enabled") and r["repeat"] and r["limit"] == "rate" and r.get("disabled_at"):
+            if (
+                not r.get("enabled")
+                and r["repeat"]
+                and r["limit"] == "rate"
+                and r.get("disabled_at")
+                and not r.get("parked_since")
+                and not r.get("archived_at")
+            ):
                 # la apago el tope total viejo: pasar a limite por frecuencia la vuelve a prender
                 r["enabled"] = True
                 r.pop("disabled_at", None)
+        if "enabled" in d:
+            r["enabled"] = d["enabled"]
+            if d["enabled"]:
+                for key in (
+                    "parked_from",
+                    "parked_to",
+                    "parked_since",
+                    "parked_was_enabled",
+                    "archived_at",
+                    "disabled_reason",
+                    "disabled_at",
+                ):
+                    r.pop(key, None)
         rules.save()
     rules.publish()
     state.log(

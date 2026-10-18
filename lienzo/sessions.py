@@ -214,6 +214,8 @@ def refresh_envios() -> None:
                     if reconciled:
                         rules.save(strict=True)
                         rules.publish()
+                if stale_send_notice(card):
+                    transcript_stat.pop(card["session_id"], None)
                 if changed or (before != view["envio"] and _envio_firma(card) == _envio_firma(snap)):
                     touch(card)
             state.avisar_si_cambia(f"envio {snap['session_id']}", None)
@@ -565,6 +567,8 @@ def retake_rules_from(old: str, new: str) -> int:
         for r in suyas:
             r["from"] = new
             r.pop("parked_from", None)
+            r.pop("archived_at", None)
+            r.pop("disabled_reason", None)
             if not r.get("parked_to"):  # con el destino tambien muerto, sigue esperando a la otra
                 # vuelve como estaba: una de un solo disparo que ya salio, o apagada a mano, sigue apagada
                 r["enabled"] = r.pop("parked_was_enabled", True)
@@ -595,11 +599,17 @@ def park_rules_to(sid: str) -> int:
 def retarget_rules(old: str, new: str) -> int:
     """Las reglas que avisaban a `old` (estacionadas o no) pasan a avisar a `new`, habilitadas."""
     with lock:
-        suyas = [r for r in rules.items if old in (r.get("to"), r.get("parked_to"))]
+        suyas = [
+            r
+            for r in rules.items
+            if old in (r.get("to"), r.get("parked_to")) and (old != new or r.get("parked_to") == old)
+        ]
         for r in suyas:
             r["to"] = new
             r.pop("to_pc", None)  # se vuelve a identificar con el snapshot del destino nuevo
             r.pop("parked_to", None)
+            r.pop("archived_at", None)
+            r.pop("disabled_reason", None)
             if not r.get("parked_from"):
                 # la que sigue con el origen estacionado espera a su sucesora (retake_rules_from)
                 r["enabled"] = r.pop("parked_was_enabled", True)
@@ -633,6 +643,12 @@ def adopt_dead_target(s: dict) -> str | None:
     carpeta, hace menos de SUCESION_MAX_S; ver _prioridad_sucesora), hereda sus reglas aca y en las
     otras PCs, las que le avisaban y las suyas, y su titulo. Devuelve el id viejo, o None."""
     ahora = time.time()
+    # El barrido puede recuperar el mismo id sin un registro de sucesión vigente.
+    retake_rules_from(s["session_id"], s["session_id"])
+    with lock:
+        parked_to = any(r.get("parked_to") == s["session_id"] for r in rules.items)
+    if parked_to:
+        retarget_rules(s["session_id"], s["session_id"])
     with lock:
         for k in [k for k, v in DEAD_TARGETS.items() if ahora - v["since"] > SUCESION_MAX_S]:
             DEAD_TARGETS.pop(k, None)
@@ -1056,6 +1072,8 @@ def apply_turn_hooked(s: dict, t: dict) -> None:
     la transcripcion se toma lo que el agente viene diciendo mientras corre, y el estado solo
     cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido, o un
     permiso contestado en la terminal, que no deja hook de cierre)."""
+    if clear_stale_send_notice(s):
+        set_state(s, "termino" if t.get("ended") else "corriendo")
     if s.get("agent") != "pi" and needs_answered(s, t):
         state.log(
             f"{s['session_id'][:8]}: la transcripcion siguio despues del aviso "
@@ -1100,6 +1118,7 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
                     and hashlib.sha256(p.encode()).hexdigest() == receipt.get("prompt_sha256")):
                 receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
                 s["sent_mark"] = s["envio_pendiente"] = None
+    clear_stale_send_notice(s)
     if t.get("final") or not t.get("ended"):
         s["last_reply"] = turn_say(t) or s["last_reply"]
     if not turn_say(t) and (waiting := perfil(s["agent"]).waiting_text(t)):
@@ -1471,6 +1490,39 @@ def claim_pid(s: dict, ev: dict) -> None:
 
 
 ENVIO_SIN_CONFIRMAR_S = 25  # con el agente libre, lo que tarda en llegar el UserPromptSubmit de un envio
+
+
+def stale_send_notice(s: dict) -> bool:
+    """Detecta solo un sin_enviar anterior a un envío Codex confirmado posterior.
+
+    El acuse conserva su correlación/hash original. No prueba fin de turno: el estado
+    se reconstruye con la transcripción, sin inventarlo a partir de last_reply.
+    Con el lock del registro tomado, igual que envio_sin_confirmar.
+    """
+    notice = s.get("needs") or {}
+    receipt = s.get("envio_codex") or {}
+    if (s.get("agent") != "codex" or not s.get("alive") or s.get("state") == "muerta"
+            or notice.get("kind") != "sin_enviar" or s.get("pending_id")
+            or receipt.get("estado") != "entregado" or receipt.get("confirmacion_final") is not True
+            or not receipt.get("envio_id")):
+        return False
+    since = parse_ts(notice.get("since"))
+    sent_at = receipt.get("at")
+    if since is None or type(sent_at) not in (int, float):
+        return False
+    try:
+        sent = dt.datetime.fromtimestamp(sent_at, dt.UTC)
+    except (OSError, OverflowError, ValueError):
+        return False
+    return sent > since  # sin orden causal probado, conservar el aviso más nuevo
+
+
+def clear_stale_send_notice(s: dict) -> bool:
+    """Con transcripción disponible, retira el aviso sin modificar el acuse ni reenviar."""
+    if not stale_send_notice(s):
+        return False
+    s["needs"] = None
+    return True
 
 
 def envio_sin_confirmar(s: dict, ahora: float) -> bool:
@@ -1955,7 +2007,7 @@ def apply_event(ev: dict) -> None:
         s["alive"] = True
         s["dead_since"] = None
         apply_hook(s, ev, name, created)
-        if created and DEAD_TARGETS:
+        if created or name == "SessionStart":
             en_hilo(adopt_dead_target, dict(s))
         if ev_pid_dead and not (s.get("pid") and backend.agent_alive(s)):
             marcar_muerta(s, avisar=False)  # un evento viejo no dice que muriera trabajando ahora
@@ -2571,6 +2623,8 @@ def check_liveness(sid: str) -> None:
         if s is None:
             return
         changed = refresh_alive(s)
+        if stale_send_notice(s):
+            transcript_stat.pop(sid, None)  # reparar también tarjetas ya persistidas, sin crecimiento nuevo
         changed = envio_sin_confirmar(s, time.time()) or changed
         if (
             s["agent"] == "coda"

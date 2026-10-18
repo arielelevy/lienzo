@@ -95,7 +95,9 @@ def test_la_sucesion_sobrevive_al_reinicio_del_server(entorno, monkeypatch):
     # al cargar rules.json, las estacionadas de una muerta que espera sucesora se conservan
     informe = next(r for r in st.rules.items if r["id"] == "informe")
     assert server.conservar_regla(informe) is True
-    assert server.conservar_regla({**informe, "parked_from": None}) is False
+    orphan = {**informe, "parked_from": None}
+    assert server.conservar_regla(orphan) is True
+    assert not orphan["enabled"]
 
 
 def test_con_dos_frentes_en_la_carpeta_gana_la_restaurada(entorno):

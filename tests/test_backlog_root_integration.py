@@ -73,7 +73,7 @@ def test_deleting_rule_preserves_unintegrated_report(report_http):
     import state
 
     status, body = report_http("DELETE", "/rules/r")
-    assert status == 200 and body["conservada"] is True
+    assert status == 409 and body["conservada"] is True
     assert len(state.rules.items) == 1
     assert state.rules.items[0]["enabled"] is False
     assert state.rules.items[0]["informes"][0]["respuesta"] == "informe"

@@ -90,5 +90,7 @@ def test_las_reglas_hacia_otra_pc_sobreviven_al_reinicio(aislado, monkeypatch):
     # el arranque siguiente: una lista nueva que lee el mismo archivo con la regla del server
     releida = st.JsonList(guardadas.path, "rules")
     releida.load(server.conservar_regla)
-    assert [r["id"] for r in releida.items] == ["r1", "r4"]
+    # 0.4.0 conserva todas hasta reconciliar el inventario y restaurables. El origen
+    # ausente se archiva con motivo; no se borra silenciosamente durante load().
+    assert [r["id"] for r in releida.items] == ["r1", "r2", "r3", "r4"]
     assert releida.items[0]["to_pc"] == "pcB"

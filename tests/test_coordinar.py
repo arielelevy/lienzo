@@ -83,7 +83,7 @@ def test_cablear_crea_una_regla_por_frente_vivo_y_no_repite(monkeypatch):
 
     def pedir(m, r, cuerpo=None, timeout=20):
         if m == "GET":
-            return 200, [{"kind": "on_stop", "from": "b", "to": "coord"}]
+            return 200, [{"kind": "on_stop", "from": "b", "to": "coord", "enabled": True}]
         creadas.append(cuerpo["from"])
         textos.append(cuerpo["text"])
         return 200, {"id": "x"}
@@ -95,6 +95,30 @@ def test_cablear_crea_una_regla_por_frente_vivo_y_no_repite(monkeypatch):
     assert r["creadas"] == ["a"] and r["ya_estaban"] == ["b"] and r["fallaron"] == [] and creadas == ["a"]
     # sin {respuesta} el server manda solo el encabezado y el informe no llega (medido el 2026-10-09)
     assert "{respuesta}" in textos[0] and "{titulo}" in textos[0]
+
+
+def test_cablear_no_cuenta_parked_archivadas_ni_apagadas(monkeypatch):
+    monkeypatch.setattr(c, "YO", "coord")
+    monkeypatch.setattr(
+        c, "sesiones", lambda: [_tarjeta(sid, alive=True) for sid in ("parked", "archived", "off", "active")]
+    )
+    existing = [
+        {
+            "kind": "on_stop",
+            "from": sid,
+            "to": "coord",
+            "enabled": sid != "off",
+            **({"parked_since": "ayer"} if sid == "parked" else {}),
+            **({"archived_at": "ayer"} if sid == "archived" else {}),
+        }
+        for sid in ("parked", "archived", "off", "active")
+    ]
+    monkeypatch.setattr(
+        c, "pedir", lambda method, path, cuerpo=None, **kw: (200, existing if method == "GET" else {"id": "new"})
+    )
+    result = c.cablear()
+    assert result["ya_estaban"] == ["active"]
+    assert result["creadas"] == ["parked", "archived", "off"]
 
 
 def test_cablear_cuenta_los_fallos_con_el_motivo(monkeypatch):

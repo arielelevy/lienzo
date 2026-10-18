@@ -23,16 +23,18 @@ class ClaudePipeBridge:
         self._condition = threading.Condition()
         self._jobs = {}
         self._closed = False
+        self.resume = False
         self.last_poll = 0.0
         self.adapter_pid = None
         self.registered = threading.Event()
+        self.before_first_poll = None
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def handle(self):
                 try:
                     super().handle()
-                except (OSError, TimeoutError):
+                except OSError, TimeoutError:
                     # Disconnects are transport outcomes, not traceback/log payloads.
                     return
 
@@ -96,9 +98,13 @@ class ClaudePipeBridge:
         return {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}
 
     def _request(self, route, data):
+        # Closing takes lifecycle locks before the job condition. Persisting
+        # registration must therefore happen outside this condition.
+        if route == "/poll" and not self.registered.is_set() and self.before_first_poll is not None:
+            self.before_first_poll(data.get("adapter_pid"))
         with self._condition:
             if self._closed:
-                return {"stop": True}
+                return {"stop": True, "resume": self.resume}
             if route == "/poll":
                 self.last_poll = time.monotonic()
                 self.adapter_pid = data.get("adapter_pid")
@@ -113,7 +119,7 @@ class ClaudePipeBridge:
                     if remaining <= 0:
                         return {}
                     self._condition.wait(remaining)
-                return {"stop": True}
+                return {"stop": True, "resume": self.resume}
             if route == "/result":
                 job = self._jobs[data["id"]]
                 if job["status"] not in ("writing", "unknown"):

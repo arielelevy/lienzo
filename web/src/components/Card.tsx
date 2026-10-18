@@ -311,6 +311,9 @@ interface Props {
 }
 
 export function Card({ session: s, pending: p, rules = [], links = [], sessions = {}, onDeleteRule, selected, picked = false, related, freeGroup, peerDown, pcColor, marked = false, onMark, onPick, onSelect, onDecide, onAnswer, onDrop, onGrip, onPress, toast: extToast }: Props) {
+  const coordinator = Object.values(sessions).find((other) => other.coordinator && other.alive && other.session_id !== s.session_id
+    && (s.repo_key && other.repo_key ? s.repo_key === other.repo_key : !!s.cwd && s.cwd.replaceAll("\\", "/").toLowerCase() === other.cwd?.replaceAll("\\", "/").toLowerCase()));
+  const uncabled = s.alive && !s.coordinator && coordinator && !rules.some((r) => r.enabled && !r.parked_since && !r.archived_at && r.kind === "on_stop" && r.from === s.session_id && r.to === coordinator.session_id);
   const { toast, node: toastNode } = useLocalToast(extToast);
   // su papel en una consulta entre investigadores abierta (consultas.ts), o null
   const consultaRol = rolDe(useConsultas(), s.session_id, s.last_prompt);
@@ -616,6 +619,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               ★
             </span>
           )}
+          {uncabled && <span className="chip" title={`Sin regla activa hacia ${shortName(coordinator)}`}>sin aviso a coordinadora</span>}
           {s.copycat_of && (
             <span className="copycat" title={`copycat: sigue el trabajo de ${shortName(sessions[s.copycat_of], "otra sesión")}`}>
               ⧉ copycat

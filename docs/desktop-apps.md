@@ -10,6 +10,20 @@ Cada afirmación lleva su marca:
 - **[V]** verificado: en el código del repo, en un archivo de esta PC o en la documentación oficial.
 - **[I]** inferido: deducido de lo anterior, sin medir. Hay que probarlo antes de construir encima.
 
+## Cambio de continuidad en 0.4.0
+
+El adaptador autorizado conserva las credenciales Claude en su memoria mientras vive el mismo
+proceso dueño. Tras reiniciar Lienzo, vuelve a autenticar el servidor y conecta un canal nuevo;
+el archivo de encuentro contiene únicamente ids públicos e identidades de procesos. No guarda
+tokens ni mensajes. Un cierre explícito del enlace cancela esa recuperación y requiere conectar
+de nuevo. Los mensajes cuyo resultado quedó incierto no se repiten.
+
+Un adaptador de una versión anterior necesita conectarse una vez con el código nuevo. Si el
+adaptador anterior ya murió, Lienzo no puede recuperar sus credenciales desde archivos.
+
+La validación y los límites de esta versión están en [las notas 0.4.0](releases/0.4.0.md).
+Las mediciones siguientes son antecedentes del 2026-10-17.
+
 ## Medido e implementado el 2026-10-17
 
 ### Estado del corte de integración (13:31)

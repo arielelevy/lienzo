@@ -142,6 +142,7 @@ const DESC_EDGE = 180;
 
 /** Editor de una conexion pendiente, anclado al glifo de su flecha. */
 interface Edit {
+  enabled: boolean;
   id: string;
   kind: Rule["kind"];
   x: number;
@@ -261,6 +262,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
     if (!r) return;
     const periodic = r.kind === "at" && !!r.every_s;
     setEdit({
+      enabled: r.enabled,
       id: r.id,
       kind: r.kind,
       x: s.x,
@@ -282,7 +284,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   );
   const saveEdit = async () => {
     if (!edit) return;
-    const body: RuleEdit = { text: edit.text };
+    const body: RuleEdit = { text: edit.text, enabled: edit.enabled };
     if (edit.kind === "at") {
       const m = edit.time.trim().match(/^(\d{1,2}):(\d{2})$/);
       if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) {
@@ -541,6 +543,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         onEnter={saveEdit}
         head={edit.kind === "at" ? (edit.repeat ? "↻ periódica" : "⏰ programada") : "⏹ cuando termine"}
       >
+        <label><input type="checkbox" checked={edit.enabled} onChange={(e) => setEdit({ ...edit, enabled: e.target.checked })} /> Habilitada</label>
         {edit.kind === "at" && (
           <label>
             {edit.repeat ? "primera vez (HH:MM)" : "hora (HH:MM)"}
@@ -708,7 +711,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
           <g
             key={s.ids[0]}
             className={`arrow ${mine ? "mine" : ""} ${s.dim ? "dim" : ""}`}
-            style={sel !== null ? { opacity: on ? 1 : 0.12 } : undefined}
+            style={sel !== null ? { opacity: on ? 1 : 0.12 } : s.disabled ? { opacity: 0.4 } : undefined}
           >
             {s.kind === "native" && <path d={s.d} className="line native-outer" />}
             <path

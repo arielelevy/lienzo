@@ -80,6 +80,7 @@ def test_ready_only_after_successful_poll(monkeypatch, capsys):
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(adapter, "owner_handle", lambda sid: (Kernel(), 1))
+    monkeypatch.setattr(adapter, "pin_ancestors", lambda *args: [])
     monkeypatch.setattr(adapter.urllib.request, "build_opener", lambda *args: Opener())
     with pytest.raises(OSError, match="connection_lost"):
         adapter.run_adapter({"session_id": "fixture"})

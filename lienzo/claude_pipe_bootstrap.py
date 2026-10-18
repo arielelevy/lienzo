@@ -11,6 +11,7 @@ from ctypes import wintypes as wt
 from pathlib import Path
 
 import procinfo
+import state
 
 
 def kernel_api():
@@ -83,8 +84,8 @@ def user_security(kernel):
         kernel.CloseHandle(token)
 
 
-def verified_child(client_pid, session_id):
-    """Pin every ancestor and enforce creation ordering and the live session registry."""
+def pin_ancestors(client_pid, session_id):
+    """Pin the complete OS ancestry, including exited intermediaries, up to live Claude."""
     kernel = kernel_api()
     registry = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "sessions"
     handles = []
@@ -94,30 +95,45 @@ def verified_child(client_pid, session_id):
         pid = client_pid
         for _ in range(32):
             if not pid or pid in visited:
-                return False
+                raise ValueError("ancestor_cycle")
             visited.add(pid)
             handle = procinfo.open_process(pid, 0x101000)
             if not handle:
-                return False
+                raise ValueError("ancestor_unavailable")
             handles.append(handle)
             start = process_start(kernel, handle)
             if previous_start is not None and start > previous_start:
-                return False
+                raise ValueError("ancestor_recycled")
             previous_start = start
             exe = procinfo.image_path(pid)
-            if not exe:
-                return False
+            kernel.WaitForSingleObject.argtypes = [wt.HANDLE, wt.DWORD]
+            alive = kernel.WaitForSingleObject(handle, 0) == 258
+            if not exe and alive:
+                raise ValueError("ancestor_image_unavailable")
             record = registry / f"{pid}.json"
-            if Path(exe).name.lower() == "claude.exe" and record.exists():
+            if exe and Path(exe).name.lower() == "claude.exe" and record.exists():
                 row = json.loads(record.read_text(encoding="utf-8"))
                 if row.get("sessionId") == session_id and str(row.get("procStart")) == str(start):
-                    kernel.WaitForSingleObject.argtypes = [wt.HANDLE, wt.DWORD]
-                    return len(handles) > 1 and kernel.WaitForSingleObject(handle, 0) == 258
+                    if len(handles) > 1 and alive:
+                        return handles
+                    raise ValueError("owner_not_alive")
             pid, _ = procinfo.proc_info(pid)
-        return False
-    finally:
+        raise ValueError("owner_not_in_ancestry")
+    except BaseException:
         for handle in handles:
             procinfo.close_handle(handle)
+        raise
+
+
+def verified_child(client_pid, session_id):
+    """Public rendezvous data never authorizes a client; its OS ancestry does."""
+    try:
+        handles = pin_ancestors(client_pid, session_id)
+    except OSError, ValueError, TypeError:
+        return False
+    for handle in handles:
+        procinfo.close_handle(handle)
+    return True
 
 
 class ClaudePipeBootstrap:
@@ -207,7 +223,13 @@ class ClaudePipeBootstrap:
                     kernel.DisconnectNamedPipe(self._handle)
                     continue
                 self.client_pid = pid.value
-                payload = json.dumps(self.bridge.environment()).encode() + b"\n"
+                environment = self.bridge.environment()
+                environment.update(
+                    LIENZO_CLAUDE_SERVER_PID=str(self.server_pid),
+                    LIENZO_CLAUDE_SERVER_START=str(self.server_start),
+                    LIENZO_CLAUDE_RECONNECT_HOME=state.LIENZO,
+                )
+                payload = json.dumps(environment).encode() + b"\n"
                 count = wt.DWORD()
                 buffer = ctypes.create_string_buffer(payload)
                 if not kernel.WriteFile(self._handle, buffer, len(payload), ctypes.byref(count), None):

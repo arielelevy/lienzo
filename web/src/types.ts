@@ -294,6 +294,9 @@ export interface ConfigPut extends Config {
 }
 
 export interface Rule {
+  parked_since?: string;
+  disabled_reason?: string;
+  archived_at?: string;
   id: string;
   kind: "on_stop" | "at";
   from: string | null;

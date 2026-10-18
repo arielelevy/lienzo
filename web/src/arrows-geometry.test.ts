@@ -174,12 +174,14 @@ test("buildItems dibuja las reglas activas con los dos extremos en el tablero, y
   ];
   const items = buildItems([], rules, anchors, fmt);
   // "auto" (sin origen, la programa el server) y "self" (mismo origen y destino) ahora se dibujan
-  // como bucle sobre su propia tarjeta; "off" (deshabilitada) y "lost" (destino que no esta) no
-  assert.deepEqual(items.map((i) => i.ids[0]), ["r1", "r2", "r3", "r4", "auto", "self"]);
-  const auto = items[4];
+  // como bucle sobre su propia tarjeta; off sigue visible con motivo, lost no tiene extremo.
+  assert.deepEqual(items.map((i) => i.ids[0]), ["r1", "r2", "r3", "r4", "off", "auto", "self"]);
+  assert.equal(items[4].disabled, true);
+  assert.match(items[4].desc, /Deshabilitada: deshabilitada o agotada/);
+  const auto = items[5];
   assert.equal(auto.from, auto.to);
   assert.equal(auto.desc, "Cada vez que n(b) cierre un turno, su respuesta se manda a sí misma. Una sola vez. Doble click para editarla.");
-  assert.equal(items[5].from, "a");
+  assert.equal(items[6].from, "a");
   assert.equal(items[0].title, "cuando n(a) termine → su respuesta a n(b) · click para seleccionarla");
   assert.equal(items[0].desc, "Cada vez que n(a) cierre un turno, su respuesta se manda a n(b). Una sola vez. Doble click para editarla.");
   assert.equal(items[1].desc, "Cada vez que n(a) cierre un turno, su respuesta se manda a n(b). Van 2 de 5. Doble click para editarla.");

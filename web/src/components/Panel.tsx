@@ -137,7 +137,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
   const links = [...conn.links].sort((a, b) => b.ts.localeCompare(a.ts));
   const rules = [...conn.rules].sort((a, b) => Number(b.enabled) - Number(a.enabled));
   const ruleState = (r: ConnectionsResponse["rules"][number]) => {
-    if (!r.enabled) return "inactiva";
+    if (!r.enabled) return `${r.archived_at ? "archivada" : "inactiva"}: ${r.disabled_reason ?? (r.parked_since ? "esperando restauración" : "deshabilitada o agotada")}`;
     if (r.kind === "at") {
       if (r.every_s) {
         // periodica: proxima hora, cuenta de disparos y si saltea al destino ocupado
@@ -173,7 +173,7 @@ function Connections({ sid, conn }: { sid: string; conn: ConnectionsResponse | "
       ) : (
         <div className="empty">nada mandado ni recibido</div>
       )}
-      <h3>Conexiones activas</h3>
+      <h3>Conexiones y reglas archivadas</h3>
       {rules.length ? (
         rules.map((r) => {
           const outbound = r.from === sid;

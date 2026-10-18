@@ -163,6 +163,7 @@ export type NewRule =
 
 /** Cuerpo de PUT /rules/<id>: solo lo que cambia. `every_s: null` la vuelve de un disparo. */
 export interface RuleEdit {
+  enabled?: boolean;
   text?: string;
   at?: string;
   every_s?: number | null;

@@ -678,6 +678,8 @@ def test_aviso_muerta_un_destino_que_revienta_no_corta_los_demas(reglas, monkeyp
 
 def test_rules_loop_una_regla_que_revienta_no_corta_las_demas(reglas, monkeypatch, log_capturado):
     rl, st, _ = reglas
+    # El origen sigue vivo: esta prueba aísla errores de disparo, no el archivo de huérfanas.
+    st.sessions[ORIGEN] = {"session_id": ORIGEN, "alive": True}
     r1, r2 = _dos_reglas(st, kind="at")
     for r in (r1, r2):
         r["at"] = st.now()
@@ -697,7 +699,7 @@ def test_rules_loop_una_regla_que_revienta_no_corta_las_demas(reglas, monkeypatc
     monkeypatch.setattr(rl, "fire_rule", fire)
     import types
 
-    monkeypatch.setattr(rl, "time", types.SimpleNamespace(sleep=dormir))  # no el time.sleep de todos
+    monkeypatch.setattr(rl, "time", types.SimpleNamespace(sleep=dormir, time=time.time))  # reloj real, pausa local
     with pytest.raises(_Fin):
         rl.rules_loop()
     assert disparos == ["r1", "r2"]

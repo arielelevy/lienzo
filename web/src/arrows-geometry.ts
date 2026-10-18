@@ -68,6 +68,7 @@ export interface Seg {
   /** no hubo camino limpio (cruza una tercera tarjeta, o no entra en el area util): se dibuja
    *  igual, con opacidad baja */
   dim?: boolean;
+  disabled?: boolean;
   /** y del carril por el que corre (antes de repartir pistas). El tablero reserva el alto del
    *  carril mas cargado y solo si hay al menos una flecha que lo use */
   lane?: number;
@@ -828,7 +829,7 @@ function linkItems(links: Link[], anchors: Map<string, Rect>, fmt: Formatters, n
 function ruleItems(rules: Rule[], anchors: Map<string, Rect>, fmt: Formatters): Item[] {
   const items: Item[] = [];
   for (const r of rules) {
-    if (!r.enabled || !anchors.has(r.to)) continue;
+    if (!anchors.has(r.to)) continue;
     const self = !r.from || r.from === r.to;
     if (!self && !anchors.has(r.from!)) continue;
     const from = self ? r.to : r.from!;
@@ -863,7 +864,12 @@ function ruleItems(rules: Rule[], anchors: Map<string, Rect>, fmt: Formatters): 
       title = `${r.at ? fmt.when(r.at) : "sin hora"} → «${r.text}» a ${b}${ELEGIR}`;
       desc = `${r.at ? cap(fmt.when(r.at)) : "Sin hora fijada,"} ${quien} «${r.text}»${aQuien}.${firma}${tail}`;
     }
-    items.push({ ids: [r.id], kind: "rule", from, to: r.to, glyph, title, desc });
+    if (!r.enabled) {
+      const reason = r.disabled_reason ?? (r.parked_since ? "esperando restauración de una sesión" : "deshabilitada o agotada");
+      title = `Deshabilitada: ${reason}. ${title}`;
+      desc = `Deshabilitada: ${reason}. ${desc}`;
+    }
+    items.push({ ids: [r.id], kind: "rule", from, to: r.to, glyph, title, desc, disabled: !r.enabled });
   }
   return items;
 }

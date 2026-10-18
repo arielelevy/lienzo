@@ -83,6 +83,7 @@ def retirar_regla(rule_id: str) -> bool:
         if rule is not None and informes.pendientes(rule):
             anterior = dict(rule)
             rule["enabled"] = False
+            rule["disabled_reason"] = "borrado rechazado: hay informes pendientes de integrar"
             try:
                 rules.save(strict=True)
             except Exception:
@@ -95,6 +96,41 @@ def retirar_regla(rule_id: str) -> bool:
         return False
 
 
+def reconciliar_cableado() -> None:
+    """Recupera ids vivos y archiva orígenes sin proceso ni opción de restaurar."""
+    restaurables = {s["session_id"] for s in ses.restore.restorables()}
+    with lock:
+        vivos = {sid for sid, s in sessions.items() if s.get("alive")}
+    for sid in vivos:
+        ses.retake_rules_from(sid, sid)
+        with lock:
+            parked_to = any(r.get("parked_to") == sid for r in rules.items)
+        if parked_to:
+            ses.retarget_rules(sid, sid)
+    changed = False
+    with lock:
+        for r in rules.items:
+            origin = r.get("from")
+            if (
+                origin
+                and origin not in vivos
+                and origin not in restaurables
+                and origin not in sessions
+                and not r.get("archived_at")
+            ):
+                if not r.get("parked_from"):
+                    if not r.get("parked_to"):
+                        r["parked_was_enabled"] = bool(r.get("enabled"))
+                    r["parked_from"] = origin
+                    r["parked_since"] = now()
+                r.update(enabled=False, archived_at=now(), disabled_reason="origen muerto y no restaurable")
+                changed = True
+        if changed:
+            rules.save()
+    if changed:
+        rules.publish()
+
+
 def agregar_regla(rule: dict, cap: int = 500) -> None:
     """Recorta sólo reglas sin informes pendientes; la retención prevalece sobre el cupo."""
     with lock:
@@ -102,7 +138,7 @@ def agregar_regla(rule: dict, cap: int = 500) -> None:
         excess = max(0, len(previous) + 1 - cap)
         retained = []
         for existing in previous:
-            if excess and not informes.pendientes(existing):
+            if excess and not informes.pendientes(existing) and not existing.get("archived_at"):
                 excess -= 1
             else:
                 retained.append(existing)
@@ -602,7 +638,9 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
         if rule.get("solo_si"):
             cuantos = f"informe demorado; {agrupados} aviso(s) en la espera"
         else:
-            cuantos = "un aviso demorado" if agrupados == 1 else f"{agrupados} avisos agrupados (va el del ultimo turno)"
+            cuantos = (
+                "un aviso demorado" if agrupados == 1 else f"{agrupados} avisos agrupados (va el del ultimo turno)"
+            )
         text = f"[lienzo: {cuantos} por el limite de frecuencia de la regla {rule['id']}]" + chr(10) + text
     informe = None
     if on_stop and h:
@@ -631,7 +669,9 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
         if code == 200 and res.get("estado"):
             rule["last_envio"] = {k: res.get(k) for k in ("estado", "motivo", "envio_id", "transporte", "at")}
             if res["estado"] != "entregado":
-                rule["last_result"] = f"{res['estado']}: {res.get('motivo') or 'entrega sin confirmar; no se reintenta'}"
+                rule["last_result"] = (
+                    f"{res['estado']}: {res.get('motivo') or 'entrega sin confirmar; no se reintenta'}"
+                )
         if on_stop and code == 200 and h:
             rule["last_hash"] = h
         if rule.get("kind") == "on_stop":
@@ -642,6 +682,7 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
         if not rule.get("repeat") or exhausted:
             rule["enabled"] = False
             rule["disabled_at"] = now()
+            rule["disabled_reason"] = "tope total alcanzado" if exhausted else "regla de un solo disparo ejecutada"
         elif periodic:
             advance_at(rule)
         rules.save()
@@ -746,8 +787,9 @@ def _evaluar_on_stop(sid: str, cerrada: dict) -> None:
         for r in rules.items:
             if not suya(r):
                 continue
-            foto_regla = ({**foto, "huella": foto["huella"] + "-" + secrets.token_hex(6)}
-                          if r.get("dedupe") is False else foto)
+            foto_regla = (
+                {**foto, "huella": foto["huella"] + "-" + secrets.token_hex(6)} if r.get("dedupe") is False else foto
+            )
             if callar and r.get("to") == callar.get("a"):
                 r["last_result"] = "salteado: el turno respondía un envío sin_aviso"
                 salteadas.append(r)
@@ -995,8 +1037,7 @@ def recuperar_informes() -> list[dict]:
                 continue
             if proximo_permitido(r, dt.datetime.now().astimezone())[0] is not None:
                 continue
-            informe = next((x for x in r.get("informes", [])
-                            if x["estado"] == "pendiente" and not x["intentos"]), None)
+            informe = next((x for x in r.get("informes", []) if x["estado"] == "pendiente" and not x["intentos"]), None)
             if informe is not None:
                 _on_stop_en_vuelo.add(r["id"])
                 _fotos[r["id"]] = {"texto": informe["respuesta"], "huella": informe["id"]}
@@ -1007,6 +1048,7 @@ def recuperar_informes() -> list[dict]:
 def rules_loop() -> None:
     while True:
         try:
+            reconciliar_cableado()
             # primero y aparte: un envio lento o una regla rota de abajo no la posterga
             reconciliar()  # turnos cerrados que ninguna on_stop evaluo (un Stop sin transicion)
         except Exception:
@@ -1068,8 +1110,11 @@ def purge_stale_xpc(known_remote, known_local, *, peer_id: str | None = None) ->
         for r in rotas:
             r["parked_to"], r["parked_since"], r["enabled"] = r["to"], now(), False
         viejas = {
-            r["id"] for r in rules.items
-            if r.get("parked_since") and (local_dt(r["parked_since"]) or limite) < limite
+            r["id"]
+            for r in rules.items
+            if r.get("parked_since")
+            and (local_dt(r["parked_since"]) or limite) < limite
+            and not r.get("archived_at")
             and not any(x.get("estado") != "integrado" for x in r.get("informes", []))
         }
         if viejas:
@@ -1087,7 +1132,7 @@ def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
     limit = dt.datetime.now().astimezone() - dt.timedelta(hours=max_age_h)
 
     def stale(r: dict) -> bool:
-        if informes.pendientes(r):
+        if informes.pendientes(r) or r.get("archived_at"):
             return False
         if r.get("kind") != "at" or r.get("enabled"):
             return False
@@ -1117,6 +1162,7 @@ def reactivar_agotadas_por_tope_viejo() -> int:
             and not r.get("enabled")
             and not tope_total(r)
             and not r.get("parked_since")
+            and not r.get("archived_at")
             and apagada is not None
             and disparo is not None
             and abs((apagada - disparo).total_seconds()) < 1

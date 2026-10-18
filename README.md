@@ -1,7 +1,7 @@
 # Lienzo
 
-Versión **0.3.1**: protección frente a hilos CLI inciertos, cuota agotada e informes tardíos;
-mejoras de memoria y Chrome remoto. [Novedades, validación y límites](docs/releases/0.3.1.md).
+Versión **0.4.0**: envío a Codex CLI por su consola visible, recuperación del canal Claude
+y reglas de coordinación visibles y recuperables. [Novedades, validación y límites](docs/releases/0.4.0.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada

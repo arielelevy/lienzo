@@ -7,12 +7,14 @@ import re
 import threading
 import time
 import uuid
+from ctypes import wintypes
 
 import agentes
+import claude_pipe_reconnect as rendezvous
 import procinfo
 import procs
 from claude_pipe import MAX_TEXT, ClaudePipeBridge
-from claude_pipe_bootstrap import ClaudePipeBootstrap
+from claude_pipe_bootstrap import ClaudePipeBootstrap, kernel_api, pin_ancestors, process_start
 
 CONFIRM_LIMIT_S = 600
 HEARTBEAT_CLOSE_GRACE_S = 30
@@ -75,6 +77,35 @@ def _bootstrap_failed(entry):
     )
 
 
+def _persist_first_poll(sid, bridge, adapter_pid):
+    """Persist launch opt-in before readiness, even if its card has not arrived."""
+    with _lifecycle:
+        with _lock:
+            entry = _entries.get(sid)
+            if entry is None or entry["bridge"] is not bridge or entry.get("closing"):
+                raise ValueError("enlace Claude cerrado antes del primer poll")
+            owner = entry["owner"]
+        handles = []
+        try:
+            if owner is None:
+                if type(adapter_pid) is not int or adapter_pid <= 0:
+                    raise ValueError("identidad de adaptador Claude inválida")
+                handles = pin_ancestors(adapter_pid, sid)
+                kernel = kernel_api()
+                kernel.GetProcessId.argtypes = [wintypes.HANDLE]
+                kernel.GetProcessId.restype = wintypes.DWORD
+                owner = kernel.GetProcessId(handles[-1]), process_start(kernel, handles[-1])
+                reason = _compatibility(owner)
+                if reason:
+                    raise ValueError(reason)
+            rendezvous.publish(sid, owner, entry["bootstrap"])
+            with _lock:
+                entry["owner"] = owner
+        finally:
+            for handle in handles:
+                procinfo.close_handle(handle)
+
+
 def _prepare(session_id):
     sid = str(uuid.UUID(session_id))
     with _lifecycle, _lock:
@@ -93,6 +124,7 @@ def _prepare(session_id):
             raise
         entry = {"bridge": bridge, "bootstrap": bootstrap, "expires_at": time.time() + 120, "owner": None}
         _entries[sid] = entry
+        bridge.before_first_poll = lambda pid: _persist_first_poll(sid, bridge, pid)
         return entry
 
 
@@ -132,6 +164,7 @@ def register(card, *, reconnect=False):
                     "bootstrap Claude finalizado sin conexión vigente; cerrá el enlace y registrá de nuevo"
                 )
             entry["owner"] = owner
+        rendezvous.publish(card["session_id"], owner, entry["bootstrap"])
         return {
             "session_id": card["session_id"],
             "command": entry["bootstrap"].command(powershell=True),
@@ -303,13 +336,16 @@ def _rejected(reason, envio_id=None, estado="rechazado"):
     }
 
 
-def _close(session_id, expected=None):
+def _close(session_id, expected=None, *, restarting=False):
     with _lifecycle:
         with _lock:
             entry = _entries.get(session_id)
             if entry is None or (expected is not None and entry is not expected):
                 return
             entry["closing"] = True
+            entry["bridge"].resume = restarting
+        if not restarting:
+            rendezvous.descriptor_path(session_id).unlink(missing_ok=True)
         # Keep the entry reserved until both writers/listeners are closed.
         try:
             entry["bootstrap"].close()
@@ -320,12 +356,36 @@ def _close(session_id, expected=None):
 
 
 def close(session_id):
-    _close(session_id)
+    with _lifecycle:
+        _close(session_id)
+        rendezvous.descriptor_path(session_id).unlink(missing_ok=True)
 
 
 def reap(cards):
     """Call outside the sessions lock, with a snapshot of locally owned cards."""
     current = {card["session_id"]: card for card in cards}
+    # Only a previously opted-in, still identical Claude owner gets a new rendezvous.
+    for sid, card in current.items():
+        if card.get("agent") != "claude":
+            continue
+        try:
+            path = rendezvous.descriptor_path(sid)
+        except ValueError:
+            continue
+        if path.exists() and sid not in _entries:
+            try:
+                with _lifecycle:
+                    row = json.loads(path.read_text(encoding="utf-8"))
+                    owner = _owner(card)
+                    if owner and row.get("owner") == list(owner) and not _compatibility(owner):
+                        entry = _prepare(sid)
+                        with _lock:
+                            entry["owner"] = owner
+                        rendezvous.publish(sid, owner, entry["bootstrap"])
+            except OSError, ValueError, KeyError, TypeError:
+                # Public metadata cannot authorize a connection without OS owner verification.
+                rendezvous.state.avisar_si_cambia("claude reconnect " + sid, "No se pudo validar el rendezvous Claude")
+                continue
     with _lock:
         entries = list(_entries.items())
     for sid, entry in entries:
@@ -337,16 +397,18 @@ def reap(cards):
             or _bootstrap_failed(entry)
             or (card is None and entry["owner"] is not None)
         ):
-            _close(sid, expected=entry)
+            _close(sid, expected=entry, restarting=not gone and card is not None and _owner(card) == entry["owner"])
+        elif entry["owner"] is not None and entry["bridge"].registered.is_set():
+            rendezvous.publish(sid, entry["owner"], entry["bootstrap"])
 
 
-def close_all():
+def close_all(*, restarting=False):
     with _lock:
         entries = list(_entries.items())
     errors = []
     for sid, entry in entries:
         try:
-            _close(sid, expected=entry)
+            _close(sid, expected=entry, restarting=restarting)
         except (OSError, RuntimeError, TimeoutError) as error:
             errors.append(error)
     if errors:

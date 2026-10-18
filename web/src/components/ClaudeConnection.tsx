@@ -31,7 +31,7 @@ export function ClaudeConnection({ session: s, toast }: { session: Session; toas
     {connection?.connected && <p role="status">Adaptador conectado. Esperando la capacidad actual de la sesión.</p>}
     {connection && !connection.connected && <div>
       <p>Ejecutá este comando público desde esta sesión Claude y aprobalo allí. No contiene secretos.</p>
-      <p>En PowerShell empieza con &amp;. Si la caja ya está en modo bash, no agregues otro !. Después de reiniciar el server hace falta una nueva conexión.</p>
+      <p>En PowerShell empieza con &amp;. Si la caja ya está en modo bash, no agregues otro !. El adaptador reconecta al reiniciar el server mientras siga vivo el mismo proceso Claude. Un cierre explícito del enlace requiere conectarlo de nuevo.</p>
       {expired ? <p role="status">El comando venció. Generá otro antes de ejecutarlo.</p> : <>
         <textarea readOnly aria-label="Comando público para conectar Claude" value={connection.command} />
         <button onClick={() => {

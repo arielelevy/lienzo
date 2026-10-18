@@ -54,6 +54,7 @@ def card(tmp_path, monkeypatch):
     runtime._latest.clear()
     monkeypatch.setattr(runtime, "ClaudePipeBridge", Bridge)
     monkeypatch.setattr(runtime, "ClaudePipeBootstrap", Bootstrap)
+    monkeypatch.setattr(runtime.rendezvous, "publish", lambda *args: None)
     monkeypatch.setattr(runtime.procs, "creation_filetime", lambda pid: 111)
     monkeypatch.setattr(runtime.procinfo, "alive", lambda pid: True)
     monkeypatch.setattr(
@@ -323,7 +324,7 @@ def test_reap_stale_snapshot_does_not_close_replacement(card, monkeypatch):
     old["bridge"].last_poll -= runtime.HEARTBEAT_CLOSE_GRACE_S + 1
     real_close = runtime._close
 
-    def replace_then_close(sid, expected=None):
+    def replace_then_close(sid, expected=None, *, restarting=False):
         real_close(sid)
         runtime.register(card)
         real_close(sid, expected)

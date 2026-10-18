@@ -7,11 +7,14 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
 from ctypes import wintypes
 from pathlib import Path
+
+from claude_pipe_bootstrap import pin_ancestors
 
 
 def owner_handle(session_id):
@@ -131,15 +134,32 @@ def write_pipe(address, token, session_id, message_id, text, timeout_ms=3000):
         kernel.CloseHandle(handle)
 
 
+def bridge_credentials(environment):
+    url = environment["LIENZO_CLAUDE_BRIDGE_URL"]
+    secret = environment["LIENZO_CLAUDE_BRIDGE_SECRET"]
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname != "127.0.0.1"
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+        or not parsed.port
+    ):
+        raise ValueError("bridge_not_loopback")
+    if not isinstance(secret, str) or not secret or len(secret) > 256 or "\r" in secret or "\n" in secret:
+        raise ValueError("bridge_invalid_secret")
+    return url, secret
+
+
 def run_adapter(metadata):
     expected = os.environ["LIENZO_CLAUDE_BRIDGE_SESSION"]
     if metadata["session_id"] != expected:
         raise ValueError("session_mismatch")
-    url = os.environ["LIENZO_CLAUDE_BRIDGE_URL"]
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.path:
-        raise ValueError("bridge_not_loopback")
-    secret = os.environ.pop("LIENZO_CLAUDE_BRIDGE_SECRET")
+    url, secret = bridge_credentials(os.environ)
+    os.environ.pop("LIENZO_CLAUDE_BRIDGE_SECRET")
     token = os.environ.pop("CLAUDE_CODE_MESSAGING_TOKEN")
     address = os.environ["CLAUDE_CODE_MESSAGING_SOCKET"]
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -155,15 +175,52 @@ def run_adapter(metadata):
             return json.load(response)
 
     kernel, owner = owner_handle(expected)
+    # The original bootstrap authenticated this server's PID/FILETIME. Retain its
+    # executable and exact argv in memory to authenticate later server instances.
+    trusted_server = None
+    reconnect_owner = None
+    if os.environ.get("LIENZO_CLAUDE_SERVER_PID"):
+        import claude_pipe_reconnect as rendezvous
+        from claude_pipe_bootstrap import process_start
+
+        rendezvous.state.LIENZO = os.environ.pop("LIENZO_CLAUDE_RECONNECT_HOME")
+        trusted_server = rendezvous.server_identity(
+            int(os.environ.pop("LIENZO_CLAUDE_SERVER_PID")), int(os.environ.pop("LIENZO_CLAUDE_SERVER_START"))
+        )
+        # owner_handle already checked registry PID/FILETIME; get PID from the pinned handle.
+        kernel.GetProcessId.argtypes = [wintypes.HANDLE]
+        reconnect_owner = kernel.GetProcessId(owner), process_start(kernel, owner)
     kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
     ready = False
+    ancestors = []
     try:
-        # Poll failures terminate this private adapter; no reconnect/replay loop.
+        # Keep exited intermediate process objects alive so a new server can
+        # still verify PID/FILETIME/PPID back to this live Claude owner.
+        ancestors = pin_ancestors(os.getpid(), expected)
         while kernel.WaitForSingleObject(owner, 0) == 258:
-            job = request("/poll", {"adapter_pid": os.getpid()})
+            try:
+                job = request("/poll", {"adapter_pid": os.getpid()})
+            except OSError, ValueError:
+                if trusted_server is None:
+                    raise
+                # No job is replayed. Only reconnect the control channel while its
+                # pinned Claude owner remains alive; every failed attempt is paced.
+                time.sleep(1)
+                if kernel.WaitForSingleObject(owner, 0) != 258:
+                    return
+                try:
+                    received = rendezvous.reconnect(expected, reconnect_owner, trusted_server)
+                    new_url, new_secret = bridge_credentials(received)
+                except OSError, ValueError, KeyError, TypeError:
+                    continue
+                url, secret = new_url, new_secret
+                continue
             if job.get("stop"):
-                return
+                if not job.get("resume") or trusted_server is None:
+                    return
+                time.sleep(1)
+                continue
             if not ready:
                 print("claude_pipe_adapter_ready", flush=True)
                 ready = True
@@ -176,8 +233,15 @@ def run_adapter(metadata):
                 status = "pipe_written"
             except OSError, ValueError, TimeoutError:
                 status = "unknown"
-            request("/result", {"id": job["id"], "status": status})
+            try:
+                request("/result", {"id": job["id"], "status": status})
+            except OSError, ValueError:
+                # A lost result is uncertain; never write this job again.
+                if trusted_server is None:
+                    raise
     finally:
+        for ancestor in ancestors:
+            kernel.CloseHandle(ancestor)
         kernel.CloseHandle(owner)
 
 
@@ -251,7 +315,11 @@ def cli():
         message = "claude_pipe_adapter_failed"
         if sys.argv[1:2] == ["--bootstrap"]:
             if isinstance(error, ValueError) and error.args == ("claude_messaging_environment_missing",):
-                print(message + ": esta ejecución no heredó el canal de Claude. Ejecutá el comando desde una herramienta de esa conversación de Claude; abrir el canal en otra consola no lo conecta.", file=sys.stderr)
+                print(
+                    message
+                    + ": esta ejecución no heredó el canal de Claude. Ejecutá el comando desde una herramienta de esa conversación de Claude; abrir el canal en otra consola no lo conecta.",
+                    file=sys.stderr,
+                )
                 return 2
             stale_identity = isinstance(error, ValueError) and error.args in (
                 ("bootstrap_server_identity_mismatch",),

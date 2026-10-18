@@ -356,7 +356,8 @@ def consulta_tarjeta(sid: str) -> dict | None:
 
 def consulta_enviar(sid: str, texto: str, de: str | list[str] | None, cid: str) -> tuple[int, dict]:
     """consulta.enviar: el envio del tablero (local o reenviado a la PC duena), con la flecha de la consulta.
-    Con varios `de` (la sintesis lee a todos los investigadores) se teclea una vez y se dibuja una flecha por cada uno."""
+    Con varios `de` (la sintesis lee a todos los investigadores) se teclea una vez y se dibuja una flecha por cada uno.
+    """
     origenes = [x for x in (de if isinstance(de, list) else [de]) if x and x != sid]
     d = {"text": texto, "consulta": cid}
     if origenes:
@@ -504,14 +505,10 @@ def config_peers_loop(stop_event: threading.Event | None = None) -> None:
 
 
 def conservar_regla(r: dict) -> bool:
-    """Al arrancar, que reglas de rules.json siguen: las que salen de una tarjeta de esta PC (o de
-    ninguna, las `at`) y van a una tarjeta conocida o a otra PC (`xpc`). La de otra PC se conserva
-    aunque su destino todavia no se vea: el espejo llega despues, y si el destino ya no existe la
-    purga la estaciona (`purge_stale_xpc`) en vez de perderla."""
-    esperan = ses.DEAD_TARGETS  # las estacionadas de una muerta que espera sucesora (sucesion.json)
-    destino = r.get("to") in sessions or bool(r.get("xpc")) or (r.get("parked_to") or "") in esperan
-    origen = not r.get("from") or r["from"] in sessions or (r.get("parked_from") or "") in esperan
-    return destino and origen
+    """Conserva reglas para reconciliar las huérfanas después de recuperar el inventario."""
+    # El barrido puede repoblar una tarjeta después de cargar rules.json.
+    # reconciliar_cableado decide el archivo con el inventario vivo y restaurables.
+    return True
 
 
 def salud_publica(autorizado: bool) -> dict:
@@ -1178,7 +1175,9 @@ def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
         sid = s["session_id"]  # el primer turno puede haber reemplazado el id provisional durante el envío
     src_s = registrar_envio(sid, d)
     if d.get("copycat") is True and res.get("estado") not in (None, "entregado"):
-        res["handover_error"] = "traspaso pendiente: entrega no confirmada; el origen conserva su trabajo. No reenvíes el texto"
+        res["handover_error"] = (
+            "traspaso pendiente: entrega no confirmada; el origen conserva su trabajo. No reenvíes el texto"
+        )
         return
     if s is not None and src_s is not None and d.get("copycat") is True:
         # pegar trabajo: la copia hereda el titulo; el origen se detiene salvo "Duplicar"
@@ -1197,7 +1196,9 @@ def envio_del_tablero(sid: str, s: dict | None, d: dict, res: dict) -> None:
 def remote_hand_over(sid: str, origin: dict | None, d: dict, res: dict) -> None:
     """El texto ya llego: un fallo de metadatos se informa sin volver a enviarlo."""
     if res.get("estado") not in (None, "entregado"):
-        res["handover_error"] = "traspaso pendiente: entrega no confirmada; el origen conserva su trabajo. No reenvíes el texto"
+        res["handover_error"] = (
+            "traspaso pendiente: entrega no confirmada; el origen conserva su trabajo. No reenvíes el texto"
+        )
         return
     origin = origin or next((s for s in mirror.MIRROR.sessions() if s["session_id"] == d.get("from")), None)
     if origin is None:
@@ -1331,7 +1332,8 @@ def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero
                 plan = ses.puede_enviar(s)
                 rechazo = None if plan["puede"] else (409, {"error": plan["motivo"], "envio": plan})
             elif nombre == "coordinator" and (s.get("agent"), (s.get("external") or {}).get("kind")) in {
-                ("codex", "codex-desktop"), ("claude", "claude-desktop")
+                ("codex", "codex-desktop"),
+                ("claude", "claude-desktop"),
             }:
                 # The role routes replies, not console control. Require a usable channel to enable;
                 # removing the role must still work after the desktop app or its queue is gone.
@@ -2025,7 +2027,9 @@ class Handler(JsonHandler):
                     target = rule.get("to") if rule else None
                 if target is None:
                     return self._json(404, {"error": "conexion desconocida"})
-                return self._json(*acuse_informe(parts[1], parts[3], {"estado": body.get("estado"), "session_id": target}))
+                return self._json(
+                    *acuse_informe(parts[1], parts[3], {"estado": body.get("estado"), "session_id": target})
+                )
             if parts == ["rules", "retarget"]:
                 # a mano: las reglas que avisaban a `old` pasan a `new`, aca y en las otras PCs
                 code, res = accion_retarget(self._json_body(), desde_tablero=True)
@@ -2333,7 +2337,12 @@ class Handler(JsonHandler):
             if len(parts) == 2 and parts[0] in ("links", "rules"):
                 log(f"{parts[0][:-1]} {parts[1]} borrada desde la UI ({self._client_ip()})")
                 if parts[0] == "rules":
-                    return self._json(200, {"ok": True, "conservada": rl.retirar_regla(parts[1])})
+                    if rl.retirar_regla(parts[1]):
+                        return self._json(
+                            409,
+                            {"error": "No se puede borrar: hay informes pendientes de integrar.", "conservada": True},
+                        )
+                    return self._json(200, {"ok": True})
                 links.remove(lambda x: x["id"] == parts[1])
                 return self._json(200, {"ok": True})
             return self._json(404, {"error": "ruta desconocida"})
@@ -2571,7 +2580,10 @@ class PeerHandler(JsonHandler):
         if len(rest) == 3 and rest[0] == "sessions" and method == "PUT":
             return self._accion_sesion(method, rest[1], rest[2], raw)
         if len(rest) == 2 and rest[0] == "rules" and method == "DELETE":
-            rl.retirar_regla(rest[1])
+            if rl.retirar_regla(rest[1]):
+                return self._json(
+                    409, {"error": "No se puede borrar: hay informes pendientes de integrar.", "conservada": True}
+                )
             return self._json(200, {"ok": True})
         if len(rest) == 2 and rest[0] == "sessions" and method == "DELETE":
             drop_session(rest[1], "borrada desde otra PC")
@@ -2922,11 +2934,12 @@ def detener_plugins(espera: float = DETENER_MAX_S) -> list[str]:
     """Llama a `detener()` de los plugins que lo declaran, en otro hilo y con tope: un plugin que no
     vuelve no deja el server sin salir. Devuelve los parados, o [] si la parada no termino a tiempo."""
     hecho: list[str] = []
+
     def parar():
         try:
             hecho.extend(plugins.detener())
         finally:
-            ses.claude_pipe_runtime.close_all()
+            ses.claude_pipe_runtime.close_all(restarting=True)
 
     hilo = threading.Thread(target=parar, name="detener-plugins", daemon=True)
     hilo.start()
