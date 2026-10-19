@@ -57,6 +57,17 @@ coordinación y QR. Un barrido no equivale a verificar manualmente cada rama.
 
 ## Hallazgos que permanecen pendientes
 
+Hallazgo adicional al contrastar el antecedente de GIST: la prueba heredada
+`test_real_adapter_reconnects_after_its_launcher_exits` copiaba `cmd.exe` bajo el
+nombre `claude.exe`. La primera global la incluía. Se detuvo el árbol de procesos de
+la segunda corrida tras verificar su comando y luego se verificó que los seis PID
+del árbol ya no estaban vivos. Se retiraron la copia y el launcher específico. La
+prueba nueva usa el Python original y verifica con procesos/FILETIME reales que un
+registro no convierte ese proceso en un Claude autorizado. Los demás contratos de
+reconexión mantienen sus dobles explícitos. No se atribuye a esa cobertura una
+reconexión positiva real; esa medición requiere un entorno autorizado con Claude.
+Una búsqueda posterior no encontró copias de binarios en las pruebas Python.
+
 1. Aprendizaje real: 0 creencias, 5 encargos sin clasificar y 0 patrones en `lienzo` al
    medir. El transporte corregido permite alimentar nuevos encargos, pero no sustituye
    clasificación histórica, investigación causal, evidencia ni veredictos humanos.

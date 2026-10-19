@@ -35,6 +35,12 @@ su timeout de 450 s; se amplió el presupuesto a 900 s, sin cambiar el baseline 
 oráculos. La evidencia de la siguiente corrida y su compuerta quedan en los resultados
 del runner. No se aprueban automáticamente referencias ni mutaciones.
 
+Se retiró de la suite la suplantación de `cmd.exe` como `claude.exe`, identificada al
+revisar el antecedente de GIST. La prueba de rechazo usa ahora un Python original,
+con su nombre real. La reconexión positiva con ascendencia Claude real queda
+pendiente de medición en un entorno autorizado; no se reproduce mediante binarios
+del sistema renombrados. No se borraron artefactos anteriores del incidente.
+
 ## Producto, aprendizaje y extensiones (2026-10-16)
 
 Checklist único de esta conversación. Todo queda pendiente; el estado técnico no cierra una tarea.

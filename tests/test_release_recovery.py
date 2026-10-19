@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -266,102 +265,35 @@ def test_adapter_survives_graceful_bridge_restart_without_replay(monkeypatch, in
             sender.join(5)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="real Windows process ancestry and pipes")
-def test_real_adapter_reconnects_after_its_launcher_exits(tmp_path, monkeypatch):
-    import time
-
+@pytest.mark.skipif(os.name != "nt", reason="real Windows process ancestry")
+def test_registry_does_not_impersonate_a_real_python_process(tmp_path, monkeypatch):
+    """El registro no convierte Python en Claude; se conserva el nombre real del binario."""
     sid = str(uuid.uuid4())
-    # cmd.exe renamed only in this fixture supplies a synthetic Claude image.
-    # It runs no model, accesses no real session and stays alive on its own stdin.
-    synthetic_claude = tmp_path / "claude.exe"
-    shutil.copyfile(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe", synthetic_claude)
-    first, second = pipe.ClaudePipeBridge(sid), pipe.ClaudePipeBridge(sid)
-    kernel = bootstrap.kernel_api()
-    server_handle = reconnect.procinfo.open_process(os.getpid(), 0x101000)
-    server_start = bootstrap.process_start(kernel, server_handle)
-    reconnect.procinfo.close_handle(server_handle)
-    env = dict(os.environ)
-    env.update(first.environment())
-    env.update(
-        CLAUDE_CODE_MESSAGING_TOKEN="synthetic-test-token",
-        CLAUDE_CODE_MESSAGING_SOCKET="synthetic-test-socket",
-        LIENZO_CLAUDE_SERVER_PID=str(os.getpid()),
-        LIENZO_CLAUDE_SERVER_START=str(server_start),
-        LIENZO_CLAUDE_RECONNECT_HOME=state.LIENZO,
+    registry = tmp_path / "claude" / "sessions"
+    registry.mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(registry.parent))
+    owner = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    owner_log = tmp_path / "owner.log"
-    with owner_log.open("wb") as output:
-        owner = subprocess.Popen(
-            [str(synthetic_claude), "/d", "/q", "/k"],
-            stdin=subprocess.PIPE,
-            stdout=output,
-            stderr=output,
-            env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        listener = bootstrap.ClaudePipeBootstrap(second)
+    try:
+        handle = reconnect.procinfo.open_process(owner.pid, 0x101000)
+        assert handle
         try:
-            handle = reconnect.procinfo.open_process(owner.pid, 0x101000)
-            start = bootstrap.process_start(kernel, handle)
-            reconnect.procinfo.close_handle(handle)
-            registry = Path(env["CLAUDE_CONFIG_DIR"]) / "sessions"
-            registry.mkdir(parents=True, exist_ok=True)
-            (registry / f"{owner.pid}.json").write_text(
-                json.dumps({"pid": owner.pid, "procStart": str(start), "sessionId": sid})
-            )
-            launcher = Path(__file__).parent / "fixtures" / "claude_adapter_launcher.py"
-            owner.stdin.write(f'"{sys.executable}" "{launcher}" {sid}\r\n'.encode())
-            owner.stdin.flush()
-            assert first.registered.wait(10), owner_log.read_text(errors="replace")
-            adapter_pid = first.adapter_pid
-            launcher_pid, _ = reconnect.procinfo.proc_info(adapter_pid)
-            deadline = time.monotonic() + 8
-            while reconnect.procinfo.alive(launcher_pid) and time.monotonic() < deadline:
-                time.sleep(0.02)
-            assert not reconnect.procinfo.alive(launcher_pid), "launcher did not return"
-            assert reconnect.procinfo.alive(adapter_pid)
-            first.resume = True
-            first.close()
-            reconnect.publish(sid, (owner.pid, start), listener)
-            if not second.registered.wait(10):
-                # The contract is eventual reconnection through the real OS gate.
-                # Preserve its timeout, with ancestry detail only as diagnostics.
-                detail = "ancestry valid at diagnostic time"
-                try:
-                    pinned = bootstrap.pin_ancestors(adapter_pid, sid)
-                except (OSError, ValueError, TypeError) as error:
-                    detail = repr(error)
-                else:
-                    for ancestor in pinned:
-                        reconnect.procinfo.close_handle(ancestor)
-                pytest.fail(
-                    "adapter did not reconnect within 10 s; " + detail + "; " + owner_log.read_text(errors="replace")
-                )
-            assert second.adapter_pid == adapter_pid
-            listener._thread.join(2)  # the bootstrap ack is processed asynchronously
-            assert listener.client_pid == adapter_pid and listener.result == "transferred"
-            assert not bootstrap.verified_child(os.getpid(), sid)
-            # An unrelated process running the exact same adapter script/argv and
-            # forged public owner descriptor still cannot establish Claude ancestry.
-            foreign = subprocess.run(
-                [sys.executable, str(Path(adapter.__file__).resolve()), "--serve"],
-                input=json.dumps({"session_id": sid}).encode(),
-                env=env,
-                capture_output=True,
-                timeout=10,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            assert foreign.returncode == 2 and b"claude_pipe_adapter_failed" in foreign.stderr
-            assert second.adapter_pid == adapter_pid
-            second.close()
-            deadline = time.monotonic() + 6
-            while reconnect.procinfo.alive(adapter_pid) and time.monotonic() < deadline:
-                time.sleep(0.02)
-            assert not reconnect.procinfo.alive(adapter_pid)
+            start = bootstrap.process_start(bootstrap.kernel_api(), handle)
         finally:
-            first.close()
-            second.close()
-            listener.close()
-            owner.stdin.close()
-            owner.terminate()
-            owner.wait(timeout=5)
+            reconnect.procinfo.close_handle(handle)
+        (registry / f"{owner.pid}.json").write_text(
+            json.dumps({"pid": owner.pid, "procStart": str(start), "sessionId": sid}),
+            encoding="utf-8",
+        )
+        assert reconnect.procinfo.alive(owner.pid)
+        assert not bootstrap.verified_child(owner.pid, sid)
+        assert Path(reconnect.procinfo.image_path(owner.pid)).name.lower().startswith("python")
+    finally:
+        owner.stdin.close()
+        owner.terminate()
+        owner.wait(timeout=5)
