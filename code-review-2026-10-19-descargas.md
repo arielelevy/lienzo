@@ -41,3 +41,18 @@ de actualizar el destino. Los trabajos viven en memoria: continúan al cerrar el
 modal, pero no sobreviven al reinicio del servidor. No se midieron mutaciones ni
 se aceptaron casos o baselines: las ejecuciones directas anteriores no equivalen
 a un PASS certificado por la compuerta agéntica.
+
+## Ajuste del estado final
+
+Reporte real de Ariel: los archivos llegaron y el contador alcanzó el total,
+pero la barra permanecía visible. Explorer revisó el componente y el reporte;
+Analyser distinguió transferencia activa y resultado terminal; Designer amplió
+los recorridos existentes para exigir mensaje final, ausencia de barra y cierre;
+Executor ejecutó los tres recorridos Chromium sobre la UI compilada (3 con salida
+0), lint y build (salida 0); Detective contrastó el resultado y revisó el delta.
+La barra se renderiza sólo en waiting/copying, también desaparece ante error y se
+conservan los errores por archivo. El estado recibido ofrece Cerrar y volver a la
+lista; se oculta la instrucción de selección durante el trabajo. Sin cambios al
+transporte ni escrituras adicionales a los archivos. Sin hallazgos abiertos en
+este delta. Se reutilizó el diseño previo sin aceptar casos ni baselines nuevos;
+esta ejecución directa no certifica PASS de la compuerta.

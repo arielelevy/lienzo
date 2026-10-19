@@ -79,7 +79,7 @@ export function Downloads({ peer, onClose }: { peer: Peer; onClose: () => void }
       }
     }}>
       <header><h2 id="downloads-title">Traer descargas de {peer.name}</h2><button ref={closeButton} onClick={onClose} aria-label="Cerrar descargas">×</button></header>
-      <p>Los 30 archivos más recientes. Elegí cuáles guardar en esta PC.</p>
+      {!job && <p>Los 30 archivos más recientes. Elegí cuáles guardar en esta PC.</p>}
       {preview && <p className="downloads-path">Origen: {preview.source}<br />Guardar en: {preview.destination}</p>}
       {error && <p role="alert" className="downloads-error">{error}</p>}
       {permission && <div><p>Podés habilitar sólo la carpeta Descargas de ambas PCs para transferir estos archivos.</p><button disabled={loading} onClick={() => void enable()}>Habilitar carpeta Descargas</button></div>}
@@ -101,11 +101,12 @@ export function Downloads({ peer, onClose }: { peer: Peer; onClose: () => void }
         </div> : <footer><button disabled={loading} onClick={() => void load()}>Actualizar lista</button><button disabled={loading || !selected.size} onClick={() => { if (existing.length) setConfirm(true); else void bring(false); }}>Traer seleccionados ({selected.size})</button></footer>}
       </>}
       {job && <div role="status">
+        {job.state === "received" && <h3>✓ Transferencia finalizada</h3>}
         <p>{job.state === "received" ? "Archivos recibidos y verificados" : job.state === "error" ? "La transferencia tuvo errores" : "Trayendo archivos…"} · {size(job.bytes)} de {size(job.total)}</p>
-        <progress max={job.total || 1} value={job.state === "received" && !job.total ? 1 : job.bytes} />
+        {active && <progress aria-label="Progreso de descarga" max={job.total || 1} value={job.bytes} />}
         <ul>{job.files.map(file => <li key={file.name}>{file.name}: {file.state === "received" ? "recibido" : file.error || "pendiente"}</li>)}</ul>
         {job.error && <p role="alert" className="downloads-error">{job.error}</p>}
-        {!active && <button onClick={() => { setJob(null); void load(); }}>Ver descargas otra vez</button>}
+        {!active && <footer><button onClick={() => { setJob(null); void load(); }}>Ver descargas otra vez</button><button onClick={onClose}>Cerrar</button></footer>}
         {active && <p>Podés cerrar esta ventana; la transferencia sigue en Lienzo.</p>}
       </div>}
     </section>

@@ -32,7 +32,12 @@ for (const overwrite of [false,true]) test(`clic derecho pide confirmación y ${
   expect(writes).toEqual([]);
   await dialog.getByRole('button',{name:overwrite?'Sobrescribir y traer':'Saltear existentes',exact:true}).click();
   await expect(dialog.getByText(/Archivos recibidos y verificados/)).toBeVisible();
+  await expect(dialog.getByRole('heading',{name:'✓ Transferencia finalizada'})).toBeVisible();
+  await expect(dialog.getByRole('progressbar')).toHaveCount(0);
+  await expect(dialog.getByText('Los 30 archivos más recientes. Elegí cuáles guardar en esta PC.')).toHaveCount(0);
   expect(writes).toEqual([{plan:'plan-1',files:overwrite?['new','old']:['new'],replace:overwrite?['old']:[]}]);
+  await dialog.getByRole('button',{name:'Cerrar',exact:true}).click();
+  await expect(dialog).toHaveCount(0);
 });
 
 test('respuesta tardía al cerrar el diálogo no escribe ni abre otra PC',async({page})=>{
