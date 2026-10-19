@@ -1456,6 +1456,9 @@ def accion_pending(request_id: str, d: dict, *, desde_tablero: bool) -> tuple[in
 def rescan_once() -> None:
     """Buscar sesiones y refrescar etiquetas y títulos de sus consolas locales."""
     try:
+        import codex_status
+
+        codex_status.request_scan()
         sweep_once()
         console_titles.sync_once(force=True)
     except Exception:

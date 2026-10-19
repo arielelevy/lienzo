@@ -116,6 +116,51 @@ def test_two_terminals_in_one_folder_keep_separate_threads(monkeypatch):
     status._cache.clear()
 
 
+@pytest.mark.parametrize("thread", [SID, None])
+def test_status_only_once_until_manual_scan_or_new_process(monkeypatch, thread):
+    from types import SimpleNamespace
+
+    status._cache.clear()
+    status._running.clear()
+    clock = [0]
+    start = [123]
+    calls = []
+    monkeypatch.setattr(status.procinfo, "_WIN", True)
+    monkeypatch.setattr(status.procinfo, "process_agent", lambda pid: "codex")
+    monkeypatch.setattr(status.procs, "creation_filetime", lambda pid: start[0])
+    monkeypatch.setattr(status.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(status, "rollout", lambda sid: "rollout.jsonl")
+    monkeypatch.setattr(status.subprocess, "run", lambda *a, **kw:
+                        calls.append(a) or SimpleNamespace(returncode=0, stdout=json.dumps({"thread": thread})))
+    try:
+        status.discover(42)
+        for tick in (11, 61, 301, 3600):
+            clock[0] = tick
+            status.discover(42)
+        assert len(calls) == 1
+        status.request_scan()
+        status.discover(42)
+        assert len(calls) == 2
+        start[0] = 456
+        status.discover(42)
+        assert len(calls) == 3
+    finally:
+        status._cache.clear()
+        status._running.clear()
+
+
+def test_manual_scan_does_not_duplicate_running_query():
+    key = (42, 123)
+    status._cache[key] = (0, None)
+    status._running.add(key)
+    try:
+        status.request_scan()
+        assert key in status._cache
+    finally:
+        status._cache.clear()
+        status._running.clear()
+
+
 @pytest.mark.parametrize("payload", [{"id": OTHER, "originator": "codex-tui"},
                                      {"id": SID, "originator": "codex_exec"}])
 def test_wrong_thread_or_headless_file_rejected(store, payload):

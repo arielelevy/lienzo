@@ -19,7 +19,16 @@ import procs
 
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _cache = {}
+_running = set()
 _lock = threading.Lock()
+
+
+def request_scan():
+    """El botón Buscar sesiones permite otro intento, sin duplicar consultas en curso."""
+    with _lock:
+        for key in list(_cache):
+            if key not in _running:
+                del _cache[key]
 
 
 def idle(snapshot):
@@ -111,14 +120,17 @@ def discover(pid):
     tick = time.monotonic()
     with _lock:
         previous = _cache.get(key)
-        if previous and tick - previous[0] < (60 if previous[1] else 10):
-            return previous[1]
+        if previous:
+            # La prueba vence, el permiso de teclear no se renueva con el tiempo.
+            return previous[1] if tick - previous[0] < 60 else None
         # No dos consultas simultáneas sobre la misma consola.
         _cache[key] = (tick, None)
-        if len(_cache) > 128:
-            for old in list(_cache):
-                if old != key and tick - _cache[old][0] > 120:
-                    del _cache[old]
+        _running.add(key)
+        # Sólo retirar otras encarnaciones del mismo PID: purgar por edad
+        # permitiría volver a teclear en una CLI que sigue abierta.
+        for old in list(_cache):
+            if old[0] == pid and old != key and old not in _running:
+                del _cache[old]
     try:
         result = subprocess.run(
             [sys.executable, __file__, "--pid", str(pid), "--start", str(start)],
@@ -134,6 +146,7 @@ def discover(pid):
         proof = None
     with _lock:
         _cache[key] = (time.monotonic(), proof)
+        _running.discard(key)
     return proof
 
 

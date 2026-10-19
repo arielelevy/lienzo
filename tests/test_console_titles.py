@@ -112,13 +112,16 @@ def test_manual_sync_reapplies_title_after_cached_attempt(monkeypatch):
 
 
 def test_manual_rescan_discovers_before_retitling(monkeypatch):
+    import codex_status
+
     from lienzo import server
 
     calls = []
+    monkeypatch.setattr(codex_status, "request_scan", lambda: calls.append("status-permitido"))
     monkeypatch.setattr(server, "sweep_once", lambda: calls.append("sweep"))
     monkeypatch.setattr(ct, "sync_once", lambda **kwargs: calls.append(kwargs))
     server.rescan_once()
-    assert calls == ["sweep", {"force": True}]
+    assert calls == ["status-permitido", "sweep", {"force": True}]
 
 
 def test_manual_rescan_reports_worker_failure(monkeypatch):
