@@ -46,7 +46,8 @@ export const hasConsole = (s: Session): boolean => !!s.alive && !!s.pid && !s.or
 export const needsPiReload = (s: Session): boolean => s.agent === "pi" && s.source === "sweep" && !s.hooked && !s.transcript_path;
 
 /** Sin identidad no sabemos si esta libre: no confundir un log desconocido con una sesion nueva. */
-export const isFree = (s: Session): boolean => !needsPiReload(s) && canWrite(s) && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();
+export const isFree = (s: Session): boolean => s.state !== "corriendo" && (s.source !== "sweep" || !!s.transcript_path)
+  && canWrite(s) && !(s.last_prompt || "").trim() && !(s.last_reply || "").trim();
 
 /** Texto sobre el que busca el filtro del header. El agente va primero porque su nombre ("codex",
  *  "claude") es lo primero que uno escribe, y hasta ahora sólo se filtraba por los chips; despues

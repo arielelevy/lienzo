@@ -557,7 +557,7 @@ def propagar_auto_aprobar(valor: bool, pcs: list[str] | None = None) -> dict[str
             pend[pc] = valor
             log(f"auto-aprobar = {valor} no llego a {pc} ({motivo}); se reintenta cuando conteste")
         _guardar_config_pendiente(pend)
-    return {**{pc: "ok" for pc in ok}, **fallaron}
+    return dict.fromkeys(ok, "ok") | fallaron
 
 
 def olvidar_config_pendiente(pc: str) -> None:
@@ -1804,20 +1804,20 @@ class Handler(JsonHandler):
             return
         try:
             if parts == ["tailchrome", "process"]:
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "el proceso se administra desde esta PC"})
                 return self._json(200, tailchrome_process.service(self.server.server_port).public())
             if parts == ["tailchrome"]:
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "el puente se abre desde esta PC"})
                 return self._file(os.path.join(HERE, "tailchrome.html"), "text/html; charset=utf-8")
             if parts == ["tailchrome", "stream"]:
-                if self._via_tunnel() or not self._is_local() or not self._origin_ok():
+                if not self._is_local() or not self._origin_ok():
                     return self._json(403, {"error": "el puente requiere un Origin local propio"})
                 return _tailchrome_local(self)
             if parts == ["browser", "stream"]:
                 # canal vivo de Chrome remoto (browser_stream.py): el socket queda tomado hasta que el visor cierra
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "Chrome remoto se maneja desde la PC de Lienzo"})
                 if not self._origin_ok():
                     return self._json(403, {"error": "el Origin no es propio"})
@@ -1836,7 +1836,7 @@ class Handler(JsonHandler):
                 # el icono de la pestaña: vive en la raiz del build, no en assets/
                 return self._file(os.path.join(DIST, "favicon.svg"), "image/svg+xml", cache="public, max-age=86400")
             if parts == ["health"]:
-                return self._json(200, salud_publica(self._authed() or self._is_local()))
+                return self._json(200, salud_publica(self._authed()))
             if parts == ["agent-improvements"]:
                 return self._json(200, agent_improvements.status())
             if parts == ["cuotas"]:
@@ -1904,11 +1904,11 @@ class Handler(JsonHandler):
             if parts == ["peers"]:
                 return self._get_peers()
             if parts == ["downloads"]:
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "Las descargas se traen desde la PC de destino"})
                 return self._json(*downloads.preview((self.query.get("pc") or [""])[0]))
             if len(parts) == 3 and parts[:2] == ["downloads", "jobs"]:
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "Las descargas se consultan desde esta PC"})
                 return self._json(*downloads.status(parts[2]))
             if parts == ["xfer"]:
@@ -2053,7 +2053,7 @@ class Handler(JsonHandler):
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
             if parts == ["tailchrome", "process"]:
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "el proceso se administra desde esta PC"})
                 process = tailchrome_process.service(self.server.server_port)
                 try:
@@ -2066,12 +2066,12 @@ class Handler(JsonHandler):
                     return self._json(200, {"ok": True})
                 return self._json(404, {"ok": False, "error": "no hay una sesion web con ese id"})
             if parts == ["browser"]:
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "Chrome remoto se maneja desde la PC de Lienzo"})
                 code, res = browser_api.dispatch(self._json_body())
                 return self._json(code, res)
             if parts in (["downloads"], ["downloads", "enable"]):
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "Las descargas se traen desde la PC de destino"})
                 data = self._json_body()
                 return self._json(*(downloads.enable(data.get("pc")) if parts[-1] == "enable" else downloads.start(data)))
@@ -2095,7 +2095,7 @@ class Handler(JsonHandler):
                 return self._json(code, res)
             if parts == ["restart"]:
                 # {pc?}: esta PC o la PC `pc` (por /peer/restart, firmado). Solo desde la LAN
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "reiniciar solo desde una PC de la LAN"})
                 pc = self._json_body().get("pc")
                 if pc and pc != identity.pc_id():
@@ -2109,7 +2109,7 @@ class Handler(JsonHandler):
                 # conocimiento por proyecto (conocimiento_api.py): proyectos, rondas, encargos, entregas,
                 # nodos y vinculos. Los veredictos y los cuerpos son de la coordinadora o de Ariel en
                 # esta PC o la LAN, como /browser y /restart: nada por el tunel
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "el conocimiento se escribe desde una PC de la LAN"})
                 code, res = conocimiento_api.dispatch("POST", parts[1:], self._json_body(), self.query)
                 return self._json(code, res)
@@ -2143,7 +2143,7 @@ class Handler(JsonHandler):
             if len(parts) == 5 and parts[0] == "rules" and parts[2] == "informes" and parts[4] == "acuse":
                 # Acuse explícito del usuario de esta PC/LAN, como los veredictos de memoria.
                 # No se admite por túnel ni por el listener peer ni se autentica una CLI por su UUID.
-                if self._via_tunnel() or not self._is_local():
+                if not self._is_local():
                     return self._json(403, {"error": "el acuse se registra desde una PC de la LAN"})
                 body = self._json_body()
                 with lock:
@@ -2197,7 +2197,7 @@ class Handler(JsonHandler):
         """Lee UNA vez un secreto de destino memoria. Desde esta PC o cualquiera de la LAN (no por
         el tunel). Con `?pc=<pc_id>` lo pide a esa PC: viaja cifrado con la clave del par y se
         descifra aca. Despues de leerlo no existe mas en ningun lado."""
-        if self._via_tunnel() or not self._is_local():
+        if not self._is_local():
             return self._json(403, {"error": "un secreto solo se lee desde las PCs de la LAN"})
         pc = (self.query.get("pc") or [""])[0]
         if pc and pc != identity.pc_info()["pc_id"]:
@@ -2345,7 +2345,7 @@ class Handler(JsonHandler):
         for k, v in d.items():
             if not isinstance(v, bool):
                 return self._json(400, {"error": f"{k} debe ser true o false"})
-        if autoaprobar.CLAVE in d and (self._via_tunnel() or not self._is_local()):
+        if autoaprobar.CLAVE in d and not self._is_local():
             # aprobar todo sin mirar solo se prende desde la LAN, nunca por el tunel
             return self._json(403, {"error": "auto-aprobar solo se cambia desde una PC de la LAN"})
         for k, v in d.items():

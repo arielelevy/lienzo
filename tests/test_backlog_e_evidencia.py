@@ -12,8 +12,8 @@ def encargo():
 
 
 def evidencia(encargo, **fields):
-    data = dict(clase='control_desarrollo', control='pruebas', estado='ejecutada',
-                referencia='salidas/test.log', resultado='fallo: 1 caso')
+    data = {'clase': 'control_desarrollo', 'control': 'pruebas', 'estado': 'ejecutada',
+                'referencia': 'salidas/test.log', 'resultado': 'fallo: 1 caso'}
     data.update(fields)
     node = k.crear_nodo('backlog-e', 'evidencia', 'control', data, autor='server')
     k.vincular('backlog-e', encargo['id'], 'apoya', node['id'], autor='server')
@@ -38,10 +38,10 @@ def test_ejecucion_fallida_y_verificacion_separadas(encargo):
     assert result['calidad'] == 'no inferida'
 
 
-@pytest.mark.parametrize('fields', [dict(referencia=''), dict(resultado=None),
-    dict(control=[]), dict(estado='verificada', verificada_por='server'),
-    dict(estado='verificada', verificada_por='persona:', verificacion='x'),
-    dict(estado='verificada', verificada_por='persona:Ariel')])
+@pytest.mark.parametrize('fields', [{'referencia': ''}, {'resultado': None},
+    {'control': []}, {'estado': 'verificada', 'verificada_por': 'server'},
+    {'estado': 'verificada', 'verificada_por': 'persona:', 'verificacion': 'x'},
+    {'estado': 'verificada', 'verificada_por': 'persona:Ariel'}])
 def test_evidencia_incompleta_no_acredita(encargo, fields):
     evidencia(encargo, **fields)
     result = p.controles('backlog-e', encargo['id'])
@@ -61,10 +61,10 @@ def test_retirar_apoyo_y_separacion_proyectos(encargo):
 
 def test_refutacion_no_crea_apoyo_y_conserva_evidencia(encargo):
     proof = evidencia(encargo)
-    belief = c.proponer('backlog-e', dict(texto='hipótesis', accion='investigar',
-        dimension='pruebas', contexto={'version_modelo': '1'}, fuentes=[proof['id']]), autor='server')
-    c.resolver('backlog-e', belief['id'], dict(por='persona:Ariel', motivo='refutada',
-        resultado='refutada', evidencia=proof['id']))
+    belief = c.proponer('backlog-e', {'texto': 'hipótesis', 'accion': 'investigar',
+        'dimension': 'pruebas', 'contexto': {'version_modelo': '1'}, 'fuentes': [proof['id']]}, autor='server')
+    c.resolver('backlog-e', belief['id'], {'por': 'persona:Ariel', 'motivo': 'refutada',
+        'resultado': 'refutada', 'evidencia': proof['id']})
     node = k.nodo('backlog-e', belief['id'])
     assert node['estado'] == 'revertida'
     assert node['datos']['evidencia_veredicto'] == proof['id']

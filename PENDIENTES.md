@@ -7,6 +7,34 @@ Fecha: 2026-10-10.
 
 Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las specs.
 
+### Observación del 2026-10-19: aprendizaje y limpieza
+
+Sin cerrar tareas. En la API viva de `lienzo` se contaron 0 creencias y 5 encargos,
+todos sin clasificación, con 0 patrones. El scheduler estaba habilitado pero en pausa
+por actividad; el investigador no había evaluado casos desde el reinicio.
+El alta normal de encargos no transportaba `contexto_desarrollo` ni
+`controles_declarados`: ahora el cliente, la API y el almacenamiento admiten esos
+campos opcionales y los validan antes de escribir. Los controles siguen siendo
+declaraciones; no se convierten en evidencia ejecutada. No se clasificaron encargos
+históricos ni se promovieron creencias.
+
+Propuesta recuperada de [ChatGPT](https://chatgpt.com/c/6ad6148d-db70-83e9-bb64-f3b8fe93e468):
+Python conserva creencias, procedencia e historial; SWI-Prolog podría aportar
+inferencia con reglas `.pl` y una interfaz pequeña. La charla se refiere principalmente
+a Chesstudia. Ariel propuso evaluar un motor separado reutilizable por Chesstudia,
+Lienzo y otras apps, con reglas por dominio. No está implementado ni se instaló un
+runtime; queda pendiente definir y medir un primer caso por consumidor.
+
+La CLI Codex con daemon compartido puede asociarse para lectura mediante el nombre
+completo del pie visible, si coincide con un único hilo TUI en la misma carpeta real.
+Esto no acredita identidad para `queue`, ni cierra la P0 de `/new` y `/clear`.
+El PID 9100 se vinculó en vivo al hilo `01a15639-8f32-7ed2-97f9-a56b81c865e3`.
+
+Validación y límites: `code-review-2026-10-19-clean-code.md`. La primera global alcanzó
+su timeout de 450 s; se amplió el presupuesto a 900 s, sin cambiar el baseline ni los
+oráculos. La evidencia de la siguiente corrida y su compuerta quedan en los resultados
+del runner. No se aprueban automáticamente referencias ni mutaciones.
+
 ## Producto, aprendizaje y extensiones (2026-10-16)
 
 Checklist único de esta conversación. Todo queda pendiente; el estado técnico no cierra una tarea.

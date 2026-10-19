@@ -20,6 +20,7 @@ from __future__ import annotations
 import conocimiento as k
 import veredictos as v
 from conocimiento import Rechazo
+from conocimiento_params import _entero
 
 PREFIJOS = ("veredictos", "pendientes", "duplicados", "temas", "briefing", "preguntar", "vista", "alternativas")
 
@@ -48,15 +49,6 @@ def _lista(query: dict, nombre: str) -> list[str]:
 def _uno(query: dict, nombre: str, defecto=None):
     xs = _lista(query, nombre)
     return xs[0] if xs else defecto
-
-
-def _entero(val, nombre: str, defecto: int) -> int:
-    if val is None:
-        return defecto
-    try:
-        return int(val)
-    except (TypeError, ValueError) as e:
-        raise Rechazo(f"{nombre} debe ser un entero") from e
 
 
 def dispatch(metodo: str, partes: list[str], cuerpo: dict | None, query: dict | None) -> tuple[int, dict | list]:

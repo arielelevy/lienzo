@@ -7,6 +7,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "lien
 import coordinar as c
 
 
+def test_encargo_carries_explicit_learning_context(monkeypatch):
+    calls = []
+    monkeypatch.setattr(c, "_conocimiento", lambda *args: calls.append(args) or {"estado": "pendiente"})
+    context = {"tipo_trabajo": "refactor", "tecnologia": "python"}
+    c.encargo("lienzo", "round", "A", "Simplificar", contexto_desarrollo=context,
+              controles_declarados=["pruebas"])
+    assert calls[0][2]["contexto_desarrollo"] == context
+    assert calls[0][2]["controles_declarados"] == ["pruebas"]
+
+
 def _tarjeta(sid, **kw):
     return {"session_id": sid, "pc": "pcB", "pid": 100, "cwd": r"D:\apps\x", "agent": "coda", "state": "termino", **kw}
 

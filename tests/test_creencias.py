@@ -7,6 +7,53 @@ import patrones_desarrollo as p
 import pytest
 
 
+def test_normal_task_api_feeds_patterns_without_promoting_beliefs():
+    pid = "learning-entry"
+    k.registrar_proyecto(pid)
+    round_id = k.abrir_ronda(pid, "Revisar cambios", autor="coordinadora:c")["id"]
+    for letter in ("A", "B"):
+        code, task = api.dispatch("POST", [pid, "encargos"], {
+            "ronda": round_id, "letra": letter, "texto": "Simplificar código",
+            "contexto_desarrollo": {"tipo_trabajo": "refactor", "tecnologia": "python"},
+            "controles_declarados": ["pruebas", "pruebas", "auditoria_skill"],
+        }, {})
+        assert code == 200 and task["estado"] == "pendiente"
+        assert task["datos"]["controles_declarados"] == ["pruebas", "auditoria_skill"]
+    analysis = api.dispatch("GET", [pid, "patrones-desarrollo"], None, {})[1]
+    assert analysis["sin_clasificar"] == 0
+    assert len(analysis["patrones"]) == 1
+    pattern = analysis["patrones"][0]
+    assert pattern["encargos"] == 2 and pattern["contexto"]["tipo_trabajo"] == "refactor"
+    assert pattern["controles_declarados"] == {"pruebas": 2, "auditoria_skill": 2}
+    assert c.listar(pid) == []
+    assert c.checklist(pid, {"tipo_trabajo": "refactor"})["items"] == []
+
+
+@pytest.mark.parametrize("fields", [
+    {"contexto_desarrollo": {}},
+    {"contexto_desarrollo": {"tipo_trabajo": "inventado"}},
+    {"contexto_desarrollo": {"tipo_trabajo": "bugfix", "desconocido": "x"}},
+    {"contexto_desarrollo": []},
+    {"controles_declarados": "pruebas"},
+    {"controles_declarados": ["aprobado"]},
+    {"controles_declarados": [{}]},
+])
+def test_invalid_task_labels_leave_no_task_or_file(fields):
+    from pathlib import Path
+
+    pid = "learning-invalid"
+    k.registrar_proyecto(pid)
+    round_id = k.abrir_ronda(pid, "Revisar cambios", autor="coordinadora:c")["id"]
+    before = k.cambios(pid)
+    code, _ = api.dispatch("POST", [pid, "encargos"], {
+        "ronda": round_id, "letra": "A", "texto": "Cambio", **fields,
+    }, {})
+    assert code == 400
+    assert k.cambios(pid) == before
+    assert k.nodos(pid, tipo="encargo")["total"] == 0
+    assert not (Path(k._carpeta(pid)) / "rondas" / round_id / "encargo-A.md").exists()
+
+
 @pytest.fixture
 def setup():
     k.registrar_proyecto("belief-test")

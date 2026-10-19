@@ -20,22 +20,7 @@ from __future__ import annotations
 import aprendizaje as ap
 import conocimiento as k
 from conocimiento import Rechazo
-
-
-def _q(query: dict, nombre: str, defecto=None):
-    v = query.get(nombre)
-    if isinstance(v, list):
-        v = v[0] if v else None
-    return v if v not in (None, "") else defecto
-
-
-def _entero(v, nombre: str, defecto: int) -> int:
-    if v is None:
-        return defecto
-    try:
-        return int(v)
-    except (TypeError, ValueError) as e:
-        raise Rechazo(f"{nombre} debe ser un entero") from e
+from conocimiento_params import _entero, _q
 
 
 def dispatch(metodo: str, partes: list[str], cuerpo: dict | None, query: dict | None) -> tuple[int, dict | list]:

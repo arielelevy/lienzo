@@ -49,6 +49,7 @@ import registro_niveles
 import sessions as ses
 import veredictos_api
 from conocimiento import Rechazo
+from conocimiento_params import _entero, _q
 
 
 def _tarjeta(d: dict, pid: str | None = None) -> dict:
@@ -79,22 +80,6 @@ def _replica_con(pid: str, pc: str) -> bool:
     import replica
 
     return any(c["peer"] == pc for c in replica.estado(pid)["cursores"])
-
-
-def _q(query: dict, nombre: str, defecto=None):
-    v = query.get(nombre)
-    if isinstance(v, list):
-        v = v[0] if v else None
-    return v if v not in (None, "") else defecto
-
-
-def _entero(v, nombre: str, defecto: int) -> int:
-    if v is None:
-        return defecto
-    try:
-        return int(v)
-    except (TypeError, ValueError) as e:
-        raise Rechazo(f"{nombre} debe ser un entero") from e
 
 
 def dispatch(metodo: str, partes: list[str], cuerpo: dict | None, query: dict | None) -> tuple[int, dict | list]:
@@ -197,6 +182,8 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             autor=autor,
             archivos=d.get("archivos"),
             origen=d.get("origen"),
+            contexto_desarrollo=d.get("contexto_desarrollo"),
+            controles_declarados=d.get("controles_declarados"),
         )
     if len(resto) == 3 and resto[0] == "encargos" and metodo == "POST":
         if resto[2] == "enviado":

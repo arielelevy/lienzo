@@ -17,6 +17,21 @@ TIPOS = {"bugfix", "feature", "refactor", "investigacion", "documentacion", "arq
 CONTROLES = {"pruebas", "claude_review_local", "auditoria_skill"}
 
 
+def datos_encargo(contexto=None, controles=None):
+    """Etiquetas explícitas del productor; declarar un control no acredita su ejecución."""
+    data = {}
+    if contexto is not None:
+        context = creencias._contexto(contexto)
+        if context.get("tipo_trabajo") not in TIPOS:
+            raise k.Rechazo("contexto_desarrollo requiere un tipo_trabajo válido")
+        data["contexto_desarrollo"] = context
+    if controles is not None:
+        if not isinstance(controles, list) or any(not isinstance(x, str) or x not in CONTROLES for x in controles):
+            raise k.Rechazo("controles_declarados admite pruebas, claude_review_local y auditoria_skill")
+        data["controles_declarados"] = list(dict.fromkeys(controles))
+    return data
+
+
 def analizar(pid):
     """Cuenta encargos declarados, separados por tipo, tecnología y área; máximo 500."""
     import patrones_evidencia

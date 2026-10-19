@@ -69,7 +69,7 @@ def summarize(session: dict, page: dict) -> dict:
     meta = page.get("meta", {})
     unavailable = not page.get("turns") and bool(page.get("note"))
     evidence = {
-        "counts": {k: None for k in count} if unavailable else count,
+        "counts": dict.fromkeys(count) if unavailable else count,
         "tools": refs[-80:],
         "partial": True,
         "unavailable": unavailable,

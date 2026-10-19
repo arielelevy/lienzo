@@ -501,6 +501,10 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
               </>
             ) : "Pi todavía no guardó una transcripción. Aparecerá cuando persista el primer turno; las sesiones --no-session no guardan logs."}
           </div>
+        ) : s.source === "sweep" && !s.transcript_path ? (
+          <div className="empty" role="status">
+            Lienzo detectó el proceso, pero todavía no identificó su conversación. No se puede leer el historial.
+          </div>
         ) : free ? (
           freeEmpty
         ) : (

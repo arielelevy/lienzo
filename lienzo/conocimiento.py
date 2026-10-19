@@ -1335,6 +1335,8 @@ def crear_encargo(
     autor: str,
     archivos: list[str] | None = None,
     origen: dict | None = None,
+    contexto_desarrollo: dict | None = None,
+    controles_declarados: list[str] | None = None,
 ) -> dict:
     """El pedido a un frente, con su cuerpo guardado en rondas/<ronda>/encargo-<letra>.md. La letra
     identifica el encargo dentro de la ronda (A, B, C...): dos encargos con la misma letra en la misma
@@ -1344,6 +1346,9 @@ def crear_encargo(
     letra = letra.upper()  # encargo-A.md y encargo-a.md son el mismo archivo en Windows
     texto = _texto(texto, "texto", 200_000)
     archivos = [str(x) for x in (archivos or []) if isinstance(x, str)]
+    import patrones_desarrollo
+
+    etiquetas = patrones_desarrollo.datos_encargo(contexto_desarrollo, controles_declarados)
     with _abrir(pid) as con:
         rn = _nodo(con, pid, ronda)
         if rn["tipo"] != "ronda":
@@ -1355,7 +1360,7 @@ def crear_encargo(
             pid,
             "encargo",
             (texto.splitlines()[0].lstrip("# ").strip() or letra)[:200],
-            {"letra": letra, "archivos": archivos, "ruta": ruta},
+            {"letra": letra, "archivos": archivos, "ruta": ruta, **etiquetas},
             autor=autor,
             origen=origen,
             ronda=ronda,

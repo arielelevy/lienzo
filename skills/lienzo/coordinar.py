@@ -885,13 +885,18 @@ def abrir_ronda(pid, objetivo):
     )
 
 
-def encargo(pid, ronda, letra, texto, archivos=None):
+def encargo(pid, ronda, letra, texto, archivos=None, *, contexto_desarrollo=None, controles_declarados=None):
     """Registra el encargo (el texto entero queda en rondas/<ronda>/encargo-<letra>.md) y devuelve su
-    nodo. Después de lanzar o mandar, `encargo_enviado(pid, e["id"], s)` lo vincula a la tarjeta."""
+    nodo. Después de lanzar o mandar, `encargo_enviado(pid, e["id"], s)` lo vincula a la tarjeta.
+    `contexto_desarrollo` admite tipo_trabajo (bugfix, feature, refactor, investigacion,
+    documentacion, arquitectura), tecnología/área/fase y agente/modelo/versiones.
+    `controles_declarados` lista pruebas, claude_review_local o auditoria_skill: no acredita ejecución."""
     return _conocimiento(
         "POST",
         f"/{pid}/encargos",
-        {"ronda": ronda, "letra": letra, "texto": texto, "archivos": archivos or [], "autor": f"coordinadora:{YO}"},
+        {"ronda": ronda, "letra": letra, "texto": texto, "archivos": archivos or [], "autor": f"coordinadora:{YO}",
+         **({"contexto_desarrollo": contexto_desarrollo} if contexto_desarrollo is not None else {}),
+         **({"controles_declarados": controles_declarados} if controles_declarados is not None else {})},
     )
 
 

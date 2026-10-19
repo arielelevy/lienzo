@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import QRCode from "qrcode";
+import { useQr } from "../hooks/useQr";
 import { copyLabel, useCopyState } from "../names";
 
 /** URL navegable (link en pestaña nueva) con boton Copiar al lado. El boton avisa solo,
@@ -20,10 +19,7 @@ export function UrlLink({ url }: { url: string }) {
 
 /** QR de la URL del tunel para abrir el lienzo desde el celular. */
 export function UrlQr({ url, onClose, mode = "code" }: { url: string; onClose: () => void; mode?: "code" | "full" }) {
-  const [qr, setQr] = useState<string | null>(null);
-  useEffect(() => {
-    QRCode.toDataURL(url, { width: 260, margin: 1 }).then(setQr).catch(() => setQr(null));
-  }, [url]);
+  const qr = useQr(url, 260);
   return (
     <div className="gate" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="gate-box">

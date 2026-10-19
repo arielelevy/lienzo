@@ -2,10 +2,9 @@
 
 import json
 
-import pytest
-
-import codex_queue as cq
 import agentes
+import codex_queue as cq
+import pytest
 
 REAL_PROBE = cq.codex_identity.probe
 
@@ -19,8 +18,8 @@ def cli(tmp_path, monkeypatch):
     monkeypatch.setattr(cq.codex_identity, "probe", lambda pid: {"verified": False, "reason": "sin prueba actual"})
     monkeypatch.setattr(cq, "store_path", lambda: tmp_path / "queue.json")
     monkeypatch.setattr(cq.subproc, "correr", lambda *a, **kw: pytest.fail("no debe encolar"))
-    return dict(agent="codex", pid=4242, cwd=str(tmp_path),
-                session_id="01a14774-aa3f-7062-b3f3-aa996a33ff35", transcript_path=str(rollout))
+    return {"agent": "codex", "pid": 4242, "cwd": str(tmp_path),
+                "session_id": "01a14774-aa3f-7062-b3f3-aa996a33ff35", "transcript_path": str(rollout)}
 
 
 @pytest.mark.parametrize("transition", ["/new", "/clear", "pid-reciclado", "exec-paralelo"])
@@ -47,8 +46,8 @@ def test_two_clis_and_newer_exec_rollout_in_same_repo_do_not_select_a_thread(cli
 
 
 def test_uncertain_old_send_is_preserved_without_replay(cli):
-    record = dict(estado="sin_confirmacion", at=1, thread=cli["session_id"],
-                  rollout=cli["transcript_path"], sha256=cq._sha("mensaje"), desde=cq._iso(1))
+    record = {"estado": "sin_confirmacion", "at": 1, "thread": cli["session_id"],
+                  "rollout": cli["transcript_path"], "sha256": cq._sha("mensaje"), "desde": cq._iso(1)}
     cq._save({"old": record})
     before = cq.store_path().read_bytes()
     assert cq.enviar(cli, "mensaje", {"envio_id": "old"}, esperar=0)["estado"] == "rechazado"
@@ -66,8 +65,8 @@ def test_desktop_keeps_its_existing_contract(cli, monkeypatch):
 
 
 def test_measured_identity_allows_cli_but_rejects_recycled_pid_and_new_thread(cli, monkeypatch):
-    proof = dict(verified=True, pid=cli["pid"], process_start=123,
-                 thread=cli["session_id"], path=cli["transcript_path"])
+    proof = {"verified": True, "pid": cli["pid"], "process_start": 123,
+                 "thread": cli["session_id"], "path": cli["transcript_path"]}
     monkeypatch.setattr(cq.codex_identity, "probe", lambda pid: proof)
     cli["codex_process_start"] = 123
     assert cq.puede_enviar(cli)["puede"] is True
@@ -81,7 +80,7 @@ def test_measured_identity_allows_cli_but_rejects_recycled_pid_and_new_thread(cl
 def test_discovery_never_assigns_previous_rollout_by_120s_margin(cli, tmp_path, monkeypatch):
     assert agentes.guess_codex(cli["cwd"], 0, str(tmp_path)) == (None, None)
     assert agentes.perfil("codex").guess(cli["cwd"], None, str(tmp_path)) == (None, None)
-    proof = dict(verified=True, thread=cli["session_id"], path=cli["transcript_path"])
+    proof = {"verified": True, "thread": cli["session_id"], "path": cli["transcript_path"]}
     monkeypatch.setattr(cq.codex_identity, "probe", lambda pid: proof)
     assert agentes.perfil("codex").identity({"pid": cli["pid"]}, {}) == (cli["session_id"], cli["transcript_path"])
 
@@ -100,8 +99,8 @@ def test_two_measured_clis_same_cwd_remain_distinct(cli, tmp_path, monkeypatch):
     other = {**cli, "pid": 4243, "session_id": "01a14a6b-1acc-7db2-9dbb-b7faf4033e22",
              "transcript_path": str(other_path), "codex_process_start": 124}
     cli["codex_process_start"] = 123
-    proofs = {s["pid"]: dict(verified=True, process_start=s["codex_process_start"],
-                             thread=s["session_id"], path=s["transcript_path"]) for s in (cli, other)}
+    proofs = {s["pid"]: {"verified": True, "process_start": s["codex_process_start"],
+                             "thread": s["session_id"], "path": s["transcript_path"]} for s in (cli, other)}
     monkeypatch.setattr(cq.codex_identity, "probe", proofs.__getitem__)
     assert cq.puede_enviar(cli)["puede"]
     assert cq.puede_enviar(other)["puede"]

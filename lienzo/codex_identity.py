@@ -157,6 +157,7 @@ def transcript_identity(pid: int) -> dict:
     observed = _probe(pid, observation=True)
     if observed.get("observed"):
         return observed
+    import codex_observation
     import codex_status
 
-    return codex_status.discover(pid) or proof
+    return codex_observation.observe(pid) or codex_status.discover(pid) or proof

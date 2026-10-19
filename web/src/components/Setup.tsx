@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import QRCode from "qrcode";
 import { api, type AuthInfo } from "../api";
+import { useQr } from "../hooks/useQr";
 import { UrlLink } from "./UrlQr";
 
 interface SetupResult {
@@ -14,15 +14,6 @@ interface SetupResult {
 
 interface Props {
   onClose: (configured: boolean) => void;
-}
-
-export function useQr(text: string | null, width = 240) {
-  const [qr, setQr] = useState<string | null>(null);
-  useEffect(() => {
-    if (!text) return;
-    QRCode.toDataURL(text, { width, margin: 1 }).then(setQr).catch(() => setQr(null));
-  }, [text, width]);
-  return qr;
 }
 
 /** Alta del acceso desde el celular, solo desde la PC y una sola vez. Dos QR, cero tipeo:

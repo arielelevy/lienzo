@@ -72,7 +72,7 @@ def plataforma_actual() -> str:
 
 
 def _texto(valor: object, maximo: int) -> bool:
-    return isinstance(valor, str) and 0 < len(valor.strip()) and len(valor) <= maximo
+    return isinstance(valor, str) and len(valor.strip()) > 0 and len(valor) <= maximo
 
 
 def _lista_de(valor: object, permitidos: tuple[str, ...], campo: str, errores: list[str]) -> list[str]:

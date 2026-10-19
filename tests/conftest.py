@@ -21,6 +21,13 @@ def _sin_tmux_real(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _sin_lectura_codex_real(monkeypatch):
+    import codex_observation
+
+    monkeypatch.setattr(codex_observation, "_footer", lambda pid: None)
+
+
+@pytest.fixture(autouse=True)
 def _sin_codex_queue_real(monkeypatch):
     """La cola puede consumir cuota aun con la app cerrada. Los casos del transporte ponen su doble
     explícito después de este autouse; ninguno descubre codex.exe real por accidente."""
