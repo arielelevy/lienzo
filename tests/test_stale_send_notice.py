@@ -43,6 +43,25 @@ def test_later_confirmed_delivery_clears_only_stale_notice_without_claiming_turn
     assert ses.clear_stale_send_notice(card) is False
 
 
+def test_missing_transcript_explains_uncertainty_without_changing_receipt(card):
+    before = copy.deepcopy(card)
+    view = ses.public_session(card)
+    assert view["needs"]["kind"] == "sin_transcripcion"
+    assert view["envio_codex"] == before["envio_codex"]
+    assert card == before
+
+
+@pytest.mark.parametrize("agent,path,kind", [
+    ("claude", None, "sin_enviar"),
+    ("codex", "rollout.jsonl", "sin_enviar"),
+    ("codex", None, "permission"),
+])
+def test_missing_transcript_does_not_relabel_other_notices(card, agent, path, kind):
+    card.update(agent=agent, transcript_path=path)
+    card["needs"]["kind"] = kind
+    assert ses.public_session(card)["needs"]["kind"] == kind
+
+
 def test_reported_card_uses_notice_offset_and_original_send_timestamp(card):
     card["needs"]["since"] = "2026-10-18T11:47:43.553-03:00"
     card["envio_codex"].update(envio_id="df66b2f1382606928efebdf4", at=1792334976.2462003)

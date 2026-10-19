@@ -319,6 +319,7 @@ GOLDEN: dict[str, dict] = {
                 "final": "Falla una.",
                 "id": "tu1",
                 "prompt": "revisá el repo",
+                "prompt_ts": "2026-09-10T00:02:00.000Z",
                 "ts_end": "2026-09-10T00:02:00.000Z",
                 "ts_start": "2026-09-10T00:02:00.000Z",
                 "usage": None,

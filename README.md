@@ -145,6 +145,12 @@ TUI («Switch model?») se muestran con sus opciones y se eligen desde ahí.
   sugerencia que muestra la terminal.
   En Codex CLI sobre Windows, el envío espera a que la consola consuma el texto y deja una pausa
   antes del Enter para que el mensaje se publique. Si la cola no se vacía en 10 s, informa el error.
+  Si Codex usa un daemon compartido y la terminal no tiene abierto su rollout, Lienzo consulta
+  `/status` automáticamente cuando el editor está vacío y la terminal libre. El UUID publicado
+  por esa TUI permite encontrar su transcripción exacta y unir la tarjeta provisional con la de
+  los hooks. La consulta se limita a una por minuto después de identificarla; no ejecuta un turno
+  del modelo. Con un borrador, un diálogo o trabajo en curso, espera. El vínculo es de lectura:
+  los mensajes siguen entrando por la consola, sin habilitar la cola CLI.
 - Permisos: Permitir o Denegar desde la tarjeta (nunca «permitir siempre»; vence a los 60 s).
 - Denegados: lo que una regla, política o clasificador le niega al agente aparece como
   «Denegado: herramienta» con un botón «Autorizar y que reintente». Una denegación anterior al

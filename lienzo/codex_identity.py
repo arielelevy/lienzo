@@ -155,4 +155,8 @@ def transcript_identity(pid: int) -> dict:
     if proof["verified"]:
         return proof
     observed = _probe(pid, observation=True)
-    return observed if observed.get("observed") else proof
+    if observed.get("observed"):
+        return observed
+    import codex_status
+
+    return codex_status.discover(pid) or proof

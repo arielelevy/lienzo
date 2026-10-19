@@ -56,7 +56,7 @@ export function Cuotas() {
       const sugerido = data.sugerido === a;
       const alta = !!c.ok && ((c.weekly?.used_pct ?? 0) >= 90 || (c.five_hour?.used_pct ?? 0) >= 90);
       const medido = fecha(c.read_at);
-      const uso = !c.ok ? "sin lectura" : c.weekly ? `${pct(c.weekly.used_pct)} sem${c.five_hour ? ` · ${pct(c.five_hour.used_pct)} 5 h` : ""}` : "sin dato semanal";
+      const uso = !c.ok ? "sin lectura" : c.weekly ? `${pct(c.weekly.used_pct)} usado semanal${c.five_hour ? ` · ${pct(c.five_hour.used_pct)} usado 5 h` : ""}` : "sin dato semanal";
       return <button key={a} type="button" className={`cuota ${a}${sugerido ? " sugerido" : ""}${c.ok ? "" : " fallida"}${alta ? " alta" : ""}`}
         disabled={midiendo} title={detalle(a, c, data) + (fallo ? `\nÚltimo intento falló: ${fallo}` : "")}
         aria-label={`${etiquetaAgente(a)}: ${uso}${c.ok && !c.five_hour ? `, ${SIN_5H}` : ""}${sugerido ? ", conviene ahora" : ""}. ${medido ? `Medido ${medido}` : "Sin medición"}. Medir de nuevo`}

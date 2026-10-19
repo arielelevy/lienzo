@@ -295,6 +295,8 @@ export function needsLabel(needs: Needs): string {
     case "sin_enviar":
       // el lienzo tecleo el encargo pero el agente no lo confirmo: suele quedar en el editor sin Enter
       return "El encargo quedó sin enviar: mirá la terminal (¿falta Enter?)";
+    case "sin_transcripcion":
+      return "Envío sin confirmar: Lienzo no pudo vincular la transcripción de esta terminal";
     default:
       return "Te necesita";
   }

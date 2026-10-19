@@ -144,6 +144,11 @@ def public_session(s: dict, *, calcular: bool = False) -> dict:
             "puede": False, "motivo": "capacidad de envío pendiente de comprobar", "transporte": None,
         }
     view = {**s, "envio": dict(plan)}
+    # Sin rollout no existe un oráculo para distinguir recepción de falta de Enter.
+    # Incluye avisos persistidos antes de que Codex moviera el escritor al daemon.
+    if (s.get("agent") == "codex" and not s.get("transcript_path")
+            and (s.get("needs") or {}).get("kind") == "sin_enviar"):
+        view["needs"] = {**s["needs"], "kind": "sin_transcripcion"}
     ext = s.get("external") or {}
     if ext.get("kind") == "claude-desktop":
         # Presentación derivada; cwd/identidad de memoria y título persistido quedan intactos.
@@ -2260,7 +2265,20 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
         if s.get("hooked") and s["agent"] != "codex":
             return  # la extension tiene prioridad sobre el entorno de un comando anterior
         if sid and sid != s["session_id"] and sid in sessions:
-            return  # no vincular un archivo cuya sesion ya tiene otra tarjeta
+            target = sessions[sid]
+            if (not codex_proof or target.get("agent") != "codex"
+                    or (target.get("pid") and backend.agent_alive(target))):
+                return  # no robar el hilo de otro proceso vivo
+            provisional = s
+            claim_pid(target, {**s, "transcript_path": tpath})
+            if target.get("pid") != probe_pid or sessions.get(provisional["session_id"]) is provisional:
+                return  # no se pudo trasladar el cableado y retirar la provisoria
+            for key in ("envio_codex", "envio_pendiente", "sent_mark"):
+                if provisional.get(key) and not target.get(key):
+                    target[key] = deepcopy(provisional[key])
+            if not target.get("needs") and (provisional.get("needs") or {}).get("kind") == "sin_enviar":
+                target["needs"] = deepcopy(provisional["needs"])
+            s = target
         if sessions.get(s["session_id"]) is not s:
             return  # la borraron mientras buscabamos su transcripcion: no revivirla
         if sid and sid != s["session_id"] and sid not in sessions:

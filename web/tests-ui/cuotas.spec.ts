@@ -46,9 +46,9 @@ test("lectura ok: Claude y Codex lado a lado abajo a la derecha, con su medició
   const grupo = page.getByRole("group", { name: "Cuotas de Claude y Codex" });
   const claude = grupo.getByRole("button", { name: /^Claude Code:/ });
   const codex = grupo.getByRole("button", { name: /^Codex:/ });
-  await expect(claude).toContainText("82 % sem · 11 % 5 h");
+  await expect(claude).toContainText("82 % usado semanal · 11 % usado 5 h");
   await expect(claude).toContainText(hora(MEDIDO));
-  await expect(codex).toContainText("51 % sem");
+  await expect(codex).toContainText("51 % usado semanal");
   await expect(codex).not.toContainText("5 h");
   await expect(codex).toHaveAttribute("title", /5 h: el plan no informa 5 h/);
   await expect(codex).toHaveAccessibleName(/el plan no informa 5 h, conviene ahora/);
