@@ -44,7 +44,7 @@ async function start(id,other){
   const home=resolve(out,`${id}-${process.pid}`);await mkdir(home,{recursive:true});
   await writeFile(resolve(home,'peer.json'),JSON.stringify({pc_id:id,name:id,color:'#12B886'}));
   const child=spawn('py',['-3.14',resolve(root,'tests/tailchrome_fixture.py'),other],{
-    cwd:root,env:{...process.env,LIENZO_HOME:home,PYTHONIOENCODING:'utf-8'},stdio:['ignore','pipe','pipe'],windowsHide:true,
+    cwd:root,env:{...process.env,LIENZO_HOME:home,PYTHONIOENCODING:'utf-8',LIENZO_TEST_AUTO_HOST:'1'},stdio:['ignore','pipe','pipe'],windowsHide:true,
   });
   children.push(child);const lines=createInterface({input:child.stdout});
   let log='';child.stderr.on('data',d=>log+=d);child.stdout.on('data',d=>log+=d);
@@ -54,7 +54,7 @@ async function start(id,other){
     child.once('error',no);
     lines.on('line',line=>{if(line.startsWith('{')){clearTimeout(timer);yes(JSON.parse(line));}});
   });
-  return {...ports,home,id,other,save:()=>writeFile(resolve(out,`${id}.log`),log)};
+  return {...ports,home,id,other,child,save:()=>writeFile(resolve(out,`${id}.log`),log)};
 }
 async function eventually(check){
   const deadline=Date.now()+15000;let last;
@@ -76,6 +76,7 @@ try{
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`http://127.0.0.1:${nodes[0].board}/tailchrome`);
   await page.getByRole('option',{name:nodes[1].id}).waitFor({state:'attached'});
+  await page.getByText('Puente manual para diagnóstico',{exact:true}).click();
   await page.getByLabel('IP de Tailscale de esa PC').fill('100.81.147.100');
   await page.getByRole('button',{name:'Conectar puente',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Puente conectado.'}).waitFor({timeout:15000});
@@ -100,8 +101,38 @@ try{
     const response=await fetch(`http://127.0.0.1:${nodes[1].board}/test/forward-health`);assert.equal(response.status,503);
   });
   for(let i=0;i<2;i++)assert.equal(await readFile(resolve(nodes[i].home,'peers.json'),'utf8'),before[i]);
+  // Proceso automático: inventario entero, sin ninguna IP ingresada en la UI.
+  await writeFile(resolve(nodes[0].home,'network.json'),JSON.stringify({running:true,
+    selfNode:{id:'self',hostname:'fixture-lienzo',online:true,tailscaleIPs:['100.64.1.9']},
+    peers:[{id:'known',hostname:nodes[1].id,online:true,tailscaleIPs:['100.81.147.100']},
+      {id:'unknown',hostname:'otro-equipo',online:true,tailscaleIPs:['100.68.123.40']},
+      {id:'phone',hostname:'telefono',online:false,tailscaleIPs:['100.71.143.59']}],totalPeers:3,
+  }));
+  const autoPage=await browser.newPage();
+  await autoPage.goto(`http://127.0.0.1:${nodes[0].board}/tailchrome`);
+  await autoPage.getByRole('button',{name:'Activar proceso automático',exact:true}).click();
+  await autoPage.getByRole('table',{name:'Equipos de Tailscale'}).getByRole('row').filter({hasText:nodes[1].id}).filter({hasText:'Conectado'}).waitFor({timeout:20000});
+  assert.equal(await autoPage.getByRole('table').getByRole('row').count(),5);
+  await autoPage.screenshot({path:resolve(out,'automatico.png'),fullPage:true});
+  await browser.close();browser=undefined; // no quedan pestañas ni navegador
+  for(let i=0;i<2;i++)await eventually(async()=>{
+    const response=await fetch(`http://127.0.0.1:${nodes[i].board}/test/forward-health`);
+    assert.equal(response.status,200);assert.equal((await response.json()).fixture_pc,nodes[1-i].id);
+  });
+  assert.deepEqual(JSON.parse(await readFile(resolve(nodes[0].home,'tailchrome-process.json'),'utf8')),{enabled:true});
+  await nodes[0].save();nodes[0].child.kill();
+  nodes[0]=await start(nodes[0].id,nodes[0].other); // mismo LIENZO_HOME, puertos nuevos
+  for(let i=0;i<2;i++)await eventually(async()=>{
+    const response=await fetch(`http://127.0.0.1:${nodes[i].board}/test/forward-health`);assert.equal(response.status,200);
+  });
+  const stopped=await fetch(`http://127.0.0.1:${nodes[0].board}/tailchrome/process`,{method:'POST',headers:{'X-Lienzo':'1','Content-Type':'application/json'},body:JSON.stringify({enabled:false})});
+  assert.equal(stopped.status,200);
+  await eventually(async()=>{
+    const response=await fetch(`http://127.0.0.1:${nodes[1].board}/test/forward-health`);assert.equal(response.status,503);
+  });
+  for(let i=0;i<2;i++)assert.equal(await readFile(resolve(nodes[i].home,'peers.json'),'utf8'),before[i]);
   assert.deepEqual(errors,[]);
-  console.log('OK: navegador real, HTTP firmado en ambos sentidos, desconexión, reconexión, cierre de pestaña, peers.json intacto. Proxy Tailchrome sustituido; tailnet real pendiente.');
+  console.log('OK: puente manual, proceso automático, inventario completo, comunicación firmada bidireccional sin Chrome, autostart tras reiniciar Lienzo, stop y peers.json intacto. Helper y tailnet sustituidos; integración real pendiente.');
 }catch(error){
   for(const page of browser?.contexts().flatMap(c=>c.pages())||[])await page.screenshot({path:resolve(out,'fallo.png'),fullPage:true}).catch(()=>{});
   throw error;

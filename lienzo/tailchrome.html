@@ -12,11 +12,21 @@
   button{margin-top:24px;background:#b6e2ba;color:#142519;cursor:pointer;font-weight:600}
   button:disabled{opacity:.5;cursor:default}#status{padding:16px;border-left:3px solid #b6e2ba;background:#202724}
   a{color:#b6e2ba}
+  table{width:100%;border-collapse:collapse;margin:24px 0}td,th{text-align:left;padding:10px 6px;border-bottom:1px solid #47534b;font-size:14px}details{margin-top:32px}small{color:#b9c2bd}#process-state{white-space:pre-line}
 </style>
 <main>
   <a href="/">← Volver al tablero</a>
-  <h1>Puente Tailchrome</h1>
-  <p>Abrí esta página en el Chrome que tiene Tailchrome conectado. La otra PC debe tener Tailscale de Windows y ambas deben estar emparejadas en Lienzo.</p>
+  <h1>Tu red en Lienzo</h1>
+  <p>Activá el proceso una vez. Arranca con Lienzo, encuentra los equipos de tu red Tailscale y conecta los pares conocidos. Después podés cerrar esta página y Chrome.</p>
+  <button id="process-enable">Activar proceso automático</button>
+  <button id="process-disable" hidden>Detener proceso automático</button>
+  <p id="process-state" role="status">Consultando el proceso…</p>
+  <a id="login" hidden target="_blank" rel="noopener noreferrer">Autorizar Lienzo en mi cuenta Tailscale</a>
+  <p><small>Usa el helper de Tailchrome que ya instalaste, con un perfil independiente y un nombre terminado en -lienzo. La primera vez requiere autorizar ese nodo en tu cuenta. Los equipos nuevos se muestran sin emparejar.</small></p>
+  <table aria-label="Equipos de Tailscale"><thead><tr><th>Equipo</th><th>Dirección</th><th>Lienzo</th></tr></thead><tbody id="devices"></tbody></table>
+  <p id="inventory"></p>
+  <details><summary>Puente manual para diagnóstico</summary>
+  <p>Esta alternativa requiere dejar la pestaña abierta en Chrome con Tailchrome conectado.</p>
   <form id="form">
     <label for="pc">Conectar con</label><select id="pc" required></select>
     <label for="host">IP de Tailscale de esa PC</label>
@@ -26,6 +36,7 @@
   <button id="disconnect" hidden>Desconectar</button>
   <p id="status" role="status">Cargando PCs emparejadas…</p>
   <p>Dejá esta pestaña abierta. Al cerrarla se desconecta el puente; las sesiones siguen trabajando en su PC. Los mensajes viajan cifrados y conservan las firmas del par.</p>
+  </details>
 </main>
 <script>
 const form=document.querySelector('#form'), pc=document.querySelector('#pc'), host=document.querySelector('#host');
@@ -74,5 +85,30 @@ form.addEventListener('submit',event=>{
 });
 disconnect.addEventListener('click',()=>stop('Puente desconectado.'));
 window.addEventListener('pagehide',()=>stop('Puente desconectado.'));
+const enable=document.querySelector('#process-enable'),disable=document.querySelector('#process-disable');
+const processState=document.querySelector('#process-state'),login=document.querySelector('#login'),devices=document.querySelector('#devices');
+let updating=false;
+async function processUpdate(enabled){
+  if(updating)return;updating=true;enable.disabled=true;disable.disabled=true;
+  try{
+    const options=typeof enabled==='boolean'?{method:'POST',headers:{'X-Lienzo':'1','Content-Type':'application/json'},body:JSON.stringify({enabled})}:{};
+    const response=await fetch('/tailchrome/process',options),data=await response.json();
+    if(!response.ok)throw Error(data.error||'No se pudo consultar el proceso');
+    enable.hidden=data.enabled;disable.hidden=!data.enabled;
+    processState.textContent=data.error||(!data.enabled?'Proceso detenido.':data.needs_login?'Falta autorizar el nodo de Lienzo en tu cuenta Tailscale.':data.running?`Proceso conectado como ${data.hostname}. Se reconecta automáticamente.`:'Iniciando el helper de Tailchrome…');
+    login.hidden=!data.login_url;if(data.login_url)login.href=data.login_url;
+    devices.replaceChildren();
+    for(const node of data.devices){
+      const row=document.createElement('tr');
+      for(const text of [node.name||node.node_id,node.ips.join(', '),!node.online?'Desconectado':node.connected?'Conectado':node.paired?'Emparejado, conectando':node.lienzo?'Detectado, sin emparejar':'Sin Lienzo detectado']){
+        const cell=document.createElement('td');cell.textContent=text;row.append(cell);
+      }
+      devices.append(row);
+    }
+    document.querySelector('#inventory').textContent=data.truncated?`El helper devolvió ${data.devices.length} de ${data.total} equipos. El inventario está incompleto.`:`${data.devices.length} equipos en tu red.`;
+  }catch(error){processState.textContent=error.message;}finally{updating=false;enable.disabled=false;disable.disabled=false;}
+}
+enable.addEventListener('click',()=>processUpdate(true));disable.addEventListener('click',()=>processUpdate(false));
+processUpdate();setInterval(()=>processUpdate(),3000);
 </script>
 </html>

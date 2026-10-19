@@ -187,9 +187,11 @@ def server_handshake(handler) -> Socket | None:
     return Socket(handler.connection, handler.rfile, mask=False)
 
 
-def client_connect(host: str, port: int, path: str, headers: dict, timeout: float = 10.0) -> Socket:
+def client_connect(
+    host: str, port: int, path: str, headers: dict, timeout: float = 10.0, *, connected_socket=None
+) -> Socket:
     """Abre un WebSocket contra `host:port` con los headers dados (los firmados del par)."""
-    sock = socket.create_connection((host, port), timeout=timeout)
+    sock = connected_socket if connected_socket is not None else socket.create_connection((host, port), timeout=timeout)
     try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         key = base64.b64encode(os.urandom(16)).decode("ascii")

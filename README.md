@@ -540,7 +540,24 @@ cualquier perfil sólo entre IP de Tailscale (100.64.0.0/10 de los dos lados).
 
 **Si sólo tenés Tailchrome en Chrome:** el nodo de la extensión no publica el puerto de Lienzo
 ni conecta el proceso Python a la tailnet. Hay un puente opcional en
-`http://localhost:7321/tailchrome`. Abrilo **en la PC que tiene la extensión**, elegí el par ya
+`http://localhost:7321/tailchrome`.
+
+**Proceso automático:** tocá **Activar proceso automático** una vez en esa página. Lienzo usa
+el helper que Tailchrome ya instaló (registro de Chrome o Edge en Windows), sin copiarlo ni
+modificar su binario. Usa un perfil propio `lienzo-<pc_id>` y un nombre `<equipo>-lienzo`,
+independiente del perfil de Chrome. La primera vez hay que autorizar ese nodo en la cuenta
+Tailscale desde el enlace que muestra la página. Después el helper arranca con Lienzo y puede
+mantener el canal con Chrome cerrado. **Detener proceso automático** desactiva ese arranque.
+
+El inventario muestra todos los nodos publicados por el helper, incluido el propio y los
+desconectados. Busca el listener de Lienzo en las IPv4 100.x de los nodos conectados. Conecta
+automáticamente todos los pares conocidos; la identidad final se confirma por firma y cifrado,
+nunca por el nombre ni por la respuesta anónima de descubrimiento. Los equipos nuevos se muestran
+como detectados sin emparejar; no se les concede acceso. Si el helper trunca un inventario grande,
+la página avisa cuántos nodos recibió y no lo presenta como completo. El helper debe admitir proxy
+autenticado; no se extraen credenciales de Chrome ni se guardan las del proxy en disco.
+
+**Puente manual para diagnóstico:** abrilo **en la PC que tiene la extensión**, elegí el par ya
 emparejado e ingresá la IP de Tailscale de la PC que tiene el cliente de Windows (por ejemplo,
 `100.x.y.z`). Ambas PCs necesitan esta versión de Lienzo y el servidor abierto. Tocá
 **Conectar puente** y dejá la pestaña abierta. El canal permite pedidos en ambos sentidos,

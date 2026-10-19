@@ -70,6 +70,7 @@ import secretos
 import sessions as ses
 import state
 import tailchrome
+import tailchrome_process
 import tmux
 import tools
 import transcripts
@@ -1798,6 +1799,10 @@ class Handler(JsonHandler):
         if parts is None:
             return
         try:
+            if parts == ["tailchrome", "process"]:
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "el proceso se administra desde esta PC"})
+                return self._json(200, tailchrome_process.service(self.server.server_port).public())
             if parts == ["tailchrome"]:
                 if self._via_tunnel() or not self._is_local():
                     return self._json(403, {"error": "el puente se abre desde esta PC"})
@@ -2035,6 +2040,15 @@ class Handler(JsonHandler):
                 return self._setup()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
+            if parts == ["tailchrome", "process"]:
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "el proceso se administra desde esta PC"})
+                process = tailchrome_process.service(self.server.server_port)
+                try:
+                    process.configure(self._json_body().get("enabled"))
+                except (ValueError, RuntimeError) as exc:
+                    return self._json(400, {"error": str(exc)})
+                return self._json(200, process.public())
             if len(parts) == 4 and parts[:2] == ["auth", "sessions"] and parts[3] == "revoke":
                 if auth.revocar(parts[2]):
                     return self._json(200, {"ok": True})
@@ -3329,6 +3343,10 @@ def main() -> int:
     threading.Thread(target=consulta_loop, name="consulta", daemon=True).start()
     plugins.cargar()  # lienzo/extensiones/*.py, si los hay en esta PC (Git los ignora)
     plugins.iniciar()
+    try:
+        tailchrome_process.service(a.port, a.peer_port).autostart()
+    except (OSError, ValueError, RuntimeError):
+        log(f"Tailchrome automático: no se pudo leer el arranque guardado\n{traceback.format_exc()}")
     if modo_pares:
         stop_beacon = threading.Event()
         beacon.start(a.peer_port, stop_beacon)
