@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ago, api, ApiError } from "../api";
 import { toggled } from "../names";
 import type { Peer, Session } from "../types";
+import { Downloads } from "./Downloads";
 
 const POLL_MS = 15000;
 
@@ -112,6 +113,17 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
   // el aviso del ultimo click en el violeta, atado al problema que lo genero: cuando el violeta se va
   // (o cambia) el aviso viejo deja de verse; antes «pasada» quedaba pegado para siempre
   const [gitMsg, setGitMsg] = useState<Record<string, { msg: string; git: string | null }>>({});
+  const [menu, setMenu] = useState<{peer: Peer; x: number; y: number} | null>(null);
+  const [downloads, setDownloads] = useState<Peer | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    const close = () => setMenu(null);
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    document.addEventListener("click", close); document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", key); };
+  }, [menu]);
   if (peers.length < 2) return null;
   const localPcId = peers.find((p) => p.local)?.pc_id ?? null;
   const total = Object.keys(sessions).length;
@@ -171,7 +183,9 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
                 : `${p.name}${alerta ? ` — ${alerta}` : ""}${git ? ` — git: ${git}` : ""} (Ctrl + click suma o saca PCs)`
             }
             aria-pressed={filter.has(p.pc_id)}
+            data-pc={p.pc_id}
             onClick={(e) => (e.ctrlKey || e.metaKey ? onToggle(p.pc_id) : onSelect(p.pc_id))}
+            onContextMenu={event => { event.preventDefault(); setMenu({peer:p,x:Math.min(event.clientX,window.innerWidth-230),y:Math.min(event.clientY,window.innerHeight-70)}); }}
           >
             <span className="dot" aria-hidden="true" />
             {p.name}
@@ -200,6 +214,13 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
           </span>
         );
       })}
+      {menu && <div ref={menuRef} role="menu" aria-label={`Acciones de ${menu.peer.name}`} className="pc-context-menu" style={{left:Math.max(4,menu.x),top:Math.max(4,menu.y)}}>
+        <button role="menuitem" disabled={menu.peer.local || !menu.peer.alive} onClick={() => { setDownloads(menu.peer); setMenu(null); }}>Traer descargas…</button>
+      </div>}
+      {downloads && <Downloads key={downloads.pc_id} peer={downloads} onClose={() => {
+        document.querySelector<HTMLButtonElement>(`.pcchip[data-pc="${CSS.escape(downloads.pc_id)}"]`)?.focus();
+        setDownloads(null);
+      }} />}
     </div>
   );
 }

@@ -60,6 +60,9 @@ if os.environ.get("LIENZO_TEST_AUTO_HOST") == "1":
     server.tailchrome_process._service = server.tailchrome_process.Service(
         board.server_port, host_factory=NativeFixture
     )
+    downloads_dir = Path(state.LIENZO) / "Downloads"
+    downloads_dir.mkdir(exist_ok=True)
+    server.downloads.source.folder = lambda: downloads_dir
 server.tailchrome_process.service(board.server_port).autostart()
 for instance in (peer, board):
     instance.daemon_threads = True

@@ -10,6 +10,7 @@ import sys
 import threading
 from pathlib import Path
 
+import download_source
 import state
 
 
@@ -145,6 +146,8 @@ atexit.register(FRAMES.close)
 
 
 def request(data):
+    if isinstance(data, dict) and data.get("action") in ("downloads-list", "downloads-read", "downloads-enable"):
+        return download_source.dispatch(data)
     if isinstance(data, dict) and data.get("action") == "window-frame":
         return FRAMES.request(data)
     if isinstance(data, dict) and data.get("action") in ("windows", "window-frame", "window-input", "window-release"):

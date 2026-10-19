@@ -314,6 +314,21 @@ En el menú ⋯, apagadas por defecto:
 
 ### Chrome remoto
 
+**Traer descargas:** clic derecho sobre la tarjeta de una PC en la tira superior del tablero →
+**Traer descargas…**. Muestra los 30 archivos terminados más recientes de su carpeta Descargas,
+con fecha, tamaño y si el mismo nombre ya existe en esta PC. Elegí los archivos y tocá
+**Traer seleccionados**. Los repetidos requieren elegir **Sobrescribir y traer** o
+**Saltear existentes** antes de iniciar. Si cambia un archivo local durante la copia, se conserva
+y se informa el conflicto. El destino es la carpeta Descargas de la PC donde abriste el tablero.
+
+Ambas PCs deben tener esta versión. La carpeta se detecta mediante la ubicación de Descargas del
+usuario de Windows, sin adivinar su nombre. Si falta el permiso en `copy_roots`, el botón
+**Habilitar carpeta Descargas** autoriza únicamente esa carpeta en ambas PCs y conserva el resto
+de la configuración. La lista y el contenido viajan por el canal cifrado de pares. No hace falta
+que Chrome siga abierto para traer archivos ya descargados. Los temporales se omiten; cada bloque
+se verifica y se publica el archivo al finalizar. La transferencia continúa al cerrar el diálogo,
+pero no se reanuda automáticamente después de reiniciar Lienzo.
+
 El enlace **Chrome remoto** del encabezado abre `/chrome` en una pestaña nueva del navegador.
 Elegí una PC. **Chrome real · ventana completa** muestra su ventana de Chrome dentro de esa
 pestaña: sus pestañas, barra de direcciones, menús y avisos. Los controles de Lienzo quedan en

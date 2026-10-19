@@ -120,6 +120,25 @@ try{
     assert.equal(response.status,200);assert.equal((await response.json()).fixture_pc,nodes[1-i].id);
   });
   assert.deepEqual(JSON.parse(await readFile(resolve(nodes[0].home,'tailchrome-process.json'),'utf8')),{enabled:true});
+  await writeFile(resolve(nodes[0].home,'Downloads/Reunion.pdf'),'local-original');
+  await writeFile(resolve(nodes[1].home,'Downloads/Reunion.pdf'),'remote-approved');
+  const notes=Buffer.alloc(400000,'G');
+  await writeFile(resolve(nodes[1].home,'Downloads/Notas.pdf'),notes);
+  const base=`http://127.0.0.1:${nodes[0].board}`;
+  const post=(path,body)=>fetch(base+path,{method:'POST',headers:{'X-Lienzo':'1','Content-Type':'application/json'},body:JSON.stringify(body)});
+  assert.equal((await post('/downloads/enable',{pc:nodes[1].id})).status,200);
+  const filesResponse=await fetch(base+`/downloads?pc=${nodes[1].id}`);assert.equal(filesResponse.status,200);
+  const files=await filesResponse.json(),old=files.files.find(f=>f.name==='Reunion.pdf');assert.equal(old.exists,true);
+  const selection={plan:files.plan,files:files.files.map(f=>f.id)};
+  assert.equal((await post('/downloads',selection)).status,409);
+  assert.equal(await readFile(resolve(nodes[0].home,'Downloads/Reunion.pdf'),'utf8'),'local-original');
+  const transfer=await post('/downloads',{...selection,replace:[old.id]});assert.equal(transfer.status,202);
+  const job=await transfer.json();
+  await eventually(async()=>{
+    const result=await (await fetch(base+`/downloads/jobs/${job.id}`)).json();assert.equal(result.state,'received');
+  });
+  assert.equal(await readFile(resolve(nodes[0].home,'Downloads/Reunion.pdf'),'utf8'),'remote-approved');
+  assert.deepEqual(await readFile(resolve(nodes[0].home,'Downloads/Notas.pdf')),notes);
   await nodes[0].save();nodes[0].child.kill();
   nodes[0]=await start(nodes[0].id,nodes[0].other); // mismo LIENZO_HOME, puertos nuevos
   for(let i=0;i<2;i++)await eventually(async()=>{
@@ -132,7 +151,7 @@ try{
   });
   for(let i=0;i<2;i++)assert.equal(await readFile(resolve(nodes[i].home,'peers.json'),'utf8'),before[i]);
   assert.deepEqual(errors,[]);
-  console.log('OK: puente manual, proceso automático, inventario completo, comunicación firmada bidireccional sin Chrome, autostart tras reiniciar Lienzo, stop y peers.json intacto. Helper y tailnet sustituidos; integración real pendiente.');
+  console.log('OK: proceso automático sin Chrome, inventario, autostart, descargas cifradas de 400 KB, confirmación de sobrescritura, stop y peers.json intacto. Helper y tailnet sustituidos; integración real pendiente.');
 }catch(error){
   for(const page of browser?.contexts().flatMap(c=>c.pages())||[])await page.screenshot({path:resolve(out,'fallo.png'),fullPage:true}).catch(()=>{});
   throw error;

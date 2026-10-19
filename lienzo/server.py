@@ -47,6 +47,7 @@ import console_titles
 import consulta
 import cuenta_github
 import cuotas
+import downloads
 import federation
 import harness_updates
 import health
@@ -1899,6 +1900,14 @@ class Handler(JsonHandler):
                 return self._doc_img(parts[2])
             if parts == ["peers"]:
                 return self._get_peers()
+            if parts == ["downloads"]:
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "Las descargas se traen desde la PC de destino"})
+                return self._json(*downloads.preview((self.query.get("pc") or [""])[0]))
+            if len(parts) == 3 and parts[:2] == ["downloads", "jobs"]:
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "Las descargas se consultan desde esta PC"})
+                return self._json(*downloads.status(parts[2]))
             if parts == ["xfer"]:
                 return self._json(200, xfer.todos())
             if len(parts) == 2 and parts[0] == "xfer":
@@ -2058,6 +2067,11 @@ class Handler(JsonHandler):
                     return self._json(403, {"error": "Chrome remoto se maneja desde la PC de Lienzo"})
                 code, res = browser_api.dispatch(self._json_body())
                 return self._json(code, res)
+            if parts in (["downloads"], ["downloads", "enable"]):
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "Las descargas se traen desde la PC de destino"})
+                data = self._json_body()
+                return self._json(*(downloads.enable(data.get("pc")) if parts[-1] == "enable" else downloads.start(data)))
             if parts == ["rescan"]:
                 threading.Thread(target=rescan_once, daemon=True).start()
                 return self._json(202, {"ok": True})
