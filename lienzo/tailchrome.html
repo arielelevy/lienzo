@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Puente Tailchrome · Lienzo</title>
+<style>
+  :root{color-scheme:dark;font:16px system-ui;background:#151719;color:#edf0ed}
+  body{max-width:620px;margin:10vh auto;padding:24px}h1{font-size:30px}
+  p{line-height:1.6;color:#b9c2bd}label{display:block;margin:24px 0 8px}
+  input,select,button{box-sizing:border-box;width:100%;padding:13px;border:1px solid #47534b;border-radius:7px;background:#202724;color:inherit;font:inherit}
+  button{margin-top:24px;background:#b6e2ba;color:#142519;cursor:pointer;font-weight:600}
+  button:disabled{opacity:.5;cursor:default}#status{padding:16px;border-left:3px solid #b6e2ba;background:#202724}
+  a{color:#b6e2ba}
+</style>
+<main>
+  <a href="/">← Volver al tablero</a>
+  <h1>Puente Tailchrome</h1>
+  <p>Abrí esta página en el Chrome que tiene Tailchrome conectado. La otra PC debe tener Tailscale de Windows y ambas deben estar emparejadas en Lienzo.</p>
+  <form id="form">
+    <label for="pc">Conectar con</label><select id="pc" required></select>
+    <label for="host">IP de Tailscale de esa PC</label>
+    <input id="host" placeholder="100.x.x.x" inputmode="decimal" required autocomplete="off">
+    <button id="connect">Conectar puente</button>
+  </form>
+  <button id="disconnect" hidden>Desconectar</button>
+  <p id="status" role="status">Cargando PCs emparejadas…</p>
+  <p>Dejá esta pestaña abierta. Al cerrarla se desconecta el puente; las sesiones siguen trabajando en su PC. Los mensajes viajan cifrados y conservan las firmas del par.</p>
+</main>
+<script>
+const form=document.querySelector('#form'), pc=document.querySelector('#pc'), host=document.querySelector('#host');
+const status=document.querySelector('#status'), connect=document.querySelector('#connect'), disconnect=document.querySelector('#disconnect');
+let local, remote, stopped=true, generation=0;
+function stop(message,id=generation){
+  if(stopped||id!==generation)return;
+  stopped=true;local?.close();remote?.close();
+  connect.disabled=false;disconnect.hidden=true;status.textContent=message;
+}
+function forward(target,data){
+  if(target.readyState!==WebSocket.OPEN||target.bufferedAmount>8*1024*1024){stop('El canal no puede recibir datos. Volvé a conectar.');return;}
+  target.send(data);
+}
+fetch('/peers').then(r=>{if(!r.ok)throw Error('No se pudo consultar las PCs');return r.json();}).then(peers=>{
+  for(const peer of peers.filter(p=>!p.local)){
+    const option=document.createElement('option');option.value=peer.pc_id;option.textContent=peer.name||peer.pc_id;pc.append(option);
+  }
+  status.textContent=pc.options.length?'Elegí la PC con Tailscale de Windows e indicá su IP 100.x.':'Primero emparejá las dos PCs desde «Varias PCs».';
+  connect.disabled=!pc.options.length;
+}).catch(error=>{connect.disabled=true;status.textContent=error.message;});
+form.addEventListener('submit',event=>{
+  event.preventDefault();stopped=false;connect.disabled=true;disconnect.hidden=false;
+  const id=++generation;
+  status.textContent='Abriendo el canal por Tailchrome…';remote=null;
+  const queue=[];let queued=0;
+  const scheme=location.protocol==='https:'?'wss:':'ws:';
+  local=new WebSocket(`${scheme}//${location.host}/tailchrome/stream?${new URLSearchParams({pc:pc.value,host:host.value.trim()})}`);
+  local.binaryType='arraybuffer';
+  local.onmessage=event=>{
+    if(stopped||id!==generation)return;
+    if(typeof event.data==='string'){
+      const message=JSON.parse(event.data);
+      if(message.ready){status.textContent='Puente conectado. Ya podés usar el tablero en cualquiera de las dos PCs.';return;}
+      if(!message.url||remote){stop('Respuesta inesperada del puente.');return;}
+      remote=new WebSocket(message.url);remote.binaryType='arraybuffer';
+      remote.onopen=()=>{if(id!==generation)return;for(const data of queue)forward(remote,data);queue.length=0;queued=0;};
+      remote.onmessage=event=>{if(typeof event.data!=='string'&&!stopped&&id===generation)forward(local,event.data);};
+      remote.onerror=()=>stop('No se pudo llegar a la otra PC. Verificá Tailchrome, la IP 100.x, el emparejamiento y la versión de Lienzo en ambas PCs.',id);
+      remote.onclose=()=>stop('La otra PC cerró el puente. Volvé a conectar.',id);
+    }else if(remote?.readyState===WebSocket.OPEN){forward(remote,event.data);}
+    else{queued+=event.data.byteLength;if(queued>65536)stop('No se pudo abrir el canal remoto.');else queue.push(event.data);}
+  };
+  local.onerror=()=>stop('Lienzo rechazó el puente. Verificá la PC elegida, su IP de Tailscale y que no haya otro puente abierto.',id);
+  local.onclose=()=>stop('El puente se desconectó. Las sesiones siguen abiertas en su PC.',id);
+});
+disconnect.addEventListener('click',()=>stop('Puente desconectado.'));
+window.addEventListener('pagehide',()=>stop('Puente desconectado.'));
+</script>
+</html>

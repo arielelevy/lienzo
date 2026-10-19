@@ -538,6 +538,28 @@ cualquier perfil sólo entre IP de Tailscale (100.64.0.0/10 de los dos lados).
 
 ### Cuando la red no deja verse a las PCs: Tailscale
 
+**Si sólo tenés Tailchrome en Chrome:** el nodo de la extensión no publica el puerto de Lienzo
+ni conecta el proceso Python a la tailnet. Hay un puente opcional en
+`http://localhost:7321/tailchrome`. Abrilo **en la PC que tiene la extensión**, elegí el par ya
+emparejado e ingresá la IP de Tailscale de la PC que tiene el cliente de Windows (por ejemplo,
+`100.x.y.z`). Ambas PCs necesitan esta versión de Lienzo y el servidor abierto. Tocá
+**Conectar puente** y dejá la pestaña abierta. El canal permite pedidos en ambos sentidos,
+incluyendo SSE y el transporte de Chrome remoto; no requiere abrir un puerto entrante en
+el nodo de Tailchrome. El destino debe admitir conexiones al listener de pares (7322).
+
+El navegador transporta sobres cifrados con claves derivadas de la clave del par, con secuencias
+por sentido. No recibe la clave del par. Los pedidos interiores mantienen sus firmas HMAC y
+el destino se limita a un listener privado de pares, nunca a puertos elegidos por el navegador.
+El puente usa rutas efímeras en memoria, sin cambiar `peers.json`. Cerrarlo devuelve Lienzo al
+camino directo configurado. Con Tailscale de Windows en ambas PCs se sigue usando la conexión
+directa; no hace falta abrir esta página. Dos PCs que sólo tienen extensiones no están cubiertas.
+
+Prueba reproducible: `node web/tests-ui/tailchrome-e2e.mjs`. Usa Chromium con un proxy HTTP
+local y dos instancias aisladas de Lienzo: comprueba pedidos firmados en ambos sentidos,
+desconexión, reconexión y cierre de pestaña. **No acredita la extensión instalada ni una
+conexión real entre PCs**. La extensión oficial de Tailscale comparte la arquitectura de proxy,
+pero todavía no se verificó su compatibilidad con este puente.
+
 Un Wi-Fi público (un bar, una estación de servicio) suele aislar a los clientes: la puerta de
 enlace contesta, pero la otra PC no responde ni ARP y ningún paquete de la LAN pasa entre las dos.
 Ni el broadcast ni el barrido unicast del beacon lo saltan. Medido el 2026-10-05 en «YPF Clientes 2».

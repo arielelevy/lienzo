@@ -69,6 +69,7 @@ import rules as rl
 import secretos
 import sessions as ses
 import state
+import tailchrome
 import tmux
 import tools
 import transcripts
@@ -304,6 +305,86 @@ def verify_peer_request(headers, method: str, path: str, body: bytes) -> str | N
 # seguia colgado de la IP vieja (segunda revision 2026-10-04).
 _ip_conectada: dict[str, str] = {}
 _ip_conectada_lock = threading.Lock()
+_tailchrome_lock = threading.RLock()
+_tailchrome_bridges: dict[str, tailchrome.Bridge | None] = {}
+
+
+def _tailchrome_serve(handler, pc_id: str, nonce: str, *, url: str | None = None) -> None:
+    """Sólo pares existentes. El listener de destino siempre es PeerHandler en loopback."""
+    peer = federation.get_peer(PEERS_FILE, pc_id)
+    key = _peer_key(pc_id)
+    if peer is None or key is None:
+        return handler._json(404, {"error": "PC no emparejada"})
+    with _tailchrome_lock:
+        if pc_id in _tailchrome_bridges:
+            previous = _tailchrome_bridges[pc_id]
+            if previous is None or not previous.closed.is_set():
+                return handler._json(409, {"error": "ya hay un puente para esta PC"})
+        _tailchrome_bridges[pc_id] = None
+    private = None
+    bridge = None
+    wire = None
+    try:
+        wire = tailchrome.ws.server_handshake(handler)
+        if wire is None:
+            return
+        handler.close_connection = True
+        if url is not None:
+            wire.send(tailchrome.ws.TEXT, json.dumps({"url": url}).encode("utf-8"))
+        private = QuietServer(("127.0.0.1", 0), PeerHandler)
+        private.daemon_threads = True
+        threading.Thread(target=private.serve_forever, daemon=True).start()
+
+        def ready(current):
+            try:
+                with _tailchrome_lock:
+                    if _tailchrome_bridges.get(pc_id) is current and not current.closed.is_set():
+                        _connect_peer_from_record(peer)
+                        log(f"puente Tailchrome conectado: {peer.get('name') or pc_id}")
+            except Exception:
+                log(f"puente Tailchrome: fallo al conectar el espejo\n{traceback.format_exc()}")
+                current.close()
+
+        bridge = tailchrome.Bridge(
+            wire, key, nonce, url is not None, private.server_address,
+            identity.pc_id(), pc_id, ready, log,
+        )
+        with _tailchrome_lock:
+            _tailchrome_bridges[pc_id] = bridge
+        bridge.run()
+    finally:
+        if bridge is not None:
+            bridge.close()
+        elif wire is not None:
+            wire.close()
+        with _tailchrome_lock:
+            if _tailchrome_bridges.get(pc_id) is bridge:
+                _tailchrome_bridges.pop(pc_id, None)
+                if bridge is not None and bridge.ready.is_set():
+                    _connect_stored_peer(pc_id)
+        if private is not None:
+            private.shutdown()
+            private.server_close()
+        log(f"puente Tailchrome cerrado: {pc_id}")
+
+
+def _tailchrome_local(handler):
+    pc_id = (handler.query.get("pc") or [""])[0]
+    peer = federation.get_peer(PEERS_FILE, pc_id)
+    if peer is None:
+        return handler._json(404, {"error": "elegí una PC emparejada"})
+    host = (handler.query.get("host") or [""])[0]
+    try:
+        address = ipaddress.IPv4Address(host)
+        if address not in red.CGNAT:
+            raise ValueError("fuera de Tailscale")
+        key = bytes.fromhex(peer["key"])
+    except (ValueError, KeyError):
+        return handler._json(400, {"error": "indicá la IPv4 de Tailscale de la otra PC (100.x)"})
+    conn = federation.PeerConn(host, int(peer["port"]), key, identity.pc_id())
+    headers = federation.signed_headers(conn, "GET", tailchrome.PATH, b"")
+    url = f"ws://{host}:{conn.port}{tailchrome.PATH}?{urllib.parse.urlencode(headers)}"
+    return _tailchrome_serve(handler, pc_id, headers["X-Lienzo-Nonce"], url=url)
 
 
 def _connect_peer_from_record(peer: dict) -> None:
@@ -321,6 +402,10 @@ def _connect_peer_from_record(peer: dict) -> None:
     except (KeyError, TypeError, ValueError) as e:
         log(f"peer {peer.get('pc_id')}: registro invalido, no se conecta el espejo ({e})")
         return
+    with _tailchrome_lock:
+        bridge = _tailchrome_bridges.get(pc_id)
+        if bridge is not None and bridge.ready.is_set() and not bridge.closed.is_set():
+            host, port = bridge.address
     mirror.MIRROR.connect(
         pc_id, {"name": peer.get("name"), "color": peer.get("color")}, host, port, key, identity.pc_id()
     )
@@ -1713,6 +1798,14 @@ class Handler(JsonHandler):
         if parts is None:
             return
         try:
+            if parts == ["tailchrome"]:
+                if self._via_tunnel() or not self._is_local():
+                    return self._json(403, {"error": "el puente se abre desde esta PC"})
+                return self._file(os.path.join(HERE, "tailchrome.html"), "text/html; charset=utf-8")
+            if parts == ["tailchrome", "stream"]:
+                if self._via_tunnel() or not self._is_local() or not self._origin_ok():
+                    return self._json(403, {"error": "el puente requiere un Origin local propio"})
+                return _tailchrome_local(self)
             if parts == ["browser", "stream"]:
                 # canal vivo de Chrome remoto (browser_stream.py): el socket queda tomado hasta que el visor cierra
                 if self._via_tunnel() or not self._is_local():
@@ -2405,6 +2498,12 @@ class PeerHandler(JsonHandler):
     # hilo esperando para siempre. El SSE manda un ping cada 15 s, asi que esto sobra para el vivo.
     timeout = PEER_SOCKET_TIMEOUT_S
 
+    def _signature_headers(self, method, rest):
+        if method == "GET" and rest == ["tailchrome"]:
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            return {k: v[0] for k, v in query.items() if len(v) == 1}
+        return self.headers
+
     def _parts_and_body(self, method: str) -> tuple[list[str], bytes] | None:
         """Ruta partida y cuerpo leido, con los mismos limites que Handler._route (Content-Length
         exacto, sin Transfer-Encoding). None (ya contestado) si algo no cierra.
@@ -2423,8 +2522,9 @@ class PeerHandler(JsonHandler):
             rest = parts[1:] if parts[:1] == ["peer"] else None
             sin_firma = rest is not None and _sin_firma(method, rest)
             if rest is not None and not sin_firma:
-                claimed = self.headers.get("X-Lienzo-Peer") or ""
-                completos = all(self.headers.get(h) for h in ("X-Lienzo-Ts", "X-Lienzo-Nonce", "X-Lienzo-Sig"))
+                headers = self._signature_headers(method, rest)
+                claimed = headers.get("X-Lienzo-Peer") or ""
+                completos = all(headers.get(h) for h in ("X-Lienzo-Ts", "X-Lienzo-Nonce", "X-Lienzo-Sig"))
                 if not claimed or not completos or _peer_key(claimed) is None:
                     _avisar_401(claimed or self.client_address[0], "sin headers de firma o PC no emparejada")
                     self.close_connection = True
@@ -2458,7 +2558,8 @@ class PeerHandler(JsonHandler):
         sin_firma = _sin_firma(method, rest)
         pc_id = None
         if not sin_firma:
-            pc_id = verify_peer_request(self.headers, method, path, raw)
+            headers = self._signature_headers(method, rest)
+            pc_id = verify_peer_request(headers, method, path, raw)
             if pc_id is None:
                 return self._json(401, {"error": "firma invalida"})
         try:
@@ -2479,6 +2580,9 @@ class PeerHandler(JsonHandler):
         self._dispatch("DELETE")
 
     def _route(self, method: str, rest: list[str], raw: bytes, pc_id: str | None) -> None:
+        if method == "GET" and rest == ["tailchrome"]:
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            return _tailchrome_serve(self, pc_id, query["X-Lienzo-Nonce"][0])
         if method == "POST" and len(rest) == 4 and rest[0] == "sessions" and rest[2:] == ["improvements", "jev"]:
             code, res = improvement_judge(rest[1], self._body_json(raw), from_board=False)
             return self._json(code, res)
@@ -3095,6 +3199,9 @@ def _beacon_sync_once(beacon) -> None:
     for pc_id, info in vistos.items():
         if not isinstance(info, dict):
             continue
+        with _tailchrome_lock:
+            if pc_id in _tailchrome_bridges:
+                continue  # la ruta efímera del puente no se guarda en peers.json
         with _ip_conectada_lock:
             conectada = _ip_conectada.get(pc_id)
         ip = elegir_direccion(info, conectada, ahora, BEACON_TTL_S)
