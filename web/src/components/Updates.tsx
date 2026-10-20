@@ -91,12 +91,20 @@ export function Updates({ peers, onClose, initialPc = "", target }: { peers: Pee
   const pcName = peers.find(peer => peer.pc_id === initialPc)?.name ?? "Esta PC";
   const failed = failure || fresh?.error;
   return createPortal(<dialog ref={dialog} className="updates-dialog" aria-label="Actualizaciones" onCancel={onClose}>
-    <div className="updates-heading"><h2>Actualizando {pcName}</h2><button onClick={onClose} aria-label="Cerrar actualizaciones">✕</button></div>
+    <div className="updates-heading"><h2>Actualizaciones</h2><button onClick={onClose} aria-label="Cerrar actualizaciones">✕</button></div>
+    <p className="updates-pc">{pcName}</p>
     <p role="status">{failed ? "No se pudo actualizar" : done ? "Actualización aplicada" : checking ? "Terminando consulta de novedades…" : error && accepted ? "Reconectando…" : fresh && Object.hasOwn(PHASE, fresh.phase) ? PHASE[fresh.phase] : "Iniciando actualización…"}</p>
     {!done && !failed && <progress aria-label="Progreso de actualización" />}
+    {data && <>
+      <dl className="updates-versions"><dt>En ejecución</dt><dd>{data.running?.slice(0, 8)}</dd><dt>Disponible en Git</dt><dd>{data.version && `v${data.version} `}{data.target?.slice(0, 8)}</dd></dl>
+      {data.checked_at && <p className="updates-detail">Consultado {new Date(data.checked_at * 1000).toLocaleString()}</p>}
+      <h3>Qué cambió</h3>
+      {data.changes.length ? <ul className="updates-changes">{data.changes.map(change => <li key={change}>{change}</li>)}</ul> : <p className="updates-detail">No hay novedades registradas en esta consulta.</p>}
+    </>}
     {failed && <p role="alert">{failed}</p>}
     {error && !accepted && !failure && <p role="alert">{error}</p>}
     {done && <p>Las terminales siguen abiertas.</p>}
+    {!done && <p className="updates-detail">Se prepara y compila antes de aplicar. Lienzo reconecta automáticamente; las terminales siguen abiertas.</p>}
     <button onClick={onClose}>Cerrar</button>
   </dialog>, document.body);
 }

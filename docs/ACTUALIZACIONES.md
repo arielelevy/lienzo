@@ -4,6 +4,8 @@ Cuando hay una versión pendiente aparece **Actualizar** en el menú ⋯ y en el
 derecho de cada PC disponible. Si no hay novedades, la entrada no aparece. Al pulsarla comienza
 la actualización de esa PC y se abre una ventana con progreso y resultado, sin otra confirmación.
 La versión de abajo a la izquierda también permite iniciar cuando hay novedades.
+La ventana conserva **Qué cambió**, la versión disponible, el commit en ejecución y la fecha
+de consulta mientras muestra el avance. No agrega otro botón Actualizar ni una confirmación.
 El servidor consulta Git cada cinco minutos. Cerrar la ventana no cancela la actualización;
 volver a abrirla retoma el progreso. Los impedimentos se muestran como errores visibles.
 

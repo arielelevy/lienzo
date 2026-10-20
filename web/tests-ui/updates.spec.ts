@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { BASE, bloquearEscrituras, instalarTablero } from "./tablero-fijo";
 
-const status = { phase: "available", available: true, busy: false, running: "1234567890", target: "abcdef1234", version: "0.4.1", checked_at: 1792450000, changes: [], blocked: "" };
+const status = { phase: "available", available: true, busy: false, running: "1234567890", target: "abcdef1234", version: "0.4.1", checked_at: 1792450000, changes: ["abcdef1 Esperar la consulta Git antes de actualizar"], blocked: "" };
 const peers = [
   { pc_id: "local", name: "Escritorio", local: true, alive: true, color: "green", last_seen: "", health: null },
   { pc_id: "notebook", name: "Notebook", local: false, alive: true, color: "blue", last_seen: "", health: null },
@@ -23,6 +23,11 @@ test("Actualizar inicia una sola vez y muestra progreso y resultado sin otra con
   await expect(dialog.getByText("Compilando la interfaz…")).toBeVisible();
   expect(sent).toEqual([{ target: status.target }]);
   await expect(dialog.getByRole("progressbar")).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Qué cambió" })).toBeVisible();
+  await expect(dialog.getByText(status.changes[0], { exact: true })).toBeVisible();
+  await expect(dialog.getByText("En ejecución", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("v0.4.1 abcdef12", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "node_modules/.playwright-artifacts/update-detail-progress.png" });
   await expect(dialog.getByRole("button", { name: /Actualizar/ })).toHaveCount(0);
   state = { ...status, phase: "current", available: false, running: status.target };
   await expect(dialog.getByText("Actualización aplicada", { exact: true })).toBeVisible();
@@ -58,7 +63,7 @@ test("Actualizar de otra PC inicia sólo el target de esa máquina", async ({ pa
   await page.goto(BASE);
   await page.locator('.pcchip[data-pc="notebook"]').click({ button: "right" });
   await page.getByRole("menuitem", { name: "Actualizar", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Actualizando Notebook" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Actualizaciones" }).getByText("Notebook", { exact: true })).toBeVisible();
   await expect.poll(() => sent).toEqual({ pc: "notebook", target: status.target });
   await expect(page.getByRole("combobox", { name: "PC a actualizar" })).toHaveCount(0);
 });
@@ -171,4 +176,18 @@ test("una consulta Git que no termina vence con error visible", async ({ page })
   await page.clock.fastForward(91000);
   await expect(dialog.getByRole("alert")).toContainText("La consulta de novedades no terminó");
   expect(applies).toBe(0);
+});
+
+test("las novedades y el avance caben en el celular sin otro botón Actualizar", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await bloquearEscrituras(page); await instalarTablero(page);
+  await page.route("**/updates", route => route.fulfill({ json: status }));
+  await page.route("**/updates/apply", route => route.fulfill({ status: 202, json: status }));
+  await page.goto(BASE);
+  await page.getByRole("button", { name: "Abrir actualizaciones" }).click();
+  const dialog = page.getByRole("dialog", { name: "Actualizaciones" });
+  await expect(dialog.getByText(status.changes[0], { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Actualizar/ })).toHaveCount(0);
+  expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.screenshot({ path: "node_modules/.playwright-artifacts/update-detail-mobile.png" });
 });

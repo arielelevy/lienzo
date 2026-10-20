@@ -2,7 +2,18 @@
 .updates-dialog::backdrop { background: #0008; }
 .updates-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .updates-heading h2 { margin-top: 0; }
-.updates-dialog progress { display: block; width: 100%; margin: 16px 0; }
+.updates-pc, .updates-detail { color: var(--dim); font-size: 13px; }
+.updates-pc { margin-top: 0; }
+.updates-versions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 13px; }
+.updates-versions dt { color: var(--dim); }
+.updates-versions dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.updates-dialog h3 { font-size: 14px; margin: 20px 0 8px; }
+.updates-changes { padding-left: 20px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.updates-changes li + li { margin-top: 6px; }
+.updates-dialog progress { display: block; width: 100%; height: 3px; margin: 16px 0; accent-color: var(--dim); }
+.updates-dialog progress::-webkit-progress-bar { background: var(--line); border-radius: 2px; }
+.updates-dialog progress::-webkit-progress-value { background: var(--dim); }
+.updates-dialog progress::-moz-progress-bar { background: var(--dim); }
 .updates-dialog [role=alert] { color: var(--warning, #eab96c); }
 .release-badge button { all: unset; cursor: pointer; pointer-events: auto; }
 .release-badge button:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
