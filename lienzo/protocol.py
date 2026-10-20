@@ -18,6 +18,7 @@ CAPABILITIES = (
     "browser.remote",
     "browser.window",
     "browser.stream",
+    "browser.tabs.stream.v1",
     "memoria.replica",
 )
 

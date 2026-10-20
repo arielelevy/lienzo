@@ -82,6 +82,7 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
             "browser.remote",
             "browser.window",
             "browser.stream",
+            "browser.tabs.stream.v1",
             "memoria.replica",
         ],
         "launch_roots": [],

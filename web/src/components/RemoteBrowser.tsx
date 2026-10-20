@@ -20,6 +20,18 @@ const FRAME_HEADER = 17; // >IHHHHHHB: seq, x, y, ancho, alto, ancho total, alto
 const modifiers = (e: {altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean}) =>
   Number(e.altKey) + Number(e.ctrlKey) * 2 + Number(e.metaKey) * 4 + Number(e.shiftKey) * 8;
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(n)));
+const WORKER_BUSY = 'Chrome está atendiendo otro pedido; esperá un momento';
+const READ_RETRY_DELAYS = [500, 1000, 1500];
+const isWorkerBusy = (e: unknown) => e instanceof ApiError && e.status === 409 && e.body.error === WORKER_BUSY;
+
+function waitForBrowserRetry(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(new DOMException('La vista se cerró', 'AbortError')); };
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, ms);
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, {once: true});
+  });
+}
 
 async function writeClipboard(text: string) {
   if (navigator.clipboard) return navigator.clipboard.writeText(text);
@@ -326,6 +338,192 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   </div><div className="remote-status">{peer.name} · Chrome real · Usás el mouse y teclado de esa PC. Cerrar esta vista deja Chrome abierto.</div></>;
 }
 
+/** Canal de pestañas del HOST CDP existente. No comparte decoder ni framing con Win32. */
+function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React.RefObject<HTMLDivElement | null>, onState: (reply: Reply, tab: string) => void) {
+  const [canvas] = useState(() => document.createElement('canvas'));
+  const [frame, setFrame] = useState<{tab: string; generation: number; width: number; height: number} | null>(null);
+  const [generation, setGeneration] = useState(0);
+  const [opened, setOpened] = useState(0);
+  const [connected, setConnected] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [inputError, setInputError] = useState('');
+  const [blocked, setBlocked] = useState(false);
+  const selected = useRef(tab);
+  const generationCounter = useRef(0);
+  const stateHandler = useRef(onState);
+  const open = useRef<(() => void) | null>(null);
+  const send = useRef<((events: Command[]) => Promise<unknown>) | null>(null);
+  const release = useRef<(() => Promise<unknown>) | null>(null);
+  const canInput = useRef(false);
+  const ready = enabled && connected && generation === opened && frame?.generation === generation && !blocked;
+  useEffect(() => { canInput.current = ready; }, [ready]);
+  useEffect(() => { stateHandler.current = onState; }, [onState]);
+  useEffect(() => { selected.current = tab; open.current?.(); }, [tab]);
+  useEffect(() => {
+    if (!enabled) return;
+    let disposed = false, attempts = 0, inputId = 0;
+    let ws: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout>, resize: ReturnType<typeof setTimeout>;
+    let current = 0, signature = '', lastSeq = 0, decoding = false;
+    type Image = {generation: number; seq: number; width: number; height: number; jpeg: ArrayBuffer; channel: WebSocket};
+    let latest: Image | null = null;
+    const pending = new Map<number, {generation: number; resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>}>();
+    const uint = (v: unknown): v is number => Number.isInteger(v) && Number(v) > 0 && Number(v) <= 0xffffffff;
+    const inputFailure = (message: string) => { if (!disposed) { setInputError(message); setBlocked(true); } };
+    const uncertain = () => {
+      if (!pending.size) return;
+      const e = new Error('Entrada sin confirmación. No se reenvió; revisá la página antes de continuar.');
+      inputFailure(e.message);
+      for (const p of pending.values()) { clearTimeout(p.timer); p.reject(e); }
+      pending.clear();
+    };
+    const request = (kind: 'input' | 'release-input', events?: Command[]): Promise<void> => {
+      if (ws?.readyState !== WebSocket.OPEN || !current || (kind === 'input' && !canInput.current)) return Promise.reject(new Error('La entrada está pausada; no se envió el pedido.'));
+      if (pending.size >= (kind === 'input' ? 32 : 64) || (events && (!events.length || events.length > 64))) return Promise.reject(new Error('Demasiadas entradas pendientes; no se envió el pedido.'));
+      const n = ++inputId, gen = current, channel = ws;
+      const message = JSON.stringify({t: kind, n, generation: gen, ...(events ? {events} : {})});
+      if (new TextEncoder().encode(message).length > 65536) return Promise.reject(new Error('La entrada es demasiado grande; no se envió el pedido.'));
+      const result = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(n); const e = new Error('Entrada sin confirmación. No se reenvió; revisá la página antes de continuar.');
+          inputFailure(e.message); reject(e);
+        }, 10000);
+        pending.set(n, {generation: gen, resolve, reject, timer});
+        try { channel.send(message); }
+        catch (e) { clearTimeout(timer); pending.delete(n); inputFailure('No se confirmó la entrada; no se reenvió.'); reject(e); }
+      });
+      return result;
+    };
+    const releaseInput = () => {
+      if (current && ws?.readyState === WebSocket.OPEN) void request('release-input').catch(e => inputFailure((e as Error).message));
+    };
+    const select = (force = false) => {
+      if (disposed || ws?.readyState !== WebSocket.OPEN || !selected.current) return;
+      const rect = viewport.current?.getBoundingClientRect();
+      const width = clamp(rect?.width ?? 1280, 320, 1920), height = clamp(rect?.height ?? 800, 240, 1080);
+      const next = `${selected.current}:${width}:${height}`;
+      if (!force && signature === next) return;
+      if (generationCounter.current === 0xffffffff) { setError('Se agotaron las generaciones del canal. Volvé a abrir la vista.'); return; }
+      releaseInput(); // generación vieja antes del open; su ACK sigue correlacionado aunque cambie current
+      current = ++generationCounter.current; signature = next; lastSeq = 0; latest = null; canInput.current = false;
+      setGeneration(current); setOpened(0); setError(''); setNotice('Cargando pestaña…');
+      ws.send(JSON.stringify({t: 'open', tab: selected.current, generation: current, width, height}));
+    };
+    const draw = async () => {
+      if (decoding) return;
+      decoding = true;
+      try {
+        while (latest && !disposed) {
+          const image = latest; latest = null;
+          try {
+            const bitmap = await createImageBitmap(new Blob([image.jpeg], {type: 'image/jpeg'}));
+            try {
+              if (disposed || ws !== image.channel || image.generation !== current) continue;
+              if (bitmap.width !== image.width || bitmap.height !== image.height) throw new Error('Las dimensiones JPEG no coinciden con el cuadro de Chrome');
+              const context = canvas.getContext('2d');
+              if (!context) throw new Error('No se pudo dibujar la pestaña de Chrome');
+              if (canvas.width !== image.width || canvas.height !== image.height) { canvas.width = image.width; canvas.height = image.height; }
+              context.drawImage(bitmap, 0, 0);
+              setFrame({tab: selected.current, generation: current, width: image.width, height: image.height});
+              setNotice(''); setError(''); attempts = 0;
+              if (image.channel.readyState === WebSocket.OPEN) image.channel.send(JSON.stringify({t: 'ack', generation: current, n: image.seq}));
+            } finally { bitmap.close(); }
+          } catch (e) {
+            if (!disposed && ws === image.channel && image.generation === current) setError(`Captura detenida: ${(e as Error).message}`);
+          }
+        }
+      } finally { decoding = false; }
+    };
+    const connect = () => {
+      if (disposed) return;
+      const channel = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/browser/stream?pc=${encodeURIComponent(peer.pc_id)}&mode=tabs`);
+      channel.binaryType = 'arraybuffer'; ws = channel; signature = '';
+      channel.onopen = () => {
+        if (disposed || ws !== channel) return;
+        setConnected(true); select(true);
+        if (document.hidden) channel.send(JSON.stringify({t: 'pause'}));
+      };
+      channel.onmessage = event => {
+        if (disposed || ws !== channel) return;
+        try {
+          if (typeof event.data !== 'string') {
+            if (!(event.data instanceof ArrayBuffer) || event.data.byteLength <= 12 || event.data.byteLength > 12 + 4 * 1024 * 1024) throw new Error('Cuadro JPEG de Chrome inválido o demasiado grande');
+            const data = new DataView(event.data);
+            const gen = data.getUint32(0), seq = data.getUint32(4), width = data.getUint16(8), height = data.getUint16(10);
+            if (!uint(gen) || !uint(seq) || !width || !height || width > 1920 || height > 1080) throw new Error('Cabecera de pestaña inválida');
+            if (gen !== current || seq <= lastSeq) return;
+            lastSeq = seq;
+            latest = {generation: gen, seq, width, height, jpeg: event.data.slice(12), channel};
+            void draw(); // un decoder y un único slot latest; nunca una cadena de promesas de imágenes
+            return;
+          }
+          const m = JSON.parse(event.data);
+          if (!m || typeof m !== 'object' || typeof m.t !== 'string') throw new Error('Mensaje de pestaña inválido');
+          if (m.generation !== undefined && !uint(m.generation)) throw new Error('Generación de pestaña inválida');
+          if (m.t === 'input' || (m.t === 'error' && m.input)) {
+            if (!Number.isSafeInteger(m.n) || m.n < 1 || !uint(m.generation)) { uncertain(); throw new Error('Resultado de entrada inválido'); }
+            const p = pending.get(m.n);
+            if (!p || p.generation !== m.generation) return; // nunca confirma otro input; incluye release de generación anterior
+            if (m.t === 'error' && (typeof m.message !== 'string' || !['rejected', 'uncertain'].includes(m.outcome))) { uncertain(); throw new Error('Resultado de entrada inválido'); }
+            clearTimeout(p.timer); pending.delete(m.n);
+            if (m.t === 'input') p.resolve();
+            else { const e = new Error(`${m.message}. ${m.outcome === 'uncertain' ? 'Entrada sin confirmación' : 'Entrada rechazada'}; no se reenvió.`); inputFailure(e.message); p.reject(e); }
+            return;
+          }
+          if (m.generation !== undefined && m.generation !== current) return;
+          if (m.t === 'opened') {
+            if (m.generation !== current || m.tab !== selected.current || m.format !== 'jpeg' || !uint(m.width) || !uint(m.height) || m.width > 1920 || m.height > 1080) throw new Error('Selección de pestaña inválida');
+            setOpened(current);
+          } else if (m.t === 'state') {
+            if (m.generation !== current || (m.tabs !== undefined && (!Array.isArray(m.tabs) || m.tabs.some((t: Tab) => !t || typeof t.id !== 'string' || typeof t.title !== 'string' || typeof t.url !== 'string')))
+              || (m.back !== undefined && typeof m.back !== 'boolean') || (m.forward !== undefined && typeof m.forward !== 'boolean')
+              || ['running', 'connecting', 'autoApproving', 'prepared'].some(k => m[k] !== undefined && typeof m[k] !== 'boolean')
+              || (m.connectionError !== undefined && typeof m.connectionError !== 'string')
+              || (m.mode !== undefined && !['existing', 'lienzo'].includes(m.mode))
+              || (m.dialog != null && (typeof m.dialog.type !== 'string' || typeof m.dialog.message !== 'string' || (m.dialog.defaultPrompt !== undefined && typeof m.dialog.defaultPrompt !== 'string')))) throw new Error('Estado de pestaña inválido');
+            stateHandler.current(m, selected.current);
+          } else if (m.t === 'error') {
+            if (typeof m.message !== 'string') throw new Error('Error de captura inválido');
+            setError(m.message); setNotice('Captura detenida; la entrada usa un canal independiente.');
+          } else throw new Error('Mensaje de pestaña desconocido');
+        } catch (e) { setError((e as Error).message); }
+      };
+      channel.onclose = () => {
+        if (disposed || ws !== channel) return;
+        ws = null; signature = ''; latest = null; canInput.current = false; setConnected(false); setOpened(0); uncertain();
+        if (++attempts > 5) { setNotice('Reconexión detenida. Revisá la conexión y volvé a intentar.'); return; }
+        setNotice(`Reconectando lectura (${attempts}/5)… La última imagen puede estar desactualizada.`);
+        retry = setTimeout(connect, Math.min(4000, 500 * 2 ** (attempts - 1)));
+      };
+    };
+    open.current = () => { clearTimeout(retry); if (ws?.readyState === WebSocket.OPEN) select(true); else if (!ws || ws.readyState === WebSocket.CLOSED) { attempts = 0; connect(); } };
+    send.current = events => request('input', events);
+    release.current = () => request('release-input');
+    const visibility = () => { if (ws?.readyState === WebSocket.OPEN) { if (document.hidden) releaseInput(); ws.send(JSON.stringify({t: document.hidden ? 'pause' : 'resume'})); } };
+    const observer = new ResizeObserver(() => { clearTimeout(resize); resize = setTimeout(() => select(), 150); });
+    if (viewport.current) observer.observe(viewport.current);
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('blur', releaseInput);
+    canInput.current = false;
+    connect();
+    return () => {
+      releaseInput();
+      disposed = true; canInput.current = false; open.current = null; send.current = null; release.current = null;
+      clearTimeout(retry); clearTimeout(resize); observer.disconnect(); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('blur', releaseInput);
+      latest = null; uncertain();
+      if (ws) { ws.onclose = null; if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({t: 'release'})); ws.close(); }
+    };
+  }, [enabled, peer.pc_id, viewport, canvas]);
+  return {canvas, frame, ready, notice, error, inputError,
+    retry: () => open.current?.(),
+    allowInput: () => { setInputError(''); setBlocked(false); },
+    send: (events: Command[]) => send.current?.(events) ?? Promise.reject(new Error('El canal de pestañas está cerrado; no se envió el pedido.')),
+    releaseInput: () => { void release.current?.().catch(e => { setInputError((e as Error).message); setBlocked(true); }); },
+    reportInput: (e: unknown) => { setInputError((e as Error).message); setBlocked(true); },
+  };
+}
+
 function BrowserDesktop({peer}: {peer: Peer}) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [tab, setTab] = useState("");
@@ -338,6 +536,10 @@ function BrowserDesktop({peer}: {peer: Peer}) {
   const [prepared, setPrepared] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [readNotice, setReadNotice] = useState('');
+  const [readStopped, setReadStopped] = useState(false);
+  const [readEpoch, setReadEpoch] = useState(0);
+  const [inputNotice, setInputNotice] = useState('');
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
   const [frame, setFrame] = useState<Reply & {tab?: string}>({});
@@ -348,10 +550,13 @@ function BrowserDesktop({peer}: {peer: Peer}) {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { document.title = `Chrome · ${peer.name} · Lienzo`; }, [peer.name]);
 
-  const call = useCallback((command: Command): Promise<Reply> => {
+  const call = useCallback((command: Command, signal?: AbortSignal): Promise<Reply> => {
     const execute = () => {
-      if (!mounted.current) throw new Error("La vista se cerró");
-      return api.post<Reply>("/browser", {pc: peer.pc_id, ...command});
+      if (!mounted.current || signal?.aborted) throw new DOMException('La vista se cerró', 'AbortError');
+      return api.get<Reply>('/browser', {
+        method: 'POST', headers: {'X-Lienzo': '1', 'Content-Type': 'application/json'},
+        body: JSON.stringify({pc: peer.pc_id, ...command}), signal,
+      });
     };
     if (command.action === "frame") return Promise.resolve().then(execute); // la imagen no hace esperar al teclado
     const request = chain.current.then(execute);
@@ -359,10 +564,34 @@ function BrowserDesktop({peer}: {peer: Peer}) {
     return request;
   }, [peer.pc_id]);
   const report = useCallback((e: unknown) => {
+    if (isWorkerBusy(e)) {
+      if (mounted.current) setInputNotice(`${WORKER_BUSY}. El pedido no se reintentó.`);
+      return;
+    }
     if (mounted.current) setError(isMissingRoute(e)
       ? "Actualizá y reiniciá Lienzo en esta PC para usar Chrome remoto."
       : (e as Error).message);
   }, []);
+  const reportRead = useCallback((e: unknown) => {
+    if (isWorkerBusy(e)) {
+      if (mounted.current) { setReadNotice('Chrome sigue ocupado. Actualizá la vista para volver a intentar.'); setReadStopped(true); }
+    } else report(e);
+  }, [report]);
+  // Sólo estas consultas se pueden repetir. Inputs, navegación y conexión nunca pasan por acá.
+  const read = useCallback(async (command: Command & {action: 'state' | 'profiles' | 'frame'}, signal: AbortSignal): Promise<Reply> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const result = await call(command, signal);
+        if (signal.aborted) throw new DOMException('La vista se cerró', 'AbortError');
+        if (attempt > 0) { setReadNotice(''); setReadStopped(false); }
+        return result;
+      } catch (e) {
+        if (signal.aborted || !isWorkerBusy(e) || attempt >= READ_RETRY_DELAYS.length) throw e;
+        setReadNotice(`${WORKER_BUSY}. Reintentando lectura (${attempt + 1}/${READ_RETRY_DELAYS.length})…`);
+        await waitForBrowserRetry(READ_RETRY_DELAYS[attempt], signal);
+      }
+    }
+  }, [call]);
   const update = useCallback((result: Reply) => {
     if (!mounted.current) return;
     if (result.running !== undefined) setRunning(result.running);
@@ -378,12 +607,20 @@ function BrowserDesktop({peer}: {peer: Peer}) {
       setTab(current => next.some(t => t.id === current) ? current : (next[0]?.id ?? ""));
     }
   }, []);
+  const streamEnabled = peer.health?.capabilities?.includes('browser.tabs.stream.v1') === true;
+  const streamState = useCallback((result: Reply, selectedTab: string) => { update(result); setFrame(previous => ({...previous, ...result, tab: selectedTab})); }, [update]);
+  const stream = useTabStream(peer, tab, streamEnabled && running && !!tab && peer.alive && !error, viewport, streamState);
   useEffect(() => {
-    let cancelled = false;
-    if (peer.alive) call({action: "state"}).then(r => { if (!cancelled) update(r); }).catch(e => { if (!cancelled) report(e); });
-    if (peer.alive) call({action: "profiles"}).then(r => { if (!cancelled) update(r); }).catch(e => { if (!cancelled) report(e); });
-    return () => { cancelled = true; };
-  }, [call, peer.alive, update, report]);
+    const controller = new AbortController();
+    if (peer.alive) void (async () => {
+      for (const action of ['state', 'profiles'] as const) {
+        const result = await read({action}, controller.signal);
+        if (controller.signal.aborted) return;
+        update(result);
+      }
+    })().catch(e => { if (!controller.signal.aborted) reportRead(e); });
+    return () => controller.abort();
+  }, [read, peer.alive, update, reportRead, readEpoch]);
 
   const action = useCallback(async (command: Command) => {
     setBusy(true);
@@ -393,48 +630,49 @@ function BrowserDesktop({peer}: {peer: Peer}) {
       update(r);
       if (r.id) setTab(r.id);
       setError(r.connectionError ?? "");
+      setInputNotice('');
     } catch (e) { report(e); }
     finally { if (mounted.current) setBusy(false); }
   }, [call, update, report]);
 
   useEffect(() => {
     if (!connecting || !peer.alive) return;
-    let cancelled = false;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      try { const r = await call({action: "state"}); if (!cancelled) update(r); }
-      catch (e) { if (!cancelled) { setConnecting(false); report(e); } }
-      if (!cancelled) timer = setTimeout(poll, 1000);
+      try { const r = await read({action: "state"}, controller.signal); if (!controller.signal.aborted) update(r); }
+      catch (e) {
+        if (!controller.signal.aborted) { if (!isWorkerBusy(e)) setConnecting(false); reportRead(e); }
+        return;
+      }
+      if (!controller.signal.aborted) timer = setTimeout(poll, 1000);
     };
     timer = setTimeout(poll, 1000);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [call, connecting, peer.alive, update, report]);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [read, connecting, peer.alive, update, reportRead, readEpoch]);
 
   useEffect(() => {
-    if (!running || !tab || !peer.alive || error) return;
-    let cancelled = false;
+    if (streamEnabled || !running || !tab || !peer.alive || error) return;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       if (document.hidden) { timer = setTimeout(poll, 1000); return; }
       const rect = viewport.current?.getBoundingClientRect();
       const started = performance.now();
       try {
-        const r = await call({action: "frame", tab, width: clamp(rect?.width ?? 1280, 320, 1920), height: clamp(rect?.height ?? 800, 240, 1080)});
-        if (cancelled) return;
+        const r = await read({action: "frame", tab, width: clamp(rect?.width ?? 1280, 320, 1920), height: clamp(rect?.height ?? 800, 240, 1080)}, controller.signal);
+        if (controller.signal.aborted) return;
         setFrame(previous => ({...previous, ...r, tab, image: r.image ?? (previous.tab === tab ? previous.image : undefined)}));
         update(r);
         // el proximo pedido sale enseguida; el minimo evita martillar una pagina quieta
         timer = setTimeout(poll, Math.max(0, 100 - (performance.now() - started)));
       } catch (e) {
-        if (cancelled) return;
-        // 409: el worker está ocupado con un comando largo (pegado, diálogo); la imagen espera, no falla
-        if (e instanceof ApiError && e.status === 409) timer = setTimeout(poll, 300);
-        else report(e);
+        if (!controller.signal.aborted) reportRead(e);
       }
     };
     void poll();
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [call, running, tab, peer.alive, error, update, report]);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [streamEnabled, read, running, tab, peer.alive, error, update, reportRead, readEpoch]);
 
   const active = tabs.find(t => t.id === tab);
   const shownUrl = active?.url === "about:blank" ? "" : (active?.url ?? "");
@@ -452,7 +690,7 @@ function BrowserDesktop({peer}: {peer: Peer}) {
     viewport.current?.querySelector<HTMLElement>(".remote-screen")?.focus();
   };
   const selectTab = (id: string) => {
-    setTab(id); setEditing(false); setError("");
+    setTab(id); setEditing(false); setError(""); setReadNotice(''); setReadStopped(false);
     void action({action: "activate", tab: id});
   };
   return <>
@@ -484,7 +722,10 @@ function BrowserDesktop({peer}: {peer: Peer}) {
       {running && <button className="remote-stop" disabled={busy || !peer.alive} onClick={() => void action({action: "stop"})}>{mode === 'existing' ? 'Desconectar' : 'Cerrar Chrome'}</button>}
     </div>
     <div className="remote-viewport" ref={viewport}>
-      {ready && !frame.dialog && frame.tab === tab && frame.image && <RemoteScreen key={tab} image={frame.image} width={frame.width ?? 1280} height={frame.height ?? 800}
+      {ready && streamEnabled && stream.frame?.tab === tab && !(frame.tab === tab && frame.dialog) && <RemoteScreen key={tab} canvas={stream.canvas} stream enabled={stream.ready} inputEpoch={stream.frame.generation} onRelease={stream.releaseInput}
+        width={stream.frame.width} height={stream.frame.height} send={stream.send} onError={stream.reportInput} onAddress={() => address.current?.focus()}
+        onCopy={() => { void call({action: 'copy', tab}).then(r => writeClipboard(r.text ?? '')).catch(stream.reportInput); }} />}
+      {ready && !streamEnabled && !frame.dialog && frame.tab === tab && frame.image && <RemoteScreen key={tab} image={frame.image} width={frame.width ?? 1280} height={frame.height ?? 800}
         send={events => call({action: "input", tab, events})} onError={report} onAddress={() => address.current?.focus()}
         onCopy={() => { void call({action: "copy", tab}).then(r => writeClipboard(r.text ?? "")).catch(report); }} />}
       {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1><p>{peer.diagnostico || "La PC no responde. Revisá que esté encendida y con Lienzo abierto."}</p><p>Cuando vuelva a conectarse, podés abrir Chrome desde acá.</p></div>
@@ -500,9 +741,18 @@ function BrowserDesktop({peer}: {peer: Peer}) {
           <details><summary>Usar un perfil separado de Lienzo</summary><p>Funciona sin monitor y conserva sus propios inicios de sesión.</p><button disabled={busy} onClick={() => void action({action: 'start'})}>Abrir Chrome</button></details>
         </div>
         : !tab ? <div className="remote-empty"><h1>No hay pestañas abiertas</h1><button disabled={busy} onClick={() => void action({action: "new", url: "about:blank"})}>Nueva pestaña</button></div>
-        : frame.tab !== tab || !frame.image ? <div className="remote-empty">Cargando página…</div> : null}
+        : (streamEnabled ? stream.frame?.tab !== tab : frame.tab !== tab || !frame.image) ? <div className="remote-empty">Cargando página…</div> : null}
       {ready && frame.tab === tab && frame.dialog && <BrowserDialog dialog={frame.dialog} onAnswer={(accept, text) => void action({action: "dialog", tab, accept, text})} />}
+      {streamEnabled && (stream.notice || stream.error || stream.inputError) && <div className="remote-capture-notice">
+        {(stream.notice || stream.error) && <div role={stream.error ? 'alert' : 'status'}>{stream.error}{stream.notice && <span> {stream.notice}</span>}<button onClick={stream.retry}>Actualizar captura</button></div>}
+        {stream.inputError && <div role="alert">{stream.inputError}<button onClick={stream.allowInput}>Habilitar entrada sin reenviar</button></div>}
+      </div>}
+      {(readNotice || inputNotice) && <div className="remote-capture-notice">
+        {readNotice && <div role="status">{readNotice}{readStopped && <button onClick={() => { setReadNotice(''); setReadStopped(false); setReadEpoch(n => n + 1); }}>Actualizar vista</button>}</div>}
+        {inputNotice && <div role="alert">{inputNotice}</div>}
+      </div>}
     </div>
+    {!streamEnabled && <small>Vista compatible por HTTP · la PC no anuncia el canal de pestañas en vivo.</small>}
     <div className="remote-status"><span className={peer.alive ? "remote-online" : ""}>●</span> {peer.name}<span>{busy ? "Procesando…" : running ? "Chrome remoto" : "Chrome cerrado"}</span><small>F11 · Pantalla completa</small></div>
   </>;
 }
@@ -519,17 +769,18 @@ function BrowserDialog({dialog, onAnswer}: {dialog: NonNullable<Reply["dialog"]>
 /** Superficie con mouse y teclado. En modo nativo (`canvas`) la imagen la dibuja el dueño del canvas y
  *  cada evento sale enseguida; los movimientos se juntan por cuadro de animación. En modo pestaña
  *  (`image`) se agrupan en lotes cada 30 ms sobre HTTP. */
-function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, width, height, send, onError, onAddress, onCopy}: {
+function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, stream = false, enabled = true, inputEpoch, onRelease, width, height, send, onError, onAddress, onCopy}: {
   canvas?: HTMLCanvasElement;
-  image?: string; cursor?: string; format?: 'png' | 'jpeg'; native?: boolean; width: number; height: number; send: (events: Command[]) => Promise<unknown>; onError: (e: unknown) => void; onAddress: () => void; onCopy: () => void;
+  image?: string; cursor?: string; format?: 'png' | 'jpeg'; native?: boolean; stream?: boolean; enabled?: boolean; inputEpoch?: number; onRelease?: () => void; width: number; height: number; send: (events: Command[]) => Promise<unknown>; onError: (e: unknown) => void; onAddress: () => void; onCopy: () => void;
 }) {
+  const direct = native || stream;
   const element = useRef<HTMLDivElement>(null);
   const holder = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (!canvas || !holder.current) return;
-    canvas.setAttribute('aria-label', 'Contenido de la ventana remota');
+    canvas.setAttribute('aria-label', stream ? 'Contenido de la pestaña remota' : 'Contenido de la ventana remota');
     holder.current.replaceChildren(canvas);
-  }, [canvas]);
+  }, [canvas, stream]);
   const pending = useRef<Command[]>([]);
   const sending = useRef(false);
   const live = useRef(false);
@@ -538,26 +789,27 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, w
   const errorHandler = useRef(onError);
   const touch = useRef<{id: number; x: number; y: number; lastX: number; lastY: number; scrolling: boolean} | null>(null);
   const pressedButton = useRef<number | null>(null);
+  useEffect(() => { if (stream) { pending.current = []; pressedButton.current = null; touch.current = null; } }, [stream, inputEpoch]);
   useEffect(() => { sender.current = send; }, [send]);
   useEffect(() => { errorHandler.current = onError; }, [onError]);
   const flush = useCallback(() => {
     scheduled.current = 0;
-    if (!live.current || !pending.current.length || (!native && sending.current)) return;
+    if (!live.current || !pending.current.length || (!direct && sending.current)) return;
     const batch = pending.current.splice(0, 64);
     sending.current = true;
     void sender.current(batch).catch(e => { pending.current = []; errorHandler.current(e); }).finally(() => { sending.current = false; });
-  }, [native]);
+  }, [direct]);
   useEffect(() => {
     live.current = true;
-    const timer = native ? undefined : setInterval(flush, 30);
+    const timer = direct ? undefined : setInterval(flush, 30);
     return () => { live.current = false; if (timer) clearInterval(timer); if (scheduled.current) cancelAnimationFrame(scheduled.current); pending.current = []; };
-  }, [flush, native]);
+  }, [flush, direct]);
   const enqueue = (event: Command) => {
-    if (!live.current) return;
+    if (!live.current || !enabled) return;
     if (pending.current.length >= 128) { pending.current = []; onError(new Error("La conexión no sigue el ritmo del teclado. Reconectá antes de continuar.")); return; }
     if (event.type === "mouseMoved" && pending.current.at(-1)?.type === "mouseMoved") pending.current.pop();
     pending.current.push(event);
-    if (!native) return;
+    if (!direct) return;
     if (event.type === "mouseMoved") { if (!scheduled.current) scheduled.current = requestAnimationFrame(flush); }
     else flush();
   };
@@ -577,6 +829,7 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, w
     });
   };
   const key = (e: React.KeyboardEvent, type: string) => {
+    if (!enabled) return;
     if (e.key === "F11" || (e.ctrlKey && e.key.toLowerCase() === "v")) return;
     e.preventDefault(); e.stopPropagation();
     if (!native && e.ctrlKey && e.key.toLowerCase() === "l") { if (type === "keyDown") onAddress(); return; }
@@ -591,10 +844,12 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, w
     if (native && !code) { if (type === 'keyDown') onError(new Error(`Tecla no admitida: ${e.key}`)); return; }
     enqueue({kind: "key", type, key: e.key, code: e.code, keyCode: code, modifiers: modifiers(e)});
   };
-  return <div ref={element} className={`remote-screen${native ? ' remote-screen-native' : ''}`} tabIndex={0} role="application" aria-label="Página remota: mouse y teclado"
+  return <div ref={element} className={`remote-screen${native ? ' remote-screen-native' : ''}`} tabIndex={enabled ? 0 : -1} aria-disabled={!enabled || undefined} role="application" aria-label="Página remota: mouse y teclado"
     style={native ? {cursor} : undefined}
+    onBlur={() => { if (stream) { pending.current = []; pressedButton.current = null; touch.current = null; onRelease?.(); } }}
     onKeyDown={e => key(e, "keyDown")} onKeyUp={e => key(e, "keyUp")}
     onPointerDown={e => {
+      if (!enabled) return;
       e.preventDefault();
       if (!e.isPrimary) return;
       e.currentTarget.setPointerCapture(e.pointerId); e.currentTarget.focus();

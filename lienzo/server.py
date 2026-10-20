@@ -1834,7 +1834,7 @@ class Handler(JsonHandler):
                     return self._json(403, {"error": "Chrome remoto se maneja desde la PC de Lienzo"})
                 if not self._origin_ok():
                     return self._json(403, {"error": "el Origin no es propio"})
-                browser_stream.serve_viewer(self, (self.query.get("pc") or [""])[0])
+                browser_stream.serve_viewer(self, (self.query.get("pc") or [""])[0], (self.query.get("mode") or ["window"])[0])
                 self.close_connection = True
                 return
             if not parts or parts in (["docs"], ["chrome"]):
@@ -2639,6 +2639,10 @@ class PeerHandler(JsonHandler):
         if method == "GET" and len(rest) == 3 and rest[:2] == ["browser", "stream"]:
             log(f"peer GET /peer/browser/stream de {pc_id}")
             browser_stream.serve_peer(self, _peer_key(pc_id), rest[2])
+            self.close_connection = True
+            return
+        if method == "GET" and len(rest) == 4 and rest[:3] == ["browser", "stream", "tabs"]:
+            browser_stream.serve_peer(self, _peer_key(pc_id), rest[3], "tabs")
             self.close_connection = True
             return
         if method == "POST" and rest == ["conocimiento"]:

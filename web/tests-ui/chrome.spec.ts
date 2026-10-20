@@ -1,6 +1,450 @@
 /** Propuesta de aceptación: UI real, peer y Chrome simulados explícitamente. */
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+import { bloquearEscrituras } from "./tablero-fijo";
 test.use({hasTouch: true});
+
+const WORKER_BUSY = 'Chrome está atendiendo otro pedido; esperá un momento';
+type BrowserCommand = Record<string, unknown>;
+type BrowserFixture = {status?: number; json: Record<string, unknown>};
+
+/** Intercepta cada comando; no consulta ni controla Chrome o PCs reales. */
+async function busyFixture(page: Page, reply: (command: BrowserCommand) => BrowserFixture | undefined) {
+  const calls: BrowserCommand[] = [];
+  await bloquearEscrituras(page);
+  await page.route('**/auth', r => r.fulfill({json: {configured: false, authenticated: true, local: true}}));
+  await page.route('**/peers', r => r.fulfill({json: [
+    {pc_id: 'busy-peer', name: 'PC ocupada', alive: true, local: false},
+    {pc_id: 'other-peer', name: 'Otra PC', alive: true, local: false},
+  ]}));
+  await page.routeWebSocket('**/browser/stream*', ws => ws.onMessage(() => {}));
+  await page.route('**/browser', r => {
+    const command = r.request().postDataJSON() as BrowserCommand;
+    calls.push(command);
+    return r.fulfill(reply(command) ?? {json: command.action === 'profiles' ? {profiles: [{id: 'Default', name: 'Fixture'}]}
+      : command.action === 'windows' ? {windows: [{id: 'fixture-window', title: 'Fixture'}]}
+      : {running: true, mode: 'existing', tabs: [{id: 'fixture-tab', title: String(command.pc), url: 'about:blank'}], image: '/9j/2Q==', width: 1280, height: 800}});
+  });
+  await page.goto('/chrome?pc=busy-peer');
+  await page.getByRole('button', {name: 'Controles de Chrome remoto'}).click();
+  await page.getByRole('button', {name: 'Vista por pestañas', exact: true}).click();
+  return calls;
+}
+
+test('worker ocupado en state es temporal y recupera la vista sin reconectar', async ({page}) => {
+  let states = 0;
+  const calls = await busyFixture(page, d => d.action === 'state' && ++states <= 2
+    ? {status: 409, json: {error: WORKER_BUSY}} : undefined);
+  await expect(page.getByRole('status')).toContainText('Reintentando lectura');
+  await expect(page.getByRole('heading', {name: 'No se pudo conectar con Chrome'})).toHaveCount(0);
+  await expect(page.getByRole('tab', {name: 'busy-peer', exact: true})).toBeVisible();
+  await expect(page.getByRole('application', {name: 'Página remota: mouse y teclado'})).toBeVisible();
+  expect(states).toBe(3);
+  expect(calls.some(d => ['connect', 'start', 'stop'].includes(String(d.action)))).toBeFalsy();
+});
+
+test('worker ocupado al leer perfiles reintenta sólo la lectura', async ({page}) => {
+  let profiles = 0;
+  const calls = await busyFixture(page, d => d.action === 'profiles' && ++profiles === 2
+    ? {status: 409, json: {error: WORKER_BUSY}} : undefined); // la primera lectura pertenece al modo ventana
+  await expect(page.getByRole('status')).toContainText('Reintentando lectura');
+  await expect(page.getByRole('status')).toHaveCount(0);
+  expect(profiles).toBe(3);
+  expect(calls.some(d => d.action === 'connect' || d.action === 'start')).toBeFalsy();
+});
+
+test('worker ocupado durante conexión conserva el permiso pendiente y recupera sin reenviar connect', async ({page}) => {
+  let connecting = false;
+  let polls = 0;
+  const calls = await busyFixture(page, d => {
+    if (d.action === 'connect') { connecting = true; return {json: {connecting: true, running: false}}; }
+    if (d.action === 'state') {
+      if (!connecting) return {json: {connecting: false, running: false}};
+      if (++polls <= 2) return {status: 409, json: {error: WORKER_BUSY}};
+      return {json: {connecting: false, running: true, tabs: [{id: 'fixture-tab', title: 'busy-peer', url: 'about:blank'}]}};
+    }
+  });
+  await page.getByRole('button', {name: 'Conectar Chrome abierto', exact: true}).click();
+  await expect(page.getByRole('status')).toContainText('Reintentando lectura');
+  await expect(page.getByRole('heading', {name: 'Aceptá la conexión en Chrome'})).toBeVisible();
+  await expect(page.getByRole('tab', {name: 'busy-peer', exact: true})).toBeVisible();
+  expect(calls.filter(d => d.action === 'connect')).toHaveLength(1);
+});
+
+test('worker ocupado en frame conserva imagen, limita reintentos y permite recuperar manualmente', async ({page}) => {
+  let occupied = false;
+  let rejected = 0;
+  const calls = await busyFixture(page, d => {
+    if (d.action === 'frame' && occupied) { rejected++; return {status: 409, json: {error: WORKER_BUSY}}; }
+  });
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible();
+  occupied = true;
+  await expect(page.getByRole('status')).toContainText('Reintentando lectura');
+  await expect(screen).toBeVisible();
+  await expect(page.getByRole('button', {name: 'Actualizar vista', exact: true})).toBeVisible({timeout: 10000});
+  expect(rejected).toBe(4); // un intento y tres reintentos, nunca el polling ilimitado de cualquier 409
+  await page.waitForTimeout(800);
+  expect(rejected).toBe(4);
+  expect(calls.some(d => d.action === 'stop')).toBeFalsy();
+  occupied = false;
+  await page.getByRole('button', {name: 'Actualizar vista', exact: true}).click();
+  await expect(page.getByRole('button', {name: 'Actualizar vista', exact: true})).toHaveCount(0);
+  await expect(screen).toBeVisible();
+});
+
+for (const {status, error} of [
+  {status: 409, error: 'Chrome está cerrado. Abrilo desde Chrome remoto'},
+  {status: 504, error: WORKER_BUSY},
+]) {
+  test(`no reintenta error definitivo ${status}: ${error}`, async ({page}) => {
+    let frames = 0;
+    await busyFixture(page, d => {
+      if (d.action === 'frame') { frames++; return {status, json: {error}}; }
+    });
+    await expect(page.getByRole('heading', {name: 'No se pudo conectar con Chrome'})).toBeVisible();
+    await expect(page.getByText(error, {exact: true})).toBeVisible();
+    await page.waitForTimeout(800);
+    expect(frames).toBe(1);
+  });
+}
+
+test('worker ocupado no reenvía teclas ni desconecta la imagen', async ({page}) => {
+  const calls = await busyFixture(page, d => d.action === 'input' ? {status: 409, json: {error: WORKER_BUSY}} : undefined);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible();
+  await screen.focus();
+  await screen.press('a');
+  await expect(page.getByRole('alert')).toContainText('El pedido no se reintentó');
+  await expect(screen).toBeVisible();
+  const inputs = calls.filter(d => d.action === 'input').length;
+  expect(inputs).toBeGreaterThan(0);
+  await page.waitForTimeout(1000);
+  expect(calls.filter(d => d.action === 'input')).toHaveLength(inputs);
+  expect(calls.some(d => d.action === 'stop' || d.action === 'connect')).toBeFalsy();
+});
+
+for (const change of ['pc', 'modo'] as const) {
+  test(`cancela lectura ocupada al cambiar ${change}`, async ({page}) => {
+    const calls = await busyFixture(page, d => d.pc === 'busy-peer' && d.action === 'state'
+      ? {status: 409, json: {error: WORKER_BUSY}} : undefined);
+    await expect(page.getByRole('status')).toContainText('Reintentando lectura');
+    if (change === 'pc') {
+      await page.getByRole('combobox', {name: 'PC del navegador'}).selectOption('other-peer');
+      await expect(page.getByRole('tab', {name: 'other-peer', exact: true})).toBeVisible();
+    } else {
+      await page.getByRole('button', {name: 'Chrome real · ventana completa', exact: true}).click();
+      await expect(page.getByRole('combobox', {name: 'Ventana de Chrome'})).toHaveValue('fixture-window');
+    }
+    const oldStates = calls.filter(d => d.pc === 'busy-peer' && d.action === 'state').length;
+    await page.waitForTimeout(1800);
+    expect(calls.filter(d => d.pc === 'busy-peer' && d.action === 'state')).toHaveLength(oldStates);
+    await expect(page.getByRole('heading', {name: 'No se pudo conectar con Chrome'})).toHaveCount(0);
+  });
+}
+
+async function streamFixture(page: Page, automaticFrames = true) {
+  const http: BrowserCommand[] = [];
+  const channels: {commands: BrowserCommand[]; send: (message: string | Buffer) => void; close: () => void}[] = [];
+  const control = {input: 'ack' as 'ack' | 'hold' | 'uncertain', release: 'ack' as 'ack' | 'hold', state: true};
+  const owned = {buttons: new Set<string>(), keys: new Set<string>()};
+  const releases: {generation: number; reason: string; buttons: string[]; keys: string[]}[] = [];
+  const releaseOwned = (generation: number, reason: string) => {
+    releases.push({generation, reason, buttons: [...owned.buttons], keys: [...owned.keys]}); owned.buttons.clear(); owned.keys.clear();
+  };
+  await bloquearEscrituras(page);
+  await page.route('**/auth', r => r.fulfill({json: {configured: false, authenticated: true, local: true}}));
+  await page.route('**/peers', r => r.fulfill({json: [{pc_id: 'stream-fixture', name: 'PC stream', alive: true, local: false, health: {capabilities: ['browser.tabs.stream.v1']}}]}));
+  const tabs = [{id: 'a', title: 'Pestaña A', url: 'about:blank'}, {id: 'b', title: 'Pestaña B', url: 'about:blank'}];
+  await page.route('**/browser', r => {
+    const d = r.request().postDataJSON(); http.push(d);
+    return r.fulfill({json: d.action === 'windows' ? {windows: [{id: 'fixture', title: 'Fixture'}]}
+      : d.action === 'profiles' ? {profiles: []} : {running: d.action !== 'stop', mode: 'existing', tabs}});
+  });
+  const images = await page.evaluate(() => ['#ff0000', '#0000ff'].map(color => {
+    const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 240;
+    const ctx = canvas.getContext('2d')!; ctx.fillStyle = color; ctx.fillRect(0, 0, 320, 240);
+    return canvas.toDataURL('image/jpeg', .8).split(',')[1];
+  }));
+  const packet = (generation: number, seq: number, blue = false) => {
+    const header = Buffer.alloc(12);
+    header.writeUInt32BE(generation, 0); header.writeUInt32BE(seq, 4); header.writeUInt16BE(320, 8); header.writeUInt16BE(240, 10);
+    return Buffer.concat([header, Buffer.from(images[blue ? 1 : 0], 'base64')]);
+  };
+  await page.routeWebSocket('**/browser/stream*', ws => {
+    if (!ws.url().includes('mode=tabs')) { ws.onMessage(() => {}); return; }
+    const channel = {commands: [] as BrowserCommand[], send: (message: string | Buffer) => ws.send(message), close: () => ws.close({code: 1011, reason: 'corte fixture'})};
+    channels.push(channel);
+    let currentGeneration = 0;
+    ws.onMessage(message => {
+      const d = JSON.parse(String(message)); channel.commands.push(d);
+      if (d.t === 'open') {
+        if (currentGeneration) releaseOwned(currentGeneration, 'open');
+        currentGeneration = d.generation;
+        ws.send(JSON.stringify({t: 'opened', generation: d.generation, tab: d.tab, width: 320, height: 240, format: 'jpeg'}));
+        if (control.state) ws.send(JSON.stringify({t: 'state', generation: d.generation, tabs, back: true, forward: false, dialog: null}));
+        if (automaticFrames) ws.send(packet(d.generation, 1, d.tab === 'b'));
+      }
+      if (d.t === 'input') for (const event of d.events) {
+        if (event.type === 'mousePressed') owned.buttons.add(String(event.button));
+        if (event.type === 'mouseReleased') owned.buttons.delete(String(event.button));
+        const key = String(event.code || event.key || event.keyCode);
+        if (event.type === 'keyDown') owned.keys.add(key);
+        if (event.type === 'keyUp') owned.keys.delete(key);
+      }
+      if (d.t === 'release-input') {
+        releaseOwned(d.generation, 'release-input');
+        if (control.release === 'ack') ws.send(JSON.stringify({t: 'input', n: d.n, generation: d.generation}));
+      }
+      if (d.t === 'input' && control.input !== 'hold') ws.send(JSON.stringify(control.input === 'ack'
+        ? {t: 'input', n: d.n, generation: d.generation}
+        : {t: 'error', input: true, n: d.n, generation: d.generation, outcome: 'uncertain', message: 'CDP sin respuesta fixture'}));
+    });
+  });
+  await page.goto('/chrome?pc=stream-fixture');
+  await page.getByRole('button', {name: 'Controles de Chrome remoto'}).click();
+  await page.getByRole('button', {name: 'Vista por pestañas', exact: true}).click();
+  await expect.poll(() => channels.length).toBe(1);
+  await expect.poll(() => channels[0].commands.filter(d => d.t === 'open').length).toBeGreaterThan(0);
+  return {channels, http, packet, control, owned, releases};
+}
+
+async function holdFirstDecode(page: Page, at = 1) {
+  await page.addInitScript(at => {
+    const original = window.createImageBitmap.bind(window);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const stats = {calls: 0, active: 0, max: 0, release: () => release()};
+    Object.assign(window, {decodeFixture: stats});
+    window.createImageBitmap = (async (image: ImageBitmapSource, options?: ImageBitmapOptions) => {
+      stats.calls++; stats.active++; stats.max = Math.max(stats.max, stats.active);
+      try { if (stats.calls === at) await gate; return await original(image, options); }
+      finally { stats.active--; }
+    }) as typeof createImageBitmap;
+  }, at);
+}
+
+test('tabs stream negocia JPEG, acusa después de dibujar y manda teclado sin HTTP frame/input', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible();
+  await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'ack').length).toBe(1);
+  await screen.focus(); await screen.press('a');
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
+  expect(f.http.some(d => d.action === 'frame' || d.action === 'input' || d.action === 'connect')).toBeFalsy();
+  const rgb = await page.locator('canvas').evaluate(c => Array.from((c as HTMLCanvasElement).getContext('2d')!.getImageData(10, 10, 1, 1).data));
+  expect(rgb[0]).toBeGreaterThan(200); expect(rgb[2]).toBeLessThan(30);
+  await page.getByRole('button', {name: 'Atrás', exact: true}).click();
+  expect(f.http.some(d => d.action === 'history')).toBeTruthy();
+  const before = f.channels[0].commands.filter(d => d.t === 'open').length;
+  await page.setViewportSize({width: 1200, height: 750});
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'open').length).toBeGreaterThan(before);
+  expect(f.channels[0].commands.some(d => d.t === 'size')).toBeFalsy();
+  const generations = f.channels[0].commands.filter(d => d.t === 'open').map(d => Number(d.generation));
+  expect(generations.every((n, i) => i === 0 || n > generations[i - 1])).toBeTruthy();
+});
+
+test('tabs stream descarta decode de generación vieja al cambiar pestaña', async ({page}) => {
+  await holdFirstDecode(page);
+  const f = await streamFixture(page);
+  await expect.poll(() => page.evaluate(() => (window as unknown as {decodeFixture: {calls: number}}).decodeFixture.calls)).toBe(1);
+  await page.getByRole('tab', {name: 'Pestaña B', exact: true}).click();
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'open').length).toBe(2);
+  await page.evaluate(() => (window as unknown as {decodeFixture: {release: () => void}}).decodeFixture.release());
+  await expect(page.locator('canvas')).toBeVisible();
+  const current = Number(f.channels[0].commands.filter(d => d.t === 'open').at(-1)!.generation);
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'ack').map(d => d.generation)).toEqual([current]);
+  const rgb = await page.locator('canvas').evaluate(c => Array.from((c as HTMLCanvasElement).getContext('2d')!.getImageData(10, 10, 1, 1).data));
+  expect(rgb[2]).toBeGreaterThan(200); expect(rgb[0]).toBeLessThan(30);
+});
+
+test('tabs stream conserva un decoder y un slot latest ante ráfaga', async ({page}) => {
+  await holdFirstDecode(page);
+  const f = await streamFixture(page);
+  await expect.poll(() => page.evaluate(() => (window as unknown as {decodeFixture: {calls: number}}).decodeFixture.calls)).toBe(1);
+  const gen = Number(f.channels[0].commands.find(d => d.t === 'open')!.generation);
+  for (let n = 2; n <= 6; n++) f.channels[0].send(f.packet(gen, n, true));
+  await page.waitForTimeout(100); // dejar llegar la ráfaga al slot, manteniendo decode detenido
+  expect(f.channels[0].commands.filter(d => d.t === 'ack')).toHaveLength(0);
+  await page.evaluate(() => (window as unknown as {decodeFixture: {release: () => void}}).decodeFixture.release());
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'ack').map(d => d.n)).toEqual([1, 6]);
+  expect(await page.evaluate(() => { const s = (window as unknown as {decodeFixture: {calls: number; max: number}}).decodeFixture; return {calls: s.calls, max: s.max}; })).toEqual({calls: 2, max: 1});
+});
+
+test('tabs stream input no espera el decode de la captura siguiente', async ({page}) => {
+  await holdFirstDecode(page, 2);
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  const gen = Number(f.channels[0].commands.find(d => d.t === 'open')!.generation);
+  f.channels[0].send(f.packet(gen, 2, true));
+  await expect.poll(() => page.evaluate(() => (window as unknown as {decodeFixture: {calls: number}}).decodeFixture.calls)).toBe(2);
+  await screen.focus(); await screen.press('a');
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
+  expect(f.channels[0].commands.some(d => d.t === 'ack' && d.n === 2)).toBeFalsy();
+  await page.evaluate(() => (window as unknown as {decodeFixture: {release: () => void}}).decodeFixture.release());
+  await expect.poll(() => f.channels[0].commands.some(d => d.t === 'ack' && d.n === 2)).toBeTruthy();
+  expect(f.http.some(d => d.action === 'frame' || d.action === 'input')).toBeFalsy();
+});
+
+test('tabs stream reconecta sólo lectura y requiere habilitar entrada incierta sin replay', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  f.control.input = 'hold';
+  await screen.focus(); await screen.press('a');
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
+  f.channels[0].close();
+  await expect(page.getByRole('alert')).toContainText('Entrada sin confirmación');
+  f.control.input = 'ack';
+  await expect.poll(() => f.channels.length).toBe(2);
+  await expect(screen).toHaveAttribute('aria-disabled', 'true');
+  expect(f.channels[1].commands.some(d => d.t === 'input')).toBeFalsy();
+  await page.getByRole('button', {name: 'Habilitar entrada sin reenviar'}).click();
+  await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  expect(f.channels[1].commands.some(d => d.t === 'input')).toBeFalsy();
+  await screen.focus(); await screen.press('b');
+  await expect.poll(() => f.channels[1].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
+  expect(f.http.some(d => d.action === 'input' || d.action === 'frame')).toBeFalsy();
+});
+
+test('tabs stream muestra captura inválida sin ocultar el último cuadro ni degradar a HTTP', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible();
+  f.channels[0].send(Buffer.alloc(4));
+  await expect(page.getByRole('alert')).toContainText('Cuadro JPEG de Chrome inválido');
+  await expect(screen).toBeVisible();
+  expect(f.http.some(d => d.action === 'frame')).toBeFalsy();
+  const previous = Number(f.channels[0].commands.find(d => d.t === 'open')!.generation);
+  await page.getByRole('button', {name: 'Actualizar captura', exact: true}).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  const next = Number(f.channels[0].commands.filter(d => d.t === 'open').at(-1)!.generation);
+  expect(next).toBeGreaterThan(previous);
+  f.channels[0].send(f.packet(previous, 20, true));
+  await page.waitForTimeout(150);
+  expect(f.channels[0].commands.some(d => d.t === 'ack' && d.generation === previous && d.n === 20)).toBeFalsy();
+});
+
+test('tabs stream pausa/resume al ocultar y release no cierra Chrome al salir del modo', async ({page}) => {
+  const f = await streamFixture(page);
+  await expect(page.locator('canvas')).toBeVisible();
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', {value: true, configurable: true}); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect.poll(() => f.channels[0].commands.some(d => d.t === 'pause')).toBeTruthy();
+  await page.evaluate(() => { Object.defineProperty(document, 'hidden', {value: false, configurable: true}); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect.poll(() => f.channels[0].commands.some(d => d.t === 'resume')).toBeTruthy();
+  const controls = page.getByRole('button', {name: 'Controles de Chrome remoto'});
+  if (await controls.getAttribute('aria-expanded') !== 'true') await controls.click();
+  await page.getByRole('button', {name: 'Chrome real · ventana completa', exact: true}).click();
+  await expect.poll(() => f.channels[0].commands.some(d => d.t === 'release')).toBeTruthy();
+  expect(f.http.some(d => d.action === 'stop')).toBeFalsy();
+});
+
+test('tabs stream timeout de input y ACK tardío no habilitan entrada ni reenvían', async ({page}) => {
+  await page.clock.install();
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  f.control.input = 'hold'; await screen.focus(); await screen.press('a');
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
+  const inputs = f.channels[0].commands.filter(d => d.t === 'input');
+  await page.clock.runFor(10100);
+  await expect(page.getByRole('alert')).toContainText('Entrada sin confirmación');
+  for (const d of inputs) f.channels[0].send(JSON.stringify({t: 'input', n: d.n, generation: d.generation}));
+  await expect(screen).toHaveAttribute('aria-disabled', 'true');
+  expect(f.channels[0].commands.filter(d => d.t === 'input')).toHaveLength(inputs.length);
+});
+
+test('tabs stream held mouse resize up conserva foco y libera sólo su botón antes de open', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  const original = await screen.elementHandle();
+  const box = (await screen.boundingBox())!;
+  await page.mouse.move(box.x + 50, box.y + 100); await page.mouse.down();
+  await expect.poll(() => f.owned.buttons.size).toBe(1);
+  const gen = Number(f.channels[0].commands.find(d => d.t === 'open')!.generation);
+  await page.setViewportSize({width: 1100, height: 720});
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'open').length).toBeGreaterThan(1);
+  await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  expect(await original!.evaluate(element => element.isConnected)).toBeTruthy();
+  await expect(screen).toBeFocused();
+  await page.mouse.up();
+  expect(f.channels[0].commands.some(d => d.t === 'release-input' && d.generation === gen)).toBeTruthy();
+  expect(f.releases.filter(r => r.reason === 'release-input').flatMap(r => r.buttons)).toEqual(['left']);
+  expect(f.owned.buttons.size).toBe(0);
+  expect(f.channels[0].commands.filter(d => d.t === 'input').flatMap(d => d.events as BrowserCommand[]).filter(e => e.type === 'mousePressed')).toHaveLength(1);
+});
+
+test('tabs stream held key blur libera propia sin reenviar downs', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  await screen.focus(); await page.keyboard.down('Shift');
+  await expect.poll(() => f.owned.keys.size).toBe(1);
+  await page.getByRole('textbox', {name: 'Dirección o búsqueda'}).focus();
+  await expect.poll(() => f.owned.keys.size).toBe(0);
+  await page.keyboard.up('Shift');
+  expect(f.releases.filter(r => r.reason === 'release-input').flatMap(r => r.keys)).toEqual(['ShiftLeft']);
+  expect(f.channels[0].commands.filter(d => d.t === 'input').flatMap(d => d.events as BrowserCommand[]).filter(e => e.type === 'keyDown')).toHaveLength(1);
+});
+
+test('tabs stream diálogo A no oculta frame B antes del state B', async ({page}) => {
+  const f = await streamFixture(page);
+  const gen = f.channels[0].commands.find(d => d.t === 'open')!.generation;
+  f.channels[0].send(JSON.stringify({t: 'state', generation: gen, dialog: {type: 'prompt', message: 'Prompt A', defaultPrompt: ''}}));
+  await expect(page.getByText('Prompt A', {exact: true})).toBeVisible();
+  f.control.state = false;
+  await page.getByRole('tab', {name: 'Pestaña B', exact: true}).click();
+  await expect(page.getByRole('application', {name: 'Página remota: mouse y teclado'})).toBeVisible();
+  await expect(page.getByText('Prompt A', {exact: true})).toHaveCount(0);
+});
+
+test('tabs stream release lento no absorbe otro blur después de un down nuevo', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  f.control.release = 'hold';
+  const address = page.getByRole('textbox', {name: 'Dirección o búsqueda'});
+  await screen.focus(); await page.keyboard.down('Shift');
+  await expect.poll(() => f.owned.keys.size).toBe(1);
+  await address.focus();
+  await expect.poll(() => f.owned.keys.size).toBe(0);
+  await page.keyboard.up('Shift');
+  await screen.focus(); await page.keyboard.down('Shift');
+  await expect.poll(() => f.owned.keys.size).toBe(1);
+  await address.focus();
+  await expect.poll(() => f.owned.keys.size).toBe(0);
+  expect(f.channels[0].commands.filter(d => d.t === 'release-input')).toHaveLength(2);
+  expect(f.releases.flatMap(r => r.keys)).toEqual(['ShiftLeft', 'ShiftLeft']);
+  await page.keyboard.up('Shift');
+});
+
+test('tabs stream held key cambio tab correlaciona ACK de release viejo', async ({page}) => {
+  await page.clock.install();
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  await screen.focus(); await page.keyboard.down('Shift');
+  await expect.poll(() => f.owned.keys.size).toBe(1);
+  f.control.release = 'hold';
+  await page.getByRole('tab', {name: 'Pestaña B', exact: true}).click();
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'open').length).toBe(2);
+  const release = f.channels[0].commands.find(d => d.t === 'release-input')!;
+  expect(release).toBeTruthy();
+  const next = f.channels[0].commands.filter(d => d.t === 'open').at(-1)!;
+  expect(Number(release.generation)).toBeLessThan(Number(next.generation));
+  // Blur y selección liberan por separado: confirmar todos los pedidos realmente enviados.
+  for (const d of f.channels[0].commands.filter(d => d.t === 'release-input')) {
+    f.channels[0].send(JSON.stringify({t: 'input', n: d.n, generation: d.generation}));
+  }
+  await page.clock.runFor(10100);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(f.owned.keys.size).toBe(0);
+  await page.keyboard.up('Shift');
+  const ids = f.channels[0].commands.filter(d => d.t === 'input' || d.t === 'release-input').map(d => Number(d.n));
+  expect(new Set(ids).size).toBe(ids.length);
+});
 
 for (const saved of ['', 'Profile 1']) {
   test(`abre Chrome automáticamente sin ventanas y recuerda el perfil ${saved || 'predeterminado'}`, async ({page}) => {

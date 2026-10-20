@@ -18,6 +18,7 @@ let consentProcess = null;
 let autoApproving = false;
 let consentError = '';
 const pages = new Map();
+const attaching = new Map();
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 
 function executable() {
@@ -81,7 +82,7 @@ class CDP {
       const id = ++this.id;
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(Object.assign(new Error('Chrome tardó demasiado en responder'), {status: 504}));
+        reject(Object.assign(new Error(`Chrome tardó demasiado en responder (${method})`), {status: 504}));
       }, 8000);
       this.pending.set(id, {resolve, reject, timer});
       this.socket.send(JSON.stringify({id, method, params, sessionId}));
@@ -127,7 +128,15 @@ async function tabs() {
   return list;
 }
 
-async function page(id) {
+async function page(id, cached = false) {
+  if (cached && pages.has(id)) return pages.get(id);
+  if (attaching.has(id)) return attaching.get(id);
+  const pending = attachPage(id);
+  attaching.set(id, pending);
+  try { return await pending; } finally { attaching.delete(id); }
+}
+
+async function attachPage(id) {
   if (typeof id !== 'string' || !(await tabs()).some(t => t.id === id)) fail('La pestaña ya no existe', 404);
   if (!pages.has(id)) {
     // Una sola conexión autorizada por Chrome; las páginas usan sesiones CDP.
@@ -155,37 +164,41 @@ function integer(n, min, max) {
   return n;
 }
 
-async function input(cdp, events) {
+async function input(cdp, events, releaseOnly = false) {
   if (!Array.isArray(events) || events.length > 64) fail('Demasiados eventos de entrada');
+  const commands = [];
   for (const e of events) {
+    if (releaseOnly && !((e.kind === 'key' && e.type === 'keyUp') || (e.kind === 'mouse' && e.type === 'mouseReleased'))) fail('La liberación sólo admite eventos up');
     if (e.kind === 'text') {
       if (typeof e.text !== 'string' || e.text.length > 16000) fail('Texto demasiado largo');
-      await cdp.send('Input.insertText', {text: e.text});
+      commands.push(['Input.insertText', {text: e.text}]);
     } else if (e.kind === 'key') {
       if (!['keyDown', 'keyUp'].includes(e.type) || typeof e.key !== 'string' || e.key.length > 40
           || typeof e.code !== 'string' || e.code.length > 40) fail('Tecla inválida');
-      await cdp.send('Input.dispatchKeyEvent', {
+      commands.push(['Input.dispatchKeyEvent', {
         type: e.type, key: e.key, code: e.code,
         windowsVirtualKeyCode: integer(e.keyCode, 0, 255),
         modifiers: integer(e.modifiers, 0, 15),
         ...(e.type === 'keyDown' && !(e.modifiers & 7) && (e.key.length === 1 || e.key === 'Enter')
           ? {text: e.key === 'Enter' ? '\r' : e.key} : {}),
-      });
+      }]);
     } else if (e.kind === 'mouse') {
       if (!['mousePressed', 'mouseReleased', 'mouseMoved', 'mouseWheel'].includes(e.type)
           || !['none', 'left', 'middle', 'right'].includes(e.button)) fail('Acción de mouse inválida');
       const params = {
         type: e.type, x: integer(e.x, 0, 1920), y: integer(e.y, 0, 1080),
         button: e.button, buttons: integer(e.buttons, 0, 7), modifiers: integer(e.modifiers, 0, 15),
-        clickCount: ['mousePressed', 'mouseReleased'].includes(e.type) ? Math.max(1, integer(e.clickCount, 0, 3)) : integer(e.clickCount, 0, 3),
+        clickCount: releaseOnly ? 0 : ['mousePressed', 'mouseReleased'].includes(e.type) ? Math.max(1, integer(e.clickCount, 0, 3)) : integer(e.clickCount, 0, 3),
       };
       if (e.type === 'mouseWheel') {
         params.deltaX = integer(e.deltaX, -4000, 4000);
         params.deltaY = integer(e.deltaY, -4000, 4000);
       }
-      await cdp.send('Input.dispatchMouseEvent', params);
+      commands.push(['Input.dispatchMouseEvent', params]);
     } else fail('Entrada desconocida');
   }
+  // Validar TODO el lote antes del primer efecto; un 400 nunca significa ejecucion parcial.
+  for (const [method, params] of commands) await cdp.send(method, params);
 }
 
 async function stop() {
@@ -307,9 +320,21 @@ async function handle(d) {
     const {targetId} = await browser.send('Target.createTarget', {url: url(d.url)});
     return {id: targetId, running: true, tabs: await tabs()};
   }
-  const cdp = await page(d.tab);
-  if (d.action === 'frame') {
+  const cdp = await page(d.tab, ['snapshot', 'input', 'release-input', 'viewport', 'tab-state'].includes(d.action));
+  if (d.action === 'viewport') {
     const width = integer(d.width, 320, 1920), height = integer(d.height, 240, 1080);
+    await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
+    cdp.size = `${width}x${height}`;
+    return {width, height};
+  }
+  if (d.action === 'frame' || d.action === 'snapshot') {
+    const width = integer(d.width, 320, 1920), height = integer(d.height, 240, 1080);
+    // Snapshot nunca modifica el viewport: open/viewport es la unica operacion que lo establece.
+    if (d.action === 'snapshot') {
+      if (cdp.dialog) return {dialog: cdp.dialog};
+      const {data} = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false});
+      return {image: data, width, height};
+    }
     if (cdp.size !== `${width}x${height}`) {
       await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
       cdp.size = `${width}x${height}`;
@@ -319,6 +344,11 @@ async function handle(d) {
     const history = await cdp.send('Page.getNavigationHistory');
     return {running: true, tabs: await tabs(), image: data, width, height,
       back: history.currentIndex > 0, forward: history.currentIndex < history.entries.length - 1, dialog: null};
+  }
+  if (d.action === 'tab-state') {
+    const history = await cdp.send('Page.getNavigationHistory');
+    return {running: true, tabs: await tabs(), back: history.currentIndex > 0,
+      forward: history.currentIndex < history.entries.length - 1, dialog: cdp.dialog};
   }
   if (d.action === 'navigate') {
     const result = await cdp.send('Page.navigate', {url: url(d.url)});
@@ -332,6 +362,7 @@ async function handle(d) {
     const entry = h.entries[h.currentIndex + d.direction];
     if (entry) await cdp.send('Page.navigateToHistoryEntry', {entryId: entry.id});
   } else if (d.action === 'input') await input(cdp, d.events);
+  else if (d.action === 'release-input') await input(cdp, d.events, true);
   else if (d.action === 'copy') {
     const {result, exceptionDetails} = await cdp.send('Runtime.evaluate', {
       expression: `(() => { const e = document.activeElement; return (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement) && typeof e.selectionStart === 'number' ? e.value.slice(e.selectionStart, e.selectionEnd) : String(window.getSelection()); })()`,
@@ -349,11 +380,36 @@ async function handle(d) {
 
 const lines = createInterface({input: process.stdin, crlfDelay: Infinity});
 let chain = Promise.resolve();
+let lifecycle = Promise.resolve();
+let active = new Set();
+const inputs = new Map();
 lines.on('line', line => {
-  chain = chain.then(async () => {
-    try { process.stdout.write(JSON.stringify(await handle(JSON.parse(line))) + '\n'); }
-    catch (e) { process.stdout.write(JSON.stringify({status: e.status ?? 502, error: e.message}) + '\n'); }
-  });
+  let request;
+  try { request = JSON.parse(line); }
+  catch (e) { process.stdout.write(JSON.stringify({status: 400, error: e.message}) + '\n'); return; }
+  // El worker de ventana conserva su protocolo FIFO; HOST usa ids para concurrencia.
+  const correlated = typeof request.requestId === 'number';
+  const run = async () => {
+    let result;
+    try { result = await handle(request); }
+    catch (e) { result = {status: e.status ?? 502, error: e.message}; }
+    if (correlated) result.requestId = request.requestId;
+    process.stdout.write(JSON.stringify(result) + '\n');
+  };
+  if (!correlated) { chain = chain.then(run); return; }
+  if (['start', 'stop', 'connect', 'prepare'].includes(request.action)) {
+    const previous = [...active];
+    lifecycle = lifecycle.then(() => Promise.allSettled(previous)).then(run);
+    return;
+  }
+  const barrier = lifecycle;
+  const key = request.tab;
+  const ordered = !['snapshot', 'frame', 'state', 'profiles', 'tab-state'].includes(request.action);
+  const before = ordered ? inputs.get(key) ?? Promise.resolve() : Promise.resolve();
+  const work = Promise.all([barrier, before]).then(run);
+  active.add(work);
+  if (ordered) inputs.set(key, work);
+  void work.finally(() => { active.delete(work); if (inputs.get(key) === work) inputs.delete(key); });
 });
 lines.on('close', () => { void stop().finally(() => process.exit(0)); });
 process.on('SIGTERM', () => { void stop().finally(() => process.exit(0)); });

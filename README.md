@@ -386,6 +386,14 @@ predeterminado. Abrir un perfil desde Lienzo no garantiza que Chrome comparta es
 preferencias para habilitar la conexión. La autorización inicial requiere interacción en el
 Chrome de destino; no se promete que este modo funcione sin monitor o sesión gráfica activa.
 
+Con ambas PCs actualizadas, esta vista usa un canal WebSocket persistente y la misma conexión
+CDP ya autorizada. Envía capturas JPEG completas, hasta diez por segundo, con un solo cuadro
+pendiente de confirmación. La captura y la entrada se procesan por separado: el mouse y el
+teclado no esperan que termine la imagen. Una pestaña admite un visor a la vez. Al cambiar de
+pestaña o tamaño se descartan cuadros de la selección anterior; los clics y las teclas no se
+reenvían automáticamente tras un error o una desconexión. El funcionamiento con Windows
+bloqueado depende también de Chrome y del estado de su compositor; requiere prueba en destino.
+
 La alternativa **Usar un perfil separado de Lienzo → Abrir Chrome** usa un perfil persistente en
 `~/.lienzo/chrome-remoto`, en modo headless, sin monitor. **Cerrar Chrome** cierra sólo ese proceso.
 Volver al tablero o cerrar la pestaña local conserva el navegador remoto. Se admite abrir hasta
@@ -848,6 +856,7 @@ además la cookie de sesión.
 | GET | `/events` | SSE con cada cambio |
 | POST | `/browser` | `{pc, action, ...}`; perfiles, ventanas y acciones de Chrome en la PC elegida |
 | GET | `/browser/stream?pc=<pc_id>` | WebSocket persistente del modo ventana: imagen, cursor y entradas |
+| GET | `/browser/stream?pc=<pc_id>&mode=tabs` | Canal de pestañas sobre CDP ya autorizado: JPEG binario y entrada independiente; requiere `browser.tabs.stream.v1` |
 | GET | `/docs` | esta referencia y el diseño, con buscador |
 | POST | `/rescan` | barrido de procesos ahora |
 | GET, POST | `/auth`, `/setup`, `/login`, `/logout`, `/enroll` | acceso remoto |

@@ -137,7 +137,68 @@ class BrowserHost:
             self.lock.release()
 
 
-HOST = BrowserHost()
+class CDPHost(BrowserHost):
+    """Un solo CDP autorizado, con respuestas correlacionadas fuera del lock de escritura."""
+
+    def __init__(self):
+        super().__init__()
+        self.lock = threading.RLock()
+        self.pending = {}
+        self.next_id = 0
+
+    def _read(self, process, responses):
+        error = {"status": 502, "error": "Se cerró el proceso de Chrome remoto"}
+        try:
+            for line in process.stdout:
+                result = json.loads(line)
+                request_id = result.pop("requestId", None)
+                with self.lock:
+                    item = self.pending.get(request_id)
+                    if item and item[0] is process:
+                        item[1].put_nowait(result)
+        except (OSError, ValueError, AttributeError, queue.Full) as exc:
+            error = {"status": 502, "error": f"Respuesta inválida del navegador: {type(exc).__name__}"}
+        finally:
+            with self.lock:
+                for owner, response in self.pending.values():
+                    if owner is process and response.empty():
+                        response.put_nowait(error)
+
+    def request(self, data):
+        if not isinstance(data, dict) or len(json.dumps(data)) > 65536:
+            return 400, {"error": "Pedido de navegador inválido o demasiado grande"}
+        request_id = None
+        try:
+            with self.lock:
+                if self.process is None or self.process.poll() is not None:
+                    self.close()
+                    if data.get("action") == "state":
+                        return 200, {"running": False, "tabs": []}
+                    if data.get("action") not in ("start", "profiles", "prepare", "connect"):
+                        return 409, {"error": "Chrome está cerrado. Abrilo desde Chrome remoto"}
+                    self._start()
+                if len(self.pending) >= 128:
+                    return 409, {"error": "Chrome está atendiendo otro pedido; esperá un momento"}
+                self.next_id += 1
+                request_id = self.next_id
+                response = queue.Queue(maxsize=1)
+                self.pending[request_id] = (self.process, response)
+                self.process.stdin.write(json.dumps({**data, "requestId": request_id}, ensure_ascii=True) + "\n")
+                self.process.stdin.flush()
+            result = response.get(timeout=22)
+            return result.pop("status", 200), result
+        except queue.Empty:
+            # Puede haberse ejecutado: no cerrar el HOST ni repetir clicks/teclas.
+            return 504, {"error": "Chrome no respondió a tiempo. El pedido no se reintentó"}
+        except (OSError, RuntimeError) as exc:
+            return 503, {"error": str(exc)}
+        finally:
+            if request_id is not None:
+                with self.lock:
+                    self.pending.pop(request_id, None)
+
+
+HOST = CDPHost()
 WINDOW = BrowserHost(window=True)
 FRAMES = BrowserHost(window=True)
 atexit.register(HOST.close)
