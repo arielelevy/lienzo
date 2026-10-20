@@ -132,6 +132,7 @@ test('muestra la ventana completa por el canal vivo y manda el mouse sin pedir d
       stream.push(d);
       if (d.t === 'open') { ws.send(JSON.stringify({t: 'opened', window: d.window})); ws.send(frame); }
       if (d.t === 'input') { ws.send(JSON.stringify({t: 'input', n: d.n})); ws.send(JSON.stringify({t: 'cursor', cursor: 'pointer'})); }
+      if (d.t === 'copy') ws.send(JSON.stringify({t: 'clipboard', text: 'Texto remoto · ñ 🧉'}));
     });
   });
   await page.goto('/chrome');
@@ -163,6 +164,22 @@ test('muestra la ventana completa por el canal vivo y manda el mouse sin pedir d
   await touch.detach();
   stream.length = 0;
   const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await screen.focus();
+  await screen.press('Control+c');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('Texto remoto · ñ 🧉');
+  expect(stream.filter(d => d.t === 'copy')).toHaveLength(1);
+  expect(stream.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]).some(e => e.key === 'c')).toBeFalsy();
+  // HTTP por LAN: comprobar también la copia sin Clipboard API.
+  await page.evaluate(() => navigator.clipboard.writeText('portapapeles anterior'));
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {value: undefined, configurable: true}));
+  await screen.press('Control+c');
+  await expect.poll(() => stream.filter(d => d.t === 'copy').length).toBe(2);
+  await expect.poll(() => page.evaluate(() => {
+    Reflect.deleteProperty(navigator, 'clipboard');
+    return navigator.clipboard.readText();
+  })).toBe('Texto remoto · ñ 🧉');
+  stream.length = 0;
   await screen.dispatchEvent('keydown', {key: 'a', code: 'KeyA', keyCode: 0, ctrlKey: true});
   await screen.dispatchEvent('keyup', {key: 'a', code: 'KeyA', keyCode: 0, ctrlKey: true});
   await screen.dispatchEvent('keydown', {key: 'ñ', keyCode: 0});

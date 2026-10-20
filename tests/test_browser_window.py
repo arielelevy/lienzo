@@ -10,6 +10,68 @@ import browser_window as module
 import pytest
 
 
+def test_stream_copy_returns_text_from_selected_window():
+    seen = []
+    stream = module.Streamer(SimpleNamespace(copy=lambda hwnd: seen.append(hwnd) or "ñ 🧉"), io.BytesIO(), capture=lambda: None)
+    stream.hwnd = 123
+    messages = []
+    stream.json = messages.append
+    stream.handle({"t": "copy"})
+    assert seen == [123]
+    assert messages == [{"t": "clipboard", "text": "ñ 🧉"}]
+
+
+def test_stream_copy_reports_error_without_returning_old_clipboard():
+    def copy(hwnd):
+        raise ValueError("Chrome no copió texto nuevo")
+
+    stream = module.Streamer(SimpleNamespace(copy=copy), io.BytesIO(), capture=lambda: None)
+    stream.hwnd = 123
+    messages = []
+    stream.json = messages.append
+    stream.handle({"t": "copy"})
+    assert messages == [{"t": "error", "input": True, "message": "Chrome no copió texto nuevo"}]
+
+
+def test_copy_waits_for_new_clipboard_and_preserves_unicode(monkeypatch):
+    import ctypes
+
+    windows = module.Windows.__new__(module.Windows)
+    content = ("selección ñ 🧉\0").encode("utf-16-le")
+    buffer = ctypes.create_string_buffer(content)
+    sequence = [1]
+    closed = []
+    windows.user = SimpleNamespace(
+        GetClipboardSequenceNumber=lambda: sequence[0],
+        OpenClipboard=lambda owner: True,
+        GetClipboardData=lambda format: 99,
+        CloseClipboard=lambda: closed.append(True),
+    )
+    windows.kernel = SimpleNamespace(
+        GlobalSize=lambda handle: len(content),
+        GlobalLock=lambda handle: ctypes.addressof(buffer),
+        GlobalUnlock=lambda handle: None,
+    )
+    windows.release = lambda: None
+    windows.input = lambda hwnd, events: sequence.__setitem__(0, 2)
+    windows.active = windows.chrome = lambda hwnd: True
+    assert windows.copy(123) == "selección ñ 🧉"
+    assert closed == [True]
+
+
+def test_copy_rejects_stale_clipboard(monkeypatch):
+    windows = module.Windows.__new__(module.Windows)
+    windows.user = SimpleNamespace(GetClipboardSequenceNumber=lambda: 7)
+    windows.release = lambda: None
+    windows.input = lambda hwnd, events: None
+    windows.active = windows.chrome = lambda hwnd: True
+    ticks = iter([0, 0.1, 2])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    with pytest.raises(ValueError, match="no copió texto nuevo"):
+        windows.copy(123)
+
+
 @pytest.mark.parametrize("value", [True, -1, 3841, "12", None])
 def test_capture_dimensions_reject_invalid_values(value):
     with pytest.raises(ValueError):

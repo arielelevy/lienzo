@@ -15,11 +15,25 @@ type Reply = {
 };
 type Command = Record<string, unknown>;
 /** Lo que manda el worker por el canal vivo (browser_window.py --stream): texto JSON o un cuadro binario. */
-type StreamMessage = { t: string; n?: number; message?: string; input?: boolean; cursor?: string; window?: string; windows?: {id: string; title: string}[] };
+type StreamMessage = { t: string; n?: number; text?: string; message?: string; input?: boolean; cursor?: string; window?: string; windows?: {id: string; title: string}[] };
 const FRAME_HEADER = 17; // >IHHHHHHB: seq, x, y, ancho, alto, ancho total, alto total, flags
 const modifiers = (e: {altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean}) =>
   Number(e.altKey) + Number(e.ctrlKey) * 2 + Number(e.metaKey) * 4 + Number(e.shiftKey) * 8;
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(n)));
+
+async function writeClipboard(text: string) {
+  if (navigator.clipboard) return navigator.clipboard.writeText(text);
+  // Los visores abiertos por HTTP en la LAN no tienen Clipboard API.
+  const focused = document.activeElement as HTMLElement | null;
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.style.cssText = 'position:fixed;left:-10000px;top:0';
+  document.body.append(field);
+  try {
+    field.select();
+    if (!document.execCommand('copy')) throw new Error('El navegador no permitió copiar al portapapeles local');
+  } finally { field.remove(); focused?.focus(); }
+}
 
 export function RemoteBrowser() {
   const peers = usePeers();
@@ -186,7 +200,11 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
             if ('cursor' in value && typeof value.cursor !== 'string') throw new Error('Mensaje de Chrome remoto inválido');
             m = value as StreamMessage;
           } catch { report(new Error('Mensaje de Chrome remoto inválido')); return; }
-          if (m.t === 'opened') { attempts = 0; setNotice(''); }
+          if (m.t === 'clipboard') {
+            if (typeof m.text !== 'string') { setInputError('Texto copiado inválido'); return; }
+            void writeClipboard(m.text).catch(e => { if (!cancelled) setInputError(`No se pudo copiar en esta PC: ${(e as Error).message}`); });
+          }
+          else if (m.t === 'opened') { attempts = 0; setNotice(''); }
           else if (m.t === 'cursor' && m.cursor && ['default', 'pointer', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'progress', 'help'].includes(m.cursor)) setCursor(m.cursor);
           else if (m.t === 'input') {
             const started = sentAt.get(m.n ?? -1);
@@ -298,7 +316,10 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       : !window ? <div className="remote-empty"><h1>Chrome en {peer.name}</h1><p>{busy ? 'Abriendo tu perfil de Chrome…' : 'Buscando tu ventana de Chrome…'}</p></div>
       : size ? <RemoteScreen key={window} native cursor={cursor} canvas={canvas} width={size.width} height={size.height}
           send={events => { const r = sender.current?.(events) ?? Promise.reject(new Error('Chrome remoto está reconectando')); setInputError(''); return r; }}
-          onError={e => { if (live.current) setInputError((e as Error).message); }} onAddress={()=>{}} onCopy={()=>{}} />
+          onError={e => { if (live.current) setInputError((e as Error).message); }} onAddress={()=>{}} onCopy={()=>{
+            if (socket.current?.readyState !== WebSocket.OPEN) { setInputError('Chrome remoto está reconectando'); return; }
+            setInputError(''); socket.current.send(JSON.stringify({t: 'copy'}));
+          }} />
       : <div className="remote-empty">Cargando ventana de Chrome…</div>}
     {inputError && <div className="remote-input-warning" role="alert">{inputError}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
     {notice && <div className="remote-capture-notice" role="status">{notice}</div>}
@@ -465,7 +486,7 @@ function BrowserDesktop({peer}: {peer: Peer}) {
     <div className="remote-viewport" ref={viewport}>
       {ready && !frame.dialog && frame.tab === tab && frame.image && <RemoteScreen key={tab} image={frame.image} width={frame.width ?? 1280} height={frame.height ?? 800}
         send={events => call({action: "input", tab, events})} onError={report} onAddress={() => address.current?.focus()}
-        onCopy={() => { void call({action: "copy", tab}).then(r => navigator.clipboard.writeText(r.text ?? "")).catch(report); }} />}
+        onCopy={() => { void call({action: "copy", tab}).then(r => writeClipboard(r.text ?? "")).catch(report); }} />}
       {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1><p>{peer.diagnostico || "La PC no responde. Revisá que esté encendida y con Lienzo abierto."}</p><p>Cuando vuelva a conectarse, podés abrir Chrome desde acá.</p></div>
         : error ? <div className="remote-empty" role="alert"><h1>No se pudo conectar con Chrome</h1><p>{error}</p><button onClick={() => { setError(''); void action({action: "state"}); }} disabled={busy}>Revisar conexión</button><button onClick={() => void action({action: "stop"})} disabled={busy}>Volver a elegir</button></div>
         : connecting ? <div className="remote-empty"><h1>{autoApproving ? "Lienzo está autorizando Chrome" : "Aceptá la conexión en Chrome"}</h1><p>{autoApproving ? `El Lienzo de ${peer.name} está buscando el aviso y pulsando Permitir en esa misma PC.` : `Chrome muestra un aviso en ${peer.name}. Elegí Permitir para compartir esa sesión con Lienzo.`}</p><button onClick={() => void action({action: "stop"})} disabled={busy}>Cancelar conexión</button></div>
@@ -559,7 +580,7 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, w
     if (e.key === "F11" || (e.ctrlKey && e.key.toLowerCase() === "v")) return;
     e.preventDefault(); e.stopPropagation();
     if (!native && e.ctrlKey && e.key.toLowerCase() === "l") { if (type === "keyDown") onAddress(); return; }
-    if (!native && e.ctrlKey && e.key.toLowerCase() === "c") { if (type === "keyDown") onCopy(); return; }
+    if (e.ctrlKey && e.key.toLowerCase() === "c") { if (type === "keyDown" && !e.repeat) onCopy(); return; }
     // Teclados virtuales y herramientas de accesibilidad pueden enviar keyCode=0.
     if (native && !e.keyCode && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       if (type === 'keyDown') enqueue({kind: 'text', text: e.key});

@@ -116,6 +116,14 @@ class Windows:
         self.gdi.CreateCompatibleBitmap.restype = w.HBITMAP
         self.gdi.SelectObject.restype = w.HANDLE
         self.kernel.OpenProcess.restype = w.HANDLE
+        self.user.GetClipboardData.argtypes = [w.UINT]
+        self.user.GetClipboardData.restype = w.HANDLE
+        self.user.GetClipboardSequenceNumber.restype = w.DWORD
+        self.kernel.GlobalLock.argtypes = [w.HANDLE]
+        self.kernel.GlobalLock.restype = c.c_void_p
+        self.kernel.GlobalUnlock.argtypes = [w.HANDLE]
+        self.kernel.GlobalSize.argtypes = [w.HANDLE]
+        self.kernel.GlobalSize.restype = c.c_size_t
         # Todos los handles conservan sus 64 bits al pasar a la API nativa.
         for dll, name, args in [
             (self.user, "GetWindowDC", [w.HWND]),
@@ -516,6 +524,39 @@ class Windows:
                 fail("Entrada de ventana desconocida")
         return {"ok": True}
 
+    def copy(self, hwnd):
+        """Copia sólo por pedido del visor; nunca devuelve el portapapeles anterior."""
+        previous = self.user.GetClipboardSequenceNumber()
+        self.release()
+        self.input(hwnd, [
+            {"kind": "key", "type": "keyDown", "keyCode": 67, "modifiers": 2},
+            {"kind": "key", "type": "keyUp", "keyCode": 67, "modifiers": 2},
+            {"kind": "key", "type": "keyUp", "keyCode": 17, "modifiers": 0},
+        ])
+        deadline = time.monotonic() + 1.5
+        while time.monotonic() < deadline:
+            if not self.active(hwnd) or not self.chrome(hwnd):
+                fail("Cambió la ventana activa; no se leyó el portapapeles")
+            if self.user.GetClipboardSequenceNumber() != previous and self.user.OpenClipboard(None):
+                try:
+                    handle = self.user.GetClipboardData(13)  # CF_UNICODETEXT
+                    if not handle:
+                        fail("La selección no contiene texto para copiar")
+                    size = self.kernel.GlobalSize(handle)
+                    if size > 2_000_000:
+                        fail("El texto seleccionado es demasiado grande para copiar")
+                    pointer = self.kernel.GlobalLock(handle)
+                    if not pointer:
+                        fail("Windows no permitió leer el texto copiado")
+                    try:
+                        return c.string_at(pointer, size).decode("utf-16-le").split("\0", 1)[0]
+                    finally:
+                        self.kernel.GlobalUnlock(handle)
+                finally:
+                    self.user.CloseClipboard()
+            time.sleep(0.02)
+        fail("Chrome no copió texto nuevo. Seleccioná el texto y volvé a copiar.")
+
     def send_mouse(self, flags, delta=0):
         """Entrada Win32 con resultado verificable; mouse_event no informa si se insertó."""
 
@@ -648,6 +689,13 @@ class Streamer:
                 self.json({"t": "error", "input": True, "n": data.get("n"), "message": str(exc)})
                 return
             self.json({"t": "input", "n": data.get("n")})
+        elif kind == "copy":
+            if self.hwnd is None:
+                fail("Todavía no hay una ventana abierta")
+            try:
+                self.json({"t": "clipboard", "text": self.windows.copy(self.hwnd)})
+            except (ValueError, UnicodeError) as exc:
+                self.json({"t": "error", "input": True, "message": str(exc)})
         elif kind == "ack":
             with self.cv:
                 self.in_flight = max(0, self.in_flight - 1)
