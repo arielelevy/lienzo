@@ -1,0 +1,11 @@
+.updates-dialog { color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; width: min(560px, calc(100vw - 32px)); max-height: 85vh; overflow: auto; padding: 24px; }
+.updates-dialog::backdrop { background: #0008; }
+.updates-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.updates-heading h2 { margin-top: 0; }
+.updates-dialog dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.updates-dialog dd { margin: 0; font-variant-numeric: tabular-nums; }
+.updates-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.updates-dialog [role=alert], .updates-notice { color: var(--warning, #eab96c); }
+.release-badge button { all: unset; cursor: pointer; pointer-events: auto; }
+.release-badge button:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+.release-badge .update-available { color: var(--accent, #60bca0); margin-left: 6px; }

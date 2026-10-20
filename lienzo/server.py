@@ -75,6 +75,7 @@ import tailchrome_process
 import tmux
 import tools
 import transcripts
+import updates
 import xfer
 from beacon import DISCOVERED_TTL_S as BEACON_TTL_S
 from rules import connections_of, purge_stale_at_rules, rules_loop
@@ -1793,6 +1794,16 @@ class Handler(JsonHandler):
         origin = self.headers.get("Origin")
         return True if not origin else self._origin_matches(origin)
 
+    def _updates(self, method, action, pc=None, data=None):
+        if not self._is_local():
+            return self._json(403, {"error": "Las actualizaciones se administran desde una PC de la LAN"})
+        if pc and pc != identity.pc_id():
+            path = "/updates" + ("/" + action if action else "")
+            code, result = mirror.MIRROR.forward(pc, method, path, {"target": (data or {}).get("target")} if method == "POST" else None)
+        else:
+            code, result = updates.dispatch(method, action, data)
+        return self._json(code, result)
+
     def _origin_ok(self) -> bool:
         """Para un WebSocket (no puede mandar X-Lienzo): el Origin tiene que venir y ser el propio."""
         origin = self.headers.get("Origin")
@@ -1803,6 +1814,8 @@ class Handler(JsonHandler):
         if parts is None:
             return
         try:
+            if parts == ["updates"]:
+                return self._updates("GET", "", (self.query.get("pc") or [None])[0])
             if parts == ["tailchrome", "process"]:
                 if not self._is_local():
                     return self._json(403, {"error": "el proceso se administra desde esta PC"})
@@ -2103,6 +2116,9 @@ class Handler(JsonHandler):
                     return self._json(code, res)
                 code, res = reiniciar()
                 return self._json(code, res)
+            if len(parts) == 2 and parts[0] == "updates" and parts[1] in ("check", "apply"):
+                data = self._json_body()
+                return self._updates("POST", parts[1], data.get("pc"), data)
             if parts == ["secrets"]:
                 return self._secret_send()
             if parts and parts[0] == "conocimiento":
@@ -2677,6 +2693,10 @@ class PeerHandler(JsonHandler):
             log(f"reinicio pedido por {pc_id}")
             code, res = reiniciar()
             return self._json(code, res)
+        if rest == ["updates"] and method == "GET":
+            return self._json(*updates.dispatch(method, ""))
+        if len(rest) == 2 and rest[0] == "updates" and method == "POST":
+            return self._json(*updates.dispatch(method, rest[1], self._body_json(raw)))
         if method == "POST" and rest == ["secrets"]:
             return self._secret_receive(raw, pc_id)
         if method == "GET" and rest == ["secrets"]:
@@ -3310,6 +3330,10 @@ def main() -> int:
     clean_attachments()
     captura.arrancar()  # lo que pasa por el lienzo queda en la memoria del proyecto (anexo A de v5)
     harness_updates.start(launch.harness_executable)
+    try:
+        updates.start(reiniciar)
+    except (OSError, ValueError, updates.UpdateError, subprocess.SubprocessError) as exc:
+        log(f"actualizador: no se pudo iniciar ({type(exc).__name__})")
     console_titles.start()
     optimization_scheduler.start(log)
     if not a.no_sweep:

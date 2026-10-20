@@ -16,6 +16,7 @@ import { Panel } from "./components/Panel";
 import { pcOf, PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
 import { Cuotas } from "./components/Cuotas";
 import { ReleaseBadge } from "./components/ReleaseBadge";
+import { Updates } from "./components/Updates";
 import { ProjectStrip, expandSelected, repoGroups, useProjectFilter } from "./components/ProjectStrip";
 import { Plugins } from "./plugins";
 import { SelectionBar } from "./components/SelectionBar";
@@ -242,6 +243,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const markVisible = useCallback(() => setMarked((cur) => new Set([...cur, ...visibleToMark])), [visibleToMark]);
   const [showHelp, setShowHelp] = useState(false);
   const [showKnowledge, setShowKnowledge] = useState(false);
+  const [showUpdates, setShowUpdates] = useState(false);
   // el panel va pegado a la derecha, debajo del header: su alto sale de aca (--hh)
   useEffect(() => {
     const h = document.querySelector("header");
@@ -273,6 +275,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // panel. `all` cierra todo de una; sin `all` cierra un nivel, el de mas adelante.
   const closeOverlays = useCallback(
     (all = false) => {
+      if (showUpdates) {
+        setShowUpdates(false);
+        if (!all) return;
+      }
       if (showKnowledge) {
         setShowKnowledge(false);
         if (!all) return;
@@ -287,7 +293,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
       }
       if (selectedRef.current) setSelected(null);
     },
-    [connect, showHelp, showKnowledge],
+    [connect, showHelp, showKnowledge, showUpdates],
   );
 
   // Escape va de a un nivel; el menu del header lo cierra el propio Header y frena esta cascada
@@ -456,6 +462,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         }}
         onHelp={() => setShowHelp(true)}
         onKnowledge={() => { closeOverlays(true); setShowKnowledge(true); }}
+        onUpdates={authInfo.local ? () => { closeOverlays(true); setShowUpdates(true); } : undefined}
         projects={
           <ProjectStrip
             groups={projectGroups}
@@ -511,6 +518,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         </div>
       )}
       {showKnowledge && <Knowledge onClose={() => setShowKnowledge(false)} />}
+      {showUpdates && <Updates peers={peers} onClose={() => setShowUpdates(false)} />}
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
       {showPairing && <Pairing peers={peers} toast={toast} onClose={() => setShowPairing(false)} />}
@@ -548,7 +556,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         marked={markedLive}
         onMark={toggleMark}
         onClearMarked={clearMarked}
-        escBlocked={showHelp || showKnowledge || !!connect}
+        escBlocked={showHelp || showKnowledge || showUpdates || !!connect}
       />
       <SelectionBar sids={[...markedLive]} sessions={sessions} onClear={clearMarked} visibleToMark={visibleToMark} onMarkVisible={markVisible} />
       {connect && sessions[connect.from] && (
@@ -600,7 +608,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         </>
       )}
       <Cuotas />
-      <ReleaseBadge />
+      <ReleaseBadge local={authInfo.local} onUpdates={authInfo.local ? () => setShowUpdates(true) : undefined} />
       <Toasts toasts={toasts} />
     </div>
   );
