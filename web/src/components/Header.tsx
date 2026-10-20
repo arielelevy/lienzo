@@ -153,7 +153,7 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
               </div>
             ))}
             <div className="acciones">
-              {onUpdates && <button role="menuitem" onClick={closeAnd(onUpdates)}><span className="nombre">Actualizaciones</span></button>}
+              {onUpdates && <button role="menuitem" onClick={closeAnd(onUpdates)}><span className="nombre">Actualizar</span></button>}
               <button role="menuitem" onClick={closeAnd(() => window.open("/docs", "_blank", "noopener"))}>
                 <span className="nombre">Referencia</span>
                 <span className="aparte">otra pestaña</span>

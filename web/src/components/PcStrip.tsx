@@ -116,10 +116,9 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
   const [gitMsg, setGitMsg] = useState<Record<string, { msg: string; git: string | null }>>({});
   const [menu, setMenu] = useState<{peer: Peer; x: number; y: number} | null>(null);
   const [downloads, setDownloads] = useState<Peer | null>(null);
-  const [updating, setUpdating] = useState<Peer | null>(null);
+  const [updating, setUpdating] = useState<{ peer: Peer; target: string } | null>(null);
   const updatePc = menu?.peer.local ? "" : menu?.peer.pc_id ?? "";
   const update = useUpdateStatus(updatePc, !!menu && menu.peer.alive);
-  const upToDate = !!update.data && ["current", "applied"].includes(update.data.phase) && !update.data.error && !update.error && !update.data.available;
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
@@ -220,13 +219,11 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
         );
       })}
       {menu && <div ref={menuRef} role="menu" aria-label={`Acciones de ${menu.peer.name}`} className="pc-context-menu" style={{left:Math.max(4,menu.x),top:Math.max(4,menu.y)}}>
-        <button role="menuitem" disabled={!menu.peer.alive || upToDate} onClick={() => { setUpdating(menu.peer); setMenu(null); }}>
-          {upToDate ? "Al día" : update.data?.available ? "Actualizar…" : "Consultar actualizaciones…"}
-        </button>
+        {menu.peer.alive && update.data?.available && update.data.target && <button role="menuitem" onClick={() => { setUpdating({ peer: menu.peer, target: update.data!.target! }); setMenu(null); }}>Actualizar</button>}
         <button role="menuitem" disabled={menu.peer.local || !menu.peer.alive} onClick={() => { setDownloads(menu.peer); setMenu(null); }}>Traer descargas…</button>
       </div>}
-      {updating && <Updates key={updating.pc_id} peers={peers} initialPc={updating.local ? "" : updating.pc_id} onClose={() => {
-        document.querySelector<HTMLButtonElement>(`.pcchip[data-pc="${CSS.escape(updating.pc_id)}"]`)?.focus();
+      {updating && <Updates key={updating.peer.pc_id} peers={peers} initialPc={updating.peer.local ? "" : updating.peer.pc_id} target={updating.target} onClose={() => {
+        document.querySelector<HTMLButtonElement>(`.pcchip[data-pc="${CSS.escape(updating.peer.pc_id)}"]`)?.focus();
         setUpdating(null);
       }} />}
       {downloads && <Downloads key={downloads.pc_id} peer={downloads} onClose={() => {

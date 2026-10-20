@@ -41,50 +41,44 @@ export function useUpdateStatus(pc = "", enabled = true, revision = 0, intervalM
   return state.pc === pc ? state : { pc };
 }
 
+// sólo las fases de una actualización en curso: sin novedades no hay ventana ni etiqueta
 const PHASE: Record<string, string> = {
-  idle: "Sin consultar", checking: "Buscando novedades…", available: "Actualización disponible",
-  current: "Al día", preparing: "Preparando actualización…", building: "Compilando la interfaz…",
-  applying: "Aplicando actualización…", restarting: "Reconectando…", applied: "Actualización aplicada", error: "La actualización no pudo terminar",
+  preparing: "Preparando actualización…", building: "Compilando la interfaz…",
+  applying: "Aplicando actualización…", restarting: "Reconectando…",
 };
 
-export function Updates({ peers, onClose, initialPc = "" }: { peers: Peer[]; onClose: () => void; initialPc?: string }) {
-  const [pc, setPc] = useState(initialPc);
-  const [revision, setRevision] = useState(0);
-  const [action, setAction] = useState<{ pc: string; error?: string; busy?: boolean }>({ pc: "" });
-  const { data, error } = useUpdateStatus(pc, true, revision, 3000);
+export function Updates({ peers, onClose, initialPc = "", target }: { peers: Peer[]; onClose: () => void; initialPc?: string; target?: string }) {
+  const { data, error } = useUpdateStatus(initialPc, true, 0, 1000);
+  const [failure, setFailure] = useState(target ? "" : "No hay una versión pendiente para actualizar.");
+  const [accepted, setAccepted] = useState(false);
+  const started = useRef(false);
+  // el estado leído antes de aceptar puede traer el error de un intento anterior: sólo cuenta uno nuevo
+  const latest = useRef(data);
+  const [stale, setStale] = useState<UpdateStatus>();
+  useEffect(() => { latest.current = data; }, [data]);
   const dialog = useRef<HTMLDialogElement>(null);
-  const selected = useRef(pc);
-  useEffect(() => { selected.current = pc; }, [pc]);
   useEffect(() => { dialog.current?.showModal(); }, []);
-  const submit = async (kind: "check" | "apply") => {
-    const targetPc = pc;
-    setAction({ pc, busy: true });
-    try {
-      await api.post(`/updates/${kind}`, { pc: pc || undefined, target: kind === "apply" ? data?.target : undefined });
-      if (selected.current === targetPc) setRevision(value => value + 1);
-    } catch (failure) {
-      if (selected.current === targetPc) setAction({ pc, error: updateError(failure) });
-      return;
-    }
-    if (selected.current === targetPc) setAction({ pc });
-  };
-  const ownAction: { error?: string; busy?: boolean } = action.pc === pc ? action : {};
-  const busy = data?.busy || ownAction.busy;
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    if (!target) return;
+    void api.get<UpdateStatus>(`/updates${initialPc ? `?pc=${encodeURIComponent(initialPc)}` : ""}`).then(current => {
+      if (current.target === target && (current.busy || current.running === target)) return;
+      return api.post("/updates/apply", { pc: initialPc || undefined, target });
+    }).then(() => { setStale(latest.current); setAccepted(true); })
+      .catch(problem => setFailure(updateError(problem)));
+  }, [initialPc, target]);
+  const fresh = accepted && data !== stale ? data : undefined;
+  const done = !!fresh && fresh.running === target && !fresh.busy && !fresh.error;
+  const pcName = peers.find(peer => peer.pc_id === initialPc)?.name ?? "Esta PC";
+  const failed = failure || fresh?.error;
   return createPortal(<dialog ref={dialog} className="updates-dialog" aria-label="Actualizaciones" onCancel={onClose}>
-    <div className="updates-heading"><h2>Actualizaciones</h2><button onClick={onClose} aria-label="Cerrar actualizaciones">✕</button></div>
-    <label>PC <select aria-label="PC a actualizar" value={pc} onChange={event => setPc(event.target.value)}>
-      <option value="">Esta PC</option>{peers.filter(peer => !peer.local).map(peer => <option key={peer.pc_id} value={peer.pc_id} disabled={!peer.alive}>{peer.name}{peer.alive ? "" : " · sin conexión"}</option>)}
-    </select></label>
-    <p role="status">{data ? PHASE[data.phase] ?? data.phase : "Consultando…"}</p>
-    {data && <>
-      <dl><dt>En ejecución</dt><dd>{data.running?.slice(0, 8)}</dd><dt>Disponible en Git</dt><dd>{data.version ? `v${data.version}` : "Sin consultar"} {data.target?.slice(0, 8)}</dd></dl>
-      {data.checked_at && <p className="small dim">Consultado {new Date(data.checked_at * 1000).toLocaleString()}</p>}
-      {data.message && <p>{data.message}</p>}
-      {data.blocked && <p className="updates-notice">{data.blocked}</p>}
-      <h3>Qué cambió</h3>{data.changes.length ? <ul>{data.changes.map(change => <li key={change}>{change}</li>)}</ul> : <p>No hay novedades registradas en esta consulta.</p>}
-    </>}
-    {(error || ownAction.error || data?.error) && <p role="alert">{ownAction.error || error || data?.error}</p>}
-    <p className="small dim">Se prepara y compila antes de aplicar. Lienzo reconecta automáticamente; las terminales siguen abiertas.</p>
-    <div className="updates-actions"><button disabled={busy} onClick={() => void submit("check")}>Buscar novedades</button><button className="primary" disabled={!data?.available || !!data.blocked || busy || !!error} onClick={() => void submit("apply")}>Actualizar {pc ? "PC elegida" : "esta PC"}</button></div>
+    <div className="updates-heading"><h2>Actualizando {pcName}</h2><button onClick={onClose} aria-label="Cerrar actualizaciones">✕</button></div>
+    <p role="status">{failed ? "No se pudo actualizar" : done ? "Actualización aplicada" : error && accepted ? "Reconectando…" : fresh && Object.hasOwn(PHASE, fresh.phase) ? PHASE[fresh.phase] : "Iniciando actualización…"}</p>
+    {!done && !failed && <progress aria-label="Progreso de actualización" />}
+    {failed && <p role="alert">{failed}</p>}
+    {error && !accepted && !failure && <p role="alert">{error}</p>}
+    {done && <p>Las terminales siguen abiertas.</p>}
+    <button onClick={onClose}>Cerrar</button>
   </dialog>, document.body);
 }

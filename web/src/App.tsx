@@ -16,7 +16,7 @@ import { Panel } from "./components/Panel";
 import { pcOf, PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
 import { Cuotas } from "./components/Cuotas";
 import { ReleaseBadge } from "./components/ReleaseBadge";
-import { Updates } from "./components/Updates";
+import { Updates, useUpdateStatus } from "./components/Updates";
 import { ProjectStrip, expandSelected, repoGroups, useProjectFilter } from "./components/ProjectStrip";
 import { Plugins } from "./plugins";
 import { SelectionBar } from "./components/SelectionBar";
@@ -146,6 +146,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // tira de PCs (ronda multi-PC, §3.9 del plan): [] hasta que exista GET /peers, y entonces la
   // tira ni el filtro se dibujan (PcStrip lo decide solo con el arreglo vacío)
   const peers = usePeers();
+  const updateStatus = useUpdateStatus("", authInfo.local);
   const { pcFilter, selectPc, togglePc, showAllPcs } = usePcFilter(peers);
   // sesion de una PC caida: ni el tablero (Board.tsx tiene su propio peerDownOf) ni el selector de
   // destino de Conectar/Pegar trabajo tienen a quien escribirle, aunque la sesion siga "viva" en el
@@ -462,7 +463,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         }}
         onHelp={() => setShowHelp(true)}
         onKnowledge={() => { closeOverlays(true); setShowKnowledge(true); }}
-        onUpdates={authInfo.local ? () => { closeOverlays(true); setShowUpdates(true); } : undefined}
+        onUpdates={authInfo.local && updateStatus.data?.available ? () => { closeOverlays(true); setShowUpdates(true); } : undefined}
         projects={
           <ProjectStrip
             groups={projectGroups}
@@ -518,7 +519,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         </div>
       )}
       {showKnowledge && <Knowledge onClose={() => setShowKnowledge(false)} />}
-      {showUpdates && <Updates peers={peers} onClose={() => setShowUpdates(false)} />}
+      {showUpdates && <Updates peers={peers} target={updateStatus.data?.target} onClose={() => setShowUpdates(false)} />}
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
       {showPairing && <Pairing peers={peers} toast={toast} onClose={() => setShowPairing(false)} />}
@@ -608,7 +609,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         </>
       )}
       <Cuotas />
-      <ReleaseBadge local={authInfo.local} onUpdates={authInfo.local ? () => setShowUpdates(true) : undefined} />
+      <ReleaseBadge local={authInfo.local} onUpdates={authInfo.local && updateStatus.data?.available ? () => setShowUpdates(true) : undefined} />
       <Toasts toasts={toasts} />
     </div>
   );

@@ -1,11 +1,11 @@
 # Actualizaciones desde Lienzo
 
-Abrí **⋯ → Actualizaciones** o tocá la versión abajo a la izquierda. Elegí esta PC o una PC
-emparejada, consultá qué cambió y usá **Actualizar**. El indicador avisa cuando hay novedades.
-También podés hacer botón derecho sobre una PC en la tira superior: **Actualizar…** abre
-directamente esa máquina si hay una versión pendiente. Si está al día, muestra **Al día**
-deshabilitado; si aún no se conoce el estado, permite consultar sin aplicar nada.
-El servidor consulta Git cada cinco minutos; el botón Buscar novedades fuerza una consulta.
+Cuando hay una versión pendiente aparece **Actualizar** en el menú ⋯ y en el menú del botón
+derecho de cada PC disponible. Si no hay novedades, la entrada no aparece. Al pulsarla comienza
+la actualización de esa PC y se abre una ventana con progreso y resultado, sin otra confirmación.
+La versión de abajo a la izquierda también permite iniciar cuando hay novedades.
+El servidor consulta Git cada cinco minutos. Cerrar la ventana no cancela la actualización;
+volver a abrirla retoma el progreso. Los impedimentos se muestran como errores visibles.
 
 La actualización prepara un worktree temporal y compila la interfaz antes de avanzar `main`
 con fast-forward. Si hay cambios locales, commits propios, una compilación fallida o el checkout
