@@ -1,5 +1,10 @@
 # Motor lógico y aprendizaje verificable
 
+Actualización del alcance autorizada por Ariel el 19/10: implementar consulta opcional de ida y
+vuelta y separar el motor en `D:/Apps/motor-logico`. Se usa JSON por proceso con límites;
+el prototipo anterior sigue descartado. Python mantiene creencias y aprendizaje sin Prolog.
+Se conserva debajo la propuesta inicial como historia, sin marcar tareas como completadas.
+
 Propuesta del 19 de octubre de 2026. Revisada por una CLI real de Claude Opus 5.5;
 ajustada por Codex. Pendiente de decisión de Ariel.
 Se planifica antes de implementar. El prototipo en `.temp/motor-logico` no es producto integrado.

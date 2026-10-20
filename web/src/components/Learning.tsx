@@ -16,6 +16,7 @@ interface Evidence { id: string; texto: string }
 interface Pattern { contexto: Record<string, string>; encargos: number; fuentes: string[]; controles_declarados: Record<string, number>; controles_evidencia: { ejecutados?: unknown[]; verificados?: unknown[] }[] }
 interface Patterns { revisados: number; sin_clasificar: number; muestra_parcial: boolean; patrones: Pattern[] }
 interface Data { checklist: Checklist; pending: Belief[]; evidence: Evidence[]; patterns: Patterns }
+interface Reasoning { motor: string; snapshot: string; conclusiones: { id: string; status: string; chains: string[][] }[]; diferencias: { id: string; python: string; prolog: string }[] }
 
 export const CONTEXT = [
   ["tipo_trabajo", "Tipo de trabajo"], ["tecnologia", "Tecnología"], ["area", "Área"], ["fase", "Fase"],
@@ -31,6 +32,15 @@ const NAME_KEY = "lienzo.persona";
 
 const obj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const int = (v: unknown) => Number.isInteger(v) && Number(v) >= 0;
+function parseReasoning(v: unknown): Reasoning {
+  if (!obj(v) || typeof v.motor !== "string" || typeof v.snapshot !== "string" || !Array.isArray(v.conclusiones) || !Array.isArray(v.diferencias)) throw new Error("Respuesta Prolog inválida");
+  for (const c of v.conclusiones) {
+    if (!obj(c) || typeof c.id !== "string" || typeof c.status !== "string" || !Array.isArray(c.chains)
+      || c.chains.some(path => !Array.isArray(path) || path.some(id => typeof id !== "string"))) throw new Error("Conclusión Prolog inválida");
+  }
+  if (v.diferencias.some(d => !obj(d) || typeof d.id !== "string" || typeof d.python !== "string" || typeof d.prolog !== "string")) throw new Error("Comparación Prolog inválida");
+  return v as unknown as Reasoning;
+}
 function bad(what: string): never { throw new Error(what + " no tiene el formato esperado"); }
 function items(v: unknown): Item[] {
   if (!Array.isArray(v) || v.some(x => !obj(x) || typeof x.creencia !== "string" || typeof x.accion !== "string" || typeof x.estado !== "string" || typeof x.motivo !== "string" || !obj(x.usos))) bad("El aprendizaje");
@@ -117,11 +127,15 @@ export function Learning({ base }: { base: string }) {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState("");
+  const [reasoning, setReasoning] = useState<Reasoning>();
+  const [reasonError, setReasonError] = useState("");
+  const [reasonBusy, setReasonBusy] = useState(false);
+  const prologRequest = useRef<AbortController>();
   const request = useRef<AbortController>();
   // el contexto vigente, no el de la pantalla donde se apretó: una recarga tras guardar usa lo que se ve
   const current = useRef(context);
   useEffect(() => { current.current = context; }, [context]);
-  useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => () => { request.current?.abort(); prologRequest.current?.abort(); }, []);
   const person = name.trim();
 
   /** Las 100 evidencias más nuevas (la API pagina de a 100 desde la más vieja), la última primero. */
@@ -131,6 +145,7 @@ export function Learning({ base }: { base: string }) {
     return evidence(page).nodos.reverse();
   };
   const load = async () => {
+    prologRequest.current?.abort(); setReasoning(undefined); setReasonError(""); setReasonBusy(false);
     request.current?.abort();
     const controller = new AbortController(); request.current = controller;
     setLoading(true); setError("");
@@ -160,8 +175,24 @@ export function Learning({ base }: { base: string }) {
     } catch (err: unknown) { setError(failMsg("guardar")(err)); } finally { setBusy(""); }
   };
   const edit = (key: string, value: string) => {
+    prologRequest.current?.abort(); setReasoning(undefined); setReasonError(""); setReasonBusy(false);
     request.current?.abort(); setLoading(false); setData(undefined); setNotice("");
     setContext(c => ({ ...c, [key]: value }));
+  };
+  const infer = async () => {
+    prologRequest.current?.abort();
+    const controller = new AbortController(); prologRequest.current = controller;
+    setReasonBusy(true); setReasonError(""); setReasoning(undefined);
+    const contexto = Object.fromEntries(Object.entries(current.current).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
+    try {
+      const response = await fetch(base + "/razonamiento", { method: "POST", signal: controller.signal,
+        headers: { "X-Lienzo": "1", "Content-Type": "application/json" }, body: JSON.stringify({ contexto }) });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(obj(result) && typeof result.error === "string" ? result.error : "Prolog no está disponible");
+      const parsed = parseReasoning(result);
+      if (!controller.signal.aborted) setReasoning(parsed);
+    } catch (failure) { if (!controller.signal.aborted) setReasonError(failure instanceof Error ? failure.message : "No se pudo consultar Prolog"); }
+    finally { if (!controller.signal.aborted) setReasonBusy(false); }
   };
 
   return <div className="knowledge-workspace">
@@ -174,12 +205,14 @@ export function Learning({ base }: { base: string }) {
       </fieldset>
       <label htmlFor={fieldId + "-name"}>Tu nombre (firma veredictos y uso)</label>
       <input id={fieldId + "-name"} maxLength={100} value={name} onChange={e => { setName(e.target.value); saveName(e.target.value); }} />
-      <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : "Consultar aprendizaje"}</button></div>
+      <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : "Consultar aprendizaje"}</button><button type="button" disabled={reasonBusy || loading} onClick={() => void infer()}>{reasonBusy ? "Razonando…" : "Contrastar con Prolog"}</button></div>
     </form>
     <div className="knowledge-results" aria-busy={loading}>
       {loading && <p role="status">Leyendo el aprendizaje del proyecto…</p>}
       {error && <div role="alert" className="knowledge-error">{error}</div>}
       {notice && <p role="status" className="knowledge-notice">{notice}</p>}
+      {reasonError && <p role="alert" className="knowledge-error">{reasonError}. No se ejecutó el razonamiento Prolog. Las creencias y el aprendizaje siguen disponibles.</p>}
+      {reasoning && <section className="knowledge-section" aria-label="Razonamiento Prolog"><h3>Razonamiento Prolog</h3><p>{reasoning.motor} respondió · {reasoning.conclusiones.length} creencias analizadas · {reasoning.diferencias.length} diferencias con Python.</p><p className="knowledge-note">Consulta de sólo lectura sobre el mismo contexto y evidencia. No valida ni modifica creencias.</p>{reasoning.conclusiones.length === 0 && <p>No hay creencias registradas para contrastar.</p>}<ul>{reasoning.conclusiones.map(c => <li key={c.id}>{c.id}: {STATES[c.status] ?? c.status}{c.chains.map((path, i) => <div key={i}>{path.join(" → ")}</div>)}</li>)}</ul><details><summary>Snapshot y comparación</summary><p className="knowledge-value">{reasoning.snapshot}</p>{reasoning.diferencias.map(d => <p key={d.id}>{d.id}: Python {d.python} · Prolog {d.prolog}</p>)}</details></section>}
       {!loading && !error && !data && <p className="knowledge-empty">Completá el contexto del trabajo y consultá.</p>}
       {data && <>
         <section className="knowledge-section"><h3>Aplica a este contexto</h3>

@@ -133,15 +133,15 @@ def listar(pid):
         return [k._fila(row) for row in rows]
 
 
-def _vigente(data):
+def _vigente(data, ahora=None):
     try:
         expires = dt.datetime.fromisoformat(data["vigente_hasta"])
     except KeyError, TypeError, ValueError:
         return False  # metadata ausente/inválida no acredita vigencia
-    return expires.tzinfo is not None and expires > dt.datetime.now(dt.UTC)
+    return expires.tzinfo is not None and expires > (ahora if ahora is not None else dt.datetime.now(dt.UTC))
 
 
-def _evaluar(node, context, apoyos, cadenas):
+def _evaluar(node, context, apoyos, cadenas, ahora=None):
     """El primer motivo por el que no aplica, en orden de gravedad, o `aplicable`, con las cadenas
     hasta un respaldo caído. `cadenas(id)` se llama sólo para las validadas con respaldo activo."""
     data = node["datos"]
@@ -154,13 +154,13 @@ def _evaluar(node, context, apoyos, cadenas):
     if (node["id"], data.get("evidencia_veredicto")) not in apoyos:
         return "respaldo_retirado", []
     chains = cadenas(node["id"])
-    return _vigencia(data, context, chains), chains
+    return _vigencia(data, context, chains, ahora), chains
 
 
-def _vigencia(data, context, chains):
+def _vigencia(data, context, chains, ahora=None):
     if chains:
         return "respaldo_caido"
-    if not _vigente(data):
+    if not _vigente(data, ahora):
         return "vencida"
     required = data.get("contexto")
     if not isinstance(required, dict) or set(required) - CONTEXTO or not all(isinstance(v, str) for v in required.values()):

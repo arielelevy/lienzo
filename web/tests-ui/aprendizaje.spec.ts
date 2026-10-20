@@ -145,3 +145,29 @@ test('formato inválido o error HTTP se ven; proyecto vacío muestra vacío hone
   expect(await dialog.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
   await page.screenshot({ path: info.outputPath('aprendizaje-movil.png'), fullPage: true });
 });
+
+test('Prolog muestra cadenas y contraste sin validar ni modificar creencias', async ({ page }) => {
+  await prepare(page);
+  let sent: unknown;
+  await page.route('**/conocimiento/uno/razonamiento', route => {
+    sent = route.request().postDataJSON();
+    return route.fulfill({ json: { motor: 'SWI-Prolog · WSL', snapshot: 'snapshot-prueba',
+      conclusiones: [{ id: 'b1', status: 'respaldo_caido', chains: [['b1', 'h9']] }], diferencias: [] } });
+  });
+  await page.getByLabel('Tipo de trabajo', { exact: true }).fill(' bugfix ');
+  await page.getByRole('button', { name: 'Contrastar con Prolog' }).click();
+  const result = page.getByRole('region', { name: 'Razonamiento Prolog' });
+  await expect(result).toContainText('1 creencias analizadas · 0 diferencias con Python');
+  await expect(result).toContainText('b1 → h9');
+  expect(sent).toEqual({ contexto: { tipo_trabajo: 'bugfix' } });
+  await page.getByLabel('Agente', { exact: true }).fill('codex');
+  await expect(result).toHaveCount(0);
+});
+
+test('Prolog ausente se informa como error y no como resultado vacío', async ({ page }) => {
+  await prepare(page);
+  await page.route('**/conocimiento/uno/razonamiento', route => route.fulfill({ status: 503, json: { error: 'Prolog no disponible en WSL' } }));
+  await page.getByRole('button', { name: 'Contrastar con Prolog' }).click();
+  await expect(page.getByRole('alert')).toContainText('Prolog no disponible en WSL');
+  await expect(page.getByRole('region', { name: 'Razonamiento Prolog' })).toHaveCount(0);
+});

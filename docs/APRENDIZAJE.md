@@ -6,6 +6,23 @@ Los registros fechados del piloto se conservan como evidencia histórica, no com
 
 ## Alcance
 
+### Consulta opcional a Prolog
+
+En Aprendizaje, **Contrastar con Prolog** envía un snapshot de IDs, estados, relaciones y contexto
+al repo independiente `D:/Apps/motor-logico`. No envía conversaciones ni textos de creencias.
+Recibe conclusiones justificadas y muestra diferencias con Python sobre el mismo snapshot.
+No modifica creencias, veredictos ni aprendizaje. Python conserva la autoridad actual.
+Si falta SWI-Prolog, WSL o el repo, sólo falla esa consulta: el resto sigue disponible.
+No se invoca al iniciar ni al consultar el aprendizaje normal. No requiere reinstalaciones.
+
+Por defecto busca el repo hermano `motor-logico/main.pl` (remoto privado
+`arielelevy/motor-logico`, se clona junto a Lienzo). `LIENZO_PROLOG_ENGINE` permite fijar
+otra ruta absoluta al archivo. Windows usa la distro WSL `Ubuntu` existente; Linux usa `swipl`.
+Sin el repo, la consulta responde «Motor lógico no encontrado» sin lanzar ningún proceso.
+Transporte JSON por proceso, contrato 1/reglas 1; máximo 1000 nodos, 2000 vínculos y 1 MiB.
+No trunca el grafo: rechaza la consulta si excede límites. No hay integración ajedrecística aún.
+Cada repo tiene actualizaciones independientes; actualizar Lienzo no instala ni actualiza el motor.
+
 Analizar el flujo completo y las capacidades de Lienzo: herramientas, contexto, memoria,
 planificación, arquitectura, construcción, coordinación, olas, pruebas, review, auditoría y documentación.
 Distinguir problemas observados, causas investigadas, alternativas y beneficios demostrados.

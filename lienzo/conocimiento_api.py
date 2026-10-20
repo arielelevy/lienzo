@@ -48,6 +48,7 @@ import creencias
 import identity
 import patrones_desarrollo
 import patrones_evidencia
+import prolog_learning
 import registro_niveles
 import sessions as ses
 import veredictos_api
@@ -160,6 +161,8 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
     if resto == ["checklist"] and metodo == "GET":
         contexto = {key: _q(query, key) for key in creencias.CONTEXTO if _q(query, key) is not None}
         return 200, creencias.checklist(pid, contexto, limite=_entero(_q(query, "limite"), "limite", 8))
+    if resto == ["razonamiento"] and metodo == "POST":
+        return prolog_learning.inferir(pid, d.get("contexto", {}))
     if resto == ["patrones-desarrollo"] and metodo == "GET":
         return 200, patrones_desarrollo.analizar(pid)
     if resto == ["rondas"] and metodo == "POST":
