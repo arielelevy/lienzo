@@ -55,7 +55,8 @@ la tarjeta; al leer el informe del frente, se entrega entero:
 
 ```python
 r = c.abrir_ronda("teorema", "ronda 4: halving racional")
-e = c.encargo("teorema", r["id"], "A", texto_del_encargo, archivos=["codigo/sustituciones.py"])
+e = c.encargo("teorema", r["id"], "A", texto_del_encargo, archivos=["codigo/sustituciones.py"], tipo_trabajo="refactor")
+texto = c.preparar_encargo("teorema", texto_del_encargo, encargo=e)  # suma los aprendizajes aplicables
 s = c.lanzar_y_titular(None, "D:/Apps/Teorema", "Teorema - encargo A - ...", agent="codex")
 c.encargo_enviado(
     "teorema", e["id"], s
@@ -66,6 +67,22 @@ c.cerrar_ronda("teorema", r["id"])
 c.conocimiento("teorema")  # resumen: nodos por tipo y estado, rondas
 c.conocimiento("teorema", "halving OR mitad", saltos=1)  # BM25 + vecinos por el grafo
 ```
+
+### Aprendizaje: tipo de trabajo, aprendizajes aplicables, uso y controles (2026-10-19)
+
+- **`tipo_trabajo` es obligatorio** en `c.encargo` y en `POST /conocimiento/<p>/encargos`
+  (bugfix, feature, refactor, investigacion, documentacion, arquitectura o `sin_clasificar`). Sin él: 400.
+- La respuesta trae `aprendizajes`: creencias validadas por una persona que aplican a ese contexto
+  (hasta 3), y `aprendizajes_texto` para el frente. `preparar_encargo(..., encargo=e)` lo pega. Queda
+  registrado en el encargo qué se mostró (`aprendizajes_mostrados`), no que se siguió.
+- Al leer el informe, `c.uso_aprendizaje(pid, creencia, "sirvio"|"no_aplico"|"ya_sabido", encargo=e["id"])`.
+  Dos «no aplicó» que superan a los «sirvió» marcan la creencia para revisar; no cambian su estado.
+- El frente declara cada control que corrió como evidencia `clase: control_desarrollo`, `estado: ejecutada`
+  (plantilla en `INSTRUCCION_CONOCIMIENTO`): queda atada al encargo. `verificada` la pone una persona.
+- `GET /conocimiento/<p>/checklist?<contexto>` da `items` aplicables y `no_aplican` con el motivo
+  (sin_veredicto, refutada, respaldo_retirado, respaldo_caido con su cadena, vencida,
+  contexto_insuficiente, fuera_de_contexto). Memoria → Aprendizaje lo muestra y deja a una persona
+  dar el veredicto de las propuestas y declarar el uso.
 
 ### El bloque `conocimiento` del informe (etapa 2)
 

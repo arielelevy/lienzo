@@ -885,18 +885,39 @@ def abrir_ronda(pid, objetivo):
     )
 
 
-def encargo(pid, ronda, letra, texto, archivos=None, *, contexto_desarrollo=None, controles_declarados=None):
+def encargo(pid, ronda, letra, texto, archivos=None, *, tipo_trabajo=None, contexto_desarrollo=None,
+            controles_declarados=None):
     """Registra el encargo (el texto entero queda en rondas/<ronda>/encargo-<letra>.md) y devuelve su
     nodo. Después de lanzar o mandar, `encargo_enviado(pid, e["id"], s)` lo vincula a la tarjeta.
-    `contexto_desarrollo` admite tipo_trabajo (bugfix, feature, refactor, investigacion,
-    documentacion, arquitectura), tecnología/área/fase y agente/modelo/versiones.
-    `controles_declarados` lista pruebas, claude_review_local o auditoria_skill: no acredita ejecución."""
+    El tipo de trabajo es obligatorio: bugfix, feature, refactor, investigacion, documentacion,
+    arquitectura o, si no se sabe, sin_clasificar (va en `tipo_trabajo` o dentro de
+    `contexto_desarrollo`, que además admite tecnología/área/fase y agente/modelo/versiones).
+    `controles_declarados` lista pruebas, claude_review_local o auditoria_skill: no acredita ejecución.
+    La respuesta trae `aprendizajes` (creencias validadas que aplican a ese contexto) y
+    `aprendizajes_texto`, para pegar en el mensaje al frente; `preparar_encargo(..., encargo=e)` lo hace."""
+    contexto = dict(contexto_desarrollo or {})
+    if tipo_trabajo is not None:
+        contexto["tipo_trabajo"] = tipo_trabajo
+    if "tipo_trabajo" not in contexto:
+        raise ValueError("encargo: falta tipo_trabajo (usar 'sin_clasificar' si no se sabe)")
     return _conocimiento(
         "POST",
         f"/{pid}/encargos",
         {"ronda": ronda, "letra": letra, "texto": texto, "archivos": archivos or [], "autor": f"coordinadora:{YO}",
-         **({"contexto_desarrollo": contexto_desarrollo} if contexto_desarrollo is not None else {}),
+         "contexto_desarrollo": contexto,
          **({"controles_declarados": controles_declarados} if controles_declarados is not None else {})},
+    )
+
+
+def uso_aprendizaje(pid, creencia, resultado, encargo=None, nota=None):
+    """Si un aprendizaje mostrado sirvió (`sirvio`), no aplicó (`no_aplico`) o ya se sabía (`ya_sabido`).
+    Queda en el historial de la creencia; con dos o más «no aplicó» y más «no aplicó» que «sirvió» se marca
+    para revisar, sin cambiarla."""
+    return _conocimiento(
+        "POST",
+        f"/{pid}/creencias/{creencia}/uso",
+        {"resultado": resultado, "por": f"coordinadora:{YO}",
+         **({"encargo": encargo} if encargo else {}), **({"nota": nota} if nota else {})},
     )
 
 
@@ -1048,10 +1069,12 @@ def vista(pid, tema):
     return _consulta_memoria(pid, "vista", {"tema": tema})
 
 
-def preparar_encargo(pid, texto, archivos=None, temas=None, consultas=None):
-    """Texto para un frente con el briefing actual y la plantilla de conocimiento."""
+def preparar_encargo(pid, texto, archivos=None, temas=None, consultas=None, encargo=None):
+    """Texto para un frente con el briefing actual, los aprendizajes aplicables del encargo `encargo`
+    (lo que devolvió `encargo(...)`) y la plantilla de conocimiento."""
     contexto = briefing(pid, archivos=archivos, temas=temas, consultas=consultas, markdown=True)
-    return "\n\n".join((texto, contexto["markdown"], INSTRUCCION_CONOCIMIENTO))
+    aprendizajes = (encargo or {}).get("aprendizajes_texto") or ""
+    return "\n\n".join(x for x in (texto, aprendizajes, contexto["markdown"], INSTRUCCION_CONOCIMIENTO) if x)
 
 
 def parecidos(pid, incidente, limite=20):
@@ -1123,7 +1146,8 @@ incidentes, reglas, temas y evidencia. Si no hay nada que declarar, no pongas el
     {"id": "d1", "tipo": "decision", "texto": "<lo elegido>", "datos": {"motivo": "<por que>"}},
     {"id": "p1", "tipo": "pregunta", "texto": "<lo que falta responder>", "datos": {"para_quien": "coordinadora|ariel"}},
     {"id": "m1", "tipo": "medicion", "texto": "<que se midio>", "datos": {"metrica": "", "valor": 0, "unidad": "", "condicion": "<commit, PC, datos>"}},
-    {"id": "t1", "tipo": "tema", "texto": "<modulo, archivo o concepto>", "datos": {}}
+    {"id": "t1", "tipo": "tema", "texto": "<modulo, archivo o concepto>", "datos": {}},
+    {"id": "c1", "tipo": "evidencia", "texto": "<control que corriste>", "datos": {"clase": "control_desarrollo", "control": "pruebas|claude_review_local|auditoria_skill", "estado": "ejecutada", "resultado": "<pasó, falló o hallazgos>", "referencia": "<log, comando o archivo>"}}
   ],
   "vinculos": [
     {"de": "d1", "relacion": "motivada_por", "a": "h1"},
@@ -1135,7 +1159,8 @@ incidentes, reglas, temas y evidencia. Si no hay nada que declarar, no pongas el
 
 Reglas: cada nodo lleva id local unico, tipo, texto y datos. Una decision exige motivo y al menos un vinculo
 elige o descarta; una regla exige ambito (proyecto|agente) y derivada_de; un incidente, herramienta y agente;
-una evidencia, clase y referencia. Relaciones que podes declarar: motivada_por, elige, descarta, derivada_de,
+una evidencia, clase y referencia. Declará una evidencia control_desarrollo por cada control que realmente
+corriste (estado ejecutada; verificada la pone una persona): queda atada a este encargo. Relaciones que podes declarar: motivada_por, elige, descarta, derivada_de,
 aplica_a, sobre, apoya. Un extremo es un id local o `nodo:<id>` de algo que ya esta en el proyecto (te lo doy
 en el encargo). Si algo no valida, el bloque entero queda afuera y te pido la correccion.
 """

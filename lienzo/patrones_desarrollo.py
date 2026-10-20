@@ -14,6 +14,7 @@ import conocimiento as k
 import creencias
 
 TIPOS = {"bugfix", "feature", "refactor", "investigacion", "documentacion", "arquitectura"}
+SIN_CLASIFICAR = "sin_clasificar"  # declarado a propósito: se cuenta aparte, nunca como un patrón
 CONTROLES = {"pruebas", "claude_review_local", "auditoria_skill"}
 
 
@@ -22,8 +23,8 @@ def datos_encargo(contexto=None, controles=None):
     data = {}
     if contexto is not None:
         context = creencias._contexto(contexto)
-        if context.get("tipo_trabajo") not in TIPOS:
-            raise k.Rechazo("contexto_desarrollo requiere un tipo_trabajo válido")
+        if context.get("tipo_trabajo") not in TIPOS | {SIN_CLASIFICAR}:
+            raise k.Rechazo("contexto_desarrollo requiere un tipo_trabajo válido o sin_clasificar")
         data["contexto_desarrollo"] = context
     if controles is not None:
         if not isinstance(controles, list) or any(not isinstance(x, str) or x not in CONTROLES for x in controles):

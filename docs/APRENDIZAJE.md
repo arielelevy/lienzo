@@ -98,6 +98,17 @@ El checklist debe ser breve, contextual y excluir apoyos retirados, refutaciones
 sin crear reglas duplicadas que puedan quedar vigentes al refutar o vencer la creencia.
 El borrador `patrones_desarrollo.py` agrupa encargos con etiquetas explícitas de trabajo y controles.
 No acredita una inferencia completa de patrones ni que los controles declarados se ejecutaran.
+
+Primer corte del aprendizaje real (2026-10-19), sin motor nuevo:
+- Todo encargo de la API declara `tipo_trabajo` (`sin_clasificar` se cuenta aparte).
+- El checklist explica por qué una creencia no aplica. `respaldo_caido` reutiliza las cadenas de
+  `aprendizaje._Respaldos`: las fuentes de una creencia se vinculan con `motivada_por` al proponerla.
+- Al crear un encargo se devuelven hasta 3 aprendizajes aplicables y se registra que se mostraron.
+- El uso declarado (`sirvio`, `no_aplico`, `ya_sabido`) sólo marca `revisar`; nunca cambia el estado.
+- La evidencia `control_desarrollo` del bloque de un informe queda atada al encargo; el frente no
+  puede declararla `verificada`.
+- Memoria → Aprendizaje reemplaza Creencias, Checklist y Patrones, con veredicto y uso firmados por
+  una persona. El experimento Prolog del mismo día está en `.temp/motor-logico/experimento-2026-10-19/`.
 El estado de validación de esos borradores está en [Producto](PRODUCTO.md#estado-al-consolidar).
 
 ## Investigador CLI en segundo plano
@@ -197,7 +208,8 @@ Las rutas existentes incluyen `GET/PUT /agent-improvements`,
 Las escrituras mantienen autenticación, CSRF y propiedad de la sesión/proyecto.
 `PUT /agent-improvements/scheduler` (sólo local) admite además `research_check` y `enqueue_research`
 con `project`, y `cancel_research` con `job`. El estado expone `research.last_evaluation`; un GET
-no lee la cuota. Las rutas del borrador de creencias no se presentan como API desplegada.
+no lee la cuota. Creencias: `GET/POST /conocimiento/<p>/creencias`, `POST .../creencias/<id>/veredicto`,
+`POST .../creencias/<id>/uso` y `GET .../checklist`.
 
 La verificación debe cubrir muestras parciales, errores y consumo ausentes, aislamiento entre
 sesiones/proyectos/PCs, respuestas tardías, concurrencia, pausa, recuperación y guardias de consumo.

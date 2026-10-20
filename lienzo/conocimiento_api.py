@@ -8,7 +8,10 @@ ruta ya sin el primer tramo `conocimiento`.
     GET  /conocimiento/<p>                            resumen
     POST /conocimiento/<p>/rondas                     {objetivo, coordinadora?, autor?}
     POST /conocimiento/<p>/rondas/<id>/estado         {estado, por, motivo?}   (cerrada hace el cierre)
-    POST /conocimiento/<p>/encargos                   {ronda, letra, texto, archivos?, autor?}
+    POST /conocimiento/<p>/encargos                   {ronda, letra, texto, contexto_desarrollo{tipo_trabajo,..}, archivos?, autor?}
+                                                      + aprendizajes aplicables al contexto
+    GET  /conocimiento/<p>/checklist?<contexto>       aplicables y, aparte, por qué no aplica cada otra
+    POST /conocimiento/<p>/creencias/<id>/uso         {resultado: sirvio|no_aplico|ya_sabido, por, encargo?, nota?}
     POST /conocimiento/<p>/encargos/<id>/enviado      {session_id, agent?, model?, pc?, cwd?}
     POST /conocimiento/<p>/encargos/<id>/estado       {estado, por, motivo?}
     POST /conocimiento/<p>/entregas                   {encargo, revision, cuerpo, autor?, origen?}
@@ -152,6 +155,8 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             return 200, creencias.proponer(pid, d, autor=autor)
     if len(resto) == 3 and resto[0] == "creencias" and resto[2] == "veredicto" and metodo == "POST":
         return 200, creencias.resolver(pid, resto[1], d)
+    if len(resto) == 3 and resto[0] == "creencias" and resto[2] == "uso" and metodo == "POST":
+        return 200, creencias.registrar_uso(pid, resto[1], d)
     if resto == ["checklist"] and metodo == "GET":
         contexto = {key: _q(query, key) for key in creencias.CONTEXTO if _q(query, key) is not None}
         return 200, creencias.checklist(pid, contexto, limite=_entero(_q(query, "limite"), "limite", 8))
@@ -174,7 +179,10 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             return code, resultado["ronda"] if code == 200 else resultado
         return 200, k.cambiar_estado(pid, resto[1], estado, por=por, motivo=d.get("motivo") or "")
     if resto == ["encargos"] and metodo == "POST":
-        return 200, k.crear_encargo(
+        contexto = d.get("contexto_desarrollo")
+        if not isinstance(contexto, dict) or "tipo_trabajo" not in contexto:
+            raise Rechazo("contexto_desarrollo.tipo_trabajo es obligatorio; si no se sabe, usar sin_clasificar")
+        encargo = k.crear_encargo(
             pid,
             k._texto(d.get("ronda"), "ronda", 64),
             d.get("letra"),
@@ -182,9 +190,17 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             autor=autor,
             archivos=d.get("archivos"),
             origen=d.get("origen"),
-            contexto_desarrollo=d.get("contexto_desarrollo"),
+            contexto_desarrollo=contexto,
             controles_declarados=d.get("controles_declarados"),
         )
+        # el encargo ya quedó: si leer lo aplicable falla por lo que sea, se informa sin perder su id
+        # (un 500 haría reintentar con la misma letra y el reintento es 409)
+        try:
+            aprendizajes, encargo = creencias.para_encargo(pid, encargo)
+        except Exception as e:  # mejor esfuerzo, como los adaptadores de conocimiento
+            return 200, {**encargo, "aprendizajes": [], "aprendizajes_error": str(e)}
+        return 200, {**encargo, "aprendizajes": aprendizajes,
+                     "aprendizajes_texto": creencias.texto_aprendizajes(aprendizajes)}
     if len(resto) == 3 and resto[0] == "encargos" and metodo == "POST":
         if resto[2] == "enviado":
             return 200, k.encargo_enviado(pid, resto[1], _tarjeta(d, pid))

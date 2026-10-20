@@ -83,3 +83,18 @@
 .knowledge-context legend { font-weight: 600; }
 .knowledge-context input { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: inherit; }
 .knowledge-context input:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }
+
+/* Aprendizaje: tarjetas de creencias, uso y veredicto (Learning.tsx) */
+.knowledge-query > input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font: inherit; }
+.knowledge-query > input:focus-visible, .learning-verdict input:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }
+.learning-cards { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 10px; }
+.learning-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--card); min-width: 0; }
+.learning-action { margin: 6px 0 4px; font-weight: 600; overflow-wrap: anywhere; }
+.learning-flag { color: var(--need); }
+.learning-uses { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.learning-verdict { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 4px; display: grid; gap: 4px; }
+.learning-verdict label { font-size: 12px; margin-top: 6px; }
+.learning-verdict fieldset { border: 0; padding: 0; margin: 6px 0 0; display: flex; gap: 14px; flex-wrap: wrap; }
+.learning-verdict legend { font-size: 12px; color: var(--dim); }
+.learning-verdict input[type="date"] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; max-width: 100%; }
+.learning-verdict button { justify-self: start; margin-top: 8px; }

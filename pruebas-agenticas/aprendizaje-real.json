@@ -1,0 +1,17 @@
+{
+  "nombre": "aprendizaje-real-primer-corte",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/aprendizaje-real",
+  "reglas": [
+    "Todo encargo creado por la API declara tipo_trabajo; sin_clasificar se cuenta aparte y nunca forma un patrón.",
+    "Una creencia sólo aplica si una persona la validó con evidencia, el vínculo con esa evidencia sigue activo, ninguna fuente que la motiva cayó, está vigente y el contexto coincide; si no, se informa el motivo.",
+    "Mostrar un aprendizaje no es usarlo. El uso lo declara una persona o la coordinadora y sólo marca revisar; nunca cambia el estado.",
+    "Un control de desarrollo declarado por el frente queda atado a su encargo como ejecutado; verificado sólo lo pone una persona."
+  ],
+  "casos": [{
+    "id": "aprendizaje-real-backend",
+    "comando": ["py", "-m", "pytest", "tests/test_aprendizaje_real.py", "tests/test_creencias.py", "tests/test_conocimiento.py", "tests/test_coordinar.py", "tests/test_backlog_e_evidencia.py", "tests/test_ronda4_b_patrones.py", "tests/test_aprendizaje.py", "-q", "-p", "no:cacheprovider"],
+    "timeoutMs": 300000,
+    "cubre": ["lienzo/creencias.py", "lienzo/conocimiento_api.py", "lienzo/conocimiento.py", "lienzo/patrones_desarrollo.py", "lienzo/patrones_evidencia.py", "skills/lienzo/coordinar.py"]
+  }]
+}

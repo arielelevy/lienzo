@@ -142,7 +142,8 @@ def test_invalid_expiry_rolls_back_evidence_and_data(setup):
         c.resolver(pid, belief["id"], {**verdict, "vigente_hasta": "2020-01-01"})
     node = k.nodo(pid, belief["id"])
     assert node["estado"] == "propuesta" and "resultado" not in node["datos"]
-    assert node["vinculos"]["salen"] == []
+    # sólo queda la fuente que motivó la propuesta; el veredicto fallido no dejó apoyo
+    assert [v["relacion"] for v in node["vinculos"]["salen"]] == ["motivada_por"]
 
 
 def test_expired_or_removed_support_never_enters_checklist(setup):

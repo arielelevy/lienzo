@@ -4,18 +4,17 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, failMsg } from "../api";
 import "../knowledge.css";
+import { Learning } from "./Learning";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type RecordData = { [key: string]: Json };
 interface Project { id: string; nombre?: string }
 interface Topic { id: string; texto: string }
-type View = "briefing" | "preguntar" | "vista" | "pendientes" | "capturas" | "creencias" | "checklist" | "patrones-desarrollo";
+type View = "briefing" | "preguntar" | "vista" | "pendientes" | "capturas" | "aprendizaje";
 const VIEWS: { id: View; label: string }[] = [
   { id: "briefing", label: "Briefing" }, { id: "preguntar", label: "Buscar" },
   { id: "vista", label: "Vista por tema" }, { id: "pendientes", label: "Pendientes y avisos" },
-  { id: "capturas", label: "Capturado" },
-  { id: "creencias", label: "Creencias" }, { id: "checklist", label: "Checklist contextual" },
-  { id: "patrones-desarrollo", label: "Patrones de desarrollo" },
+  { id: "capturas", label: "Capturado" }, { id: "aprendizaje", label: "Aprendizaje" },
 ];
 const CLASES = [["", "Todo"], ["pedido", "Pedidos"], ["respuesta", "Respuestas"], ["envio", "Envíos"], ["regla", "Reglas"]];
 const LABELS: Record<string, string> = {
@@ -44,11 +43,6 @@ const LABELS: Record<string, string> = {
   observado: "Observado", encargos_abiertos: "Encargos abiertos", apoyo_rechazado: "Apoyo rechazado",
   puesto: "Puesto en la búsqueda", redactado: "Secretos tapados", recortado: "Recortado",
 };
-const CONTEXT = [
-  ["agente", "Agente"], ["modelo", "Modelo"], ["version_agente", "Versión del agente"],
-  ["version_modelo", "Versión del modelo"], ["fase", "Fase"], ["tipo_trabajo", "Tipo de trabajo"],
-  ["tecnologia", "Tecnología"], ["area", "Área"],
-] as const;
 function label(key: string) { return Object.hasOwn(LABELS, key) ? LABELS[key] : key.replaceAll("_", " "); }
 function record(value: unknown): value is RecordData { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function projects(value: unknown): Project[] {
@@ -62,16 +56,7 @@ function topics(value: unknown): Topic[] {
   return value.temas as unknown as Topic[];
 }
 function response(value: unknown, view: View): RecordData {
-  if (view === "creencias") {
-    if (!Array.isArray(value) || value.some(n => !record(n) || typeof n.texto !== "string" || typeof n.estado !== "string" || !record(n.datos)))
-      throw new Error("Las creencias no tienen el formato esperado");
-    return { creencias: value as Json[] };
-  }
   if (!record(value)) throw new Error("La consulta no devolvió un objeto válido");
-  if (view === "checklist" && (!Array.isArray(value.items) || !Number.isInteger(value.total) || Number(value.total) < value.items.length || !record(value.contexto) || value.items.some(n => !record(n) || typeof n.accion !== "string" || typeof n.creencia !== "string" || typeof n.evidencia !== "string" || typeof n.vigente_hasta !== "string")))
-    throw new Error("El checklist no tiene el formato esperado");
-  if (view === "patrones-desarrollo" && (!Array.isArray(value.patrones) || !Number.isInteger(value.revisados) || Number(value.revisados) < 0 || !Number.isInteger(value.sin_clasificar) || Number(value.sin_clasificar) < 0 || typeof value.muestra_parcial !== "boolean" || value.patrones.some(n => !record(n) || !record(n.contexto) || !Array.isArray(n.fuentes) || !Array.isArray(n.controles_evidencia))))
-    throw new Error("Los patrones no tienen el formato esperado");
   const lists = view === "briefing" ? ["vigente", "abierto", "otros"] : view === "preguntar" ? ["candidatos"] : view === "pendientes" ? ["pendientes"] : view === "capturas" ? ["capturas"] : [];
   if (lists.some(k => !Array.isArray(value[k])) || (view === "vista" && typeof value.markdown !== "string"))
     throw new Error("La consulta no tiene el formato esperado");
@@ -126,9 +111,6 @@ function Nodes({ value, empty }: { value: Json; empty: string }) {
 }
 function Readout({ data, view }: { data: RecordData; view: View }) {
   if (view === "vista") return <Markdown text={data.markdown as string} />;
-  if (view === "creencias") return <section className="knowledge-section"><h3>Creencias y respaldo</h3><p className="knowledge-note">Una propuesta no es una regla vigente. El estado y el veredicto se conservan tal como están registrados.</p><Nodes value={data.creencias} empty="No hay creencias registradas en este proyecto." /></section>;
-  if (view === "checklist") return <section className="knowledge-section"><h3>Acciones aplicables al contexto</h3><p className="knowledge-note">Sólo creencias vigentes validadas por una persona, con respaldo activo y fecha vigente. Consultar no cambia estados.</p><details><summary>Contexto consultado</summary><Value value={data.contexto} /></details><p>{String(data.total)} acciones aplicables; mostrando {(data.items as Json[]).length}.</p><Nodes value={(data.items as RecordData[]).map(({ accion, ...item }) => ({ ...item, texto: accion, id: item.creencia, estado: "vigente", tipo: "Acción respaldada" }))} empty="No hay acciones aplicables al contexto consultado. Esto no prueba que no existan creencias para otros contextos." /></section>;
-  if (view === "patrones-desarrollo") return <section className="knowledge-section"><h3>Patrones descriptivos</h3><p className="knowledge-note">Los controles declarados no acreditan ejecución ni calidad. Leé sus fuentes y evidencia; esta consulta no promueve propuestas.</p><p>{String(data.revisados)} encargos revisados · {String(data.sin_clasificar)} sin clasificar.</p>{data.muestra_parcial === true && <p className="knowledge-notice">Muestra parcial: se analizaron sólo los últimos 500 encargos.</p>}<Nodes value={data.patrones} empty="No hay patrones de desarrollo clasificados en esta muestra." /></section>;
   const groups = view === "briefing" ? ["vigente", "abierto", "otros"] : view === "preguntar" ? ["candidatos"] : view === "capturas" ? ["capturas"] : ["pendientes", "encargos_abiertos"];
   return <>
     {view === "preguntar" && <p className="knowledge-note">{typeof data.total === "number" ? data.total : (data.candidatos as Json[]).length} resultados. Son candidatos con su respaldo; una búsqueda vacía no prueba que algo no exista.</p>}
@@ -154,7 +136,6 @@ function ProjectPanel({ id }: { id: string }) {
   const [hops, setHops] = useState("1");
   const [prose, setProse] = useState(false);
   const [clase, setClase] = useState("");
-  const [context, setContext] = useState<Record<string, string>>({});
   const [data, setData] = useState<RecordData>();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -178,10 +159,6 @@ function ProjectPanel({ id }: { id: string }) {
     if (view === "preguntar") { params.set("saltos", hops); params.set("offset", String(offset)); params.set("limite", "100"); if (prose) params.set("prosa", "1"); }
     if (view === "capturas") { params.set("limite", "100"); if (clase) params.set("clase", clase); }
     if (view === "vista") params.set("tema", theme);
-    if (view === "checklist") {
-      for (const [key] of CONTEXT) if (context[key]?.trim()) params.set(key, context[key].trim());
-      params.set("limite", "20");
-    }
     try {
       const result = response(await api.get<unknown>(base + "/" + view + "?" + params.toString(), { signal: controller.signal }), view);
       if (view === "pendientes") {
@@ -199,7 +176,7 @@ function ProjectPanel({ id }: { id: string }) {
   };
   return <div className="knowledge-body">
     <nav className="knowledge-nav" aria-label="Consultas de memoria">{VIEWS.map(v => <button key={v.id} type="button" aria-pressed={view === v.id} onClick={() => selectView(v.id)}>{v.label}</button>)}</nav>
-    <div className="knowledge-workspace">
+    {view === "aprendizaje" ? <Learning base={base} /> : <div className="knowledge-workspace">
       <form className="knowledge-query" onSubmit={e => { e.preventDefault(); void query(); }}>
         <h2>{VIEWS.find(v => v.id === view)!.label}</h2>
         {(view === "briefing" || view === "preguntar") && <>
@@ -214,12 +191,10 @@ function ProjectPanel({ id }: { id: string }) {
           {view === "preguntar" && <label className="knowledge-hops">Relaciones a recorrer<select aria-label="Saltos de relaciones" value={hops} onChange={e => { clear(); setHops(e.target.value); }}><option value="0">Sin expandir</option><option value="1">Un salto</option><option value="2">Dos saltos</option></select></label>}
         </>}
         {view === "vista" && <><label htmlFor={fieldId + "-theme"}>Tema de la vista</label><select id={fieldId + "-theme"} value={theme} onChange={e => { clear(); setTheme(e.target.value); }}><option value="">Elegí un tema</option>{catalog.data?.map(t => <option key={t.id} value={t.id}>{t.texto}</option>)}</select>{catalog.loading && <p role="status">Cargando temas…</p>}{catalog.data?.length === 0 && <p className="knowledge-note">Este proyecto no tiene temas registrados.</p>}</>}
-        {view === "checklist" && <fieldset className="knowledge-context"><legend>Contexto de trabajo</legend><p className="knowledge-note">Completá los valores exactos del contexto. Los campos vacíos no se envían.</p>{CONTEXT.map(([key, title]) => <div key={key}><label htmlFor={fieldId + "-" + key}>{title}</label><input id={fieldId + "-" + key} maxLength={100} value={context[key] ?? ""} onChange={e => { clear(); setContext(current => ({ ...current, [key]: e.target.value })); }} /></div>)}</fieldset>}
-        {(view === "creencias" || view === "patrones-desarrollo") && <p className="knowledge-note">Sólo lectura. Se muestran los estados, fuentes y respaldos registrados; no se aceptan ni promueven propuestas desde esta vista.</p>}
         {catalog.error && <div className="knowledge-error" role="alert"><p>{catalog.error}</p><button type="button" onClick={catalog.reload}>Reintentar temas</button></div>}
         {view === "pendientes" && <p className="knowledge-note">Leé lo que espera veredicto y los apoyos rechazados. Consultar no cambia estados.</p>}
         {view === "capturas" && <label className="knowledge-hops">Mostrar<select aria-label="Clase de captura" value={clase} onChange={e => { clear(); setClase(e.target.value); }}>{CLASES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label>}
-        <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : view === "briefing" ? "Leer briefing" : view === "vista" ? "Generar vista" : view === "pendientes" ? "Leer pendientes y avisos" : view === "capturas" ? "Leer lo capturado" : view === "creencias" ? "Leer creencias" : view === "checklist" ? "Consultar checklist" : view === "patrones-desarrollo" ? "Consultar patrones" : "Buscar"}</button>{loading && <button type="button" onClick={clear}>Cancelar consulta</button>}</div>
+        <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : view === "briefing" ? "Leer briefing" : view === "vista" ? "Generar vista" : view === "pendientes" ? "Leer pendientes y avisos" : view === "capturas" ? "Leer lo capturado" : "Buscar"}</button>{loading && <button type="button" onClick={clear}>Cancelar consulta</button>}</div>
       </form>
       <div className="knowledge-results" aria-busy={loading}>
         {loading && <p role="status">Leyendo la memoria del proyecto…</p>}
@@ -232,7 +207,7 @@ function ProjectPanel({ id }: { id: string }) {
           <button type="button" disabled={loading || data.siguientes === null} onClick={() => { if (typeof data.siguientes === "number") void query(data.siguientes, true); }}>Más resultados</button></div>
         </nav>}
       </div>
-    </div>
+    </div>}
   </div>;
 }
 

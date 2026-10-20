@@ -1555,6 +1555,8 @@ def _adoptar(con, pid: str, informe: dict, encargo: dict, revision: int, *, auto
         "UPDATE nodo SET datos = ?, ronda = COALESCE(ronda, ?) WHERE id = ?",
         (_json(datos), encargo["ronda"], informe["id"]),
     )
+    # al capturarlo no tenia encargo: sus controles recien ahora saben a quien respaldan
+    _atar_controles(con, pid, informe["id"], encargo["id"], autor=autor, origen=origen)
     n2 = _nodo(con, pid, informe["id"])
     _cambio(
         con,
@@ -1578,7 +1580,7 @@ def _con_bloque(con, pid: str, n: dict, cuerpo: str, *, ronda, encargo, autor: s
     # v5 §5.2: todo o nada, en la misma transaccion que el informe. Con errores el informe
     # queda igual y el bloque «pendiente de vincular», con los errores por posicion
     sesion = _sesion_del_encargo(con, encargo) if encargo else origen.get("sesion_nodo")
-    res = _incorporar_bloque(con, pid, n["id"], ronda, sesion, bloque, autor=autor, origen=origen)
+    res = _incorporar_bloque(con, pid, n["id"], ronda, sesion, bloque, autor=autor, origen=origen, encargo=encargo)
     datos = {**n["datos"], "conocimiento": res}
     con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (_json(datos), n["id"]))
     n2 = _nodo(con, pid, n["id"])
@@ -1746,6 +1748,8 @@ def validar_bloque(con: sqlite3.Connection, pid: str, texto: str) -> tuple[dict 
         err += [{"donde": donde, "error": x} for x in roto_en({"texto": nd.get("texto"), "datos": datos})]
         if tipo:
             err += [{"donde": donde, "error": x} for x in _faltan_datos(tipo, datos)]
+            if tipo == "evidencia" and datos.get("clase") == "control_desarrollo" and datos.get("estado") == "verificada":
+                err.append({"donde": donde, "error": "un control lo verifica una persona, no el frente que lo ejecutó"})
             if isinstance(lid, str) and lid not in tipos:
                 tipos[lid] = tipo
 
@@ -1786,6 +1790,8 @@ def validar_bloque(con: sqlite3.Connection, pid: str, texto: str) -> tuple[dict 
             err.append({"donde": donde, "error": f"{rel} no admite {tde} -> {ta}"})
         if rel in CON_MOTIVO and not _campo(v, "motivo"):
             err.append({"donde": donde, "error": f"{rel} exige motivo"})
+        if rel == "apoya" and tde == "encargo":
+            err.append({"donde": donde, "error": "el control de un encargo lo ata el server al encargo del informe"})
         err += [{"donde": donde, "error": x} for x in roto_en({"motivo": v.get("motivo")})]
         if isinstance(v.get("de"), str) and not v["de"].startswith("nodo:"):
             con_salida.setdefault(v["de"], set()).add(rel)
@@ -1795,6 +1801,42 @@ def validar_bloque(con: sqlite3.Connection, pid: str, texto: str) -> tuple[dict 
         if tipo == "regla" and "derivada_de" not in con_salida.get(lid, set()):
             err.append({"donde": f"nodo {lid}", "error": "una regla exige derivada_de"})
     return (b if not err else None), err
+
+
+_CONTROL = "n.tipo = 'evidencia' AND json_extract(n.datos, '$.clase') = 'control_desarrollo'"
+
+
+def _atar_controles(con: sqlite3.Connection, pid: str, informe: str, encargo: str, *, autor: str, origen: dict) -> None:
+    """La evidencia control_desarrollo declarada en `informe` apoya a `encargo`. Un control que una
+    revision posterior vuelve a declarar reemplaza al anterior en vez de sumarse; lo verificado por una
+    persona no se toca."""
+    nuevos = {
+        r["id"]: json.loads(r["datos"]).get("control")
+        for r in con.execute(
+            f"SELECT n.id, n.datos FROM vinculo v JOIN nodo n ON n.id = v.de WHERE v.a = ?"
+            f" AND v.relacion = 'declarado_en' AND v.activo = 1 AND {_CONTROL}",
+            (informe,),
+        )
+    }
+    if not nuevos:
+        return
+    for r in con.execute(
+        f"SELECT v.*, n.datos AS control_datos FROM vinculo v JOIN nodo n ON n.id = v.a WHERE v.de = ?"
+        f" AND v.relacion = 'apoya' AND v.activo = 1 AND {_CONTROL}",
+        (encargo,),
+    ).fetchall():
+        datos = json.loads(r["control_datos"])
+        if r["a"] in nuevos or datos.get("estado") == "verificada" or datos.get("control") not in nuevos.values():
+            continue
+        con.execute("UPDATE vinculo SET activo = 0 WHERE de = ? AND relacion = 'apoya' AND a = ?", (encargo, r["a"]))
+        v = _fila(
+            con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = 'apoya' AND a = ?", (encargo, r["a"])).fetchone()
+        )
+        anterior = {k: r[k] for k in r.keys() if k != "control_datos"}  # noqa: SIM118 - sqlite3.Row no itera claves
+        _cambio(con, pid, "vinculo_retirado", autor, "el control se declaro de nuevo en " + informe, origen, v,
+                anterior=_fila(anterior), de=encargo, relacion="apoya", a=r["a"])
+    for nid in nuevos:
+        vincular(pid, encargo, "apoya", nid, autor=autor, origen=origen, motivo="control declarado", con=con)
 
 
 def _sesion_del_encargo(con: sqlite3.Connection, encargo: str) -> str | None:
@@ -1815,9 +1857,11 @@ def _incorporar_bloque(
     *,
     autor: str,
     origen: dict,
+    encargo: str | None = None,
 ) -> dict:
     """Valida el bloque y, si esta entero, crea sus nodos (estado inicial de su tipo, `ronda`,
-    `declarado_en` el informe, hallazgos `encontrado_por` el nodo `sesion`) y sus vinculos. Devuelve
+    `declarado_en` el informe, hallazgos `encontrado_por` el nodo `sesion`, la evidencia de un control
+    de desarrollo apoyando al `encargo` que responde) y sus vinculos. Devuelve
     lo que se guarda en datos.conocimiento del informe: el mapa de ids locales a persistentes, o los
     errores. Idempotente por informe (clave declarado:<informe>:<id local>)."""
     bloque, errores = validar_bloque(con, pid, texto)
@@ -1841,6 +1885,8 @@ def _incorporar_bloque(
         vincular(pid, n["id"], "declarado_en", informe, autor=autor, origen=origen, con=con)
         if nd["tipo"] == "hallazgo" and sesion:
             vincular(pid, n["id"], "encontrado_por", sesion, autor=autor, origen=origen, con=con)
+    if encargo:
+        _atar_controles(con, pid, informe, encargo, autor=autor, origen=origen)
 
     def pers(ref: str) -> str:
         return ref[5:] if ref.startswith("nodo:") else ids[ref]
@@ -2008,7 +2054,8 @@ def reincorporar(pid: str, informe: str, *, por: str) -> dict:
         ).fetchone()
         sesion = _sesion_del_encargo(con, r["a"]) if r else (n["origen"] or {}).get("sesion_nodo")
         res = _incorporar_bloque(
-            con, pid, informe, n["ronda"], sesion, bloque, autor=por, origen={"reincorporado": True}
+            con, pid, informe, n["ronda"], sesion, bloque, autor=por, origen={"reincorporado": True},
+            encargo=r["a"] if r else None,
         )
         if res["estado"] != "incorporado":
             return {"informe": informe, "conocimiento": res}
