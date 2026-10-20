@@ -61,9 +61,21 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     await expect(page.locator(".pcstrip")).toHaveCount(0);
   });
 
-  test("con un solo peer (la propia PC) tampoco aparece", async ({ page }) => {
+  test("la única PC queda visible con su menú y sin un filtro Todas redundante", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()), [PEER_LOCAL]);
-    await expect(page.locator(".pcstrip")).toHaveCount(0);
+    const strip = page.getByRole("toolbar", { name: "filtrar por PC" });
+    await expect(strip).toBeVisible();
+    await expect(strip.locator(".pcchip.all")).toHaveCount(0);
+    const chip = strip.locator('.pcchip[data-pc="local-1"]');
+    await expect(chip).toContainText("oficina");
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".card")).toHaveCount(8);
+    await chip.click();
+    await expect(page.locator(".card")).toHaveCount(8);
+    await chip.click({ button: "right" });
+    await expect(page.getByRole("menu", { name: "Acciones de oficina" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await angosta(page);
   });
 
   test("con dos, muestra Todas N y un chip por PC con conteo, memoria y temperatura", async ({ page }) => {

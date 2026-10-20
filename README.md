@@ -1,7 +1,7 @@
 # Lienzo
 
 Versión **0.4.0**: envío a Codex CLI por su consola visible, recuperación del canal Claude
-y reglas de coordinación visibles y recuperables. [Novedades, validación y límites](docs/releases/0.5.2.md).
+y reglas de coordinación visibles y recuperables. [Novedades, validación y límites](docs/releases/0.5.3.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
@@ -657,6 +657,9 @@ Por qué no llega una PC: el chip de la tira dice el motivo cuando una PC está 
   viejo contesta 404 con `sucesora` (no se redirige solo); `coordinar.enviar` reintenta ahí.
 
 ### La tira de PCs
+
+La etiqueta de esta PC se muestra aunque sea la única: su menú derecho conserva Actualizar
+cuando hay una versión pendiente. Con varias PCs también aparece Todas para filtrar el tablero.
 
 Arriba del tablero, un chip por PC con sus tarjetas, memoria libre, CPU, temperatura y latencia. En
 rojo si pasa de 85 °C, si no le entra otro agente sin bajar de 1,5 GB libres o si un agente se

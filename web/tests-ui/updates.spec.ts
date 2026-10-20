@@ -191,3 +191,23 @@ test("las novedades y el avance caben en el celular sin otro botón Actualizar",
   expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ path: "node_modules/.playwright-artifacts/update-detail-mobile.png" });
 });
+
+test("Actualizar sigue accesible por clic derecho cuando sólo hay una PC", async ({ page }) => {
+  await bloquearEscrituras(page); await instalarTablero(page, [], [peers[0]]);
+  let sent: unknown;
+  await page.route("**/updates", route => route.fulfill({ json: status }));
+  await page.route("**/updates/apply", route => {
+    sent = route.request().postDataJSON();
+    return route.fulfill({ status: 202, json: status });
+  });
+  await page.goto(BASE);
+  const chip = page.locator('.pcchip[data-pc="local"]');
+  await expect(chip).toBeVisible();
+  await chip.click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Actualizar", exact: true })).toBeVisible();
+  await page.screenshot({ path: "node_modules/.playwright-artifacts/pc-single-menu.png" });
+  await page.getByRole("menuitem", { name: "Actualizar", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Actualizaciones" });
+  await expect(dialog.getByRole("heading", { name: "Qué cambió" })).toBeVisible();
+  await expect.poll(() => sent).toEqual({ target: status.target });
+});
