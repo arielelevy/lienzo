@@ -47,8 +47,8 @@ const PHASE: Record<string, string> = {
   applying: "Aplicando actualización…", restarting: "Reconectando…", applied: "Actualización aplicada", error: "La actualización no pudo terminar",
 };
 
-export function Updates({ peers, onClose }: { peers: Peer[]; onClose: () => void }) {
-  const [pc, setPc] = useState("");
+export function Updates({ peers, onClose, initialPc = "" }: { peers: Peer[]; onClose: () => void; initialPc?: string }) {
+  const [pc, setPc] = useState(initialPc);
   const [revision, setRevision] = useState(0);
   const [action, setAction] = useState<{ pc: string; error?: string; busy?: boolean }>({ pc: "" });
   const { data, error } = useUpdateStatus(pc, true, revision, 3000);

@@ -37,3 +37,17 @@ Una PC antigua requiere bootstrap convencional para poder usar esta API. El buil
 el aviso de bundle mayor a 500 kB; no se modificó la política de división del frontend.
 
 Todas las tareas siguen pendientes de veredicto humano.
+
+## Menú de cada PC (pedido posterior de Ariel)
+
+Revisión focal de `PcStrip.tsx`, `Updates.tsx` y su recorrido UI: botón derecho consulta el
+estado de la PC elegida; muestra Actualizar si hay versión pendiente y Al día deshabilitado
+sólo ante estado current/applied sin error. Una consulta pendiente o fallida no se presenta
+como Al día. PC desconectada no habilita acciones. El diálogo arranca en esa PC; cerrar
+restaura foco a su tarjeta. El backend mantiene su comprobación del target antes de aplicar.
+El menú abre la consulta, no dispara una actualización por botón derecho.
+
+Sin cambios al backend ni al aprendizaje que desarrolla Claude. Build y lint verificados;
+recorrido UI incluye menú remoto, destino seleccionado y local al día sin acción.
+La primera invocación de UI coincidió con Vite reconstruyendo dist y encontró 503 en la
+precondición; se esperó el build y se ejecutó de nuevo, sin alterar oráculos ni baselines.

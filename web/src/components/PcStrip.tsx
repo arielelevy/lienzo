@@ -3,6 +3,7 @@ import { ago, api, ApiError } from "../api";
 import { toggled } from "../names";
 import type { Peer, Session } from "../types";
 import { Downloads } from "./Downloads";
+import { Updates, useUpdateStatus } from "./Updates";
 
 const POLL_MS = 15000;
 
@@ -115,6 +116,10 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
   const [gitMsg, setGitMsg] = useState<Record<string, { msg: string; git: string | null }>>({});
   const [menu, setMenu] = useState<{peer: Peer; x: number; y: number} | null>(null);
   const [downloads, setDownloads] = useState<Peer | null>(null);
+  const [updating, setUpdating] = useState<Peer | null>(null);
+  const updatePc = menu?.peer.local ? "" : menu?.peer.pc_id ?? "";
+  const update = useUpdateStatus(updatePc, !!menu && menu.peer.alive);
+  const upToDate = !!update.data && ["current", "applied"].includes(update.data.phase) && !update.data.error && !update.error && !update.data.available;
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
@@ -185,7 +190,7 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
             aria-pressed={filter.has(p.pc_id)}
             data-pc={p.pc_id}
             onClick={(e) => (e.ctrlKey || e.metaKey ? onToggle(p.pc_id) : onSelect(p.pc_id))}
-            onContextMenu={event => { event.preventDefault(); setMenu({peer:p,x:Math.min(event.clientX,window.innerWidth-230),y:Math.min(event.clientY,window.innerHeight-70)}); }}
+            onContextMenu={event => { event.preventDefault(); setMenu({peer:p,x:Math.min(event.clientX,window.innerWidth-230),y:Math.min(event.clientY,window.innerHeight-120)}); }}
           >
             <span className="dot" aria-hidden="true" />
             {p.name}
@@ -215,8 +220,15 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
         );
       })}
       {menu && <div ref={menuRef} role="menu" aria-label={`Acciones de ${menu.peer.name}`} className="pc-context-menu" style={{left:Math.max(4,menu.x),top:Math.max(4,menu.y)}}>
+        <button role="menuitem" disabled={!menu.peer.alive || upToDate} onClick={() => { setUpdating(menu.peer); setMenu(null); }}>
+          {upToDate ? "Al día" : update.data?.available ? "Actualizar…" : "Consultar actualizaciones…"}
+        </button>
         <button role="menuitem" disabled={menu.peer.local || !menu.peer.alive} onClick={() => { setDownloads(menu.peer); setMenu(null); }}>Traer descargas…</button>
       </div>}
+      {updating && <Updates key={updating.pc_id} peers={peers} initialPc={updating.local ? "" : updating.pc_id} onClose={() => {
+        document.querySelector<HTMLButtonElement>(`.pcchip[data-pc="${CSS.escape(updating.pc_id)}"]`)?.focus();
+        setUpdating(null);
+      }} />}
       {downloads && <Downloads key={downloads.pc_id} peer={downloads} onClose={() => {
         document.querySelector<HTMLButtonElement>(`.pcchip[data-pc="${CSS.escape(downloads.pc_id)}"]`)?.focus();
         setDownloads(null);

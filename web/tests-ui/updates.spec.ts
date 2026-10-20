@@ -79,3 +79,25 @@ test("actualizar otra PC manda su identidad y no la confunde con esta PC", async
   await expect(dialog.getByRole("combobox", { name: "PC a actualizar" })).toHaveValue("");
   await expect(dialog.getByText("local123", { exact: true })).toBeVisible();
 });
+
+test("botón derecho en la PC abre sus actualizaciones; al día no ejecuta nada", async ({ page }) => {
+  await bloquearEscrituras(page);
+  await instalarTablero(page, [], [
+    { pc_id: "local", name: "Escritorio", local: true, alive: true, color: "green", last_seen: "", health: null },
+    { pc_id: "notebook", name: "Notebook", local: false, alive: true, color: "blue", last_seen: "", health: null },
+  ]);
+  await page.route("**/updates*", route => {
+    const remote = new URL(route.request().url()).searchParams.get("pc") === "notebook";
+    return route.fulfill({ json: remote ? status : { ...status, phase: "current", available: false } });
+  });
+  await page.goto(BASE);
+  await page.locator('.pcchip[data-pc="notebook"]').click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Actualizar…", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Actualizaciones", exact: true });
+  await expect(dialog.getByRole("combobox", { name: "PC a actualizar" })).toHaveValue("notebook");
+  await dialog.getByRole("button", { name: "Cerrar actualizaciones" }).click();
+  await page.locator('.pcchip[data-pc="local"]').click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Al día", exact: true })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "Actualizar…", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: "node_modules/.playwright-artifacts/updates-pc-context.png" });
+});

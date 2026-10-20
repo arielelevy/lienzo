@@ -2,6 +2,9 @@
 
 Abrí **⋯ → Actualizaciones** o tocá la versión abajo a la izquierda. Elegí esta PC o una PC
 emparejada, consultá qué cambió y usá **Actualizar**. El indicador avisa cuando hay novedades.
+También podés hacer botón derecho sobre una PC en la tira superior: **Actualizar…** abre
+directamente esa máquina si hay una versión pendiente. Si está al día, muestra **Al día**
+deshabilitado; si aún no se conoce el estado, permite consultar sin aplicar nada.
 El servidor consulta Git cada cinco minutos; el botón Buscar novedades fuerza una consulta.
 
 La actualización prepara un worktree temporal y compila la interfaz antes de avanzar `main`
