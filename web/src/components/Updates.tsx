@@ -47,10 +47,27 @@ const PHASE: Record<string, string> = {
   applying: "Aplicando actualización…", restarting: "Reconectando…",
 };
 
+async function waitForCheck(pc: string, onChecking: () => void) {
+  const path = `/updates${pc ? `?pc=${encodeURIComponent(pc)}` : ""}`;
+  const deadline = Date.now() + 90000;
+  const read = () => api.get<UpdateStatus>(path, { signal: AbortSignal.timeout(10000) });
+  let current = await read();
+  let waited = false;
+  while (current.phase === "checking") {
+    waited = true; onChecking();
+    if (Date.now() >= deadline) throw new Error("La consulta de novedades no terminó. Cerrá esta ventana y volvé a intentar.");
+    await new Promise(resolve => window.setTimeout(resolve, 1000));
+    current = await read();
+  }
+  if (waited && current.error) throw new Error(current.error);
+  return current;
+}
+
 export function Updates({ peers, onClose, initialPc = "", target }: { peers: Peer[]; onClose: () => void; initialPc?: string; target?: string }) {
   const { data, error } = useUpdateStatus(initialPc, true, 0, 1000);
   const [failure, setFailure] = useState(target ? "" : "No hay una versión pendiente para actualizar.");
   const [accepted, setAccepted] = useState(false);
+  const [checking, setChecking] = useState(false);
   const started = useRef(false);
   // el estado leído antes de aceptar puede traer el error de un intento anterior: sólo cuenta uno nuevo
   const latest = useRef(data);
@@ -62,11 +79,12 @@ export function Updates({ peers, onClose, initialPc = "", target }: { peers: Pee
     if (started.current) return;
     started.current = true;
     if (!target) return;
-    void api.get<UpdateStatus>(`/updates${initialPc ? `?pc=${encodeURIComponent(initialPc)}` : ""}`).then(current => {
-      if (current.target === target && (current.busy || current.running === target)) return;
+    void waitForCheck(initialPc, () => setChecking(true)).then(current => {
+      setChecking(false);
+      if (current.target === target && ((current.busy && Object.hasOwn(PHASE, current.phase)) || current.running === target)) return;
       return api.post("/updates/apply", { pc: initialPc || undefined, target });
     }).then(() => { setStale(latest.current); setAccepted(true); })
-      .catch(problem => setFailure(updateError(problem)));
+      .catch(problem => { setChecking(false); setFailure(updateError(problem)); });
   }, [initialPc, target]);
   const fresh = accepted && data !== stale ? data : undefined;
   const done = !!fresh && fresh.running === target && !fresh.busy && !fresh.error;
@@ -74,7 +92,7 @@ export function Updates({ peers, onClose, initialPc = "", target }: { peers: Pee
   const failed = failure || fresh?.error;
   return createPortal(<dialog ref={dialog} className="updates-dialog" aria-label="Actualizaciones" onCancel={onClose}>
     <div className="updates-heading"><h2>Actualizando {pcName}</h2><button onClick={onClose} aria-label="Cerrar actualizaciones">✕</button></div>
-    <p role="status">{failed ? "No se pudo actualizar" : done ? "Actualización aplicada" : error && accepted ? "Reconectando…" : fresh && Object.hasOwn(PHASE, fresh.phase) ? PHASE[fresh.phase] : "Iniciando actualización…"}</p>
+    <p role="status">{failed ? "No se pudo actualizar" : done ? "Actualización aplicada" : checking ? "Terminando consulta de novedades…" : error && accepted ? "Reconectando…" : fresh && Object.hasOwn(PHASE, fresh.phase) ? PHASE[fresh.phase] : "Iniciando actualización…"}</p>
     {!done && !failed && <progress aria-label="Progreso de actualización" />}
     {failed && <p role="alert">{failed}</p>}
     {error && !accepted && !failure && <p role="alert">{error}</p>}

@@ -112,3 +112,63 @@ test("volver a abrir durante la compilación retoma el progreso sin otro apply",
   await expect(page.getByText("Compilando la interfaz…")).toBeVisible();
   expect(applies).toBe(1);
 });
+
+test("Actualizar espera la consulta Git y después inicia una sola actualización", async ({ page }) => {
+  await bloquearEscrituras(page); await instalarTablero(page);
+  let state = { ...status };
+  let applies = 0;
+  await page.route("**/updates", route => route.fulfill({ json: state }));
+  await page.route("**/updates/apply", route => {
+    applies++; state = { ...status, phase: "building", busy: true };
+    return route.fulfill({ status: 202, json: state });
+  });
+  await page.goto(BASE);
+  const open = page.getByRole("button", { name: "Abrir actualizaciones" });
+  await expect(open).toBeVisible();
+  state = { ...status, phase: "checking", busy: true };
+  await open.click();
+  const dialog = page.getByRole("dialog", { name: "Actualizaciones" });
+  await expect(dialog.getByText("Terminando consulta de novedades…")).toBeVisible();
+  expect(applies).toBe(0);
+  state = { ...status };
+  await expect(dialog.getByText("Compilando la interfaz…")).toBeVisible();
+  expect(applies).toBe(1);
+});
+
+test("una consulta Git fallida se informa sin aplicar ni simular éxito", async ({ page }) => {
+  await bloquearEscrituras(page); await instalarTablero(page);
+  let state = { ...status, error: "" };
+  let applies = 0;
+  await page.route("**/updates", route => route.fulfill({ json: state }));
+  await page.route("**/updates/apply", route => { applies++; return route.fulfill({ status: 202, json: status }); });
+  await page.goto(BASE);
+  const open = page.getByRole("button", { name: "Abrir actualizaciones" });
+  await expect(open).toBeVisible();
+  state = { ...status, phase: "checking", busy: true, error: "" };
+  await open.click();
+  const dialog = page.getByRole("dialog", { name: "Actualizaciones" });
+  await expect(dialog.getByText("Terminando consulta de novedades…")).toBeVisible();
+  state = { ...status, phase: "error", error: "No se pudo consultar Git" };
+  await expect(dialog.getByRole("alert")).toHaveText("No se pudo consultar Git");
+  await expect(dialog.getByRole("progressbar")).toHaveCount(0);
+  expect(applies).toBe(0);
+});
+
+test("una consulta Git que no termina vence con error visible", async ({ page }) => {
+  await page.clock.install();
+  await bloquearEscrituras(page); await instalarTablero(page);
+  let state = { ...status };
+  let applies = 0;
+  await page.route("**/updates", route => route.fulfill({ json: state }));
+  await page.route("**/updates/apply", route => { applies++; return route.fulfill({ status: 202, json: status }); });
+  await page.goto(BASE);
+  const open = page.getByRole("button", { name: "Abrir actualizaciones" });
+  await expect(open).toBeVisible();
+  state = { ...status, phase: "checking", busy: true };
+  await open.click();
+  const dialog = page.getByRole("dialog", { name: "Actualizaciones" });
+  await expect(dialog.getByText("Terminando consulta de novedades…")).toBeVisible();
+  await page.clock.fastForward(91000);
+  await expect(dialog.getByRole("alert")).toContainText("La consulta de novedades no terminó");
+  expect(applies).toBe(0);
+});
