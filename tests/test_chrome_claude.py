@@ -39,6 +39,15 @@ def test_conexiones_solo_hosts_con_el_origen_de_la_extension(monkeypatch):
         12: (r"C:\u\.local\bin\claude.exe", "claude.exe -n lienzo"),
         13: (r"C:\u\.local\bin\claude.exe", f"claude.exe --chrome-native-host {chrome_claude.ORIGEN}"),
         14: (r"C:\otro\chrome-native-host.exe", "chrome-native-host.exe chrome-extension://otra/"),
+        15: (
+            r"C:\u\.codex\extension-host.exe",
+            "extension-host.exe chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/",
+        ),
+        16: (
+            r"C:\u\.codex\extension-host.exe",
+            "extension-host.exe chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/",
+        ),
+        17: (r"C:\otro\extension-host.exe", f"extension-host.exe {chrome_claude.ORIGEN}"),
     }
     monkeypatch.setattr(chrome_claude.sys, "platform", "win32")
     monkeypatch.setattr(chrome_claude, "_pids", lambda: list(procesos))
@@ -46,9 +55,12 @@ def test_conexiones_solo_hosts_con_el_origen_de_la_extension(monkeypatch):
     monkeypatch.setattr(chrome_claude.procinfo, "command_line", lambda pid: procesos[pid][1])
     # 2026-10-21 17:19:19 UTC como FILETIME
     monkeypatch.setattr(chrome_claude.procs, "creation_filetime", lambda pid: 116444736000000000 + 1792603159 * 10**7)
+    desde = "2026-10-21T17:19:19+00:00"
     assert chrome_claude.conexiones() == [
-        {"pid": 10, "host": "desktop", "desde": "2026-10-21T17:19:19+00:00"},
-        {"pid": 13, "host": "code", "desde": "2026-10-21T17:19:19+00:00"},
+        {"agent": "claude", "host": "code", "pids": [13], "desde": desde},
+        {"agent": "claude", "host": "desktop", "pids": [10], "desde": desde},
+        # los dos hosts de Codex son una sola extensión; el 17 trae el origen de Claude y no vale
+        {"agent": "codex", "host": "codex", "pids": [15, 16], "desde": desde},
     ]
 
 

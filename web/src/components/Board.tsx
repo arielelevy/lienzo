@@ -961,7 +961,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   <div className="cards">
                   {/* la extensión Claude in Chrome conectada: presencia, sin panel ni acciones */}
                   {k === "trabajo" && chromes.map((c) => (
-                    <div key={`chrome-${c.peer.pc_id}-${c.pid}`}>
+                    <div key={`chrome-${c.peer.pc_id}-${c.agent}-${c.host}`}>
                       <ChromeCard c={c} pcColor={peers.length > 1 ? c.peer.color : undefined} />
                     </div>
                   ))}

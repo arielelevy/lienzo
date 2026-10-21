@@ -64,13 +64,27 @@ def perfiles_cacheados() -> list[dict]:
     return _cache[1]
 
 
-# --- la extensión conectada ahora -------------------------------------------------------------
-# Chrome lanza un host nativo por cada conexión de la extensión, con el origen en la línea de
-# comando: el de Claude Desktop (chrome-native-host.exe) o el de Claude Code (chrome-native-host.bat
-# -> claude.exe). Medido el 2026-10-21: «chrome-native-host.exe chrome-extension://fcoe.../
-# --parent-window=0», hijo de un cmd.exe hijo de chrome.exe. El chat no se lee: sólo que está.
+# --- las extensiones conectadas ahora ---------------------------------------------------------
+# Chrome lanza un host nativo por cada conexión de una extensión, con el origen en la línea de
+# comando. Claude: el de Claude Desktop (chrome-native-host.exe) o el de Claude Code
+# (chrome-native-host.bat -> claude.exe). Codex: la extensión «ChatGPT» con el host del plugin de
+# Codex (~/.codex/plugins/.../extension-host.exe, com.openai.codexextension). Medido el 2026-10-21:
+# «<host>.exe chrome-extension://<id>/ --parent-window=0», hijo de un cmd.exe hijo de chrome.exe.
+# El chat no se lee: sólo que está.
 ORIGEN = f"chrome-extension://{EXTENSION_ID}/"
-_HOSTS = {"chrome-native-host.exe": "desktop", "claude.exe": "code"}
+# nombre del ejecutable -> (agente, por donde, orígenes que valen)
+_HOSTS = {
+    "chrome-native-host.exe": ("claude", "desktop", (ORIGEN,)),
+    "claude.exe": ("claude", "code", (ORIGEN,)),
+    "extension-host.exe": (
+        "codex",
+        "codex",
+        (
+            "chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/",
+            "chrome-extension://odlomjlbamekndcpllcnffbgeohgkmjh/",
+        ),
+    ),
+}
 _TTL_CONEXION = 15.0
 _cache_conexion: tuple[float, list[dict]] | None = None
 
@@ -84,24 +98,30 @@ def _pids() -> list[int]:
 
 
 def conexiones() -> list[dict]:
-    """`[{pid, host, desde}]` de los hosts nativos vivos de la extensión: `host` es "desktop" o
-    "code" y `desde` la hora de creación en ISO UTC. [] fuera de Windows o si no se puede leer.
-    La línea de comando se lee sólo de los procesos con nombre de host (no de los ~400)."""
+    """`[{agent, host, pids, desde}]`: una por agente y por donde se conecta, con los hosts
+    nativos vivos de su extensión. `host` es "desktop" o "code" (Claude) o "codex", y `desde` la
+    creación del más viejo en ISO UTC. Codex abre más de un host a la vez y es una sola extensión.
+    [] fuera de Windows. La línea de comando se lee sólo de los procesos con nombre de host."""
     if sys.platform != "win32":
         return []
-    salida = []
+    grupos: dict[tuple[str, str], dict] = {}
     for pid in _pids():
-        host = _HOSTS.get(os.path.basename(procinfo.image_path(pid) or "").lower())
-        if not host or ORIGEN not in (procinfo.command_line(pid) or ""):
+        conocido = _HOSTS.get(os.path.basename(procinfo.image_path(pid) or "").lower())
+        if not conocido:
+            continue
+        agent, host, origenes = conocido
+        cmd = procinfo.command_line(pid) or ""
+        if not any(o in cmd for o in origenes):
             continue
         ft = procs.creation_filetime(pid)
         desde = (
-            datetime.fromtimestamp((ft - 116444736000000000) / 1e7, UTC).isoformat(timespec="seconds")
-            if ft
-            else None
+            datetime.fromtimestamp((ft - 116444736000000000) / 1e7, UTC).isoformat(timespec="seconds") if ft else None
         )
-        salida.append({"pid": pid, "host": host, "desde": desde})
-    return sorted(salida, key=lambda c: c["desde"] or "")
+        g = grupos.setdefault((agent, host), {"agent": agent, "host": host, "pids": [], "desde": desde})
+        g["pids"].append(pid)
+        if desde and (not g["desde"] or desde < g["desde"]):
+            g["desde"] = desde
+    return sorted(grupos.values(), key=lambda c: (c["agent"], c["host"]))
 
 
 def conexiones_cacheadas() -> list[dict]:

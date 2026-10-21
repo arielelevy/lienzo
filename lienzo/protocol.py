@@ -68,6 +68,6 @@ def info() -> dict:
         "distros_wsl": tmux.distros(),
         # perfiles de Chrome con la extensión Claude in Chrome: el diálogo los muestra al tildar Chrome
         "chrome_claude": chrome_claude.perfiles_cacheados(),
-        # la extensión conectada ahora (su host nativo vivo): el tablero le dibuja una tarjeta
-        "chrome_claude_conexiones": chrome_claude.conexiones_cacheadas(),
+        # las extensiones de Claude y Codex conectadas ahora en Chrome: el tablero les dibuja una tarjeta
+        "chrome_conexiones": chrome_claude.conexiones_cacheadas(),
     }

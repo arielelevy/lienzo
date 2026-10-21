@@ -160,8 +160,9 @@ export interface PeerHealth {
   distros_wsl?: string[];
   /** perfiles de Chrome de esa PC con la extensión Claude in Chrome instalada (chrome_claude.py) */
   chrome_claude?: { id: string; name: string; cuenta: string }[];
-  /** la extensión conectada ahora en esa PC: un host nativo vivo por conexión (chrome_claude.conexiones) */
-  chrome_claude_conexiones?: { pid: number; host: "desktop" | "code"; desde: string | null }[];
+  /** las extensiones de Claude y Codex conectadas ahora en el Chrome de esa PC, una por agente y por
+   *  donde se conecta, con sus hosts nativos vivos (chrome_claude.conexiones) */
+  chrome_conexiones?: { agent: "claude" | "codex"; host: "desktop" | "code" | "codex"; pids: number[]; desde: string | null }[];
   /** cuota por agente en esa PC: "ok", "agotada", "agotada hasta HH:MM" o "desconocida" */
   cuotas?: Record<string, string> | null;
 }

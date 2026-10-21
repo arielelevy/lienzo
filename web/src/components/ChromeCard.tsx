@@ -1,5 +1,5 @@
 import { ago } from "../api";
-import type { Peer } from "../types";
+import type { Peer, PeerHealth } from "../types";
 
 /** El logo de Chrome, en el subíndice del badge (`--chrome`) y en la tarjeta de la extensión. */
 export function ChromeLogo({ size }: { size: number }) {
@@ -14,35 +14,36 @@ export function ChromeLogo({ size }: { size: number }) {
   );
 }
 
-export interface ChromeConexion {
-  peer: Peer;
-  pid: number;
-  host: "desktop" | "code";
-  desde: string | null;
-}
+export type ChromeConexion = NonNullable<PeerHealth["chrome_conexiones"]>[number] & { peer: Peer };
 
-/** Las extensiones Claude in Chrome conectadas ahora, una por host nativo vivo, de las PCs vivas
- *  que pasan el filtro de PC (chrome_claude.conexiones en la salud de cada PC). */
+/** Las extensiones de Claude y Codex conectadas ahora en Chrome, de las PCs vivas que pasan el
+ *  filtro de PC (chrome_claude.conexiones en la salud de cada PC). */
 export function chromeConexiones(peers: Peer[], pcFilter: Set<string>): ChromeConexion[] {
   return peers
     .filter((p) => p.alive !== false && (pcFilter.size === 0 || pcFilter.has(p.pc_id)))
-    .flatMap((p) => (p.health?.chrome_claude_conexiones ?? []).map((c) => ({ peer: p, ...c })));
+    .flatMap((p) => (p.health?.chrome_conexiones ?? []).map((c) => ({ ...c, peer: p })));
 }
 
-/** La extensión Claude in Chrome conectada: sólo presencia. El chat vive en claude.ai y la
- *  extensión, y el lienzo no lo lee; por eso la tarjeta no abre panel ni tiene acciones. */
+const VIA: Record<ChromeConexion["host"], string> = {
+  desktop: "vía Claude Desktop",
+  code: "vía Claude Code",
+  codex: "vía Codex",
+};
+
+/** Una extensión conectada: sólo presencia. El chat vive en la nube y en la extensión, y el
+ *  lienzo no lo lee; por eso la tarjeta no abre panel ni tiene acciones. */
 export function ChromeCard({ c, pcColor }: { c: ChromeConexion; pcColor?: string }) {
-  const via = c.host === "desktop" ? "vía Claude Desktop" : "vía Claude Code";
+  const nombre = c.agent === "codex" ? "Codex" : "Claude";
   return (
     <div
       className={`card chromeext ${pcColor ? "haspc" : ""}`}
       style={pcColor ? ({ "--pc-color": pcColor } as React.CSSProperties) : undefined}
       role="group"
-      aria-label={`Claude en Chrome en ${c.peer.name}: conectada ${via}`}
+      aria-label={`${nombre} en Chrome en ${c.peer.name}: conectada ${VIA[c.host]}`}
     >
       <div className="top">
-        <span className="badge claude">
-          claude
+        <span className={`badge ${c.agent}`}>
+          {c.agent}
           <sub className="badge-chrome" role="img" aria-label="en Chrome">
             <ChromeLogo size={11} />
           </sub>
@@ -50,10 +51,10 @@ export function ChromeCard({ c, pcColor }: { c: ChromeConexion; pcColor?: string
         <span className="repo">{c.peer.name}</span>
         <span className="right" title={c.desde ?? undefined}>{c.desde ? ago(c.desde) : ""}</span>
       </div>
-      <div className="title">Claude en Chrome</div>
-      <div className="down small dim">Extensión conectada {via}</div>
+      <div className="title">{nombre} en Chrome</div>
+      <div className="down small dim">Extensión conectada {VIA[c.host]}</div>
       <div className="meta">
-        <span>PID {c.pid}</span>
+        <span>PID {c.pids.join(", ")}</span>
       </div>
     </div>
   );
