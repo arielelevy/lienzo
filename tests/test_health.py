@@ -27,6 +27,7 @@ def test_snapshot_trae_las_cinco_claves():
         "carpetas",
         "distros_wsl",
         "chrome_claude",
+        "chrome_claude_conexiones",
         "mem_free_gb",
         "mem_total_gb",
         "cpu_pct",
@@ -69,6 +70,7 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
     monkeypatch.setattr(health.protocol.tmux, "distros", list)
     monkeypatch.setattr(health.protocol, "carpetas_de_proyecto", lambda roots: [])
     monkeypatch.setattr(health.protocol.chrome_claude, "perfiles_cacheados", list)
+    monkeypatch.setattr(health.protocol.chrome_claude, "conexiones_cacheadas", list)
     s = health.snapshot()
     assert s == {
         "protocol_version": 1,
@@ -91,6 +93,7 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
         "carpetas": [],
         "distros_wsl": [],
         "chrome_claude": [],
+        "chrome_claude_conexiones": [],
         "mem_free_gb": None,
         "mem_total_gb": None,
         "cpu_pct": None,

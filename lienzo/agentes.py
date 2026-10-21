@@ -298,6 +298,10 @@ class Antigravity(Perfil):
 
     def permission_option(self, dialog: dict | None) -> int | None:
         q, ops = _dialogo_plano(dialog)
+        # crear o editar un archivo: «1. Yes, allow creation» / «2. No, deny creation», con el diff
+        # arriba y la pregunta fuera de pantalla (medido el 2026-10-21): se reconoce por el par
+        if len(ops) == 2 and (m := re.fullmatch(r"yes, allow (\w+)", ops[0][1])) and ops[1][1] == f"no, deny {m[1]}":
+            return ops[0][0]
         if q != "requesting permission for:" or not any(t == "no, cancel" for _, t in ops):
             return None
         return next((n for n, t in ops if t == "yes, run command"), None)

@@ -774,4 +774,6 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
   .mejoras-vista-cuerpo { grid-template-columns: 1fr; padding: 12px 12px 24px; gap: 14px; }
   .mejoras-vista-cabecera { padding: 10px 12px; }
 }
-.badge-chrome { display: inline-flex; margin: 0 -3px 0 2px; vertical-align: sub; line-height: 0; transform: translateY(3px); }
+/* tarjeta de la extensión Claude in Chrome conectada (ChromeCard): sin panel ni acciones */
+.card.chromeext { cursor: default; }
+.badge-chrome {display: inline-flex; margin: 0 -3px 0 2px; vertical-align: sub; line-height: 0; transform: translateY(3px); }

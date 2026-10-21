@@ -187,11 +187,24 @@ def dialog(lines: list[str]) -> dict | None:
         return kiro
     run: list[tuple[int, dict]] = []
     best: list[tuple[int, dict]] = []
+    # renglones que continuan la opcion de arriba: Antigravity parte «...start with 'python -c "»
+    # y sigue el comando abajo, y sin esto el dialogo terminaba en la 2 y perdia «4. No, cancel»
+    # (medido el 2026-10-21: auto-aprobar decia «no es un permiso»). Se suman solo si llega la
+    # opcion siguiente
+    resto: list[str] = []
     for i, raw in enumerate(lines):
-        m = _OPT_RE.match(_sin_borde(raw))
+        linea = _sin_borde(raw)
+        m = _OPT_RE.match(linea)
         if m and int(m.group("n")) == len(run) + 1:
+            if run and resto:
+                run[-1][1]["text"] = " ".join([run[-1][1]["text"], *resto])
+            resto = []
             run.append((i, {"n": int(m.group("n")), "text": m.group("txt").strip(), "cursor": bool(m.group("cur"))}))
             continue
+        if run and not m and linea and len(resto) < 2 and not set(linea) <= set(RULE_CHARS):
+            resto.append(linea)
+            continue
+        resto = []
         if len(run) >= 2:
             best = run
         run = (

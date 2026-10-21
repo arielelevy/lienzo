@@ -5,11 +5,16 @@ se abre nada de la sesión del perfil. La extensión no dice en cuál está cone
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import re
 import sys
 import time
+from datetime import UTC, datetime
+
+import procinfo
+import procs
 
 # el id que autoriza el host nativo de Claude Code (com.anthropic.claude_code_browser_extension.json)
 EXTENSION_ID = "fcoeoabgfenejglbffodgkkbkcdhcgfn"
@@ -57,3 +62,54 @@ def perfiles_cacheados() -> list[dict]:
     if _cache is None or ahora - _cache[0] > _TTL:
         _cache = (ahora, perfiles())
     return _cache[1]
+
+
+# --- la extensión conectada ahora -------------------------------------------------------------
+# Chrome lanza un host nativo por cada conexión de la extensión, con el origen en la línea de
+# comando: el de Claude Desktop (chrome-native-host.exe) o el de Claude Code (chrome-native-host.bat
+# -> claude.exe). Medido el 2026-10-21: «chrome-native-host.exe chrome-extension://fcoe.../
+# --parent-window=0», hijo de un cmd.exe hijo de chrome.exe. El chat no se lee: sólo que está.
+ORIGEN = f"chrome-extension://{EXTENSION_ID}/"
+_HOSTS = {"chrome-native-host.exe": "desktop", "claude.exe": "code"}
+_TTL_CONEXION = 15.0
+_cache_conexion: tuple[float, list[dict]] | None = None
+
+
+def _pids() -> list[int]:
+    arr = (ctypes.c_ulong * 8192)()
+    needed = ctypes.c_ulong()
+    if not ctypes.windll.psapi.EnumProcesses(ctypes.byref(arr), ctypes.sizeof(arr), ctypes.byref(needed)):
+        return []
+    return [arr[i] for i in range(needed.value // ctypes.sizeof(ctypes.c_ulong)) if arr[i]]
+
+
+def conexiones() -> list[dict]:
+    """`[{pid, host, desde}]` de los hosts nativos vivos de la extensión: `host` es "desktop" o
+    "code" y `desde` la hora de creación en ISO UTC. [] fuera de Windows o si no se puede leer.
+    La línea de comando se lee sólo de los procesos con nombre de host (no de los ~400)."""
+    if sys.platform != "win32":
+        return []
+    salida = []
+    for pid in _pids():
+        host = _HOSTS.get(os.path.basename(procinfo.image_path(pid) or "").lower())
+        if not host or ORIGEN not in (procinfo.command_line(pid) or ""):
+            continue
+        ft = procs.creation_filetime(pid)
+        desde = (
+            datetime.fromtimestamp((ft - 116444736000000000) / 1e7, UTC).isoformat(timespec="seconds")
+            if ft
+            else None
+        )
+        salida.append({"pid": pid, "host": host, "desde": desde})
+    return sorted(salida, key=lambda c: c["desde"] or "")
+
+
+def conexiones_cacheadas() -> list[dict]:
+    global _cache_conexion
+    ahora = time.monotonic()
+    if _cache_conexion is None or ahora - _cache_conexion[0] > _TTL_CONEXION:
+        try:
+            _cache_conexion = (ahora, conexiones())
+        except OSError:  # la salud nunca se cae por esto
+            _cache_conexion = (ahora, [])
+    return _cache_conexion[1]

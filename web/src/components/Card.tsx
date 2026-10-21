@@ -7,6 +7,7 @@ import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
 import { canWrite, displayRepo, displayTitle, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { CardNeeds } from "./CardNeeds";
+import { ChromeLogo } from "./ChromeCard";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
 import "../card.css";
@@ -953,12 +954,6 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
 /** Subíndice del badge: la sesión nació con `--chrome` y maneja el Chrome real por la extensión. */
 function ChromeSub() {
   return <sub className="badge-chrome" title="Con Chrome (--chrome)" role="img" aria-label="con Chrome">
-    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-      <path d="M8 8L1.07 4A8 8 0 0 1 14.93 4Z" fill="#db4437" />
-      <path d="M8 8L14.93 4A8 8 0 0 1 8 16Z" fill="#f4b400" />
-      <path d="M8 8L8 16A8 8 0 0 1 1.07 4Z" fill="#0f9d58" />
-      <circle cx="8" cy="8" r="3.7" fill="#fff" />
-      <circle cx="8" cy="8" r="2.8" fill="#4285f4" />
-    </svg>
+    <ChromeLogo size={11} />
   </sub>;
 }

@@ -4,6 +4,7 @@ import { Arrows } from "./Arrows";
 import { Launch } from "./Launch";
 import { AgentImprovements } from "./AgentImprovements";
 import { Card, freeGroups, PICK_MS } from "./Card";
+import { ChromeCard, chromeConexiones } from "./ChromeCard";
 import { pcOf } from "./PcStrip";
 import { passesProjects } from "./ProjectStrip";
 import type { Link, Peer, Pending, Rule, Session, State } from "../types";
@@ -336,6 +337,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   const peerDownOf = (s: Session) => peerDownIn(s, peersById, localPcId);
   // el color de su PC, solo con mas de una emparejada: con una sola (o ninguna) pintar de "su color"
   // no dice nada que la tarjeta no dijera ya
+  // con un filtro de repos o «sólo coordinadoras» la extensión no entra: no es de ningún repo
+  const chromes = useMemo(
+    () => (selectedRepos.size > 0 || coordOnly ? [] : chromeConexiones(peers, pcFilter)),
+    [peers, pcFilter, selectedRepos, coordOnly],
+  );
   const pcColorOf = (s: Session): string | undefined => (peers.length > 1 ? peersById.get(pcOf(s, localPcId) ?? "")?.color : undefined);
   // el arrastre vive en el ref (los listeners de document lo leen al instante, sin esperar el
   // render) y se copia al estado para dibujar la linea
@@ -951,8 +957,14 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                     <span>{label}</span>
                     <span className="n">{list.length}</span>
                   </h2>
-                  {list.length === 0 && !sinTarjetas && <div className="empty">nada acá</div>}
+                  {list.length === 0 && (k !== "trabajo" || chromes.length === 0) && !sinTarjetas && <div className="empty">nada acá</div>}
                   <div className="cards">
+                  {/* la extensión Claude in Chrome conectada: presencia, sin panel ni acciones */}
+                  {k === "trabajo" && chromes.map((c) => (
+                    <div key={`chrome-${c.peer.pc_id}-${c.pid}`}>
+                      <ChromeCard c={c} pcColor={peers.length > 1 ? c.peer.color : undefined} />
+                    </div>
+                  ))}
                   {/* columna ancha: subcolumnas por CSS (grilla de var(--lanes) en .col.wide .cards),
                       no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
                       y perderia su estado (pedido expandido, input de renombrar, toast) */}

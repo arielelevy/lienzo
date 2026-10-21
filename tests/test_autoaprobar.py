@@ -194,15 +194,17 @@ def test_opcion_de_permiso_reconoce_los_dialogos_de_permiso_y_nada_mas():
 def test_antigravity_permiso_observado_elige_solo_ejecucion_actual(monkeypatch):
     import screen
 
-    dialog = screen.dialog([
-        "────────────────────────────────────────────────────────",
-        "Requesting permission for:",
-        "Get-ChildItem -Path . Run this command?",
-        "❯ 1. Yes, run command",
-        "  2. Yes, and always allow in this conversation for commands that start with 'Get-ChildItem -Path .'",
-        "  3. Yes, and always allow for commands that start with 'Get-ChildItem -Path .' (Persist to settings.json)",
-        "  4. No, cancel",
-    ])
+    dialog = screen.dialog(
+        [
+            "────────────────────────────────────────────────────────",
+            "Requesting permission for:",
+            "Get-ChildItem -Path . Run this command?",
+            "❯ 1. Yes, run command",
+            "  2. Yes, and always allow in this conversation for commands that start with 'Get-ChildItem -Path .'",
+            "  3. Yes, and always allow for commands that start with 'Get-ChildItem -Path .' (Persist to settings.json)",
+            "  4. No, cancel",
+        ]
+    )
     assert dialog and dialog["question"] == "Requesting permission for:"
     hechos = _armar_dialogo(monkeypatch, dialog, agent="antigravity")
     au.ronda(ahora=100)
@@ -210,13 +212,63 @@ def test_antigravity_permiso_observado_elige_solo_ejecucion_actual(monkeypatch):
     assert st.sessions["d1"].get(au.OMITIDO) is None
 
 
-@pytest.mark.parametrize("question,options", [
-    ("Which library?", ["Yes, run command", "No, cancel"]),
-    ("Do you trust the files in this folder?", ["Yes, run command", "No, cancel"]),
-    ("Requesting permission for:", ["Yes, and always allow", "No, cancel"]),
-    ("Requesting permission for:", ["Yes, run command", "Other"]),
-    ("Requesting permission for:", ["Yes, run command and always allow", "No, cancel"]),
-])
+def test_antigravity_permiso_con_opciones_partidas_en_dos_renglones(monkeypatch):
+    # pantalla real del 2026-10-21: el prefijo citado en las opciones 2 y 3 trae un salto de linea
+    import screen
+
+    dialog = screen.dialog(
+        [
+            "Requesting permission for:",
+            '   python -c "',
+            "   with open('analisis/INVENTARIO-REPOS-HUALAI.md', 'r', encoding='utf-8') as f:",
+            "       text = f.read()",
+            "",
+            "   ⋯ (71 lines hidden)",
+            "",
+            "Run this command?",
+            "> 1. Yes, run command",
+            "  2. Yes, and always allow in this conversation for commands that start with 'python -c \"",
+            "with open('analisis/INVENTARIO-REPOS-HUALAI.md', 'r', encoding='utf-...'",
+            "  3. Yes, and always allow for commands that start with 'python -c \"",
+            "with open('analisis/INVENTARIO-REPOS-HUALAI.md', 'r', encoding='utf-...' (Persist to settings.json)",
+            "  4. No, cancel",
+            "",
+            "  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
+            "esc to cancel                                                       Gemini 3.8 Flash · high",
+        ]
+    )
+    assert dialog and [o["n"] for o in dialog["options"]] == [1, 2, 3, 4]
+    assert dialog["options"][2]["text"].endswith("(Persist to settings.json)")
+    assert dialog["options"][3]["text"] == "No, cancel"
+    hechos = _armar_dialogo(monkeypatch, dialog, agent="antigravity")
+    au.ronda(ahora=100)
+    assert hechos == [("d1", 1)]
+
+
+def test_antigravity_permiso_de_crear_archivo_sin_pregunta_visible():
+    dialog = _dialogo("15  +      end_idx = content.find('## Abierto')", ["Yes, allow creation", "No, deny creation"])
+    assert au.opcion_de_permiso(dialog, "antigravity") == 1
+    otro = _dialogo("Which one?", ["Yes, allow creation", "No, deny edit"])
+    assert au.opcion_de_permiso(otro, "antigravity") is None
+
+
+def test_dialogo_no_suma_texto_que_no_sigue_con_otra_opcion():
+    import screen
+
+    dialog = screen.dialog(["Switch model?", "❯ 1. Yes", "  2. No", "Esc to cancel"])
+    assert dialog and dialog["options"][1]["text"] == "No"
+
+
+@pytest.mark.parametrize(
+    "question,options",
+    [
+        ("Which library?", ["Yes, run command", "No, cancel"]),
+        ("Do you trust the files in this folder?", ["Yes, run command", "No, cancel"]),
+        ("Requesting permission for:", ["Yes, and always allow", "No, cancel"]),
+        ("Requesting permission for:", ["Yes, run command", "Other"]),
+        ("Requesting permission for:", ["Yes, run command and always allow", "No, cancel"]),
+    ],
+)
 def test_antigravity_no_aprueba_preguntas_ni_permisos_incompletos(question, options):
     assert au.opcion_de_permiso(_dialogo(question, options), "antigravity") is None
 
