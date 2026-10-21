@@ -239,6 +239,8 @@ details.fold > summary,
 /* Repo y rama pueden ceder ancho. El estado y las acciones pasan a otra linea si no entran:
    Antigravity agrega actividad sin confirmar y aviso a coordinadora, ademas de hora y botones. */
 .card .top > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .top .identity { display: inline-flex; align-items: center; gap: 8px; flex: 1 1 0; }
+.card .top .identity > span { min-width: 0; overflow: hidden; white-space: nowrap; }
 .card .top .badge, .card .top .right { flex: 0 0 auto; overflow: visible; }
 /* El grupo de acciones tampoco puede superar la tarjeta ni forzar sus textos a una sola linea.
    Sin recorte: se conservan los botones, sus areas sensibles y el contorno de foco. */

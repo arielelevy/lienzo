@@ -68,6 +68,12 @@ conserva en `.temp/coordinacion/2026-10-21/root-paths/formato-despues.json`.
 Esta revisión es la foto previa al commit y a la global final. Los resultados finales se guardan
 fuera del árbol versionado y se publicarán con la release, para no cambiar la huella probada.
 
+La global de239b0f5 cerró6/7 casos aprobados:2939 backend/10 omitidas,153 memoria,16 controles
+E2E y138 UI aprobadas/1 fallida. La tarjeta crecía23,5px con «enviando…». Se preservó el FAIL,
+no se ejecutaron mutaciones y se corrigió el agrupamiento de repo/rama. La focal posterior
+pasó47 pruebas originales sin debilitar sus oráculos. [Revisión del ajuste](code-review-cabecera-envio.md).
+Debe repetirse la global del commit que incluya ese ajuste; este resultado no se fusiona con ella.
+
 Dependencias frontend: raíz ejecutó `npm audit --omit=dev --json` y `npm audit --json` desde
 web, ambos rc0 y0 vulnerabilidades declaradas. Inventario npm:348 dependencias totales.
 Es consulta de advisories, no prueba de ausencia de defectos desconocidos ni auditoría de las

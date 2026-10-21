@@ -563,14 +563,16 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     >
       <div className="top">
         <span className={`badge ${s.agent}`}>{s.agent}{s.chrome && <ChromeSub />}</span>
-        <span className="repo" title={displayRepo(s)}>
-          {displayRepo(s)}
-        </span>
-        {s.branch && (
-          <span className="branch" title={`rama ${s.branch}`}>
-            ⎇ {s.branch}
+        <span className="identity">
+          <span className="repo" title={displayRepo(s)}>
+            {displayRepo(s)}
           </span>
-        )}
+          {s.branch && (
+            <span className="branch" title={`rama ${s.branch}`}>
+              ⎇ {s.branch}
+            </span>
+          )}
+        </span>
         <span className="right">
           {/* estado como icono: corriendo y termino comparten la columna "Trabajo"; la huerfana va a
               "Muerta" con esta etiqueta, para distinguirla de un proceso muerto de verdad */}

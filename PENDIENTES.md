@@ -65,6 +65,8 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   privilegios de symlink Windows; incluye10/10 cierres WSL inmediatos y6 symlinks POSIX por
   UNC. Hashes de entrega iguales antes/después; falta la global del conjunto. El primer409
   WSL se conserva sin causa confirmada; no se ejecutó el receptor POSIX en Linux.
+  La global de239b0f5 dio6/7:2939 backend aprobadas/10 omitidas,138 UI aprobadas/1 fallida
+  por salto de altura al enviar. Ajuste posterior:47 UI focales aprobadas; requiere otra global.
 
 - [ ] Cerrar el contrato de turno de Antigravity con transiciones reales de pausa, cancelación,
   error, auto-continue, herramienta y finalización. Mantener bloqueados fin y `on_stop` hasta
