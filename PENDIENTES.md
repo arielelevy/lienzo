@@ -78,6 +78,12 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   Sigue sin atribuirse el fallo remoto: se observó además rechazo de foco de Windows.
   No hay copia real nueva ni despliegue remoto de este delta acreditado.
   [Revisión](review/2026-10-21/code-review-seleccion-descargas.md).
+  En0.6.3 se observó selección por nombre desde la otra PC; el clic directo
+  no quedó acreditado. Prueba posterior:6ACK y1rechazo de posición Windows,
+  un solo hover en vuelo; entrada bloqueada sin replay. Diagnóstico local nuevo
+  distingue lectura fallida y mismatch, añade coordenadas/límites sin modificar
+  restricciones:68pruebas aprobadas. Falta observarlo desplegado.
+  [Revisión del diagnóstico](review/2026-10-21/code-review-diagnostico-cursor.md).
 
 - [ ] Verificar en uso remoto la corrección de seguimiento del puntero del 21/10, publicada en 0.6.1:
   la UI mantiene hasta cuatro pedidos de hover en vuelo; el receptor reemplaza sólo la última
@@ -130,6 +136,11 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   nodos y vínculos viejos aunque entren cambios de una base que siguió creciendo. Diseñar
   actualización, procedencia e idempotencia sin importar bases reales por esta consolidación.
   Fuente: `.temp/coordinacion/2026-10-20/C-memoria/diseno-importador-legacy.md`.
+  Avance local21/10: lectura del origen en una transacción coherente; carreraWAL
+  reproducida y corregida,154 pruebas del caso memoria-focal aprobadas por runner.
+  No resuelve todavía la aplicación de actualizaciones con procedencia/CAS.
+  Inventario local sólo lectura:0basesviejasactivas y1registroimportado; remota sin contar.
+  [Revisión](review/2026-10-21/code-review-foto-importacion-legacy.md).
 - [ ] Ejecutar auditoría global y gate del runner sobre una foto conjunta estable de Chrome,
   Antigravity, memoria, cancelación y Prolog; después preparar release conjunta y activación
   coordinada. Reutiliza el pendiente transversal de circuito integrado y batería global.

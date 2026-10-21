@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.3**: control de flujo de entrada en Chrome de ventana completa.
+Versión **0.6.4**: foto SQLite consistente al importar y diagnóstico de posición del cursor.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.3.md).
+[Novedades, validación y límites](docs/releases/0.6.4.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
