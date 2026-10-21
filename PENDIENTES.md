@@ -13,7 +13,7 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 El 2026-10-21 Ariel autorizó publicar 0.6.0 con el fallo WSL conocido y continuar su
 diagnóstico después. No acredita PASS global ni cierra los pendientes. La focal posterior
 al arreglo de reanudación dio 50 aprobadas, 1 fallida y 6 omitidas: bloque 200/cierre 409
-y 37 bytes cero en el parcial. El cierre rechazado y el WinError 2 anterior siguen abiertos.
+y 38 bytes cero en el parcial. El cierre rechazado y el WinError 2 anterior siguen abiertos.
 
 Estos avances no cierran casillas ni acreditan aceptación, activación o PASS global.
 Las notas anteriores conservan su fecha; este corte actualiza sus límites para esta ronda.
@@ -54,6 +54,13 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   Evidencia: `.temp/coordinacion/2026-10-20/D-antigravity/azure/diseno-azure-aprendizaje.md`.
 
 ### Brechas actuales de integración y aceptación
+
+- [ ] Publicar y verificar en LAN la corrección de seguimiento del puntero del 21/10:
+  la UI mantiene hasta cuatro pedidos de hover en vuelo; el receptor reemplaza sólo la última
+  posición pendiente compatible, sin cruzar teclas, botones o generaciones. Regresiones:
+  57 backend y 39 UI sobre bundle de producción aprobadas, con rojo previo. El incidente
+  real de seguimiento todavía no está verificado como resuelto. No es PASS global.
+  [Revisión y límites](review/2026-10-21/code-review-puntero-remoto.md).
 
 - [ ] Diagnosticar el inicio intermitente de Git con `0xc0000142`. Windows registra siete
   avisos entre el 19 y el 21 de octubre: seis de `git-remote-https.exe` y uno de `git.exe`.

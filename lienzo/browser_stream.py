@@ -137,6 +137,51 @@ def _free() -> None:
         _sessions -= 1
 
 
+def _hover_input(data):
+    if data.get("t") != "input" or not data.get("events"):
+        return False
+    for event in data["events"]:
+        if not isinstance(event, dict) or (
+            event.get("kind"),
+            event.get("type"),
+            event.get("button"),
+            event.get("buttons"),
+            event.get("clickCount"),
+        ) != ("mouse", "mouseMoved", "none", 0, 0):
+            return False
+        for name, maximum in (("x", 3840), ("y", 2160), ("modifiers", 15), ("buttons", 0), ("clickCount", 0)):
+            if type(event.get(name)) is not int or not 0 <= event[name] <= maximum:
+                return False
+    return True
+
+
+class _InputQueue(queue.Queue):
+    """Sólo reemplaza hover consecutivo aún no despachado; el resto conserva FIFO."""
+
+    def put_latest(self, data):
+        with self.not_full:
+            previous = self.queue[-1] if self.queue else None
+            if (
+                previous
+                and _hover_input(data)
+                and _hover_input(previous)
+                and (
+                    data["generation"] == previous["generation"]
+                    and data["n"] > previous["n"]
+                    and data.get("basis") == previous.get("basis")
+                    and len({e["modifiers"] for e in data["events"] + previous["events"]}) == 1
+                )
+            ):
+                self.queue[-1] = data
+                return previous
+            if self.maxsize > 0 and self._qsize() >= self.maxsize:
+                raise queue.Full
+            self._put(data)
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
+        return None
+
+
 class TabWorker:
     """Una suscripción al HOST existente. Captura, metadata e input no comparten espera CDP."""
 
@@ -152,7 +197,7 @@ class TabWorker:
         self.width, self.height = 1280, 800
         self.seq = 0
         self.awaiting = None
-        self.commands = queue.Queue(maxsize=64)
+        self.commands = _InputQueue(maxsize=64)
         self.last_image = None
         self.capture_error = False
         self.dialog_wait = False
@@ -207,7 +252,16 @@ class TabWorker:
             ):
                 raise ValueError("Entrada inválida")
             try:
-                self.commands.put_nowait(data)
+                previous = self.commands.put_latest(data)
+                if previous is not None:
+                    self.json(
+                        {
+                            "t": "input",
+                            "n": previous["n"],
+                            "generation": previous["generation"],
+                            "outcome": "superseded",
+                        }
+                    )
             except queue.Full:
                 self.json(
                     {

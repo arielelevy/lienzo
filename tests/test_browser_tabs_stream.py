@@ -113,6 +113,132 @@ def test_tab_key_separates_transport_modes():
     assert module.channel_key(bytes(32), "a" * 32) != module.channel_key(bytes(32), "a" * 32, "tabs")
 
 
+def test_hover_burst_replaces_waiting_positions_and_preserves_key(tab_worker, monkeypatch):
+    worker, capture_gate, _, _, _, calls, output = tab_worker
+    entered, release = threading.Event(), threading.Event()
+    original = browser_remote.HOST.request
+
+    def delayed(data):
+        if data["action"] == "input" and data["events"][0].get("x") == 1:
+            entered.set()
+            assert release.wait(3), "la prueba no liberó el primer movimiento"
+        return original(data)
+
+    monkeypatch.setattr(browser_remote.HOST, "request", delayed)
+    send(worker, t="open", tab="a", generation=1, width=800, height=600)
+    wait_message(output, lambda m: m.get("t") == "opened")
+
+    def move(n):
+        send(
+            worker,
+            t="input",
+            n=n,
+            generation=1,
+            basis={"width": 800, "height": 600},
+            events=[
+                {
+                    "kind": "mouse",
+                    "type": "mouseMoved",
+                    "x": n,
+                    "y": 10,
+                    "button": "none",
+                    "buttons": 0,
+                    "modifiers": 0,
+                    "clickCount": 0,
+                }
+            ],
+        )
+
+    try:
+        move(1)
+        assert entered.wait(1)
+        for n in range(2, 81):
+            move(n)
+        send(worker, t="input", n=81, generation=1, events=[{"kind": "text", "text": "fin"}])
+    finally:
+        release.set()
+        capture_gate.set()
+    result = wait_message(output, lambda m: m.get("n") == 81)
+    assert result["t"] == "input", result
+    inputs = [call for call in calls if call["action"] == "input"]
+    assert [call["events"][0].get("x") for call in inputs] == [1, 80, None]
+    results = [
+        json.loads(payload) for kind, payload in output if kind == ws.TEXT and json.loads(payload).get("t") == "input"
+    ]
+    assert {m["n"] for m in results} == set(range(1, 82))
+    assert {m["n"] for m in results if m.get("outcome") == "superseded"} == set(range(2, 80))
+
+
+@pytest.mark.parametrize(
+    "barrier", ["key", "release", "open", "size", "wheel", "drag", "modifier", "basis", "generation"]
+)
+def test_hover_replacement_does_not_cross_input_boundaries(barrier):
+    def move(n):
+        return {
+            "t": "input",
+            "n": n,
+            "generation": 1,
+            "basis": {"width": 800, "height": 600},
+            "events": [
+                {
+                    "kind": "mouse",
+                    "type": "mouseMoved",
+                    "button": "none",
+                    "buttons": 0,
+                    "clickCount": 0,
+                    "modifiers": 0,
+                    "x": n,
+                    "y": 1,
+                }
+            ],
+        }
+
+    middle = move(2)
+    if barrier in ("release", "open", "size"):
+        middle["t"] = {"release": "release-input", "open": "open", "size": "size"}[barrier]
+    elif barrier == "key":
+        middle["events"] = [{"kind": "key", "type": "keyUp", "key": "Shift", "code": "ShiftLeft"}]
+    elif barrier == "wheel":
+        middle["events"][0].update(type="mouseWheel", deltaY=20)
+    elif barrier == "drag":
+        middle["events"][0]["buttons"] = 1
+    elif barrier == "modifier":
+        middle["events"][0]["modifiers"] = 2
+    elif barrier == "basis":
+        middle["basis"]["width"] = 900
+    else:
+        middle["generation"] = 2
+    commands = module._InputQueue(maxsize=4)
+    for item in (move(1), middle, move(3)):
+        assert commands.put_latest(item) is None
+    assert commands.put_latest(move(4))["n"] == 3
+    assert [commands.get_nowait()["n"] for _ in range(3)] == [1, 2, 4]
+
+
+def test_stale_hover_does_not_replace_a_newer_position():
+    commands = module._InputQueue(maxsize=4)
+    data = {
+        "t": "input",
+        "n": 9,
+        "generation": 1,
+        "events": [
+            {
+                "kind": "mouse",
+                "type": "mouseMoved",
+                "button": "none",
+                "buttons": 0,
+                "clickCount": 0,
+                "modifiers": 0,
+                "x": 9,
+                "y": 1,
+            }
+        ],
+    }
+    commands.put_latest(data)
+    assert commands.put_latest({**data, "n": 8}) is None
+    assert commands.get_nowait()["n"] == 9
+
+
 def test_relay_tab_mode_is_in_signed_path_and_old_peer_rejected(monkeypatch):
     from types import SimpleNamespace
 

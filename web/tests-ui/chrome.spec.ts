@@ -225,6 +225,46 @@ async function holdFirstDecode(page: Page, at = 1) {
   }, at);
 }
 
+test('tabs stream hover avanza sin esperar cada ACK y conserva la última posición', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  f.control.input = 'hold';
+  const box = (await screen.boundingBox())!;
+  const events = () => f.channels[0].commands.filter(d => d.t === 'input');
+  for (let i = 0; i < 12; i++) {
+    await page.mouse.move(box.x + box.width / 2 + i, box.y + box.height / 2);
+    await page.waitForTimeout(20);
+  }
+  await expect.poll(() => events().length).toBeGreaterThan(1);
+  expect(events().length).toBeLessThanOrEqual(4);
+  const before = [...events()];
+  f.control.input = 'ack';
+  for (const [i, d] of before.entries()) f.channels[0].send(JSON.stringify({t: 'input', n: d.n, generation: d.generation, ...(i === 1 ? {outcome: 'superseded'} : {})}));
+  await expect.poll(() => events().length).toBeGreaterThan(before.length);
+  const last = events().at(-1)!;
+  const moves = last.events as Record<string, unknown>[];
+  const scale = Math.min(box.width / 320, box.height / 240);
+  expect(moves.at(-1)!.x).toBe(Math.round(160 + 11 / scale));
+  expect(moves.at(-1)!.buttons).toBe(0);
+  await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+});
+
+test('tabs stream no acepta confirmar una tecla como movimiento reemplazado', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  f.control.input = 'hold';
+  await screen.focus(); await screen.press('a');
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
+  const sent = f.channels[0].commands.filter(d => d.t === 'input');
+  const d = sent[0];
+  f.channels[0].send(JSON.stringify({t: 'input', n: d.n, generation: d.generation, outcome: 'superseded'}));
+  await expect(screen).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByRole('alert').filter({hasText: 'Confirmación de reemplazo inválida'})).toBeVisible();
+  expect(f.channels[0].commands.filter(d => d.t === 'input')).toHaveLength(sent.length);
+});
+
 test('tabs stream negocia JPEG, acusa después de dibujar y manda teclado sin HTTP frame/input', async ({page}) => {
   const f = await streamFixture(page);
   const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});

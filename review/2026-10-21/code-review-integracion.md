@@ -107,7 +107,7 @@ Se revisó el delta y sus regresiones; falta focal completa y validación global
 La carrera corregida no explica ni cierra retrospectivamente el WinError 2 de WSL.
 La focal de esta foto terminó rc1: 50 aprobadas, 1 fallida, 6 omitidas en 299,76 s.
 Espejo y las tres regresiones de estado pasaron. WSL produjo bloque 200 y cierre 409 en
-`inocuo-0.bin`: faltaba el bloque 0 y la lectura posterior conservó 37 bytes cero,
+`inocuo-0.bin`: faltaba el bloque 0 y la lectura posterior conservó 38 bytes cero,
 distintos de los esperados. Los otros nueve cierres dieron 200 y bytes correctos.
 No hubo OSError capturada: es evidencia de pérdida de contenido, no del WinError 2 anterior.
 Se preservaron respuestas y bytes completos en `.temp/resultados/E-wsl-frio/` y se abrió

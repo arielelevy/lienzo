@@ -369,7 +369,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
     let basis: {width: number; height: number} | null = null;
     type Image = {generation: number; seq: number; width: number; height: number; jpeg: ArrayBuffer; channel: WebSocket};
     let latest: Image | null = null;
-    const pending = new Map<number, {generation: number; resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>}>();
+    const pending = new Map<number, {generation: number; hover: boolean; resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>}>();
     const uint = (v: unknown): v is number => Number.isInteger(v) && Number(v) > 0 && Number(v) <= 0xffffffff;
     const inputFailure = (message: string) => { if (!disposed) { setInputError(message); setBlocked(true); } };
     const uncertain = () => {
@@ -391,7 +391,8 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
           pending.delete(n); const e = new Error('Entrada sin confirmación. No se reenvió; revisá la página antes de continuar.');
           inputFailure(e.message); reject(e);
         }, 10000);
-        pending.set(n, {generation: gen, resolve, reject, timer});
+        const hover = kind === 'input' && !!events?.length && events.every(e => e.kind === 'mouse' && e.type === 'mouseMoved' && e.buttons === 0 && e.button === 'none');
+        pending.set(n, {generation: gen, hover, resolve, reject, timer});
         try { channel.send(message); }
         catch (e) { clearTimeout(timer); pending.delete(n); inputFailure('No se confirmó la entrada; no se reenvió.'); reject(e); }
       });
@@ -476,6 +477,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
             if (!Number.isSafeInteger(m.n) || m.n < 1 || !uint(m.generation)) { uncertain(); throw new Error('Resultado de entrada inválido'); }
             const p = pending.get(m.n);
             if (!p || p.generation !== m.generation) return; // nunca confirma otro input; incluye release de generación anterior
+            if (m.t === 'input' && m.outcome !== undefined && (m.outcome !== 'superseded' || !p.hover)) { uncertain(); throw new Error('Confirmación de reemplazo inválida'); }
             if (m.t === 'error' && (typeof m.message !== 'string' || !['rejected', 'uncertain'].includes(m.outcome))) { uncertain(); throw new Error('Resultado de entrada inválido'); }
             clearTimeout(p.timer); pending.delete(m.n);
             if (m.t === 'input') p.resolve();
@@ -812,7 +814,8 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
     // control de flujo: movimientos y ruedas esperan el ACK del anterior y mientras tanto se suman;
     // teclas y clics salen enseguida (con una remota lenta, uno por cuadro agotaba las 32 pendientes)
     const coalescible = pending.current.every(e => e.type === "mouseMoved" || e.type === "mouseWheel");
-    if (inFlight.current && (!direct || coalescible)) return;
+    const hover = pending.current.every(e => e.kind === 'mouse' && e.type === 'mouseMoved' && e.buttons === 0 && e.button === 'none');
+    if (inFlight.current && (!direct || (coalescible && (!hover || inFlight.current >= 4)))) return;
     const batch = pending.current.splice(0, 64);
     inFlight.current++; sending.current = true;
     void sender.current(batch).catch(e => { pending.current = []; errorHandler.current(e); }).finally(() => {
