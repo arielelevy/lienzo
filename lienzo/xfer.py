@@ -1145,6 +1145,7 @@ class Trabajo:
         if self._hilo is not None and self._hilo.is_alive():
             return
         self._pausa.clear()
+        self.estado = "listando"  # publicar actividad antes de devolver control al que retoma
         self._hilo = threading.Thread(target=self._correr, name=f"xfer-{self.id}", daemon=True)
         self._hilo.start()
 

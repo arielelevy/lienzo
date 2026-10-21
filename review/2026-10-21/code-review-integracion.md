@@ -6,7 +6,7 @@ correcciones con sus pruebas y no convierte el inventario de archivos en certifi
 
 | Hallazgo | Evidencia de corrección | Pendiente |
 |---|---|---|
-| B01, auxiliares fuera de raíz | Rojo con hardlinks y junction reales; final47 aprobadas/6 omitidas, incluyendo10 cierres inmediatos WSL y6 symlinks POSIX por UNC | Global final; rama del receptor POSIX no ejecutada en Linux |
+| B01, auxiliares fuera de raíz | Rojo con hardlinks y junction reales; focal47 aprobadas/6 omitidas, incluyendo10 cierres inmediatos WSL y6 symlinks POSIX por UNC | Global ded319d6b detectó WinError2 en primer bloque WSL; compatibilidad inestable; receptor POSIX no ejecutado en Linux |
 | B02, rehabilitación de ciclos | API prepara candidato, consulta fuera del lock y revalida; arranque comprueba origen/topología o conserva apagada con motivo | Global final; sin probar peers reales |
 | B03, caché que certifica bytes viejos | Rojo con caché caliente y tamaño/mtime conservados; hashes frescos y contador que exige una sola lectura, con y sin alteración | Global final; releer destinos tiene costo deliberado |
 | B04, réplica revive retirada posterior | Fila e historial comparten fecha causal; retirada automática reutiliza transacción | Global final; no reparación retroactiva acreditada |
@@ -73,6 +73,51 @@ E2E y138 UI aprobadas/1 fallida. La tarjeta crecía23,5px con «enviando…». S
 no se ejecutaron mutaciones y se corrigió el agrupamiento de repo/rama. La focal posterior
 pasó47 pruebas originales sin debilitar sus oráculos. [Revisión del ajuste](code-review-cabecera-envio.md).
 Debe repetirse la global del commit que incluya ese ajuste; este resultado no se fusiona con ella.
+
+La global ded319d6b corrigió la regresión visual:139 UI aprobadas. Cerró6/7 casos, con backend
+2938 aprobadas/1 fallida/10 omitidas: el primer bloque del primer archivo de la tanda WSL recibió
+500/FileNotFoundError WinError2. El log no preserva la API nativa causante; no se atribuye una
+causa retrospectiva. La huella se mantuvo85d504549833223e y la configuración no cambió.
+Se detuvo la mutación por guardia. E continúa diagnóstico de primera operación en carpetas nuevas,
+sin calentamiento, relajación de guardias, nuevos permisos ni reintentos hasta obtener verde.
+La publicación sigue pendiente de corregir el fallo funcional y validar otra foto estable.
+
+Diagnóstico posterior: 20 carpetas WSL nuevas dieron bloque 200/cierre 200 y bytes correctos;
+no reprodujeron el fallo original. El delta de tests conserva la excepción original y la
+respuesta 500, agrega traceback antes de atender_peer y persiste los diez resultados sólo
+después del cierre. No modifica xfer.py, guardias, apertura, retries ni oráculos. El caso
+inyectado acredita observabilidad, no una corrección del fallo de transferencia.
+La primera focal diagnóstica dio 46 aprobadas/2 fallidas/6 omitidas y atravesó suspensión:
+Kernel-Power 42 a 01:41:31 por batería y reanudación 09:39:20. Se conserva rc1; no se atribuyen
+los dos fallos a una causa interna sin medir. Se autorizó una focal nueva por esa interferencia,
+sin omitir ni reintentar operaciones. Un verde posterior no resolverá por sí solo la intermitencia.
+La focal nueva terminó rc1: 47 aprobadas, 1 fallida y 6 omitidas en 250,22 s. WSL pasó;
+el espejo siguió copiando al vencer su espera, sin errores registrados. Se abrió diagnóstico
+acotado de ese caso con stacks y progreso, manteniendo el plazo y el oráculo originales.
+No se inicia otra global ni se publica antes de contrastar esa evidencia.
+La reproducción única de espejo pasó en 45,36 s. Ambas esperas comenzaron en `listando`;
+la segunda duró 40,99 s y terminó con 302 archivos. No reproduce el fallo ni demuestra
+su causa. La lectura de `arrancar` detectó una carrera independiente: devolvía control
+antes de publicar un estado activo. Una barrera antes de `_fases` produjo dos rojos,
+con `pausado` y `confirmar_espejo` aún visibles. El cambio publica `listando` antes de
+iniciar el hilo, después de comprobar que no hay uno vivo y de limpiar pausa. Los tres
+controles pasaron: ambos estados anteriores y preservación de hilo vivo/pausa/error.
+No cambia plazos, prioridad, filesystem, transferencia ni manejo de errores de `_correr`.
+Se revisó el delta y sus regresiones; falta focal completa y validación global de esta foto.
+La carrera corregida no explica ni cierra retrospectivamente el WinError 2 de WSL.
+La focal de esta foto terminó rc1: 50 aprobadas, 1 fallida, 6 omitidas en 299,76 s.
+Espejo y las tres regresiones de estado pasaron. WSL produjo bloque 200 y cierre 409 en
+`inocuo-0.bin`: faltaba el bloque 0 y la lectura posterior conservó 37 bytes cero,
+distintos de los esperados. Los otros nueve cierres dieron 200 y bytes correctos.
+No hubo OSError capturada: es evidencia de pérdida de contenido, no del WinError 2 anterior.
+Se preservaron respuestas y bytes completos en `.temp/resultados/E-wsl-frio/` y se abrió
+observación acotada de las decisiones de existencia, preparación y truncado. No se repite
+la global ni se publica mientras este fallo funcional permanezca abierto.
+
+Decisión posterior de Ariel, 2026-10-21: «libera release y sigue con este bug después».
+Autoriza publicar con el fallo WSL conocido, revocando la espera de publicación anterior.
+Se conserva el FAIL y se documenta que no hay global ni mutación nueva del commit publicado.
+No se modifica la evidencia, no se acepta baseline y no se cierra el pendiente.
 
 Dependencias frontend: raíz ejecutó `npm audit --omit=dev --json` y `npm audit --json` desde
 web, ambos rc0 y0 vulnerabilidades declaradas. Inventario npm:348 dependencias totales.

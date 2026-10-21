@@ -19,6 +19,7 @@ import sys
 import threading
 import tempfile
 import time
+import traceback
 
 import pytest
 
@@ -411,6 +412,75 @@ def test_espejo_lista_antes_y_borra_solo_con_confirmacion(canal):
     assert t.estado == "terminado", t.errores
     assert not os.path.exists(os.path.join(canal["destino"], "viejo", "sobra.txt"))
     _igual(canal, datos)
+
+
+@pytest.mark.parametrize("previous", ["pausado", "confirmar_espejo"])
+def test_retomar_publica_estado_activo_antes_de_fases(canal, monkeypatch, previous):
+    t = xfer.Trabajo(
+        {
+            "id": "barrera-inicio",
+            "estado": previous,
+            "pc": "destino-pc",
+            "origen": str(canal["origen"]),
+            "destino": str(canal["destino"]),
+            "bs": MIB,
+            "hilos": 1,
+            "espejo": previous == "confirmar_espejo",
+            "errores": ["error anterior"],
+        }
+    )
+    t._pausa.set()
+    entered, release = threading.Event(), threading.Event()
+
+    def fases_con_barrera():
+        entered.set()
+        assert release.wait(30), "la prueba no liberó su hilo"
+        t.estado = "terminado"
+
+    monkeypatch.setattr(t, "_fases", fases_con_barrera)
+    xfer.TRABAJOS[t.id] = t
+    try:
+        code, response = xfer.retomar(t.id, confirmar=t.espejo)
+        assert code == 202 and response == {"id": t.id}
+        assert entered.wait(10), "el hilo no llegó a la barrera"
+        assert t.estado == "listando"
+        assert not t._pausa.is_set()
+        assert t.confirmado is t.espejo
+        assert t.errores == []
+    finally:
+        release.set()
+        if t._hilo is not None:
+            t._hilo.join(timeout=10)
+    assert t.estado == "terminado"
+
+
+def test_arrancar_no_duplica_hilo_vivo_ni_resetea_su_estado(canal, monkeypatch):
+    t = xfer.Trabajo({"id": "barrera-vivo", "estado": "pausado", "errores": ["conservar"]})
+    entered, release = threading.Event(), threading.Event()
+
+    def fases_con_barrera():
+        entered.set()
+        assert release.wait(30), "la prueba no liberó su hilo"
+        raise RuntimeError("fallo inocuo de fases")
+
+    monkeypatch.setattr(t, "_fases", fases_con_barrera)
+    xfer.TRABAJOS[t.id] = t
+    try:
+        t.arrancar()
+        assert entered.wait(10), "el hilo no llegó a la barrera"
+        original = t._hilo
+        t.estado = "copiando"
+        t.pausar()
+        t.arrancar()
+        assert t._hilo is original
+        assert t.estado == "copiando" and t._pausa.is_set()
+        assert t.errores == ["conservar"]
+    finally:
+        release.set()
+        if t._hilo is not None:
+            t._hilo.join(timeout=10)
+    assert t.estado == "error"
+    assert any("fallo inocuo de fases" in error for error in t.errores)
 
 
 def test_sin_espejo_nunca_borra(canal):
@@ -838,8 +908,28 @@ def test_cache_caliente_lee_una_sola_vez_y_actualiza_hashes(canal, monkeypatch, 
     assert json.loads(row[0]) == [xfer.hash_bytes(expected)]
 
 
+def _registrar_error_wsl(func, errors):
+    """Captura el traceback antes de que atender_peer reduzca OSError a un mensaje."""
+
+    def wrapped(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except OSError as exc:
+            errors.append(
+                {
+                    "tipo": type(exc).__name__,
+                    "winerror": getattr(exc, "winerror", None),
+                    "ntstatus": getattr(exc, "ntstatus", None),
+                    "traceback": "".join(traceback.format_exception(exc)),
+                }
+            )
+            raise
+
+    return wrapped
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="UNC WSL desde Windows")
-def test_wsl_unc_diez_cierres_inmediatos(canal, monkeypatch, record_property):
+def test_wsl_unc_diez_cierres_inmediatos(canal, monkeypatch, record_property, tmp_path):
     base = "\\\\wsl.localhost\\Ubuntu\\tmp"
     try:
         own = tempfile.TemporaryDirectory(prefix="lienzo-E-xfer-diez-", dir=base)
@@ -848,12 +938,16 @@ def test_wsl_unc_diez_cierres_inmediatos(canal, monkeypatch, record_property):
     with own as folder:
         monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [folder]})
         monkeypatch.setattr(xfer, "soltar_cache", lambda path: None)
+        errors = []
+        monkeypatch.setattr(xfer, "r_bloque", _registrar_error_wsl(xfer.r_bloque, errors))
+        monkeypatch.setattr(xfer, "r_cerrar", _registrar_error_wsl(xfer.r_cerrar, errors))
         results = []
         for i in range(10):
             data = f"WSL inocuo numero {i}: cierre inmediato\n".encode()
             hashes = [xfer.hash_bytes(data)]
             name = f"inocuo-{i}.bin"
             body = {"destino": folder, "bs": MIB, "rel": name, "size": len(data)}
+            errors.clear()
             block_code, block_response = xfer.atender_peer(
                 ["bloque"], xfer._armar({**body, "i": 0, "hash": hashes[0]}, data)
             )
@@ -879,10 +973,35 @@ def test_wsl_unc_diez_cierres_inmediatos(canal, monkeypatch, record_property):
                     "bytes_esperados_hex": data.hex(),
                     "igual": actual == data,
                     "lectura_error": read_error,
+                    "excepciones_antes_de_respuesta": list(errors),
                 }
             )
+            # Sólo después del cierre: no calienta el primer bloque ni cambia su oráculo.
+            (tmp_path / "cierres-wsl.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
         record_property("cierres_wsl", json.dumps(results))
+        print("cierres_wsl=" + json.dumps(results))
         assert all(r["codigo"] == 200 and r["igual"] for r in results), results
+
+
+def test_diagnostico_wsl_preserva_excepcion_y_respuesta(monkeypatch):
+    errors = []
+    error = FileNotFoundError(2, "fallo inocuo inyectado")
+    error.winerror = 2
+    error.ntstatus = 0xC0000034
+
+    def causa_nativa_inyectada(raw):
+        raise error
+
+    wrapped = _registrar_error_wsl(causa_nativa_inyectada, errors)
+    with pytest.raises(FileNotFoundError) as raised:
+        wrapped(b"")
+    assert raised.value is error
+    monkeypatch.setattr(xfer, "r_bloque", wrapped)
+    code, response = xfer.atender_peer(["bloque"], b"")
+    assert code == 500 and response == {"error": f"FileNotFoundError: {error}"}
+    assert len(errors) == 2
+    assert all(e["winerror"] == 2 and e["ntstatus"] == 0xC0000034 for e in errors)
+    assert all("causa_nativa_inyectada" in e["traceback"] for e in errors)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="enlaces POSIX expuestos por UNC WSL")

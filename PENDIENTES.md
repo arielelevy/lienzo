@@ -10,6 +10,11 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 
 ### Estado de la ronda del 2026-10-20 (consolidado el 2026-10-21)
 
+El 2026-10-21 Ariel autorizó publicar 0.6.0 con el fallo WSL conocido y continuar su
+diagnóstico después. No acredita PASS global ni cierra los pendientes. La focal posterior
+al arreglo de reanudación dio 50 aprobadas, 1 fallida y 6 omitidas: bloque 200/cierre 409
+y 37 bytes cero en el parcial. El cierre rechazado y el WinError 2 anterior siguen abiertos.
+
 Estos avances no cierran casillas ni acreditan aceptación, activación o PASS global.
 Las notas anteriores conservan su fecha; este corte actualiza sus límites para esta ronda.
 
@@ -50,6 +55,14 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
 
 ### Brechas actuales de integración y aceptación
 
+- [ ] Diagnosticar el inicio intermitente de Git con `0xc0000142`. Windows registra siete
+  avisos entre el 19 y el 21 de octubre: seis de `git-remote-https.exe` y uno de `git.exe`.
+  El helper inicia en el control del 21/10 y su firma es válida. Lienzo consulta HTTPS cada
+  300 s; todavía no se acreditó el proceso padre del fallo ni la DLL causante. La RAM libre
+  medida fue de 90 a 669 MB, pero el compromiso estaba al 47%: no demuestra agotamiento.
+  Sólo el último aviso quedó a 21 s de despertar; la suspensión no explica todos los avisos.
+  Evidencia: `.temp/coordinacion/2026-10-21/git-popup-wake-correlation.json`.
+
 - [ ] Verificar y corregir los ocho hallazgos de la [auditoría Codex total](review/2026-10-21/code-review-codex-total.md)
   antes de cerrar la release: B01 auxiliares de transferencia fuera de raíz; B02 rehabilitación
   de bucles; B03 hashes obsoletos con caché caliente; B04 réplica que reactiva retiradas nuevas;
@@ -67,6 +80,9 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   WSL se conserva sin causa confirmada; no se ejecutó el receptor POSIX en Linux.
   La global de239b0f5 dio6/7:2939 backend aprobadas/10 omitidas,138 UI aprobadas/1 fallida
   por salto de altura al enviar. Ajuste posterior:47 UI focales aprobadas; requiere otra global.
+  La global ded319d6b pasó139 UI y6/7 casos, pero falló el primer bloque de la tanda WSL
+  con500/FileNotFoundError WinError2:2938 backend aprobadas,1 fallida y10 omitidas. Los verdes
+  previos no acreditan compatibilidad estable. Publicación y mutación detenidas; diagnóstico E.
 
 - [ ] Cerrar el contrato de turno de Antigravity con transiciones reales de pausa, cancelación,
   error, auto-continue, herramienta y finalización. Mantener bloqueados fin y `on_stop` hasta
