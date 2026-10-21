@@ -15,7 +15,7 @@ type Reply = {
 };
 type Command = Record<string, unknown>;
 /** Lo que manda el worker por el canal vivo (browser_window.py --stream): texto JSON o un cuadro binario. */
-type StreamMessage = { t: string; n?: number; text?: string; message?: string; input?: boolean; cursor?: string; window?: string; windows?: {id: string; title: string}[] };
+type StreamMessage = { t: string; n?: number; capture_ms?: number; encode_ms?: number; text?: string; message?: string; input?: boolean; cursor?: string; window?: string; windows?: {id: string; title: string}[] };
 const FRAME_HEADER = 17; // >IHHHHHHB: seq, x, y, ancho, alto, ancho total, alto total, flags
 // Cuadro v2 (browser_window.frame_v2): despues de la cabecera, la copia del scroll (>hHHHHH: dy, x0,
 // x1, top, bottom, parches) y cada parche como >HHHHI (x, y, ancho, alto, largo) + PNG.
@@ -150,7 +150,7 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   const [inputError, setInputError] = useState('');
   const [inputBlocked, setInputBlocked] = useState(false);
   const [inputEpoch, setInputEpoch] = useState(0);
-  const [stats, setStats] = useState({input: 0, fps: 0, kbps: 0});
+  const [stats, setStats] = useState({input: 0, fps: 0, kbps: 0, remote: ''});
   const [notice, setNotice] = useState('');
   const [cursor, setCursor] = useState('default');
   const [busy, setBusy] = useState(false);
@@ -269,6 +269,8 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
             void writeClipboard(m.text).catch(e => { if (!cancelled) setInputError(`No se pudo copiar en esta PC: ${(e as Error).message}`); });
           }
           else if (m.t === 'opened') { attempts = 0; setNotice(''); }
+          // tiempos de la PC de allá (browser_window.Streamer._measure): dónde se va cada cuadro
+          else if (m.t === 'stats' && typeof m.capture_ms === 'number' && typeof m.encode_ms === 'number') setStats(s => ({...s, remote: `captura ${Math.round(m.capture_ms!)} ms · armado ${Math.round(m.encode_ms!)} ms`}));
           else if (m.t === 'cursor' && m.cursor && ['default', 'pointer', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'progress', 'help'].includes(m.cursor)) setCursor(m.cursor);
           else if (m.t === 'input') {
             const entry = awaiting.get(m.n ?? -1);
@@ -408,7 +410,7 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
     <label>Ventana <select aria-label="Ventana de Chrome" value={window} onChange={e=>{setWindow(e.target.value);setError('');}}>{windows.map(w=><option key={w.id} value={w.id}>{w.title}</option>)}</select></label>
     <button disabled={!peer.alive || busy} onClick={()=>void refresh().catch(report)}>Actualizar ventanas</button>
     <button aria-label="Pantalla completa" onClick={()=>{void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen()).catch(report);}}>⛶</button>
-    <small aria-label="Demora de Chrome remoto">Mouse {stats.input ? `${stats.input} ms` : '—'} · Imagen {stats.fps ? `${stats.fps} cuadros/s · ${stats.kbps} kB/s` : '—'}</small>
+    <small aria-label="Demora de Chrome remoto">Mouse {stats.input ? `${stats.input} ms` : '—'} · Imagen {stats.fps ? `${stats.fps} cuadros/s · ${stats.kbps} kB/s` : '—'}{stats.remote && ` · ${stats.remote}`}</small>
   </div>;
   return <>{toolbarSlot && createPortal(toolbar, toolbarSlot)}<div className="remote-viewport" ref={viewport}>
     {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1></div>

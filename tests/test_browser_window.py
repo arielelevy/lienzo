@@ -481,6 +481,25 @@ def test_streamer_uses_v2_only_when_the_viewer_asks():
     assert not module.FRAME_HEADER.unpack(second[: module.FRAME_HEADER.size])[-1] & module.FRAME_V2
 
 
+def test_streamer_v2_prefetches_the_next_capture_only_while_moving():
+    base = rgb(8, 4)
+    changed = paint(base, 8, 1, 1, 1, 1, (0, 0, 0))
+    streamer, out, windows, captures = make_streamer([base, changed, changed, changed, changed])
+    streamer.handle({"t": "open", "window": "7", "v": 2})
+    assert streamer.step()  # completo; arranca la captura siguiente
+    streamer._prefetch[1].result()
+    assert len(captures) == 2
+    streamer.handle({"t": "ack", "n": 1})
+    patch = streamer.step()  # usa la adelantada: no captura de nuevo en el momento
+    assert patch and len(captures) >= 2
+    streamer._prefetch[1].result()
+    streamer.handle({"t": "ack", "n": 2})
+    assert streamer.step() is None and streamer.idle == 1  # sin cambios: la adelantada de esta vuelta queda
+    streamer._prefetch[1].result()
+    assert streamer.step() is None and streamer.idle == 2
+    assert streamer._prefetch is None  # quieta: ya no adelanta
+
+
 class FakeWindows:
     def __init__(self):
         self.inputs = []

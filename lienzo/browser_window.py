@@ -7,6 +7,7 @@ Dos modos sobre el mismo codigo Win32:
 """
 
 import base64
+import concurrent.futures
 import ctypes as c
 import json
 import os
@@ -42,6 +43,7 @@ MIN_INTERVAL_S = 1 / 60
 IDLE_INTERVAL_S = 0.04  # sin cambios se mira 25 veces por segundo durante IDLE_FAST_STEPS lecturas...
 IDLE_SLOW_S = 0.15  # ...y despues 6 veces por segundo; la entrada del visor vuelve al ritmo rapido
 IDLE_FAST_STEPS = 50
+PREFETCH_MAX_AGE_S = 0.15  # una captura adelantada mas vieja (se espero un acuse) se descarta
 
 
 def fail(message):
@@ -823,6 +825,8 @@ class Streamer:
         self.idle = 0  # lecturas seguidas sin cambios
         self.last = None  # (hwnd, ancho, alto, rgb) del ultimo cuadro enviado
         self.v2 = False
+        self._prefetch = None  # (hwnd, futuro de la captura, cuando arranco)
+        self._executor = None
         self.stats = {"capture": [], "encode": [], "frames": 0, "bytes": 0, "since": clock()}
         self.closed = False
 
@@ -912,7 +916,10 @@ class Streamer:
             if refit and size:
                 # solo al abrir o cambiar de tamano: cuadro a cuadro pelearia con quien maximiza alla
                 self.windows.fit(hwnd, *size)
-            rgb, width, height = self.capture(hwnd)
+            rgb, width, height = self._grab(hwnd, refit)
+            if self.v2 and self.idle == 0:
+                # con movimiento, la proxima captura arranca ya, mientras este cuadro se arma y viaja
+                self._prefetch = (hwnd, self._pool().submit(self.capture, hwnd), self.clock())
             cursor = self.windows.cursor()
             if cursor != self.last_cursor:
                 self.json({"t": "cursor", "cursor": cursor})
@@ -953,6 +960,22 @@ class Streamer:
             self.seq + 1, box[0], box[1], box[2] - box[0], box[3] - box[1], width, height, FRAME_FULL if full else 0
         )
         return self._send_frame(hwnd, width, height, rgb, header + png(rgb, width, box), started)
+
+    def _pool(self):
+        if self._executor is None:
+            self._executor = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="captura")
+        return self._executor
+
+    def _grab(self, hwnd, refit):
+        """La captura adelantada si es de esta ventana y reciente; si no, una nueva. Medido el
+        2026-10-21 en ar-it33940: captura 50 ms y armado 27 ms en serie daban 12 cuadros/s.
+        PrintWindow y zlib sueltan el GIL, asi que las dos etapas se pisan."""
+        pending, self._prefetch = self._prefetch, None
+        if pending and pending[0] == hwnd and not refit:
+            result = pending[1].result()  # una falla de la captura sube como ValueError, igual que sin adelantar
+            if self.clock() - pending[2] <= PREFETCH_MAX_AGE_S:
+                return result
+        return self.capture(hwnd)
 
     def _measure(self, capture_s, encode_s, size):
         """Suma lo que tardo cada vuelta y cada segundo manda {"t": "stats"}: captura y armado del
@@ -1025,6 +1048,8 @@ class Streamer:
             with self.cv:
                 self.closed = True
                 self.cv.notify_all()
+            if self._executor is not None:
+                self._executor.shutdown(wait=False, cancel_futures=True)
             self.windows.release()
 
 
