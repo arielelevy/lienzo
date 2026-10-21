@@ -145,6 +145,7 @@ class Windows:
             (self.user, "SystemParametersInfoW", [w.UINT, w.UINT, c.c_void_p, w.UINT]),
             (self.user, "SetCursorPos", [c.c_int, c.c_int]),
             (self.user, "GetCursorPos", [c.POINTER(w.POINT)]),
+            (self.user, "GetClipCursor", [c.POINTER(w.RECT)]),
             (self.user, "MonitorFromWindow", [w.HWND, w.DWORD]),
             (self.user, "GetWindowThreadProcessId", [w.HWND, c.POINTER(w.DWORD)]),
             (self.gdi, "CreateCompatibleDC", [w.HDC]),
@@ -456,6 +457,25 @@ class Windows:
                 f"Windows no permitió activar Chrome; no se envió la entrada. Al frente está: {self.describe(foreground)}"
             )
 
+    def position_mouse(self, x, y):
+        if not self.user.SetCursorPos(x, y):
+            fail("Windows no permitió mover el mouse de Chrome; no se envió el clic")
+        actual = w.POINT()
+        if not self.user.GetCursorPos(c.byref(actual)):
+            fail("Windows no permitió comprobar la posición del mouse; no se envió el clic")
+        if (actual.x, actual.y) == (x, y):
+            return
+        area = w.RECT()
+        bounds = (
+            f"área permitida=({area.left},{area.top},{area.right},{area.bottom})"
+            if self.user.GetClipCursor(c.byref(area))
+            else "área permitida no disponible"
+        )
+        fail(
+            "El mouse no quedó en la posición pedida; no se envió el clic fuera de lugar. "
+            f"pedido=({x},{y}); observado=({actual.x},{actual.y}); {bounds}"
+        )
+
     def input(self, hwnd, events):
         if not isinstance(events, list) or len(events) > 64:
             fail("Demasiados eventos de entrada")
@@ -468,11 +488,7 @@ class Windows:
             if kind == "mouse":
                 x = bounded(event.get("x"), 0, rect.right - rect.left - 1)
                 y = bounded(event.get("y"), 0, rect.bottom - rect.top - 1)
-                if not self.user.SetCursorPos(rect.left + x, rect.top + y):
-                    fail("Windows no permitió mover el mouse de Chrome; no se envió el clic")
-                actual = w.POINT()
-                if not self.user.GetCursorPos(c.byref(actual)) or (actual.x, actual.y) != (rect.left + x, rect.top + y):
-                    fail("Windows limitó la posición del mouse; no se envió el clic fuera de lugar")
+                self.position_mouse(rect.left + x, rect.top + y)
                 flags = {
                     ("mousePressed", "left"): 2,
                     ("mouseReleased", "left"): 4,

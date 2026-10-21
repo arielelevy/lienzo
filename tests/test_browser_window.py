@@ -288,6 +288,49 @@ def test_mouse_injection_reports_windows_rejection():
         windows.send_mouse(2)
 
 
+@pytest.mark.parametrize("clip_ok", [True, False])
+def test_mouse_position_mismatch_reports_requested_observed_and_bounds_without_click(clip_ok):
+    windows = module.Windows.__new__(module.Windows)
+    windows.focus = lambda hwnd: None
+    windows.active = windows.chrome = lambda hwnd: True
+    windows.rect = lambda hwnd: SimpleNamespace(left=-100, top=10, right=100, bottom=110)
+    calls = []
+
+    def observed(point):
+        point._obj.x, point._obj.y = -90, 30
+        return True
+
+    def clip(area):
+        area._obj.left, area._obj.top, area._obj.right, area._obj.bottom = -90, 20, 100, 100
+        return clip_ok
+
+    windows.user = SimpleNamespace(
+        SetCursorPos=lambda x, y: calls.append((x, y)) or True,
+        GetCursorPos=observed,
+        GetClipCursor=clip,
+    )
+    windows.send_mouse = lambda flag: calls.append(flag)
+    with pytest.raises(ValueError) as raised:
+        windows.input(123, [{"kind": "mouse", "type": "mousePressed", "x": 5, "y": 6, "button": "left"}])
+    assert "pedido=(-95,16)" in str(raised.value)
+    assert "observado=(-90,30)" in str(raised.value)
+    assert ("área permitida=(-90,20,100,100)" if clip_ok else "área permitida no disponible") in str(raised.value)
+    assert calls == [(-95, 16)]  # un solo movimiento, ningún clic ni retry
+
+
+def test_mouse_position_read_failure_does_not_claim_cursor_was_clipped_or_click():
+    windows = module.Windows.__new__(module.Windows)
+    windows.focus = lambda hwnd: None
+    windows.active = windows.chrome = lambda hwnd: True
+    windows.rect = lambda hwnd: SimpleNamespace(left=0, top=0, right=100, bottom=100)
+    calls = []
+    windows.user = SimpleNamespace(SetCursorPos=lambda x, y: True, GetCursorPos=lambda point: False)
+    windows.send_mouse = lambda flag: calls.append(flag)
+    with pytest.raises(ValueError, match="no permitió comprobar la posición"):
+        windows.input(123, [{"kind": "mouse", "type": "mousePressed", "x": 5, "y": 6, "button": "left"}])
+    assert calls == []
+
+
 def test_control_a_restores_modifier_before_key_and_releases_it():
     windows = module.Windows.__new__(module.Windows)
     windows.focus = lambda hwnd: None
