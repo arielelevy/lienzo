@@ -64,6 +64,13 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
 
 ### Brechas actuales de integración y aceptación
 
+- [ ] Verificar el control de flujo nativo preparado para0.6.3 en uso remoto:
+  ACK real, un hover en vuelo y última posición pendiente, IDs crecientes,
+  bloqueo sin replay y liberación al blur/cambio. Cinco casos nuevos y44UI
+  de producción aprobados; revisión independiente sin bloqueantes nuevos.
+  No acredita resolución del puntero ni del clic físico del checkbox.
+  [Revisión](review/2026-10-21/code-review-flujo-ventana-nativa.md).
+
 - [ ] Verificar selección de descargas desde ar-it33940 al traer archivos de ariel.
   Ariel informa que no puede marcar el checkbox. Se midió un blanco de13×13px;
   cambio local: casilla24×24px y selección por nombre con label nativo.

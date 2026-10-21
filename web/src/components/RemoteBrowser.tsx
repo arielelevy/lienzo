@@ -117,6 +117,8 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   const [profile, setProfile] = useState('');
   const [error, setError] = useState('');
   const [inputError, setInputError] = useState('');
+  const [inputBlocked, setInputBlocked] = useState(false);
+  const [inputEpoch, setInputEpoch] = useState(0);
   const [stats, setStats] = useState({input: 0, fps: 0, kbps: 0});
   const [notice, setNotice] = useState('');
   const [cursor, setCursor] = useState('default');
@@ -178,6 +180,7 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   useEffect(() => { windowRef.current = window; }, [window]);
   const openWindow = useCallback((ws: WebSocket | null) => {
     if (ws?.readyState !== WebSocket.OPEN || !windowRef.current) return;
+    ws.send(JSON.stringify({t:'release'}));
     ws.send(JSON.stringify({t: 'open', window: windowRef.current, ...physicalSize(viewport.current?.getBoundingClientRect())}));
   }, []);
   // cambiar de ventana no abre otro canal ni otro worker: se le pide la nueva al mismo
@@ -189,6 +192,22 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
     let retry: ReturnType<typeof setTimeout>;
     let resize: ReturnType<typeof setTimeout>;
     const sentAt = new Map<number, number>();
+    const awaiting = new Map<number, {resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>}>();
+    let inputSequence = 0;
+    let blocked = false;
+    const rejectInputs = (error: Error) => {
+      for (const entry of awaiting.values()) { clearTimeout(entry.timer); entry.reject(error); }
+      awaiting.clear(); sentAt.clear();
+    };
+    const blockInputs = (error: Error) => {
+      blocked = true; setInputBlocked(true);
+      rejectInputs(error);
+      const ws = socket.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({t:'release'})); }
+        catch { ws.close(); } // el cierre también libera sólo las teclas/botones propios del worker
+      }
+    };
     let frames = 0, bytes = 0, since = performance.now();
     let drawing: Promise<void> = Promise.resolve();
     const connect = () => {
@@ -198,11 +217,12 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       let opened = false;
       ws.onopen = () => {
         opened = true;
+        blocked = false; setInputBlocked(false); setInputEpoch(value => value + 1);
         openWindow(ws);
         if (document.hidden) ws.send(JSON.stringify({t: 'pause'}));
       };
       ws.onmessage = event => {
-        if (cancelled) return;
+        if (cancelled || socket.current !== ws) return;
         if (typeof event.data === 'string') {
           let m: StreamMessage;
           try {
@@ -219,11 +239,20 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
           else if (m.t === 'opened') { attempts = 0; setNotice(''); }
           else if (m.t === 'cursor' && m.cursor && ['default', 'pointer', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'progress', 'help'].includes(m.cursor)) setCursor(m.cursor);
           else if (m.t === 'input') {
+            const entry = awaiting.get(m.n ?? -1);
+            if (!entry) return;
+            awaiting.delete(m.n!); clearTimeout(entry.timer); entry.resolve();
             const started = sentAt.get(m.n ?? -1);
             sentAt.delete(m.n ?? -1);
             if (started !== undefined) setStats(s => ({...s, input: Math.round(performance.now() - started)}));
           } else if (m.t === 'error') {
-            if (m.input) { setInputError(m.message ?? ''); return; }
+            if (m.input) {
+              setInputError(m.message ?? '');
+              if (awaiting.has(m.n ?? -1)) {
+                blockInputs(new Error(m.message ?? 'La entrada remota no se confirmó'));
+              }
+              return;
+            }
             if (m.message?.includes('ya no está disponible')) {
               // la ventana vista se cerró allá: se relee el catálogo y se abre la que quede
               void refresh().then(() => openWindow(socket.current)).catch(report);
@@ -266,6 +295,8 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       };
       ws.onclose = () => {
         if (cancelled || socket.current !== ws) return;
+        blocked = true; setInputBlocked(true);
+        rejectInputs(new Error('Se cerró el canal de entrada; no se reenvió'));
         socket.current = null;
         if (!opened && attempts === 0) { report(new Error('Esta PC no abrió el canal de Chrome remoto. Reiniciá Lienzo y volvé a probar.')); return; }
         if (++attempts > 5) { setNotice(''); report(new Error('Se perdió la conexión con Chrome remoto')); return; }
@@ -277,7 +308,10 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
     // una solapa oculta no hace capturar a la otra PC: se pausa y se retoma al volver
     const visibility = () => {
       const ws = socket.current;
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({t: document.hidden ? 'pause' : 'resume'}));
+      if (ws?.readyState === WebSocket.OPEN) {
+        if (document.hidden) ws.send(JSON.stringify({t:'release'}));
+        ws.send(JSON.stringify({t: document.hidden ? 'pause' : 'resume'}));
+      }
     };
     document.addEventListener('visibilitychange', visibility);
     const observer = new ResizeObserver(() => {
@@ -290,16 +324,28 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
     if (viewport.current) observer.observe(viewport.current);
     const send = (events: Command[]) => {
       const ws = socket.current;
-      if (ws?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Chrome remoto está reconectando'));
-      const n = sentAt.size ? Math.max(...sentAt.keys()) + 1 : 1;
-      sentAt.set(n, performance.now());
-      if (sentAt.size > 200) sentAt.delete(Math.min(...sentAt.keys()));
-      ws.send(JSON.stringify({t: 'input', n, events}));
-      return Promise.resolve();
+      if (blocked || ws?.readyState !== WebSocket.OPEN) return Promise.reject(new Error('Chrome remoto está reconectando'));
+      if (awaiting.size >= 128) {
+        const error = new Error('La conexión no sigue el ritmo de entrada; no se reenvió');
+        blockInputs(error);
+        return Promise.reject(error);
+      }
+      const n = ++inputSequence;
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          blockInputs(new Error('La entrada remota no se confirmó; no se reenvió'));
+        }, 10000);
+        awaiting.set(n, {resolve, reject, timer}); sentAt.set(n, performance.now());
+        try { ws.send(JSON.stringify({t: 'input', n, events})); }
+        catch (error) {
+          blockInputs(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
     };
     sender.current = send;
     return () => {
       cancelled = true;
+      rejectInputs(new Error('La vista se cerró; no se reenvió'));
       clearTimeout(retry); clearTimeout(resize);
       observer.disconnect();
       document.removeEventListener('visibilitychange', visibility);
@@ -326,14 +372,15 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
     {!peer.alive ? <div className="remote-empty"><h1>{peer.name} está desconectada</h1></div>
       : error ? <div className="remote-empty" role="alert"><h1>No se pudo mostrar Chrome</h1><p>{error}</p><button onClick={()=>void refresh().catch(report)}>Reconectar</button></div>
       : !window ? <div className="remote-empty"><h1>Chrome en {peer.name}</h1><p>{busy ? 'Abriendo tu perfil de Chrome…' : 'Buscando tu ventana de Chrome…'}</p></div>
-      : size ? <RemoteScreen key={window} native cursor={cursor} canvas={canvas} width={size.width} height={size.height}
+      : size ? <RemoteScreen key={window} native enabled={!inputBlocked} inputEpoch={inputEpoch} cursor={cursor} canvas={canvas} width={size.width} height={size.height}
+          onRelease={()=>{if(socket.current?.readyState===WebSocket.OPEN)socket.current.send(JSON.stringify({t:'release'}));}}
           send={events => { const r = sender.current?.(events) ?? Promise.reject(new Error('Chrome remoto está reconectando')); setInputError(''); return r; }}
           onError={e => { if (live.current) setInputError((e as Error).message); }} onAddress={()=>{}} onCopy={()=>{
             if (socket.current?.readyState !== WebSocket.OPEN) { setInputError('Chrome remoto está reconectando'); return; }
             setInputError(''); socket.current.send(JSON.stringify({t: 'copy'}));
           }} />
       : <div className="remote-empty">Cargando ventana de Chrome…</div>}
-    {inputError && <div className="remote-input-warning" role="alert">{inputError}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
+    {inputError && <div className="remote-input-warning" role="alert">{inputError}{inputBlocked && <button onClick={()=>socket.current?.close()}>Reconectar entrada sin reenviar</button>}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
     {notice && <div className="remote-capture-notice" role="status">{notice}</div>}
   </div><div className="remote-status">{peer.name} · Chrome real · Usás el mouse y teclado de esa PC. Cerrar esta vista deja Chrome abierto.</div></>;
 }
@@ -803,7 +850,7 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
   const errorHandler = useRef(onError);
   const touch = useRef<{id: number; x: number; y: number; lastX: number; lastY: number; scrolling: boolean} | null>(null);
   const pressedButton = useRef<number | null>(null);
-  useEffect(() => { if (stream) { pending.current = []; pressedButton.current = null; touch.current = null; } }, [stream, inputEpoch]);
+  useEffect(() => { if (stream || native) { pending.current = []; pressedButton.current = null; touch.current = null; } }, [stream, native, inputEpoch]);
   useEffect(() => { sender.current = send; }, [send]);
   useEffect(() => { errorHandler.current = onError; }, [onError]);
   const inFlight = useRef(0);
@@ -815,14 +862,14 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
     // teclas y clics salen enseguida (con una remota lenta, uno por cuadro agotaba las 32 pendientes)
     const coalescible = pending.current.every(e => e.type === "mouseMoved" || e.type === "mouseWheel");
     const hover = pending.current.every(e => e.kind === 'mouse' && e.type === 'mouseMoved' && e.buttons === 0 && e.button === 'none');
-    if (inFlight.current && (!direct || (coalescible && (!hover || inFlight.current >= 4)))) return;
+    if (inFlight.current && (!direct || (coalescible && (!hover || inFlight.current >= (native ? 1 : 4))))) return;
     const batch = pending.current.splice(0, 64);
     inFlight.current++; sending.current = true;
     void sender.current(batch).catch(e => { pending.current = []; errorHandler.current(e); }).finally(() => {
       inFlight.current--; sending.current = inFlight.current > 0;
       if (!inFlight.current && pending.current.length && live.current) flushAgain.current();
     });
-  }, [direct]);
+  }, [direct, native]);
   useEffect(() => { flushAgain.current = flush; }, [flush]);
   useEffect(() => {
     live.current = true;
@@ -880,7 +927,7 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
   };
   return <div ref={element} className={`remote-screen${native || stream ? ' remote-screen-native' : ''}`} tabIndex={enabled ? 0 : -1} aria-disabled={!enabled || undefined} role="application" aria-label="Página remota: mouse y teclado"
     style={native ? {cursor} : undefined}
-    onBlur={() => { if (stream) { pending.current = []; pressedButton.current = null; touch.current = null; onRelease?.(); } }}
+    onBlur={() => { if (stream || native) { pending.current = []; pressedButton.current = null; touch.current = null; onRelease?.(); } }}
     onKeyDown={e => key(e, "keyDown")} onKeyUp={e => key(e, "keyUp")}
     onPointerDown={e => {
       if (!enabled) return;
