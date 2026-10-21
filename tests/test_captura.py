@@ -528,6 +528,41 @@ def test_reimportar_una_base_vieja_que_no_se_renombro_no_duplica(monkeypatch):
     assert [c["motivo"] for c in k.cambios("p")][-1] == "tarde" and len(k.cambios("p")) == 4  # solo lo nuevo
 
 
+def test_importar_vieja_no_mezcla_filas_con_historial_de_otra_revision():
+    base_vieja("p")
+    path = os.path.join(k.raiz(), "p", "conocimiento.sqlite")
+    source = sqlite3.connect(path)
+    assert source.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    central = sqlite3.connect(":memory:")
+    central.executescript(k.ESQUEMA)
+
+    class ConcurrentSource:
+        def execute(self, *args):
+            return central.execute(*args)
+
+        def executemany(self, sql, rows):
+            result = central.executemany(sql, rows)
+            if sql.startswith("INSERT OR IGNORE INTO nodo "):
+                source.execute("UPDATE nodo SET texto = 'revision nueva' WHERE id = 't-p'")
+                source.execute(
+                    "INSERT INTO cambio (proyecto,nodo_id,accion,nuevo,autor,motivo,origen,fecha)"
+                    " VALUES ('p','t-p','datos',?,'c','concurrente','{}',?)",
+                    (json.dumps({"texto": "revision nueva"}), k.ahora()),
+                )
+                source.commit()
+            return result
+
+    try:
+        k._importar_una(ConcurrentSource(), "p", path, "pcA")
+        assert central.execute("SELECT texto FROM nodo WHERE id='t-p'").fetchone()[0] == "halving"
+        assert central.execute("SELECT COUNT(*) FROM cambio").fetchone()[0] == 3
+        assert central.execute("SELECT ultimo_seq FROM importada").fetchone()[0] == 3
+        assert source.execute("SELECT COUNT(*) FROM cambio").fetchone()[0] == 4
+    finally:
+        source.close()
+        central.close()
+
+
 def test_una_base_vieja_que_aparece_despues_se_importa_al_arrancar():
     k.registrar_proyecto("otro")  # la base del lienzo ya existe
     base_vieja("p")

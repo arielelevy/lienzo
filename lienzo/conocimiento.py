@@ -864,6 +864,7 @@ def _importar_una(con: sqlite3.Connection, pid: str, vieja: str, local: str) -> 
     ro = sqlite3.connect("file:" + vieja.replace("\\", "/") + "?mode=ro", uri=True, timeout=30)
     ignoradas = 0
     try:
+        ro.execute("BEGIN")  # esquema, filas e historial pertenecen a la misma foto del origen
         tablas = {r[0] for r in ro.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         previo = con.execute("SELECT ultimo_seq FROM importada WHERE ruta = ?", (vieja,)).fetchone()
         desde = previo[0] if previo else 0
