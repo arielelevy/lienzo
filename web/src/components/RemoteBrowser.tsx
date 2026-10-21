@@ -824,7 +824,8 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
     if (native && type !== 'mouseReleased' && (x < 0 || y < 0 || x >= shownWidth || y >= shownHeight)) return;
     enqueue({kind: "mouse", type, x: clamp(x * width / shownWidth, 0, native ? width-1 : width),
       y: clamp(y * height / shownHeight, 0, native ? height-1 : height),
-      button: type === "mouseMoved" ? "none" : ["left", "middle", "right"][options?.button ?? e.button],
+      // el arrastre táctil trae button -1: la rueda y el movimiento no llevan botón
+      button: type === "mouseMoved" || type === "mouseWheel" ? "none" : ["left", "middle", "right"][options?.button ?? e.button],
       buttons: e.buttons, modifiers: modifiers(e), clickCount: clamp(e.detail, type === 'mousePressed' || type === 'mouseReleased' ? 1 : 0, 3),
       ...(type === "mouseWheel" ? {deltaX: clamp(options?.deltaX ?? (e as React.WheelEvent).deltaX, -4000, 4000), deltaY: clamp(options?.deltaY ?? (e as React.WheelEvent).deltaY, -4000, 4000)} : {}),
     });

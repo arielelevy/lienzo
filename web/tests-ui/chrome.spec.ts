@@ -327,6 +327,42 @@ test('tabs stream reconecta sin mandar al canal nuevo un release de la generaci�
   await expect.poll(() => f.channels[1].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
 });
 
+test('tabs stream: el arrastre táctil manda rueda con un botón que el host acepta', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  const box = (await screen.boundingBox())!;
+  const x = Math.round(box.x + box.width / 2), y = Math.round(box.y + box.height / 2);
+  const touch = await page.context().newCDPSession(page);
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: [{x, y}]});
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x, y: y - 60}]});
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x, y: y - 120}]});
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
+  await touch.detach();
+  const events = () => f.channels[0].commands.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]);
+  await expect.poll(() => events().filter(e => e.type === 'mouseWheel').length).toBeGreaterThan(0);
+  // browser_host.mjs rechaza cualquier botón fuera de esta lista («Acción de mouse inválida»)
+  expect(events().filter(e => e.type === 'mouseWheel').map(e => e.button)).toEqual(events().filter(e => e.type === 'mouseWheel').map(() => 'none'));
+  expect(events().some(e => e.type === 'mousePressed')).toBeFalsy();
+});
+
+test('tabs stream activa la pestaña sólo al elegirla; tamaño y reconexión no la activan', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible();
+  const activations = () => f.http.filter(d => d.action === 'activate');
+  expect(activations()).toHaveLength(0);
+  const opens = f.channels[0].commands.filter(d => d.t === 'open').length;
+  await page.setViewportSize({width: 1200, height: 750});
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'open').length).toBeGreaterThan(opens);
+  f.channels[0].close();
+  await expect.poll(() => f.channels.length).toBe(2);
+  await expect.poll(() => f.channels[1].commands.filter(d => d.t === 'open').length).toBeGreaterThan(0);
+  expect(activations()).toHaveLength(0);
+  await page.getByRole('tab', {name: 'Pestaña B', exact: true}).click();
+  await expect.poll(() => activations().map(d => d.tab)).toEqual(['b']);
+});
+
 test('tabs stream muestra captura inválida sin ocultar el último cuadro ni degradar a HTTP', async ({page}) => {
   const f = await streamFixture(page);
   const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});

@@ -57,15 +57,35 @@ test('viewport inválido se rechaza sin activar ni adjuntar la pestaña', {timeo
   assert.deepEqual(trace().slice(start).map(x=>x.method), []);
 });
 
-test('viewport trae la pestaña al frente antes de adjuntarse; activate no se adjunta', {timeout:15000}, async t => {
+test('sólo activate trae la pestaña al frente, sin adjuntarse', {timeout:15000}, async t => {
   const {request, trace} = await worker(t, 'none');
-  let start = trace().length;
+  const start = trace().length;
   assert.equal((await request({action:'activate', tab:'fixture-tab', requestId:601})).ok, true);
   assert.deepEqual(trace().slice(start).map(x=>x.method), ['Target.getTargets', 'Target.activateTarget']);
-  start = trace().length;
-  assert.equal((await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:602})).width, 800);
+});
+
+test('viewport, captura y reaperturas nunca activan; el override va sólo si cambia el tamaño', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  const start = trace().length;
+  // dos visores, refresco de captura y reconexión: todos reabren con viewport
+  await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:611});
+  await request({action:'snapshot', tab:'fixture-tab', width:800, height:600, requestId:612});
+  await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:613});
+  await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:614});
   const methods = trace().slice(start).map(x=>x.method);
-  assert.ok(methods.indexOf('Target.activateTarget') < methods.indexOf('Target.attachToTarget'), methods.join(','));
+  assert.equal(methods.filter(m => m === 'Target.activateTarget').length, 0, methods.join(','));
+  assert.equal(methods.filter(m => m === 'Emulation.setDeviceMetricsOverride').length, 1, methods.join(','));
+  await request({action:'viewport', tab:'fixture-tab', width:900, height:600, requestId:615});
+  assert.equal(trace().slice(start).filter(x => x.method === 'Emulation.setDeviceMetricsOverride').length, 2);
+});
+
+test('captura vencida de una pestaña de fondo se informa con cómo traerla, sin activarla', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'Page.captureScreenshot');
+  await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:621});
+  const failed = await request({action:'snapshot', tab:'fixture-tab', width:800, height:600, requestId:622});
+  assert.equal(failed.status, 504);
+  assert.match(failed.error, /captureScreenshot.*elegila en la lista/);
+  assert.equal(trace().filter(x => x.method === 'Target.activateTarget').length, 0);
 });
 
 test('Page.enable vencido suelta la sesión y el próximo pedido adjunta de cero', {timeout:15000}, async t => {
@@ -148,7 +168,9 @@ for (const method of ['Target.getTargets', 'Target.attachToTarget', 'Page.enable
     const frame = {action:'frame', tab:'fixture-tab', width:800, height:600};
     const failed = await request(frame);
     assert.equal(failed.status, 504);
-    assert.equal(failed.error, `Chrome tardó demasiado en responder (${method})`);
+    // Page.enable vencido suele ser una pestaña de fondo: el mensaje agrega cómo traerla al frente
+    const hint = method === 'Page.enable' ? '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla' : '';
+    assert.equal(failed.error, `Chrome tardó demasiado en responder (${method})${hint}`);
     const stateAfter = await request({action:'state'});
     assert.equal(stateAfter.status, undefined);
     assert.equal(stateAfter.running, true);

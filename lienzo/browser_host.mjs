@@ -149,6 +149,7 @@ async function attachPage(id) {
       // sin pages.set: el próximo pedido adjunta de cero; la sesión fallida no queda colgada en Chrome
       root.sessions.delete(sessionId);
       void root.send('Target.detachFromTarget', {sessionId}).catch(d => process.stderr.write(`Chrome al soltar la pestaña: ${d.message}\n`));
+      if (e.status === 504) e.message += '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla';
       throw e;
     }
     pages.set(id, cdp);
@@ -326,19 +327,23 @@ async function handle(d) {
     const {targetId} = await browser.send('Target.createTarget', {url: url(d.url)});
     return {id: targetId, running: true, tabs: await tabs()};
   }
-  if (d.action === 'activate' || d.action === 'viewport') {
-    // Medido en ar-it33940 (2026-10-20): una pestaña de fondo no dio cuadros (captureScreenshot
-    // vencido) y la misma, al frente, sí. Se activa con el navegador, antes de adjuntarse.
-    if (d.action === 'viewport') { integer(d.width, 320, 1920); integer(d.height, 240, 1080); }
+  if (d.action === 'activate') {
+    // Sólo la elección explícita de pestaña la trae al frente (medido en ar-it33940, 2026-10-20: una
+    // pestaña de fondo no da cuadros). Del navegador, sin adjuntarse: no espera un Page.enable que no
+    // contesta. viewport, captura y reconexión nunca activan: competirían con quien usa esa PC.
     if (typeof d.tab !== 'string' || !(await tabs()).some(t => t.id === d.tab)) fail('La pestaña ya no existe', 404);
     await browser.send('Target.activateTarget', {targetId: d.tab});
-    if (d.action === 'activate') return {ok: true};
+    return {ok: true};
   }
+  if (d.action === 'viewport') { integer(d.width, 320, 1920); integer(d.height, 240, 1080); }
   const cdp = await page(d.tab, ['snapshot', 'input', 'release-input', 'viewport', 'tab-state'].includes(d.action));
   if (d.action === 'viewport') {
     const width = integer(d.width, 320, 1920), height = integer(d.height, 240, 1080);
-    await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
-    cdp.size = `${width}x${height}`;
+    // el override cambia la pestaña real: se manda sólo cuando cambia el tamaño, no en cada open
+    if (cdp.size !== `${width}x${height}`) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
+      cdp.size = `${width}x${height}`;
+    }
     return {width, height};
   }
   if (d.action === 'frame' || d.action === 'snapshot') {
@@ -346,8 +351,13 @@ async function handle(d) {
     // Snapshot nunca modifica el viewport: open/viewport es la unica operacion que lo establece.
     if (d.action === 'snapshot') {
       if (cdp.dialog) return {dialog: cdp.dialog};
-      const {data} = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false});
-      return {image: data, width, height};
+      let shot;
+      try { shot = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false}); }
+      catch (e) {
+        if (e.status === 504) e.message += '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla';
+        throw e;
+      }
+      return {image: shot.data, width, height};
     }
     if (cdp.size !== `${width}x${height}`) {
       await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
