@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.5**: historial de Antigravity tras actualizar y pausa interrumpible de transferencias.
+Versión **0.6.6**: auto-aprobación del permiso de ejecución observado en Antigravity.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.5.md).
+[Novedades, validación y límites](docs/releases/0.6.6.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada

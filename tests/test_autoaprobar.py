@@ -191,6 +191,36 @@ def test_opcion_de_permiso_reconoce_los_dialogos_de_permiso_y_nada_mas():
     assert au.opcion_de_permiso(None, "claude") is None
 
 
+def test_antigravity_permiso_observado_elige_solo_ejecucion_actual(monkeypatch):
+    import screen
+
+    dialog = screen.dialog([
+        "────────────────────────────────────────────────────────",
+        "Requesting permission for:",
+        "Get-ChildItem -Path . Run this command?",
+        "❯ 1. Yes, run command",
+        "  2. Yes, and always allow in this conversation for commands that start with 'Get-ChildItem -Path .'",
+        "  3. Yes, and always allow for commands that start with 'Get-ChildItem -Path .' (Persist to settings.json)",
+        "  4. No, cancel",
+    ])
+    assert dialog and dialog["question"] == "Requesting permission for:"
+    hechos = _armar_dialogo(monkeypatch, dialog, agent="antigravity")
+    au.ronda(ahora=100)
+    assert hechos == [("d1", 1)]
+    assert st.sessions["d1"].get(au.OMITIDO) is None
+
+
+@pytest.mark.parametrize("question,options", [
+    ("Which library?", ["Yes, run command", "No, cancel"]),
+    ("Do you trust the files in this folder?", ["Yes, run command", "No, cancel"]),
+    ("Requesting permission for:", ["Yes, and always allow", "No, cancel"]),
+    ("Requesting permission for:", ["Yes, run command", "Other"]),
+    ("Requesting permission for:", ["Yes, run command and always allow", "No, cancel"]),
+])
+def test_antigravity_no_aprueba_preguntas_ni_permisos_incompletos(question, options):
+    assert au.opcion_de_permiso(_dialogo(question, options), "antigravity") is None
+
+
 def _armar_dialogo(monkeypatch, dialog, **tarjeta):
     monkeypatch.setattr(au, "_estaba_prendido", False)
     monkeypatch.setattr(st, "load_config", lambda: {"auto_aprobar": True})

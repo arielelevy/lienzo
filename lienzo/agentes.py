@@ -281,7 +281,7 @@ class Kiro(Perfil):
 
 
 class Antigravity(Perfil):
-    """Integración de terminal; todavía sin lector de conversaciones verificable."""
+    """Historial parcial y permisos de comando observados en la terminal."""
 
     preguntas_de_permiso = ()
     supported_platforms = ("win32",)
@@ -297,7 +297,10 @@ class Antigravity(Perfil):
         return None
 
     def permission_option(self, dialog: dict | None) -> int | None:
-        return None
+        q, ops = _dialogo_plano(dialog)
+        if q != "requesting permission for:" or not any(t == "no, cancel" for _, t in ops):
+            return None
+        return next((n for n, t in ops if t == "yes, run command"), None)
 
 
 AGENTES: dict[str, Perfil] = {
