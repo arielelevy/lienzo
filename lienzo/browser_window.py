@@ -46,6 +46,10 @@ IDLE_FAST_STEPS = 50
 PREFETCH_MAX_AGE_S = 0.15  # una captura adelantada mas vieja (se espero un acuse) se descarta
 
 
+class MonitorInfo(c.Structure):
+    _fields_ = [("size", w.DWORD), ("monitor", w.RECT), ("work", w.RECT), ("flags", w.DWORD)]
+
+
 def fail(message):
     raise ValueError(message)
 
@@ -265,6 +269,8 @@ class Windows:
         self.mouse_pressed = set()
         self.previous_frame = None
         self.user.GetWindowDC.restype = w.HDC
+        self.user.GetDC.restype = w.HDC
+        self.user.WindowFromPoint.restype = w.HWND
         self.user.GetForegroundWindow.restype = w.HWND
         self.user.GetAncestor.restype = w.HWND
         self.user.LoadCursorW.restype = w.HANDLE
@@ -275,6 +281,7 @@ class Windows:
         self.user.MonitorFromWindow.restype = w.HANDLE
         self.gdi.CreateCompatibleDC.restype = w.HDC
         self.gdi.CreateCompatibleBitmap.restype = w.HBITMAP
+        self.gdi.CreateDIBSection.restype = w.HBITMAP
         self.gdi.SelectObject.restype = w.HANDLE
         self.kernel.OpenProcess.restype = w.HANDLE
         self.user.GetClipboardData.argtypes = [w.UINT]
@@ -288,6 +295,8 @@ class Windows:
         # Todos los handles conservan sus 64 bits al pasar a la API nativa.
         for dll, name, args in [
             (self.user, "GetWindowDC", [w.HWND]),
+            (self.user, "GetDC", [w.HWND]),
+            (self.user, "WindowFromPoint", [w.POINT]),
             (self.user, "ReleaseDC", [w.HWND, w.HDC]),
             (self.user, "PrintWindow", [w.HWND, w.HDC, w.UINT]),
             (self.user, "GetWindowRect", [w.HWND, c.POINTER(w.RECT)]),
@@ -308,9 +317,11 @@ class Windows:
             (self.user, "GetCursorPos", [c.POINTER(w.POINT)]),
             (self.user, "GetClipCursor", [c.POINTER(w.RECT)]),
             (self.user, "MonitorFromWindow", [w.HWND, w.DWORD]),
+            (self.user, "GetMonitorInfoW", [w.HANDLE, c.POINTER(MonitorInfo)]),
             (self.user, "GetWindowThreadProcessId", [w.HWND, c.POINTER(w.DWORD)]),
             (self.gdi, "CreateCompatibleDC", [w.HDC]),
             (self.gdi, "CreateCompatibleBitmap", [w.HDC, c.c_int, c.c_int]),
+            (self.gdi, "CreateDIBSection", [w.HDC, c.c_void_p, w.UINT, c.POINTER(c.c_void_p), w.HANDLE, w.DWORD]),
             (self.gdi, "SelectObject", [w.HDC, w.HANDLE]),
             (self.gdi, "BitBlt", [w.HDC, c.c_int, c.c_int, c.c_int, c.c_int, w.HDC, c.c_int, c.c_int, w.DWORD]),
             (self.gdi, "DeleteObject", [w.HANDLE]),
@@ -382,14 +393,7 @@ class Windows:
         if self.user.IsZoomed(hwnd):
             self.user.ShowWindow(hwnd, 9)
 
-        class MonitorInfo(c.Structure):
-            _fields_ = [("size", w.DWORD), ("monitor", w.RECT), ("work", w.RECT), ("flags", w.DWORD)]
-
-        self.user.GetMonitorInfoW.argtypes = [w.HANDLE, c.POINTER(MonitorInfo)]
-        info = MonitorInfo()
-        info.size = c.sizeof(info)
-        if not self.user.GetMonitorInfoW(self.user.MonitorFromWindow(hwnd, 2), c.byref(info)):
-            fail("Windows no pudo medir el escritorio de Chrome")
+        info = self.monitor(hwnd)
         width = min(width, info.work.right - info.work.left)
         height = min(height, info.work.bottom - info.work.top)
         rect = self.rect(hwnd)
@@ -465,29 +469,85 @@ class Windows:
         width, height = rect.right - rect.left, rect.bottom - rect.top
         bounded(width, 1, 3840)
         bounded(height, 1, 2160)
-        dc = self.user.GetWindowDC(hwnd)
+        on_screen = self.on_screen(hwnd, rect)
+        source = None if on_screen else hwnd
+        dc = self.user.GetDC(None) if on_screen else self.user.GetWindowDC(hwnd)
         memory = self.gdi.CreateCompatibleDC(dc)
-        bitmap = self.gdi.CreateCompatibleBitmap(dc, width, height)
+        # seccion DIB de 32 bits de arriba a abajo: BitBlt y PrintWindow escriben directo en memoria
+        # del proceso y no hace falta GetDIBits (que con un bitmap compatible con la pantalla volvia
+        # a leer de la GPU: 68 ms contra 32 de la copia sola, medido el 2026-10-21)
+        info = c.create_string_buffer(struct.pack("<IiiHHIIiiII", 40, width, -height, 1, 32, 0, 0, 0, 0, 0, 0))
+        bits = c.c_void_p()
+        bitmap = self.gdi.CreateDIBSection(dc, info, 0, c.byref(bits), None, 0)
         old_bitmap = self.gdi.SelectObject(memory, bitmap)
         try:
-            if not dc or not memory or not bitmap or not self.user.PrintWindow(hwnd, memory, 2):
-                fail("Windows no pudo capturar Chrome. La sesión debe estar abierta y desbloqueada")
-            for popup in self.popups(hwnd):
-                self.paint_popup(popup, memory, rect)
-            info = c.create_string_buffer(struct.pack("<IiiHHIIiiII", 40, width, -height, 1, 32, 0, 0, 0, 0, 0, 0))
-            pixels = c.create_string_buffer(width * height * 4)
-            self.gdi.SelectObject(memory, old_bitmap)
-            if self.gdi.GetDIBits(memory, bitmap, 0, height, pixels, info, 0) != height:
+            if on_screen:
+                # visible y sin tapar: se copia lo que ya compuso el escritorio, sin pedirle nada a
+                # Chrome. PrintWindow(PW_RENDERFULLCONTENT) lo hace redibujar en cada cuadro y la
+                # ventana real parpadeaba en la otra PC (reportado el 2026-10-21). Los menus y avisos
+                # de Chrome ya estan en pantalla, encima.
+                if (
+                    not dc
+                    or not memory
+                    or not bitmap
+                    or not self.gdi.BitBlt(memory, 0, 0, width, height, dc, rect.left, rect.top, 0x00CC0020)
+                ):
+                    fail("Windows no pudo capturar Chrome. La sesión debe estar abierta y desbloqueada")
+            else:
+                if not dc or not memory or not bitmap or not self.user.PrintWindow(hwnd, memory, 2):
+                    fail("Windows no pudo capturar Chrome. La sesión debe estar abierta y desbloqueada")
+                for popup in self.popups(hwnd):
+                    self.paint_popup(popup, memory, rect)
+            self.gdi.GdiFlush()
+            if not bits.value:
                 fail("Windows no pudo leer la imagen de Chrome")
             rgb = bytearray(width * height * 3)
-            bgra = pixels.raw
+            bgra = c.string_at(bits.value, width * height * 4)
             rgb[0::3], rgb[1::3], rgb[2::3] = bgra[2::4], bgra[1::4], bgra[0::4]
             return bytes(rgb), width, height
         finally:
             self.gdi.SelectObject(memory, old_bitmap)
             self.gdi.DeleteObject(bitmap)
             self.gdi.DeleteDC(memory)
-            self.user.ReleaseDC(hwnd, dc)
+            self.user.ReleaseDC(source, dc)
+
+    def monitor(self, hwnd):
+        """MONITORINFO del monitor de la ventana (`monitor` entero y `work` sin la barra de tareas)."""
+        info = MonitorInfo()
+        info.size = c.sizeof(info)
+        if not self.user.GetMonitorInfoW(self.user.MonitorFromWindow(hwnd, 2), c.byref(info)):
+            fail("Windows no pudo medir el escritorio de Chrome")
+        return info
+
+    def on_screen(self, hwnd, rect, grid=5):
+        """La ventana se ve entera: no esta minimizada, entra en su monitor (sin contar el borde
+        invisible de una maximizada) y en una grilla de puntos de adentro lo que hay arriba es
+        ella o algo de su mismo proceso (un menu o aviso de Chrome). Si no, hay que pedirle la imagen
+        con PrintWindow: una ventana que se sale de la pantalla traia la barra de tareas y franjas negras."""
+        if self.user.IsIconic(hwnd):
+            return False
+        screen = self.monitor(hwnd).monitor
+        border = 16  # el borde invisible de una maximizada: 8 px al 100 %, 11 al 125-150 %
+        if (
+            rect.left + border < screen.left
+            or rect.top + border < screen.top
+            or rect.right - border > screen.right
+            or rect.bottom - border > screen.bottom
+        ):
+            return False
+        inset = 16
+        left, top, right, bottom = rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset
+        if right <= left or bottom <= top:
+            return False
+        pid = self.owner(hwnd)
+        for i in range(grid):
+            for j in range(grid):
+                point = w.POINT(left + (right - left) * i // (grid - 1), top + (bottom - top) * j // (grid - 1))
+                over = self.user.WindowFromPoint(point)
+                root = self.user.GetAncestor(over, 2) if over else None  # GA_ROOT
+                if not root or (root != hwnd and self.owner(root) != pid):
+                    return False
+        return True
 
     def frame(self, hwnd, width=None, height=None, delta=False, base=None):
         """Modo pedido/respuesta: un cuadro (o un parche sobre `base`) en base64."""
