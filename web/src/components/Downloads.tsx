@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import type { Peer } from "../types";
 import "../downloads.css";
@@ -9,6 +9,7 @@ type Job = { id: string; state: string; bytes: number; total: number; error: str
 const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 export function Downloads({ peer, onClose }: { peer: Peer; onClose: () => void }) {
+  const selectionId = useId();
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
@@ -87,10 +88,10 @@ export function Downloads({ peer, onClose }: { peer: Peer; onClose: () => void }
       {!job && preview && <>
         <table><thead><tr><th>Traer</th><th>Archivo</th><th>Fecha</th><th>Tamaño</th><th>En esta PC</th></tr></thead>
           <tbody>{preview.files.map(file => <tr key={file.id}>
-            <td><input type="checkbox" aria-label={`Traer ${file.name}`} disabled={loading || confirm} checked={selected.has(file.id)} onChange={event => setSelected(current => {
+            <td><input id={`${selectionId}-${file.id}`} type="checkbox" aria-label={`Traer ${file.name}`} disabled={loading || confirm} checked={selected.has(file.id)} onChange={event => setSelected(current => {
               const next = new Set(current); if (event.target.checked) next.add(file.id); else next.delete(file.id); return next;
             })} /></td>
-            <td>{file.name}</td><td>{new Date(file.modified_ns / 1e6).toLocaleString()}</td><td>{size(file.size)}</td><td>{file.exists ? "Ya existe" : "Nuevo"}</td>
+            <td><label htmlFor={`${selectionId}-${file.id}`}>{file.name}</label></td><td>{new Date(file.modified_ns / 1e6).toLocaleString()}</td><td>{size(file.size)}</td><td>{file.exists ? "Ya existe" : "Nuevo"}</td>
           </tr>)}</tbody>
         </table>
         {!preview.files.length && <p>No hay descargas terminadas para traer.</p>}

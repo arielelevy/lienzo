@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.1**: reemplazo de movimientos atrasados del puntero y presencia segura de
-transferencias. Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.1.md).
+Versión **0.6.2**: selección de descargas por nombre y casillas más grandes.
+Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
+[Novedades, validación y límites](docs/releases/0.6.2.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada

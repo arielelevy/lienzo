@@ -11,6 +11,26 @@ const preview = {plan:"plan-1",source:"REMOTE/Downloads",destination:"LOCAL/Down
   {id:"old",name:"Reunion.docx",size:200,modified_ns:1700000000000000000,exists:true},
 ]};
 
+test('selecciona por nombre y con teclado sin iniciar una transferencia', async ({page}) => {
+  await abrirTablero(page, sesiones(), peers);
+  let writes = 0;
+  await page.route('**/downloads**', async route => {
+    if (route.request().method() !== 'GET') writes++;
+    await route.fulfill({json: preview});
+  });
+  await page.locator('.pcchip', {hasText:'otra-PC'}).click({button:'right'});
+  await page.getByRole('menuitem', {name:'Traer descargas…'}).click();
+  const dialog = page.getByRole('dialog', {name:'Traer descargas de otra-PC'});
+  const checkbox = dialog.getByLabel('Traer Notas Gemini.pdf', {exact:true});
+  await dialog.getByText('Notas Gemini.pdf', {exact:true}).click();
+  await expect(checkbox).toBeChecked();
+  await expect(dialog.getByRole('button', {name:'Traer seleccionados (1)', exact:true})).toBeEnabled();
+  await checkbox.focus();
+  await checkbox.press('Space');
+  await expect(checkbox).not.toBeChecked();
+  expect(writes).toBe(0);
+});
+
 for (const overwrite of [false,true]) test(`clic derecho pide confirmación y ${overwrite?'sobrescribe':'saltea'} existentes`,async({page})=>{
   const writes: Record<string,unknown>[]=[];
   await abrirTablero(page,sesiones(),peers);

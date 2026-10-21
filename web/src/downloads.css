@@ -4,4 +4,7 @@
 .downloads-dialog{width:min(960px,100%);max-height:90vh;overflow:auto;padding:24px;background:var(--panel,#202724);color:var(--fg,#edf0ed);border:1px solid var(--line,#47534b);border-radius:12px;box-shadow:0 20px 80px #0007}
 .downloads-dialog header,.downloads-dialog footer,.downloads-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}.downloads-dialog h2{margin:0}.downloads-dialog header button{font-size:24px}
 .downloads-dialog p{line-height:1.5}.downloads-dialog table{width:100%;border-collapse:collapse;font-size:13px}.downloads-dialog th,.downloads-dialog td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line,#47534b);overflow-wrap:anywhere}.downloads-dialog th{font-weight:600}.downloads-dialog footer{margin-top:20px}.downloads-path{font-size:12px;opacity:.8;overflow-wrap:anywhere}.downloads-error{color:#ffb0a9}.downloads-confirm{padding:16px;margin-top:20px;border:1px solid #d5ac68;border-radius:8px}.downloads-dialog progress{width:100%}.downloads-dialog li{margin:6px 0}
+.downloads-dialog input[type="checkbox"]{width:24px;height:24px;margin:0;cursor:pointer;vertical-align:middle}
+.downloads-dialog td label{display:block;min-height:24px;cursor:pointer}
+.downloads-dialog input[type="checkbox"]:disabled{cursor:default}
 @media(max-width:650px){.downloads-backdrop{padding:8px}.downloads-dialog{padding:14px}.downloads-dialog th:nth-child(3),.downloads-dialog td:nth-child(3){display:none}.downloads-actions{flex-wrap:wrap}}

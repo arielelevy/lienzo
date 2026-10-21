@@ -15,6 +15,15 @@ diagnóstico después. No acredita PASS global ni cierra los pendientes. La foca
 al arreglo de reanudación dio 50 aprobadas, 1 fallida y 6 omitidas: bloque 200/cierre 409
 y 38 bytes cero en el parcial. El cierre rechazado y el WinError 2 anterior siguen abiertos.
 
+Actualización del 21/10: 0.6.1 está publicada y ambas PCs informaron `current`,
+`running=b62a9a78cb8cd216ae533bfe7c3549ca7859dc6e`, sin actualización en curso.
+La PC remota volvió a responder después de que Ariel la conectó mediante Tailchrome.
+Esto acredita versión y conexión, no la corrección del puntero en uso real.
+La nueva focal WSL sin instrumentación dio 1 fallida y 2 aprobadas: cierre 200,
+lectura del archivo final disponible y posterior `GetFileInformationByHandle` con
+`WinError 2`. Una sonda posterior dio 3 aprobadas sin reproducirlo; no sustituye el fallo.
+Evidencia: `.temp/coordinacion/2026-10-21/wsl-retoma/informe.md`.
+
 Estos avances no cierran casillas ni acreditan aceptación, activación o PASS global.
 Las notas anteriores conservan su fecha; este corte actualiza sus límites para esta ronda.
 
@@ -55,7 +64,15 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
 
 ### Brechas actuales de integración y aceptación
 
-- [ ] Publicar y verificar en LAN la corrección de seguimiento del puntero del 21/10:
+- [ ] Verificar selección de descargas desde ar-it33940 al traer archivos de ariel.
+  Ariel informa que no puede marcar el checkbox. Se midió un blanco de13×13px;
+  cambio local: casilla24×24px y selección por nombre con label nativo.
+  Regresión roja previa y4 recorridos UI verdes; ESLint y build aprobados.
+  Sigue sin atribuirse el fallo remoto: se observó además rechazo de foco de Windows.
+  No hay copia real nueva ni despliegue remoto de este delta acreditado.
+  [Revisión](review/2026-10-21/code-review-seleccion-descargas.md).
+
+- [ ] Verificar en uso remoto la corrección de seguimiento del puntero del 21/10, publicada en 0.6.1:
   la UI mantiene hasta cuatro pedidos de hover en vuelo; el receptor reemplaza sólo la última
   posición pendiente compatible, sin cruzar teclas, botones o generaciones. Regresiones:
   57 backend y 39 UI sobre bundle de producción aprobadas, con rojo previo. El incidente
@@ -89,7 +106,8 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   por salto de altura al enviar. Ajuste posterior:47 UI focales aprobadas; requiere otra global.
   La global ded319d6b pasó139 UI y6/7 casos, pero falló el primer bloque de la tanda WSL
   con500/FileNotFoundError WinError2:2938 backend aprobadas,1 fallida y10 omitidas. Los verdes
-  previos no acreditan compatibilidad estable. Publicación y mutación detenidas; diagnóstico E.
+  previos no acreditan compatibilidad estable. Publicación autorizada con fallo conocido:
+  0.6.0 y 0.6.1 publicadas; mutación global sin ejecutar y diagnóstico WSL abierto.
 
 - [ ] Cerrar el contrato de turno de Antigravity con transiciones reales de pausa, cancelación,
   error, auto-continue, herramienta y finalización. Mantener bloqueados fin y `on_stop` hasta
