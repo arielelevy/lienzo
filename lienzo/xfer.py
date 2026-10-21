@@ -1037,7 +1037,7 @@ class Balde:
         self._t = time.monotonic()
         self._fichas = self.rate  # un segundo de rafaga
 
-    def tomar(self, n: int) -> None:
+    def tomar(self, n: int, esperar: Callable[[float], None]) -> None:
         if self.rate <= 0:
             return
         with self._lock:
@@ -1046,7 +1046,12 @@ class Balde:
             self._t = ahora
             espera = -self._fichas / self.rate if self._fichas < 0 else 0.0
         if espera > 0:
-            time.sleep(espera)
+            try:
+                esperar(espera)
+            except Pausa:
+                with self._lock:
+                    self._fichas += n
+                raise
 
 
 def _dir_trabajos() -> str:
@@ -1224,8 +1229,11 @@ class Trabajo:
             try:
                 c, peer = self._conn()
                 c.timeout = timeout
-                if c.sock is not None:
-                    c.sock.settimeout(timeout)
+                # HTTPConnection conecta de forma diferida en request(). Firmar después
+                # evita gastar la ventana de autenticación abriendo TCP/DNS.
+                if c.sock is None:
+                    c.connect()
+                c.sock.settimeout(timeout)
                 c.request("POST", path, body=cuerpo, headers=federation.signed_headers(peer, "POST", path, cuerpo))
                 r = c.getresponse()
                 data = r.read()
@@ -1258,7 +1266,7 @@ class Trabajo:
         return self.pedir(accion, json.dumps(d, ensure_ascii=False).encode("utf-8"), timeout)
 
     def _enviar(self, accion: str, cuerpo: bytes, n: int, timeout: float = TIMEOUT_S) -> tuple[int, dict]:
-        self._red.tomar(n)
+        self._red.tomar(n, self._esperar)
         code, res = self.pedir(accion, cuerpo, timeout)
         if code == 200:
             with self._lock:
@@ -1267,7 +1275,7 @@ class Trabajo:
 
     def _leer(self, path: str, off: int, n: int) -> bytes:
         self._esperar_memoria()
-        self._disco.tomar(n)
+        self._disco.tomar(n, self._esperar)
         with open(path, "rb") as f:
             f.seek(off)
             return f.read(n)

@@ -4,6 +4,7 @@ import ctypes as ct
 import ctypes.wintypes as wt
 import hashlib
 import os
+import re
 import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -168,8 +169,14 @@ def resolve(session, *, root=None, probe_factory=NativeProbe):
             locks.append(path)
         with probe_factory(pid) as probe:
             start, image = probe.process()
-            official = str((Path.home() / "AppData/Local/agy/bin/agy.exe").resolve())
-            if start // 10 != expected or os.path.normcase(image) != os.path.normcase(official):
+            image_path = Path(image)
+            official_dir = Path.home() / "AppData/Local/agy/bin"
+            # The updater renames the running image; its known hash is still mandatory.
+            if (
+                start // 10 != expected
+                or os.path.normcase(str(image_path.parent)) != os.path.normcase(str(official_dir))
+                or re.fullmatch(r"agy\.exe(?:\.[0-9]{1,20}\.old)?", image_path.name, re.IGNORECASE) is None
+            ):
                 raise IdentityError("process_identity_mismatch")
             _compatible_executable(image)
             matches = []

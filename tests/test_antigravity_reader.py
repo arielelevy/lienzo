@@ -175,8 +175,22 @@ def test_sqlite_error_does_not_expose_details(database, monkeypatch):
     assert "PRIVATE_SECRET" not in json.dumps(result) and not result["turns"]
 
 
-def test_identity_ownership_ambiguity_rotation_and_pid_reuse(tmp_path, monkeypatch):
-    monkeypatch.setattr(identity, "_compatible_executable", lambda _: None)
+@pytest.mark.parametrize(
+    "image_name,accepted",
+    [
+        ("agy.exe", True),
+        ("agy.exe.1792586409122112700.old", True),
+        ("agy.exe.old", False),
+        ("agy.exe.123.old.exe", False),
+        ("agy.exe.other.old", False),
+        ("agy.exe.123.old/agy.exe", False),
+        ("../other/agy.exe", False),
+        ("agy.exe.123456789012345678901.old", False),
+    ],
+)
+def test_identity_ownership_ambiguity_rotation_and_pid_reuse(tmp_path, monkeypatch, image_name, accepted):
+    checked_images = []
+    monkeypatch.setattr(identity, "_compatible_executable", checked_images.append)
     (tmp_path / "presence").mkdir()
     (tmp_path / "conversations").mkdir()
     (tmp_path / "presence" / (CASCADE + ".lock")).touch()
@@ -196,12 +210,18 @@ def test_identity_ownership_ambiguity_rotation_and_pid_reuse(tmp_path, monkeypat
             pass
 
         def process(self):
-            return self.start, str((Path.home() / "AppData/Local/agy/bin/agy.exe").resolve())
+            return self.start, str((Path.home() / "AppData/Local/agy/bin" / image_name).resolve())
 
         def owners(self, path):
             return self.owners_value
 
+    if not accepted:
+        with pytest.raises(identity.IdentityError, match="process_identity_mismatch"):
+            identity.resolve(SESSION, root=tmp_path, probe_factory=Probe)
+        assert checked_images == []
+        return
     assert identity.resolve(SESSION, root=tmp_path, probe_factory=Probe).cascade == CASCADE
+    assert checked_images == [str((Path.home() / "AppData/Local/agy/bin" / image_name).resolve())]
     Probe.start += 10
     with pytest.raises(identity.IdentityError, match="process_identity_mismatch"):
         identity.resolve(SESSION, root=tmp_path, probe_factory=Probe)
@@ -240,10 +260,11 @@ def test_synthetic_status_transitions_do_not_end_turn(status):
     assert not store._turns([decoded], CASCADE)[0]["ended"]
 
 
-def test_executable_upgrade_unknown_closed(tmp_path, monkeypatch):
+@pytest.mark.parametrize("name", ["agy.exe", "agy.exe.1792586409122112700.old"])
+def test_executable_upgrade_unknown_closed(tmp_path, monkeypatch, name):
     import hashlib
 
-    exe = tmp_path / "agy.exe"
+    exe = tmp_path / name
     exe.write_bytes(b"synthetic known executable")
     monkeypatch.setattr(identity, "SUPPORTED_EXE_SHA256", hashlib.sha256(exe.read_bytes()).hexdigest())
     identity._compatible_executable(str(exe))

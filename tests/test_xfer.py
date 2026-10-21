@@ -20,6 +20,7 @@ import threading
 import tempfile
 import time
 import traceback
+from types import SimpleNamespace
 
 import pytest
 
@@ -250,13 +251,29 @@ def test_receptor_muere_a_mitad_y_se_retoma_desde_el_diario(canal, monkeypatch):
     assert len(antes) + len(llegados) <= 24 + 2
 
 
-def test_el_que_manda_se_reinicia_y_retoma_sin_releer_lo_hecho(canal):
-    datos = _arbol(canal["origen"])
+def test_el_que_manda_se_reinicia_y_retoma_sin_releer_lo_hecho(canal, monkeypatch):
+    datos = {"a.txt": b"primero", "b.txt": b"segundo", "c.txt": b"tercero"}
+    for rel, data in datos.items():
+        _escribir(os.path.join(canal["origen"], rel), data)
+    confirmado, seguir = threading.Event(), threading.Event()
+    original = xfer.Trabajo._hecho
+
+    def al_confirmar(self, rel, *args):
+        original(self, rel, *args)
+        if rel == "a.txt":
+            confirmado.set()
+            if not seguir.wait(20):
+                raise RuntimeError("la prueba no liberó el archivo confirmado")
+
+    monkeypatch.setattr(xfer, "GRUPO", 1)
+    monkeypatch.setattr(xfer.Trabajo, "_hecho", al_confirmar)
     t = _correr(canal, esperar=False, mbps=1, hilos=1)
-    fin = time.time() + 20
-    while t.archivos_hechos < 50 and time.time() < fin:
-        time.sleep(0.02)
-    xfer.pausar(t.id)
+    try:
+        assert confirmado.wait(20), "no se confirmó el primer archivo"
+        assert t.archivos_hechos == 1
+        xfer.pausar(t.id)
+    finally:
+        seguir.set()
     t._hilo.join(timeout=10)
     assert t.estado == "pausado"
     hechos = t.archivos_hechos
@@ -398,6 +415,86 @@ def test_firma_vieja_o_sin_firma_no_escribe(canal):
     assert not os.path.exists(os.path.join(canal["destino"], "z.txt"))
     status, res = _firmado(canal, "/peer/xfer/paquete", body)  # la misma, firmada ahora: pasa
     assert status == 200 and res["archivos"]["z.txt"] == "ok"
+
+
+def test_conexion_lenta_no_consume_ventana_de_firma(canal, monkeypatch):
+    """La firma debe nacer después de conectar, incluso tras perder el keep-alive."""
+    original_connect = http.client.HTTPConnection.connect
+    connected = []
+    signed = []
+    original_headers = fed.signed_headers
+
+    def connect(conn):
+        original_connect(conn)
+        connected.append(conn)
+
+    def headers(*args):
+        assert connected, "se firmó antes de completar la conexión TCP"
+        signed.append(len(connected))
+        return original_headers(*args)
+
+    monkeypatch.setattr(http.client.HTTPConnection, "connect", connect)
+    monkeypatch.setattr(fed, "signed_headers", headers)
+    trabajo = xfer.Trabajo({"id": "firma-conexion", "pc": "destino-pc"})
+    body = json.dumps({"destino": str(canal["destino"]), "bs": MIB, "archivos": []}).encode()
+    try:
+        for _ in range(2):
+            code, _ = trabajo.pedir("estado", body)
+            assert code == 200
+        assert len(connected) == 1  # conserva keep-alive
+        trabajo._soltar()
+        assert trabajo.pedir("estado", body)[0] == 200
+        assert signed == [1, 1, 2]
+    finally:
+        trabajo._soltar()
+
+
+@pytest.mark.parametrize("limite", ["mbps", "disco_mbps"])
+def test_pausa_interrumpe_limite_y_devuelve_presupuesto(monkeypatch, limite):
+    job = xfer.Trabajo({"id": "pausa-limite", limite: 0.000001})
+    started, cleanup, finished = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+    wait = job._esperar
+
+    def waiting(seconds):
+        started.set()
+        wait(seconds)
+
+    def uninterruptible_sleep(seconds):
+        started.set()
+        assert cleanup.wait(5), "limpieza de la prueba no solicitada"
+
+    def worker():
+        try:
+            if limite == "mbps":
+                job._enviar("paquete", b"synthetic", 30)
+            else:
+                job._leer("NO_DEBE_ABRIRSE", 0, 30)
+            errors.append("continuó después de pausar")
+        except xfer.Pausa:
+            pass
+        except Exception as exc:
+            errors.append(type(exc).__name__)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(job, "_esperar", waiting)
+    monkeypatch.setattr(xfer, "time", SimpleNamespace(monotonic=time.monotonic, sleep=uninterruptible_sleep))
+    monkeypatch.setattr(xfer, "mem_libre_gb", lambda: None)
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    try:
+        assert started.wait(2)
+        job.pausar()
+        assert finished.wait(1), "el límite de velocidad no se interrumpe con pausa"
+        assert not errors
+        bucket = job._red if limite == "mbps" else job._disco
+        assert bucket._fichas == pytest.approx(bucket.rate)
+    finally:
+        job.pausar()
+        cleanup.set()
+        thread.join(2)
+    assert not thread.is_alive()
 
 
 def test_espejo_lista_antes_y_borra_solo_con_confirmacion(canal):

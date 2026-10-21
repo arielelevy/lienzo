@@ -10,6 +10,34 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 
 ### Estado de la ronda del 2026-10-20 (consolidado el 2026-10-21)
 
+Retoma del 21/10 después del reinicio: correcciones locales de xfer para firmar
+después de conectar y para interrumpir la espera del límite de red/disco al
+pausar, devolviendo el presupuesto reservado. Cuatro regresiones finales aprobadas,
+incluido el caso de reanudación sincronizado tras confirmar un archivo real.
+La corrida amplia previa a la segunda corrección dio 2977 backend aprobadas,
+una fallida (pausa/reanudación) y diez omitidas; frontend lint/build/unitarias
+y 139 recorridos UI aprobados. La causa de esa falla concreta no está acreditada.
+La focal posterior dio 176 aprobadas, dos fallidas y seis omitidas: repitió la
+pausa/reanudación antes de corregir la precondición del caso y el fallo WSL de
+bloque aceptado/cierre 409 con ceros. El experimento WSL no confirmó truncate
+como causa; la sonda nativa posterior pasó tres casos sin capturar el fallo.
+Se conserva toda la evidencia; WSL sigue abierto. No hay PASS global,
+despliegue, reinicio, reanudación de copias ni casillas cerradas.
+[Revisión y límites](review/2026-10-21/code-review-estabilidad-retoma.md).
+
+Actualización del 21/10, 12:13: 0.6.4 está publicada. Las dos PCs informaron
+`phase=current`, `busy=false` y `running=eb3ee09c5f45b02efb5dffba310b4eac314e9578`.
+Incluye la foto transaccional del importador SQLite y el diagnóstico de posición
+del mouse; no acredita que el incidente remoto esté resuelto. La observación
+posterior del visor quedó sin ejecutar por timeout del controlador del navegador.
+Evidencia: `.temp/coordinacion/2026-10-21/release-0.6.4-actualizacion-verificada.json`.
+
+La sonda WSL de limpieza/conservación terminó con rc 0: 8/8 precursores,
+8/8 objetivos y 4/4 limpiezas, sin reproducción. No se activó la observación
+Linux condicionada al primer fallo. Conserva abiertos los fallos históricos de
+`NtCreateFile`, `NtSetInformationFile` y `GetFileInformationByHandle`; no es PASS global.
+Evidencia: `.temp/resultados/E-wsl-frio/linux-c882cb8bf7c5487b99bc14145421a800/informe.md`.
+
 El 2026-10-21 Ariel autorizó publicar 0.6.0 con el fallo WSL conocido y continuar su
 diagnóstico después. No acredita PASS global ni cierra los pendientes. La focal posterior
 al arreglo de reanudación dio 50 aprobadas, 1 fallida y 6 omitidas: bloque 200/cierre 409
