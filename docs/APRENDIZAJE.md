@@ -15,6 +15,35 @@ No modifica creencias, veredictos ni aprendizaje. Python conserva la autoridad a
 Si falta SWI-Prolog, WSL o el repo, sólo falla esa consulta: el resto sigue disponible.
 No se invoca al iniciar ni al consultar el aprendizaje normal. No requiere reinstalaciones.
 
+### Contraste lógico de candidatos
+
+**Contrastar candidatos** (`POST /conocimiento/<p>/candidatos/contraste`, `prolog_contraste.py`)
+revisa lo que espera veredicto: decisiones, reglas y mediciones propuestas y hallazgos propuestos
+(propuestas del investigador, hipótesis, creencias). Usa el contrato 3 del motor sin almacén: los
+hechos del grafo (IDs, tipos, estados, clases, rol del autor de cada evidencia y vínculos) y las
+reglas `contraste-1` de Lienzo viajan como datos. No envía textos.
+
+Observaciones, cada una con su prueba (regla → hechos del grafo) y sus fuentes:
+- respaldo caído (una fuente rechazada, revertida o retirada, siguiendo decisiones);
+- regla cuestionada de la que depende o a la que reemplaza;
+- contradicción con una decisión vigente: la misma alternativa elegida y descartada;
+- reapertura de un hallazgo rechazado (`mismo_que`);
+- apoyo retirado.
+
+Independencia de la evidencia:
+- Solo cuenta la evidencia firmada por una persona.
+- La que generó Lienzo no cuenta.
+- La de un agente o de clase desconocida queda como «no verificada».
+
+«Listo para revisar» quiere decir: con evidencia de una persona y sin observaciones. Un oráculo
+Python independiente calcula lo mismo. Si los dos difieren, el contraste no es concluyente y no
+marca nada como listo. Nunca promueve, rechaza ni cierra, y lee la base en solo lectura.
+
+Si el motor falta o la respuesta es inválida (incompleta, truncada, con IDs ajenos o con pruebas
+que no cierran contra los hechos enviados), se informa como error y nunca como vacío. Medición
+del 2026-10-20 sobre 5 proyectos reales: 60 candidatos, 0 diferencias, 0 observaciones
+estructurales y ninguno con evidencia de una persona. Hoy la señal útil es esa falta de evidencia.
+
 Por defecto busca el repo hermano `motor-logico/main.pl` (remoto privado
 `arielelevy/motor-logico`, se clona junto a Lienzo). `LIENZO_PROLOG_ENGINE` permite fijar
 otra ruta absoluta al archivo. Windows usa la distro WSL `Ubuntu` existente; Linux usa `swipl`.
@@ -180,9 +209,19 @@ del repo; el caso viaja al servicio de OpenAI. La respuesta se valida antes de t
 
 **Ejecución.** Un caso a la vez dentro del tick del scheduler; el tick queda ocupado mientras corre.
 Actividad del usuario, pausa, cancelación, memoria por debajo de la reserva o cuota excedida matan
-el árbol del proceso propio y pausan o cancelan conservando la última salida. La CPU no se mide durante
+el árbol del proceso propio y pausan o cancelan conservando la última salida. Un corte por actividad,
+agentes, memoria o cuota pospone el trabajo 30 min: el inicio ya cuenta y retomar enseguida gastaría
+el otro en las mismas condiciones. La pausa del usuario no pospone. La CPU no se mide durante
 la ejecución porque incluye al propio proceso. Una política bloqueada pospone 30 min sin lanzar nada.
-Tras reiniciar el server, un trabajo `running` pasa a revisión y su PID registrado nunca se mata.
+Tras reiniciar el server, un trabajo `running` pasa a revisión y su PID registrado nunca se mata; uno
+`paused` se conserva tal cual, PID incluido, porque no tiene proceso propio vivo.
+
+**Revisión.** Un trabajo en revisión no sale solo. Desde «Aprendizaje en segundo plano» se revisa
+(intentos, corridas, último corte e historial) y se reencola o se descarta, siempre a pedido
+(`requeue_research` y `dismiss_research` con `job`). Reencolar conserva intentos, corridas e
+historial, revalida la política y rechaza un caso agotado («intentos agotados (2 de 2)»). Descartar lo
+pasa a cancelado: el caso sigue en el historial, no vuelve solo y sus corridas siguen contando en las
+24 h. Ninguna de las dos libera lugar en el tope de 100 trabajos.
 El descubrimiento automático elige a lo sumo un caso por proyecto cada 30 min y sólo si la política lo habilita.
 
 Ariel no respondió todavía qué experimentos puede ejecutar solo en un entorno aislado.
@@ -224,7 +263,7 @@ Las rutas existentes incluyen `GET/PUT /agent-improvements`,
 `GET/PUT /agent-improvements/scheduler` y `GET /trabajo/<proyecto>`.
 Las escrituras mantienen autenticación, CSRF y propiedad de la sesión/proyecto.
 `PUT /agent-improvements/scheduler` (sólo local) admite además `research_check` y `enqueue_research`
-con `project`, y `cancel_research` con `job`. El estado expone `research.last_evaluation`; un GET
+con `project`, `cancel_research`, `requeue_research` y `dismiss_research` con `job`. El estado expone `research.last_evaluation`; un GET
 no lee la cuota. Creencias: `GET/POST /conocimiento/<p>/creencias`, `POST .../creencias/<id>/veredicto`,
 `POST .../creencias/<id>/uso` y `GET .../checklist`.
 

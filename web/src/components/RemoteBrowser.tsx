@@ -366,6 +366,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
     let ws: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout>, resize: ReturnType<typeof setTimeout>;
     let current = 0, signature = '', lastSeq = 0, decoding = false;
+    let basis: {width: number; height: number} | null = null;
     type Image = {generation: number; seq: number; width: number; height: number; jpeg: ArrayBuffer; channel: WebSocket};
     let latest: Image | null = null;
     const pending = new Map<number, {generation: number; resolve: () => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>}>();
@@ -382,7 +383,8 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
       if (ws?.readyState !== WebSocket.OPEN || !current || (kind === 'input' && !canInput.current)) return Promise.reject(new Error('La entrada está pausada; no se envió el pedido.'));
       if (pending.size >= (kind === 'input' ? 32 : 64) || (events && (!events.length || events.length > 64))) return Promise.reject(new Error('Demasiadas entradas pendientes; no se envió el pedido.'));
       const n = ++inputId, gen = current, channel = ws;
-      const message = JSON.stringify({t: kind, n, generation: gen, ...(events ? {events} : {})});
+      // la entrada se mapeó sobre el tamaño CSS del último cuadro dibujado: si la pestaña cambió, el host no la manda
+      const message = JSON.stringify({t: kind, n, generation: gen, ...(events ? {events} : {}), ...(kind === 'input' && basis ? {basis} : {})});
       if (new TextEncoder().encode(message).length > 65536) return Promise.reject(new Error('La entrada es demasiado grande; no se envió el pedido.'));
       const result = new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -404,9 +406,15 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
       const width = clamp(rect?.width ?? 1280, 320, 1920), height = clamp(rect?.height ?? 800, 240, 1080);
       const next = `${selected.current}:${width}:${height}`;
       if (!force && signature === next) return;
+      if (!force && current && signature.startsWith(`${selected.current}:`)) {
+        // misma pestaña, otro tamaño de visor: sólo cambia la escala de la captura; sin open ni release
+        signature = next;
+        ws.send(JSON.stringify({t: 'size', generation: current, width, height}));
+        return;
+      }
       if (generationCounter.current === 0xffffffff) { setError('Se agotaron las generaciones del canal. Volvé a abrir la vista.'); return; }
       releaseInput(); // generación vieja antes del open; su ACK sigue correlacionado aunque cambie current
-      current = ++generationCounter.current; signature = next; lastSeq = 0; latest = null; canInput.current = false;
+      current = ++generationCounter.current; signature = next; lastSeq = 0; latest = null; basis = null; canInput.current = false;
       setGeneration(current); setOpened(0); setError(''); setNotice('Cargando pestaña…');
       ws.send(JSON.stringify({t: 'open', tab: selected.current, generation: current, width, height}));
     };
@@ -420,11 +428,14 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
             const bitmap = await createImageBitmap(new Blob([image.jpeg], {type: 'image/jpeg'}));
             try {
               if (disposed || ws !== image.channel || image.generation !== current) continue;
-              if (bitmap.width !== image.width || bitmap.height !== image.height) throw new Error('Las dimensiones JPEG no coinciden con el cuadro de Chrome');
+              // el JPEG es la pestaña escalada (nunca más grande que su tamaño CSS por DPR) con la misma proporción
+              const ratio = (bitmap.width / bitmap.height) / (image.width / image.height);
+              if (!bitmap.width || bitmap.width > image.width * 4 || bitmap.height > image.height * 4 || Math.abs(ratio - 1) > 0.02) throw new Error('Las dimensiones JPEG no coinciden con el cuadro de Chrome');
               const context = canvas.getContext('2d');
               if (!context) throw new Error('No se pudo dibujar la pestaña de Chrome');
-              if (canvas.width !== image.width || canvas.height !== image.height) { canvas.width = image.width; canvas.height = image.height; }
+              if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) { canvas.width = bitmap.width; canvas.height = bitmap.height; }
               context.drawImage(bitmap, 0, 0);
+              basis = {width: image.width, height: image.height};
               setFrame({tab: selected.current, generation: current, width: image.width, height: image.height});
               setNotice(''); setError(''); attempts = 0;
               if (image.channel.readyState === WebSocket.OPEN) image.channel.send(JSON.stringify({t: 'ack', generation: current, n: image.seq}));
@@ -451,7 +462,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
             if (!(event.data instanceof ArrayBuffer) || event.data.byteLength <= 12 || event.data.byteLength > 12 + 4 * 1024 * 1024) throw new Error('Cuadro JPEG de Chrome inválido o demasiado grande');
             const data = new DataView(event.data);
             const gen = data.getUint32(0), seq = data.getUint32(4), width = data.getUint16(8), height = data.getUint16(10);
-            if (!uint(gen) || !uint(seq) || !width || !height || width > 1920 || height > 1080) throw new Error('Cabecera de pestaña inválida');
+            if (!uint(gen) || !uint(seq) || !width || !height || width > 3840 || height > 2160) throw new Error('Cabecera de pestaña inválida');
             if (gen !== current || seq <= lastSeq) return;
             lastSeq = seq;
             latest = {generation: gen, seq, width, height, jpeg: event.data.slice(12), channel};
@@ -473,7 +484,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
           }
           if (m.generation !== undefined && m.generation !== current) return;
           if (m.t === 'opened') {
-            if (m.generation !== current || m.tab !== selected.current || m.format !== 'jpeg' || !uint(m.width) || !uint(m.height) || m.width > 1920 || m.height > 1080) throw new Error('Selección de pestaña inválida');
+            if (m.generation !== current || m.tab !== selected.current || m.format !== 'jpeg' || !uint(m.width) || !uint(m.height) || m.width > 3840 || m.height > 2160) throw new Error('Selección de pestaña inválida');
             setOpened(current);
           } else if (m.t === 'state') {
             if (m.generation !== current || (m.tabs !== undefined && (!Array.isArray(m.tabs) || m.tabs.some((t: Tab) => !t || typeof t.id !== 'string' || typeof t.title !== 'string' || typeof t.url !== 'string')))
@@ -492,7 +503,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
       channel.onclose = () => {
         if (disposed || ws !== channel) return;
         // la generación era de este canal: el worker del canal nuevo no la conoce y rechazaría su release
-        ws = null; signature = ''; latest = null; current = 0; canInput.current = false; setConnected(false); setOpened(0); uncertain();
+        ws = null; signature = ''; latest = null; current = 0; basis = null; canInput.current = false; setConnected(false); setOpened(0); uncertain();
         if (++attempts > 5) { setNotice('Reconexión detenida. Revisá la conexión y volvé a intentar.'); return; }
         setNotice(`Reconectando lectura (${attempts}/5)… La última imagen puede estar desactualizada.`);
         retry = setTimeout(connect, Math.min(4000, 500 * 2 ** (attempts - 1)));
@@ -793,13 +804,23 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
   useEffect(() => { if (stream) { pending.current = []; pressedButton.current = null; touch.current = null; } }, [stream, inputEpoch]);
   useEffect(() => { sender.current = send; }, [send]);
   useEffect(() => { errorHandler.current = onError; }, [onError]);
+  const inFlight = useRef(0);
+  const flushAgain = useRef<() => void>(() => {});
   const flush = useCallback(() => {
     scheduled.current = 0;
-    if (!live.current || !pending.current.length || (!direct && sending.current)) return;
+    if (!live.current || !pending.current.length) return;
+    // control de flujo: movimientos y ruedas esperan el ACK del anterior y mientras tanto se suman;
+    // teclas y clics salen enseguida (con una remota lenta, uno por cuadro agotaba las 32 pendientes)
+    const coalescible = pending.current.every(e => e.type === "mouseMoved" || e.type === "mouseWheel");
+    if (inFlight.current && (!direct || coalescible)) return;
     const batch = pending.current.splice(0, 64);
-    sending.current = true;
-    void sender.current(batch).catch(e => { pending.current = []; errorHandler.current(e); }).finally(() => { sending.current = false; });
+    inFlight.current++; sending.current = true;
+    void sender.current(batch).catch(e => { pending.current = []; errorHandler.current(e); }).finally(() => {
+      inFlight.current--; sending.current = inFlight.current > 0;
+      if (!inFlight.current && pending.current.length && live.current) flushAgain.current();
+    });
   }, [direct]);
+  useEffect(() => { flushAgain.current = flush; }, [flush]);
   useEffect(() => {
     live.current = true;
     const timer = direct ? undefined : setInterval(flush, 30);
@@ -808,22 +829,30 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
   const enqueue = (event: Command) => {
     if (!live.current || !enabled) return;
     if (pending.current.length >= 128) { pending.current = []; onError(new Error("La conexión no sigue el ritmo del teclado. Reconectá antes de continuar.")); return; }
-    if (event.type === "mouseMoved" && pending.current.at(-1)?.type === "mouseMoved") pending.current.pop();
+    const last = pending.current.at(-1);
+    if (event.type === "mouseMoved" && last?.type === "mouseMoved") pending.current.pop();
+    // un arrastre táctil da 60-120 ruedas por segundo: se suman en una sola por cuadro, como el mouse
+    if (event.type === "mouseWheel" && last?.type === "mouseWheel") {
+      pending.current.pop();
+      event = {...event, deltaX: clamp(Number(last.deltaX) + Number(event.deltaX), -4000, 4000), deltaY: clamp(Number(last.deltaY) + Number(event.deltaY), -4000, 4000)};
+    }
     pending.current.push(event);
     if (!direct) return;
-    if (event.type === "mouseMoved") { if (!scheduled.current) scheduled.current = requestAnimationFrame(flush); }
+    if (event.type === "mouseMoved" || event.type === "mouseWheel") { if (!scheduled.current) scheduled.current = requestAnimationFrame(flush); }
     else flush();
   };
   const mouse = (e: React.MouseEvent, type: string, options?: {deltaX?: number; deltaY?: number; button?: number}) => {
     const box = element.current!.getBoundingClientRect();
     const scale = Math.min(box.width / width, box.height / height);
-    const shownWidth = native ? width * scale : box.width;
-    const shownHeight = native ? height * scale : box.height;
+    // ventana real y pestañas por canal vivo: imagen encajada (letterbox) sobre el tamaño real
+    const fit = native || stream;
+    const shownWidth = fit ? width * scale : box.width;
+    const shownHeight = fit ? height * scale : box.height;
     const x = e.clientX - box.left - (box.width - shownWidth) / 2;
     const y = e.clientY - box.top - (box.height - shownHeight) / 2;
-    if (native && type !== 'mouseReleased' && (x < 0 || y < 0 || x >= shownWidth || y >= shownHeight)) return;
-    enqueue({kind: "mouse", type, x: clamp(x * width / shownWidth, 0, native ? width-1 : width),
-      y: clamp(y * height / shownHeight, 0, native ? height-1 : height),
+    if (fit && type !== 'mouseReleased' && (x < 0 || y < 0 || x >= shownWidth || y >= shownHeight)) return;
+    enqueue({kind: "mouse", type, x: clamp(x * width / shownWidth, 0, fit ? width-1 : width),
+      y: clamp(y * height / shownHeight, 0, fit ? height-1 : height),
       // el arrastre táctil trae button -1: la rueda y el movimiento no llevan botón
       button: type === "mouseMoved" || type === "mouseWheel" ? "none" : ["left", "middle", "right"][options?.button ?? e.button],
       buttons: e.buttons, modifiers: modifiers(e), clickCount: clamp(e.detail, type === 'mousePressed' || type === 'mouseReleased' ? 1 : 0, 3),
@@ -846,7 +875,7 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
     if (native && !code) { if (type === 'keyDown') onError(new Error(`Tecla no admitida: ${e.key}`)); return; }
     enqueue({kind: "key", type, key: e.key, code: e.code, keyCode: code, modifiers: modifiers(e)});
   };
-  return <div ref={element} className={`remote-screen${native ? ' remote-screen-native' : ''}`} tabIndex={enabled ? 0 : -1} aria-disabled={!enabled || undefined} role="application" aria-label="Página remota: mouse y teclado"
+  return <div ref={element} className={`remote-screen${native || stream ? ' remote-screen-native' : ''}`} tabIndex={enabled ? 0 : -1} aria-disabled={!enabled || undefined} role="application" aria-label="Página remota: mouse y teclado"
     style={native ? {cursor} : undefined}
     onBlur={() => { if (stream) { pending.current = []; pressedButton.current = null; touch.current = null; onRelease?.(); } }}
     onKeyDown={e => key(e, "keyDown")} onKeyUp={e => key(e, "keyUp")}

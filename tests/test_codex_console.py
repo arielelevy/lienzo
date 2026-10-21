@@ -37,8 +37,16 @@ def test_thread_changes_do_not_send_to_old_rollout(cli, monkeypatch, transition)
     assert len(typed) == 1
 
 
-@pytest.mark.parametrize("change", [{"stopped_by": "user"}, {"pending_id": "permission"},
-                                  {"no_console": True}, {"orphan": True}, {"external": {"kind": "runner"}}])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"stopped_by": "user"},
+        {"pending_id": "permission"},
+        {"no_console": True},
+        {"orphan": True},
+        {"external": {"kind": "runner"}},
+    ],
+)
 def test_existing_guards_remain_active(cli, monkeypatch, change):
     cli.update(change)
     monkeypatch.setattr(ses, "run_send", lambda *a: pytest.fail("must not type"))
@@ -49,8 +57,11 @@ def test_existing_guards_remain_active(cli, monkeypatch, change):
 def test_process_incarnation_is_passed_to_injector_and_recycled_pid_rejects(cli, monkeypatch):
     calls = []
     monkeypatch.setattr(ses.procs, "creation_filetime", lambda pid: 123)
-    monkeypatch.setattr(ses.subprocess, "run", lambda cmd, **kw:
-                        calls.append(cmd) or SimpleNamespace(returncode=0, stdout='{"ok":true}'))
+    monkeypatch.setattr(
+        ses.subprocess,
+        "run",
+        lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0, stdout='{"ok":true}'),
+    )
     assert ses.run_send(cli, "hola")[0] == 200
     assert calls[0][calls[0].index("--expected-start") + 1] == "123"
     monkeypatch.setattr(ses.procs, "creation_filetime", lambda pid: 124)
@@ -92,6 +103,7 @@ def test_uncertain_write_is_not_replayed(cli, monkeypatch):
 
 def test_unicode_message_is_preserved_in_attachment(cli, monkeypatch, tmp_path):
     from pathlib import Path
+
     monkeypatch.setattr(ses, "ADJUNTOS", str(tmp_path / "attachments"))
     typed = []
     monkeypatch.setattr(ses, "run_send", lambda s, text: typed.append(text) or (200, {"ok": True}))
@@ -105,6 +117,7 @@ def test_unicode_message_is_preserved_in_attachment(cli, monkeypatch, tmp_path):
 
 def test_native_rejects_unrepresentable_text_before_any_input(monkeypatch):
     from test_send import consola
+
     events = consola(monkeypatch, [])
     assert not send.inject(123, "hola 🙂")["ok"]
     assert not events
@@ -128,6 +141,7 @@ def _members(members):
 
 def test_native_guard_rejects_shared_console(monkeypatch):
     from test_send import consola
+
     events = consola(monkeypatch, [])
 
     def members(array, size):
@@ -141,6 +155,7 @@ def test_native_guard_rejects_shared_console(monkeypatch):
 
 def test_owner_dying_after_text_prevents_enter(monkeypatch):
     from test_send import consola
+
     events = consola(monkeypatch, [0])
     alive = iter([True, False])
     monkeypatch.setattr(send.k32, "GetConsoleProcessList", lambda members, size: _members(members), raising=False)

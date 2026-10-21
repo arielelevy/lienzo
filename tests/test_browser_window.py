@@ -12,7 +12,9 @@ import pytest
 
 def test_stream_copy_returns_text_from_selected_window():
     seen = []
-    stream = module.Streamer(SimpleNamespace(copy=lambda hwnd: seen.append(hwnd) or "ñ 🧉"), io.BytesIO(), capture=lambda: None)
+    stream = module.Streamer(
+        SimpleNamespace(copy=lambda hwnd: seen.append(hwnd) or "ñ 🧉"), io.BytesIO(), capture=lambda: None
+    )
     stream.hwnd = 123
     messages = []
     stream.json = messages.append

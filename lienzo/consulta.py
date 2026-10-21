@@ -173,7 +173,9 @@ def _rechazo(msg: str, code: int = 400) -> tuple[int, dict]:
 
 def _participante_ocupado(participantes: list[str]) -> str | None:
     with lock:
-        ocupados = {p for current in CONSULTAS.values() if current["estado"] in ABIERTAS for p in _participantes(current)}
+        ocupados = {
+            p for current in CONSULTAS.values() if current["estado"] in ABIERTAS for p in _participantes(current)
+        }
         comunes = ocupados.intersection(participantes)
         return min(comunes) if comunes else None
 

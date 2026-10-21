@@ -13,12 +13,14 @@ conocimiento_api._dispatch la engancha por prefijo de ruta.
     GET  /conocimiento/<p>/avisos                                 apoyos rechazados (decisiones y preguntas)
     GET  /conocimiento/<p>/nodos/<id>/aviso                       el aviso de un nodo
     GET  /conocimiento/<p>/nodos/<id>/dependencias                quien depende de un nodo (transitivo)
+    POST /conocimiento/<p>/candidatos/contraste                   contraste lógico de lo que espera veredicto (motor, sólo lectura)
 """
 
 from __future__ import annotations
 
 import aprendizaje as ap
 import conocimiento as k
+import prolog_contraste
 from conocimiento import Rechazo
 from conocimiento_params import _entero, _q
 
@@ -58,6 +60,9 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
         return 200, ap.reglas_cuestionadas(pid)
     if len(resto) == 3 and resto[0] == "reglas" and resto[2] == "cuestionar" and metodo == "POST":
         return 200, ap.cuestionar_regla(pid, resto[1])
+    if resto == ["candidatos", "contraste"] and metodo == "POST":
+        # acción explícita: lee el grafo y consulta el motor; no escribe ni promueve
+        return prolog_contraste.contrastar(pid)
     if resto == ["avisos"] and metodo == "GET":
         return 200, ap.apoyos_rechazados(pid)
     if len(resto) == 3 and resto[0] == "nodos" and metodo == "GET":

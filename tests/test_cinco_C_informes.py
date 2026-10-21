@@ -1,4 +1,5 @@
 """Contratos del libro de informes; sin transporte ni sesiones reales."""
+
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -32,8 +33,11 @@ def test_dos_frentes_simultaneos_persisten_sin_reenvio(entorno):
     otra = {**rule, "id": "cinco-C-segunda", "from": "cinco-C-src"}
     state.rules.items.append(otra)
     state.sessions[otra["from"]] = {
-        "session_id": otra["from"], "agent": "codex", "state": "termino",
-        "last_reply": "ESTADO: segundo frente", "prompt_id": "otro",
+        "session_id": otra["from"],
+        "agent": "codex",
+        "state": "termino",
+        "last_reply": "ESTADO: segundo frente",
+        "prompt_id": "otro",
     }
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:

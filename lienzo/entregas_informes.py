@@ -13,8 +13,13 @@ def conservar(rule, foto, timestamp):
     existente = next((x for x in informes if x["id"] == foto["huella"]), None)
     if existente is not None:
         return existente
-    informe = {"id": foto["huella"], "respuesta": foto["texto"],
-               "created": timestamp, "estado": "pendiente", "intentos": 0}
+    informe = {
+        "id": foto["huella"],
+        "respuesta": foto["texto"],
+        "created": timestamp,
+        "estado": "pendiente",
+        "intentos": 0,
+    }
     informes.append(informe)
     return informe
 

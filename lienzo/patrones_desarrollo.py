@@ -39,7 +39,7 @@ def analizar(pid):
 
     with k._abrir(pid) as con:
         rows = con.execute(
-            "SELECT * FROM nodo WHERE proyecto=? AND tipo='encargo' " "ORDER BY fecha DESC,id DESC LIMIT 501", (pid,)
+            "SELECT * FROM nodo WHERE proyecto=? AND tipo='encargo' ORDER BY fecha DESC,id DESC LIMIT 501", (pid,)
         ).fetchall()
     groups = collections.defaultdict(list)
     unknown = 0
@@ -70,7 +70,7 @@ def analizar(pid):
                 "encargos": len(nodes),
                 "fuentes": [n["id"] for n in nodes[:30]],
                 "controles_declarados": dict(declared),
-                "controles_evidencia": [respaldos[node['id']] for node in nodes],
+                "controles_evidencia": [respaldos[node["id"]] for node in nodes],
                 "calidad": "no inferida; requiere resultados y revisión de evidencia",
             }
         )

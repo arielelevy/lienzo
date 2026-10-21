@@ -363,7 +363,17 @@ def test_preguntar_con_prosa_es_opt_in_y_no_mezcla(tmp_path):
     sin = veredictos.preguntar("p", ["latencia"])
     assert "prosa" not in sin
     con = veredictos.preguntar("p", ["latencia"], prosa=True)
-    assert {k2: v for k2, v in con.items() if k2 != "prosa"} == sin
+    # cada busqueda nueva fija su propia foto (token distinto, frente C lote 8); todo lo demas es exacto:
+    # la prosa no cambia candidatos, orden, total ni la foto salvo su token
+    assert {k2: v for k2, v in con.items() if k2 not in ("prosa", "foto")} == {
+        k2: v for k2, v in sin.items() if k2 != "foto"
+    }
+    assert [n["id"] for n in con["candidatos"]] == [n["id"] for n in sin["candidatos"]]
+    for r in (sin, con):
+        assert isinstance(r["foto"]["token"], str) and r["foto"]["token"]
+    assert sin["foto"]["token"] != con["foto"]["token"]
+    assert {x: con["foto"][x] for x in ("hasta_seq", "ids")} == {x: sin["foto"][x] for x in ("hasta_seq", "ids")}
+    assert sin["foto"]["ids"] == sin["total"]
     assert [p["nodo"] for p in con["prosa"]] == [e["id"]]
     assert con["prosa"][0]["marca"] == "prosa, no declarado" and "[latencia]" in con["prosa"][0]["fragmento"]
     # la captura es de otro proyecto (otra carpeta): no aparece

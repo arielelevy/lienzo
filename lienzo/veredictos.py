@@ -10,15 +10,22 @@ y apoyos rechazados requieren `aprendizaje` (frente D); los errores se propagan 
 
 from __future__ import annotations
 
+import json
 import re
+import secrets
 import sqlite3
+import threading
+import time
 import unicodedata
+from collections import OrderedDict
 
 import conocimiento as k
 from conocimiento import Rechazo
 
 ROLES_VEREDICTO = {k.C, k.P}
-ESTADOS_PENDIENTES = ("propuesto", "propuesta", "observado", "abierta", "recibido")
+# los estados iniciales y `cuestionada`: una regla cuestionada espera que la coordinadora la revalide o
+# la retire, y al cerrar la ronda tiene que verla (v5 §5.3, §6.2)
+ESTADOS_PENDIENTES = ("propuesto", "propuesta", "observado", "abierta", "recibido", "cuestionada")
 TIPOS_PENDIENTES = ("informe", "hallazgo", "decision", "incidente", "regla", "medicion", "pregunta")
 # (tipo, estado) -> seccion del briefing (v5 §4 y §7.2); lo que no esta aca va a `otros`
 VIGENTE = {("decision", "vigente"), ("regla", "vigente"), ("medicion", "valida"), ("hallazgo", "confirmado")}
@@ -94,14 +101,15 @@ def _lista_textos(x, nombre: str, maximo: int = 50) -> list[str]:
 
 
 def _vinculos_de(con: sqlite3.Connection, ids: list[str]) -> dict[str, list[dict]]:
-    """Los vinculos activos que tocan cada id, en una consulta (json_each evita el tope de parametros)."""
+    """Los vinculos activos que tocan cada id, en una consulta (json_each evita el tope de parametros).
+    En orden de alta: el mismo nodo trae sus vinculos igual en cualquier pagina, aunque cambie el lote."""
     if not ids:
         return {}
     j = k._json(ids)
     out: dict[str, list[dict]] = {i: [] for i in ids}
     for r in con.execute(
         "SELECT * FROM vinculo WHERE activo = 1 AND (de IN (SELECT value FROM json_each(?))"
-        " OR a IN (SELECT value FROM json_each(?)))",
+        " OR a IN (SELECT value FROM json_each(?))) ORDER BY rowid",
         (j, j),
     ):
         v = k._fila(r)
@@ -147,29 +155,21 @@ def _respaldos(con, pid, aplicados: list[dict], origen: dict) -> None:
             raise Rechazo(f"item {a['item']}: {falta}", 409)
 
 
-def _cuestionar_si_repite(pid: str, aplicados: list[dict]) -> list[dict]:
+def _cuestionar_si_repite(con, pid: str, aplicados: list[dict]) -> list[dict]:
     """Un `repite` confirmado puede dejar una regla con recurrencia posterior a su vigencia: se aplica
-    la transicion del server en el acto (v5 §6.2), no cuando alguien se acuerde de pedirla."""
+    la transicion del server en el acto (v5 §6.2), en la transaccion del veredicto o del cierre. Antes
+    corria despues del commit: un fallo dejaba el repite sin cuestionar y, al cerrar, el cambio quedaba
+    posterior a cierre_seq (frente C, 2026-10-20)."""
     if not any(a["accion"] == "vinculo" and a["vinculo"]["relacion"] == "repite" for a in aplicados):
         return []
     import aprendizaje
 
-    return [r for r in aprendizaje.cuestionar(pid) if r.get("recien")]
+    return [r for r in aprendizaje.cuestionar(pid, con=con) if r.get("recien")]
 
 
 def _retirar_en(con, pid, de, relacion, a, *, por, motivo, origen) -> dict:
-    """`conocimiento.retirar_vinculo` sobre la conexion del veredicto."""
-    r = con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)).fetchone()
-    if r is None:
-        raise Rechazo("vinculo desconocido", 404)
-    if not r["activo"]:
-        return k._fila(r)
-    con.execute("UPDATE vinculo SET activo = 0 WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a))
-    v = k._fila(
-        con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)).fetchone()
-    )
-    k._cambio(con, pid, "vinculo_retirado", por, motivo, origen, v, anterior=k._fila(r), de=de, relacion=relacion, a=a)
-    return v
+    """`conocimiento.retirar_vinculo` sobre la conexion del veredicto (con su control de proyecto)."""
+    return k.retirar_vinculo(pid, de, relacion, a, por=por, motivo=motivo, origen=origen, con=con)
 
 
 def _origen_veredicto(con, pid, revision, evidencia) -> dict:
@@ -242,11 +242,14 @@ def veredicto(pid: str, items: list, *, por: str, revision=None, evidencia=None,
         raise Rechazo("items debe ser una lista no vacia")
     motivo = motivo or "veredicto"
     with k._abrir(pid) as con:
+        # lock tomado antes de leer: estados, respaldos y cuestionamiento ven la base quieta
+        con.execute("BEGIN IMMEDIATE")
         origen = _origen_veredicto(con, pid, revision, evidencia)
         aplicados = [_item_en(con, pid, i, it, por=por, motivo=motivo, origen=origen) for i, it in enumerate(items)]
         _respaldos(con, pid, aplicados, origen)
+        cuestionadas = _cuestionar_si_repite(con, pid, aplicados)
     res = {"por": por, "origen": origen, "aplicados": aplicados, "n": len(aplicados)}
-    if cuestionadas := _cuestionar_si_repite(pid, aplicados):
+    if cuestionadas:
         res["reglas_cuestionadas"] = cuestionadas
     return res
 
@@ -255,7 +258,8 @@ def veredicto(pid: str, items: list, *, por: str, revision=None, evidencia=None,
 
 
 def pendientes(pid: str, ronda: str | None = None) -> dict:
-    """Lo que espera veredicto: informes `recibido` y nodos en el estado inicial de su tipo, por ronda y
+    """Lo que espera veredicto: informes `recibido`, nodos en el estado inicial de su tipo y reglas
+    `cuestionada`, por ronda y
     fecha, cada uno con sus vinculos activos. Con `ronda`, solo esa ronda (las entregas tardias conservan
     la ronda de origen, asi que entran, marcadas `tardia`)."""
     tipos = ",".join(f"'{t}'" for t in TIPOS_PENDIENTES)
@@ -449,11 +453,13 @@ def cerrar_ronda(pid: str, ronda: str, *, por: str, veredictos=None, sin_resolve
                 motivo="sin resolver al cerrar",
                 con=con,
             )
+        # antes del cierre: el cuestionamiento queda en seq <= cierre_seq y pendientes ya lo ve
+        cuestionadas = _cuestionar_si_repite(con, pid, [a for g in aplicados for a in g["aplicados"]])
         cerrada = k.cerrar_ronda(pid, ronda, por=por, motivo=motivo, con=con)
     dejados = {x["nodo"] for x in sr}
     quedan = [p for p in pendientes(pid, ronda)["pendientes"] if p["id"] not in dejados]
     res = {"ronda": cerrada, "veredictos": aplicados, "sin_resolver": sr, "pendientes": quedan}
-    if cuestionadas := _cuestionar_si_repite(pid, [a for g in aplicados for a in g["aplicados"]]):
+    if cuestionadas:
         res["reglas_cuestionadas"] = cuestionadas
     return res
 
@@ -512,6 +518,7 @@ class _Candidatos:
     def __init__(self):
         self.nodos: dict[str, dict] = {}
         self.orden: list[str] = []
+        self.semillas_lexicas = {"encontradas": 0, "usadas": 0, "maximo": k.LIMITE_BUSQUEDA}
 
     def sumar(self, n: dict, procedencia: str, *, puntaje=None, salto=None, puesto=None) -> None:
         c = self.nodos.get(n["id"])
@@ -583,10 +590,20 @@ def _joins(con, pid, cand: _Candidatos, archivos: list[str], temas_ref: list[str
 def _bm25(pid, cand: _Candidatos, consultas: list[str], tipo: str | None) -> None:
     """Capa 2: cada consulta FTS por separado. Los puntajes de consultas distintas no se comparan entre
     si: un nodo conserva su mejor puesto en cualquiera de las listas (v5 §7.1, «combinando por mejor
-    puesto de cada lista») y, aparte, su mejor puntaje."""
+    puesto de cada lista») y, aparte, su mejor puntaje. Entre todas las consultas entran hasta 30
+    semillas unicas, las de mejor puesto; el empate se decide por id, no por puntaje, que sigue siendo
+    solo un dato. Antes entraban 30 por consulta, hasta 300. El corte queda en `cand.semillas_lexicas`:
+    un corte no equivale a ausencia (frente C, 2026-10-20)."""
+    hits, mejor = [], {}
     for q in consultas:
         for i, h in enumerate(k.buscar(pid, q, tipo=tipo, limite=k.LIMITE_BUSQUEDA)):
-            cand.sumar(h, f"bm25:{q}", puntaje=h["puntaje"], salto=0, puesto=i + 1)
+            hits.append((q, i + 1, h))
+            mejor[h["id"]] = min(mejor.get(h["id"], i + 1), i + 1)
+    usadas = set(sorted(mejor, key=lambda nid: (mejor[nid], nid))[: k.LIMITE_BUSQUEDA])
+    for q, puesto, h in hits:
+        if h["id"] in usadas:
+            cand.sumar(h, f"bm25:{q}", puntaje=h["puntaje"], salto=0, puesto=puesto)
+    cand.semillas_lexicas = {"encontradas": len(mejor), "usadas": len(usadas), "maximo": k.LIMITE_BUSQUEDA}
 
 
 def _expansion(pid, cand: _Candidatos, saltos: int) -> None:
@@ -607,6 +624,141 @@ def _recuperar(pid, *, archivos, temas_ref, consultas, tipo, saltos) -> tuple[_C
     _bm25(pid, cand, consultas, tipo)
     _expansion(pid, cand, saltos)
     return cand, sin_tema
+
+
+# --- fotos de `preguntar`: paginas de una lista fija (frente C, 2026-10-20) -------------------------
+
+FOTO_TTL_S = 600  # una foto vive 10 minutos desde que se crea
+FOTOS_MAX = 50  # fotos vivas por proceso; sale la usada hace mas tiempo
+FOTO_MAX_BYTES = 1_000_000  # ids y metadatos de una foto, en JSON; mas grande no se fija
+FOTOS_MAX_BYTES = 8_000_000  # entre todas las fotos
+_META_FOTO = ("id", "procedencia", "puntaje", "puesto", "salto")  # sin textos ni cuerpos
+_CAMPOS_NODO = ("id", "tipo", "texto", "estado", "estado_fecha", "estado_por", "datos", "ronda", "fecha", "autor")
+_reloj = time.monotonic
+
+
+class _Fotos:
+    """Fotos en memoria del proceso: ids y metadatos de recuperacion, nunca textos. Vencen a FOTO_TTL_S y
+    salen por antiguedad de uso (LRU) al pasar FOTOS_MAX o FOTOS_MAX_BYTES. Un reinicio las pierde: el
+    token responde 410, explicito."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._fotos: OrderedDict[str, dict] = OrderedDict()
+        self.bytes = 0
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._fotos)
+
+    def _purgar(self, ahora: float) -> None:
+        for token in [t for t, f in self._fotos.items() if f["vence"] <= ahora]:
+            self.bytes -= self._fotos.pop(token)["bytes"]
+
+    def guardar(self, foto: dict) -> str | None:
+        """El token de la foto guardada, o None si sola pasa de FOTO_MAX_BYTES."""
+        tam = len(json.dumps(foto, ensure_ascii=False).encode("utf-8"))
+        if tam > FOTO_MAX_BYTES or tam > FOTOS_MAX_BYTES:
+            return None
+        with self._lock:
+            ahora = _reloj()
+            self._purgar(ahora)
+            while self._fotos and (len(self._fotos) >= FOTOS_MAX or self.bytes + tam > FOTOS_MAX_BYTES):
+                self.bytes -= self._fotos.popitem(last=False)[1]["bytes"]
+            token = secrets.token_urlsafe(18)
+            self._fotos[token] = {**foto, "bytes": tam, "vence": ahora + FOTO_TTL_S}
+            self.bytes += tam
+            return token
+
+    def leer(self, token: str) -> dict:
+        with self._lock:
+            self._purgar(_reloj())
+            f = self._fotos.get(token)
+            if f is None:
+                raise Rechazo("la foto de la busqueda vencio o no existe; repeti la busqueda", 410)
+            self._fotos.move_to_end(token)
+            return f
+
+
+_FOTOS = _Fotos()
+
+
+def _info_foto(token: str, f: dict) -> dict:
+    return {
+        "token": token,
+        "hasta_seq": f["hasta_seq"],
+        "ids": len(f["filas"]),
+        "vence_en_s": max(0, round(f["vence"] - _reloj())),
+    }
+
+
+def _seq_proyecto(pid: str) -> int:
+    with k._abrir(pid) as con:
+        return con.execute("SELECT COALESCE(MAX(seq), 0) FROM cambio WHERE proyecto = ?", (pid,)).fetchone()[0]
+
+
+def _orden(n: dict):
+    """Salto, mejor puesto y id. El puntaje no ordena: los de consultas distintas no se comparan (v5 §7.1,
+    «combinando por mejor puesto de cada lista»); queda como dato del candidato."""
+    return (
+        n["salto"] if n["salto"] is not None else 9,
+        # sin puesto (llego por tema o archivo) va despues de los de BM25, como antes del puesto
+        n["puesto"] if n["puesto"] is not None else float("inf"),
+        n["id"],
+    )
+
+
+def _calcular(pid, archivos, temas_ref, consultas, tipo, saltos):
+    """La lista entera, ordenada. La recuperacion usa varias conexiones: si el ultimo `seq` de cambios del
+    proyecto no es el mismo antes y despues, la lista puede mezclar dos estados y se rechaza (409, sin
+    reintento). `hasta_seq` es ese seq, el que corresponde a lo calculado."""
+    antes = _seq_proyecto(pid)
+    cand, sin_tema = _recuperar(
+        pid, archivos=archivos, temas_ref=temas_ref, consultas=consultas, tipo=tipo, saltos=saltos
+    )
+    if _seq_proyecto(pid) != antes:
+        raise Rechazo("la memoria cambio mientras se calculaba la busqueda; repeti la busqueda", 409)
+    return sorted(cand.lista(), key=_orden), sin_tema, cand.semillas_lexicas, antes
+
+
+def _detalle_actual(pid: str, filas: list[dict], hasta: int) -> list[dict]:
+    """Los nodos de una pagina de la foto con su estado de hoy y la marca de si cambiaron (ellos o un
+    vinculo suyo) despues de `hasta`. El orden y los metadatos de recuperacion son los de la foto."""
+    ids = [f["id"] for f in filas]
+    if not ids:
+        return []
+    q = ",".join("?" * len(ids))
+    with k._abrir(pid) as con:
+        actuales = {
+            r["id"]: k._fila(r)
+            for r in con.execute(f"SELECT * FROM nodo WHERE proyecto = ? AND id IN ({q})", [pid, *ids])
+        }
+        cambiados = set()
+        for r in con.execute(
+            "SELECT nodo_id, de, a FROM cambio WHERE proyecto = ? AND seq > ?",
+            (pid, hasta),
+        ):
+            cambiados.update(x for x in r if x)
+    out = []
+    for f in filas:
+        n = actuales.get(f["id"])
+        base = {x: n.get(x) for x in _CAMPOS_NODO} if n else {"id": f["id"], "no_disponible": True}
+        out.append({**base, **f, "cambio_despues_de_la_foto": f["id"] in cambiados})
+    return out
+
+
+def _decorar(pid: str, nodos: list[dict]) -> list[dict]:
+    """Vinculos activos, ruta de cuerpos y apoyo rechazado de los candidatos de una pagina."""
+    with k._abrir(pid) as con:
+        vinculos = _vinculos_de(con, [n["id"] for n in nodos])
+    caidos = _apoyos_caidos(pid)
+    for n in nodos:
+        n["vinculos"] = vinculos.get(n["id"], [])
+        if n.get("tipo") in ("informe", "encargo"):
+            n["ruta"] = (n.get("datos") or {}).get("ruta")
+        if n["id"] in caidos:
+            n["apoyo_rechazado"] = caidos[n["id"]]  # v5 §6.3: el aviso acompana al candidato
+    return nodos
 
 
 def _apoyos_caidos(pid: str) -> dict[str, list[str]]:
@@ -739,6 +891,7 @@ def preguntar(
     offset: int = 0,
     limite: int = 100,
     prosa: bool = False,
+    foto: str | None = None,
 ) -> dict:
     """La cadena joins -> BM25 -> expansion (v5 §7.1) sin leer cuerpos: candidatos con procedencia,
     puntaje, salto y sus vinculos activos; los informes y encargos traen `ruta` para `leer_cuerpo`.
@@ -746,7 +899,14 @@ def preguntar(
     recuperar todo: total sin recorte, siguientes como offset o None; limite entre 1 y 500.
     Con `prosa` (opt-in) suma `prosa`: BM25 de cada consulta sobre los cuerpos de encargos e informes y
     las capturas, marcado «prosa, no declarado» y sin mezclarse con los candidatos ni con su paginacion.
-    Sin `prosa` la respuesta no cambia."""
+    Sin `prosa` la respuesta no cambia.
+
+    Foto (frente C, 2026-10-20; v5 §7.1: un corte no equivale a ausencia). La primera pagina (offset 0,
+    sin `foto`) fija el orden: devuelve `foto` {token, hasta_seq, ids, vence_en_s}. Con `foto` las
+    paginas salen de esa lista (sin duplicar ni saltear): el detalle de cada nodo es el actual y lleva
+    `cambio_despues_de_la_foto`. Token de otra busqueda: 409; vencido o desconocido: 410, nunca se
+    recalcula en silencio. Sin `foto` y con offset > 0 se recalcula como antes y `foto_motivo` lo dice.
+    Si la memoria cambia mientras se calcula, 409 (sin reintento)."""
     if type(offset) is not int or offset < 0:
         raise Rechazo("offset debe ser un entero no negativo")
     if type(limite) is not int or not 1 <= limite <= 500:
@@ -757,39 +917,52 @@ def preguntar(
     if not consultas and not archivos and not temas_ref:
         raise Rechazo("hace falta al menos una consulta, un archivo o un tema")
     saltos = max(0, min(int(saltos), k.SALTOS_MAX))
-    cand, sin_tema = _recuperar(
-        pid, archivos=archivos, temas_ref=temas_ref, consultas=consultas, tipo=tipo, saltos=saltos
-    )
-    out = cand.lista()
-    with k._abrir(pid) as con:
-        vinculos = _vinculos_de(con, [n["id"] for n in out])
-    for n in out:
-        n["vinculos"] = vinculos.get(n["id"], [])
-        if n["tipo"] in ("informe", "encargo"):
-            n["ruta"] = n["datos"].get("ruta")
-    caidos = _apoyos_caidos(pid)
-    for n in out:
-        if n["id"] in caidos:
-            n["apoyo_rechazado"] = caidos[n["id"]]  # v5 §6.3: el aviso acompana al candidato
-    out.sort(
-        key=lambda n: (
-            n["salto"] if n["salto"] is not None else 9,
-            # sin puesto (llego por tema o archivo) va despues de los de BM25, como antes del puesto
-            n["puesto"] if n["puesto"] is not None else float("inf"),
-            n["puntaje"] if n["puntaje"] is not None else 0,
-            n["id"],
+    clave = {"proyecto": pid, "consultas": consultas, "archivos": archivos, "temas": temas_ref, "tipo": tipo}
+    clave["saltos"] = saltos
+    if foto is not None:
+        if not isinstance(foto, str) or not foto or len(foto) > 64:
+            raise Rechazo("foto invalida")
+        f = _FOTOS.leer(foto)
+        if f["clave"] != clave:
+            raise Rechazo(
+                "la foto es de otra busqueda (proyecto, consultas, archivos, temas, tipo o saltos); repeti la busqueda",
+                409,
+            )
+        filas, sin_tema, semillas = f["filas"], f["sin_tema"], f["semillas"]
+        pagina = _decorar(pid, _detalle_actual(pid, filas[offset : offset + limite], f["hasta_seq"]))
+        foto_info, motivo = _info_foto(foto, f), None
+    else:
+        filas, sin_tema, semillas, hasta = _calcular(pid, archivos, temas_ref, consultas, tipo, saltos)
+        pagina = _decorar(pid, filas[offset : offset + limite])
+        foto_info, motivo = (
+            None,
+            ("sin foto: la lista se recalculo en este pedido y puede repetir o saltear candidatos entre paginas"),
         )
-    )
+        if offset == 0:
+            datos_foto = {"clave": clave, "hasta_seq": hasta, "sin_tema": sin_tema, "semillas": semillas}
+            datos_foto["filas"] = [{x: n[x] for x in _META_FOTO} for n in filas]
+            token = _FOTOS.guardar(datos_foto)
+            if token:
+                foto_info, motivo = _info_foto(token, _FOTOS.leer(token)), None
+            else:
+                motivo = (
+                    f"demasiados candidatos para fijar una foto ({len(filas)}); afina la consulta: las paginas"
+                    " siguientes se recalculan"
+                )
     res = {
         "proyecto": pid,
         "consultas": consultas,
         "temas_sin_resolver": sin_tema,
-        "total": len(out),
+        "semillas_lexicas": semillas,
+        "total": len(filas),
         "offset": offset,
         "limite": limite,
-        "siguientes": offset + limite if offset + limite < len(out) else None,
-        "candidatos": out[offset : offset + limite],
+        "siguientes": offset + limite if offset + limite < len(filas) else None,
+        "candidatos": pagina,
+        "foto": foto_info,
     }
+    if motivo:
+        res["foto_motivo"] = motivo
     if prosa:
         vistos, prosa_out = set(), []
         for q in consultas:

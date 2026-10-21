@@ -2,6 +2,7 @@
 
 import os
 
+import chrome_claude
 import state
 import tmux
 
@@ -65,4 +66,6 @@ def info() -> dict:
         # las distros de WSL de esta PC: el dialogo de lanzar las lee de la salud de cada PC (GET /peers);
         # [] fuera de Windows con WSL. Cacheadas 60 s en tmux.distros
         "distros_wsl": tmux.distros(),
+        # perfiles de Chrome con la extensión Claude in Chrome: el diálogo los muestra al tildar Chrome
+        "chrome_claude": chrome_claude.perfiles_cacheados(),
     }

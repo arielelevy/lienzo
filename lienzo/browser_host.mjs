@@ -144,7 +144,11 @@ async function attachPage(id) {
     const {sessionId} = await root.send('Target.attachToTarget', {targetId: id, flatten: true});
     const cdp = {sessionId, dialog: null, send: (method, params) => root.send(method, params, sessionId)};
     root.sessions.set(sessionId, cdp);
-    try { await cdp.send('Page.enable'); }
+    try {
+      await cdp.send('Page.enable');
+      // existing: la pestaña es del usuario; se deshace una vez lo que pudo dejar una versión que emulaba
+      if (!chrome) await cdp.send('Emulation.clearDeviceMetricsOverride');
+    }
     catch (e) {
       // sin pages.set: el próximo pedido adjunta de cero; la sesión fallida no queda colgada en Chrome
       root.sessions.delete(sessionId);
@@ -155,6 +159,27 @@ async function attachPage(id) {
     pages.set(id, cdp);
   }
   return pages.get(id);
+}
+
+// Chrome habitual (existing): nunca se emula el tamaño; se lee el real y se captura sin tocar layout ni scroll.
+async function realViewport(cdp) {
+  const {cssVisualViewport: v, visualViewport: device} = await cdp.send('Page.getLayoutMetrics');
+  const width = Math.round(v?.clientWidth), height = Math.round(v?.clientHeight);
+  if (!Number.isFinite(v?.pageX) || !Number.isFinite(v?.pageY) || !(width >= 1 && width <= 3840 && height >= 1 && height <= 2160))
+    fail('Chrome informó un tamaño de pestaña inválido', 502);
+  cdp.css = {width, height};
+  // medido (headless, 2026-10-20): con DPR 2 la captura sale al doble de px que el clip CSS
+  const dpr = device?.clientWidth > 0 ? Math.min(4, Math.max(1, device.clientWidth / v.clientWidth)) : 1;
+  return {x: v.pageX, y: v.pageY, width, height, dpr};
+}
+
+async function realShot(cdp, viewerWidth, viewerHeight) {
+  const view = await realViewport(cdp);
+  // el clip va en coordenadas del documento: arranca en el scroll actual (pageX/pageY) y escala la imagen, no la página
+  const scale = Math.min(1, viewerWidth / view.width, viewerHeight / view.height) / view.dpr;
+  const {data} = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false,
+    clip: {x: view.x, y: view.y, width: view.width, height: view.height, scale}});
+  return {image: data, width: view.width, height: view.height};
 }
 
 function url(value) {
@@ -193,7 +218,7 @@ async function input(cdp, events, releaseOnly = false) {
       if (!['mousePressed', 'mouseReleased', 'mouseMoved', 'mouseWheel'].includes(e.type)
           || !['none', 'left', 'middle', 'right'].includes(e.button)) fail('Acción de mouse inválida');
       const params = {
-        type: e.type, x: integer(e.x, 0, 1920), y: integer(e.y, 0, 1080),
+        type: e.type, x: integer(e.x, 0, 3840), y: integer(e.y, 0, 2160),
         button: e.button, buttons: integer(e.buttons, 0, 7), modifiers: integer(e.modifiers, 0, 15),
         clickCount: releaseOnly ? 0 : ['mousePressed', 'mouseReleased'].includes(e.type) ? Math.max(1, integer(e.clickCount, 0, 3)) : integer(e.clickCount, 0, 3),
       };
@@ -337,13 +362,20 @@ async function handle(d) {
   }
   if (d.action === 'viewport') { integer(d.width, 320, 1920); integer(d.height, 240, 1080); }
   const cdp = await page(d.tab, ['snapshot', 'input', 'release-input', 'viewport', 'tab-state'].includes(d.action));
+  const timedOut = e => {
+    if (e.status === 504) e.message += '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla';
+    throw e;
+  };
   if (d.action === 'viewport') {
     const width = integer(d.width, 320, 1920), height = integer(d.height, 240, 1080);
-    // el override cambia la pestaña real: se manda sólo cuando cambia el tamaño, no en cada open
+    // existing: el tamaño del visor sólo escala la captura; se informa el tamaño real de la pestaña
+    if (!chrome) return realViewport(cdp).then(v => ({width: v.width, height: v.height}));
+    // lienzo (headless propio): el override cambia la pestaña; se manda sólo cuando cambia el tamaño
     if (cdp.size !== `${width}x${height}`) {
       await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
       cdp.size = `${width}x${height}`;
     }
+    cdp.css = {width, height};
     return {width, height};
   }
   if (d.action === 'frame' || d.action === 'snapshot') {
@@ -351,22 +383,21 @@ async function handle(d) {
     // Snapshot nunca modifica el viewport: open/viewport es la unica operacion que lo establece.
     if (d.action === 'snapshot') {
       if (cdp.dialog) return {dialog: cdp.dialog};
-      let shot;
-      try { shot = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false}); }
-      catch (e) {
-        if (e.status === 504) e.message += '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla';
-        throw e;
-      }
+      if (!chrome) return await realShot(cdp, width, height).catch(timedOut);
+      const shot = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false}).catch(timedOut);
       return {image: shot.data, width, height};
     }
-    if (cdp.size !== `${width}x${height}`) {
+    if (chrome && cdp.size !== `${width}x${height}`) {
       await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
       cdp.size = `${width}x${height}`;
+      cdp.css = {width, height};
     }
     if (cdp.dialog) return {running: true, tabs: await tabs(), dialog: cdp.dialog};
-    const {data} = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false});
+    const shot = chrome
+      ? {image: (await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false})).data, width, height}
+      : await realShot(cdp, width, height);
     const history = await cdp.send('Page.getNavigationHistory');
-    return {running: true, tabs: await tabs(), image: data, width, height,
+    return {running: true, tabs: await tabs(), ...shot,
       back: history.currentIndex > 0, forward: history.currentIndex < history.entries.length - 1, dialog: null};
   }
   if (d.action === 'tab-state') {
@@ -384,7 +415,17 @@ async function handle(d) {
     const h = await cdp.send('Page.getNavigationHistory');
     const entry = h.entries[h.currentIndex + d.direction];
     if (entry) await cdp.send('Page.navigateToHistoryEntry', {entryId: entry.id});
-  } else if (d.action === 'input') await input(cdp, d.events);
+  } else if (d.action === 'input') {
+    // la entrada se mapeó sobre el tamaño de un cuadro: si la pestaña cambió desde entonces, no se manda
+    if (d.basis !== undefined) {
+      // existing: el último cuadro no prueba que la ventana conserve su tamaño. Comparar con
+      // esta lectura, no con la caché compartida que otro snapshot puede modificar mientras esperamos.
+      const current = chrome ? cdp.css : await realViewport(cdp);
+      if (!d.basis || integer(d.basis.width, 1, 3840) !== current?.width || integer(d.basis.height, 1, 2160) !== current?.height)
+        fail('La pestaña cambió de tamaño; la entrada no se envió', 409);
+    }
+    await input(cdp, d.events);
+  }
   else if (d.action === 'release-input') await input(cdp, d.events, true);
   else if (d.action === 'copy') {
     const {result, exceptionDetails} = await cdp.send('Runtime.evaluate', {

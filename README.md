@@ -1,7 +1,7 @@
 # Lienzo
 
-Versión **0.4.0**: envío a Codex CLI por su consola visible, recuperación del canal Claude
-y reglas de coordinación visibles y recuperables. [Novedades, validación y límites](docs/releases/0.5.3.md).
+Versión **0.6.0**: Chrome remoto sin emulación de tamaño, historial parcial de Antigravity,
+memoria transaccional y contraste opcional con Prolog. [Novedades, validación y límites](docs/releases/0.6.0.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
@@ -20,7 +20,7 @@ Corre en `127.0.0.1:7321`. Lee el historial de cada agente y escribe en su termi
 Las terminales y las transcripciones siguen a cargo de los agentes.
 
 [Arquitectura, diseño y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/) ·
-[Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](MEJORAS.md) ·
+[Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](PENDIENTES.md#historial-mejoras) ·
 [Documentación y decisiones de producto](docs/README.md)
 
 ![Tablero](docs/img/tablero.png)
@@ -237,6 +237,14 @@ dos muestras de recursos aptas y ningún agente ocupado ni permiso vigente. Enco
 por proyecto y versión de fuentes, con cooldown de 120 segundos y hasta 100 trabajos; sus propias
 hipótesis no generan otra ronda. Las hipótesis quedan propuestas, con evidencia y veredicto pendiente.
 
+Una investigación interrumpida por actividad, memoria o cuota espera 30 minutos antes de volver
+a intentarlo; los intentos ya usados siguen contando. Una pausa manual no agrega esa espera.
+La revisión permite reencolar o descartar por decisión explícita, conservando intentos, corridas
+e historial y revalidando la política. Cancelar se persiste antes de confirmarlo: una evaluación
+de cuota pendiente no puede volver a arrancar el caso y la cancelación sobrevive a un reinicio.
+Un proceso interrumpido al reiniciar pasa a revisión, salvo que ya tuviera cancelación solicitada.
+El PID anterior se conserva como referencia en el motivo; Lienzo no intenta matarlo.
+
 En esos mismos ratos quietos mide también **cómo se trabaja** (`lienzo/optimizacion_trabajo.py`, pedido
 de Ariel del 2026-10-16). A lo sumo una vez por hora por proyecto lee las capturas de las últimas 72 h:
 pedidos, respuestas, envíos y disparos de reglas. Mide frentes que ya entregaron y esperan a una
@@ -424,8 +432,10 @@ El menú ⋯ → Memoria permite elegir un proyecto y consultar su briefing, bus
 leer una vista por tema, y ver pendientes y avisos. Las consultas son de lectura; no confirman
 hallazgos ni aceptan reglas automáticamente.
 
-**Todo lo que pasa por el lienzo queda en la memoria, sin registrar nada a mano** (pedido de
-Ariel del 2026-10-09). El proyecto es la carpeta: la primera vez que el lienzo ve una sesión en una
+**La actividad de los agentes con turnos identificados queda en la memoria, sin registrar nada a mano**
+(pedido de Ariel del 2026-10-09). Un historial parcial, como el lector inicial de Antigravity,
+no confirma respuestas finales ni dispara esa captura automáticamente.
+El proyecto es la carpeta: la primera vez que el lienzo ve una sesión en una
 carpeta (hook, barrido, lanzamiento o envío) crea el proyecto de esa carpeta (la raíz del repo, y la
 del repo principal para un worktree) y la sesión queda como nodo. El remote sólo une la misma
 carpeta en dos PCs; dos carpetas de una PC nunca se juntan. Cada pedido, respuesta final, envío entre
@@ -441,15 +451,36 @@ Cada proyecto tiene identidad propia, rondas, encargos e informes con hash y rev
 bloque JSON `conocimiento` del informe se valida entero antes de incorporarse al grafo. Los
 veredictos requieren una coordinadora o una persona y conservan revisión, evidencia y motivo.
 El cierre de ronda aplica sus veredictos y pendientes explícitos en una transacción.
+Si un veredicto confirma una recurrencia, las reglas afectadas se cuestionan en esa misma
+transacción, antes del cierre; un fallo revierte el conjunto. Una entrega asigna su revisión y
+actualiza el encargo en una sola transacción. Cerrar o revivir una sesión actualiza sus nodos
+en todos los proyectos en los que trabajó, conservando separados los incidentes de cada proyecto.
 
 La recuperación combina archivos y temas, BM25 y relaciones del grafo. `preguntar` devuelve
 candidatos paginados con sus referencias; una búsqueda vacía no prueba que algo no exista.
+Las consultas comparten un máximo de 30 semillas por palabras, ordenadas por su mejor puesto;
+no se comparan puntajes BM25 entre consultas distintas. Buscar muestra las usadas y encontradas
+y avisa cuando hubo corte. Una base indisponible responde 503; una consulta FTS inválida, 400.
+La paginación conserva una foto de IDs y orden durante 10 minutos mediante un token.
+Los detalles se leen actualizados y se avisa si cambiaron; un token vencido responde 410.
+Sin token, cada página recalcula los resultados. Si la foto supera los límites, se pide refinar la búsqueda.
 Con `prosa=True` suma, aparte y marcado «prosa, no declarado», lo escrito en encargos, informes y
 capturas que coincide; sin ese parámetro la respuesta no cambia. El texto con U+FFFD o mojibake
 (UTF-8 leído como Windows-1252) se rechaza al entregar, al declarar un nodo y en el bloque, con la
 línea y la columna; `reparar_texto` repara el mojibake guardado con un cambio auditado por nodo.
 El aprendizaje cuenta episodios de recurrencia una vez, cuestiona reglas ante episodios
 posteriores a su vigencia y muestra apoyos rechazados y dependencias.
+
+**Contraste lógico de candidatos.** En Memoria → Aprendizaje, **Contrastar candidatos**
+consulta el motor lógico separado por su contrato 3, sin almacén. Envía hechos del grafo sin
+textos y reglas de Lienzo; devuelve respaldos caídos, reglas cuestionadas, oposiciones y apoyos
+retirados, con pruebas que se verifican contra esas reglas y hechos. Un cálculo Python
+independiente contrasta las conclusiones; si difieren o la prueba está recortada, no se informa
+que el candidato esté listo para revisión. No promueve, rechaza ni cierra conocimiento.
+El motor requiere SWI-Prolog (Ubuntu WSL en Windows) y el repo `motor-logico` junto a Lienzo,
+o una ruta explícita en `LIENZO_PROLOG_ENGINE`. Su ausencia o una respuesta inválida se informa
+como error. La procedencia humana se basa en el autor declarado en la memoria: todavía no hay
+una credencial humana separada que certifique esa identidad.
 
 Las funciones de `skills/lienzo/coordinar.py` incluyen `briefing`, `preguntar`, `vista`,
 `veredicto`, `cerrar_ronda`, `pendientes_memoria`, `recurrencia`, `cuestionar` y `lecciones`.
@@ -459,9 +490,9 @@ como una dimensión de cada tabla; los cuerpos de encargos e informes y la evide
 `~/.lienzo/proyectos/<proyecto>/`. Se replica entre las PCs
 emparejadas por el canal firmado (cada 120 s, o `POST /conocimiento/replicar`): cada PC trae de las
 demás los cambios nacidos allá, los proyectos se unen por remote, y los choques y duplicados quedan
-para la coordinadora ([anexo C](docs/propuesta-memoria-2026-10-08/anexo-c-replica.md)). Las bases no
+para la coordinadora ([anexo C](docs/propuesta-memoria/anexo-c-replica.md)). Las bases no
 se suben a Git.
-El diseño detallado está en [v5](docs/propuesta-memoria-2026-10-08/v5.md).
+El diseño detallado está en [v5](docs/propuesta-memoria/v5.md).
 
 ### Plugins locales
 
@@ -997,6 +1028,48 @@ no implican que se hayan reproducido nuevamente en esta revisión.
 - Chrome en modo ventana requiere una sesión Windows abierta y desbloqueada. Los popups propios
   se recortan al borde de la ventana compartida y algunas sombras pueden verse con fondo negro.
   No transmite audio. El parpadeo reportado en la vista por pestañas sigue sin causa confirmada.
+
+## Antigravity CLI (Windows)
+
+Se puede elegir **Antigravity** en «Lanzar CLI». Lienzo detecta `agy.exe` y busca la instalación
+oficial en `%LOCALAPPDATA%/agy/bin`, aunque la terminal todavía tenga un PATH anterior.
+La API de lanzamiento acepta `agent: "antigravity"` y `model`; `resume` usa `--conversation`
+cuando se proporciona un identificador válido. Los comandos de mantenimiento y el modo `--print`
+no se muestran como tarjetas interactivas.
+
+Esta integración permite pantalla y envío de texto a la terminal. Chat puede consultar historial
+visible parcial de SQLite bajo demanda, si la propiedad nativa del archivo de presencia y la
+fecha de creación del proceso identifican una sola conversación. No ofrece coordinadora, reglas `on_stop`,
+cuotas ni restauración automática de esas tarjetas. El estado de actividad no se confirma por
+transcripción. Los permisos se resuelven en la terminal, sin aprobación automática específica.
+El inicio de sesión se hace en Antigravity; WSL no está soportado por esta integración.
+La tarjeta muestra «actividad sin confirmar»: el estado operativo de la API lleva
+`state_source: "unverified"` y no certifica que esté trabajando o que haya terminado.
+`screen_observation` declara fuente, hora y disponibilidad de la lectura; el modelo del pie
+Gemini verificado en agy 1.4.3 es una etiqueta visible, no un ID canónico. No se extraen respuestas
+de la pantalla. Una lectura fallida o un pie no reconocido deja el modelo sin observar.
+La hora pertenece a la última muestra publicada: sondeos idénticos no actualizan esa hora ni
+persisten la tarjeta, emiten SSE o generan otra captura de memoria.
+Los IDs de `--conversation` se validan como UUID, formato observado en la caché local de agy.
+`resumed: true` sólo indica que se agregó ese argumento al comando; no confirma que agy haya
+recuperado la conversación. La reanudación real no se verificó en esta tanda.
+La API rechaza crear o reactivar reglas `on_stop` desde un agente de terminal sin lector de turnos,
+también si el origen es remoto o su agente no puede verificarse. Las reglas `at` siguen disponibles.
+
+El lector inicial usa `mode=ro`, `query_only` y snapshots compatibles con WAL; vuelve a verificar
+identidad al terminar y descarta toda la lectura ante ambigüedad, rotación o formato no soportado.
+También exige el SHA-256 del ejecutable observado en esta tanda: una actualización desconocida
+cierra el lector hasta revisar su compatibilidad. La API informa `codec_contract` y `executable_sha256`.
+Decodifica únicamente campos conocidos de `gemini_coder.Step` observados en agy 1.4.3, sin nueva
+dependencia protobuf. Omite razonamiento, firmas, argumentos y resultados de herramientas;
+aplica el filtro habitual de secretos a los textos visibles. Ese filtro reconoce patrones conocidos,
+no garantiza detectar secretos arbitrarios escritos como texto libre. Máximos por consulta:
+512 pasos, 1 MiB por BLOB, 4 MiB de BLOB acumulado y 250 ms de lectura SQLite más espera por bloqueo.
+La ventana truncada se declara en `meta.truncated`; un cursor fuera de ella se rechaza explícitamente.
+El panel consulta al abrir o cambiar de vista; no es seguimiento continuo del historial.
+El historial no adopta IDs ni modifica estado o respuestas persistidas. Todos sus turnos llevan
+`history_only: true`, `ended: false` y «fin sin confirmar». Aún falta validar la máquina de estados
+con transiciones reales; `terminalOnly` y el bloqueo de `on_stop` se conservan.
 
 ## Licencia
 

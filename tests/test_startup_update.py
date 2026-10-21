@@ -1,6 +1,15 @@
 from types import SimpleNamespace
 
+import pytest
+
 from lienzo import startup_update as updater
+
+
+@pytest.fixture(autouse=True)
+def isolated_checkout(tmp_path, monkeypatch):
+    checkout = tmp_path / "unit-checkout"
+    (checkout / "web").mkdir(parents=True)
+    monkeypatch.setattr(updater, "ROOT", checkout)
 
 
 def run_results(monkeypatch, results):

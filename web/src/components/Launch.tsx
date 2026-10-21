@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, leerCuotas, type CuotasResponse } from "../api";
-import { AGENTS, agentIds, type Agent } from "../agents";
+import { AGENTS, agentIds, can, type Agent } from "../agents";
 import { opcionesProyecto } from "../recientes";
 import type { Peer, Reciente, Session } from "../types";
 
@@ -39,6 +39,8 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
   const [modo, setModo] = useState<"general" | "ingenieria-reversa">("general");
   const [busy, setBusy] = useState(false);
   const [claudePipe, setClaudePipe] = useState(false);
+  // --chrome a pedido: la sesión maneja el Chrome real (con sus cuentas abiertas), nunca por defecto
+  const [chrome, setChrome] = useState(false);
   const [error, setError] = useState("");
   const sending = useRef(false);
   const elegida = opciones.find(o => o.key === project);
@@ -50,7 +52,10 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
   // la distro elegida recuerda para qué PC fue: al cambiar de PC vuelve la default de esa PC,
   // sin effect (setState sincrónico en un effect encadena renders)
   const [distroElegida, setDistro] = useState<{ pc: string; d: string } | null>(null);
-  const distro = distroElegida && distroElegida.pc === pc && distros.includes(distroElegida.d) ? distroElegida.d : "";
+  const windowsOnly = can(agent, "windowsOnly");
+  const distro = !windowsOnly && distroElegida && distroElegida.pc === pc && distros.includes(distroElegida.d) ? distroElegida.d : "";
+  const perfilesChrome = peers.find(p => p.pc_id === pc)?.health?.chrome_claude;
+  const conChrome = !editor && agent === "claude" && !distro;
   const launch = async () => {
     if (sending.current || !directory || unavailable) return;
     sending.current = true;
@@ -62,6 +67,7 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
         ...(!editor && distro ? { distro } : {}),
         ...(!editor && modo !== "general" ? { modo } : {}),
         ...(!editor && agent === "claude" && !distro && claudePipe ? { claude_pipe: true } : {}),
+        ...(conChrome && chrome ? { chrome: true } : {}),
       });
       if (!result.ok) throw new Error(result.error || (editor ? "No se pudo abrir VS Code" : "No se pudo lanzar la CLI"));
       // con "auto" la respuesta dice cuál eligió y por qué; el aviso de cuotas (o de mejoras) nunca bloquea
@@ -109,11 +115,14 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
         {agentIds.map(id => <option key={id} value={id}>{AGENTS[id].label}</option>)}
       </select></label>}
       {!editor && pista && <p className="cuotas-pista">{pista}</p>}
+      {!editor && agent === "antigravity" && <p className="small dim">Soporte de terminal en Windows: pantalla y envío de texto. Sin conversación estructurada, cuotas ni reglas al terminar un turno. El inicio de sesión se hace en Antigravity.</p>}
+      {conChrome && <label><input type="checkbox" checked={chrome} disabled={busy} onChange={e => setChrome(e.target.checked)} />Darle Chrome a esta sesión (--chrome)</label>}
+      {conChrome && chrome && <p className="small dim">{pistaChrome(perfilesChrome)}</p>}
       {!editor && <label>Modo<select aria-label="Modo de trabajo" disabled={busy} value={modo} onChange={e => setModo(e.target.value as typeof modo)}>
         <option value="general">General</option>
         <option value="ingenieria-reversa">Ingeniería reversa (suma REA)</option>
       </select></label>}
-      {!editor && distros.length > 0 && <label>Dónde<select aria-label="Distro de WSL" disabled={busy} value={distro} onChange={e => setDistro({ pc, d: e.target.value })}>
+      {!editor && !windowsOnly && distros.length > 0 && <label>Dónde<select aria-label="Distro de WSL" disabled={busy} value={distro} onChange={e => setDistro({ pc, d: e.target.value })}>
         <option value="">Windows</option>
         {distros.map(d => <option key={d} value={d}>WSL · {d}</option>)}
       </select></label>}
@@ -124,6 +133,16 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
         <button className="primary" disabled={busy || !directory || unavailable}>{busy ? "Lanzando…" : editor ? "Abrir" : "Lanzar"}</button></div>
     </form>
   </dialog>;
+}
+
+/** Dónde está instalada la extensión: no dice en cuál está conectada, así que con varias se avisa. */
+function pistaChrome(perfiles: { name: string; cuenta: string }[] | undefined): string {
+  const riesgo = "Maneja tu Chrome real, con las cuentas abiertas.";
+  if (!perfiles) return `${riesgo} Esta PC no informa en qué perfil está la extensión.`;
+  if (!perfiles.length) return `${riesgo} No encuentro la extensión Claude in Chrome en ningún perfil de esta PC.`;
+  const lista = perfiles.map(p => p.cuenta ? `${p.name} (${p.cuenta})` : p.name).join(", ");
+  return perfiles.length === 1 ? `${riesgo} Perfil: ${lista}.`
+    : `${riesgo} Extensión en ${lista}: trabaja en el que esté conectado.`;
 }
 
 const etiqueta = (a: string) => (AGENTS as Record<string, { label: string } | undefined>)[a]?.label ?? a;

@@ -1,7 +1,7 @@
 [project]
 name = "lienzo"
-version = "0.5.5"
-description = "Tablero para sesiones de Claude Code, Codex CLI, Pi y CODA en terminales Windows"
+version = "0.6.0"
+description = "Tablero para sesiones de agentes CLI y sus integraciones"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Ariel Levy" }]

@@ -1,4 +1,5 @@
 {
+  "antigravity": {"label": "Antigravity", "resume": "agy", "coordinable": false, "nativeChannel": false, "screen": true, "windowsOnly": true, "terminalOnly": true},
   "claude": {"label": "Claude Code", "resume": "claude --resume", "coordinable": true, "nativeChannel": true, "screen": true},
   "codex": {"label": "Codex", "resume": "codex resume", "coordinable": true, "nativeChannel": false, "screen": true},
   "pi": {"label": "Pi", "resume": "pi --resume", "coordinable": true, "nativeChannel": false, "screen": false},

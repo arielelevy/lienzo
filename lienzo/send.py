@@ -116,7 +116,7 @@ def key_records(text: str) -> list[INPUT_RECORD]:
 
     encoded = text.encode("utf-16-le")
     for offset in range(0, len(encoded), 2):
-        ch = chr(int.from_bytes(encoded[offset:offset + 2], "little"))
+        ch = chr(int.from_bytes(encoded[offset : offset + 2], "little"))
         if ch in ("\r", "\n"):
             push(VK_RETURN, "\r", 0)
             continue
@@ -311,8 +311,15 @@ def main() -> int:
         return 2
     if not a.keep_newlines:
         text = " ".join(text.replace("\r", "").split("\n")).strip()
-    res = inject(a.pid, text, 0 if a.no_enter else a.enter_presses, a.key_delay, a.chunk, a.chunk_delay,
-                 expected_start=a.expected_start)
+    res = inject(
+        a.pid,
+        text,
+        0 if a.no_enter else a.enter_presses,
+        a.key_delay,
+        a.chunk,
+        a.chunk_delay,
+        expected_start=a.expected_start,
+    )
     print(json.dumps(res, ensure_ascii=False))
     return 0 if res.get("ok") else 1
 

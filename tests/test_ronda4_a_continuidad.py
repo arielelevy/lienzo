@@ -19,8 +19,13 @@ def measured_card(tmp_path, monkeypatch):
     monkeypatch.setattr(cq.procinfo, "alive", lambda pid: True)
     monkeypatch.setattr(cq, "store_path", lambda: tmp_path / "queue.json")
     monkeypatch.setattr(cq.subproc, "correr", lambda *a, **kw: pytest.fail("no debe lanzar cola"))
-    return {"agent": "codex", "pid": 4242, "session_id": OLD,
-            "transcript_path": str(rollout), "codex_process_start": 123}
+    return {
+        "agent": "codex",
+        "pid": 4242,
+        "session_id": OLD,
+        "transcript_path": str(rollout),
+        "codex_process_start": 123,
+    }
 
 
 @pytest.mark.parametrize("change", ["thread", "process_start"])
@@ -53,13 +58,29 @@ def test_late_confirmation_uses_original_rollout_after_serialized_restart(
     message = "ESTADO: evidencia del frente"
     old_path = measured_card["transcript_path"]
     new_path = tmp_path / "rollout-new.jsonl"
-    event = json.dumps({"timestamp": cq._iso(101), "type": "response_item", "payload": {
-        "type": "message", "role": "user", "content": [{"type": "input_text", "text": message}]}})
+    event = json.dumps(
+        {
+            "timestamp": cq._iso(101),
+            "type": "response_item",
+            "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": message}]},
+        }
+    )
     new_path.write_text(event + "\n", encoding="utf-8")
     monkeypatch.setattr(cq.time, "time", lambda: 102)
-    cq._save({"q1": {"envio_id": "q1", "thread": OLD, "rollout": old_path,
-                    "sha256": cq._sha(message), "desde": cq._iso(100), "at": 100,
-                    "estado": "encolado", "transporte": "codex_queue"}})
+    cq._save(
+        {
+            "q1": {
+                "envio_id": "q1",
+                "thread": OLD,
+                "rollout": old_path,
+                "sha256": cq._sha(message),
+                "desde": cq._iso(100),
+                "at": 100,
+                "estado": "encolado",
+                "transporte": "codex_queue",
+            }
+        }
+    )
     rule = {"to": "coordinator"}
     report = ledger.conservar(rule, {"huella": "final", "texto": message}, "t0")
     ledger.resultado(report, 200, {"estado": "encolado", "envio_id": "q1"}, "t1")

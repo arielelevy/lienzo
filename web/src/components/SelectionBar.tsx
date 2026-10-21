@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { sendNotice, sessionsApi, type SendResult } from "../api";
+import { ApiError, sendNotice, sessionsApi, type SendResult } from "../api";
 import { shortName } from "../names";
 import type { Session } from "../types";
 
@@ -14,6 +14,17 @@ interface Result {
   ok: number;
   fails: Fail[];
   pending: Fail[];
+}
+
+interface SendBatch {
+  text: string;
+  result: Result;
+}
+
+// Un timeout, error de transporte o 5xx puede llegar después de escribir: no prueba rechazo.
+function rejectedBeforeSend(error: unknown): boolean {
+  return error instanceof ApiError && (error.body.estado === "rechazado" ||
+    (!error.body.estado && [400, 401, 403, 404, 409, 413, 429].includes(error.status)));
 }
 
 interface Props {
@@ -37,6 +48,8 @@ export function SelectionBar({ sids, sessions, onClear, visibleToMark, onMarkVis
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
+  const [batch, setBatch] = useState<SendBatch | null>(null);
+  const running = useRef(false);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (composing) areaRef.current?.focus();
@@ -44,46 +57,60 @@ export function SelectionBar({ sids, sessions, onClear, visibleToMark, onMarkVis
 
   // sin tarjetas marcadas no hay barra, y al volver a marcar empieza limpia
   if (sids.length === 0) {
-    if (composing || text || result) {
+    if (composing || text || result || batch) {
       setComposing(false);
       setText("");
       setResult(null);
+      setBatch(null);
     }
     return null;
   }
 
-  const run = async (what: string, call: (sid: string) => Promise<unknown>) => {
+  const run = async (what: string, call: (sid: string) => Promise<unknown>, targets = sids, previous?: Result) => {
+    if (running.current) return null;
+    running.current = true;
     setBusy(true);
     setResult(null);
-    const fails: Fail[] = [];
-    const pending: Fail[] = [];
-    let ok = 0;
-    for (const sid of sids) {
+    const fails: Fail[] = previous?.fails.filter(f => !targets.includes(f.sid)) ?? [];
+    const pending: Fail[] = [...(previous?.pending ?? [])];
+    let ok = previous?.ok ?? 0;
+    for (const sid of targets) {
       try {
         const response = await call(sid);
         if (what === "Envío") {
           const notice = sendNotice(response as SendResult);
           if (!notice.confirmed) {
-            const list = (response as SendResult).estado === "rechazado" ? fails : pending;
-            list.push({ sid, name: shortName(sessions[sid]), reason: `${notice.text}. No reenvíes el texto.` });
+            const rejected = (response as SendResult).estado === "rechazado";
+            const list = rejected ? fails : pending;
+            list.push({ sid, name: shortName(sessions[sid]), reason: `${notice.text}. ${rejected ? "Podés reintentar el rechazo." : "No reenvíes el texto."}` });
             continue;
           }
         }
         ok++;
       } catch (e) {
-        fails.push({ sid, name: shortName(sessions[sid]), reason: (e as Error).message });
+        const uncertain = what === "Envío" && !rejectedBeforeSend(e);
+        (uncertain ? pending : fails).push({ sid, name: shortName(sessions[sid]),
+          reason: `${(e as Error).message}${uncertain ? ". No reenvíes el texto." : ""}` });
       }
     }
     setBusy(false);
-    setResult({ what, ok, fails, pending });
-    return fails.length === 0 && pending.length === 0;
+    running.current = false;
+    const next = { what, ok, fails, pending };
+    setResult(next);
+    return next;
   };
 
+  // El lote conserva texto y resultados aunque se cierre el editor. Agregar tarjetas no amplía
+  // silenciosamente un reintento; los rechazos desmarcados tampoco se envían.
+  const retry = batch?.result.fails.filter(f => sids.includes(f.sid) && sessions[f.sid]).map(f => f.sid) ?? [];
   const send = async () => {
-    const t = text.trim();
-    if (!t || busy) return;
-    const todas = await run("Envío", (sid) => sessionsApi.send(sid, { text: t, attachments: [] }));
-    if (todas) {
+    const t = batch ? batch.text : text.trim();
+    const targets = batch ? retry : [...sids];
+    if (!t || busy || running.current || !targets.length) return;
+    const outcome = await run("Envío", (sid) => sessionsApi.send(sid, { text: t, attachments: [] }), targets, batch?.result);
+    if (!outcome) return;
+    setBatch({ text: t, result: outcome });
+    if (outcome.fails.length === 0 && outcome.pending.length === 0) {
       setText("");
       setComposing(false);
     }
@@ -122,6 +149,7 @@ export function SelectionBar({ sids, sessions, onClear, visibleToMark, onMarkVis
           <textarea
             ref={areaRef}
             value={text}
+            readOnly={busy || batch !== null}
             aria-label={`texto para enviar a ${n} ${n === 1 ? "tarjeta" : "tarjetas"}`}
             placeholder="Lo que se les escribe a todas…"
             onChange={(e) => setText(e.target.value)}
@@ -137,14 +165,20 @@ export function SelectionBar({ sids, sessions, onClear, visibleToMark, onMarkVis
             }}
           />
           <div className="selrow">
-            <button type="button" className="primary" disabled={busy || !text.trim()} onClick={() => void send()}>
-              {busy ? "Enviando…" : `Enviar a ${n}`}
+            <button type="button" className="primary" disabled={busy || !text.trim() || (batch !== null && retry.length === 0)} onClick={() => void send()}>
+              {busy ? "Enviando…" : batch ? (retry.length ? `Reintentar ${retry.length} ${retry.length === 1 ? "rechazo" : "rechazos"}` : "Sin rechazos para reintentar") : `Enviar a ${n}`}
             </button>
+            {batch && <button type="button" disabled={busy} onClick={() => {
+              setBatch(null);
+              setResult(null);
+              areaRef.current?.focus();
+            }}>Nuevo lote a todas</button>}
             <button type="button" disabled={busy} onClick={() => setComposing(false)}>
               Cancelar
             </button>
             <span className="dim small">Ctrl + Enter envía</span>
           </div>
+          {batch && <p className="dim small">El reintento conserva el texto y sólo incluye rechazos. Un nuevo lote vuelve a incluir todas las tarjetas seleccionadas.</p>}
         </div>
       )}
       <div className="selresult" role="status" aria-live="polite">

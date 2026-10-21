@@ -34,7 +34,6 @@ class Scheduler:
         self.tick_lock = threading.Lock()
         self.project_cursor = 0
         self.trabajo_visto = {}  # proyecto -> monotonic del ultimo analisis de como se trabaja
-        self.research_cancel = set()  # ids de trabajos de investigación con cancelación pedida
         self.research_adapter = research.adapter_for  # proyecto -> adaptador; las pruebas lo reemplazan
         self.research_view = None  # última evaluación de política; un GET no lee la cuota
         self.research_visto = {}  # proyecto -> monotonic de la última selección automática
@@ -111,13 +110,24 @@ class Scheduler:
             if not self.queue.enqueue_research(data["project"], research.unit.case(data["project"], root, folders)):
                 raise ValueError("esa unidad ya se investigó o hay una investigación activa en el proyecto")
         elif action == "cancel_research" and set(data) == {"action", "job"}:
+            self.queue.cancel_research(data["job"])
+        elif action in ("requeue_research", "dismiss_research") and set(data) == {"action", "job"}:
+            # acciones explícitas sobre un trabajo en revisión; nunca las dispara la cola sola
+            if not isinstance(data["job"], str):
+                raise ValueError("trabajo inválido")
             job = next((j for j in self.queue.view()["jobs"] if j["id"] == data["job"]), None)
-            if job is None or job.get("kind") != "research" or job["state"] not in ("queued", "running", "paused"):
-                raise ValueError("no hay una investigación activa con ese id")
-            if job["state"] == "running":
-                self.research_cancel.add(job["id"])  # el runner corta su propio proceso en el próximo sondeo
+            if job is None or job.get("kind") != "research" or job["state"] != "review":
+                raise ValueError("no hay una investigación en revisión con ese id")
+            if action == "dismiss_research":
+                self.queue.dismiss_research(job["id"])
             else:
-                self.queue.change(job["id"], state="cancelled", reason="cancelado por el usuario antes de ejecutar")
+                ceiling = research_policy.CEILINGS["max_starts_per_case"]
+                if job["attempts"] >= ceiling:
+                    raise ValueError(f"intentos agotados ({job['attempts']} de {ceiling}); el caso no se reencola")
+                decision = self._research_evaluate(job["project"])
+                if not decision["enabled"]:
+                    raise ValueError("investigador bloqueado: " + "; ".join(decision["reasons"]))
+                self.queue.requeue_research(job["id"], ceiling)
         elif action == "enqueue_off_on" and set(data) == {"action", "project"}:
             if not isinstance(data["project"], str):
                 raise ValueError("proyecto inválido")
@@ -149,7 +159,7 @@ class Scheduler:
                 raise ValueError("hay un análisis pendiente; no se reemplaza")
         else:
             raise ValueError(
-                "solo actividad, pausa, análisis local o investigador bajo política; sin comandos ni pagos"
+                "solo actividad, pausa, análisis local, investigador bajo política o revisión explícita; sin comandos ni pagos"
             )
         return self.status()
 
@@ -186,7 +196,14 @@ class Scheduler:
             self._step(job)
         except Exception as error:
             self.reason = f"análisis detenido: {type(error).__name__}"
-            self.queue.change(job["id"], state="failed", reason=self.reason)
+            with self.queue.lock:
+                current = next(j for j in self.queue.view()["jobs"] if j["id"] == job["id"])
+                cancelled = current.get("cancel_requested") or current["state"] == "cancelled"
+                self.queue.change(
+                    job["id"],
+                    state="cancelled" if cancelled else "failed",
+                    reason=RESEARCH_CANCELLED if cancelled else self.reason,
+                )
 
     def _pilot_tick(self):
         budget = optimization_budget.Budget()
@@ -304,10 +321,11 @@ class Scheduler:
         return decision
 
     def _research_stop(self, jid):
-        if jid in self.research_cancel:
+        job = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
+        if job.get("cancel_requested"):
             return RESEARCH_CANCELLED
         if not self.queue.view()["enabled"]:
-            return "pausado por el usuario"
+            return RESEARCH_PAUSED
         reason = activity.cancellation_reason(self.last_ui)
         if reason:
             return reason
@@ -318,29 +336,39 @@ class Scheduler:
 
     def _research_step(self, job):
         jid, project = job["id"], job["project"]
-        if jid in self.research_cancel:
-            self.research_cancel.discard(jid)
-            self.queue.change(jid, state="cancelled", reason=RESEARCH_CANCELLED)
-            return
-        if job["attempts"] >= research_policy.CEILINGS["max_starts_per_case"]:
-            self.queue.change(jid, state="review", reason="intentos agotados; sin reintento automático")
-            return
+        with self.queue.lock:
+            job = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
+            if job["state"] not in ("queued", "paused"):
+                return
+            if job["attempts"] >= research_policy.CEILINGS["max_starts_per_case"]:
+                self.queue.change(jid, state="review", reason="intentos agotados; sin reintento automático")
+                return
         since = time.time() - 86400
         adapter, decision = research.evaluate(
             project, self.research_adapter(project), runs_today=self.queue.research_runs_since(since)
         )
         self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
-        if not decision["enabled"]:
-            reason = "investigador bloqueado: " + "; ".join(decision["reasons"])
-            self.reason = reason
-            self.queue.change(jid, state="paused", reason=reason, not_before=time.time() + RESEARCH_BACKOFF_S)
-            return
-        if self._cancelled(job):
-            return
-        attempts = job["attempts"] + 1
-        self.queue.change(
-            jid, state="running", attempts=attempts, runs=[*job["runs"], time.time()], reason="investigando", pid=None
-        )
+        with self.queue.lock:
+            # La política puede tardar: una cancelación aceptada mientras tanto gana.
+            job = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
+            if job["state"] not in ("queued", "paused"):
+                return
+            if not decision["enabled"]:
+                reason = "investigador bloqueado: " + "; ".join(decision["reasons"])
+                self.reason = reason
+                self.queue.change(jid, state="paused", reason=reason, not_before=time.time() + RESEARCH_BACKOFF_S)
+                return
+            if self._cancelled(job):
+                return
+            attempts = job["attempts"] + 1
+            self.queue.change(
+                jid,
+                state="running",
+                attempts=attempts,
+                runs=[*job["runs"], time.time()],
+                reason="investigando",
+                pid=None,
+            )
         self.reason = f"investigando con {adapter.name} (sólo lectura)"
         try:
             outcome = research.investigate(
@@ -351,8 +379,16 @@ class Scheduler:
                 on_start=lambda pid: self.queue.change(jid, pid=pid),
             )
         finally:
-            self.research_cancel.discard(jid)
-        self.queue.change(jid, pid=None)  # el proceso propio ya terminó; un error al registrar no lo deja colgado
+            self.queue.change(jid, pid=None)  # el proceso propio terminó; conservar cancelación persistida
+        with self.queue.lock:
+            current = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
+            if current.get("cancel_requested"):
+                outcome = {**outcome, "status": "stopped", "reason": RESEARCH_CANCELLED}
+            self._research_result(job, outcome)
+
+    def _research_result(self, job, outcome):
+        """Se registra bajo el lock de cola: cancelar y publicar el resultado tienen un orden único."""
+        jid, project = job["id"], job["project"]
         meta, why = outcome.get("meta"), outcome.get("reason")
         if outcome["status"] == "ok":
             saved = research.record(project, job["case"], outcome["result"], meta)
@@ -370,7 +406,9 @@ class Scheduler:
             evidence = research.record_failure(project, job["case"], meta, why)
             self.queue.change(jid, state="cancelled", pid=None, evidence=evidence, last_run=meta, reason=why)
         elif outcome["status"] == "stopped":
-            later = {"not_before": time.time() + RESEARCH_BACKOFF_S} if why.startswith("cuota") else {}
+            # un corte del entorno (actividad, agentes, memoria o cuota) pospone: retomar en el próximo
+            # tick gastaría el otro inicio del caso en las mismas condiciones. La pausa del usuario no.
+            later = {} if why == RESEARCH_PAUSED else {"not_before": time.time() + RESEARCH_BACKOFF_S}
             self.queue.change(jid, state="paused", pid=None, last_run=meta, reason=why, **later)
             self.reason, self.good_samples = why, 0
         else:
@@ -437,6 +475,7 @@ TRABAJO_CADA_S = 3600
 RESEARCH_EVERY_S = 1800
 RESEARCH_BACKOFF_S = 1800
 RESEARCH_CANCELLED = "cancelado por el usuario"
+RESEARCH_PAUSED = "pausado por el usuario"
 
 INSTANCE = None
 ERROR = None

@@ -528,11 +528,14 @@ class Windows:
         """Copia sólo por pedido del visor; nunca devuelve el portapapeles anterior."""
         previous = self.user.GetClipboardSequenceNumber()
         self.release()
-        self.input(hwnd, [
-            {"kind": "key", "type": "keyDown", "keyCode": 67, "modifiers": 2},
-            {"kind": "key", "type": "keyUp", "keyCode": 67, "modifiers": 2},
-            {"kind": "key", "type": "keyUp", "keyCode": 17, "modifiers": 0},
-        ])
+        self.input(
+            hwnd,
+            [
+                {"kind": "key", "type": "keyDown", "keyCode": 67, "modifiers": 2},
+                {"kind": "key", "type": "keyUp", "keyCode": 67, "modifiers": 2},
+                {"kind": "key", "type": "keyUp", "keyCode": 17, "modifiers": 0},
+            ],
+        )
         deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline:
             if not self.active(hwnd) or not self.chrome(hwnd):

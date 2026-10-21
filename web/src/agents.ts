@@ -13,12 +13,14 @@ interface Caps {
   coordinable: boolean;
   nativeChannel: boolean;
   screen: boolean;
+  windowsOnly?: boolean;
+  terminalOnly?: boolean;
 }
 
 /** Catalogo de CLI: los filtros, tipos, textos y capacidades salen de la misma lista. */
 export const AGENTS = capabilities satisfies Record<string, Caps>;
 export type Agent = keyof typeof AGENTS;
-export type Capability = "coordinable" | "nativeChannel" | "screen";
+export type Capability = "coordinable" | "nativeChannel" | "screen" | "windowsOnly" | "terminalOnly";
 
 /** ¿Este agente puede esto? Un agente que el front todavia no conoce (server mas nuevo) no puede nada. */
 export const can = (agent: string, cap: Capability): boolean => !!(AGENTS as Record<string, Caps | undefined>)[agent]?.[cap];

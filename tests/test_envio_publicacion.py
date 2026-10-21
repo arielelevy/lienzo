@@ -1,4 +1,5 @@
 """Publicación real HTTP/SSE aislada; transporte Codex simulado, nunca consumo de cuenta."""
+
 import http.client
 import json
 import os
@@ -19,9 +20,15 @@ PLAN = {"puede": True, "motivo": None, "transporte": "codex_queue"}
 
 @pytest.fixture
 def card(monkeypatch, tmp_path):
-    s = {"session_id": SID, "agent": "codex", "pid": 42, "repo": "fixture",
-         "started": "2026-10-17", "transcript_path": str(tmp_path / "rollout.jsonl"),
-         "envio_codex": {"estado": "encolado", "envio_id": "e1", "at": time.time()}}
+    s = {
+        "session_id": SID,
+        "agent": "codex",
+        "pid": 42,
+        "repo": "fixture",
+        "started": "2026-10-17",
+        "transcript_path": str(tmp_path / "rollout.jsonl"),
+        "envio_codex": {"estado": "encolado", "envio_id": "e1", "at": time.time()},
+    }
     monkeypatch.setattr(ses, "sessions", {SID: s})
     monkeypatch.setattr(server, "sessions", ses.sessions)
     monkeypatch.setattr(ses, "_envio_publico", {})
@@ -38,9 +45,11 @@ def card(monkeypatch, tmp_path):
 def assert_lock_free():
     """Otro hilo debe poder entrar: no depende de detalles privados de RLock."""
     entered = threading.Event()
+
     def acquire():
         with ses.lock:
             entered.set()
+
     t = threading.Thread(target=acquire)
     t.start()
     assert entered.wait(1), "IO de capacidad/confirmación bajo lock global"
@@ -49,10 +58,12 @@ def assert_lock_free():
 
 def test_snapshots_copy_and_only_compute_local_capabilities(card, monkeypatch):
     remote = {"session_id": "remote", "pc": "other", "envio": {"puede": False, "motivo": "dueña", "transporte": None}}
+
     def plan(s):
         assert s["session_id"] == SID
         assert_lock_free()
         return PLAN
+
     monkeypatch.setattr(ses, "puede_enviar", plan)
     monkeypatch.setattr(server.mirror.MIRROR, "sessions", lambda: [remote])
     snap = server._local_state()
@@ -82,10 +93,18 @@ def test_periodic_confirmation_persists_and_broadcasts_without_sending(card, mon
     monkeypatch.setattr(ses, "puede_enviar", lambda s: PLAN)
     monkeypatch.setattr(cq, "enviar", lambda *a: pytest.fail("sondear nunca envía"))
     calls, events = [], []
+
     def confirm(eid):
         assert_lock_free()
         calls.append(eid)
-        return {"estado": "entregado", "envio_id": eid, "motivo": None, "referencia": "ref", "transporte": "codex_queue"}
+        return {
+            "estado": "entregado",
+            "envio_id": eid,
+            "motivo": None,
+            "referencia": "ref",
+            "transporte": "codex_queue",
+        }
+
     monkeypatch.setattr(cq, "confirmar", confirm)
     monkeypatch.setattr(state, "broadcast", events.append)
     ses.refresh_envios()
@@ -101,9 +120,11 @@ def test_expiration_is_visible_and_polling_stops(card, monkeypatch):
     card["envio_codex"]["at"] -= cq.CONFIRM_LIMIT_S + 1
     monkeypatch.setattr(ses, "puede_enviar", lambda s: PLAN)
     calls = []
+
     def confirm(eid):
         calls.append(eid)
         return {"estado": "sin_confirmacion", "envio_id": eid, "motivo": "venció; no se reintenta"}
+
     monkeypatch.setattr(cq, "confirmar", confirm)
     monkeypatch.setattr(state, "broadcast", lambda e: None)
     ses.refresh_envios()
@@ -117,12 +138,14 @@ def test_expiration_is_visible_and_polling_stops(card, monkeypatch):
 @pytest.mark.parametrize("replace", [False, True])
 def test_late_result_never_overwrites_new_send_or_replacement(card, monkeypatch, replace):
     monkeypatch.setattr(ses, "puede_enviar", lambda s: PLAN)
+
     def confirm(eid):
         if replace:
             ses.sessions[SID] = {**card, "envio_codex": {"envio_id": "new", "estado": "encolado"}}
         else:
             card["envio_codex"] = {"envio_id": "new", "estado": "encolado"}
         return {"estado": "entregado", "envio_id": eid}
+
     monkeypatch.setattr(cq, "confirmar", confirm)
     monkeypatch.setattr(state, "broadcast", lambda e: None)
     ses.refresh_envios()
@@ -134,7 +157,7 @@ def test_poll_limits_and_round_robin(card, monkeypatch):
         sid = f"extra-{i}"
         ses.sessions[sid] = {**card, "session_id": sid, "envio_codex": None}
     seen = []
-    monkeypatch.setattr(ses, "puede_enviar", lambda s: (seen.append(s["session_id"]) or PLAN))
+    monkeypatch.setattr(ses, "puede_enviar", lambda s: seen.append(s["session_id"]) or PLAN)
     monkeypatch.setattr(cq, "confirmar", lambda e: {"estado": "encolado", "envio_id": e})
     monkeypatch.setattr(state, "broadcast", lambda e: None)
     ses.refresh_envios()
@@ -201,20 +224,31 @@ def queue_card(tmp_path, monkeypatch):
     rollout.write_text("", encoding="utf-8")
     monkeypatch.setattr(cq, "codex_exe", lambda: "C:/fake/codex.exe")
     monkeypatch.setattr(cq.procinfo, "alive", lambda pid: True)
-    monkeypatch.setattr(cq.codex_identity, "probe", lambda pid: {
-        "verified": True, "pid": pid, "process_start": 1234, "thread": SID, "path": str(rollout)})
-    return {"agent": "codex", "session_id": SID, "pid": 42, "transcript_path": str(rollout), "codex_process_start": 1234}
+    monkeypatch.setattr(
+        cq.codex_identity,
+        "probe",
+        lambda pid: {"verified": True, "pid": pid, "process_start": 1234, "thread": SID, "path": str(rollout)},
+    )
+    return {
+        "agent": "codex",
+        "session_id": SID,
+        "pid": 42,
+        "transcript_path": str(rollout),
+        "codex_process_start": 1234,
+    }
 
 
 def test_atomic_reservation_blocks_parallel_queue_calls(queue_card, monkeypatch):
     barrier = threading.Barrier(2)
     release = threading.Event()
     calls, results = [], []
+
     def fake(argv, **kw):
         calls.append(argv)
         barrier.wait(3)
         assert release.wait(3)
         return 0, f"Queued message {SID} for thread {SID}", ""
+
     monkeypatch.setattr(cq.subproc, "correr", fake)
     worker = threading.Thread(target=lambda: results.append(cq.enviar(queue_card, "same", esperar=0)))
     worker.start()
@@ -232,9 +266,11 @@ def test_atomic_reservation_blocks_parallel_queue_calls(queue_card, monkeypatch)
 @pytest.mark.parametrize("code", [124, 1, 0])
 def test_ambiguous_result_keeps_reservation_past_duplicate_window(queue_card, monkeypatch, code):
     calls = []
+
     def fake(*a, **kw):
         calls.append(1)
         return code, "", "resultado no correlacionado"
+
     monkeypatch.setattr(cq.subproc, "correr", fake)
     result = cq.enviar(queue_card, "same", esperar=0)
     assert result["estado"] == "sin_confirmacion" and "incierto" in result["motivo"]
@@ -254,10 +290,12 @@ def test_windows_quoted_utf16_limit_sends_attachment(queue_card, monkeypatch, te
     monkeypatch.setattr(ses.captura, "envio", lambda *a, **kw: None)
     monkeypatch.setattr(ses, "touch", lambda s: True)
     sent = []
+
     def send(s, message):
         sent.append(message)
         assert cq.message_fits(s, message)
         return {"estado": "encolado", "envio_id": "bounded"}
+
     monkeypatch.setattr(cq, "enviar", send)
     assert ses.send_codex_queue(queue_card, text, [])[0] == 200
     assert "Adjunto: C:/fixture/mensaje.md" in sent[0] and text not in sent[0]
@@ -278,6 +316,7 @@ def test_late_http_send_result_cannot_replace_newer_send(card, monkeypatch):
         card["envio_codex"] = {"envio_id": "newer", "estado": "entregado", "at": 20}
         card["last_prompt"] = "newer prompt"
         return {"envio_id": "older", "estado": "encolado", "at": 10}
+
     monkeypatch.setattr(cq, "enviar", send)
     monkeypatch.setattr(ses.captura, "envio", lambda *a, **kw: None)
     assert ses.send_codex_queue(card, "older prompt", [])[0] == 200
@@ -287,9 +326,14 @@ def test_late_http_send_result_cannot_replace_newer_send(card, monkeypatch):
 
 @pytest.mark.parametrize("name,user_title", [(None, None), ("Sesión de prueba", None), ("Canal", "Mi título")])
 def test_desktop_names_are_derived_from_validated_metadata_not_cwd(card, name, user_title):
-    card.update(agent="claude", repo="scratch-temporal", cwd="C:/scratch-temporal",
-                title=user_title or "scratch-viejo", title_source="user" if user_title else "prompt",
-                external={"kind": "claude-desktop", "via": "registro", "desktop": True, "canal": name})
+    card.update(
+        agent="claude",
+        repo="scratch-temporal",
+        cwd="C:/scratch-temporal",
+        title=user_title or "scratch-viejo",
+        title_source="user" if user_title else "prompt",
+        external={"kind": "claude-desktop", "via": "registro", "desktop": True, "canal": name},
+    )
     view = ses.public_session(card)
     assert view["repo"] == "Claude Desktop"
     assert view["title"] == (user_title or name or "Sesión de Claude Desktop")

@@ -33,12 +33,28 @@ class Queue:
             self.enabled, self.jobs = data["enabled"], data["jobs"]
             self._validate()
             for job in self.jobs:
-                if job["state"] in ("running", "paused"):
-                    job["state"] = "review"
-                    job["reason"] = "ejecución interrumpida; revisar antes de reencolar"
+                # un pausado no tiene proceso propio vivo: se conserva tal cual (pid incluido, nunca se mata)
+                if job["state"] == "running":
+                    previous_reason = job.get("reason")
+                    job["state"] = "cancelled" if job.get("cancel_requested") else "review"
+                    job["reason"] = (
+                        "cancelado por el usuario; ejecución interrumpida"
+                        if job.get("cancel_requested")
+                        else "ejecución interrumpida; revisar antes de reencolar"
+                    )
                     if job.get("kind") == "research" and job.get("pid"):
                         # El PID pudo reutilizarse: nunca se mata un proceso que no lanzó este server.
                         job["reason"] += f"; el PID {job['pid']} registrado no se mata tras el reinicio"
+                    job["pid"] = None
+                    job["history"] = [
+                        *job.get("history", []),
+                        {
+                            "at": time.time(),
+                            "from": "running",
+                            "to": job["state"],
+                            "reason": previous_reason,
+                        },
+                    ]
 
     def activate(self):
         with self.lock:
@@ -64,12 +80,18 @@ class Queue:
                 if not isinstance(case, dict) or not isinstance(case.get("case_key"), str):
                     raise ValueError("caso de investigación inválido")
                 attempts = job.get("attempts")
+                if type(job.get("cancel_requested", False)) is not bool:
+                    raise ValueError("cancelación de investigación inválida")
                 if type(attempts) is not int or not 0 <= attempts <= MAX_RESEARCH_ATTEMPTS:
                     raise ValueError("intentos de investigación inválidos")
                 if not isinstance(job.get("runs"), list) or not all(
                     isinstance(x, (int, float)) and not isinstance(x, bool) for x in job["runs"]
                 ):
                     raise ValueError("ejecuciones de investigación inválidas")
+                if not isinstance(job.get("history", []), list) or not all(
+                    isinstance(x, dict) for x in job.get("history", [])
+                ):
+                    raise ValueError("historial de investigación inválido")
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -154,6 +176,64 @@ class Queue:
                 job.clear()
                 job.update(previous)
                 raise
+
+    def requeue_research(self, job_id: str, max_starts: int):
+        """review -> queued por pedido explícito del usuario. Conserva intentos, corridas e historial:
+        un caso agotado no vuelve, y sigue a lo sumo una investigación activa por proyecto."""
+        with self.lock:
+            job = self._in_review(job_id)
+            if job["attempts"] >= max_starts:
+                raise ValueError(f"intentos agotados ({job['attempts']} de {max_starts}); el caso no se reencola")
+            if any(
+                j is not job and j.get("kind") == "research" and j["project"] == job["project"] and j["state"] in ACTIVE
+                for j in self.jobs
+            ):
+                raise ValueError("hay otra investigación activa en el proyecto")
+            self._transition(
+                job, "queued", f"reencolado por el usuario; conserva intentos {job['attempts']} de {max_starts}"
+            )
+            return dict(job)
+
+    def dismiss_research(self, job_id: str):
+        """review -> cancelled por pedido explícito. El caso sigue en el historial: no vuelve solo y
+        sus corridas siguen contando en las 24 h."""
+        with self.lock:
+            job = self._in_review(job_id)
+            self._transition(job, "cancelled", "descartado por el usuario tras revisión")
+            return dict(job)
+
+    def _in_review(self, job_id):
+        job = next((j for j in self.jobs if j["id"] == job_id), None)
+        if job is None or job.get("kind") != "research" or job["state"] != "review":
+            raise ValueError("no hay una investigación en revisión con ese id")
+        return job
+
+    def cancel_research(self, job_id):
+        """La aceptación se persiste bajo el mismo lock que el inicio y el resultado."""
+        with self.lock:
+            job = next((j for j in self.jobs if j["id"] == job_id), None)
+            if job is None or job.get("kind") != "research" or job["state"] not in ACTIVE:
+                raise ValueError("no hay una investigación activa con ese id")
+            running = job["state"] == "running"
+            if running and job.get("cancel_requested"):
+                return
+            self._transition(
+                job,
+                "running" if running else "cancelled",
+                "cancelación solicitada por el usuario" if running else "cancelado por el usuario antes de ejecutar",
+                cancel_requested=running,
+            )
+
+    def _transition(self, job, new_state, reason, **values):
+        previous = json.loads(json.dumps(job))
+        entry = {"at": time.time(), "from": job["state"], "to": new_state, "reason": job.get("reason")}
+        job.update(state=new_state, reason=reason, history=[*job.get("history", []), entry], **values)
+        try:
+            self.save()
+        except OSError:
+            job.clear()
+            job.update(previous)
+            raise
 
     def next_job(self):
         with self.lock:

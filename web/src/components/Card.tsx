@@ -443,7 +443,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         }}
       >
         <div className="top">
-          <span className={`badge ${s.agent}`}>{s.agent}</span>
+          <span className={`badge ${s.agent}`}>{s.agent}{s.chrome && <ChromeSub />}</span>
           <span className="repo" title={displayRepo(s)}>
             {displayRepo(s)}
           </span>
@@ -562,7 +562,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       }}
     >
       <div className="top">
-        <span className={`badge ${s.agent}`}>{s.agent}</span>
+        <span className={`badge ${s.agent}`}>{s.agent}{s.chrome && <ChromeSub />}</span>
         <span className="repo" title={displayRepo(s)}>
           {displayRepo(s)}
         </span>
@@ -578,7 +578,9 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             <span className="st orphan" title="el proceso sigue, pero su terminal de VS Code se cerró: no hay dónde escribirle">
               sin terminal
             </span>
-          ) : s.alive === false ? null : s.state === "corriendo" ? (
+          ) : s.alive === false ? null : can(s.agent, "terminalOnly") ? (
+            <span className="small" title="Sin lector de turnos: el envío y la pantalla no confirman actividad ni fin de turno">actividad sin confirmar</span>
+          ) : s.state === "corriendo" ? (
             /* verde sólo si de verdad está haciendo algo: sin cupo, o quieta hace rato, el punto se
                apaga. Una sesión que llegó al límite de uso nunca cierra el turno, así que sin esto
                se queda en verde para siempre (medido en Codex: 1,2 h "corriendo" sin cupo) */
@@ -668,6 +670,13 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
           </button>
         </span>
       </div>
+      {can(s.agent, "terminalOnly") && s.alive !== false && <div className="small terminal-observation">
+        {s.screen_observation?.available && s.screen_observation.model_label
+          ? `Pantalla: ${s.screen_observation.model_label}`
+          : "Modelo sin observar en pantalla"}
+        {s.screen_observation && <span title={s.screen_observation.observed_at}> · lectura hace {ago(s.screen_observation.observed_at)}</span>}
+        <div>Observación parcial; sin respuesta estructurada ni confirmación de fin de turno.</div>
+      </div>}
       {menuOpen && (
         <div className="cardmenu" role="menu" ref={menuRef} onClick={(e) => e.stopPropagation()}>
           <button type="button" role="menuitem" disabled={!workClipboard.canCopy}
@@ -937,4 +946,17 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     </div>
     </>
   );
+}
+
+/** Subíndice del badge: la sesión nació con `--chrome` y maneja el Chrome real por la extensión. */
+function ChromeSub() {
+  return <sub className="badge-chrome" title="Con Chrome (--chrome)" role="img" aria-label="con Chrome">
+    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+      <path d="M8 8L1.07 4A8 8 0 0 1 14.93 4Z" fill="#db4437" />
+      <path d="M8 8L14.93 4A8 8 0 0 1 8 16Z" fill="#f4b400" />
+      <path d="M8 8L8 16A8 8 0 0 1 1.07 4Z" fill="#0f9d58" />
+      <circle cx="8" cy="8" r="3.7" fill="#fff" />
+      <circle cx="8" cy="8" r="2.8" fill="#4285f4" />
+    </svg>
+  </sub>;
 }

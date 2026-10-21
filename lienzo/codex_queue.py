@@ -122,9 +122,15 @@ def puede_enviar(s: dict, contexto: dict | None = None) -> dict:
         if not identity["verified"]:
             return _no(f"identidad de hilo CLI sin verificar: {identity['reason']}")
         if identity["process_start"] != s.get("codex_process_start"):
-            return _no("identidad de hilo CLI sin verificar: creación del proceso distinta o no registrada (PID reciclado)")
-        if identity["thread"] != thread or os.path.normcase(os.path.realpath(identity["path"])) != os.path.normcase(os.path.realpath(rollout)):
-            return _no("identidad de hilo CLI sin verificar: el proceso tiene otro rollout activo; esperar reidentificación")
+            return _no(
+                "identidad de hilo CLI sin verificar: creación del proceso distinta o no registrada (PID reciclado)"
+            )
+        if identity["thread"] != thread or os.path.normcase(os.path.realpath(identity["path"])) != os.path.normcase(
+            os.path.realpath(rollout)
+        ):
+            return _no(
+                "identidad de hilo CLI sin verificar: el proceso tiene otro rollout activo; esperar reidentificación"
+            )
     return {"puede": True, "motivo": None, "transporte": "codex_queue"}
 
 
@@ -143,8 +149,11 @@ def _load() -> dict:
 def _save(data: dict) -> None:
     cutoff = time.time() - 86400
     # Una reserva incierta no vence con el historial: olvidarla permitiría un reenvío ciego.
-    data = {k: v for k, v in data.items() if v.get("at", 0) >= cutoff
-            or v.get("estado") in ("pendiente", "encolado", "sin_confirmacion")}
+    data = {
+        k: v
+        for k, v in data.items()
+        if v.get("at", 0) >= cutoff or v.get("estado") in ("pendiente", "encolado", "sin_confirmacion")
+    }
     store_path().parent.mkdir(parents=True, exist_ok=True)
     atomic_write(str(store_path()), json.dumps(data, ensure_ascii=False))
 
@@ -223,12 +232,9 @@ def enviar(s: dict, mensaje: str, contexto: dict | None = None, *, esperar: floa
     with _lock:
         data = _load()
         previous = data.get(envio_id)
-        if (
-            previous
-            and (
-                previous["estado"] in ("pendiente", "encolado", "sin_confirmacion")
-                or (previous["estado"] == "entregado" and time.time() - previous["at"] < DUPLICATE_S)
-            )
+        if previous and (
+            previous["estado"] in ("pendiente", "encolado", "sin_confirmacion")
+            or (previous["estado"] == "entregado" and time.time() - previous["at"] < DUPLICATE_S)
         ):
             return {
                 **_public(previous),

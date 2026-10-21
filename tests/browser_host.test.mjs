@@ -28,7 +28,8 @@ test('snapshot caliente no consulta targets/historia ni cambia viewport', {timeo
   await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:201});
   const start = trace().length;
   await request({action:'snapshot', tab:'fixture-tab', width:900, height:700, requestId:202});
-  assert.deepEqual(trace().slice(start).map(x=>x.method), ['Page.captureScreenshot']);
+  // existing: lee el tamaño real (solo lectura) y captura; nunca emula
+  assert.deepEqual(trace().slice(start).map(x=>x.method), ['Page.getLayoutMetrics', 'Page.captureScreenshot']);
 });
 
 test('lote inválido se rechaza antes de enviar el primer evento', {timeout:15000}, async t => {
@@ -64,7 +65,7 @@ test('sólo activate trae la pestaña al frente, sin adjuntarse', {timeout:15000
   assert.deepEqual(trace().slice(start).map(x=>x.method), ['Target.getTargets', 'Target.activateTarget']);
 });
 
-test('viewport, captura y reaperturas nunca activan; el override va sólo si cambia el tamaño', {timeout:15000}, async t => {
+test('existing: viewport, captura y reaperturas nunca activan ni emulan el tamaño', {timeout:15000}, async t => {
   const {request, trace} = await worker(t, 'none');
   const start = trace().length;
   // dos visores, refresco de captura y reconexión: todos reabren con viewport
@@ -74,9 +75,9 @@ test('viewport, captura y reaperturas nunca activan; el override va sólo si cam
   await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:614});
   const methods = trace().slice(start).map(x=>x.method);
   assert.equal(methods.filter(m => m === 'Target.activateTarget').length, 0, methods.join(','));
-  assert.equal(methods.filter(m => m === 'Emulation.setDeviceMetricsOverride').length, 1, methods.join(','));
+  assert.equal(methods.filter(m => m === 'Emulation.setDeviceMetricsOverride').length, 0, methods.join(','));
   await request({action:'viewport', tab:'fixture-tab', width:900, height:600, requestId:615});
-  assert.equal(trace().slice(start).filter(x => x.method === 'Emulation.setDeviceMetricsOverride').length, 2);
+  assert.equal(trace().slice(start).filter(x => x.method === 'Emulation.setDeviceMetricsOverride').length, 0);
 });
 
 test('captura vencida de una pestaña de fondo se informa con cómo traerla, sin activarla', {timeout:15000}, async t => {
@@ -94,11 +95,13 @@ test('Page.enable vencido suelta la sesión y el próximo pedido adjunta de cero
   assert.equal(failed.status, 504);
   assert.match(failed.error, /Page\.enable/);
   assert.equal(trace().filter(x=>x.method === 'Target.detachFromTarget').length, 1);
-  assert.equal((await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:702})).width, 800);
+  assert.equal(trace().filter(x=>x.method === 'Emulation.clearDeviceMetricsOverride').length, 0); // la sesión fallida no llegó a limpiar
+  assert.equal((await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:702})).width, 1280);
   assert.equal(trace().filter(x=>x.method === 'Target.attachToTarget').length, 2);
+  assert.equal(trace().filter(x=>x.method === 'Emulation.clearDeviceMetricsOverride').length, 1); // la sesión nueva limpia una vez
 });
 
-async function worker(t, scenario) {
+async function worker(t, scenario, view = '1280x800') {
   const folder = mkdtempSync(join(tmpdir(), 'lienzo-host-fixture-'));
   const data = process.platform === 'win32' ? join(folder, 'Google/Chrome/User Data')
     : process.platform === 'darwin' ? join(folder, 'Library/Application Support/Google/Chrome')
@@ -107,7 +110,7 @@ async function worker(t, scenario) {
   writeFileSync(join(data, 'DevToolsActivePort'), '9222\n/devtools/browser/fixture\n');
   const traceFile = join(folder, 'cdp.jsonl');
   const child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, host, join(folder, 'profile')], {
-    env: {...process.env, LOCALAPPDATA:folder, HOME:folder, USERPROFILE:folder, TEST_BROWSER_HOST_SCENARIO:scenario, TEST_BROWSER_HOST_TRACE:traceFile},
+    env: {...process.env, LOCALAPPDATA:folder, HOME:folder, USERPROFILE:folder, TEST_BROWSER_HOST_SCENARIO:scenario, TEST_BROWSER_HOST_TRACE:traceFile, TEST_BROWSER_HOST_VIEW:view},
     windowsHide:true, stdio:['pipe', 'pipe', 'pipe'],
   });
   const queued = [], waiting = [], methods = [];
@@ -162,14 +165,14 @@ async function worker(t, scenario) {
   return {request, methods, child, trace};
 }
 
-for (const method of ['Target.getTargets', 'Target.attachToTarget', 'Page.enable', 'Emulation.setDeviceMetricsOverride', 'Page.captureScreenshot', 'Page.getNavigationHistory']) {
+for (const method of ['Target.getTargets', 'Target.attachToTarget', 'Page.enable', 'Emulation.clearDeviceMetricsOverride', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Page.getNavigationHistory']) {
   test(`frame: vence ${method}; state y el siguiente frame siguen usables`, {timeout:15000}, async t => {
     const {request, methods} = await worker(t, method);
     const frame = {action:'frame', tab:'fixture-tab', width:800, height:600};
     const failed = await request(frame);
     assert.equal(failed.status, 504);
     // Page.enable vencido suele ser una pestaña de fondo: el mensaje agrega cómo traerla al frente
-    const hint = method === 'Page.enable' ? '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla' : '';
+    const hint = ['Page.enable', 'Emulation.clearDeviceMetricsOverride'].includes(method) ? '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla' : '';
     assert.equal(failed.error, `Chrome tardó demasiado en responder (${method})${hint}`);
     const stateAfter = await request({action:'state'});
     assert.equal(stateAfter.status, undefined);
@@ -202,16 +205,91 @@ test('timeout de entrada informa sólo el método, sin texto privado ni URL de n
   assert.ok(!JSON.stringify(result).includes(secret));
 });
 
-test('frame frío usa siete comandos CDP; frame caliente usa cuatro sin tocar foco Win32', {timeout:15000}, async t => {
+test('frame frío usa ocho comandos CDP; frame caliente usa cinco sin tocar foco Win32', {timeout:15000}, async t => {
   const {request, trace} = await worker(t, 'healthy');
   const frame = {action:'frame', tab:'fixture-tab', width:800, height:600};
   const before = trace().length;
   assert.equal((await request(frame)).image, 'fixture-image');
   const cold = trace().slice(before);
-  assert.deepEqual(cold.map(item => item.method), ['Target.getTargets', 'Target.attachToTarget', 'Page.enable', 'Emulation.setDeviceMetricsOverride', 'Page.captureScreenshot', 'Page.getNavigationHistory', 'Target.getTargets']);
+  assert.deepEqual(cold.map(item => item.method), ['Target.getTargets', 'Target.attachToTarget', 'Page.enable', 'Emulation.clearDeviceMetricsOverride', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Page.getNavigationHistory', 'Target.getTargets']);
   const next = trace().length;
   assert.equal((await request(frame)).image, 'fixture-image');
   const warm = trace().slice(next);
-  assert.deepEqual(warm.map(item => item.method), ['Target.getTargets', 'Page.captureScreenshot', 'Page.getNavigationHistory', 'Target.getTargets']);
+  assert.deepEqual(warm.map(item => item.method), ['Target.getTargets', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Page.getNavigationHistory', 'Target.getTargets']);
   t.diagnostic(JSON.stringify({cold:cold.map(item => item.method), warm:warm.map(item => item.method), timing:'fixture; no es medición de Chrome remoto'}));
+});
+
+// Contrato (2026-10-20, parpadeo en ar-it33940 con 0.5.5): en modo existing la pestaña real nunca se emula;
+// se captura a su tamaño real desde el scroll actual, y la entrada lleva el tamaño sobre el que se mapeó.
+test('existing: dos visores con tamaños distintos y frame HTTP no alternan el tamaño de la pestaña real', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  const start = trace().length;
+  await request({action:'viewport', tab:'fixture-tab', width:1280, height:800, requestId:801}); // visor A
+  await request({action:'frame', tab:'fixture-tab', width:900, height:600, requestId:802});     // visor B por HTTP
+  await request({action:'snapshot', tab:'fixture-tab', width:1280, height:800, requestId:803});
+  await request({action:'frame', tab:'fixture-tab', width:900, height:600, requestId:804});
+  await request({action:'viewport', tab:'fixture-tab', width:1280, height:800, requestId:805});
+  const overrides = trace().slice(start).filter(x => x.method === 'Emulation.setDeviceMetricsOverride').length;
+  t.diagnostic(`overrides en la pestaña real: ${overrides}`);
+  assert.equal(overrides, 0);
+});
+
+test('existing: la captura arranca en el scroll actual y escala la imagen, no la página', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  const shot = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600, requestId:901});
+  assert.deepEqual([shot.width, shot.height], [1280, 800]); // tamaño CSS real, no el del visor
+  const clip = trace().filter(x => x.method === 'Page.captureScreenshot').at(-1).params.clip;
+  assert.deepEqual({x:clip.x, y:clip.y, width:clip.width, height:clip.height}, {x:0, y:1600, width:1280, height:800});
+  assert.equal(clip.scale, Math.min(900 / 1280, 600 / 800));
+  assert.equal(trace().filter(x => ['Emulation.setDeviceMetricsOverride', 'Runtime.evaluate'].includes(x.method)).length, 0);
+});
+
+test('existing: una pestaña 4K se informa a su tamaño y acepta coordenadas hasta 3840x2160', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none', '3840x2160');
+  assert.deepEqual(await request({action:'viewport', tab:'fixture-tab', width:1280, height:800, requestId:911}), {width:3840, height:2160, requestId:911});
+  const move = {kind:'mouse', type:'mouseMoved', button:'none', buttons:0, x:3839, y:2159, modifiers:0, clickCount:0};
+  assert.equal((await request({action:'input', tab:'fixture-tab', basis:{width:3840, height:2160}, events:[move], requestId:912})).ok, true);
+  assert.deepEqual(trace().filter(x => x.method === 'Input.dispatchMouseEvent').map(x => [x.params.x, x.params.y]), [[3839, 2159]]);
+});
+
+test('existing: entrada mapeada sobre un tamaño viejo se rechaza sin enviar nada', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  await request({action:'viewport', tab:'fixture-tab', width:900, height:600, requestId:921});
+  const before = trace().length;
+  const move = {kind:'mouse', type:'mouseMoved', button:'none', buttons:0, x:10, y:10, modifiers:0, clickCount:0};
+  const stale = await request({action:'input', tab:'fixture-tab', basis:{width:1000, height:800}, events:[move], requestId:922});
+  assert.equal(stale.status, 409);
+  assert.match(stale.error, /cambió de tamaño/);
+  assert.deepEqual(trace().slice(before).map(x => x.method), ['Page.getLayoutMetrics']);
+  assert.equal((await request({action:'input', tab:'fixture-tab', basis:{width:1280, height:800}, events:[move], requestId:923})).ok, true);
+});
+
+test('B08: métricas cambian después del cuadro y la base cacheada no autoriza entrada', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'resize-before-input');
+  const shot = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  assert.deepEqual([shot.width, shot.height], [1280, 800]);
+  const before = trace().length;
+  const move = {kind:'mouse', type:'mouseMoved', button:'none', buttons:0, x:10, y:10, modifiers:0, clickCount:0};
+  const result = await request({action:'input', tab:'fixture-tab', basis:{width:1280, height:800}, events:[move]});
+  assert.equal(result.status, 409);
+  assert.match(result.error, /cambió de tamaño/);
+  assert.deepEqual(trace().slice(before).map(x => x.method), ['Page.getLayoutMetrics']);
+});
+
+test('B08: acepta base actual sin otro cuadro y libera teclas y botones aun con base vieja', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'resize-before-input');
+  await request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  const key = {kind:'key', type:'keyDown', key:'a', code:'KeyA', keyCode:65, modifiers:0};
+  const mouse = {kind:'mouse', type:'mousePressed', button:'left', buttons:1, x:10, y:10, modifiers:0, clickCount:1};
+  const before = trace().length;
+  assert.equal((await request({action:'input', tab:'fixture-tab', basis:{width:900, height:600}, events:[key, mouse]})).ok, true);
+  assert.deepEqual(trace().slice(before).map(x => x.method), ['Page.getLayoutMetrics', 'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent']);
+  const releaseStart = trace().length;
+  assert.equal((await request({action:'release-input', tab:'fixture-tab', basis:{width:1280, height:800},
+    events:[{...key, type:'keyUp'}, {...mouse, type:'mouseReleased', buttons:0, clickCount:0}]})).ok, true);
+  const released = trace().slice(releaseStart);
+  assert.deepEqual(released.map(x => x.method), ['Input.dispatchKeyEvent', 'Input.dispatchMouseEvent']);
+  assert.equal(released[0].params.type, 'keyUp');
+  assert.equal(released[1].params.clickCount, 0);
+  assert.equal(trace().some(x => ['Target.activateTarget', 'Page.navigate', 'Emulation.setDeviceMetricsOverride'].includes(x.method)), false);
 });

@@ -30,17 +30,19 @@ from work_titles import project_title
 
 WINDOWS = sys.platform == "win32"
 
-_CLAUDE_PIPE_ERRORS = frozenset({
-    "el enlace Claude se está cerrando",
-    "límite de enlaces Claude alcanzado; cerrá los enlaces sin uso",
-    "no se pudo verificar el proceso de esta sesión Claude",
-    "protocolo Claude desconocido o incompatible: se requiere peerProtocol entero 1",
-    "versión Claude desconocida o inválida",
-    "versión Claude anterior al mínimo Windows 2.1.234",
-    "el proceso Claude cambió durante el registro",
-    "el proceso de la sesión cambió: cerrá el enlace anterior",
-    "bootstrap Claude finalizado sin conexión vigente; cerrá el enlace y registrá de nuevo",
-})
+_CLAUDE_PIPE_ERRORS = frozenset(
+    {
+        "el enlace Claude se está cerrando",
+        "límite de enlaces Claude alcanzado; cerrá los enlaces sin uso",
+        "no se pudo verificar el proceso de esta sesión Claude",
+        "protocolo Claude desconocido o incompatible: se requiere peerProtocol entero 1",
+        "versión Claude desconocida o inválida",
+        "versión Claude anterior al mínimo Windows 2.1.234",
+        "el proceso Claude cambió durante el registro",
+        "el proceso de la sesión cambió: cerrá el enlace anterior",
+        "bootstrap Claude finalizado sin conexión vigente; cerrá el enlace y registrá de nuevo",
+    }
+)
 
 
 def claude_pipe_error(error: Exception) -> str:
@@ -48,6 +50,7 @@ def claude_pipe_error(error: Exception) -> str:
     if isinstance(error, ValueError) and str(error) in _CLAUDE_PIPE_ERRORS:
         return str(error)
     return f"no se pudo abrir el enlace local Claude ({type(error).__name__})"
+
 
 # los ejecutables salen del registro de agentes (agentes.py); el nombre queda porque lo leen otros
 AGENT_EXES = {nombre: p.exe for nombre, p in AGENTES.items()}
@@ -128,12 +131,26 @@ def _allowed_roots() -> list[str]:
 _existe = os.path.isdir
 
 
+def _physical_path(path: str) -> str:
+    return os.path.normcase(os.path.realpath(path, strict=True))
+
+
 def _cwd_allowed(cwd: str, roots: list[str]) -> bool:
     # % expande variables adentro del .cmd aunque vaya entre comillas, y " las cierra
     if not cwd or not roots or any(c in cwd for c in '"%\r\n') or not _existe(cwd):
         return False
     norm = os.path.normcase(os.path.normpath(cwd))
-    return any(norm == root or norm.startswith(root + os.sep) for root in roots)
+    try:
+        physical = _physical_path(cwd)
+        for root in roots:
+            if norm != root and not norm.startswith(root.rstrip(os.sep) + os.sep):
+                continue
+            physical_root = _physical_path(root)
+            if os.path.commonpath((physical, physical_root)) == physical_root:
+                return True
+    except OSError, ValueError:
+        return False
+    return False
 
 
 def _exe_path(exe_name: str) -> str | None:
@@ -141,6 +158,9 @@ def _exe_path(exe_name: str) -> str | None:
     el instalador de Claude Code (~/.local/bin), despues el PATH de este server."""
     propio = os.path.join(state.HOME, ".local", "bin", exe_name)
     candidatos: list[str] = []
+    if exe_name == "agy.exe":
+        local = os.environ.get("LOCALAPPDATA", os.path.join(state.HOME, "AppData", "Local"))
+        candidatos.append(os.path.join(local, "agy", "bin", exe_name))
     if exe_name == "codex.exe":
         # El instalador standalone mantiene esta entrada. Una copia vieja en .local/bin
         # no reconoce su instalación y seguiría lanzando una versión sin actualizar.
@@ -212,6 +232,7 @@ def launch(
     distro: str | None = None,
     modo: str = "general",
     claude_pipe: bool = False,
+    chrome: bool = False,
 ) -> dict:
     """Escribe el .cmd en `<LIENZO_HOME>/launch/` y lo lanza con explorer.exe. Rechaza (sin tocar
     disco ni proceso) un `cwd` fuera de `launch_roots` y un `agent` desconocido. Devuelve
@@ -220,12 +241,19 @@ def launch(
     un agente que retoma por id (p. ej. `pid-123`) lanza sin retomar y lo dice: `resumed: false`.
     Con `distro` (Windows con WSL) la sesion nace adentro de tmux de esa distro: spawn por
     wsl.exe -d <distro> con el cwd traducido a /mnt/<letra>, y la tarjeta queda direccionada a esa
-    distro desde el nacimiento. Sin pedido, el comportamiento de siempre."""
+    distro desde el nacimiento. Con `chrome` (sólo Claude en Windows nativo) la sesión nace con
+    `--chrome`: maneja el Chrome real del usuario por la extensión, así que va a pedido, nunca por defecto.
+    Sin pedido, el comportamiento de siempre."""
     exe_name = AGENT_EXES.get(agent)
     if exe_name is None:
         return {"ok": False, "error": f"agente desconocido: {agent!r}"}
     if ("win32" if WINDOWS else sys.platform) not in AGENTES[agent].supported_platforms:
         return {"ok": False, "error": f"integracion de {agent} no soportada en esta plataforma"}
+    if chrome and (agent != "claude" or distro):
+        # la extensión habla con el host nativo de Windows: desde WSL no la alcanza
+        return {"ok": False, "error": "chrome requiere una sesión Claude en Windows nativo"}
+    if agent == "antigravity" and distro:
+        return {"ok": False, "error": "Antigravity está integrado sólo en Windows; WSL todavía no está soportado"}
     if agent == "coda" and _cuota_coda() == "agotada":
         # abriria una terminal que falla en el primer turno (medido el 2026-10-04)
         return {
@@ -256,7 +284,7 @@ def launch(
     resume_args = _resume_args(agent, resume)
     model_args = _model_args(agent, model)
     nombre_args = _nombre_args(agent, title)
-    extra = [*AGENTES[agent].iniciar, *resume_args, *model_args, *nombre_args]
+    extra = [*AGENTES[agent].iniciar, *resume_args, *model_args, *nombre_args, *(["--chrome"] if chrome else [])]
     improvement_warnings = []
     try:
         instructions, improvement_warnings = agent_improvements.launch_instructions(agent, distro, modo)

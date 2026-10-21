@@ -5,6 +5,15 @@ vuelta y separar el motor en `D:/Apps/motor-logico`. Se usa JSON por proceso con
 el prototipo anterior sigue descartado. Python mantiene creencias y aprendizaje sin Prolog.
 Se conserva debajo la propuesta inicial como historia, sin marcar tareas como completadas.
 
+Verificación del 20/10: la interfaz real de Lienzo completó la consulta opcional a SWI-Prolog en
+WSL. El proyecto tenía 0 creencias y 5 encargos sin clasificar; el contraste devolvió 0 creencias
+analizadas y 0 diferencias con Python. Esto verifica el transporte, no la utilidad del aprendizaje.
+Las 16 pruebas de `tests/test_prolog_learning.py` pasaron con el runtime real, incluida la
+comparación diferencial. No se aprobaron baselines ni se cerraron etapas. El contrato 1 del
+motor independiente sigue usando un proceso por consulta; el servicio persistente descrito
+más abajo pertenece a la propuesta histórica y requiere comparación medida antes de adoptarlo.
+Evidencia: [revisión del contraste ampliado](../../../review/2026-10-20/code-review-2026-10-20-prolog-contraste.md), que incluye las pruebas del contrato inicial.
+
 Propuesta del 19 de octubre de 2026. Revisada por una CLI real de Claude Opus 5.5;
 ajustada por Codex. Pendiente de decisión de Ariel.
 Se planifica antes de implementar. El prototipo en `.temp/motor-logico` no es producto integrado.

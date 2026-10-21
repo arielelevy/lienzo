@@ -429,3 +429,51 @@ def test_mouse_release_uses_last_move_and_zero_click_count(tab_worker):
     wait_message(output, lambda m: m.get("n") == 3)
     release = next(c for c in calls if c["action"] == "release-input")["events"][0]
     assert (release["x"], release["y"], release["clickCount"]) == (300, 300, 0)
+
+
+def test_size_cambia_escala_sin_open_release_ni_generacion(tab_worker):
+    worker, gate, capturing, _, _, calls, output = tab_worker
+    gate.set()
+    send(worker, t="open", tab="a", generation=1, width=800, height=600)
+    wait_message(output, lambda m: m["t"] == "opened")
+    send(worker, t="size", generation=1, width=1000, height=700)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and (worker.width, worker.height) != (1000, 700):
+        time.sleep(0.01)
+    assert (worker.width, worker.height, worker.generation) == (1000, 700, 1)
+    viewports = [c for c in calls if c["action"] == "viewport"]
+    assert [(c["width"], c["height"]) for c in viewports] == [(800, 600), (1000, 700)]
+    assert not any(c["action"] == "release-input" for c in calls)
+    assert sum(1 for kind, p in output if kind == ws.TEXT and json.loads(p)["t"] == "opened") == 1
+    send(worker, t="size", generation=9, width=1100, height=700)  # generación vieja: se ignora
+    time.sleep(0.1)
+    assert (worker.width, worker.height) == (1000, 700)
+
+
+def test_opened_y_cuadros_llevan_el_tamano_css_real_y_basis_llega_al_host(tab_worker, monkeypatch):
+    worker, gate, _, _, frame_done, calls, output = tab_worker
+    original = browser_remote.HOST.request
+
+    def request(data):
+        if data["action"] == "viewport":
+            calls.append(data)
+            return 200, {"width": 3840, "height": 2160}
+        if data["action"] == "snapshot":
+            calls.append(data)
+            return 200, {"image": base64.b64encode(b"jpeg-real").decode(), "width": 3840, "height": 2160}
+        return original(data)
+
+    monkeypatch.setattr(browser_remote.HOST, "request", request)
+    send(worker, t="open", tab="a", generation=1, width=800, height=600)
+    opened = wait_message(output, lambda m: m["t"] == "opened")
+    assert (opened["width"], opened["height"]) == (3840, 2160)
+    assert frame_done.wait(2)
+    packet = next(p for kind, p in output if kind == ws.BINARY)
+    assert module.TAB_FRAME.unpack(packet[:12]) == (1, 1, 3840, 2160)
+    snap = next(c for c in calls if c["action"] == "snapshot")
+    assert (snap["width"], snap["height"]) == (800, 600)  # el visor sólo escala la captura
+    move = {"kind": "mouse", "type": "mouseMoved", "button": "none", "buttons": 0, "x": 1, "y": 1, "modifiers": 0}
+    send(worker, t="input", n=1, generation=1, events=[move], basis={"width": 3840, "height": 2160})
+    wait_message(output, lambda m: m.get("n") == 1)
+    sent = next(c for c in calls if c["action"] == "input")
+    assert sent["basis"] == {"width": 3840, "height": 2160}

@@ -1,4 +1,5 @@
 """Lectura de metadatos de facturación; nunca imprime claves ni cuerpos de error."""
+
 import json
 import sys
 import urllib.error
@@ -26,10 +27,19 @@ def main():
                 raise ValueError("respuesta demasiado grande")
             data = json.loads(raw).get("data")
             if isinstance(data, dict):
-                result["data"] = {k: data.get(k) for k in (
-                    "id", "model", "created_at", "total_cost", "tokens_prompt",
-                    "tokens_completion", "provider_name", "request_id",
-                )}
+                result["data"] = {
+                    k: data.get(k)
+                    for k in (
+                        "id",
+                        "model",
+                        "created_at",
+                        "total_cost",
+                        "tokens_prompt",
+                        "tokens_completion",
+                        "provider_name",
+                        "request_id",
+                    )
+                }
             else:
                 result["aggregate_available"] = isinstance(data, list)
         except urllib.error.HTTPError as error:

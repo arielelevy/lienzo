@@ -511,3 +511,19 @@ def test_snapshot_del_tablero_lleva_el_espejo_y_el_de_otra_pc_no(entorno, monkey
     assert [x["session_id"] for x in tablero["sessions"]] == [SID, REMOTA]
     assert [x["session_id"] for x in peer["sessions"]] == [SID]
     assert set(tablero) == set(peer) == {"type", "sessions", "pending", "links", "rules", "build"}
+
+
+def test_launch_con_chrome_llega_al_lanzador_y_a_la_otra_pc(entorno):
+    d = {"cwd": "C:/x", "agent": "claude", "title": "t", "chrome": True}
+    entorno["efectos"].clear()
+    assert al_tablero(entorno["tablero"], "POST", "/sessions/launch", json.dumps(d).encode())[0] == 200
+    assert entorno["efectos"] == [
+        ("launch", "C:/x", "t", "claude", {"model": None, "distro": None, "modo": "general", "chrome": True})
+    ]
+    al_tablero(entorno["tablero"], "POST", "/sessions/launch", json.dumps({**d, "pc": "pcB"}).encode())
+    assert entorno["espejo"].llamadas[-1] == (
+        "pcB",
+        "POST",
+        "/launch",
+        {"cwd": "C:/x", "title": "t", "agent": "claude", "chrome": True},
+    )

@@ -19,6 +19,18 @@ export interface Session {
   session_id: string;
   agent: Agent;
   pid: number | null;
+  /** el proceso nació con `--chrome`: maneja el Chrome real por la extensión */
+  chrome?: boolean;
+  /** El estado operativo de una CLI sin lector de turnos no confirma actividad real. */
+  state_source?: "unverified";
+  /** Lectura parcial de pantalla; model_label es visible, no un ID canónico ni respuesta. */
+  screen_observation?: {
+    source: "screen";
+    observed_at: string;
+    available: boolean;
+    model_label: string | null;
+    activity: "unverified";
+  } | null;
   cwd: string | null;
   repo: string;
   branch: string | null;
@@ -146,6 +158,8 @@ export interface PeerHealth {
   git_auth?: Record<string, "ok" | "vencida" | "no_verificable" | "sin_red" | "timeout" | "error"> | null;
   /** distros de WSL instaladas en esa PC (solo Windows con WSL; vacía o ausente = ninguna) */
   distros_wsl?: string[];
+  /** perfiles de Chrome de esa PC con la extensión Claude in Chrome instalada (chrome_claude.py) */
+  chrome_claude?: { id: string; name: string; cuenta: string }[];
   /** cuota por agente en esa PC: "ok", "agotada", "agotada hasta HH:MM" o "desconocida" */
   cuotas?: Record<string, string> | null;
 }
@@ -202,6 +216,7 @@ export interface AskQuestion {
 }
 
 export interface DigestTurn {
+  history_only?: boolean;
   id: string;
   ts_start: string | null;
   ended: boolean;

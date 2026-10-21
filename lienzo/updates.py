@@ -32,15 +32,25 @@ class Updater:
         if self.journal.exists():
             saved = json.loads(self.journal.read_text(encoding="utf-8"))
             if saved.get("phase") == "restarting" and saved.get("target") == self.running:
-                self.data.update(saved, phase="applied", available=False, head=self.running,
-                                 message="Actualización aplicada")
+                self.data.update(
+                    saved, phase="applied", available=False, head=self.running, message="Actualización aplicada"
+                )
             elif saved.get("phase") not in ("idle", "applied", "error"):
                 self.data.update(phase="error", error="La actualización anterior se interrumpió; revisá el checkout")
 
     def run(self, args, *, cwd=None, timeout=60):
         env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never"}
-        result = subprocess.run(args, cwd=cwd or self.root, env=env, stdin=subprocess.DEVNULL,
-                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+        result = subprocess.run(
+            args,
+            cwd=cwd or self.root,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
         if result.returncode:
             # No publicar stderr de git/npm: puede incluir credenciales en URLs del remoto.
             raise UpdateError(f"Falló {Path(args[0]).name} (código {result.returncode})")
@@ -74,12 +84,26 @@ class Updater:
         ahead, behind = map(int, self.git("rev-list", "--left-right", "--count", f"{head}...{target}").split())
         package = json.loads(self.git("show", f"{target}:web/package.json"))
         changes = self.git("log", "-15", "--format=%h %s", f"{self.running}..{target}").splitlines()
-        blocked = ("Hay cambios locales; guardalos en Git antes de actualizar" if dirty else
-                   "La rama tiene commits propios; requiere revisión" if ahead else
-                   "El servidor necesita arrancar con lienzo-server.cmd para aplicar la actualización" if not self.supervised else "")
-        return {"head": head, "target": target, "available": behind > 0 or head != self.running, "ahead": ahead,
-                "behind": behind, "blocked": blocked, "version": package["version"],
-                "changes": changes, "checked_at": time.time()}
+        blocked = (
+            "Hay cambios locales; guardalos en Git antes de actualizar"
+            if dirty
+            else "La rama tiene commits propios; requiere revisión"
+            if ahead
+            else "El servidor necesita arrancar con lienzo-server.cmd para aplicar la actualización"
+            if not self.supervised
+            else ""
+        )
+        return {
+            "head": head,
+            "target": target,
+            "available": behind > 0 or head != self.running,
+            "ahead": ahead,
+            "behind": behind,
+            "blocked": blocked,
+            "version": package["version"],
+            "changes": changes,
+            "checked_at": time.time(),
+        }
 
     def submit(self, action, target=None):
         with self.lock:
@@ -96,7 +120,7 @@ class Updater:
             try:
                 self.set(phase="checking" if action == "check" else "preparing", error=None, message=None)
                 threading.Thread(target=self.worker, args=(action, target), daemon=True, name="lienzo-update").start()
-            except (OSError, RuntimeError):
+            except OSError, RuntimeError:
                 self.busy = False
                 self.data.update(phase="error", error="No se pudo registrar o iniciar la actualización")
                 return 503, {"error": self.data["error"]}
@@ -130,7 +154,11 @@ class Updater:
             compile(path.read_bytes(), str(path), "exec")
         self.set(phase="building", message="Preparando la interfaz antes de aplicar")
         for script in ("npm.cmd ci --ignore-scripts --no-audit --no-fund", "npm.cmd run build"):
-            command = [os.environ["COMSPEC"], "/d", "/c", script] if os.name == "nt" else script.replace("npm.cmd", "npm").split()
+            command = (
+                [os.environ["COMSPEC"], "/d", "/c", script]
+                if os.name == "nt"
+                else script.replace("npm.cmd", "npm").split()
+            )
             self.run(command, cwd=folder / "web", timeout=300)
         if not (folder / "web/dist/index.html").is_file():
             raise UpdateError("La compilación no produjo una interfaz")
@@ -177,8 +205,7 @@ SERVICE = None
 
 def start(restart):
     global SERVICE
-    SERVICE = Updater(state.ROOT, Path(state.LIENZO) / "update.json", restart,
-                      os.environ.get("LIENZO_RELOAD") == "1")
+    SERVICE = Updater(state.ROOT, Path(state.LIENZO) / "update.json", restart, os.environ.get("LIENZO_RELOAD") == "1")
 
     def poll():
         while True:

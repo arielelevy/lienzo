@@ -17,9 +17,20 @@ def inventory(tmp_path, monkeypatch):
     paths = {}
     for pid, sid in [(4242, SID), (4243, OTHER)]:
         path = tmp_path / f"rollout-{sid}.jsonl"
-        path.write_text(json.dumps({"type": "session_meta", "payload": {
-            "id": sid, "originator": "codex-tui", "cwd": str(tmp_path),
-        }}) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": sid,
+                        "originator": "codex-tui",
+                        "cwd": str(tmp_path),
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         paths[pid] = str(path)
 
     def snapshot(pid, *, observation=False):
@@ -61,9 +72,19 @@ def test_observation_rejects_ambiguous_changed_or_non_tui_rollouts(inventory, mo
 
     if change == "exec":
         from pathlib import Path
-        Path(inventory[4242]).write_text(json.dumps({"type": "session_meta", "payload": {
-            "id": SID, "originator": "codex_exec",
-        }}), encoding="utf-8")
+
+        Path(inventory[4242]).write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {
+                        "id": SID,
+                        "originator": "codex_exec",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
     monkeypatch.setattr(identity, "_snapshot", snapshot)
     result = identity.transcript_identity(4242)
     assert not result["verified"] and not result.get("observed")

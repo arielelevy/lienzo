@@ -12,11 +12,18 @@ def test_normal_task_api_feeds_patterns_without_promoting_beliefs():
     k.registrar_proyecto(pid)
     round_id = k.abrir_ronda(pid, "Revisar cambios", autor="coordinadora:c")["id"]
     for letter in ("A", "B"):
-        code, task = api.dispatch("POST", [pid, "encargos"], {
-            "ronda": round_id, "letra": letter, "texto": "Simplificar código",
-            "contexto_desarrollo": {"tipo_trabajo": "refactor", "tecnologia": "python"},
-            "controles_declarados": ["pruebas", "pruebas", "auditoria_skill"],
-        }, {})
+        code, task = api.dispatch(
+            "POST",
+            [pid, "encargos"],
+            {
+                "ronda": round_id,
+                "letra": letter,
+                "texto": "Simplificar código",
+                "contexto_desarrollo": {"tipo_trabajo": "refactor", "tecnologia": "python"},
+                "controles_declarados": ["pruebas", "pruebas", "auditoria_skill"],
+            },
+            {},
+        )
         assert code == 200 and task["estado"] == "pendiente"
         assert task["datos"]["controles_declarados"] == ["pruebas", "auditoria_skill"]
     analysis = api.dispatch("GET", [pid, "patrones-desarrollo"], None, {})[1]
@@ -29,15 +36,18 @@ def test_normal_task_api_feeds_patterns_without_promoting_beliefs():
     assert c.checklist(pid, {"tipo_trabajo": "refactor"})["items"] == []
 
 
-@pytest.mark.parametrize("fields", [
-    {"contexto_desarrollo": {}},
-    {"contexto_desarrollo": {"tipo_trabajo": "inventado"}},
-    {"contexto_desarrollo": {"tipo_trabajo": "bugfix", "desconocido": "x"}},
-    {"contexto_desarrollo": []},
-    {"controles_declarados": "pruebas"},
-    {"controles_declarados": ["aprobado"]},
-    {"controles_declarados": [{}]},
-])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"contexto_desarrollo": {}},
+        {"contexto_desarrollo": {"tipo_trabajo": "inventado"}},
+        {"contexto_desarrollo": {"tipo_trabajo": "bugfix", "desconocido": "x"}},
+        {"contexto_desarrollo": []},
+        {"controles_declarados": "pruebas"},
+        {"controles_declarados": ["aprobado"]},
+        {"controles_declarados": [{}]},
+    ],
+)
 def test_invalid_task_labels_leave_no_task_or_file(fields):
     from pathlib import Path
 
@@ -45,9 +55,17 @@ def test_invalid_task_labels_leave_no_task_or_file(fields):
     k.registrar_proyecto(pid)
     round_id = k.abrir_ronda(pid, "Revisar cambios", autor="coordinadora:c")["id"]
     before = k.cambios(pid)
-    code, _ = api.dispatch("POST", [pid, "encargos"], {
-        "ronda": round_id, "letra": "A", "texto": "Cambio", **fields,
-    }, {})
+    code, _ = api.dispatch(
+        "POST",
+        [pid, "encargos"],
+        {
+            "ronda": round_id,
+            "letra": "A",
+            "texto": "Cambio",
+            **fields,
+        },
+        {},
+    )
     assert code == 400
     assert k.cambios(pid) == before
     assert k.nodos(pid, tipo="encargo")["total"] == 0

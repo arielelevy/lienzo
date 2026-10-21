@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, rulesApi, sendNotice, sessionsApi } from "../api";
-import { AGENTS } from "../agents";
+import { AGENTS, can } from "../agents";
 import { coordinatorOf } from "../nl";
 import type { Session } from "../types";
 import { canWrite, needsPiReload, REPLY_TEMPLATE, shortName } from "../names";
@@ -40,7 +40,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
   const [notifyMe, , toggleNotify] = useLocalFlag(NOTIFY_KEY, false);
 
   const notifyRule = async () => {
-    if (!notifyMe || !me) return;
+    if (!notifyMe || !me || !can(s.agent, "coordinable")) return;
     try {
       // el agente contesta varias veces (informe, aclaraciones): la regla se repite, con tope. Si ya
       // hay una activa hacia la coordinadora (de esta casilla o de Conectar), no se crea otra
@@ -223,7 +223,7 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
           ))}
         </div>
         <span className="sp" />
-        {me && (
+        {me && can(s.agent, "coordinable") && (
           <label className="small notifyme pointer" title={`al terminar este pedido, su respuesta se manda sola a ${shortName(me)}`}>
             <input type="checkbox" checked={notifyMe} onChange={(e) => toggleNotify(e.target.checked)} /> avisarme cuando termine ({shortName(me)})
           </label>

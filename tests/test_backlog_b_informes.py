@@ -1,4 +1,5 @@
 """Continuidad B: transporte simulado, estado real serializado, sin sesiones pagas."""
+
 import datetime as dt
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -19,16 +20,32 @@ def entorno(monkeypatch):
     monkeypatch.setattr(rl.rules, "publish", lambda: None)
     monkeypatch.setattr(rl, "find_session", lambda sid: state.sessions.get(sid))
     monkeypatch.setattr(rl, "full_reply", lambda s, cap=6000: s.get("last_reply", "")[:cap])
-    state.sessions["backlog-b-src"] = {"session_id": "backlog-b-src", "agent": "codex", "state": "termino",
-                                       "last_reply": "ESTADO: informe uno", "prompt_id": "p1"}
+    state.sessions["backlog-b-src"] = {
+        "session_id": "backlog-b-src",
+        "agent": "codex",
+        "state": "termino",
+        "last_reply": "ESTADO: informe uno",
+        "prompt_id": "p1",
+    }
     state.sessions["backlog-b-dst"] = {"session_id": "backlog-b-dst", "agent": "codex", "state": "termino"}
-    r = {"id": "backlog-b", "kind": "on_stop", "from": "backlog-b-src", "to": "backlog-b-dst",
-         "text": "{regla_id}/{informe_id}\n{respuesta}", "enabled": True, "repeat": True, "limit": "rate", "solo_si": "ESTADO:"}
+    r = {
+        "id": "backlog-b",
+        "kind": "on_stop",
+        "from": "backlog-b-src",
+        "to": "backlog-b-dst",
+        "text": "{regla_id}/{informe_id}\n{respuesta}",
+        "enabled": True,
+        "repeat": True,
+        "limit": "rate",
+        "solo_si": "ESTADO:",
+    }
     state.rules.items.append(r)
     sends = []
+
     def send(dst, text, attachments):
         sends.append(text)
         return 200, {"estado": "entregado", "envio_id": str(len(sends))}
+
     monkeypatch.setattr(rl, "send_to_session", send)
     yield r, sends
     state.sessions.pop("backlog-b-src", None)
@@ -120,8 +137,6 @@ def test_stop_simultaneo_no_duplica(entorno):
     assert len(r["informes"]) == 1
 
 
-
-
 def test_confirmacion_tardia_no_revierte_acuses(entorno):
     r, _ = entorno
     i = ledger.conservar(r, {"texto": "ESTADO: listo", "huella": "tardia"}, state.now())
@@ -167,8 +182,10 @@ def test_purga_federada_conserva_pendientes(entorno):
 def test_acuse_disco_fallido_no_cambia_estado(entorno, monkeypatch):
     r, _ = entorno
     ledger.conservar(r, {"texto": "ESTADO: retenido", "huella": "sin-disco"}, state.now())
+
     def falla(**kwargs):
         raise OSError("disco lleno")
+
     monkeypatch.setattr(state.rules, "save", falla)
     with pytest.raises(OSError, match="disco lleno"):
         api.acuse_informe(r["id"], "sin-disco", {"estado": "recibido", "session_id": r["to"]})

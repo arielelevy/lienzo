@@ -14,8 +14,10 @@ import json
 import os
 import secrets
 import socket
+import subprocess
 import sys
 import threading
+import tempfile
 import time
 
 import pytest
@@ -485,3 +487,474 @@ def test_traer_local_valida_el_destino_antes_de_reenviar(canal, tmp_path, monkey
             {"origen": pedido["origen"], "destino": str(canal["destino"]), "ultimo": True},
         )
     ]
+
+
+@pytest.mark.parametrize("size", [113, 3 * MIB + 17], ids=["chico", "varios-bloques"])
+def test_cache_caliente_no_certifica_bytes_alterados(canal, size):
+    rel = "caliente.bin"
+    original = b"a" * size
+    source = canal["origen"] / rel
+    target = canal["destino"] / rel
+    source.write_bytes(original)
+    first = _correr(canal)
+    assert first.estado == "terminado", first.errores
+    db = xfer.CACHE._db
+    assert db is not None
+    before = target.stat()
+    with target.open("r+b") as f:
+        f.seek(size // 2)
+        f.write(b"b")
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert target.stat().st_size == before.st_size
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
+    assert target.read_bytes() != original
+    work = _correr(canal)
+    assert xfer.CACHE._db is db, "la caché tiene que seguir abierta durante la reproducción"
+    assert work.estado == "terminado", work.errores
+    assert target.read_bytes() == original
+    assert work.salteados == 0
+    assert work.bytes_enviados == min(MIB, size)
+    normal = _correr(canal)
+    assert normal.estado == "terminado"
+    assert normal.salteados == 1 and normal.bytes_enviados == 0
+
+
+def test_cierre_con_cache_caliente_no_certifica_destino_alterado(canal):
+    target = canal["destino"] / "final.bin"
+    target.write_bytes(b"original")
+    hashes = [xfer.hash_bytes(b"original")]
+    assert xfer._hashes_final(str(target), MIB) == hashes
+    db = xfer.CACHE._db
+    before = target.stat()
+    target.write_bytes(b"alterado")
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    code, response = xfer.r_cerrar(
+        {
+            "destino": str(canal["destino"]),
+            "bs": MIB,
+            "rel": target.name,
+            "size": 8,
+            "mtime_ns": before.st_mtime_ns,
+            "hashes": hashes,
+        }
+    )
+    assert xfer.CACHE._db is db
+    assert code == 409 and response["faltan"] == [0]
+    assert target.read_bytes() == b"alterado"
+
+
+@pytest.mark.parametrize("extension", [xfer.PARTE, xfer.DIARIO])
+@pytest.mark.parametrize("action", ["estado", "bloque", "cerrar"])
+@pytest.mark.parametrize("link_kind", ["symlink", "hardlink"])
+def test_auxiliar_enlazado_se_rechaza_sin_alterar_victima(canal, tmp_path, extension, action, link_kind):
+    target = canal["destino"] / "enlace.bin"
+    victim = tmp_path / "victima.bin"
+    data = b"VICTIMA-EXTERIOR-INTACTA"
+    victim.write_bytes(data if extension == xfer.PARTE else b"bs 1048576\n")
+    if extension == xfer.PARTE:
+        (canal["destino"] / (target.name + xfer.DIARIO)).write_text("bs 1048576\n", encoding="ascii")
+    else:
+        (canal["destino"] / (target.name + xfer.PARTE)).write_bytes(data)
+    aux = str(target) + extension
+    try:
+        (os.symlink if link_kind == "symlink" else os.link)(victim, aux)
+    except OSError as exc:
+        if link_kind == "symlink" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("symlink no disponible sin privilegios; no se cambian permisos")
+        raise
+    before = victim.read_bytes(), victim.stat().st_mtime_ns
+    base = {"destino": str(canal["destino"]), "bs": MIB, "rel": target.name, "size": 1}
+    if action == "bloque":
+        raw = xfer._armar({**base, "i": 0, "hash": xfer.hash_bytes(b"x")}, b"x")
+    elif action == "cerrar":
+        raw = json.dumps({**base, "mtime_ns": 1, "hashes": [xfer.hash_bytes(b"x")]}).encode()
+    else:
+        raw = json.dumps({**base, "archivos": [target.name]}).encode()
+    code, response = xfer.atender_peer([action], raw)
+    # Comprobar la víctima incluso cuando el receptor no rechazó el pedido.
+    assert (victim.read_bytes(), victim.stat().st_mtime_ns) == before
+    assert code in (400, 403), response
+
+
+def test_parte_redirigida_entre_preparacion_y_apertura(canal, tmp_path, monkeypatch):
+    target = canal["destino"] / "carrera.bin"
+    victim = tmp_path / "victima-carrera.bin"
+    victim.write_bytes(b"intacta")
+    original = xfer._asegurar_parte
+    blocked = []
+
+    def redirect(path, bs):
+        original(path, bs)
+        try:
+            os.unlink(path + xfer.PARTE)
+        except PermissionError:
+            blocked.append(True)
+            return
+        os.link(victim, path + xfer.PARTE)
+
+    monkeypatch.setattr(xfer, "_asegurar_parte", redirect)
+    raw = xfer._armar(
+        {
+            "destino": str(canal["destino"]),
+            "bs": MIB,
+            "rel": target.name,
+            "size": 1,
+            "i": 0,
+            "hash": xfer.hash_bytes(b"x"),
+        },
+        b"x",
+    )
+    code, response = xfer.atender_peer(["bloque"], raw)
+    assert victim.read_bytes() == b"intacta"
+    assert code == 200 if blocked else code in (400, 403), response
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junction nativa de Windows")
+def test_junction_cambiada_antes_de_abrir_parte_no_altera_victima(canal, tmp_path, monkeypatch):
+    folder = canal["destino"] / "sub"
+    folder.mkdir()
+    outside = tmp_path / "exterior-junction"
+    outside.mkdir()
+    victim = outside / ("a.bin" + xfer.PARTE)
+    victim.write_bytes(b"intacta")
+    original = xfer._asegurar_parte
+    blocked = []
+
+    def redirect(path, bs):
+        original(path, bs)
+        try:
+            folder.rename(canal["destino"] / "sub-original")
+        except PermissionError:
+            blocked.append(True)  # Un handle que fija la carpeta impide la redirección.
+            return
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(folder), str(outside)],
+            check=True,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+
+    monkeypatch.setattr(xfer, "_asegurar_parte", redirect)
+    raw = xfer._armar(
+        {
+            "destino": str(canal["destino"]),
+            "bs": MIB,
+            "rel": "sub/a.bin",
+            "size": 1,
+            "i": 0,
+            "hash": xfer.hash_bytes(b"x"),
+        },
+        b"x",
+    )
+    code, response = xfer.atender_peer(["bloque"], raw)
+    assert victim.read_bytes() == b"intacta"
+    assert code == 200 if blocked else code in (400, 403), response
+
+
+def test_control_creacion_carpetas_nuevas_y_publicacion(canal):
+    rel = "nueva/anidada/control.txt"
+    data = b"control normal"
+    response = xfer.r_paquete(
+        xfer._armar(
+            {
+                "destino": str(canal["destino"]),
+                "bs": MIB,
+                "archivos": [{"rel": rel, "size": len(data), "mtime_ns": 123456789000, "hash": xfer.hash_bytes(data)}],
+            },
+            data,
+        )
+    )
+    assert response["archivos"][rel] == "ok"
+    target = canal["destino"] / rel
+    assert target.read_bytes() == data
+    assert target.stat().st_mtime_ns == 123456789000
+    target.rename(target.with_suffix(".renombrado"))  # ningún handle propio quedó abierto
+
+
+def test_control_abrir_seguro_libera_handle(canal):
+    target = str(canal["destino"] / "handle.bin")
+    with xfer._abrir_seguro(target, "wb") as f:
+        f.write(b"control")
+    os.unlink(target)
+    assert not os.path.exists(target)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="pinning de directorios Windows")
+def test_carpeta_nueva_permanece_fijada_hasta_salir(canal):
+    folder = canal["destino"] / "nueva" / "fijada"
+    moved = folder.with_name("movida")
+    with xfer._carpeta_fija(str(folder / "archivo.bin")):
+        assert folder.is_dir()
+        with pytest.raises(PermissionError):
+            folder.rename(moved)
+    folder.rename(moved)
+    assert moved.is_dir()
+
+
+@pytest.mark.parametrize("action", ["estado", "cerrar"])
+def test_final_hardlink_no_modifica_victima(canal, tmp_path, action):
+    victim = tmp_path / "final-victima.bin"
+    victim.write_bytes(b"intacta")
+    target = canal["destino"] / "final-hardlink.bin"
+    os.link(victim, target)
+    before = victim.read_bytes(), victim.stat().st_mtime_ns
+    body = {
+        "destino": str(canal["destino"]),
+        "bs": MIB,
+        "rel": target.name,
+        "size": 7,
+        "mtime_ns": 1,
+        "hashes": [xfer.hash_bytes(b"intacta")],
+        "archivos": [target.name],
+    }
+    code, response = xfer.atender_peer([action], json.dumps(body).encode())
+    assert (victim.read_bytes(), victim.stat().st_mtime_ns) == before
+    assert code in (400, 403), response
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="publicación nativa Windows")
+def test_publicacion_conserva_handle_verificado(canal, tmp_path, monkeypatch):
+    victim = tmp_path / "publicacion-victima.bin"
+    victim.write_bytes(b"intacta")
+    original = xfer._publicar_parte
+    protected = []
+
+    def publish(path, f):
+        try:
+            os.unlink(path + xfer.PARTE)
+        except PermissionError:
+            protected.append(True)
+        else:
+            os.link(victim, path + xfer.PARTE)
+        original(path, f)
+
+    monkeypatch.setattr(xfer, "_publicar_parte", publish)
+    data = b"contenido verificado"
+    raw = xfer._armar(
+        {
+            "destino": str(canal["destino"]),
+            "bs": MIB,
+            "archivos": [{"rel": "publicado.bin", "size": len(data), "mtime_ns": 12300, "hash": xfer.hash_bytes(data)}],
+        },
+        data,
+    )
+    assert xfer.r_paquete(raw)["archivos"]["publicado.bin"] == "ok"
+    assert protected
+    assert victim.read_bytes() == b"intacta"
+    assert (canal["destino"] / "publicado.bin").read_bytes() == data
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="nombres nativos Windows")
+@pytest.mark.parametrize("kind", ["short", "unc-local"])
+def test_destino_legitimo_con_nombre_nativo(canal, monkeypatch, kind):
+    import ctypes
+    from ctypes import wintypes
+
+    folder = str(canal["destino"])
+    if kind == "short":
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.GetShortPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        buffer = ctypes.create_unicode_buffer(32768)
+        n = kernel.GetShortPathNameW(folder, buffer, len(buffer))
+        if not n or n >= len(buffer):
+            raise ctypes.WinError(ctypes.get_last_error())
+        folder = buffer.value
+        if os.path.normcase(folder) == os.path.normcase(str(canal["destino"])):
+            pytest.skip("el volumen no expone alias 8.3 para este Temp")
+    else:
+        drive, rest = os.path.splitdrive(folder)
+        if len(drive) != 2:
+            pytest.skip("Temp no está en una unidad local")
+        folder = "\\\\localhost\\" + drive[0] + "$" + rest
+        if not os.path.isdir(folder):
+            pytest.skip("share local existente inaccesible; no se crea share ni se elevan permisos")
+    monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [folder]})
+    data = b"nombre legitimo"
+    raw = xfer._armar(
+        {
+            "destino": folder,
+            "bs": MIB,
+            "archivos": [{"rel": "alias.txt", "size": len(data), "mtime_ns": 12300, "hash": xfer.hash_bytes(data)}],
+        },
+        data,
+    )
+    assert xfer.r_paquete(raw)["archivos"]["alias.txt"] == "ok"
+    assert (canal["destino"] / "alias.txt").read_bytes() == data
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="UNC WSL desde Windows")
+@pytest.mark.parametrize("leer_antes", [False, True], ids=["cierre-inmediato", "con-observacion"])
+def test_wsl_unc_archivo_inocuo(canal, monkeypatch, leer_antes):
+    base = "\\\\wsl.localhost\\Ubuntu\\tmp"
+    try:
+        own = tempfile.TemporaryDirectory(prefix="lienzo-E-xfer-", dir=base)
+    except OSError as exc:
+        pytest.skip(f"WSL Ubuntu /tmp no disponible: {type(exc).__name__}, winerror={getattr(exc, 'winerror', None)}")
+    with own as folder:
+        monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [folder]})
+        # No se pide a WSL soltar caché de un archivo de pocos bytes ni se inicia un peer.
+        monkeypatch.setattr(xfer, "soltar_cache", lambda path: None)
+        data = b"WSL: prueba inocua de apertura y publicacion\n"
+        hashes = [xfer.hash_bytes(data)]
+        body = {"destino": folder, "bs": MIB, "rel": "inocuo.bin", "size": len(data)}
+        assert xfer.r_bloque(xfer._armar({**body, "i": 0, "hash": hashes[0]}, data))["ok"]
+        path = os.path.join(folder, "inocuo.bin")
+        if leer_antes:
+            with open(path + xfer.PARTE, "rb") as f:
+                assert f.read() == data, "bytes de .parte después del bloque"
+        code, response = xfer.r_cerrar({**body, "hashes": hashes, "mtime_ns": 123456789000})
+        with open(path if code == 200 else path + xfer.PARTE, "rb") as f:
+            actual = f.read()
+        assert code == 200, (response, actual)
+        assert xfer.hashes_de(path, MIB) == hashes
+        with open(path, "rb") as f:
+            assert f.read() == data
+        os.rename(path, path + ".cerrado")  # descriptor propio liberado
+
+
+@pytest.mark.parametrize("alterado", [False, True])
+def test_cache_caliente_lee_una_sola_vez_y_actualiza_hashes(canal, monkeypatch, alterado):
+    target = canal["destino"] / "lecturas.bin"
+    target.write_bytes(b"original")
+    assert xfer._hashes_final(str(target), MIB) == [xfer.hash_bytes(b"original")]
+    db = xfer.CACHE._db
+    before = target.stat()
+    expected = b"alterado" if alterado else b"original"
+    if alterado:
+        target.write_bytes(expected)
+        os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    calls = []
+    original = xfer.hashes_de
+
+    def count(path, bs):
+        calls.append(path)
+        return original(path, bs)
+
+    monkeypatch.setattr(xfer, "hashes_de", count)
+    assert xfer._hashes_final(str(target), MIB) == [xfer.hash_bytes(expected)]
+    assert calls == [str(target)]
+    assert xfer.CACHE._db is db
+    row = db.execute("SELECT hashes FROM h WHERE ruta=?", (xfer._norm(str(target)),)).fetchone()
+    assert json.loads(row[0]) == [xfer.hash_bytes(expected)]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="UNC WSL desde Windows")
+def test_wsl_unc_diez_cierres_inmediatos(canal, monkeypatch, record_property):
+    base = "\\\\wsl.localhost\\Ubuntu\\tmp"
+    try:
+        own = tempfile.TemporaryDirectory(prefix="lienzo-E-xfer-diez-", dir=base)
+    except OSError as exc:
+        pytest.skip(f"WSL Ubuntu /tmp no disponible: {type(exc).__name__}, winerror={getattr(exc, 'winerror', None)}")
+    with own as folder:
+        monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [folder]})
+        monkeypatch.setattr(xfer, "soltar_cache", lambda path: None)
+        results = []
+        for i in range(10):
+            data = f"WSL inocuo numero {i}: cierre inmediato\n".encode()
+            hashes = [xfer.hash_bytes(data)]
+            name = f"inocuo-{i}.bin"
+            body = {"destino": folder, "bs": MIB, "rel": name, "size": len(data)}
+            block_code, block_response = xfer.atender_peer(
+                ["bloque"], xfer._armar({**body, "i": 0, "hash": hashes[0]}, data)
+            )
+            # Ninguna lectura ni sleep entre bloque y cierre.
+            code, response = xfer.atender_peer(
+                ["cerrar"], json.dumps({**body, "hashes": hashes, "mtime_ns": 123456789000}).encode()
+            )
+            path = os.path.join(folder, name)
+            actual, read_error = b"", None
+            try:
+                with open(path if code == 200 else path + xfer.PARTE, "rb") as f:
+                    actual = f.read()
+            except OSError as exc:
+                read_error = {"tipo": type(exc).__name__, "winerror": getattr(exc, "winerror", None)}
+            results.append(
+                {
+                    "archivo": name,
+                    "bloque_codigo": block_code,
+                    "bloque_response": block_response,
+                    "codigo": code,
+                    "response": response,
+                    "bytes_despues_hex": actual.hex(),
+                    "bytes_esperados_hex": data.hex(),
+                    "igual": actual == data,
+                    "lectura_error": read_error,
+                }
+            )
+        record_property("cierres_wsl", json.dumps(results))
+        assert all(r["codigo"] == 200 and r["igual"] for r in results), results
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="enlaces POSIX expuestos por UNC WSL")
+@pytest.mark.parametrize("extension", [xfer.PARTE, xfer.DIARIO])
+@pytest.mark.parametrize("action", ["estado", "bloque", "cerrar"])
+def test_wsl_auxiliar_symlink_no_altera_victima(canal, monkeypatch, extension, action):
+    if not os.path.isdir("\\\\wsl.localhost\\Ubuntu\\tmp"):
+        pytest.skip("WSL Ubuntu /tmp no disponible")
+    created = subprocess.run(
+        ["wsl.exe", "-d", "Ubuntu", "--", "mktemp", "-d", "/tmp/lienzo-E-xfer-link-XXXXXXXX"],
+        check=True,
+        capture_output=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    linux = created.stdout.decode().strip()
+    assert linux.startswith("/tmp/lienzo-E-xfer-link-") and "/" not in linux[len("/tmp/") :]
+    folder = "\\\\wsl.localhost\\Ubuntu\\tmp\\" + linux.removeprefix("/tmp/")
+    try:
+        allowed = os.path.join(folder, "permitida")
+        subprocess.run(
+            ["wsl.exe", "-d", "Ubuntu", "--", "mkdir", linux + "/permitida"],
+            check=True,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        victim = os.path.join(folder, "victima.bin")
+        content = b"bs 1048576\n" if extension == xfer.DIARIO else b"victima intacta"
+        with open(victim, "wb") as f:
+            f.write(content)
+        target = os.path.join(allowed, "aux.bin")
+        other = xfer.DIARIO if extension == xfer.PARTE else xfer.PARTE
+        with open(target + other, "wb") as f:
+            f.write(b"bs 1048576\n" if other == xfer.DIARIO else b"parte")
+        subprocess.run(
+            [
+                "wsl.exe",
+                "-d",
+                "Ubuntu",
+                "--",
+                "ln",
+                "-s",
+                linux + "/victima.bin",
+                linux + "/permitida/aux.bin" + extension,
+            ],
+            check=True,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [allowed]})
+        body = {
+            "destino": allowed,
+            "bs": MIB,
+            "rel": "aux.bin",
+            "size": 1,
+            "mtime_ns": 1,
+            "hashes": [xfer.hash_bytes(b"x")],
+            "archivos": ["aux.bin"],
+        }
+        raw = (
+            xfer._armar({**body, "i": 0, "hash": xfer.hash_bytes(b"x")}, b"x")
+            if action == "bloque"
+            else json.dumps(body).encode()
+        )
+        code, response = xfer.atender_peer([action], raw)
+        with open(victim, "rb") as f:
+            assert f.read() == content
+        assert code in (400, 403), response
+    finally:
+        # Ruta absoluta devuelta por mktemp, verificada arriba, sin permisos cambiados ni root.
+        subprocess.run(
+            ["wsl.exe", "-d", "Ubuntu", "--", "rm", "-rf", "--", linux],
+            check=True,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )

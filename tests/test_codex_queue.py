@@ -44,8 +44,7 @@ def card(tmp_path, monkeypatch):
     monkeypatch.setattr(cq, "codex_exe", lambda: r"C:\codex\codex.exe")
     monkeypatch.setattr(cq.procinfo, "alive", lambda pid: pid == 4242)
     # Prueba independiente de la tarjeta: cambiar su hilo/PID/FILETIME debe rechazar.
-    proof = {"verified": True, "pid": 4242, "process_start": PROCESS_START,
-             "thread": THREAD, "path": str(rollout)}
+    proof = {"verified": True, "pid": 4242, "process_start": PROCESS_START, "thread": THREAD, "path": str(rollout)}
 
     def probe(pid):
         assert pid == 4242, "el transporte consultó otro proceso"
@@ -59,8 +58,14 @@ def card(tmp_path, monkeypatch):
     import os
 
     os.makedirs(ses.state.SESSIONS, exist_ok=True)  # touch() guarda la tarjeta ahí
-    s = {"session_id": THREAD, "agent": "codex", "pid": 4242, "transcript_path": str(rollout), "external": None,
-         "codex_process_start": PROCESS_START}
+    s = {
+        "session_id": THREAD,
+        "agent": "codex",
+        "pid": 4242,
+        "transcript_path": str(rollout),
+        "external": None,
+        "codex_process_start": PROCESS_START,
+    }
     return {"s": s, "rollout": rollout, "logs": logs}
 
 
@@ -222,10 +227,13 @@ def test_cli_without_known_thread_uses_its_console_not_a_guessed_queue(card, mon
     assert calls == [(4242, "hola")]
 
 
-@pytest.mark.parametrize("change,reason", [
-    ({"codex_process_start": PROCESS_START + 1}, "PID reciclado"),
-    ({"session_id": QUEUE_ID}, "otro rollout activo"),
-])
+@pytest.mark.parametrize(
+    "change,reason",
+    [
+        ({"codex_process_start": PROCESS_START + 1}, "PID reciclado"),
+        ({"session_id": QUEUE_ID}, "otro rollout activo"),
+    ],
+)
 def test_verified_double_does_not_follow_changes_to_the_card(card, monkeypatch, change, reason):
     monkeypatch.setattr(cq.subproc, "correr", lambda *a, **k: pytest.fail("no debe encolar"))
     result = cq.enviar({**card["s"], **change}, "hola")

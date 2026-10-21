@@ -34,7 +34,9 @@ PEDIDO = (
 
 def pedir(metodo: str, ruta: str, cuerpo: dict | None = None, timeout: float = 30) -> tuple[int, dict | list]:
     datos = json.dumps(cuerpo).encode() if cuerpo is not None else None
-    req = urllib.request.Request(BASE + ruta, data=datos, method=metodo, headers={"X-Lienzo": "1", "Content-Type": "application/json"})
+    req = urllib.request.Request(
+        BASE + ruta, data=datos, method=metodo, headers={"X-Lienzo": "1", "Content-Type": "application/json"}
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read().decode("utf-8") or "{}")
@@ -78,15 +80,24 @@ def main() -> int:
 
     code, cfg = pedir("GET", "/config")
     if code != 200:
-        print(json.dumps({**evidencia, "veredicto": "no_ejecutado", "motivo": f"GET /config {code}"}, ensure_ascii=False))
+        print(
+            json.dumps({**evidencia, "veredicto": "no_ejecutado", "motivo": f"GET /config {code}"}, ensure_ascii=False)
+        )
         return 2
     if not cfg.get("auto_aprobar"):
-        print(json.dumps({**evidencia, "veredicto": "no_ejecutado", "motivo": "auto_aprobar apagado: no se prende solo"}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {**evidencia, "veredicto": "no_ejecutado", "motivo": "auto_aprobar apagado: no se prende solo"},
+                ensure_ascii=False,
+            )
+        )
         return 2
 
     t0 = dt.datetime.now()
     antes = {s.get("session_id") for s in sesiones()}
-    code, res = pedir("POST", "/sessions/launch", {"cwd": args.cwd, "title": "e2e auto-aprobar", "agent": args.agent}, timeout=60)
+    code, res = pedir(
+        "POST", "/sessions/launch", {"cwd": args.cwd, "title": "e2e auto-aprobar", "agent": args.agent}, timeout=60
+    )
     evidencia["launch"] = {"code": code, "res": res}
     if code != 200:
         print(json.dumps({**evidencia, "veredicto": "fallo", "motivo": "launch"}, ensure_ascii=False))
@@ -95,10 +106,19 @@ def main() -> int:
     fin = time.time() + 90
     while time.time() < fin and sid is None:
         time.sleep(2)
-        nuevas = [s for s in sesiones() if s.get("session_id") not in antes and s.get("agent") == args.agent and s.get("alive")]
+        nuevas = [
+            s
+            for s in sesiones()
+            if s.get("session_id") not in antes and s.get("agent") == args.agent and s.get("alive")
+        ]
         sid = nuevas[0]["session_id"] if nuevas else None
     if sid is None:
-        print(json.dumps({**evidencia, "veredicto": "fallo", "motivo": "la tarjeta nueva no aparecio en 90 s"}, ensure_ascii=False))
+        print(
+            json.dumps(
+                {**evidencia, "veredicto": "fallo", "motivo": "la tarjeta nueva no aparecio en 90 s"},
+                ensure_ascii=False,
+            )
+        )
         return 1
     evidencia["session_id"] = sid
     try:
@@ -114,7 +134,18 @@ def main() -> int:
         evidencia["tui_lista"] = lista
         if not lista:
             s = tarjeta(sid) or {}
-            print(json.dumps({**evidencia, "veredicto": "no_ejecutado", "motivo": "la TUI no quedo lista en 60 s", "estado": s.get("state"), "needs": s.get("needs")}, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        **evidencia,
+                        "veredicto": "no_ejecutado",
+                        "motivo": "la TUI no quedo lista en 60 s",
+                        "estado": s.get("state"),
+                        "needs": s.get("needs"),
+                    },
+                    ensure_ascii=False,
+                )
+            )
             return 2
         code, res = pedir("POST", f"/sessions/{sid}/send", {"text": PEDIDO}, timeout=60)
         evidencia["send"] = {"code": code, "res": res}
@@ -140,7 +171,18 @@ def main() -> int:
         evidencia["auto_aprobado"] = aprobado
         if aprobado is None:
             s = tarjeta(sid) or {}
-            print(json.dumps({**evidencia, "veredicto": "fallo", "motivo": "sin AUTO-APROBADO (dialogo) en el log", "estado_final": s.get("state"), "needs": s.get("needs")}, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        **evidencia,
+                        "veredicto": "fallo",
+                        "motivo": "sin AUTO-APROBADO (dialogo) en el log",
+                        "estado_final": s.get("state"),
+                        "needs": s.get("needs"),
+                    },
+                    ensure_ascii=False,
+                )
+            )
             return 1
         # despues de aprobar, la tarjeta sigue (corriendo o termino), no en te_necesita por el dialogo
         fin = time.time() + 30

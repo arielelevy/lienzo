@@ -453,6 +453,7 @@ def aislado_launch(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setattr(mod_launch.subprocess, "Popen", FakePopenDistros)
     monkeypatch.setattr(mod_launch, "_existe", lambda p: True)
+    monkeypatch.setattr(mod_launch, "_physical_path", lambda p: os.path.normcase(os.path.normpath(p)))
     bin_dir = tmp_path / "home" / ".local" / "bin"
     bin_dir.mkdir(parents=True)
     for exe in mod_launch.AGENT_EXES.values():

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import os
 import secrets
 import threading
@@ -24,8 +25,23 @@ import rondas
 import sessions as ses
 import state
 import transcripts
+from agentes import AGENTES
 from sessions import add_link, find_session, send_to_session
 from state import links, load_config, lock, now, rules, sessions, short
+
+
+def on_stop_source_error(source: dict | None) -> tuple[int, dict] | None:
+    """No conocer el perfil del origen no acredita un fin de turno (API y migración)."""
+    agent = (source or {}).get("agent")
+    profile = AGENTES.get(agent) if isinstance(agent, str) else None
+    if profile is None:
+        return 409, {"code": "unverified_on_stop_source", "error": "no se pudo verificar el agente origen de on_stop"}
+    if profile.capabilities.get("terminalOnly"):
+        return 409, {
+            "code": "unsupported_on_stop",
+            "error": "el agente origen no confirma fin de turno; on_stop no está disponible",
+        }
+    return None
 
 
 def local_dt(value) -> dt.datetime | None:
@@ -1148,6 +1164,20 @@ def purge_stale_at_rules(max_age_h: float = 24.0) -> None:
         state.log(f"purgadas {n} reglas 'at' viejas (disparadas o deshabilitadas hace mas de {max_age_h:g} h)")
 
 
+def _startup_federation_reason() -> str | None:
+    """El arranque aún no conectó peers: un espejo vacío no prueba ausencia de inversas."""
+    try:
+        with open(os.path.join(state.LIENZO, "peers.json"), encoding="utf-8") as stream:
+            peers = json.load(stream)
+    except FileNotFoundError:
+        peers = {}
+    except OSError, ValueError:
+        return "no se pudo verificar peers.json; rehabilitá explícitamente después de verificar la federación"
+    if not isinstance(peers, dict) or peers or ses._mirror_sessions() or ses._mirror_rules():
+        return "topología remota sin acreditar al arrancar; rehabilitá explícitamente cuando esté disponible"
+    return None
+
+
 def reactivar_agotadas_por_tope_viejo() -> int:
     """Al arrancar: prende las on_stop repetidas que apago el tope total de antes (2026-10-14), ahora
     limitadas por frecuencia. Se reconocen porque se apagaron en su ultimo disparo (`disabled_at` a
@@ -1169,16 +1199,44 @@ def reactivar_agotadas_por_tope_viejo() -> int:
             and int(r.get("fired") or 0) >= int(r.get("max_fires") or 1)
         )
 
+    federation_reason = _startup_federation_reason()  # lectura de disco fuera del lock, sin red
+    ids, bloqueadas = [], []
+    changed = False
     with lock:
-        ids = [r["id"] for r in rules.items if agotada(r)]
         for r in rules.items:
-            if r["id"] in ids:
-                r["enabled"] = True
-                r.pop("disabled_at", None)
-        if ids:
+            if not agotada(r):
+                continue
+            source_error = on_stop_source_error(find_session(r.get("from")))
+            existentes = [x for x in list(rules.items) + ses._mirror_rules() if x.get("id") != r["id"]]
+            conflicto = loop_conflict(r, existentes, []) or _rule_clash(r, existentes)
+            reason = source_error[1]["error"] if source_error else None
+            if not reason and conflicto:
+                reason = conflicto.get("error") or "hay una regla inversa habilitada"
+            if not reason and (
+                r.get("xpc") or r.get("to_pc") or r.get("from") not in sessions or r.get("to") not in sessions
+            ):
+                reason = "las puntas locales no están acreditadas; rehabilitá explícitamente después de verificarlas"
+            reason = reason or federation_reason
+            if reason:
+                resultado = "No rehabilitada al arrancar: " + reason
+                changed |= r.get("disabled_reason") != reason or r.get("last_result") != resultado
+                r["disabled_reason"], r["last_result"] = reason, resultado
+                bloqueadas.append(r["id"])
+                continue
+            # El commit se hace con el mismo lock y cada candidata ve las habilitadas del lote.
+            r["enabled"] = True
+            r.pop("disabled_at", None)
+            r.pop("disabled_reason", None)
+            ids.append(r["id"])
+            changed = True
+        if changed:
             rules.save()
     if ids:
         state.log(f"{len(ids)} reglas on_stop agotadas por el tope viejo, prendidas de nuevo: {', '.join(ids)}")
+    if bloqueadas:
+        state.log(
+            f"{len(bloqueadas)} reglas agotadas siguen deshabilitadas por validación de arranque: {', '.join(bloqueadas)}"
+        )
     return len(ids)
 
 

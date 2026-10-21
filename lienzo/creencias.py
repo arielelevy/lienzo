@@ -36,7 +36,9 @@ _FUENTES_QUE_MOTIVAN = {"hallazgo", "medicion", "incidente", "decision"}
 
 def _contexto(value):
     if not isinstance(value, dict) or set(value) - CONTEXTO:
-        raise k.Rechazo("contexto admite agente, modelo, fase, tipo_trabajo, tecnologia, area, version_agente y version_modelo")
+        raise k.Rechazo(
+            "contexto admite agente, modelo, fase, tipo_trabajo, tecnologia, area, version_agente y version_modelo"
+        )
     return {key: k._texto(val, key, 100) for key, val in value.items()}
 
 
@@ -77,7 +79,9 @@ def proponer(pid, data, *, autor, con=None):
     # sólo al nacer: repetir la propuesta no reactiva un vínculo que alguien retiró
     for node in nodes if belief.get("creado") else []:
         if node["tipo"] in _FUENTES_QUE_MOTIVAN:
-            k.vincular(pid, belief["id"], "motivada_por", node["id"], autor=autor, motivo="fuente de la creencia", con=con)
+            k.vincular(
+                pid, belief["id"], "motivada_por", node["id"], autor=autor, motivo="fuente de la creencia", con=con
+            )
     return belief
 
 
@@ -147,9 +151,11 @@ def _evaluar(node, context, apoyos, cadenas, ahora=None):
     data = node["datos"]
     if node["estado"] in ("revertida", "reemplazada") or data.get("resultado") == "refutada":
         return "refutada", []
-    if node["estado"] != "vigente" or data.get("resultado") != "validada" or not str(
-        data.get("veredicto_por", "")
-    ).startswith("persona:"):
+    if (
+        node["estado"] != "vigente"
+        or data.get("resultado") != "validada"
+        or not str(data.get("veredicto_por", "")).startswith("persona:")
+    ):
         return "sin_veredicto", []
     if (node["id"], data.get("evidencia_veredicto")) not in apoyos:
         return "respaldo_retirado", []
@@ -163,7 +169,11 @@ def _vigencia(data, context, chains, ahora=None):
     if not _vigente(data, ahora):
         return "vencida"
     required = data.get("contexto")
-    if not isinstance(required, dict) or set(required) - CONTEXTO or not all(isinstance(v, str) for v in required.values()):
+    if (
+        not isinstance(required, dict)
+        or set(required) - CONTEXTO
+        or not all(isinstance(v, str) for v in required.values())
+    ):
         return "contexto_invalido"  # metadata rota no se lee como «cualquier contexto»
     if any(key not in context for key in required):
         return "contexto_insuficiente"
@@ -260,8 +270,13 @@ def para_encargo(pid, task, *, limite=3):
     items = checklist(pid, context, limite=limite)["items"]
     if items:
         shown = [{"creencia": x["creencia"], "evidencia": x["evidencia"], "fecha": k.ahora()} for x in items]
-        task = k.actualizar_datos(pid, task["id"], {"aprendizajes_mostrados": shown}, por="server",
-                                  motivo="aprendizajes aplicables mostrados al crear el encargo")
+        task = k.actualizar_datos(
+            pid,
+            task["id"],
+            {"aprendizajes_mostrados": shown},
+            por="server",
+            motivo="aprendizajes aplicables mostrados al crear el encargo",
+        )
     return items, task
 
 
@@ -269,8 +284,10 @@ def texto_aprendizajes(items):
     """La sección que la coordinadora pega en el mensaje al frente."""
     if not items:
         return ""
-    lines = ["## Aprendizajes aplicables del proyecto",
-             "Validados por una persona para este tipo de trabajo. Si alguno no aplica, decilo en el informe."]
+    lines = [
+        "## Aprendizajes aplicables del proyecto",
+        "Validados por una persona para este tipo de trabajo. Si alguno no aplica, decilo en el informe.",
+    ]
     for item in items:
         lines.append(f"- {item['accion']} (creencia {item['creencia']}, evidencia {item['evidencia']})")
         if item["excepciones"]:

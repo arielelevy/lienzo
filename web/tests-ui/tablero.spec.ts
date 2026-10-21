@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { SID, abrirTablero, esperarQuietud } from "./tablero-fijo";
+import { SID, abrirTablero, esperarQuietud, sesiones } from "./tablero-fijo";
 import { desborde } from "./medidas";
 
 /** Los cuatro anchos que se probaron a mano una y otra vez: la pantalla grande, el portátil, la
@@ -22,6 +22,59 @@ test.describe("nada de scroll horizontal", () => {
       expect(resumen(w, d)).toBe(`${w}: scroll 0px, nada fuera de pantalla`);
     });
   }
+
+  test("Antigravity sin aviso conserva la cabecera y sus acciones dentro de la tarjeta", async ({ page }) => {
+    // Mismo reparto que el humo real: cinco tarjetas en Trabajo, una coordinadora Codex
+    // y Antigravity sin regla on_stop. Los titulos no sustituyen las etiquetas de estado.
+    const titulos = [
+      "lienzo | coordinadora - revision general y memoria",
+      "lienzo | encargo B - review Codex de todo Lienzo",
+      "lienzo | encargo E - verificacion global y Antigravity",
+      "lienzo | sesion sin transcripcion identificada",
+      "lienzo | encargo F - consolidar pendientes y mejoras",
+    ];
+    const ids = new Set<string>([SID.coordinadora, SID.flechas, SID.mapas, SID.capas, SID.migracion]);
+    const lista = sesiones().filter(s => ids.has(s.session_id))
+      .map((s, i) => ({ ...s, repo: "lienzo", cwd: "D:/Apps/lienzo", title: titulos[i], agent: i === 3 ? "antigravity" as const : "codex" as const,
+        state: "corriendo" as const, branch: i === 3 ? null : "main", last_prompt: "hola", last_reply: "" }));
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await abrirTablero(page, lista);
+    const agy = page.locator(`.card[data-sid="${SID.capas}"]`);
+    await expect(agy.getByText("actividad sin confirmar", { exact: true })).toBeVisible();
+    await expect(agy.getByText("sin aviso a coordinadora", { exact: true })).toBeVisible();
+
+    for (const w of [1440, 960, 1440]) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await esperarQuietud(page);
+      expect(resumen(w, await desborde(page))).toBe(`${w}: scroll 0px, nada fuera de pantalla`);
+      // Tambien detecta invasiones de la tarjeta vecina que no llegan al borde de la pantalla.
+      const fuera = await page.locator(".card").evaluateAll(cards => cards.flatMap(card => {
+        const limite = card.getBoundingClientRect();
+        return [...card.querySelectorAll<HTMLElement>(".top, .top span, .top button")].filter(el => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && (r.left < limite.left - 1 || r.right > limite.right + 1);
+        }).map(el => `${card.getAttribute("data-sid")}: ${el.className}`);
+      }));
+      expect(fuera).toEqual([]);
+      const recortados = await agy.locator(".top .small, .top .chip, .top .badge").evaluateAll(els => els
+        .filter(el => el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1)
+        .map(el => el.textContent));
+      expect(recortados).toEqual([]);
+    }
+
+    // Las acciones siguen operables por teclado y no quedan escondidas por overflow.
+    await agy.focus();
+    await page.keyboard.press("ArrowDown");
+    const grip = agy.getByRole("button", { name: "arrastrar para conectar con otra tarjeta" });
+    await expect(grip).toBeFocused();
+    await page.keyboard.press("Tab");
+    const menu = agy.getByRole("button", { name: "más acciones de la tarjeta", exact: true });
+    await expect(menu).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(agy.getByRole("menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeFocused();
+  });
 
   test("tampoco después de achicar la ventana, con el panel abierto", async ({ page }) => {
     await page.setViewportSize({ width: 2560, height: 900 });

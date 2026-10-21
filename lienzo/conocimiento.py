@@ -989,7 +989,20 @@ def _fecha_causal(con, nodo_id, de, relacion, a) -> str:
 
 
 def _cambio(
-    con, pid, accion, autor, motivo, origen, nuevo, anterior=None, nodo_id=None, de=None, relacion=None, a=None
+    con,
+    pid,
+    accion,
+    autor,
+    motivo,
+    origen,
+    nuevo,
+    anterior=None,
+    nodo_id=None,
+    de=None,
+    relacion=None,
+    a=None,
+    *,
+    fecha=None,
 ):
     cur = con.execute(
         "INSERT INTO cambio (proyecto, nodo_id, de, relacion, a, accion, anterior, nuevo, autor, motivo, origen, fecha, pc)"
@@ -1006,7 +1019,7 @@ def _cambio(
             autor,
             motivo or "",
             _json(origen or {}),
-            _fecha_causal(con, nodo_id, de, relacion, a),
+            fecha if fecha is not None else _fecha_causal(con, nodo_id, de, relacion, a),
             identity.pc_id(),
         ),
     )
@@ -1126,22 +1139,34 @@ def cambiar_estado(
     origen: dict | None = None,
     con: sqlite3.Connection | None = None,
     diferir_respaldo: bool = False,
+    cierre: bool = False,
 ) -> dict:
     """Aplica una transicion de v5 §3.4 o la rechaza (409). Idempotente si ya esta en `nuevo`. Una
     regla que pasa a vigente recibe `datos.vigente_desde` (abre un periodo nuevo, §6.2), venga del
     veredicto o de esta ruta. Las transiciones «con respaldo» (RESPALDO) exigen el suyo; un veredicto
-    las difiere (`diferir_respaldo`) y las mira al final, para que el vinculo pueda venir en otro item."""
+    las difiere (`diferir_respaldo`) y las mira al final, para que el vinculo pueda venir en otro item.
+    Una ronda solo se cierra por `cerrar_ronda` (`cierre`), que guarda cierre_seq (v5 §8.4)."""
     por = _texto(por, "por", 200)
     origen = _objeto(origen, "origen")
     if con is None:
         with _abrir(pid) as c2:
             return cambiar_estado(
-                pid, nid, nuevo, por=por, motivo=motivo, origen=origen, con=c2, diferir_respaldo=diferir_respaldo
+                pid,
+                nid,
+                nuevo,
+                por=por,
+                motivo=motivo,
+                origen=origen,
+                con=c2,
+                diferir_respaldo=diferir_respaldo,
+                cierre=cierre,
             )
     n = _nodo(con, pid, nid)
     actual = n.get("estado")
     if actual == nuevo:
         return n
+    if n["tipo"] == "ronda" and nuevo == "cerrada" and not cierre:
+        raise Rechazo("una ronda se cierra con cerrar_ronda, que guarda cierre_seq (v5 §8.4)", 409)
     permitidos = TRANSICIONES.get(n["tipo"], {}).get((actual, nuevo))
     if not permitidos:
         raise Rechazo(f"transicion no permitida para {n['tipo']}: {actual} -> {nuevo}", 409)
@@ -1167,6 +1192,8 @@ RESPALDO = {
     ("pregunta", "contestada"): "contesta",
     ("decision", "reemplazada"): "reemplaza",
     ("medicion", "superada"): "reemplaza",
+    # entregado sin informe que responda era posible por sin_entrega -> entregado (frente C, 2026-10-20)
+    ("encargo", "entregado"): "responde_a",
 }
 
 
@@ -1186,6 +1213,11 @@ def falta_respaldo(con: sqlite3.Connection, nid: str, tipo: str, nuevo: str, ori
         q, que = (
             "SELECT 1 FROM vinculo WHERE a = ? AND relacion = 'contesta' AND activo = 1",
             "un vinculo contesta que llegue",
+        )
+    elif rel == "responde_a":
+        q, que = (
+            "SELECT 1 FROM vinculo WHERE a = ? AND relacion = 'responde_a' AND activo = 1",
+            "una entrega (un informe que responda al encargo)",
         )
     else:
         q, que = (
@@ -1264,7 +1296,7 @@ def vincular(
     if relacion in SIN_CICLOS and _hay_camino(con, relacion, a, de):
         raise Rechazo(f"{relacion} formaria un ciclo", 409)
     r = con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)).fetchone()
-    fecha = ahora()
+    fecha = _fecha_causal(con, None, de, relacion, a)
     if r is not None and r["activo"]:
         return {**_fila(r), "creado": False}
     if r is not None:
@@ -1281,23 +1313,57 @@ def vincular(
     v = _fila(
         con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)).fetchone()
     )
-    _cambio(con, pid, "vinculo", autor, motivo or "", origen, v, de=de, relacion=relacion, a=a)
+    _cambio(con, pid, "vinculo", autor, motivo or "", origen, v, de=de, relacion=relacion, a=a, fecha=fecha)
     return {**v, "creado": True}
 
 
-def retirar_vinculo(pid: str, de: str, relacion: str, a: str, *, por: str, motivo: str = "") -> dict:
-    with _abrir(pid) as con:
-        r = con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)).fetchone()
-        if r is None:
-            raise Rechazo("vinculo desconocido", 404)
-        if not r["activo"]:
-            return _fila(r)
-        con.execute("UPDATE vinculo SET activo = 0 WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a))
-        v = _fila(
-            con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)).fetchone()
-        )
-        _cambio(con, pid, "vinculo_retirado", por, motivo, {}, v, anterior=_fila(r), de=de, relacion=relacion, a=a)
-        return v
+def retirar_vinculo(
+    pid: str,
+    de: str,
+    relacion: str,
+    a: str,
+    *,
+    por: str,
+    motivo: str = "",
+    origen: dict | None = None,
+    con: sqlite3.Connection | None = None,
+) -> dict:
+    """Desactiva el vinculo conservando su historia. Los dos extremos tienen que ser de `pid` (v5 §3.2):
+    la tabla vinculo no lleva proyecto y la base es una sola, asi que sin este control un pedido a un
+    proyecto retiraba un vinculo de otro y anotaba el cambio en el equivocado (frente C, 2026-10-20)."""
+    if con is None:
+        with _abrir(pid) as c2:
+            return retirar_vinculo(pid, de, relacion, a, por=por, motivo=motivo, origen=origen, con=c2)
+    for extremo in (de, a):
+        _nodo(con, pid, _texto(extremo, "extremo", 64))
+    r = con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)).fetchone()
+    if r is None:
+        raise Rechazo("vinculo desconocido", 404)
+    if not r["activo"]:
+        return _fila(r)
+    fecha = _fecha_causal(con, None, de, relacion, a)
+    con.execute(
+        "UPDATE vinculo SET activo = 0, fecha = ? WHERE de = ? AND relacion = ? AND a = ?",
+        (fecha, de, relacion, a),
+    )
+    v = _fila(
+        con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = ? AND a = ?", (de, relacion, a)).fetchone()
+    )
+    _cambio(
+        con,
+        pid,
+        "vinculo_retirado",
+        por,
+        motivo,
+        origen or {},
+        v,
+        anterior=_fila(r),
+        de=de,
+        relacion=relacion,
+        a=a,
+        fecha=fecha,
+    )
+    return v
 
 
 # --- rondas, encargos, entregas -------------------------------------------------------------
@@ -1321,7 +1387,7 @@ def cerrar_ronda(pid: str, ronda: str, *, por: str, motivo: str = "", con: sqlit
             return cerrar_ronda(pid, ronda, por=por, motivo=motivo, con=c2)
     if _nodo(con, pid, ronda).get("estado") == "cerrada":
         raise Rechazo("la ronda ya esta cerrada", 409)
-    n = cambiar_estado(pid, ronda, "cerrada", por=por, motivo=motivo or "cerrar ronda", con=con)
+    n = cambiar_estado(pid, ronda, "cerrada", por=por, motivo=motivo or "cerrar ronda", con=con, cierre=True)
     seq = con.execute("SELECT COALESCE(MAX(seq), 0) FROM cambio WHERE proyecto = ?", (pid,)).fetchone()[0]
     return actualizar_datos(pid, n["id"], {"cierre_seq": seq}, por=por, motivo="cierre_seq", con=con)
 
@@ -1435,6 +1501,8 @@ def encargo_enviado(pid: str, encargo: str, sesion: dict, *, autor: str = "serve
     agent, model, pc, cwd."""
     sid = _texto(sesion.get("session_id"), "session_id", 100)
     with _abrir(pid) as con:
+        # vinculo y transicion juntos: antes un fallo en la segunda dejaba ejecutado_por sin enviado
+        con.execute("BEGIN IMMEDIATE")
         e = _nodo(con, pid, encargo)
         if e["tipo"] != "encargo":
             raise Rechazo("no es un encargo")
@@ -1449,11 +1517,11 @@ def encargo_enviado(pid: str, encargo: str, sesion: dict, *, autor: str = "serve
             autor=autor,
         )
         vincular(pid, encargo, "ejecutado_por", s["id"], autor=autor, origen={"session_id": sid}, con=con)
+        if e["estado"] == "pendiente":
+            e = cambiar_estado(pid, encargo, "enviado", por="server", motivo="la tarjeta tomo el encargo", con=con)
     with _lock:
         _sesion_proyecto[sid] = pid
         _sesion_sin_proyecto.discard(sid)
-    if e["estado"] == "pendiente":
-        return cambiar_estado(pid, encargo, "enviado", por="server", motivo="la tarjeta tomo el encargo")
     return e
 
 
@@ -1462,16 +1530,22 @@ def entregar(
     encargo: str,
     cuerpo: str,
     *,
-    revision: int,
+    revision: int | None,
     autor: str,
     origen: dict | None = None,
+    revision_siguiente: bool = False,
 ) -> dict:
     """La entrega explicita (v5 §5.1): el informe integro con su hash, en rondas/<ronda>/informe-<letra>-r<N>.md,
     un nodo informe `recibido`, responde_a el encargo, y el encargo pasa a entregado. Idempotente por
     (encargo, revision, hash). La misma revision con otro contenido es 409. Si el informe termina con
     un bloque ```conocimiento``` (v5 §5.2), se incorpora entero o queda pendiente con sus errores en
-    datos.conocimiento; reenviar el mismo informe devuelve los ids ya creados."""
-    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+    datos.conocimiento; reenviar el mismo informe devuelve los ids ya creados. Con `revision_siguiente`
+    (el informe capturado, sin revision propia) la revision es la mayor entregada + 1, leida dentro de la
+    transaccion: una entrega explicita concurrente no le gana la misma revision."""
+    if revision_siguiente:
+        if revision is not None:
+            raise Rechazo("revision_siguiente no admite revision")
+    elif not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
         raise Rechazo("revision debe ser un entero >= 1")
     if not isinstance(cuerpo, str) or not cuerpo.strip():
         raise Rechazo("cuerpo vacio")
@@ -1480,9 +1554,15 @@ def entregar(
     sha = hashlib.sha256(cuerpo.encode("utf-8")).hexdigest()
     origen = _objeto(origen, "origen")
     with _abrir(pid) as con:
+        # informe, bloque y entregado en una transaccion tomada antes de leer: la revision repetida con
+        # otro contenido se comprueba con la base quieta, y un fallo no deja el encargo `enviado` con un
+        # informe que el reintento ya no vuelve a entregar (frente C, 2026-10-20)
+        con.execute("BEGIN IMMEDIATE")
         e = _nodo(con, pid, encargo)
         if e["tipo"] != "encargo":
             raise Rechazo("no es un encargo")
+        if revision_siguiente:
+            revision = _ultima_revision(con, pid, encargo) + 1
         letra = e["datos"].get("letra", "x")
         ruta = f"rondas/{e['ronda']}/informe-{letra}-r{revision}.md"
         otra = con.execute(
@@ -1513,12 +1593,42 @@ def entregar(
             vincular(pid, n["id"], "responde_a", encargo, autor=autor, origen=origen, con=con)
             n = _con_bloque(con, pid, n, cuerpo, ronda=e["ronda"], encargo=e["id"], autor=autor, origen=origen)
             _escribir_cuerpo(pid, ruta, cuerpo, con=con, nodo=n["id"])  # antes del commit, como en crear_encargo
-    if (n["creado"] or n.get("adoptado")) and e["estado"] == "enviado":
-        cambiar_estado(pid, encargo, "entregado", por="server", motivo=f"informe r{revision}")
-    elif (n["creado"] or n.get("adoptado")) and e["estado"] == "sin_entrega" and rol_de(autor) in (C, P):
-        # entrega tardia explicita (v5 §3.4): sin_entrega -> entregado, por quien entrega
-        cambiar_estado(pid, encargo, "entregado", por=autor, motivo=f"entrega tardia r{revision}")
+        responde = con.execute(
+            "SELECT 1 FROM vinculo WHERE de = ? AND relacion = 'responde_a' AND a = ? AND activo = 1",
+            (n["id"], encargo),
+        ).fetchone()
+        if e["estado"] == "enviado" and responde is not None:
+            # tambien el reenvio idempotente: asi se completa un encargo que una entrega anterior dejo
+            # enviado (la transicion iba en otra transaccion y podia fallar sola)
+            cambiar_estado(pid, encargo, "entregado", por="server", motivo=f"informe r{revision}", con=con)
+        elif e["estado"] == "sin_entrega" and responde is not None and rol_de(autor) in (C, P):
+            # entrega tardia explicita (v5 §3.4): sin_entrega -> entregado, por quien entrega. Tambien
+            # cuando la coordinadora o una persona reenvia un informe que ya responde a este encargo
+            cambiar_estado(pid, encargo, "entregado", por=autor, motivo=f"entrega tardia r{revision}", con=con)
     return n
+
+
+# errores de SQLite que no vienen de la consulta: la base no esta disponible (bloqueo, disco, permisos)
+_BASE_NO_DISPONIBLE = ("locked", "busy", "disk i/o", "unable to open", "readonly")
+
+
+def _rechazo_fts(e: sqlite3.OperationalError) -> Rechazo:
+    """Una consulta FTS mal escrita es 400. Una base bloqueada o inaccesible es 503 y no se presenta como
+    un error de quien pregunta (v5 §4: una fuente no disponible se informa como tal; frente C, 2026-10-20)."""
+    if any(x in str(e).lower() for x in _BASE_NO_DISPONIBLE):
+        return Rechazo(f"la base no esta disponible: {e}", 503)
+    return Rechazo(f"consulta FTS invalida: {e}")
+
+
+def _ultima_revision(con: sqlite3.Connection, pid: str, encargo: str) -> int:
+    """La mayor revision entregada al encargo (0 sin entregas). La mayor, no la cantidad: con huecos (r1 y
+    r3) contar daba una que ya existia con otro contenido y el 409 perdia el informe capturado. Cuentan
+    tambien los responde_a retirados, igual que el control de revision repetida de `entregar`."""
+    return con.execute(
+        "SELECT COALESCE(MAX(CAST(json_extract(n.datos, '$.revision') AS INTEGER)), 0) FROM vinculo v"
+        " JOIN nodo n ON n.id = v.de WHERE v.a = ? AND v.relacion = 'responde_a' AND n.proyecto = ?",
+        (encargo, pid),
+    ).fetchone()[0]
 
 
 def _informe_por_hash(con: sqlite3.Connection, pid: str, sha: str, encargo: str) -> dict | None:
@@ -1622,11 +1732,7 @@ def informe_capturado(pid: str, sid: str, cuerpo: str, *, ronda: str | None, ori
         ]
     if len(encargos) == 1:
         e = encargos[0]
-        with _abrir(pid) as con:
-            hechas = con.execute(
-                "SELECT COUNT(*) FROM vinculo WHERE a = ? AND relacion = 'responde_a' AND activo = 1", (e["id"],)
-            ).fetchone()[0]
-        return entregar(pid, e["id"], cuerpo, revision=hechas + 1, autor="server", origen=origen)
+        return entregar(pid, e["id"], cuerpo, revision=None, revision_siguiente=True, autor="server", origen=origen)
     origen = {**origen, "session_id": sid, "sesion_nodo": s["id"] if s else None}
     ruta = f"capturas/informe-{sha[:16]}.md"
     with _abrir(pid) as con:
@@ -1748,7 +1854,11 @@ def validar_bloque(con: sqlite3.Connection, pid: str, texto: str) -> tuple[dict 
         err += [{"donde": donde, "error": x} for x in roto_en({"texto": nd.get("texto"), "datos": datos})]
         if tipo:
             err += [{"donde": donde, "error": x} for x in _faltan_datos(tipo, datos)]
-            if tipo == "evidencia" and datos.get("clase") == "control_desarrollo" and datos.get("estado") == "verificada":
+            if (
+                tipo == "evidencia"
+                and datos.get("clase") == "control_desarrollo"
+                and datos.get("estado") == "verificada"
+            ):
                 err.append({"donde": donde, "error": "un control lo verifica una persona, no el frente que lo ejecutó"})
             if isinstance(lid, str) and lid not in tipos:
                 tipos[lid] = tipo
@@ -1828,13 +1938,16 @@ def _atar_controles(con: sqlite3.Connection, pid: str, informe: str, encargo: st
         datos = json.loads(r["control_datos"])
         if r["a"] in nuevos or datos.get("estado") == "verificada" or datos.get("control") not in nuevos.values():
             continue
-        con.execute("UPDATE vinculo SET activo = 0 WHERE de = ? AND relacion = 'apoya' AND a = ?", (encargo, r["a"]))
-        v = _fila(
-            con.execute("SELECT * FROM vinculo WHERE de = ? AND relacion = 'apoya' AND a = ?", (encargo, r["a"])).fetchone()
+        retirar_vinculo(
+            pid,
+            encargo,
+            "apoya",
+            r["a"],
+            por=autor,
+            motivo="el control se declaro de nuevo en " + informe,
+            origen=origen,
+            con=con,
         )
-        anterior = {k: r[k] for k in r.keys() if k != "control_datos"}  # noqa: SIM118 - sqlite3.Row no itera claves
-        _cambio(con, pid, "vinculo_retirado", autor, "el control se declaro de nuevo en " + informe, origen, v,
-                anterior=_fila(anterior), de=encargo, relacion="apoya", a=r["a"])
     for nid in nuevos:
         vincular(pid, encargo, "apoya", nid, autor=autor, origen=origen, motivo="control declarado", con=con)
 
@@ -1947,19 +2060,39 @@ def sesion_viva(sid: str) -> None:
     _estado_sesion(sid, "viva", "la sesion volvio")
 
 
+def _proyectos_de_sesion(sid: str) -> list[tuple[str, str]]:
+    """(proyecto, nodo) de cada nodo `sesion` de `sid` cuya carpeta existe: una sesion que trabajo en dos
+    carpetas tiene uno en cada proyecto (anexo D de v5) y su cierre o vuelta vale para todos. Solo
+    lectura; respeta la cache negativa. Incidentes, captura y ronda siguen con `_proyecto_de_sesion`, el
+    proyecto actual (frente C, 2026-10-20)."""
+    with _lock:
+        if sid in _sesion_sin_proyecto and sid not in _sesion_proyecto:
+            return []
+    with _Conexion(db_path()) as con:
+        filas = con.execute(
+            "SELECT proyecto, id FROM nodo WHERE tipo = 'sesion' AND clave_ingesta = ? ORDER BY fecha, id",
+            (f"sesion:{sid}",),
+        ).fetchall()
+    nodos = [(r[0], r[1]) for r in filas if os.path.isdir(_carpeta(r[0]))]
+    if not nodos:
+        # como `_proyecto_de_sesion`: cada muerte de una tarjeta comun no vuelve a consultar la base
+        with _lock:
+            _sesion_sin_proyecto.add(sid)
+    return nodos
+
+
 def _estado_sesion(sid: str, estado: str, motivo: str) -> None:
     try:
-        pid = _proyecto_de_sesion(sid)
-        if not pid:
-            return
-        with _abrir(pid) as con:
-            r = con.execute(
-                "SELECT id FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, f"sesion:{sid}")
-            ).fetchone()
-        if r is not None:
-            cambiar_estado(pid, r["id"], estado, por="server", motivo=motivo)
+        nodos = _proyectos_de_sesion(sid)
     except Exception as e:
         state.log(f"conocimiento: sesion {estado} {sid[:8]}: {e}")
+        return
+    for pid, nid in nodos:
+        # cada proyecto aparte: uno que falla queda en el log y no deja a los otros sin su estado
+        try:
+            cambiar_estado(pid, nid, estado, por="server", motivo=motivo)
+        except Exception as e:
+            state.log(f"conocimiento: sesion {estado} {sid[:8]} en {pid}: {e}")
 
 
 _incidentes_vistos: set[str] = set()  # claves ya escritas (o sin proyecto) en este proceso (bajo _lock)
@@ -2054,7 +2187,14 @@ def reincorporar(pid: str, informe: str, *, por: str) -> dict:
         ).fetchone()
         sesion = _sesion_del_encargo(con, r["a"]) if r else (n["origen"] or {}).get("sesion_nodo")
         res = _incorporar_bloque(
-            con, pid, informe, n["ronda"], sesion, bloque, autor=por, origen={"reincorporado": True},
+            con,
+            pid,
+            informe,
+            n["ronda"],
+            sesion,
+            bloque,
+            autor=por,
+            origen={"reincorporado": True},
             encargo=r["a"] if r else None,
         )
         if res["estado"] != "incorporado":
@@ -2393,7 +2533,7 @@ def buscar_prosa(pid: str, consulta: str, *, limite: int = LIMITE_BUSQUEDA) -> l
                     }
                 )
         except sqlite3.OperationalError as e:
-            raise Rechazo(f"consulta FTS invalida: {e}") from e
+            raise _rechazo_fts(e) from e
     out.sort(key=lambda x: (x["puntaje"], x.get("nodo") or x.get("captura")))
     return out[:limite]
 
@@ -2477,7 +2617,7 @@ def buscar(pid: str, consulta: str, *, tipo: str | None = None, limite: int = LI
                 [consulta, *args, limite],
             ).fetchall()
         except sqlite3.OperationalError as e:
-            raise Rechazo(f"consulta FTS invalida: {e}") from e
+            raise _rechazo_fts(e) from e
     return [_fila(r) for r in filas]
 
 

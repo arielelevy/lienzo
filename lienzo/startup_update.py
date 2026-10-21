@@ -30,16 +30,17 @@ def update() -> int:
         if output := (result.stdout + result.stderr).strip():
             print(output, flush=True)
         if result.returncode:
-            print(f"Lienzo: git pull falló (código {result.returncode}); arranco con la versión local.", flush=True)
-            return 0
-        changes = subprocess.run(
-            ["git", "diff", "--name-only", before, "HEAD", "--", "web/"],
-            cwd=ROOT,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
+            print(f"Lienzo: git pull falló (código {result.returncode}); verifico la versión local.", flush=True)
+            changes = ""
+        else:
+            changes = subprocess.run(
+                ["git", "diff", "--name-only", before, "HEAD", "--", "web/"],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
         pending = ROOT / "web" / ".startup-build-pending"
         if changes:
             pending.touch()

@@ -11,8 +11,7 @@ def test_encargo_carries_explicit_learning_context(monkeypatch):
     calls = []
     monkeypatch.setattr(c, "_conocimiento", lambda *args: calls.append(args) or {"estado": "pendiente"})
     context = {"tipo_trabajo": "refactor", "tecnologia": "python"}
-    c.encargo("lienzo", "round", "A", "Simplificar", contexto_desarrollo=context,
-              controles_declarados=["pruebas"])
+    c.encargo("lienzo", "round", "A", "Simplificar", contexto_desarrollo=context, controles_declarados=["pruebas"])
     assert calls[0][2]["contexto_desarrollo"] == context
     assert calls[0][2]["controles_declarados"] == ["pruebas"]
 

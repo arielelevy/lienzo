@@ -17,6 +17,18 @@ interface Pattern { contexto: Record<string, string>; encargos: number; fuentes:
 interface Patterns { revisados: number; sin_clasificar: number; muestra_parcial: boolean; patrones: Pattern[] }
 interface Data { checklist: Checklist; pending: Belief[]; evidence: Evidence[]; patterns: Patterns }
 interface Reasoning { motor: string; snapshot: string; conclusiones: { id: string; status: string; chains: string[][] }[]; diferencias: { id: string; python: string; prolog: string }[] }
+/** Prueba del contrato 3: un hecho dado, una regla con premisas, una negación o un recorte. */
+type Proof = { by: "given" | "rule" | "truncated"; fact: { pred: string; args: unknown[] }; rule?: string; premises?: (Proof | { not: { pred: string; args: unknown[] } })[] };
+interface Justification { prueba: Proof; fuentes: string[]; prueba_truncada: boolean }
+interface Observation extends Justification { tipo: string; con: string[] }
+interface CandidateContrast { observaciones: Observation[]; evidencia_independiente: "humana" | "no_verificada" | "ausente"; listo_para_revision: boolean | null; justificacion_listo: Justification | null }
+interface NodeInfo { tipo: string; estado: string | null; clase: string | null; texto: string }
+interface Contrast {
+  autoridad: string; concluyente: boolean; reglas: string; motor: { name: string; version: string }; program_hash: string; snapshot: string;
+  cobertura: { nodos: number; vinculos: number; candidatos: number };
+  candidatos: Record<string, CandidateContrast>; nodos: Record<string, NodeInfo>;
+  diferencias_python: { consulta: string; solo_prolog: string[][]; solo_python: string[][] }[];
+}
 
 export const CONTEXT = [
   ["tipo_trabajo", "Tipo de trabajo"], ["tecnologia", "Tecnología"], ["area", "Área"], ["fase", "Fase"],
@@ -40,6 +52,27 @@ function parseReasoning(v: unknown): Reasoning {
   }
   if (v.diferencias.some(d => !obj(d) || typeof d.id !== "string" || typeof d.python !== "string" || typeof d.prolog !== "string")) throw new Error("Comparación Prolog inválida");
   return v as unknown as Reasoning;
+}
+const OBSERVATIONS: Record<string, string> = {
+  respaldo_caido: "Respaldo caído", regla_cuestionada: "Depende de una regla cuestionada", contradice: "Contradice una decisión vigente",
+  reabre_rechazado: "Reabre un hallazgo rechazado", apoyo_retirado: "Apoyo retirado",
+};
+const EVIDENCE_STATE: Record<string, string> = {
+  humana: "Evidencia de una persona", no_verificada: "Evidencia de procedencia no verificada", ausente: "Sin evidencia independiente",
+};
+const strings = (v: unknown) => Array.isArray(v) && v.every(x => typeof x === "string");
+const justified = (j: unknown) => obj(j) && obj(j.prueba) && strings(j.fuentes) && typeof j.prueba_truncada === "boolean";
+function parseContrast(v: unknown): Contrast {
+  if (!obj(v) || typeof v.concluyente !== "boolean" || typeof v.program_hash !== "string" || typeof v.snapshot !== "string" || typeof v.reglas !== "string"
+    || !obj(v.motor) || typeof v.motor.version !== "string" || !obj(v.cobertura) || !int(v.cobertura.candidatos)
+    || !obj(v.candidatos) || !obj(v.nodos) || !Array.isArray(v.diferencias_python)) bad("El contraste");
+  for (const c of Object.values(v.candidatos)) {
+    if (!obj(c) || !Array.isArray(c.observaciones) || !(c.evidencia_independiente as string in EVIDENCE_STATE)
+      || !(c.listo_para_revision === null || typeof c.listo_para_revision === "boolean")
+      || !(c.justificacion_listo === null || justified(c.justificacion_listo))
+      || c.observaciones.some(o => !obj(o) || typeof o.tipo !== "string" || !strings(o.con) || !justified(o))) bad("El contraste");
+  }
+  return v as unknown as Contrast;
 }
 function bad(what: string): never { throw new Error(what + " no tiene el formato esperado"); }
 function items(v: unknown): Item[] {
@@ -83,6 +116,49 @@ function Chain({ item }: { item: Item }) {
       {item.cadenas?.map((c, i) => <div key={i}><dt>Cadena hasta la fuente caída</dt><dd>{[item.creencia, ...c.map(s => `${s.id} (${s.texto})`)].join(" → ")}</dd></div>)}
     </dl>
   </details>;
+}
+
+const literal = (l: { pred: string; args: unknown[] }) => `${l.pred}(${l.args.map(a => String(a)).join(", ")})`;
+/** La prueba como árbol: cada paso nombra la regla de Lienzo; cada hoja, un hecho del grafo. */
+function ProofTree({ proof }: { proof: Proof | { not: { pred: string; args: unknown[] } } }) {
+  if ("not" in proof) return <li>no {literal(proof.not)}</li>;
+  if (proof.by === "truncated") return <li>{literal(proof.fact)} · <em>prueba recortada</em></li>;
+  if (proof.by === "given") return <li>{literal(proof.fact)} · hecho del grafo</li>;
+  return <li>{literal(proof.fact)} · regla {proof.rule}{!!proof.premises?.length && <ul>{proof.premises.map((p, i) => <ProofTree key={i} proof={p} />)}</ul>}</li>;
+}
+function Why({ label, j }: { label: string; j: Justification }) {
+  return <details className="learning-evidence"><summary>{label}</summary>
+    <ul className="knowledge-value">{<ProofTree proof={j.prueba} />}</ul>
+    <p className="knowledge-note">Fuentes: {j.fuentes.join(", ") || "ninguna"}{j.prueba_truncada ? " · la prueba se recortó por profundidad" : ""}.</p>
+  </details>;
+}
+function ContrastSection({ c }: { c: Contrast }) {
+  const ids = Object.keys(c.candidatos);
+  const name = (id: string) => `${c.nodos[id]?.texto || id} · ${id.slice(0, 8)}`;
+  return <section className="knowledge-section" aria-label="Contraste de candidatos">
+    <h3>Contraste de candidatos</h3>
+    <p>{c.motor.name} {c.motor.version} · {c.cobertura.candidatos} candidatos · {c.diferencias_python.length} diferencias con Python.</p>
+    <p className="knowledge-note">{c.autoridad}. Una propuesta sigue esperando el veredicto de una persona.</p>
+    {!c.concluyente && <p role="alert" className="knowledge-error">Prolog y Python no coinciden: el contraste no es concluyente y no se marca nada como listo para revisar.</p>}
+    {ids.length === 0 ? <p className="knowledge-empty">No hay candidatos que esperen veredicto en este proyecto.</p>
+      : <ul className="learning-cards">{ids.map(id => {
+        const x = c.candidatos[id];
+        return <li key={id} className="learning-card">
+          <p className="learning-action">{name(id)}</p>
+          <p className="knowledge-note">{c.nodos[id]?.tipo} {c.nodos[id]?.estado}{c.nodos[id]?.clase ? ` · ${c.nodos[id]?.clase}` : ""} · {EVIDENCE_STATE[x.evidencia_independiente]}
+            {" · "}{x.listo_para_revision === null ? "sin conclusión" : x.listo_para_revision ? "listo para revisar" : x.observaciones.length ? "con observaciones" : "falta evidencia de una persona"}</p>
+          {x.observaciones.map((o, i) => <div key={i}>
+            <strong>{OBSERVATIONS[o.tipo] ?? o.tipo}</strong>: {o.con.map(name).join(" · ")}
+            <Why label="¿Por qué?" j={o} />
+          </div>)}
+          {x.justificacion_listo && <Why label="¿Por qué está listo para revisar?" j={x.justificacion_listo} />}
+        </li>;
+      })}</ul>}
+    <details><summary>Huella y comparación</summary>
+      <p className="knowledge-value">reglas {c.reglas} · {c.program_hash} · snapshot {c.snapshot} · {c.cobertura.nodos} nodos · {c.cobertura.vinculos} vínculos</p>
+      {c.diferencias_python.map(d => <p key={d.consulta}>{d.consulta}: sólo Prolog {JSON.stringify(d.solo_prolog)} · sólo Python {JSON.stringify(d.solo_python)}</p>)}
+    </details>
+  </section>;
 }
 
 function Verdict({ belief, evidence: options, onSubmit, busy }: { belief: Belief; evidence: Evidence[]; busy: boolean; onSubmit: (body: Record<string, string>) => void }) {
@@ -131,11 +207,17 @@ export function Learning({ base }: { base: string }) {
   const [reasonError, setReasonError] = useState("");
   const [reasonBusy, setReasonBusy] = useState(false);
   const prologRequest = useRef<AbortController>();
+  const [contrast, setContrast] = useState<Contrast>();
+  const [contrastError, setContrastError] = useState("");
+  const [contrastBusy, setContrastBusy] = useState(false);
+  const contrastRequest = useRef<AbortController>();
   const request = useRef<AbortController>();
   // el contexto vigente, no el de la pantalla donde se apretó: una recarga tras guardar usa lo que se ve
   const current = useRef(context);
   useEffect(() => { current.current = context; }, [context]);
-  useEffect(() => () => { request.current?.abort(); prologRequest.current?.abort(); }, []);
+  useEffect(() => () => { request.current?.abort(); prologRequest.current?.abort(); contrastRequest.current?.abort(); }, []);
+  // otro proyecto: el contraste anterior y su respuesta tardía no son de este
+  useEffect(() => () => { contrastRequest.current?.abort(); setContrast(undefined); setContrastError(""); setContrastBusy(false); }, [base]);
   const person = name.trim();
 
   /** Las 100 evidencias más nuevas (la API pagina de a 100 desde la más vieja), la última primero. */
@@ -165,6 +247,8 @@ export function Learning({ base }: { base: string }) {
       if (!controller.signal.aborted) { setData(undefined); setError(failMsg("leer el aprendizaje")(err)); }
     } finally { if (!controller.signal.aborted) setLoading(false); }
   };
+  /** Corta la consulta en curso: su respuesta tardía se descarta (como «Cancelar consulta» en las demás vistas). */
+  const cancel = () => { request.current?.abort(); setLoading(false); setData(undefined); setError(""); setNotice(""); };
   const write = async (key: string, path: string, body: Record<string, string>, done: string) => {
     if (!person) { setError("Escribí tu nombre: los veredictos y el uso quedan firmados por una persona."); return; }
     setBusy(key); setError(""); setNotice("");
@@ -178,6 +262,21 @@ export function Learning({ base }: { base: string }) {
     prologRequest.current?.abort(); setReasoning(undefined); setReasonError(""); setReasonBusy(false);
     request.current?.abort(); setLoading(false); setData(undefined); setNotice("");
     setContext(c => ({ ...c, [key]: value }));
+  };
+  /** Contraste lógico de lo que espera veredicto: no depende del contexto, sólo lee y no escribe. */
+  const contrastCandidates = async () => {
+    contrastRequest.current?.abort();
+    const controller = new AbortController(); contrastRequest.current = controller;
+    setContrastBusy(true); setContrastError(""); setContrast(undefined);
+    try {
+      const response = await fetch(base + "/candidatos/contraste", { method: "POST", signal: controller.signal,
+        headers: { "X-Lienzo": "1", "Content-Type": "application/json" }, body: "{}" });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error(obj(result) && typeof result.error === "string" ? result.error : "El motor lógico no está disponible");
+      const parsed = parseContrast(result);
+      if (!controller.signal.aborted) setContrast(parsed);
+    } catch (failure) { if (!controller.signal.aborted) setContrastError(failure instanceof Error ? failure.message : "No se pudo contrastar"); }
+    finally { if (!controller.signal.aborted) setContrastBusy(false); }
   };
   const infer = async () => {
     prologRequest.current?.abort();
@@ -205,7 +304,7 @@ export function Learning({ base }: { base: string }) {
       </fieldset>
       <label htmlFor={fieldId + "-name"}>Tu nombre (firma veredictos y uso)</label>
       <input id={fieldId + "-name"} maxLength={100} value={name} onChange={e => { setName(e.target.value); saveName(e.target.value); }} />
-      <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : "Consultar aprendizaje"}</button><button type="button" disabled={reasonBusy || loading} onClick={() => void infer()}>{reasonBusy ? "Razonando…" : "Contrastar con Prolog"}</button></div>
+      <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : "Consultar aprendizaje"}</button>{loading && <button type="button" onClick={cancel}>Cancelar consulta</button>}<button type="button" disabled={reasonBusy || loading} onClick={() => void infer()}>{reasonBusy ? "Razonando…" : "Contrastar con Prolog"}</button><button type="button" disabled={contrastBusy} onClick={() => void contrastCandidates()}>{contrastBusy ? "Contrastando…" : "Contrastar candidatos"}</button></div>
     </form>
     <div className="knowledge-results" aria-busy={loading}>
       {loading && <p role="status">Leyendo el aprendizaje del proyecto…</p>}
@@ -213,6 +312,8 @@ export function Learning({ base }: { base: string }) {
       {notice && <p role="status" className="knowledge-notice">{notice}</p>}
       {reasonError && <p role="alert" className="knowledge-error">{reasonError}. No se ejecutó el razonamiento Prolog. Las creencias y el aprendizaje siguen disponibles.</p>}
       {reasoning && <section className="knowledge-section" aria-label="Razonamiento Prolog"><h3>Razonamiento Prolog</h3><p>{reasoning.motor} respondió · {reasoning.conclusiones.length} creencias analizadas · {reasoning.diferencias.length} diferencias con Python.</p><p className="knowledge-note">Consulta de sólo lectura sobre el mismo contexto y evidencia. No valida ni modifica creencias.</p>{reasoning.conclusiones.length === 0 && <p>No hay creencias registradas para contrastar.</p>}<ul>{reasoning.conclusiones.map(c => <li key={c.id}>{c.id}: {STATES[c.status] ?? c.status}{c.chains.map((path, i) => <div key={i}>{path.join(" → ")}</div>)}</li>)}</ul><details><summary>Snapshot y comparación</summary><p className="knowledge-value">{reasoning.snapshot}</p>{reasoning.diferencias.map(d => <p key={d.id}>{d.id}: Python {d.python} · Prolog {d.prolog}</p>)}</details></section>}
+      {contrastError && <p role="alert" className="knowledge-error">{contrastError}. No se contrastaron los candidatos; nada cambió.</p>}
+      {contrast && <ContrastSection c={contrast} />}
       {!loading && !error && !data && <p className="knowledge-empty">Completá el contexto del trabajo y consultá.</p>}
       {data && <>
         <section className="knowledge-section"><h3>Aplica a este contexto</h3>

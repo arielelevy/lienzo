@@ -54,7 +54,14 @@ if _WIN:
     _shell32.CommandLineToArgvW.restype = ctypes.POINTER(wt.LPWSTR)
     _k32.LocalFree.argtypes = [wt.HLOCAL]
 
-AGENTS = {"claude.exe": "claude", "codex.exe": "codex", "pi.exe": "pi", "coda.exe": "coda", "kiro-cli.exe": "kiro"}
+AGENTS = {
+    "claude.exe": "claude",
+    "codex.exe": "codex",
+    "pi.exe": "pi",
+    "coda.exe": "coda",
+    "kiro-cli.exe": "kiro",
+    "agy.exe": "antigravity",
+}
 
 
 def command_args(command: str) -> list[str]:
@@ -368,6 +375,58 @@ def codex_interactive(args: list[str]) -> bool:
     return True
 
 
+def antigravity_interactive(args: list[str]) -> bool:
+    """Los subcomandos y el modo print no tienen una terminal a la que enviar trabajo."""
+    commands = {
+        "agent",
+        "agents",
+        "changelog",
+        "help",
+        "install",
+        "mcp",
+        "mic-serve",
+        "models",
+        "plugin",
+        "plugins",
+        "remote-control",
+        "update",
+    }
+    # Reservados por precaución: no iniciar tarjetas de gestión de cuentas aunque cambie el CLI.
+    commands |= {"login", "logout"}
+    values = {
+        "--add-dir",
+        "--agent",
+        "--conversation",
+        "--effort",
+        "--input-format",
+        "--json-schema",
+        "--log-file",
+        "--mode",
+        "--model",
+        "--output-format",
+        "--print-timeout",
+        "--project",
+        "--prompt-interactive",
+        "-i",
+    }
+    take_value = False
+    positional = None
+    for arg in args:
+        if take_value:
+            take_value = False
+            continue
+        if arg == "--":
+            break  # lo que sigue es texto del prompt, no opciones ni subcomandos
+        flag = arg.split("=", 1)[0]
+        if flag in {"-p", "--print", "--prompt", "--help", "-h", "--version", "-v"}:
+            return False
+        if flag in values:
+            take_value = "=" not in arg
+        elif not arg.startswith("-") and positional is None:
+            positional = arg
+    return positional not in commands
+
+
 def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
     """Claude / Codex / Pi / CODA. Node solo cuenta si ejecuta la CLI interactiva de Pi.
     Tolera el binario renombrado por el auto-update
@@ -392,6 +451,8 @@ def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
                 return None
             if v == "coda" and cmdline and not coda_interactive(command_args(cmdline)[1:]):
                 return None
+            if v == "antigravity" and cmdline and not antigravity_interactive(command_args(cmdline)[1:]):
+                return None
             return v
     return None
 
@@ -400,7 +461,8 @@ def process_agent(pid: int) -> str | None:
     exe = image_path(pid)
     name = os.path.basename(exe or "").lower()
     codex = name == "codex.exe" or name.startswith("codex.exe.")
-    cmdline = command_line(pid) if codex or name in ("node.exe", "pi.exe", "coda.exe") else None
-    if codex and not cmdline:
+    antigravity = name == "agy.exe" or name.startswith("agy.exe.")
+    cmdline = command_line(pid) if codex or antigravity or name in ("node.exe", "pi.exe", "coda.exe") else None
+    if (codex or antigravity) and not cmdline:
         return None  # sin poder leer el comando no se puede distinguir el helper de la TUI
     return agent_of(exe, cmdline)

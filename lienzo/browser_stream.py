@@ -198,8 +198,8 @@ class TabWorker:
 
     def send(self, line):
         data = json.loads(line)
-        if data.get("t") in ("open", "input", "release-input"):
-            if data["t"] != "open":
+        if data.get("t") in ("open", "size", "input", "release-input"):
+            if data["t"] not in ("open", "size"):
                 self.bounded(data.get("n"), 1, 2**53 - 1)
                 self.bounded(data.get("generation"), 1, 0xFFFFFFFF)
             if data["t"] == "input" and (
@@ -281,13 +281,15 @@ class TabWorker:
                 self.capture_error = False
                 self.dialog_wait = False
                 self.last_image = None
+            # el tamaño CSS real de la pestaña (existing) o el emulado (lienzo): sobre él se mapea la entrada
+            css_width, css_height = self._css(result, width, height)
             self.json(
                 {
                     "t": "opened",
                     "tab": target,
                     "generation": generation,
-                    "width": width,
-                    "height": height,
+                    "width": css_width,
+                    "height": css_height,
                     "format": "jpeg",
                 }
             )
@@ -314,6 +316,39 @@ class TabWorker:
         else:
             raise ValueError("Pedido de pestaña desconocido")
 
+    def _css(self, result, width, height):
+        css_width, css_height = result.get("width", width), result.get("height", height)
+        self.bounded(css_width, 1, 3840)
+        self.bounded(css_height, 1, 2160)
+        return css_width, css_height
+
+    def _size(self, data):
+        """El visor cambió de tamaño: sin open, sin release y sin generación nueva. En existing sólo cambia la
+        escala de la captura; en lienzo el host emula el tamaño nuevo."""
+        width = self.bounded(data.get("width"), 320, 1920)
+        height = self.bounded(data.get("height"), 240, 1080)
+        with self.cv:
+            target = self.target
+            if not target or data.get("generation") != self.generation:
+                return
+        code, result = browser_remote.HOST.request(
+            {"action": "viewport", "tab": target, "width": width, "height": height}
+        )
+        if code != 200:
+            self.json(
+                {
+                    "t": "error",
+                    "generation": data["generation"],
+                    "message": result.get("error", "No se pudo cambiar el tamaño"),
+                }
+            )
+            return
+        with self.cv:
+            if target == self.target and data["generation"] == self.generation:
+                self.width, self.height = width, height
+                self.last_image = None
+                self.cv.notify_all()
+
     def _inputs(self):
         last_n = 0
         while not self.closed:
@@ -324,9 +359,9 @@ class TabWorker:
             with self.selection_lock:
                 if self.closed:
                     return
-                if data["t"] == "open":
+                if data["t"] in ("open", "size"):
                     try:
-                        self._send(json.dumps(data))
+                        self._send(json.dumps(data)) if data["t"] == "open" else self._size(data)
                     except ValueError as exc:
                         self.json({"t": "error", "generation": data.get("generation"), "message": str(exc)})
                     continue
@@ -360,8 +395,15 @@ class TabWorker:
                                 {"error": "Demasiadas teclas presionadas; liberá la entrada antes de continuar"},
                             )
                         else:
+                            basis = data.get("basis")
                             code, result = browser_remote.HOST.request(
-                                {"action": "input", "tab": target, "events": data["events"]}
+                                {
+                                    "action": "input",
+                                    "tab": target,
+                                    "events": data["events"],
+                                    # el tamaño del cuadro sobre el que se mapeó: el host rechaza si cambió
+                                    **({"basis": basis} if basis is not None else {}),
+                                }
                             )
                         if code == 200 or code >= 500:
                             self._track(data["events"], uncertain=code != 200)
@@ -467,7 +509,7 @@ class TabWorker:
                         self.seq += 1
                         self.awaiting = (generation, self.seq)
                         self.last_image = image
-                        packet = TAB_FRAME.pack(generation, self.seq, width, height) + image
+                        packet = TAB_FRAME.pack(generation, self.seq, *self._css(result, width, height)) + image
                     else:
                         packet = None
                 if packet is not None:

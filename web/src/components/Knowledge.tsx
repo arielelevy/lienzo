@@ -62,7 +62,27 @@ function response(value: unknown, view: View): RecordData {
     throw new Error("La consulta no tiene el formato esperado");
   if (view === "preguntar" && (!Number.isInteger(value.offset) || Number(value.offset) < 0 || !Number.isInteger(value.limite) || Number(value.limite) < 1 || !Number.isInteger(value.total) || Number(value.total) < 0 || (value.siguientes !== null && (!Number.isInteger(value.siguientes) || Number(value.siguientes) <= Number(value.offset)))))
     throw new Error("La búsqueda no devolvió una paginación válida");
+  if (view === "preguntar" && value.semillas_lexicas !== undefined && !seeds(value.semillas_lexicas))
+    throw new Error("La búsqueda no devolvió un conteo de semillas válido");
+  if (view === "preguntar" && value.foto !== undefined && value.foto !== null && !photo(value.foto))
+    throw new Error("La búsqueda no devolvió una foto válida");
   return value;
+}
+/** Foto fija del servidor: las páginas siguientes salen de esa lista con su token (409/410 si no sirve). */
+function photo(value: unknown): value is { token: string } {
+  return record(value) && typeof value.token === "string" && value.token.length > 0
+    && [value.hasta_seq, value.ids, value.vence_en_s].every(n => Number.isInteger(n) && Number(n) >= 0);
+}
+type Seeds = { encontradas: number; usadas: number; maximo: number };
+/** Semillas por palabras del servidor: hasta `maximo` únicas entre todas las consultas. Un server anterior no las manda. */
+function seeds(value: unknown): value is Seeds {
+  return record(value) && [value.encontradas, value.usadas, value.maximo].every(n => Number.isInteger(n) && Number(n) >= 0)
+    && Number(value.usadas) <= Number(value.encontradas) && Number(value.usadas) <= Number(value.maximo);
+}
+function SeedsNote({ value }: { value: Seeds }) {
+  if (value.encontradas > value.usadas)
+    return <p role="status" className="knowledge-notice">Corte de semillas: se usaron {value.usadas} de {value.encontradas} coincidencias por palabras (máximo {value.maximo}). Las que quedaron afuera no se descartan: afiná las consultas o sumá temas o archivos.</p>;
+  return <p className="knowledge-note">Semillas por palabras: {value.usadas} de {value.encontradas} (máximo {value.maximo}).</p>;
 }
 
 /** Las lecturas automáticas sólo cargan catálogos. El cleanup cancela también respuestas tardías. */
@@ -103,7 +123,7 @@ function Nodes({ value, empty }: { value: Json; empty: string }) {
     if (!record(node) || typeof node.texto !== "string") return <li key={i}><Value value={node} /></li>;
     const { texto, tipo, estado, id, tardia, ...extra } = node;
     return <li key={typeof id === "string" ? id : i}>
-      <div className="knowledge-node-status"><span>{typeof tipo === "string" ? label(tipo) : "Registro"}</span>{typeof estado === "string" && <strong>{label(estado)}</strong>}{tardia === true && <strong>Entrega tardía</strong>}</div>
+      <div className="knowledge-node-status"><span>{typeof tipo === "string" ? label(tipo) : "Registro"}</span>{typeof estado === "string" && <strong>{label(estado)}</strong>}{tardia === true && <strong>Entrega tardía</strong>}{extra.cambio_despues_de_la_foto === true && <strong>Cambió después de la búsqueda</strong>}</div>
       <Markdown text={texto as string} />
       <details><summary>Origen y respaldo{typeof id === "string" ? " · " + id : ""}</summary><Value value={extra} /></details>
     </li>;
@@ -114,6 +134,8 @@ function Readout({ data, view }: { data: RecordData; view: View }) {
   const groups = view === "briefing" ? ["vigente", "abierto", "otros"] : view === "preguntar" ? ["candidatos"] : view === "capturas" ? ["capturas"] : ["pendientes", "encargos_abiertos"];
   return <>
     {view === "preguntar" && <p className="knowledge-note">{typeof data.total === "number" ? data.total : (data.candidatos as Json[]).length} resultados. Son candidatos con su respaldo; una búsqueda vacía no prueba que algo no exista.</p>}
+    {view === "preguntar" && seeds(data.semillas_lexicas) && <SeedsNote value={data.semillas_lexicas} />}
+    {view === "preguntar" && typeof data.foto_motivo === "string" && <p role="status" className="knowledge-notice">{data.foto_motivo}</p>}
     {Array.isArray(data.temas_sin_resolver) && data.temas_sin_resolver.length > 0 && <section className="knowledge-notice"><h3>Temas sin resolver</h3><Value value={data.temas_sin_resolver} /></section>}
     {data.truncado === true && <p className="knowledge-notice">El servidor recortó este resultado. Puede haber más registros.</p>}
     {view === "capturas" && <p className="knowledge-note">Lo que pasó por el lienzo en este proyecto, sin registrarlo a mano. Queda observado: no es conocimiento declarado ni tiene veredicto.</p>}
@@ -144,7 +166,7 @@ function ProjectPanel({ id }: { id: string }) {
   useEffect(() => () => request.current?.abort(), []);
   const clear = () => { request.current?.abort(); setLoading(false); setData(undefined); setError(""); };
   const selectView = (next: View) => { clear(); setView(next); };
-  const query = async (offset = 0, keepPage = false) => {
+  const query = async (offset = 0, keepPage = false, foto?: string) => {
     request.current?.abort(); setError("");
     if (!keepPage) setData(undefined);
     const q = lines(queries), archives = lines(files), refs = lines(themes);
@@ -156,7 +178,7 @@ function ProjectPanel({ id }: { id: string }) {
     if (view === "briefing" || view === "preguntar") {
       q.forEach(x => params.append("q", x)); archives.forEach(x => params.append("archivos", x)); refs.forEach(x => params.append("temas", x));
     }
-    if (view === "preguntar") { params.set("saltos", hops); params.set("offset", String(offset)); params.set("limite", "100"); if (prose) params.set("prosa", "1"); }
+    if (view === "preguntar") { params.set("saltos", hops); params.set("offset", String(offset)); params.set("limite", "100"); if (prose) params.set("prosa", "1"); if (foto) params.set("foto", foto); }
     if (view === "capturas") { params.set("limite", "100"); if (clase) params.set("clase", clase); }
     if (view === "vista") params.set("tema", theme);
     try {
@@ -203,8 +225,8 @@ function ProjectPanel({ id }: { id: string }) {
         {data && <Readout data={data} view={view} />}
         {view === "preguntar" && data && <nav className="knowledge-pagination" aria-label="Páginas de resultados">
           <p>{(data.candidatos as Json[]).length ? "Mostrando " + (Number(data.offset) + 1) + "–" + (Number(data.offset) + (data.candidatos as Json[]).length) + " de " + data.total : "Sin resultados en esta página"}</p>
-          <div><button type="button" disabled={loading || Number(data.offset) === 0} onClick={() => { void query(Math.max(0, Number(data.offset) - Number(data.limite)), true); }}>Anterior</button>
-          <button type="button" disabled={loading || data.siguientes === null} onClick={() => { if (typeof data.siguientes === "number") void query(data.siguientes, true); }}>Más resultados</button></div>
+          <div><button type="button" disabled={loading || Number(data.offset) === 0} onClick={() => { void query(Math.max(0, Number(data.offset) - Number(data.limite)), true, photo(data.foto) ? data.foto.token : undefined); }}>Anterior</button>
+          <button type="button" disabled={loading || data.siguientes === null} onClick={() => { if (typeof data.siguientes === "number") void query(data.siguientes, true, photo(data.foto) ? data.foto.token : undefined); }}>Más resultados</button></div>
         </nav>}
       </div>
     </div>}

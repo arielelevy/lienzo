@@ -239,11 +239,14 @@ test('tabs stream negocia JPEG, acusa después de dibujar y manda teclado sin HT
   await page.getByRole('button', {name: 'Atrás', exact: true}).click();
   expect(f.http.some(d => d.action === 'history')).toBeTruthy();
   const before = f.channels[0].commands.filter(d => d.t === 'open').length;
+  const releasesBefore = f.channels[0].commands.filter(d => d.t === 'release-input').length; // el blur de «Atrás» ya soltó
   await page.setViewportSize({width: 1200, height: 750});
-  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'open').length).toBeGreaterThan(before);
-  expect(f.channels[0].commands.some(d => d.t === 'size')).toBeFalsy();
-  const generations = f.channels[0].commands.filter(d => d.t === 'open').map(d => Number(d.generation));
-  expect(generations.every((n, i) => i === 0 || n > generations[i - 1])).toBeTruthy();
+  // el visor cambió de tamaño: sólo la escala de la captura; sin open, sin release ni generación nueva
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'size').length).toBeGreaterThan(0);
+  expect(f.channels[0].commands.filter(d => d.t === 'open')).toHaveLength(before);
+  const size = f.channels[0].commands.filter(d => d.t === 'size').at(-1)!;
+  expect(size.generation).toBe(f.channels[0].commands.filter(d => d.t === 'open').at(-1)!.generation);
+  expect(f.channels[0].commands.filter(d => d.t === 'release-input')).toHaveLength(releasesBefore);
 });
 
 test('tabs stream descarta decode de generación vieja al cambiar pestaña', async ({page}) => {
@@ -352,15 +355,64 @@ test('tabs stream activa la pestaña sólo al elegirla; tamaño y reconexión no
   await expect(screen).toBeVisible();
   const activations = () => f.http.filter(d => d.action === 'activate');
   expect(activations()).toHaveLength(0);
-  const opens = f.channels[0].commands.filter(d => d.t === 'open').length;
   await page.setViewportSize({width: 1200, height: 750});
-  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'open').length).toBeGreaterThan(opens);
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'size').length).toBeGreaterThan(0);
   f.channels[0].close();
   await expect.poll(() => f.channels.length).toBe(2);
   await expect.poll(() => f.channels[1].commands.filter(d => d.t === 'open').length).toBeGreaterThan(0);
   expect(activations()).toHaveLength(0);
   await page.getByRole('tab', {name: 'Pestaña B', exact: true}).click();
   await expect.poll(() => activations().map(d => d.tab)).toEqual(['b']);
+});
+
+test('tabs stream: un arrastre táctil largo con la remota lenta suma ruedas y no agota las entradas pendientes', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  f.control.input = 'hold'; // ningún ACK: cada pedido queda pendiente, como con una remota lenta
+  const box = (await screen.boundingBox())!;
+  const x = Math.round(box.x + box.width / 2), y0 = Math.round(box.y + box.height - 40);
+  const touch = await page.context().newCDPSession(page);
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: [{x, y: y0}]});
+  for (let i = 1; i <= 60; i++) await touch.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x, y: y0 - i * 5}]});
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
+  await touch.detach();
+  await page.waitForTimeout(300);
+  const wheels = f.channels[0].commands.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]).filter(e => e.type === 'mouseWheel');
+  expect(wheels.length).toBeGreaterThan(0);
+  // sin ACK sale un solo pedido; el resto espera sumado, sin agotar las 32 pendientes
+  expect(f.channels[0].commands.filter(d => d.t === 'input')).toHaveLength(1);
+  await expect(page.getByText('Demasiadas entradas pendientes')).toHaveCount(0);
+});
+
+test('tabs stream: con ACK el arrastre táctil llega entero, sumado en pocos pedidos', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  const box = (await screen.boundingBox())!;
+  const x = Math.round(box.x + box.width / 2), y0 = Math.round(box.y + box.height - 40);
+  const touch = await page.context().newCDPSession(page);
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: [{x, y: y0}]});
+  for (let i = 1; i <= 60; i++) await touch.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x, y: y0 - i * 5}]});
+  await touch.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
+  await touch.detach();
+  const sent = () => f.channels[0].commands.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]).filter(e => e.type === 'mouseWheel');
+  // 60 movimientos de 5 px menos el umbral de 8 px: el desplazamiento total llega aunque vaya sumado
+  await expect.poll(() => sent().reduce((sum, e) => sum + Number(e.deltaY), 0)).toBeGreaterThanOrEqual(280);
+  expect(f.channels[0].commands.filter(d => d.t === 'input').length).toBeLessThanOrEqual(60);
+});
+
+test('tabs stream con el tamaño quieto no reabre ni cambia el tamaño pedido (sin bucle de layout)', async ({page}) => {
+  const f = await streamFixture(page);
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible();
+  // cuadros con otro tamaño que el pedido: no deben disparar el ResizeObserver ni otro open
+  const gen = Number(f.channels[0].commands.filter(d => d.t === 'open').at(-1)!.generation);
+  for (let n = 2; n <= 8; n++) { f.channels[0].send(f.packet(gen, n, n % 2 === 0)); await page.waitForTimeout(150); }
+  const opens = f.channels[0].commands.filter(d => d.t === 'open');
+  const sizes = new Set(opens.map(d => `${d.width}x${d.height}`));
+  expect(opens, JSON.stringify(opens)).toHaveLength(1);
+  expect(sizes.size).toBe(1);
 });
 
 test('tabs stream muestra captura inválida sin ocultar el último cuadro ni degradar a HTTP', async ({page}) => {
@@ -410,24 +462,25 @@ test('tabs stream timeout de input y ACK tardío no habilitan entrada ni reenví
   expect(f.channels[0].commands.filter(d => d.t === 'input')).toHaveLength(inputs.length);
 });
 
-test('tabs stream held mouse resize up conserva foco y libera sólo su botón antes de open', async ({page}) => {
+test('tabs stream held mouse resize up conserva foco y el botón sin open ni release', async ({page}) => {
   const f = await streamFixture(page);
   const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
   await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
   const original = await screen.elementHandle();
   const box = (await screen.boundingBox())!;
-  await page.mouse.move(box.x + 50, box.y + 100); await page.mouse.down();
+  // dentro de la imagen encajada: las franjas del letterbox no mandan clics
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
   await expect.poll(() => f.owned.buttons.size).toBe(1);
-  const gen = Number(f.channels[0].commands.find(d => d.t === 'open')!.generation);
   await page.setViewportSize({width: 1100, height: 720});
-  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'open').length).toBeGreaterThan(1);
+  await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'size').length).toBeGreaterThan(0);
+  expect(f.channels[0].commands.filter(d => d.t === 'open')).toHaveLength(1);
   await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
   expect(await original!.evaluate(element => element.isConnected)).toBeTruthy();
   await expect(screen).toBeFocused();
+  expect(f.owned.buttons.size).toBe(1); // el cambio de tamaño no suelta el botón: sigue el mismo arrastre
   await page.mouse.up();
-  expect(f.channels[0].commands.some(d => d.t === 'release-input' && d.generation === gen)).toBeTruthy();
-  expect(f.releases.filter(r => r.reason === 'release-input').flatMap(r => r.buttons)).toEqual(['left']);
-  expect(f.owned.buttons.size).toBe(0);
+  await expect.poll(() => f.owned.buttons.size).toBe(0);
+  expect(f.channels[0].commands.some(d => d.t === 'release-input')).toBeFalsy();
   expect(f.channels[0].commands.filter(d => d.t === 'input').flatMap(d => d.events as BrowserCommand[]).filter(e => e.type === 'mousePressed')).toHaveLength(1);
 });
 

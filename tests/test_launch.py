@@ -35,6 +35,7 @@ def aislado(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.setattr(launch.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(launch, "_existe", lambda p: True)
+    monkeypatch.setattr(launch, "_physical_path", lambda p: os.path.normcase(os.path.normpath(p)))
     bin_dir = tmp_path / "home" / ".local" / "bin"
     bin_dir.mkdir(parents=True)
     for exe in launch.AGENT_EXES.values():
@@ -340,3 +341,19 @@ def test_codex_official_installation_wins_over_old_local_copy(tmp_path, monkeypa
     managed.parent.mkdir(parents=True)
     managed.write_text("managed")
     assert launch._exe_path("codex.exe") == str(managed)
+
+
+def test_chrome_suma_dash_dash_chrome_solo_si_se_pide(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_roots(monkeypatch, root)
+    assert "--chrome" not in _cuerpo_del_cmd(launch.launch(str(root / "p"), "t", "claude"))
+    res = launch.launch(str(root / "p"), "t", "claude", chrome=True)
+    assert res["ok"] is True and " --chrome\r\n" in _cuerpo_del_cmd(res)
+
+
+@pytest.mark.parametrize(("agent", "distro"), [("codex", None), ("claude", "Ubuntu")])
+def test_chrome_fuera_de_claude_en_windows_se_rechaza_sin_lanzar(aislado, monkeypatch, agent, distro):
+    con_roots(monkeypatch, aislado / "repos")
+    res = launch.launch(str(aislado / "repos" / "p"), "t", agent, distro=distro, chrome=True)
+    assert res == {"ok": False, "error": "chrome requiere una sesión Claude en Windows nativo"}
+    assert FakePopen.calls == []

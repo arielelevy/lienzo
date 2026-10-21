@@ -222,6 +222,61 @@ test.describe("«Enviar a todas», «Interrumpir» y «Marcar las visibles»", (
     await expect(marcadas(page)).toHaveCount(1);
   });
 
+  test("B06: el segundo clic reintenta sólo el rechazo y un nuevo lote es explícito", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()));
+    const llamadas: { sid: string; text: string }[] = [];
+    await page.route("**/sessions/*/send", async route => {
+      const sid = new URL(route.request().url()).pathname.split("/")[2];
+      llamadas.push({ sid, text: route.request().postDataJSON().text });
+      const rechazado = sid === SID.capas && llamadas.filter(c => c.sid === sid).length === 1;
+      await route.fulfill({ status: rechazado ? 409 : 200, json: rechazado ? { error: "ocupada" } : { estado: "entregado", chars: 4 } });
+    });
+    for (const sid of [SID.mapas, SID.capas, SID.reglas]) await titulo(page, sid).click(Ctrl);
+    await barra(page).getByRole("button", { name: "Enviar a todas", exact: true }).click();
+    await barra(page).getByRole("textbox").fill("hola");
+    await barra(page).getByRole("button", { name: "Enviar a 3", exact: true }).click();
+    await expect(barra(page)).toContainText("2 ok / 1 fallaron");
+    await expect(barra(page).getByRole("textbox")).toHaveValue("hola");
+    await barra(page).locator(".selsend button.primary").click();
+    await expect(barra(page)).toContainText("3 ok / 0 fallaron");
+    expect(llamadas.map(c => c.sid)).toEqual([SID.mapas, SID.capas, SID.reglas, SID.capas]);
+
+    await barra(page).getByRole("button", { name: "Enviar a todas", exact: true }).click();
+    await barra(page).getByRole("button", { name: "Nuevo lote a todas", exact: true }).click();
+    await barra(page).getByRole("textbox").fill("otro lote");
+    await barra(page).getByRole("button", { name: "Enviar a 3", exact: true }).click();
+    await expect(barra(page)).toContainText("3 ok / 0 fallaron");
+    expect(llamadas.slice(4)).toEqual([SID.mapas, SID.capas, SID.reglas].map(sid => ({ sid, text: "otro lote" })));
+  });
+
+  test("B06: inciertos y errores de red no se reenvían por clic ni Ctrl+Enter", async ({ page }) => {
+    await abrirTablero(page, sinLibres(sesiones()));
+    const llamadas: string[] = [];
+    await page.route("**/sessions/*/send", async route => {
+      const sid = new URL(route.request().url()).pathname.split("/")[2];
+      llamadas.push(sid);
+      if (sid === SID.capas) return route.abort("failed");
+      await route.fulfill({ json: sid === SID.reglas
+        ? { estado: "sin_confirmacion", motivo: "sin ACK", chars: 4 }
+        : { estado: "entregado", chars: 4 } });
+    });
+    for (const sid of [SID.mapas, SID.capas, SID.reglas]) await titulo(page, sid).click(Ctrl);
+    await barra(page).getByRole("button", { name: "Enviar a todas", exact: true }).click();
+    const texto = barra(page).getByRole("textbox");
+    await texto.fill("hola");
+    await barra(page).getByRole("button", { name: "Enviar a 3", exact: true }).click();
+    await expect(barra(page)).toContainText("1 ok / 2 pendientes / 0 fallaron");
+    await expect(texto).toHaveValue("hola");
+    await expect(texto).toHaveAttribute("readonly", "");
+    await expect(barra(page).getByRole("button", { name: "Sin rechazos para reintentar", exact: true })).toBeDisabled();
+    await texto.press("Control+Enter");
+    await barra(page).getByRole("button", { name: "Cancelar", exact: true }).click();
+    await barra(page).getByRole("button", { name: "Enviar a todas", exact: true }).click();
+    await texto.press("Control+Enter");
+    expect(llamadas).toEqual([SID.mapas, SID.capas, SID.reglas]);
+    await expect(barra(page)).toContainText("No reenvíes el texto");
+  });
+
   test("Interrumpir llama a interrupt de cada tarjeta marcada", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesiones()));
     const llamadas: string[] = [];

@@ -952,6 +952,11 @@ def parse_kiro(path: str, max_bytes: int = TAIL_BYTES) -> dict:
     return {"meta": meta, "turns": turns}
 
 
+def parse_antigravity(path: str) -> dict:
+    """Soporte de terminal: todavía no hay un formato de conversación verificado."""
+    return {"meta": {"agent": "antigravity", "transcript_unavailable": True}, "turns": []}
+
+
 def leaf_of(s: dict) -> str | None:
     """Lo que elige, dentro de la transcripcion de una tarjeta, que parte es suya: la rama activa
     en Pi y la sesion en CODA, que guarda todas en la misma base. El resto, nada."""

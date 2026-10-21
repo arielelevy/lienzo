@@ -342,10 +342,16 @@ def registrar(proyecto: str, analisis: dict) -> list[str]:
                     ids.append(nodo["id"])
                 creencias.proponer(
                     proyecto,
-                    {"texto": h["texto"], "accion": h["sugerencia"], "dimension": "coordinacion",
-                     "fuentes": [nodo["id"]], "contexto": {},
-                     "excepciones": "Patrón observado; beneficio de la acción todavía no medido"},
-                    autor="server", con=con,
+                    {
+                        "texto": h["texto"],
+                        "accion": h["sugerencia"],
+                        "dimension": "coordinacion",
+                        "fuentes": [nodo["id"]],
+                        "contexto": {},
+                        "excepciones": "Patrón observado; beneficio de la acción todavía no medido",
+                    },
+                    autor="server",
+                    con=con,
                 )
         return ids
     finally:

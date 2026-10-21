@@ -11,12 +11,14 @@ la implementación y la evidencia histórica se identifican por separado.
 | [Plugins](PLUGINS.md) | Tools, integraciones y formas de trabajo; cargador y contrato uniforme v1 |
 | [Consultas](CONSULTAS.md) | Investigadores, vueltas, síntesis, réplica y persistencia |
 | [WSL](WSL.md) | Distros, identidad, teclado, pantalla, transcripciones y lanzamiento |
-| [Memoria](propuesta-memoria-2026-10-08/v5.md) | Esquema, transiciones y contratos detallados del conocimiento |
-| [Réplica de memoria](propuesta-memoria-2026-10-08/anexo-c-replica.md) | Propiedad, conflictos y recuperación entre PCs |
+| [Memoria](propuesta-memoria/v5.md) | Esquema, transiciones y contratos detallados del conocimiento |
+| [Réplica de memoria](propuesta-memoria/anexo-c-replica.md) | Propiedad, conflictos y recuperación entre PCs |
 | [Apps de escritorio](desktop-apps.md) | Monitoreo y envío; interfaces medidas, conexión y límites |
 | [Uso e instalación](../README.md) | Entrada operativa para usar Lienzo |
+| [Versión 0.6.0](releases/0.6.0.md) | Cambios, verificación y límites de esta versión |
+| [Revisiones](../review/README.md) | Auditorías fechadas, evidencia y límites de cobertura |
 | [Pendientes](../PENDIENTES.md) | Única lista de trabajo |
-| [Mejoras](../MEJORAS.md) | Registro histórico de hechos y decisiones |
+| [Mejoras](../PENDIENTES.md#historial-mejoras) | Registro histórico de hechos y decisiones |
 | [Pruebas](../pruebas-agenticas/README.md) | Configuración y operación de las verificaciones |
 
 ## Qué se unificó

@@ -19,6 +19,7 @@ INTERVAL_S = 6 * 60 * 60
 RETRY_S = 15 * 60
 TIMEOUT_S = 120
 COMMANDS = {
+    "antigravity": ("update",),
     "claude": ("update",),
     "codex": ("update",),
     "pi": ("update", "--self", "--no-approve"),

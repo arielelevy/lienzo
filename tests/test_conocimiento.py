@@ -402,8 +402,13 @@ def test_api_recorrido_completo_y_errores():
     code, e = api.dispatch(
         "POST",
         ["lienzo", "encargos"],
-        {"ronda": r["id"], "letra": "A", "texto": "hacer X", "archivos": ["lienzo/conocimiento.py"],
-         "contexto_desarrollo": {"tipo_trabajo": "sin_clasificar"}},
+        {
+            "ronda": r["id"],
+            "letra": "A",
+            "texto": "hacer X",
+            "archivos": ["lienzo/conocimiento.py"],
+            "contexto_desarrollo": {"tipo_trabajo": "sin_clasificar"},
+        },
         {},
     )
     assert code == 200 and e["estado"] == "pendiente"

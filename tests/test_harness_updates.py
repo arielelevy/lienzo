@@ -69,13 +69,13 @@ def test_codex_outdated_runs_update(monkeypatch):
 def test_startup_and_six_hour_boundary(monkeypatch):
     updater, clock, calls = setup_updater(monkeypatch)
     updater.cycle(lambda agent: "/bin/" + agent)
-    assert len(calls) == 5
+    assert len(calls) == len(hu.COMMANDS)
     clock[0] += hu.INTERVAL_S - 1
     updater.cycle(lambda agent: "/bin/" + agent)
-    assert len(calls) == 5
+    assert len(calls) == len(hu.COMMANDS)
     clock[0] += 1
     updater.ensure("claude", "/bin/claude")
-    assert len(calls) == 6
+    assert len(calls) == len(hu.COMMANDS) + 1
     assert calls[-1][0][-1] == "update"
 
 

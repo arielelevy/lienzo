@@ -1,4 +1,5 @@
 :root {
+  --antigravity: #4285f4;
   --bg: #0f1115; --panel: #171a21; --card: #1d212b; --line: #2a2f3b; --fg: #e6e8ee; --dim: #8b93a7; --acc: #5b9cff;
   --run: #3fb950; --need: #f0b429; --dead: #f05b5b; --claude: #d97757; --codex: #10a37f; --pi: #c49a45; --kiro: #9b7fe8; --coda: #43a2ca; --coda-bg: #0a1016; --err: #f05b5b; --git: #d946ef;
   /* texto sobre un fondo lleno de color (boton principal, badges, chips prendidos, toast de la
@@ -234,13 +235,16 @@ details.fold > summary,
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; cursor: pointer; position: relative; }
 .card:hover { border-color: var(--acc); }
 .card.sel { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
-.card .top { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--dim); margin-bottom: 6px; padding-right: 22px; min-width: 0; }
-/* en columnas angostas (tres abiertas) el repo y la rama ceden con elipsis; el badge y el
-   "hace X" de la derecha no se encogen, asi la fecha siempre queda visible */
+.card .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 11px; color: var(--dim); margin-bottom: 6px; padding-right: 22px; min-width: 0; }
+/* Repo y rama pueden ceder ancho. El estado y las acciones pasan a otra linea si no entran:
+   Antigravity agrega actividad sin confirmar y aviso a coordinadora, ademas de hora y botones. */
 .card .top > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .top .badge, .card .top .right { flex: 0 0 auto; overflow: visible; }
+/* El grupo de acciones tampoco puede superar la tarjeta ni forzar sus textos a una sola linea.
+   Sin recorte: se conservan los botones, sus areas sensibles y el contorno de foco. */
+.card .top .right { max-width: 100%; flex-wrap: wrap; white-space: normal; }
 .badge { display: inline-flex; align-items: center; justify-content: center; height: 18px; line-height: 16px; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--ink); }
-.badge.kiro { background: var(--kiro); } .badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); } .badge.pi { background: var(--pi); } .badge.coda { background: var(--coda-bg); color: var(--coda); }
+.badge.antigravity { background: var(--antigravity); } .badge.kiro { background: var(--kiro); } .badge.claude { background: var(--claude); } .badge.codex { background: var(--codex); } .badge.pi { background: var(--pi); } .badge.coda { background: var(--coda-bg); color: var(--coda); }
 .card .repo { font-weight: 600; color: var(--fg); }
 /* De los dos que ceden ancho, cede primero la rama: el repo dice de qué es la tarjeta y la rama
    casi siempre es "main". Y los dos se cortan al ras, sin elipsis, porque acá los tres puntos
@@ -545,6 +549,7 @@ header .search .chip.claude.on { background: var(--claude); }
 header .search .chip.codex.on { background: var(--codex); }
 header .search .chip.pi.on { background: var(--pi); }
 header .search .chip.kiro.on { background: var(--kiro); }
+header .search .chip.antigravity.on { background: var(--antigravity); }
 header .search .chip.coda.on { background: var(--coda-bg); color: var(--coda); }
 header .search .chip:not(.on) { text-decoration: line-through; }
 header .agent-project-separator { width: 1px; height: 20px; flex: 0 0 1px; background: var(--line); margin: 0 3px; }
@@ -767,3 +772,4 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
   .mejoras-vista-cuerpo { grid-template-columns: 1fr; padding: 12px 12px 24px; gap: 14px; }
   .mejoras-vista-cabecera { padding: 10px 12px; }
 }
+.badge-chrome { display: inline-flex; margin: 0 -3px 0 2px; vertical-align: sub; line-height: 0; transform: translateY(3px); }

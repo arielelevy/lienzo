@@ -154,7 +154,7 @@ def test_api_on_stop_por_defecto_frecuencia_y_total_explicito(monkeypatch):
     assert rules_api.on_stop_limits({"rate_max": True})[1]
 
 
-def test_editar_una_agotada_por_el_tope_viejo_la_reactiva(monkeypatch):
+def test_editar_una_agotada_por_el_tope_viejo_la_reactiva(entorno, monkeypatch):
     monkeypatch.setattr(rules_api.rules, "save", lambda: None)
     monkeypatch.setattr(rules_api.rules, "publish", lambda: None)
     r = {
@@ -179,6 +179,9 @@ def test_editar_una_agotada_por_el_tope_viejo_la_reactiva(monkeypatch):
 def test_al_arrancar_se_prenden_las_agotadas_por_el_tope_viejo(monkeypatch):
     """La que apago el tope total en su ultimo disparo vuelve sola; la apagada a mano, la que pidio
     tope total y la estacionada sin sucesora se quedan como estan."""
+    monkeypatch.setattr(rl, "sessions", {ORIGEN: {"agent": "claude"}, DESTINO: {"agent": "claude"}})
+    monkeypatch.setattr(rl, "find_session", lambda sid: rl.sessions.get(sid))
+    monkeypatch.setattr(ses, "mirror", None)
     t = "2026-10-14T10:00:00-03:00"
     base = {"kind": "on_stop", "from": ORIGEN, "to": DESTINO, "repeat": True, "enabled": False, "max_fires": 30}
     items = [

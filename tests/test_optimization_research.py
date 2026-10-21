@@ -536,8 +536,13 @@ def test_user_activity_pauses_and_resume_starts_new_attempt(monkeypatch):
     job = scheduler.queue.view()["jobs"][0]
     assert job["state"] == "paused" and job["reason"] == "actividad del usuario" and job["pid"] is None
     assert job["last_run"]["stopped"] == "actividad del usuario"
+    assert job["not_before"] >= time.time() + s.RESEARCH_BACKOFF_S - 60
     flag["active"] = False
     adapter.mode = "ok"
+    run_ticks(scheduler)  # dentro del plazo: no vuelve a arrancar
+    job = scheduler.queue.view()["jobs"][0]
+    assert job["state"] == "paused" and job["attempts"] == 1 and len(job["runs"]) == 1 and len(adapter.launched) == 1
+    scheduler.queue.change(job["id"], not_before=time.time() - 1)  # pasó la espera
     run_ticks(scheduler)
     job = scheduler.queue.view()["jobs"][0]
     assert job["state"] == "observed" and job["attempts"] == 2 and len(job["runs"]) == 2

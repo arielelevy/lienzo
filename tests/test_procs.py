@@ -100,3 +100,13 @@ def test_codex_unreadable_command_is_not_assumed_interactive(monkeypatch):
     monkeypatch.setattr(procinfo, "image_path", lambda pid: "codex.exe")
     monkeypatch.setattr(procinfo, "command_line", lambda pid: None)
     assert procinfo.process_agent(42) is None
+
+
+def test_sweep_marca_chrome_solo_si_claude_nacio_con_dash_dash_chrome(monkeypatch):
+    exe = r"C:\Users\x\.local\bin\claude.exe"
+    rows = [
+        {"pid": 41, "exe": exe, "cmd": f'"{exe}" -n t --chrome', "parent": "cmd.exe"},
+        {"pid": 42, "exe": exe, "cmd": f'"{exe}" "probar --chrome en el prompt"', "parent": "cmd.exe"},
+    ]
+    monkeypatch.setattr(procs.subproc, "correr", lambda *a, **kw: (0, json.dumps(rows), ""))
+    assert {p["pid"]: p["chrome"] for p in procs.sweep()} == {41: True, 42: False}

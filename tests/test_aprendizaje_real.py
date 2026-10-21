@@ -23,12 +23,30 @@ def _futuro(dias=7):
 
 def _creencia(pid, contexto, *, fuente=None, validar=True, accion="Correr el diagnóstico focal"):
     fuente = fuente or k.crear_nodo(pid, "hallazgo", "espera observada", {}, autor="server")
-    belief = c.proponer(pid, {"texto": "Creencia " + accion, "accion": accion, "dimension": "pruebas",
-                              "contexto": contexto, "fuentes": [fuente["id"]]}, autor="server")
+    belief = c.proponer(
+        pid,
+        {
+            "texto": "Creencia " + accion,
+            "accion": accion,
+            "dimension": "pruebas",
+            "contexto": contexto,
+            "fuentes": [fuente["id"]],
+        },
+        autor="server",
+    )
     evidence = k.crear_nodo(pid, "evidencia", "comparación revisada", {}, autor="persona:Ariel")
     if validar:
-        c.resolver(pid, belief["id"], {"por": "persona:Ariel", "motivo": "revisado", "resultado": "validada",
-                                       "evidencia": evidence["id"], "vigente_hasta": _futuro()})
+        c.resolver(
+            pid,
+            belief["id"],
+            {
+                "por": "persona:Ariel",
+                "motivo": "revisado",
+                "resultado": "validada",
+                "evidencia": evidence["id"],
+                "vigente_hasta": _futuro(),
+            },
+        )
     return belief, evidence, fuente
 
 
@@ -49,8 +67,12 @@ def test_encargo_sin_tipo_de_trabajo_es_400_y_sin_clasificar_se_cuenta_aparte():
         code, body = api.dispatch("POST", [pid, "encargos"], {"ronda": ronda, "letra": "A", "texto": "x", **cuerpo}, {})
         assert code == 400 and "tipo_trabajo" in body["error"]
     assert k.nodos(pid, tipo="encargo")["total"] == 0
-    code, e = api.dispatch("POST", [pid, "encargos"], {"ronda": ronda, "letra": "A", "texto": "x",
-                                                       "contexto_desarrollo": {"tipo_trabajo": "sin_clasificar"}}, {})
+    code, e = api.dispatch(
+        "POST",
+        [pid, "encargos"],
+        {"ronda": ronda, "letra": "A", "texto": "x", "contexto_desarrollo": {"tipo_trabajo": "sin_clasificar"}},
+        {},
+    )
     assert code == 200 and e["datos"]["contexto_desarrollo"] == {"tipo_trabajo": "sin_clasificar"}
     assert e["aprendizajes"] == [] and e["aprendizajes_texto"] == ""
     analysis = p.analizar(pid)
@@ -62,9 +84,17 @@ def test_encargo_recibe_lo_aplicable_y_registra_que_se_mostro():
     ronda = _ronda(pid)
     belief, evidence, _ = _creencia(pid, {"tipo_trabajo": "refactor"})
     _creencia(pid, {"tipo_trabajo": "bugfix"}, accion="Otra cosa")
-    code, e = api.dispatch("POST", [pid, "encargos"], {
-        "ronda": ronda, "letra": "A", "texto": "Simplificar",
-        "contexto_desarrollo": {"tipo_trabajo": "refactor", "tecnologia": "python"}}, {})
+    code, e = api.dispatch(
+        "POST",
+        [pid, "encargos"],
+        {
+            "ronda": ronda,
+            "letra": "A",
+            "texto": "Simplificar",
+            "contexto_desarrollo": {"tipo_trabajo": "refactor", "tecnologia": "python"},
+        },
+        {},
+    )
     assert code == 200
     assert [x["creencia"] for x in e["aprendizajes"]] == [belief["id"]]
     assert "Correr el diagnóstico focal" in e["aprendizajes_texto"] and evidence["id"] in e["aprendizajes_texto"]
@@ -149,15 +179,31 @@ def test_dos_no_aplico_marcan_revisar_sin_refutar():
     ronda = _ronda(pid)
     ctx = {"tipo_trabajo": "refactor"}
     belief, _, _ = _creencia(pid, ctx)
-    e = api.dispatch("POST", [pid, "encargos"], {"ronda": ronda, "letra": "A", "texto": "x",
-                                                 "contexto_desarrollo": ctx}, {})[1]
-    assert api.dispatch("POST", [pid, "creencias", belief["id"], "uso"],
-                        {"por": "persona:Ariel", "resultado": "inventado"}, {})[0] == 400
-    assert api.dispatch("POST", [pid, "creencias", belief["id"], "uso"],
-                        {"por": "persona:Ariel", "resultado": "sirvio", "encargo": belief["id"]}, {})[0] == 400
+    e = api.dispatch(
+        "POST", [pid, "encargos"], {"ronda": ronda, "letra": "A", "texto": "x", "contexto_desarrollo": ctx}, {}
+    )[1]
+    assert (
+        api.dispatch(
+            "POST", [pid, "creencias", belief["id"], "uso"], {"por": "persona:Ariel", "resultado": "inventado"}, {}
+        )[0]
+        == 400
+    )
+    assert (
+        api.dispatch(
+            "POST",
+            [pid, "creencias", belief["id"], "uso"],
+            {"por": "persona:Ariel", "resultado": "sirvio", "encargo": belief["id"]},
+            {},
+        )[0]
+        == 400
+    )
     for _ in range(2):
-        code, _ = api.dispatch("POST", [pid, "creencias", belief["id"], "uso"],
-                               {"por": "coordinadora:s1", "resultado": "no_aplico", "encargo": e["id"]}, {})
+        code, _ = api.dispatch(
+            "POST",
+            [pid, "creencias", belief["id"], "uso"],
+            {"por": "coordinadora:s1", "resultado": "no_aplico", "encargo": e["id"]},
+            {},
+        )
         assert code == 200
     item = _estado(pid, ctx, belief)
     assert item["estado"] == "aplicable" and item["revisar"] is True
@@ -173,11 +219,27 @@ def _informe(nodos, vinculos=()):
 def test_control_ejecutado_del_informe_queda_atado_al_encargo():
     pid = "real-control"
     ronda = _ronda(pid)
-    e = k.crear_encargo(pid, ronda, "A", "x", autor="coordinadora:c",
-                        contexto_desarrollo={"tipo_trabajo": "bugfix"}, controles_declarados=["pruebas"])
-    control = {"id": "c1", "tipo": "evidencia", "texto": "pytest focal",
-               "datos": {"clase": "control_desarrollo", "control": "pruebas", "estado": "ejecutada",
-                         "resultado": "12 pasan", "referencia": "pytest tests/test_x.py"}}
+    e = k.crear_encargo(
+        pid,
+        ronda,
+        "A",
+        "x",
+        autor="coordinadora:c",
+        contexto_desarrollo={"tipo_trabajo": "bugfix"},
+        controles_declarados=["pruebas"],
+    )
+    control = {
+        "id": "c1",
+        "tipo": "evidencia",
+        "texto": "pytest focal",
+        "datos": {
+            "clase": "control_desarrollo",
+            "control": "pruebas",
+            "estado": "ejecutada",
+            "resultado": "12 pasan",
+            "referencia": "pytest tests/test_x.py",
+        },
+    }
     inf = k.entregar(pid, e["id"], _informe([control]), revision=1, autor="frente:f")
     assert inf["datos"]["conocimiento"]["estado"] == "incorporado"
     controles = pe.controles(pid, e["id"])
@@ -187,9 +249,18 @@ def test_control_ejecutado_del_informe_queda_atado_al_encargo():
 
 
 def _control(lid, control="pruebas", resultado="pasa"):
-    return {"id": lid, "tipo": "evidencia", "texto": control,
-            "datos": {"clase": "control_desarrollo", "control": control, "estado": "ejecutada",
-                      "resultado": resultado, "referencia": "log"}}
+    return {
+        "id": lid,
+        "tipo": "evidencia",
+        "texto": control,
+        "datos": {
+            "clase": "control_desarrollo",
+            "control": control,
+            "estado": "ejecutada",
+            "resultado": resultado,
+            "referencia": "log",
+        },
+    }
 
 
 def test_control_de_un_informe_capturado_se_ata_al_adoptarlo():
@@ -209,12 +280,19 @@ def test_un_control_redeclarado_en_otra_revision_no_se_suma():
     pid = "real-revisiones"
     ronda = _ronda(pid)
     e = k.crear_encargo(pid, ronda, "A", "x", autor="coordinadora:c", contexto_desarrollo={"tipo_trabajo": "bugfix"})
-    k.entregar(pid, e["id"], _informe([_control("c1", resultado="falla"), _control("r1", "claude_review_local")]),
-               revision=1, autor="frente:f")
+    k.entregar(
+        pid,
+        e["id"],
+        _informe([_control("c1", resultado="falla"), _control("r1", "claude_review_local")]),
+        revision=1,
+        autor="frente:f",
+    )
     k.entregar(pid, e["id"], _informe([_control("c1", resultado="pasa")]), revision=2, autor="frente:f")
     ejecutados = pe.controles(pid, e["id"])["ejecutados"]
     assert sorted((x["datos"]["control"], x["datos"]["resultado"]) for x in ejecutados) == [
-        ("claude_review_local", "pasa"), ("pruebas", "pasa")]
+        ("claude_review_local", "pasa"),
+        ("pruebas", "pasa"),
+    ]
 
 
 def test_el_frente_no_ata_controles_a_un_encargo_a_mano():
@@ -232,9 +310,20 @@ def test_el_frente_no_puede_declarar_un_control_verificado():
     pid = "real-control-verificado"
     ronda = _ronda(pid)
     e = k.crear_encargo(pid, ronda, "A", "x", autor="coordinadora:c", contexto_desarrollo={"tipo_trabajo": "bugfix"})
-    control = {"id": "c1", "tipo": "evidencia", "texto": "review",
-               "datos": {"clase": "control_desarrollo", "control": "claude_review_local", "estado": "verificada",
-                         "resultado": "ok", "referencia": "r", "verificada_por": "persona:Ariel", "verificacion": "v"}}
+    control = {
+        "id": "c1",
+        "tipo": "evidencia",
+        "texto": "review",
+        "datos": {
+            "clase": "control_desarrollo",
+            "control": "claude_review_local",
+            "estado": "verificada",
+            "resultado": "ok",
+            "referencia": "r",
+            "verificada_por": "persona:Ariel",
+            "verificacion": "v",
+        },
+    }
     inf = k.entregar(pid, e["id"], _informe([control]), revision=1, autor="frente:f")
     assert inf["datos"]["conocimiento"]["estado"] == "pendiente_de_vincular"
     assert pe.controles(pid, e["id"])["verificados"] == []

@@ -63,7 +63,7 @@ def test_recovered_same_id_does_not_enable_manual_or_exhausted_rule():
 def test_put_parked_enables_only_when_both_ends_live(alive, expected):
     parked = rule(parked_from="worker", parked_since=state.now(), parked_was_enabled=True)
     state.rules.items[:] = [parked]
-    state.sessions.update(worker={"alive": alive}, coord={"alive": True})
+    state.sessions.update(worker={"alive": alive, "agent": "claude"}, coord={"alive": True, "agent": "claude"})
     assert rules_api.edit_rule("r", {"enabled": True})[0] == expected
     assert parked["enabled"] is alive
     assert ("parked_from" in parked) is not alive

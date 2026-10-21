@@ -20,10 +20,17 @@ def iso(seconds):
 def card(monkeypatch):
     row = ses.new_session("stale-send-fixture", "codex", "sweep")
     row.update(
-        state="te_necesita", alive=True,
+        state="te_necesita",
+        alive=True,
         needs={"kind": "sin_enviar", "since": iso(100), "detail": "pedido anterior"},
-        envio_codex={"envio_id": "later", "at": 110, "estado": "entregado", "confirmacion_final": True,
-                     "transporte": "tecleo", "prompt_sha256": hashlib.sha256(b"nuevo pedido").hexdigest()},
+        envio_codex={
+            "envio_id": "later",
+            "at": 110,
+            "estado": "entregado",
+            "confirmacion_final": True,
+            "transporte": "tecleo",
+            "prompt_sha256": hashlib.sha256(b"nuevo pedido").hexdigest(),
+        },
         last_reply="revisión terminada",
     )
     monkeypatch.setattr(ses, "touch", lambda s: None)
@@ -51,11 +58,14 @@ def test_missing_transcript_explains_uncertainty_without_changing_receipt(card):
     assert card == before
 
 
-@pytest.mark.parametrize("agent,path,kind", [
-    ("claude", None, "sin_enviar"),
-    ("codex", "rollout.jsonl", "sin_enviar"),
-    ("codex", None, "permission"),
-])
+@pytest.mark.parametrize(
+    "agent,path,kind",
+    [
+        ("claude", None, "sin_enviar"),
+        ("codex", "rollout.jsonl", "sin_enviar"),
+        ("codex", None, "permission"),
+    ],
+)
 def test_missing_transcript_does_not_relabel_other_notices(card, agent, path, kind):
     card.update(agent=agent, transcript_path=path)
     card["needs"]["kind"] = kind
@@ -100,11 +110,21 @@ def test_failure_newer_than_or_equal_to_receipt_is_preserved(card, sent_at):
     assert card == before
 
 
-@pytest.mark.parametrize("changes", [
-    {"estado": "encolado"}, {"estado": "sin_confirmacion"}, {"estado": "rechazado"},
-    {"confirmacion_final": False}, {"envio_id": None}, {"at": None}, {"at": True},
-    {"at": "110"}, {"at": float("nan")}, {"at": float("inf")},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"estado": "encolado"},
+        {"estado": "sin_confirmacion"},
+        {"estado": "rechazado"},
+        {"confirmacion_final": False},
+        {"envio_id": None},
+        {"at": None},
+        {"at": True},
+        {"at": "110"},
+        {"at": float("nan")},
+        {"at": float("inf")},
+    ],
+)
 def test_uncertain_or_invalid_receipt_does_not_clear_notice(card, changes):
     card["envio_codex"].update(changes)
     notice = copy.deepcopy(card["needs"])
@@ -132,8 +152,9 @@ def test_exact_new_user_turn_clears_old_notice_and_uses_real_turn_phase(card, en
 
 def test_same_prefix_different_full_hash_never_confirms_or_clears(card):
     requested, received = "x" * 125 + " original", "x" * 125 + " diferente"
-    card["envio_codex"].update(estado="encolado", confirmacion_final=False,
-                             prompt_sha256=hashlib.sha256(requested.encode()).hexdigest())
+    card["envio_codex"].update(
+        estado="encolado", confirmacion_final=False, prompt_sha256=hashlib.sha256(requested.encode()).hexdigest()
+    )
     card["sent_mark"] = ses.prompt_mark(requested)
     card["needs"]["since"] = iso(112)  # este fallo es posterior al turno leído
     ses.apply_turn_unhooked(card, {"id": "new", "prompt": received, "ts_start": iso(111), "ended": False})
@@ -147,8 +168,13 @@ def test_later_user_input_clears_old_notice_without_confirming_unmatched_send(ca
     card["envio_codex"].update(estado="encolado", confirmacion_final=False)
     receipt = copy.deepcopy(card["envio_codex"])
     card["sent_mark"] = ses.prompt_mark("texto que no coincide")
-    turn = {"id": "later", "ts_start": iso(90), "prompt_ts": iso(120),
-            "prompt": "te apruebo el baseline\npushea\narreglá ese aviso", "ended": ended}
+    turn = {
+        "id": "later",
+        "ts_start": iso(90),
+        "prompt_ts": iso(120),
+        "prompt": "te apruebo el baseline\npushea\narreglá ese aviso",
+        "ended": ended,
+    }
     (ses.apply_turn_hooked if hooked else ses.apply_turn_unhooked)(card, turn)
     assert card["needs"] is None and card["state"] == phase
     assert card["envio_codex"] == receipt
@@ -189,9 +215,13 @@ def test_codex_uses_timestamp_of_last_human_input_not_later_tools(tmp_path, lega
             return event(at, type="user_message", message=text)
         return event(at, type="item_completed", item={"type": "UserMessage", "content": [{"text": text}]})
 
-    rows = [event(90, type="task_started"), user(95, "pedido anterior"),
-            user(120, "arreglá ese aviso"), user(130, "<system-reminder>recordatorio</system-reminder>"),
-            event(150, type="agent_message", message="sigo trabajando")]
+    rows = [
+        event(90, type="task_started"),
+        user(95, "pedido anterior"),
+        user(120, "arreglá ese aviso"),
+        user(130, "<system-reminder>recordatorio</system-reminder>"),
+        event(150, type="agent_message", message="sigo trabajando"),
+    ]
     path = tmp_path / "merged.jsonl"
     path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
     turn = transcripts.parse_codex(str(path))["turns"][-1]
@@ -204,8 +234,11 @@ def test_refresh_publishes_notice_only_change_even_when_already_running(card):
     receipt = copy.deepcopy(card["envio_codex"])
     notice = copy.deepcopy(card["needs"])
     card.update(state="corriendo", needs=None)
-    parsed = {"meta": {}, "title": None, "turns": [
-        {"id": "current", "prompt": "pedido posterior", "prompt_ts": iso(120), "ended": False}]}
+    parsed = {
+        "meta": {},
+        "title": None,
+        "turns": [{"id": "current", "prompt": "pedido posterior", "prompt_ts": iso(120), "ended": False}],
+    }
     ses.apply_transcript(card, parsed)
     card["needs"] = notice
     assert ses.apply_transcript(card, parsed) is True
@@ -215,8 +248,14 @@ def test_refresh_publishes_notice_only_change_even_when_already_running(card):
 
 
 def test_unconfirmed_send_after_later_input_never_recreates_enter_warning(card):
-    card.update(state="termino", state_since=iso(130), needs=None, prompt_ts=iso(120),
-                sent_mark="unmatched", envio_pendiente={"at": 110})
+    card.update(
+        state="termino",
+        state_since=iso(130),
+        needs=None,
+        prompt_ts=iso(120),
+        sent_mark="unmatched",
+        envio_pendiente={"at": 110},
+    )
     card["envio_codex"].update(estado="encolado", confirmacion_final=False)
     assert ses.envio_sin_confirmar(card, 200) is True
     assert card["needs"] is None and card["state"] == "termino"
@@ -235,8 +274,7 @@ def test_old_send_timeout_never_replaces_a_real_blocking_notice(card, kind):
 
 
 def test_old_send_timeout_never_replaces_a_pending_permission(card):
-    card.update(state_since=iso(100), sent_mark="unmatched", envio_pendiente={"at": 110},
-                pending_id="still-open")
+    card.update(state_since=iso(100), sent_mark="unmatched", envio_pendiente={"at": 110}, pending_id="still-open")
     before = copy.deepcopy(card)
     assert ses.envio_sin_confirmar(card, 200) is False
     assert card == before
@@ -245,16 +283,28 @@ def test_old_send_timeout_never_replaces_a_pending_permission(card):
 def test_liveness_reads_later_input_before_expiring_old_send(card, tmp_path, monkeypatch):
     transcript = tmp_path / "later.jsonl"
     transcript.write_text("synthetic transcript", encoding="utf-8")
-    card.update(transcript_path=str(transcript), hooked=False, state_since=iso(100),
-                sent_mark="unmatched", envio_pendiente={"at": 110})
+    card.update(
+        transcript_path=str(transcript),
+        hooked=False,
+        state_since=iso(100),
+        sent_mark="unmatched",
+        envio_pendiente={"at": 110},
+    )
     card["envio_codex"].update(estado="encolado", confirmacion_final=False)
     monkeypatch.setattr(ses, "sessions", {card["session_id"]: card})
     monkeypatch.setattr(ses, "transcript_stat", {})
     monkeypatch.setattr(ses, "refresh_alive", lambda s: False)
     monkeypatch.setattr(ses, "coda_mirar_pantalla", lambda s: False)
     monkeypatch.setattr(ses, "coda_mirar_fondo", lambda s: None)
-    monkeypatch.setattr(ses, "read_transcript", lambda s: {"meta": {}, "title": None, "turns": [
-        {"id": "new", "prompt": "pedido nuevo combinado", "prompt_ts": iso(120), "ended": False}]})
+    monkeypatch.setattr(
+        ses,
+        "read_transcript",
+        lambda s: {
+            "meta": {},
+            "title": None,
+            "turns": [{"id": "new", "prompt": "pedido nuevo combinado", "prompt_ts": iso(120), "ended": False}],
+        },
+    )
     monkeypatch.setattr(ses.state, "broadcast", lambda event: None)
     ses.check_liveness(card["session_id"])
     assert card["needs"] is None and card["state"] == "corriendo"

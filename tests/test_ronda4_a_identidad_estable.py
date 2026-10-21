@@ -1,4 +1,5 @@
 """Identidad estable durante lectura de cabecera; sin procesos ni cuentas reales."""
+
 import json
 
 import codex_identity as identity
@@ -14,8 +15,10 @@ def header(tmp_path, monkeypatch):
     monkeypatch.setattr(identity.procinfo, "process_agent", lambda pid: "codex")
 
     def write(thread=THREAD):
-        path.write_text(json.dumps({"type": "session_meta", "payload": {
-            "id": thread, "originator": "codex-tui"}}) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps({"type": "session_meta", "payload": {"id": thread, "originator": "codex-tui"}}) + "\n",
+            encoding="utf-8",
+        )
         return str(path)
 
     write()
@@ -42,9 +45,10 @@ def test_change_during_header_read_rejects_identity(header, monkeypatch, change)
             return 123, {path}
         if change == "unavailable":
             raise OSError("proceso inaccesible")
-        return (124 if change == "process" else 123,
-                {"otro-rollout"} if change == "rollout" else
-                {path, "otro-rollout"} if change == "ambiguous" else {path})
+        return (
+            124 if change == "process" else 123,
+            {"otro-rollout"} if change == "rollout" else {path, "otro-rollout"} if change == "ambiguous" else {path},
+        )
 
     monkeypatch.setattr(identity, "_snapshot", snapshot)
     result = identity.probe(4242)

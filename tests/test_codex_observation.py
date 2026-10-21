@@ -21,8 +21,9 @@ def database(tmp_path, monkeypatch):
     monkeypatch.setattr(observation, "_footer", lambda pid: (str(tmp_path), "Mi sesión"))
     sessions = tmp_path / "sessions"
     sessions.mkdir()
-    (sessions / f"rollout-{SID}.jsonl").write_text(json.dumps({"type": "session_meta", "payload": {
-        "id": SID, "originator": "codex-tui"}}), encoding="utf-8")
+    (sessions / f"rollout-{SID}.jsonl").write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": SID, "originator": "codex-tui"}}), encoding="utf-8"
+    )
     path = tmp_path / "state_5.sqlite"
     with closing(sqlite3.connect(path)) as con, con:
         con.execute("CREATE TABLE threads (id TEXT, cwd TEXT, name TEXT, archived INT, originator TEXT)")
@@ -81,11 +82,14 @@ def test_missing_database_is_not_created(tmp_path, monkeypatch):
     assert not (tmp_path / "state_5.sqlite").exists()
 
 
-@pytest.mark.parametrize("footer,expected", [
-    ("  GPT-6.1-Sol low fast · D:/Apps/lienzo · Mi sesión", ("D:/Apps/lienzo", "Mi sesión")),
-    ("  GPT-6.1-Sol low fast · D:/Apps/lienzo · Mi sesi…", None),
-    ("  GPT-6.1-Sol low fast · D:/Apps/lienzo", None),
-])
+@pytest.mark.parametrize(
+    "footer,expected",
+    [
+        ("  GPT-6.1-Sol low fast · D:/Apps/lienzo · Mi sesión", ("D:/Apps/lienzo", "Mi sesión")),
+        ("  GPT-6.1-Sol low fast · D:/Apps/lienzo · Mi sesi…", None),
+        ("  GPT-6.1-Sol low fast · D:/Apps/lienzo", None),
+    ],
+)
 def test_footer_requires_complete_visible_name(monkeypatch, footer, expected):
     snapshot = {"ok": True, "lines": ["›", "", footer, "← for agents · ? for shortcuts"]}
     monkeypatch.setattr(observation.subproc, "correr", lambda *a, **kw: (0, json.dumps(snapshot), ""))

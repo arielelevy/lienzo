@@ -10,6 +10,7 @@ La coordinadora la engancha en `conocimiento_api._dispatch` por prefijo de ruta.
     GET  /conocimiento/<p>/temas
     GET  /conocimiento/<p>/briefing?archivos=&temas=&q=&desde_cierre=   (parametros repetibles)
     GET  /conocimiento/<p>/preguntar?q=&archivos=&temas=&tipo=&saltos=&prosa=1   (prosa: opt-in, aparte)
+    GET  /conocimiento/<p>/preguntar?...&offset=&foto=<token>          paginas de la lista fija (409 otra busqueda, 410 vencida)
     GET  /conocimiento/<p>/vista?tema=
     GET  /conocimiento/<p>/briefing?...&encargos=&markdown=1            (encargos: sus archivos; markdown: el texto)
     GET  /conocimiento/<p>/alternativas/<id>/por_que                    por que se descarto (v5 §8.5 consulta 1)
@@ -118,6 +119,7 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             offset=_entero(_uno(query, "offset"), "offset", 0),
             limite=_entero(_uno(query, "limite"), "limite", 100),
             prosa=_uno(query, "prosa") in ("1", "true", "si"),
+            foto=_uno(query, "foto"),  # token de la primera pagina: las siguientes salen de esa lista fija
         )
     if resto == ["vista"] and metodo == "GET":
         return 200, v.vista(pid, _uno(query, "tema", ""))

@@ -885,8 +885,9 @@ def abrir_ronda(pid, objetivo):
     )
 
 
-def encargo(pid, ronda, letra, texto, archivos=None, *, tipo_trabajo=None, contexto_desarrollo=None,
-            controles_declarados=None):
+def encargo(
+    pid, ronda, letra, texto, archivos=None, *, tipo_trabajo=None, contexto_desarrollo=None, controles_declarados=None
+):
     """Registra el encargo (el texto entero queda en rondas/<ronda>/encargo-<letra>.md) y devuelve su
     nodo. Después de lanzar o mandar, `encargo_enviado(pid, e["id"], s)` lo vincula a la tarjeta.
     El tipo de trabajo es obligatorio: bugfix, feature, refactor, investigacion, documentacion,
@@ -903,9 +904,15 @@ def encargo(pid, ronda, letra, texto, archivos=None, *, tipo_trabajo=None, conte
     return _conocimiento(
         "POST",
         f"/{pid}/encargos",
-        {"ronda": ronda, "letra": letra, "texto": texto, "archivos": archivos or [], "autor": f"coordinadora:{YO}",
-         "contexto_desarrollo": contexto,
-         **({"controles_declarados": controles_declarados} if controles_declarados is not None else {})},
+        {
+            "ronda": ronda,
+            "letra": letra,
+            "texto": texto,
+            "archivos": archivos or [],
+            "autor": f"coordinadora:{YO}",
+            "contexto_desarrollo": contexto,
+            **({"controles_declarados": controles_declarados} if controles_declarados is not None else {}),
+        },
     )
 
 
@@ -916,8 +923,12 @@ def uso_aprendizaje(pid, creencia, resultado, encargo=None, nota=None):
     return _conocimiento(
         "POST",
         f"/{pid}/creencias/{creencia}/uso",
-        {"resultado": resultado, "por": f"coordinadora:{YO}",
-         **({"encargo": encargo} if encargo else {}), **({"nota": nota} if nota else {})},
+        {
+            "resultado": resultado,
+            "por": f"coordinadora:{YO}",
+            **({"encargo": encargo} if encargo else {}),
+            **({"nota": nota} if nota else {}),
+        },
     )
 
 

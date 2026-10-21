@@ -10,8 +10,13 @@ from lienzo import kiro
 
 def test_catalogue_shared_by_every_provider():
     assert set(agentes.CAPACIDADES) == set(agentes.AGENTES)
-    assert {a for a, p in agentes.AGENTES.items() if p.capabilities["screen"]} == {"claude", "codex", "kiro"}
-    assert all(p.capabilities["coordinable"] for p in agentes.AGENTES.values())
+    assert {a for a, p in agentes.AGENTES.items() if p.capabilities["screen"]} == {
+        "claude",
+        "codex",
+        "kiro",
+        "antigravity",
+    }
+    assert {a for a, p in agentes.AGENTES.items() if not p.capabilities["coordinable"]} == {"antigravity"}
 
 
 @pytest.mark.parametrize("sid", ["sess_" + "-" * 36, "sess_" + "a" * 36, "sess_123", "pid-1", "&calc", None])

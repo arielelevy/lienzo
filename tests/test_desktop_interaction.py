@@ -22,10 +22,20 @@ def test_explicit_reconnect_is_forwarded_without_public_credentials(monkeypatch)
     import claude_pipe_runtime as runtime
 
     calls = []
-    monkeypatch.setattr(runtime, "register", lambda card, **kw: calls.append(kw) or {
-        "session_id": "fixture", "command": "public", "expires_at": 123,
-        "connected": False, "secret": "must-not-leave-runtime",
-    })
+    monkeypatch.setattr(
+        runtime,
+        "register",
+        lambda card, **kw: (
+            calls.append(kw)
+            or {
+                "session_id": "fixture",
+                "command": "public",
+                "expires_at": 123,
+                "connected": False,
+                "secret": "must-not-leave-runtime",
+            }
+        ),
+    )
     monkeypatch.setattr(runtime, "availability", lambda s: {"puede": False})
     code, result = server.accion_claude_pipe({"session_id": "fixture"}, {"reconnect": True})
     assert code == 200 and calls == [{"reconnect": True}]

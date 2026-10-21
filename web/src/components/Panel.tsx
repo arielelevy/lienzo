@@ -473,6 +473,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
         </div>
       )}
       <div className="body" ref={bodyRef}>
+        {s.agent === "antigravity" && tab === "digest" && note && <p className="small dim" role="status">{note}</p>}
         <ErrorBoundary resetKey={`${s.session_id}:${tab}:${transcriptTick}`}>
         {tab === "improvements" ? <AgentImprovements key={s.session_id} sid={s.session_id} /> : tab === "screen" ? (
           <>
@@ -501,6 +502,8 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
               </>
             ) : "Pi todavía no guardó una transcripción. Aparecerá cuando persista el primer turno; las sesiones --no-session no guardan logs."}
           </div>
+        ) : s.agent === "antigravity" ? (
+          <div className="empty" role="status">{note || "leyendo historial…"}</div>
         ) : s.source === "sweep" && !s.transcript_path ? (
           <div className="empty" role="status">
             Lienzo detectó el proceso, pero todavía no identificó su conversación. No se puede leer el historial.

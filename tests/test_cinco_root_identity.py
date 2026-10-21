@@ -6,9 +6,16 @@ import sessions as ses
 
 @pytest.mark.parametrize("race", [None, "pid", "card"])
 def test_uncertain_probe_preserves_card_and_references(monkeypatch, race):
-    card = {"agent": "codex", "pid": 42, "session_id": "old", "cwd": "fixture",
-            "started": "now", "transcript_path": "old.jsonl", "codex_process_start": 123,
-            "envio_codex": {"estado": "sin_confirmacion", "envio_id": "reserved"}}
+    card = {
+        "agent": "codex",
+        "pid": 42,
+        "session_id": "old",
+        "cwd": "fixture",
+        "started": "now",
+        "transcript_path": "old.jsonl",
+        "codex_process_start": 123,
+        "envio_codex": {"estado": "sin_confirmacion", "envio_id": "reserved"},
+    }
     monkeypatch.setattr(ses, "sessions", {"old": card})
     monkeypatch.setattr(ses, "guess_transcript", lambda *args: ("old", "old.jsonl"))
     monkeypatch.setattr(ses, "transcript_home", lambda s: "fixture")

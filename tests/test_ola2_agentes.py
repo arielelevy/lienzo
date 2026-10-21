@@ -391,8 +391,10 @@ def test_codex_identifica_por_pid_sin_heredar_el_rollout_del_mismo_cwd(monkeypat
     import agentes
     import codex_identity
 
-    proofs = {34228: {"verified": True, "thread": "hilo-A", "path": "rollout-A"},
-              17840: {"verified": True, "thread": "hilo-B", "path": "rollout-B"}}
+    proofs = {
+        34228: {"verified": True, "thread": "hilo-A", "path": "rollout-A"},
+        17840: {"verified": True, "thread": "hilo-B", "path": "rollout-B"},
+    }
     calls = []
 
     def probe(pid):
@@ -407,6 +409,7 @@ def test_codex_identifica_por_pid_sin_heredar_el_rollout_del_mismo_cwd(monkeypat
     proofs[17840] = {"verified": False, "reason": "snapshot incompleto"}
     assert profile.identity({"pid": 17840, "cwd": "D:/repo"}, {}) is None
     assert calls == [34228, 17840, 17840]
+
 
 LIENZO_DIR = str(Path(__file__).resolve().parents[1] / "lienzo")
 
@@ -481,15 +484,16 @@ def test_el_registro_tiene_los_cuatro_agentes_y_sus_datos_de_siempre():
     import launch
     import restore
 
-    assert set(agentes.AGENTES) == {"claude", "codex", "pi", "coda", "kiro"}
+    assert set(agentes.AGENTES) == {"claude", "codex", "pi", "coda", "kiro", "antigravity"}
     assert launch.AGENT_EXES == {
         "claude": "claude.exe",
         "codex": "codex.exe",
         "pi": "pi.exe",
         "coda": "coda.exe",
         "kiro": "kiro-cli.exe",
+        "antigravity": "agy.exe",
     }
-    assert set(restore._BY_ID) == {"claude", "codex", "kiro"}
+    assert set(restore._BY_ID) == {"claude", "codex", "kiro", "antigravity"}
     uid = "0123abcd-0000-4000-8000-000000000000"
     assert launch._resume_args("claude", uid) == ["--resume", uid]
     assert launch._resume_args("codex", uid) == ["resume", uid]
@@ -497,7 +501,7 @@ def test_el_registro_tiene_los_cuatro_agentes_y_sus_datos_de_siempre():
     assert launch._resume_args("coda", "pid-1") == ["--lastsession"]
     assert launch._resume_args("claude", "pid-1") == []
     assert launch._resume_args("gemini", uid) == []
-    assert {a for a in agentes.AGENTES if launch._model_args(a, "m-1")} == {"claude", "codex", "coda"}
+    assert {a for a in agentes.AGENTES if launch._model_args(a, "m-1")} == {"claude", "codex", "coda", "antigravity"}
     assert launch._model_args("gemini", "m-1") == []
 
 

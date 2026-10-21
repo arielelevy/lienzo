@@ -19,6 +19,7 @@ import mirror
 import rules as rl
 import state
 from rules import at_near, local_dt
+from sessions import find_session
 from state import lock, now, rules, sessions, short
 
 MIN_EVERY_S = 60
@@ -157,7 +158,14 @@ def check_rule(d: dict) -> tuple[int, dict] | None:
         return 404, {"error": "sesion destino desconocida"}
     if d["kind"] == "on_stop" and not _known_session(d.get("from")):
         return 404, {"error": "sesion origen desconocida"}
+    if d["kind"] == "on_stop":
+        return check_on_stop_source(d["from"])
     return None
+
+
+def check_on_stop_source(sid: str | None) -> tuple[int, dict] | None:
+    """La PC dueña puede ser remota; desconocer al agente no acredita un fin de turno."""
+    return rl.on_stop_source_error(find_session(sid) if sid else None)
 
 
 def check_remote_destination(d: dict, text: str) -> dict | None:
@@ -329,10 +337,61 @@ def create_rule(d: dict) -> tuple[int, dict]:
 
 
 def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
-    """PUT /rules/<id>: edita una conexion pendiente (doble click en la flecha): texto, hora,
-    repeticion. Una programada que ya disparo se puede reprogramar: vuelve a quedar vigente.
-    Devuelve (codigo, cuerpo), como create_rule. Primero valida todo y despues escribe: un 400 a
-    mitad de camino dejaria la regla editada por partes."""
+    """Prepara la edición sin mutar; una rehabilitación vuelve a validar la topología."""
+    code, values = _edit_values(d)
+    if code != 200:
+        return code, values
+    with lock:
+        r = next((x for x in rules.items if x["id"] == rule_id), None)
+        if r is None:
+            return 404, {"error": "conexion desconocida"}
+        anterior = copy.deepcopy(r)
+        code, candidata = _edited_rule(copy.deepcopy(r), d, values)
+        if code != 200:
+            return code, candidata
+        habilita = r.get("kind") == "on_stop" and not r.get("enabled") and candidata.get("enabled")
+        if habilita:
+            if conflicto := _rehabilitation_conflict(candidata):
+                return 409, conflicto
+        else:
+            _apply_edit(r, anterior, candidata)
+    if habilita:
+        # La consulta al destino y la reserva federada nunca retienen el lock de las sesiones.
+        if conflicto := check_remote_destination(candidata, candidata.get("text") or ""):
+            return 409, conflicto
+        with lock:
+            if not any(x is r for x in rules.items) or r != anterior:
+                return 409, {"error": "la conexion cambió durante la validación; volvé a intentarlo"}
+            if rejection := check_on_stop_source(candidata.get("from")):
+                return rejection
+            if conflicto := _rehabilitation_conflict(candidata):
+                return 409, conflicto
+            _apply_edit(r, anterior, candidata)
+    rules.publish()
+    state.log(
+        f"regla {r['id']} editada: {r['kind']} -> {r['to'][:8]} {r.get('at') or ''} {short(r.get('text') or '', 60)!r}"
+    )
+    return 200, r
+
+
+def _rehabilitation_conflict(rule: dict) -> dict | None:
+    """Con lock tomado: inversas y duplicados locales/espejados, excluyendo la propia regla."""
+    existentes = [r for r in list(rules.items) + mirror.MIRROR.rules() if r.get("id") != rule["id"]]
+    return rl.loop_conflict(rule, existentes, []) or rl._rule_clash(rule, existentes)
+
+
+def _apply_edit(rule: dict, anterior: dict, candidata: dict) -> None:
+    # Mantener identidad de regla e informes pendientes: sólo cambian los campos editados.
+    for key in anterior.keys() - candidata.keys():
+        rule.pop(key, None)
+    for key, value in candidata.items():
+        if key not in anterior or value != anterior[key]:
+            rule[key] = value
+    rules.save()
+
+
+def _edit_values(d: dict) -> tuple[int, dict]:
+    """Conservar la validación de entrada anterior a buscar la regla, incluido el contrato de at."""
     if "enabled" in d and type(d["enabled"]) is not bool:
         return 400, {"error": "enabled debe ser booleano"}
     at = None
@@ -347,10 +406,13 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
         max_fires = clamp_fires(d["max_fires"]) if d.get("max_fires") is not None else None
     except TypeError, ValueError, OverflowError:
         return 400, {"error": "max_fires debe ser un numero"}
+    return 200, {"at": at, "max_fires": max_fires}
+
+
+def _edited_rule(r: dict, d: dict, values: dict) -> tuple[int, dict]:
+    """Prepara los cambios sobre una copia privada; no persiste ni publica."""
+    at, max_fires = values["at"], values["max_fires"]
     with lock:
-        r = next((x for x in rules.items if x["id"] == rule_id), None)
-        if r is None:
-            return 404, {"error": "conexion desconocida"}
         if d.get("enabled") is True:
             missing = [
                 r[key]
@@ -368,7 +430,20 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
             limites, err = on_stop_limits(d, r)
             if err:
                 return 400, {"error": err}
-        # de aca en adelante no se rechaza nada mas: `extra` con algo adentro es la regla 'at' ya validada
+            # Contemplar también la reactivación implícita del límite rate, antes de mutar nada.
+            implicit_enable = (
+                not r.get("enabled")
+                and bool(d.get("repeat", r.get("repeat")))
+                and limites["limit"] == "rate"
+                and r.get("disabled_at")
+                and not r.get("parked_since")
+                and not r.get("archived_at")
+            )
+            if (d.get("enabled") is True or ("enabled" not in d and implicit_enable)) and (
+                rejection := check_on_stop_source(r.get("from"))
+            ):
+                return rejection
+        # Sólo se modifica la copia privada; aún faltan las guardias de rehabilitación.
         if "text" in d:
             r["text"] = d["text"]
         if extra is not None:
@@ -411,11 +486,6 @@ def edit_rule(rule_id: str, d: dict) -> tuple[int, dict]:
                     "disabled_at",
                 ):
                     r.pop(key, None)
-        rules.save()
-    rules.publish()
-    state.log(
-        f"regla {r['id']} editada: {r['kind']} -> {r['to'][:8]} {r.get('at') or ''} {short(r.get('text') or '', 60)!r}"
-    )
     return 200, r
 
 

@@ -124,8 +124,22 @@ _envio_poll_cursor = 0
 
 
 def _envio_firma(s: dict) -> str:
-    campos = ("session_id", "agent", "pid", "transcript_path", "external", "stopped_by",
-              "pending_id", "orphan", "no_console", "backend", "target", "distro", "alive", "envio_claude")
+    campos = (
+        "session_id",
+        "agent",
+        "pid",
+        "transcript_path",
+        "external",
+        "stopped_by",
+        "pending_id",
+        "orphan",
+        "no_console",
+        "backend",
+        "target",
+        "distro",
+        "alive",
+        "envio_claude",
+    )
     return json.dumps({k: s.get(k) for k in campos}, sort_keys=True, ensure_ascii=False)
 
 
@@ -140,14 +154,26 @@ def public_session(s: dict, *, calcular: bool = False) -> dict:
             _envio_publico[sid] = (firma, dict(plan))
     else:
         cached = _envio_publico.get(sid)
-        plan = cached[1] if cached and cached[0] == firma else {
-            "puede": False, "motivo": "capacidad de envío pendiente de comprobar", "transporte": None,
-        }
+        plan = (
+            cached[1]
+            if cached and cached[0] == firma
+            else {
+                "puede": False,
+                "motivo": "capacidad de envío pendiente de comprobar",
+                "transporte": None,
+            }
+        )
     view = {**s, "envio": dict(plan)}
+    if perfil(s["agent"]).capabilities.get("terminalOnly"):
+        # state sigue siendo el estado operativo del registro, no evidencia de un turno de agy.
+        view["state_source"] = "unverified"
     # Sin rollout no existe un oráculo para distinguir recepción de falta de Enter.
     # Incluye avisos persistidos antes de que Codex moviera el escritor al daemon.
-    if (s.get("agent") == "codex" and not s.get("transcript_path")
-            and (s.get("needs") or {}).get("kind") == "sin_enviar"):
+    if (
+        s.get("agent") == "codex"
+        and not s.get("transcript_path")
+        and (s.get("needs") or {}).get("kind") == "sin_enviar"
+    ):
         view["needs"] = {**s["needs"], "kind": "sin_transcripcion"}
     ext = s.get("external") or {}
     if ext.get("kind") == "claude-desktop":
@@ -192,11 +218,21 @@ def refresh_envios() -> None:
             old = snap.get(field) or {}
             result = None
             # Expirado es terminal para el sondeo; confirmar() sigue disponible explícitamente.
-            if (old.get("transporte") != "tecleo" and old.get("envio_id") and not old.get("confirmacion_final")
-                    and old.get("estado") in ("pendiente", "encolado", "sin_confirmacion")):
-                result = (claude_pipe_runtime.confirm if field == "envio_claude" else codex_queue.confirmar)(old["envio_id"])
+            if (
+                old.get("transporte") != "tecleo"
+                and old.get("envio_id")
+                and not old.get("confirmacion_final")
+                and old.get("estado") in ("pendiente", "encolado", "sin_confirmacion")
+            ):
+                result = (claude_pipe_runtime.confirm if field == "envio_claude" else codex_queue.confirmar)(
+                    old["envio_id"]
+                )
                 if result["estado"] == "desconocido" and time.time() - old.get("at", time.time()) > 600:
-                    result = {**old, "estado": "sin_confirmacion", "motivo": "confirmación no disponible tras reinicio; no se reintenta"}
+                    result = {
+                        **old,
+                        "estado": "sin_confirmacion",
+                        "motivo": "confirmación no disponible tras reinicio; no se reintenta",
+                    }
             with lock:
                 if sessions.get(snap["session_id"]) is not card:
                     continue
@@ -712,11 +748,16 @@ def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
         with lock:
             for rule in rules.items:
                 if sid in (rule.get("from"), rule.get("to")) and any(
-                        informe.get("estado") != "integrado" for informe in rule.get("informes", [])):
+                    informe.get("estado") != "integrado" for informe in rule.get("informes", [])
+                ):
                     rule["enabled"] = False
             rules.save(strict=True)
-        rules.remove(lambda r: sid in (r.get("from"), r.get("to")) and not any(
-            informe.get("estado") != "integrado" for informe in r.get("informes", [])))
+        rules.remove(
+            lambda r: (
+                sid in (r.get("from"), r.get("to"))
+                and not any(informe.get("estado") != "integrado" for informe in r.get("informes", []))
+            )
+        )
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
     restore_on_drop(card, muerta)
     state.broadcast({"type": "removed", "session_id": sid})
@@ -841,6 +882,7 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "target": None,  # backend tmux: el pane (%0, %1, ...) donde escribir/leer. None en Windows.
         "backend": None,  # "win32" | "tmux": que fuente maneja esta tarjeta. None = primario de la plataforma.
         "agent_exe": None,
+        "chrome": False,
         "cwd": None,
         "repo": "?",
         "repo_key": None,
@@ -853,6 +895,7 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "transcript_path": None,
         "transcript_bytes": None,
         "model": None,
+        "screen_observation": None,
         "state": "termino",
         "state_since": now(),
         "needs": None,
@@ -1117,17 +1160,25 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
         if not s.get("hooked"):
             entered = parse_ts(t.get("prompt_ts") if "prompt_ts" in t else t.get("ts_start"))
             previous = parse_ts(s.get("prompt_ts"))
-            if (s.get("agent") == "codex" and not transcripts.is_system_prompt(p) and entered
-                    and (previous is None or entered > previous)):
+            if (
+                s.get("agent") == "codex"
+                and not transcripts.is_system_prompt(p)
+                and entered
+                and (previous is None or entered > previous)
+            ):
                 s["prompt_ts"] = entered.isoformat()
             # sin hooks, el pedido sale de la transcripcion; el que tecleo el lienzo ya quedo como envio
             via = "lienzo" if s.get("sent_mark") and prompt_mark(p) == s["sent_mark"] else None
             captura.pedido(s, p, via, turno=t.get("id"))
             receipt = s.get("envio_codex") or {}
             started = parse_ts(t.get("ts_start"))
-            if (via == "lienzo" and receipt.get("transporte") == "tecleo" and started
-                    and started.timestamp() >= receipt["at"]
-                    and hashlib.sha256(p.encode()).hexdigest() == receipt.get("prompt_sha256")):
+            if (
+                via == "lienzo"
+                and receipt.get("transporte") == "tecleo"
+                and started
+                and started.timestamp() >= receipt["at"]
+                and hashlib.sha256(p.encode()).hexdigest() == receipt.get("prompt_sha256")
+            ):
                 receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
                 s["sent_mark"] = s["envio_pendiente"] = None
     clear_stale_send_notice(s, t)
@@ -1513,8 +1564,13 @@ def stale_send_notice(s: dict, turn: dict | None = None) -> bool:
     """
     notice = s.get("needs") or {}
     receipt = s.get("envio_codex") or {}
-    if (s.get("agent") != "codex" or not s.get("alive") or s.get("state") == "muerta"
-            or notice.get("kind") != "sin_enviar" or s.get("pending_id")):
+    if (
+        s.get("agent") != "codex"
+        or not s.get("alive")
+        or s.get("state") == "muerta"
+        or notice.get("kind") != "sin_enviar"
+        or s.get("pending_id")
+    ):
         return False
     since = parse_ts(notice.get("since"))
     if since is None:
@@ -1524,15 +1580,18 @@ def stale_send_notice(s: dict, turn: dict | None = None) -> bool:
         entered = parse_ts(turn.get("prompt_ts") if "prompt_ts" in turn else turn.get("ts_start"))
         if prompt and not transcripts.is_system_prompt(prompt) and entered and entered > since:
             return True  # Retirar el aviso no confirma el recibo del envío.
-    if (receipt.get("estado") != "entregado" or receipt.get("confirmacion_final") is not True
-            or not receipt.get("envio_id")):
+    if (
+        receipt.get("estado") != "entregado"
+        or receipt.get("confirmacion_final") is not True
+        or not receipt.get("envio_id")
+    ):
         return False
     sent_at = receipt.get("at")
     if type(sent_at) not in (int, float):
         return False
     try:
         sent = dt.datetime.fromtimestamp(sent_at, dt.UTC)
-    except (OSError, OverflowError, ValueError):
+    except OSError, OverflowError, ValueError:
         return False
     return sent > since  # sin orden causal probado, conservar el aviso más nuevo
 
@@ -1556,11 +1615,18 @@ def envio_sin_confirmar(s: dict, ahora: float) -> bool:
     if s.get("sent_mark") is None or not s.get("alive"):
         s["envio_pendiente"] = None  # confirmado por otro camino, o el proceso murio
         receipt = s.get("envio_codex") or {}
-        if not s.get("alive") and receipt.get("transporte") == "tecleo" and receipt.get("estado") in ("pendiente", "encolado"):
+        if (
+            not s.get("alive")
+            and receipt.get("transporte") == "tecleo"
+            and receipt.get("estado") in ("pendiente", "encolado")
+        ):
             receipt.update(estado="sin_confirmacion", motivo="el proceso Codex terminó sin confirmar; no se reintenta")
         return False
-    if (s.get("state") == "corriendo" or s.get("pending_id")
-            or (s.get("needs") or {}).get("kind") in ("permission", "question", "denied")):
+    if (
+        s.get("state") == "corriendo"
+        or s.get("pending_id")
+        or (s.get("needs") or {}).get("kind") in ("permission", "question", "denied")
+    ):
         return False
     desde = max(p["at"], (parse_ts(s.get("state_since")) or dt.datetime.min.replace(tzinfo=dt.UTC)).timestamp())
     if ahora - desde < ENVIO_SIN_CONFIRMAR_S:
@@ -1590,8 +1656,11 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
     sistema = transcripts.is_system_prompt(raw)
     via = None if sistema else prompt_origin(s, raw)
     receipt = s.get("envio_codex") or {}
-    if (via == "lienzo" and receipt.get("transporte") == "tecleo"
-            and hashlib.sha256(raw.encode()).hexdigest() == receipt.get("prompt_sha256")):
+    if (
+        via == "lienzo"
+        and receipt.get("transporte") == "tecleo"
+        and hashlib.sha256(raw.encode()).hexdigest() == receipt.get("prompt_sha256")
+    ):
         receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
     # el pedido que es el propio mensaje de autorizacion (lo tecleo el lienzo con `autorizando`) no
     # olvida lo autorizado: si no, la relectura del turno volvia a mostrar la misma denegacion
@@ -2266,8 +2335,7 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
             return  # la extension tiene prioridad sobre el entorno de un comando anterior
         if sid and sid != s["session_id"] and sid in sessions:
             target = sessions[sid]
-            if (not codex_proof or target.get("agent") != "codex"
-                    or (target.get("pid") and backend.agent_alive(target))):
+            if not codex_proof or target.get("agent") != "codex" or (target.get("pid") and backend.agent_alive(target)):
                 return  # no robar el hilo de otro proceso vivo
             provisional = s
             claim_pid(target, {**s, "transcript_path": tpath})
@@ -2323,8 +2391,11 @@ def adopt_process(p: dict) -> None:
     codex_proof = None
     if p["agent"] == "codex":
         codex_proof = codex_identity.transcript_identity(p["pid"])
-        sid, tpath = ((codex_proof["thread"], codex_proof["path"])
-                      if codex_proof["verified"] or codex_proof.get("observed") else (None, None))
+        sid, tpath = (
+            (codex_proof["thread"], codex_proof["path"])
+            if codex_proof["verified"] or codex_proof.get("observed")
+            else (None, None)
+        )
     elif p["agent"] == "pi" and not p.get("pi_guess_allowed"):
         sid, tpath = p.get("pi_session") or (None, None)
     else:
@@ -2361,6 +2432,10 @@ def adopt_process(p: dict) -> None:
                 if s["state"] == "muerta":
                     set_state(s, "termino")
                 touch(s)
+            if s.get("pid") == p["pid"] and bool(s.get("chrome")) != bool(p.get("chrome")):
+                # la línea de comando es del proceso: también la tarjeta que ya existía antes del barrido
+                s["chrome"] = bool(p.get("chrome"))
+                touch(s)
             if codex_proof and codex_proof["verified"] and s.get("pid") == p["pid"]:
                 s["codex_process_start"] = codex_proof["process_start"]
                 s["transcript_path"] = codex_proof["path"]
@@ -2377,6 +2452,7 @@ def adopt_process(p: dict) -> None:
                 "no_console": bool(p.get("no_console") or p.get("external")),
                 "external": p.get("external"),
                 "agent_exe": p["exe"],
+                "chrome": bool(p.get("chrome")),
                 "cwd": cwd,
                 "transcript_path": tpath,
                 "started": p.get("created") or now(),
@@ -2430,8 +2506,10 @@ def sweep_once() -> None:
         elif perfil(s["agent"]).identity_key is not None:
             # un /new o un resume en la TUI cambian la sesion del mismo proceso
             identity = observed.get(perfil(s["agent"]).identity_key)
-            if identity and (identity != (s["session_id"], s.get("transcript_path"))
-                             or (s["agent"] == "codex" and not s.get("codex_process_start"))):
+            if identity and (
+                identity != (s["session_id"], s.get("transcript_path"))
+                or (s["agent"] == "codex" and not s.get("codex_process_start"))
+            ):
                 attach_transcript(s, identity)
         else:
             attach_transcript(s)
@@ -2451,11 +2529,13 @@ def marcar_desktop(p: dict) -> None:
         for s in sessions.values():
             ext = s.get("external") or {}
             # El registro validado del mismo proceso prevalece sobre el fallback -p.
-            registered_desktop = (p["external"].get("kind") == "claude-desktop"
-                                  and p["external"].get("via") == "registro")
+            registered_desktop = (
+                p["external"].get("kind") == "claude-desktop" and p["external"].get("via") == "registro"
+            )
             generic_batch = ext.get("kind") == "batch" and ext.get("via") == "comando" and not ext.get("runner_pid")
-            if backend.proc_key(s) != backend.proc_key(p) or (ext and not ext.get("desktop")
-                                                           and not (registered_desktop and generic_batch)):
+            if backend.proc_key(s) != backend.proc_key(p) or (
+                ext and not ext.get("desktop") and not (registered_desktop and generic_batch)
+            ):
                 continue
             if ext != p["external"] or not s.get("no_console"):
                 s["external"], s["no_console"] = dict(p["external"]), True
@@ -2885,17 +2965,28 @@ def puede_enviar(s: dict) -> dict:
         ext = s.get("external") or {}
         if not ext or ext.get("kind") == "claude-desktop":
             if s.get("stopped_by") or s.get("pending_id"):
-                return {"puede": False, "motivo": "sesión detenida o con permiso/pregunta pendiente", "transporte": "claude_pipe"}
+                return {
+                    "puede": False,
+                    "motivo": "sesión detenida o con permiso/pregunta pendiente",
+                    "transporte": "claude_pipe",
+                }
             pipe = claude_pipe_runtime.availability(s)
-            if ext.get("kind") == "claude-desktop" or pipe["puede"] or (s.get("envio_claude") or {}).get("estado") in ("pendiente", "encolado", "sin_confirmacion"):
+            if (
+                ext.get("kind") == "claude-desktop"
+                or pipe["puede"]
+                or (s.get("envio_claude") or {}).get("estado") in ("pendiente", "encolado", "sin_confirmacion")
+            ):
                 return pipe
     if s.get("agent") == "codex" and (codex_queue.es_desktop(s) or not s.get("external")):
         if bloqueo := queue_blocked(s):
             return {"puede": False, "motivo": bloqueo[1]["error"], "transporte": None}
         if not codex_queue.es_desktop(s):
             bloqueo = send_blocked(s)
-            return ({"puede": False, "motivo": bloqueo[1]["error"], "transporte": None} if bloqueo
-                    else {"puede": True, "motivo": None, "transporte": "tecleo"})
+            return (
+                {"puede": False, "motivo": bloqueo[1]["error"], "transporte": None}
+                if bloqueo
+                else {"puede": True, "motivo": None, "transporte": "tecleo"}
+            )
         plan = codex_queue.puede_enviar(s)
         return plan
     if (s.get("external") or {}).get("kind") == "claude-desktop":
@@ -2963,7 +3054,10 @@ def run_send(s: dict, final: str, enter: bool = True, key: str | None = None) ->
     if s.get("agent") == "codex":
         start = s.get("codex_console_start")
         if type(start) is not int or procs.creation_filetime(pid) != start:
-            return 409, {"ok": False, "error": "el proceso Codex cambió o aún no se verificó: esperá el próximo barrido"}
+            return 409, {
+                "ok": False,
+                "error": "el proceso Codex cambió o aún no se verificó: esperá el próximo barrido",
+            }
         cmd += ["--expected-start", str(start)]
     cmd += ["--text-file", tf] if tf else ["--text", final]
     if not enter:
@@ -3286,16 +3380,27 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
         digest = hashlib.sha256(json.dumps([text, attachments_pedidos], ensure_ascii=False).encode()).hexdigest()
         with lock:
             previous = s.get("envio_codex") or {}
-            if (previous.get("transporte") == "tecleo" and previous.get("digest") == digest
-                    and (previous.get("estado") in ("pendiente", "encolado", "sin_confirmacion")
-                         or (previous.get("estado") == "entregado" and time.time() - previous["at"] < 60))):
+            if (
+                previous.get("transporte") == "tecleo"
+                and previous.get("digest") == digest
+                and (
+                    previous.get("estado") in ("pendiente", "encolado", "sin_confirmacion")
+                    or (previous.get("estado") == "entregado" and time.time() - previous["at"] < 60)
+                )
+            ):
                 return 200, {"ok": True, "chars": len(text), **previous}
             if previous.get("transporte") == "tecleo" and previous.get("estado") == "pendiente":
                 return 409, {"ok": False, "error": "hay un envío a la consola Codex en curso; esperá a que termine"}
             if previous and previous.get("transporte") != "tecleo":
                 s.setdefault("envios_codex_anteriores", {})[previous.get("envio_id") or sid] = previous
-            console_receipt = {"envio_id": secrets.token_hex(12), "at": time.time(), "estado": "pendiente",
-                               "transporte": "tecleo", "motivo": "esperando escritura en la consola de Codex", "digest": digest}
+            console_receipt = {
+                "envio_id": secrets.token_hex(12),
+                "at": time.time(),
+                "estado": "pendiente",
+                "transporte": "tecleo",
+                "motivo": "esperando escritura en la consola de Codex",
+                "digest": digest,
+            }
             s["envio_codex"] = console_receipt
     final, orig, attachments = compose_send(
         sid, text, attachments, agent=s.get("agent"), wsl=backend.is_tmux(s) and tmux.VIA_WSL
@@ -3314,8 +3419,9 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
         with lock:
             s["sent_mark"] = None  # no entro: lo que se tipee despues es del usuario
             if console_receipt is not None and console_receipt.get("estado") != "entregado":
-                console_receipt.update(estado="rechazado" if code == 409 else "sin_confirmacion",
-                                       motivo=out.get("error"))
+                console_receipt.update(
+                    estado="rechazado" if code == 409 else "sin_confirmacion", motivo=out.get("error")
+                )
                 touch(s)
         return code, out
     # la memoria del proyecto de la carpeta de `s` (anexo A de v5): el texto entero, no el envoltorio
@@ -3387,8 +3493,11 @@ def send_codex_queue(s: dict, text: str, attachments: list[str]) -> tuple[int, d
     captura.envio(s, text, adjuntos=attachments_pedidos, **captura.origen_actual())
     with lock:
         current = s.get("envio_codex") or {}
-        if (sessions.get(s.get("session_id")) is s and current.get("envio_id") == res.get("envio_id")
-                and current.get("at") == result_at):
+        if (
+            sessions.get(s.get("session_id")) is s
+            and current.get("envio_id") == res.get("envio_id")
+            and current.get("at") == result_at
+        ):
             s["last_prompt"] = short(orig, 500) if orig else short(final, 500)
             s["prompt_via"] = "lienzo"
             touch(s)
@@ -3644,6 +3753,22 @@ def lo_contesta_el_auto_aprobar(s: dict, d: dict) -> bool:
     return autoaprobar.opcion_de_permiso(d, s.get("agent")) is not None
 
 
+def antigravity_screen_observation(result: dict) -> dict:
+    """Sólo el pie observado de agy 1.4.3; nunca texto de respuestas ni un ID canónico."""
+    lines = [line.rstrip() for line in result.get("lines", []) if line.strip()]
+    footer = lines[-1] if lines and result.get("ok") else ""
+    model = re.fullmatch(
+        r"(?:\? for shortcuts {2,}| {8,})(Gemini [A-Za-z0-9 .()-]{1,70}) · (low|medium|high|xhigh|max)", footer
+    )
+    return {
+        "source": "screen",
+        "observed_at": now(),
+        "available": bool(result.get("ok")),
+        "model_label": f"{model[1]} · {model[2]}" if model else None,
+        "activity": "unverified",  # un prompt dibujado no confirma el fin de un turno
+    }
+
+
 def screen_once() -> None:
     """Una pasada de lectura de pantalla. read_screen es un subproceso de 183 ms por sesion: corre
     fuera del lock, y recien despues (con el lock, y si la tarjeta sigue siendo la misma) se decide
@@ -3656,6 +3781,18 @@ def screen_once() -> None:
         ]
     for s in items:
         r = read_screen(s)
+        if s["agent"] == "antigravity":
+            observation = antigravity_screen_observation(r)
+            with lock:
+                if sessions.get(s["session_id"]) is s:
+                    previous = s.get("screen_observation") or {}
+                    if any(
+                        previous.get(key) != observation[key]
+                        for key in ("source", "available", "model_label", "activity")
+                    ):
+                        # La hora corresponde a la muestra publicada, no a cada sondeo idéntico.
+                        s["screen_observation"] = observation
+                        touch(s)
         if not r.get("ok"):
             continue  # no leer la consola no demuestra que el permiso se haya cerrado
         area = r.get("area") if r.get("ok") else None

@@ -18,7 +18,7 @@ export function Digest({ turn: t, toast: extToast }: { turn: DigestTurn; toast?:
     <div className="dg">
       <div className="ts">
         {/* cruda del server venia en UTC y con milisegundos */}
-        {t.ts_start ? whenLabel(t.ts_start, true) : "sin hora"} {t.ended ? "" : "· en curso"}
+        {t.ts_start ? whenLabel(t.ts_start, true) : "sin hora"} {t.history_only ? "· fin sin confirmar" : t.ended ? "" : "· en curso"}
       </div>
       <div className="p">› {t.prompt}</div>
       {/* Lo que el agente fue diciendo en el turno, antes de la respuesta. Sin esto Destacados

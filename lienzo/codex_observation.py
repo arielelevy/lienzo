@@ -20,7 +20,8 @@ import subproc
 
 def _footer(pid):
     code, output, _ = subproc.correr(
-        [sys.executable, str(Path(__file__).with_name("screen.py")), "--pid", str(pid), "--json"], timeout=5,
+        [sys.executable, str(Path(__file__).with_name("screen.py")), "--pid", str(pid), "--json"],
+        timeout=5,
     )
     if code != 0:
         return None
@@ -49,22 +50,31 @@ def observe(pid):
         if not footer:
             return None
         cwd, name = footer
-        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.25)) as con:
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.25)) as con:
             rows = con.execute(
                 "SELECT id,cwd FROM threads WHERE name=? AND archived=0 AND originator IN (?,?)",
                 (name, "codex-tui", "codex_cli_rs"),
             ).fetchall()
-        candidates = [sid for sid, folder in rows if isinstance(folder, str)
-                      and os.path.isdir(folder) and os.path.samefile(folder, cwd)]
+        candidates = [
+            sid
+            for sid, folder in rows
+            if isinstance(folder, str) and os.path.isdir(folder) and os.path.samefile(folder, cwd)
+        ]
         if len(candidates) != 1:
             return None
         sid = candidates[0]
         path = codex_status.rollout(sid, home)
         if not path or _footer(pid) != footer or procs.creation_filetime(pid) != start:
             return None
-        return {"verified": False, "observed": True, "pid": pid, "process_start": start,
-                "thread": sid, "path": path,
-                "reason": "transcripción observada por nombre único del pie de la TUI; no autoriza queue"}
+        return {
+            "verified": False,
+            "observed": True,
+            "pid": pid,
+            "process_start": start,
+            "thread": sid,
+            "path": path,
+            "reason": "transcripción observada por nombre único del pie de la TUI; no autoriza queue",
+        }
     except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error) as error:
         state.log(f"lectura del nombre Codex pid {pid}: {type(error).__name__}")
         return None

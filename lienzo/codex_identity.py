@@ -13,10 +13,16 @@ import procinfo
 
 
 class _Handle(ctypes.Structure):
-    _fields_ = [("object", ctypes.c_void_p), ("pid", ctypes.c_size_t),
-                ("handle", ctypes.c_size_t), ("access", wt.ULONG),
-                ("trace", wt.USHORT), ("type", wt.USHORT),
-                ("attributes", wt.ULONG), ("reserved", wt.ULONG)]
+    _fields_ = [
+        ("object", ctypes.c_void_p),
+        ("pid", ctypes.c_size_t),
+        ("handle", ctypes.c_size_t),
+        ("access", wt.ULONG),
+        ("trace", wt.USHORT),
+        ("type", wt.USHORT),
+        ("attributes", wt.ULONG),
+        ("reserved", wt.ULONG),
+    ]
 
 
 def _handles(pid):
@@ -44,8 +50,8 @@ def _file_handles(pid, reference):
                 raise OSError("no se pudo identificar el tipo File")
             file_type = types.pop()
             return [row.handle for row in rows if row.pid == pid and row.type == file_type]
-        if status & 0xffffffff != 0xc0000004:
-            raise OSError(f"NtQuerySystemInformation: {status & 0xffffffff:#x}")
+        if status & 0xFFFFFFFF != 0xC0000004:
+            raise OSError(f"NtQuerySystemInformation: {status & 0xFFFFFFFF:#x}")
         size = max(size * 2, needed.value)
     raise OSError("tabla de handles excede 64 MiB")
 
@@ -53,8 +59,15 @@ def _file_handles(pid, reference):
 def _snapshot(pid, *, observation=False):
     k32 = procinfo._k32
     k32.GetCurrentProcess.restype = wt.HANDLE
-    k32.DuplicateHandle.argtypes = [wt.HANDLE, wt.HANDLE, wt.HANDLE,
-                                    ctypes.POINTER(wt.HANDLE), wt.DWORD, wt.BOOL, wt.DWORD]
+    k32.DuplicateHandle.argtypes = [
+        wt.HANDLE,
+        wt.HANDLE,
+        wt.HANDLE,
+        ctypes.POINTER(wt.HANDLE),
+        wt.DWORD,
+        wt.BOOL,
+        wt.DWORD,
+    ]
     k32.GetFileType.argtypes = [wt.HANDLE]
     k32.GetFinalPathNameByHandleW.argtypes = [wt.HANDLE, wt.LPWSTR, wt.DWORD, wt.DWORD]
     k32.GetProcessTimes.argtypes = [wt.HANDLE] + [ctypes.POINTER(wt.FILETIME)] * 4
@@ -130,16 +143,22 @@ def _probe(pid: int, *, observation=False) -> dict:
             return no("identidad Codex cambió durante la lectura del rollout")
         if observation:
             return {
-                "verified": False, "observed": True, "pid": pid,
-                "process_start": start, "thread": thread, "path": path,
+                "verified": False,
+                "observed": True,
+                "pid": pid,
+                "process_start": start,
+                "thread": thread,
+                "path": path,
                 "reason": "transcripción observada por handles del proceso; el hilo visible de la TUI sigue sin verificar",
             }
         # Repro real 2026-10-17: /new conservó el handle del hilo anterior.
         # queue lo aceptó y ejecutó un turno oculto; ni un ACK ni dos snapshots
         # estables acreditan que ese hilo siga visible. No hay aquí un vínculo
         # autoritativo TUI/hilo ni una operación atómica de envío condicionada a él.
-        return no("rollout abierto estable, pero sin prueba del hilo visible de la TUI; "
-                  "/new o /clear pueden conservar el hilo anterior; envío CLI deshabilitado")
+        return no(
+            "rollout abierto estable, pero sin prueba del hilo visible de la TUI; "
+            "/new o /clear pueden conservar el hilo anterior; envío CLI deshabilitado"
+        )
     except (OSError, ValueError, AttributeError, TypeError) as exc:
         return no(f"no se pudo verificar identidad Codex: {exc}")
 

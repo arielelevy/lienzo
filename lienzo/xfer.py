@@ -31,6 +31,7 @@ Solo biblioteca estandar.
 from __future__ import annotations
 
 import collections
+import contextlib
 import hashlib
 import http.client
 import json
@@ -38,6 +39,7 @@ import os
 import secrets
 import shutil
 import sqlite3
+import stat
 import sys
 import threading
 import time
@@ -134,7 +136,7 @@ def _dentro_sin_enlaces(root: str, path: str) -> bool:
             if os.path.islink(cursor) or os.path.isjunction(cursor):
                 return False
         return True
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
 
 
@@ -301,9 +303,320 @@ def _lock_de(path: str) -> threading.Lock:
         return _locks.setdefault(_norm(path), threading.Lock())
 
 
+def _win_relativo(path: str, parent, *, carpeta: bool, crear: bool, escribir: bool):
+    """Equivalente Windows de openat: resuelve un solo nombre desde el directorio fijado."""
+    import ctypes
+    from ctypes import wintypes
+
+    class UnicodeString(ctypes.Structure):
+        _fields_ = [("length", wintypes.USHORT), ("maximum", wintypes.USHORT), ("buffer", wintypes.LPWSTR)]
+
+    class ObjectAttributes(ctypes.Structure):
+        _fields_ = [
+            ("length", wintypes.ULONG),
+            ("root", wintypes.HANDLE),
+            ("name", ctypes.POINTER(UnicodeString)),
+            ("attributes", wintypes.ULONG),
+            ("security", ctypes.c_void_p),
+            ("quality", ctypes.c_void_p),
+        ]
+
+    class IoStatus(ctypes.Structure):
+        _fields_ = [("status", ctypes.c_void_p), ("information", ctypes.c_size_t)]
+
+    text = ctypes.create_unicode_buffer(os.path.basename(path))
+    length = len(text.value.encode("utf-16-le"))
+    name = UnicodeString(length, length + 2, ctypes.cast(text, wintypes.LPWSTR))
+    attrs = ObjectAttributes(ctypes.sizeof(ObjectAttributes), parent, ctypes.pointer(name), 0x1040, None, None)
+    result, status = wintypes.HANDLE(), IoStatus()
+    native = ctypes.WinDLL("ntdll")
+    native.NtCreateFile.argtypes = [
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.DWORD,
+        ctypes.POINTER(ObjectAttributes),
+        ctypes.POINTER(IoStatus),
+        ctypes.c_void_p,
+        wintypes.ULONG,
+        wintypes.ULONG,
+        wintypes.ULONG,
+        wintypes.ULONG,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+    ]
+    native.NtCreateFile.restype = ctypes.c_long
+    native.RtlNtStatusToDosError.argtypes = [wintypes.ULONG]
+    native.RtlNtStatusToDosError.restype = wintypes.ULONG
+    access = 0x001000A0 if carpeta else 0x80100000 | (0x40010000 if escribir else 0)
+    # Directorios: TRAVERSE + READ_ATTRIBUTES + SYNCHRONIZE; OBJ_DONT_REPARSE sigue activo.
+    options = 0x21 if carpeta else 0x00200060
+    code = native.NtCreateFile(
+        ctypes.byref(result),
+        access,
+        ctypes.byref(attrs),
+        ctypes.byref(status),
+        None,
+        0,
+        3 if carpeta else 1,
+        3 if crear else 1,
+        options,
+        None,
+        0,
+    )
+    if code < 0:
+        error = native.RtlNtStatusToDosError(code & 0xFFFFFFFF)
+        if code & 0xFFFFFFFF == 0xC000050B or error in (1920, 681, 4395):
+            raise Rechazo(403, "reparse point durante apertura de transferencia")
+        exc = ctypes.WinError(error)
+        exc.ntstatus = code & 0xFFFFFFFF
+        raise exc
+    return result.value
+
+
+def _win_abrir(path: str, *, carpeta: bool, crear: bool = False, escribir: bool = False, parent=None):
+    """Abre sin seguir reparse points; los archivos no comparten escritura ni borrado."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    class FileInfo(ctypes.Structure):
+        _fields_ = [
+            ("attributes", wintypes.DWORD),
+            ("created", wintypes.FILETIME),
+            ("accessed", wintypes.FILETIME),
+            ("modified", wintypes.FILETIME),
+            ("volume", wintypes.DWORD),
+            ("size_high", wintypes.DWORD),
+            ("size_low", wintypes.DWORD),
+            ("links", wintypes.DWORD),
+            ("index_high", wintypes.DWORD),
+            ("index_low", wintypes.DWORD),
+        ]
+
+    kernel.GetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.POINTER(FileInfo)]
+    kernel.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    access = 0x001000A0 if carpeta else 0x80000000 | (0x40010000 if escribir else 0)
+    flags = 0x00200000 | (0x02000000 if carpeta else 0)  # OPEN_REPARSE_POINT / BACKUP_SEMANTICS
+    handle = (
+        _win_relativo(path, parent, carpeta=carpeta, crear=crear, escribir=escribir)
+        if parent is not None
+        else kernel.CreateFileW(path, access, 3 if carpeta else 1, None, 4 if crear else 3, flags, None)
+    )
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    transferred = False
+    try:
+        info = FileInfo()
+        if not kernel.GetFileInformationByHandle(handle, ctypes.byref(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if info.attributes & 0x400 or bool(info.attributes & 0x10) != carpeta:
+            raise Rechazo(403, "objeto de transferencia enlazado o de tipo inválido")
+        name = ctypes.create_unicode_buffer(32768)
+        n = kernel.GetFinalPathNameByHandleW(handle, name, len(name), 0)
+        if not n or n >= len(name):
+            raise Rechazo(403, "no se pudo confinar el handle de transferencia")
+        physical = name.value
+        if physical.startswith("\\\\?\\UNC\\"):
+            physical = "\\\\" + physical[8:]
+        elif physical.startswith("\\\\?\\"):
+            physical = physical[4:]
+        if _norm(physical) != _norm(os.path.realpath(path)):
+            raise Rechazo(403, "handle fuera del destino físico")
+        if carpeta:
+            transferred = True
+            return handle, kernel.CloseHandle
+        fd = msvcrt.open_osfhandle(handle, os.O_BINARY | (os.O_RDWR if escribir else os.O_RDONLY))
+        handle = None  # el descriptor es dueño del handle desde aquí
+        return fd
+    finally:
+        if handle is not None and not transferred:
+            kernel.CloseHandle(handle)
+
+
+@contextlib.contextmanager
+def _carpeta_fija(path: str):
+    """Recorre y fija ancestros sin enlaces; en POSIX conserva el dir_fd del padre."""
+    if permitido(path) is None:
+        raise Rechazo(403, "auxiliar fuera del destino físico o enlazado")
+    parent = os.path.dirname(os.path.abspath(path))
+    drive, rest = os.path.splitdrive(parent)
+    cursor = drive + os.sep
+    with contextlib.ExitStack() as stack:
+        if sys.platform == "win32":
+            handle, close = _win_abrir(cursor, carpeta=True)
+            stack.callback(close, handle)
+            for part in rest.strip(os.sep).split(os.sep):
+                if not part:
+                    continue
+                cursor = os.path.join(cursor, part)
+                handle, close = _win_abrir(cursor, carpeta=True, crear=True, parent=handle)
+                stack.callback(close, handle)
+            yield handle
+        else:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            fd = os.open(cursor, flags)
+            stack.callback(os.close, fd)
+            for part in rest.strip(os.sep).split(os.sep):
+                if not part:
+                    continue
+                try:
+                    child = os.open(part, flags, dir_fd=fd)
+                except FileNotFoundError:
+                    try:
+                        os.mkdir(part, dir_fd=fd)
+                    except FileExistsError:
+                        pass  # otro hilo creó la carpeta; open(NO_FOLLOW) valida el objeto
+                    child = os.open(part, flags, dir_fd=fd)
+                stack.callback(os.close, child)
+                fd = child
+            yield fd
+
+
+@contextlib.contextmanager
+def _abrir_seguro(path: str, mode: str, *, encoding=None):
+    """Nunca trunca antes de validar el handle; rechaza también hardlinks de auxiliares."""
+    write = mode != "rb" and mode != "r"
+    create = mode.startswith(("w", "a"))
+    with _carpeta_fija(path) as parent:
+        if sys.platform == "win32":
+            fd = _win_abrir(path, carpeta=False, crear=create, escribir=write, parent=parent)
+        else:
+            flags = (os.O_RDWR if write else os.O_RDONLY) | os.O_NOFOLLOW | os.O_NONBLOCK
+            if create:
+                flags |= os.O_CREAT
+            fd = os.open(os.path.basename(path), flags, 0o600, dir_fd=parent)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise Rechazo(403, "archivo de transferencia enlazado o de tipo inválido")
+            f = os.fdopen(fd, mode, encoding=encoding)
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
+            if mode.startswith("w"):
+                f.truncate(0)
+            yield f
+
+
+def _validar_auxiliares(path: str) -> None:
+    for ext in (PARTE, DIARIO):
+        try:
+            info = os.lstat(path + ext)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise Rechazo(403, "auxiliar de transferencia enlazado o de tipo inválido")
+
+
+def _quitar_seguro(path: str) -> None:
+    with _carpeta_fija(path) as parent:
+        if sys.platform == "win32":
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.SetFileInformationByHandle.argtypes = [
+                wintypes.HANDLE,
+                ctypes.c_int,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+            ]
+            with _abrir_seguro(path, "r+b") as f:
+                delete = wintypes.BOOLEAN(True)
+                if not kernel.SetFileInformationByHandle(
+                    msvcrt.get_osfhandle(f.fileno()), 4, ctypes.byref(delete), ctypes.sizeof(delete)
+                ):
+                    raise ctypes.WinError(ctypes.get_last_error())
+        else:
+            os.unlink(os.path.basename(path), dir_fd=parent)
+
+
+def _mtime_handle(f, ns: int) -> None:
+    if sys.platform != "win32":
+        os.utime(f.fileno(), ns=(ns, ns))
+        return
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    ticks = ns // 100 + 116444736000000000
+    if not 0 <= ticks < 2**64:
+        raise Rechazo(400, "mtime fuera del rango de Windows")
+    value = wintypes.FILETIME(ticks & 0xFFFFFFFF, ticks >> 32)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.SetFileTime.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    if not kernel.SetFileTime(msvcrt.get_osfhandle(f.fileno()), None, ctypes.byref(value), ctypes.byref(value)):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _publicar_parte(path: str, f) -> None:
+    with _carpeta_fija(path) as parent:
+        _validar_auxiliares(path)
+        if sys.platform == "win32":
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+
+            class RenameInfo(ctypes.Structure):
+                _fields_ = [
+                    ("replace", wintypes.BOOLEAN),
+                    ("root", wintypes.HANDLE),
+                    ("length", wintypes.DWORD),
+                    ("name", wintypes.WCHAR * 1),
+                ]
+
+            name = os.path.basename(path).encode("utf-16-le")
+            buffer = ctypes.create_string_buffer(ctypes.sizeof(RenameInfo) + len(name))
+            info = RenameInfo.from_buffer(buffer)
+            info.replace, info.length, info.root = True, len(name), parent
+            ctypes.memmove(ctypes.addressof(buffer) + RenameInfo.name.offset, name, len(name))
+
+            class IoStatus(ctypes.Structure):
+                _fields_ = [("status", ctypes.c_void_p), ("information", ctypes.c_size_t)]
+
+            native = ctypes.WinDLL("ntdll")
+            native.NtSetInformationFile.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(IoStatus),
+                ctypes.c_void_p,
+                wintypes.ULONG,
+                ctypes.c_int,
+            ]
+            native.NtSetInformationFile.restype = ctypes.c_long
+            native.RtlNtStatusToDosError.argtypes = [wintypes.ULONG]
+            native.RtlNtStatusToDosError.restype = wintypes.ULONG
+            status = IoStatus()
+            code = native.NtSetInformationFile(
+                msvcrt.get_osfhandle(f.fileno()), ctypes.byref(status), buffer, len(buffer), 10
+            )
+            if code < 0:
+                raise ctypes.WinError(native.RtlNtStatusToDosError(code & 0xFFFFFFFF))
+        else:
+            name = os.path.basename(path)
+            os.replace(name + PARTE, name, src_dir_fd=parent, dst_dir_fd=parent)
+            info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            if not os.path.samestat(info, os.fstat(f.fileno())):
+                raise Rechazo(409, "la parte cambió durante la publicación")
+
+
 class CacheHashes:
-    """Hashes por bloque de los archivos ya completos del destino, para no releer GB en cada pasada:
-    vale solo si coinciden tamano, mtime_ns y tamano de bloque. En sqlite (WAL) bajo LIENZO_HOME."""
+    """Últimos hashes por bloque de los archivos completos del destino:
+    los metadatos solo filtran candidatos: la igualdad se confirma releyendo bytes.
+    En sqlite (WAL) bajo LIENZO_HOME."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -327,7 +640,11 @@ class CacheHashes:
         with self._lock:
             fila = self._conn().execute("SELECT size, mtime, bs, hashes FROM h WHERE ruta=?", (_norm(path),)).fetchone()
         if fila and fila[0] == st.st_size and fila[1] == st.st_mtime_ns and fila[2] == bs:
-            return json.loads(fila[3])
+            cached = json.loads(fila[3])
+            fresh = hashes_de(path, bs)
+            if fresh != cached:
+                self.put(path, bs, fresh)
+            return fresh
         return None
 
     def put(self, path: str, bs: int, hashes: list[str]) -> None:
@@ -355,7 +672,7 @@ CACHE = CacheHashes()
 
 def hashes_de(path: str, bs: int) -> list[str]:
     out = []
-    with open(path, "rb") as f:
+    with _abrir_seguro(path, "rb") as f:
         while True:
             b = f.read(bs)
             if not b:
@@ -376,7 +693,7 @@ def leer_diario(path: str, bs: int) -> dict[int, str] | None:
     """{bloque: hash} de lo que el `.parte` ya tiene verificado, o None si no hay diario o es de
     otro tamano de bloque (no sirve: se tira y se empieza de nuevo)."""
     try:
-        with open(path + DIARIO, encoding="ascii") as f:
+        with _abrir_seguro(path + DIARIO, "r", encoding="ascii") as f:
             lineas = f.read().splitlines()
     except OSError, UnicodeDecodeError:
         return None
@@ -396,16 +713,17 @@ def leer_diario(path: str, bs: int) -> dict[int, str] | None:
 
 
 def _anotar(path: str, lineas: list[str]) -> None:
-    with open(path + DIARIO, "a", encoding="ascii") as f:
+    with _abrir_seguro(path + DIARIO, "a", encoding="ascii") as f:
         f.write("".join(ln + "\n" for ln in lineas))
         f.flush()
         os.fsync(f.fileno())
 
 
 def _tirar_parte(path: str) -> None:
+    _validar_auxiliares(path)
     for ext in (PARTE, DIARIO):
         try:
-            os.remove(path + ext)
+            _quitar_seguro(path + ext)
         except FileNotFoundError:
             pass
 
@@ -414,7 +732,8 @@ def estado_archivo(path: str, bs: int) -> dict:
     """Lo que el destino tiene de un archivo: `{bloques: {i: hash}, parcial, size}`. Un `.parte` con
     diario manda sobre el final (es una copia a medias, mas nueva); uno sin diario no se sabe que
     tiene y se tira."""
-    with _lock_de(path):
+    with _lock_de(path), _carpeta_fija(path):
+        _validar_auxiliares(path)
         if os.path.exists(path + PARTE):
             diario = leer_diario(path, bs)
             if diario is not None:
@@ -429,6 +748,7 @@ def estado_archivo(path: str, bs: int) -> dict:
 def _asegurar_parte(path: str, bs: int) -> None:
     """Crea `<archivo>.parte` y su diario si no estan. Si el destino ya tenia el archivo, el `.parte`
     arranca como copia del final (solo viajan los bloques distintos) y el diario lista sus bloques."""
+    _validar_auxiliares(path)
     if os.path.exists(path + PARTE) and leer_diario(path, bs) is not None:
         return
     _tirar_parte(path)
@@ -436,11 +756,13 @@ def _asegurar_parte(path: str, bs: int) -> None:
     lineas = [f"bs {bs}"]
     if os.path.isfile(path):
         h = _hashes_final(path, bs)
-        shutil.copyfile(path, path + PARTE)
+        with _abrir_seguro(path, "rb") as src, _abrir_seguro(path + PARTE, "wb") as dst:
+            shutil.copyfileobj(src, dst, BS)
         lineas += [f"{i} {x}" for i, x in enumerate(h)]
     else:
-        open(path + PARTE, "wb").close()
-    with open(path + DIARIO, "w", encoding="ascii") as f:
+        with _abrir_seguro(path + PARTE, "wb"):
+            pass
+    with _abrir_seguro(path + DIARIO, "w", encoding="ascii") as f:
         f.write("".join(ln + "\n" for ln in lineas))
         f.flush()
         os.fsync(f.fileno())
@@ -450,7 +772,8 @@ def _raiz(d: dict) -> str:
     raiz = permitido(d.get("destino"))
     if raiz is None:
         raise Rechazo(403, "destino fuera de copy_roots de esta PC")
-    os.makedirs(raiz, exist_ok=True)
+    with _carpeta_fija(os.path.join(raiz, ".xfer-validar-raiz")):
+        pass
     return raiz
 
 
@@ -493,14 +816,13 @@ def r_bloque(raw: bytes) -> dict:
     _memoria_ok()
     path = unir(raiz, rel)
     prioridad_baja()
-    with _lock_de(path):
+    with _lock_de(path), _carpeta_fija(path):
         _asegurar_parte(path, bs)
-    with open(path + PARTE, "r+b") as f:
-        f.seek(i * bs)
-        f.write(datos)
-        f.flush()
-        os.fsync(f.fileno())
-    with _lock_de(path):
+        with _abrir_seguro(path + PARTE, "r+b") as f:
+            f.seek(i * bs)
+            f.write(datos)
+            f.flush()
+            os.fsync(f.fileno())
         _anotar(path, [f"{i} {h}"])
     SOLTADOR.sumar(path + PARTE, len(datos))
     return {"ok": True}
@@ -517,14 +839,16 @@ def r_cerrar(d: dict) -> tuple[int, dict]:
         raise Rechazo(400, "la lista de hashes no corresponde al tamano")
     path = unir(raiz, rel)
     prioridad_baja()
-    with _lock_de(path):
+    with _lock_de(path), _carpeta_fija(path):
+        _validar_auxiliares(path)
         if not os.path.exists(path + PARTE):
             if os.path.isfile(path) and os.path.getsize(path) == size and _hashes_final(path, bs) == hashes:
-                os.utime(path, ns=(mtime_ns, mtime_ns))
+                with _abrir_seguro(path, "r+b") as f:
+                    _mtime_handle(f, mtime_ns)
                 CACHE.put(path, bs, hashes)
                 return 200, {"ok": True, "igual": True, "hash": hash_total(hashes)}
             _asegurar_parte(path, bs)
-        with open(path + PARTE, "r+b") as f:
+        with _abrir_seguro(path + PARTE, "r+b") as f:
             f.truncate(size)
             faltan = []
             for i, h in enumerate(hashes):
@@ -535,13 +859,14 @@ def r_cerrar(d: dict) -> tuple[int, dict]:
                 SOLTADOR.sumar(path + PARTE, len(b))
             f.flush()
             os.fsync(f.fileno())
+            if not faltan:
+                _mtime_handle(f, mtime_ns)
+                _publicar_parte(path, f)
         if faltan:
             _anotar(path, [f"x {i}" for i in faltan])
             return 409, {"error": f"{len(faltan)} bloques faltan o no coinciden", "faltan": faltan}
-        os.replace(path + PARTE, path)
-        os.utime(path, ns=(mtime_ns, mtime_ns))
         try:
-            os.remove(path + DIARIO)
+            _quitar_seguro(path + DIARIO)
         except FileNotFoundError:
             pass
         CACHE.put(path, bs, hashes)
@@ -576,15 +901,15 @@ def r_paquete(raw: bytes) -> dict:
             out[rel] = "hash"
             continue
         path = unir(raiz, rel)
-        with _lock_de(path):
+        with _lock_de(path), _carpeta_fija(path):
             _tirar_parte(path)
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path + PARTE, "wb") as f:
+            with _abrir_seguro(path + PARTE, "wb") as f:
                 f.write(trozo)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(path + PARTE, path)
-            os.utime(path, ns=(mtime_ns, mtime_ns))
+                _mtime_handle(f, mtime_ns)
+                _publicar_parte(path, f)
             CACHE.put(path, bs, [h] if size else [])
         out[rel] = "ok"
     return {"archivos": out}

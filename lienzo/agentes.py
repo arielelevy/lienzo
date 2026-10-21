@@ -280,7 +280,34 @@ class Kiro(Perfil):
         return True
 
 
+class Antigravity(Perfil):
+    """Integración de terminal; todavía sin lector de conversaciones verificable."""
+
+    preguntas_de_permiso = ()
+    supported_platforms = ("win32",)
+
+    def valid_id(self, sid, *, strict: bool = True) -> bool:
+        # agy 1.4.3 persiste UUID en cache/last_conversations.json; nunca un pid ni un prefijo.
+        return isinstance(sid, str) and bool(re.fullmatch(UUID_PATTERN, sid))
+
+    def guess(self, cwd: str, born, home: str):
+        return None, None
+
+    def model(self, path: str, transcripts) -> str | None:
+        return None
+
+    def permission_option(self, dialog: dict | None) -> int | None:
+        return None
+
+
 AGENTES: dict[str, Perfil] = {
+    "antigravity": Antigravity(
+        exe="agy.exe",
+        parser="parse_antigravity",
+        parser_args=(),
+        retomar_por_id=("--conversation",),
+        acepta_modelo=True,
+    ),
     "kiro": Kiro(
         exe="kiro-cli.exe",
         parser="parse_kiro",

@@ -11,8 +11,9 @@ from lienzo.updates import UpdateError, Updater
 @pytest.fixture
 def repo(tmp_path):
     def git(cwd, *args):
-        return subprocess.run(["git", *map(str, args)], cwd=cwd, check=True,
-                              capture_output=True, text=True).stdout.strip()
+        return subprocess.run(
+            ["git", *map(str, args)], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
 
     origin, source, checkout = (tmp_path / name for name in ("origin.git", "source", "checkout"))
     git(tmp_path, "init", "--bare", "--initial-branch=main", origin)
@@ -22,7 +23,7 @@ def repo(tmp_path):
     (source / "web").mkdir()
     (source / "web/package.json").write_text('{"version":"0.4.0"}')
     (source / "pyproject.toml").write_text('[project]\ndependencies=[]\nrequires-python=">=3.14"\n')
-    (source / ".gitignore").write_text('.temp/\nweb/dist/\n')
+    (source / ".gitignore").write_text(".temp/\nweb/dist/\n")
     (source / "version.txt").write_text("old")
     git(source, "add", ".")
     git(source, "commit", "-m", "initial")
@@ -32,7 +33,7 @@ def repo(tmp_path):
     git(source, "commit", "-am", "new version")
     git(source, "push", "origin", "main")
     restarts = []
-    updater = Updater(checkout, tmp_path / "update.json", lambda: (restarts.append(True) or (202, {})), True)
+    updater = Updater(checkout, tmp_path / "update.json", lambda: restarts.append(True) or (202, {}), True)
     return updater, git, source, restarts
 
 
@@ -87,11 +88,25 @@ def test_build_failure_does_not_advance_checkout_or_restart(repo, monkeypatch):
 
 def test_real_npm_build_and_git_activation_in_disposable_checkout(repo):
     updater, git, source, restarts = repo
-    package = {"name": "update-fixture", "version": "0.4.1", "scripts": {"build":
-        "node -e \"require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/index.html','built fixture')\""}}
+    package = {
+        "name": "update-fixture",
+        "version": "0.4.1",
+        "scripts": {
+            "build": "node -e \"require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/index.html','built fixture')\""
+        },
+    }
     (source / "web/package.json").write_text(json.dumps(package))
-    (source / "web/package-lock.json").write_text(json.dumps({"name": "update-fixture", "version": "0.4.1",
-        "lockfileVersion": 3, "requires": True, "packages": {"": {"name": "update-fixture", "version": "0.4.1"}}}))
+    (source / "web/package-lock.json").write_text(
+        json.dumps(
+            {
+                "name": "update-fixture",
+                "version": "0.4.1",
+                "lockfileVersion": 3,
+                "requires": True,
+                "packages": {"": {"name": "update-fixture", "version": "0.4.1"}},
+            }
+        )
+    )
     git(source, "add", ".")
     git(source, "commit", "-m", "buildable release")
     git(source, "push", "origin", "main")
@@ -180,7 +195,7 @@ def test_update_route_blocks_tunnel_and_forwards_only_selected_pc(monkeypatch):
     handler._is_local = lambda: True
     monkeypatch.setattr(server.identity, "pc_id", lambda: "local")
     calls = []
-    monkeypatch.setattr(server.mirror.MIRROR, "forward", lambda *args: (calls.append(args) or (202, {"ok": True})))
+    monkeypatch.setattr(server.mirror.MIRROR, "forward", lambda *args: calls.append(args) or (202, {"ok": True}))
     assert handler._updates("POST", "apply", "remote", {"target": "abc", "pc": "remote"})[0] == 202
     assert calls == [("remote", "POST", "/updates/apply", {"target": "abc"})]
 

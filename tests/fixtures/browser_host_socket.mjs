@@ -9,6 +9,7 @@ globalThis.setTimeout = (callback, delay, ...args) => realTimeout(callback, dela
 let dropped = false;
 let attached = 0;
 let targetRequests = 0;
+let layoutRequests = 0;
 class FixtureSocket extends EventTarget {
   static OPEN = 1;
   static CLOSED = 3;
@@ -21,7 +22,7 @@ class FixtureSocket extends EventTarget {
   send(line) {
     const command = JSON.parse(line);
     appendFileSync(process.env.TEST_BROWSER_HOST_TRACE, JSON.stringify({method:command.method,
-      ...(command.method === 'Input.dispatchMouseEvent' ? {params:command.params} : {}), ns:process.hrtime.bigint().toString()}) + '\n');
+      ...(['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Page.captureScreenshot'].includes(command.method) ? {params:command.params} : {}), ns:process.hrtime.bigint().toString()}) + '\n');
     process.stderr.write('CDP ' + command.method + '\n');
     const reply = result => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({id:command.id, result})}));
     const late = scenario === 'late-screenshot' && command.method === 'Page.captureScreenshot';
@@ -37,6 +38,13 @@ class FixtureSocket extends EventTarget {
     if (command.method === 'Target.attachToTarget') result = {sessionId:'session-' + ++attached};
     if (command.method === 'Page.captureScreenshot') result = {data:'fixture-image'};
     if (command.method === 'Page.getNavigationHistory') result = {currentIndex:0, entries:[{id:1}]};
+    // pestaña real de 1280x800 scrolleada a 1600: el clip tiene que arrancar ahí (TEST_BROWSER_HOST_VIEW la cambia)
+    if (command.method === 'Page.getLayoutMetrics') {
+      layoutRequests++;
+      const view = scenario === 'resize-before-input' && layoutRequests > 1 ? '900x600' : process.env.TEST_BROWSER_HOST_VIEW || '1280x800';
+      const [w, h] = view.split('x').map(Number);
+      result = {cssVisualViewport:{pageX:0, pageY:1600, clientWidth:w, clientHeight:h, scale:1}, visualViewport:{clientWidth:w, clientHeight:h}};
+    }
     queueMicrotask(() => reply(result));
   }
 }

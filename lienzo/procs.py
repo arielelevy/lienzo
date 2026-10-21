@@ -181,8 +181,11 @@ def external_of_row(p: dict) -> dict | None:
     """Lo mismo que external_origin para una fila del barrido, con lo que el barrido ya leyo por CIM
     (padre, abuelo y linea de comando): sin abrir el proceso otra vez. Del padre y el abuelo el barrido
     solo trae el nombre. El registro de Claude se valida contra PID/FILETIME antes de las heurísticas."""
-    if (p.get("pid") and agent_of(p.get("exe") or "", p.get("cmd")) == "claude"
-            and (reg := desktop_por_registro(p["pid"]))):
+    if (
+        p.get("pid")
+        and agent_of(p.get("exe") or "", p.get("cmd")) == "claude"
+        and (reg := desktop_por_registro(p["pid"]))
+    ):
         return reg
     for k in ("exe", "parent_exe"):
         if kind := desktop_app(p.get(k)):
@@ -201,7 +204,7 @@ $ErrorActionPreference='SilentlyContinue'
 $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine, CreationDate
 $byId = @{}; foreach ($p in $all) { $byId[$p.ProcessId] = $p }
 $out = @()
-foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' -or $_.Name -eq 'node.exe' -or $_.Name -eq 'pi.exe' -or $_.Name -eq 'coda.exe' -or $_.Name -eq 'kiro-cli.exe' })) {
+foreach ($a in ($all | Where-Object { $_.Name -like 'claude.exe*' -or $_.Name -like 'codex.exe*' -or $_.Name -eq 'node.exe' -or $_.Name -eq 'pi.exe' -or $_.Name -eq 'coda.exe' -or $_.Name -eq 'kiro-cli.exe' -or $_.Name -like 'agy.exe*' })) {
   $par = $byId[$a.ParentProcessId]; $gp = if ($par) { $byId[$par.ParentProcessId] } else { $null }
   $out += [pscustomobject]@{
     pid = $a.ProcessId; exe = $a.ExecutablePath; cmd = $a.CommandLine
@@ -269,6 +272,8 @@ def sweep() -> list[dict]:
                 "grandparent": p.get("grandparent"),
                 "in_vscode": in_vscode,
                 "orphan": p.get("parent") is None,
+                # nació con acceso al Chrome real (Lanzar CLI con el tilde): la tarjeta lo marca
+                "chrome": "--chrome" in procinfo.command_args(p.get("cmd") or "")[1:],
                 # el registro de Claude Code (si es de este proceso) antes que la ruta y los padres
                 "external": external_of_row(p),
                 **(

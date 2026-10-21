@@ -1908,6 +1908,7 @@ def test_regla_con_origen_en_otra_pc_se_crea_alla(monkeypatch):
     import rules_api as srv
 
     llamadas = []
+    monkeypatch.setattr(srv, "find_session", lambda sid: {"session_id": sid, "agent": "claude"})
     monkeypatch.setattr(srv, "_known_session", lambda sid: True)
     monkeypatch.setattr(srv, "_rule_target_pc", lambda sid: "pcB" if sid == "remota" else None)
     monkeypatch.setattr(
@@ -1921,6 +1922,7 @@ def test_regla_origen_remoto_contra_lienzo_viejo_da_un_error_que_explica(monkeyp
     import mirror
     import rules_api as srv
 
+    monkeypatch.setattr(srv, "find_session", lambda sid: {"session_id": sid, "agent": "claude"})
     monkeypatch.setattr(srv, "_known_session", lambda sid: True)
     monkeypatch.setattr(srv, "_rule_target_pc", lambda sid: "pcB" if sid == "remota" else None)
     monkeypatch.setattr(mirror.MIRROR, "forward", lambda *a, **k: (404, {"error": "ruta desconocida"}))

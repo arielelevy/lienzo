@@ -57,7 +57,8 @@ def test_ready_only_after_successful_poll(monkeypatch, capsys):
     class Response:
         def __enter__(self):
             import io
-            return io.StringIO('{}')
+
+            return io.StringIO("{}")
 
         def __exit__(self, *args):
             return False

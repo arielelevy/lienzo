@@ -34,6 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import agent_improvements
 import agent_suggestions
+import antigravity_store
 import auth
 import autoaprobar
 import backend
@@ -349,8 +350,15 @@ def _tailchrome_serve(handler, pc_id: str, nonce: str, *, url: str | None = None
                 current.close()
 
         bridge = tailchrome.Bridge(
-            wire, key, nonce, url is not None, private.server_address,
-            identity.pc_id(), pc_id, ready, log,
+            wire,
+            key,
+            nonce,
+            url is not None,
+            private.server_address,
+            identity.pc_id(),
+            pc_id,
+            ready,
+            log,
         )
         with _tailchrome_lock:
             _tailchrome_bridges[pc_id] = bridge
@@ -382,7 +390,7 @@ def _tailchrome_local(handler):
         if address not in red.CGNAT:
             raise ValueError("fuera de Tailscale")
         key = bytes.fromhex(peer["key"])
-    except (ValueError, KeyError):
+    except ValueError, KeyError:
         return handler._json(400, {"error": "indicá la IPv4 de Tailscale de la otra PC (100.x)"})
     conn = federation.PeerConn(host, int(peer["port"]), key, identity.pc_id())
     headers = federation.signed_headers(conn, "GET", tailchrome.PATH, b"")
@@ -689,6 +697,17 @@ def session_view_response(s: dict, view: str, query: dict) -> tuple[int, dict]:
         if not s.get("pid") or s.get("orphan"):
             return 409, {"ok": False, "error": "sin consola que leer"}
         return 200, read_screen(s)
+    if s.get("agent") == "antigravity" and view in ("turns", "digest"):
+        try:
+            n = int((query.get("n") or ["10"])[0])
+        except TypeError, ValueError:
+            return 400, {"error": "n debe ser un numero entre 1 y 50"}
+        if not 1 <= n <= 50:
+            return 400, {"error": "n debe ser un numero entre 1 y 50"}
+        data = antigravity_store.history(s, n, (query.get("before") or [None])[0])
+        if view == "digest":
+            data["turns"] = [{**transcripts.digest_turn(t), "history_only": True} for t in data["turns"]]
+        return 200, data
     if not s.get("transcript_path") or not os.path.exists(s["transcript_path"]):
         note = "sin transcripcion"
         if s["agent"] == "pi" and not s.get("hooked"):
@@ -1516,6 +1535,8 @@ def _lanzar_validado(d: dict, cwd: str, agent: str, title: str, *, desde_tablero
             cuerpo["modo"] = modo
         if d.get("claude_pipe") is True:
             cuerpo["claude_pipe"] = True
+        if d.get("chrome") is True:
+            cuerpo["chrome"] = True
         if agent != "vscode":
             cuotas.iniciar()  # las lecturas de cuota corren mientras se lanza
         return mirror.MIRROR.forward(pc, "POST", "/launch", cuerpo)
@@ -1530,8 +1551,8 @@ def _lanzar_validado(d: dict, cwd: str, agent: str, title: str, *, desde_tablero
         if distro not in tmux.distros():
             return 400, {"error": f"distro desconocida: {distro}"}
     cuotas.iniciar()  # las lecturas de cuota corren mientras se lanza (tablero y peers, misma caché)
-    pipe_options = {"claude_pipe": True} if d.get("claude_pipe") is True else {}
-    res = launch.launch(cwd, title, agent, model=model, distro=distro, modo=modo, **pipe_options)
+    opciones = {k: True for k in ("claude_pipe", "chrome") if d.get(k) is True}
+    res = launch.launch(cwd, title, agent, model=model, distro=distro, modo=modo, **opciones)
     if res.get("ok"):
         return 200, res
     # launch dice su codigo cuando no es un pedido mal hecho (409: coda sin cuota en esta PC)
@@ -1799,7 +1820,9 @@ class Handler(JsonHandler):
             return self._json(403, {"error": "Las actualizaciones se administran desde una PC de la LAN"})
         if pc and pc != identity.pc_id():
             path = "/updates" + ("/" + action if action else "")
-            code, result = mirror.MIRROR.forward(pc, method, path, {"target": (data or {}).get("target")} if method == "POST" else None)
+            code, result = mirror.MIRROR.forward(
+                pc, method, path, {"target": (data or {}).get("target")} if method == "POST" else None
+            )
         else:
             code, result = updates.dispatch(method, action, data)
         return self._json(code, result)
@@ -1834,7 +1857,9 @@ class Handler(JsonHandler):
                     return self._json(403, {"error": "Chrome remoto se maneja desde la PC de Lienzo"})
                 if not self._origin_ok():
                     return self._json(403, {"error": "el Origin no es propio"})
-                browser_stream.serve_viewer(self, (self.query.get("pc") or [""])[0], (self.query.get("mode") or ["window"])[0])
+                browser_stream.serve_viewer(
+                    self, (self.query.get("pc") or [""])[0], (self.query.get("mode") or ["window"])[0]
+                )
                 self.close_connection = True
                 return
             if not parts or parts in (["docs"], ["chrome"]):
@@ -2087,7 +2112,9 @@ class Handler(JsonHandler):
                 if not self._is_local():
                     return self._json(403, {"error": "Las descargas se traen desde la PC de destino"})
                 data = self._json_body()
-                return self._json(*(downloads.enable(data.get("pc")) if parts[-1] == "enable" else downloads.start(data)))
+                return self._json(
+                    *(downloads.enable(data.get("pc")) if parts[-1] == "enable" else downloads.start(data))
+                )
             if parts == ["rescan"]:
                 threading.Thread(target=rescan_once, daemon=True).start()
                 return self._json(202, {"ok": True})
@@ -3390,7 +3417,7 @@ def main() -> int:
     plugins.iniciar()
     try:
         tailchrome_process.service(a.port, a.peer_port).autostart()
-    except (OSError, ValueError, RuntimeError):
+    except OSError, ValueError, RuntimeError:
         log(f"Tailchrome automático: no se pudo leer el arranque guardado\n{traceback.format_exc()}")
     if modo_pares:
         stop_beacon = threading.Event()

@@ -1,4 +1,5 @@
 """Activación/una observación autorizada; sin reiniciar servidor ni lanzar CLI."""
+
 import argparse
 import json
 import sys
@@ -34,9 +35,18 @@ def main():
         decision = jev.pilot_decide(sample["state"], sample["snapshot"])
         artifact = optimization_pilot.save(sample, decision)
         evidence = optimization_memory.record_jev(session["repo"], artifact, decision)
-        print(json.dumps({"artifact": artifact, "decision": decision,
-                          "project": session["repo"], "memory_evidence": evidence,
-                          "profile": "unknown", "quality": "sin etiquetas independientes"}))
+        print(
+            json.dumps(
+                {
+                    "artifact": artifact,
+                    "decision": decision,
+                    "project": session["repo"],
+                    "memory_evidence": evidence,
+                    "profile": "unknown",
+                    "quality": "sin etiquetas independientes",
+                }
+            )
+        )
 
 
 if __name__ == "__main__":

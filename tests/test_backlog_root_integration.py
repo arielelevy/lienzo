@@ -6,8 +6,14 @@ import sessions as ses
 
 @pytest.mark.parametrize("used", [False, True])
 def test_cli_console_remains_available_after_prior_turns(monkeypatch, used):
-    card = {"session_id": "pid-4242", "pid": 4242, "agent": "codex", "source": "sweep",
-            "last_prompt": "pedido previo" if used else "", "transcript_path": None}
+    card = {
+        "session_id": "pid-4242",
+        "pid": 4242,
+        "agent": "codex",
+        "source": "sweep",
+        "last_prompt": "pedido previo" if used else "",
+        "transcript_path": None,
+    }
     monkeypatch.setattr(ses, "queue_blocked", lambda s: None)
     monkeypatch.setattr(ses, "send_blocked", lambda s: None)
     monkeypatch.setattr(ses.codex_queue, "puede_enviar", lambda s: pytest.fail("CLI no debe consultar queue"))
@@ -31,11 +37,19 @@ def report_http(monkeypatch):
     import server
     import state
 
-    state.rules.items.append({"id": "r", "from": "worker", "to": "coordinator", "kind": "on_stop",
-                              "enabled": True, "informes": [{"id": "i", "estado": "pendiente", "respuesta": "informe"}]})
+    state.rules.items.append(
+        {
+            "id": "r",
+            "from": "worker",
+            "to": "coordinator",
+            "kind": "on_stop",
+            "enabled": True,
+            "informes": [{"id": "i", "estado": "pendiente", "respuesta": "informe"}],
+        }
+    )
     monkeypatch.setattr(server.Handler, "_authed", lambda self: True)
     instance = server.QuietServer(("127.0.0.1", 0), server.Handler)
-    thread = threading.Thread(target=instance.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
+    thread = threading.Thread(target=instance.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
     thread.start()
 
     def request(method, path, data=None, tunnel=False):

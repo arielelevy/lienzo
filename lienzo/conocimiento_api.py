@@ -86,12 +86,24 @@ def _replica_con(pid: str, pc: str) -> bool:
     return any(c["peer"] == pc for c in replica.estado(pid)["cursores"])
 
 
+def _sin_actor_server(cuerpo: dict) -> None:
+    """`server` es el rol de lo que el lienzo hace por su cuenta (adaptadores, captura, la entrega que
+    completa un encargo) y lo pasa el codigo, nunca un cliente. Declarado en `por` o `autor` de un
+    pedido HTTP disparaba transiciones solo del server (v5 §3.4; frente C, 2026-10-20). Es la unica
+    entrada HTTP de la memoria: veredictos_api y aprendizaje_api se despachan desde aca."""
+    for campo in ("por", "autor"):
+        valor = cuerpo.get(campo)
+        if isinstance(valor, str) and valor.split(":", 1)[0].strip().lower() == k.S:
+            raise Rechazo(f"{campo}: el rol server es del lienzo, no de un cliente", 403)
+
+
 def dispatch(metodo: str, partes: list[str], cuerpo: dict | None, query: dict | None) -> tuple[int, dict | list]:
     cuerpo = {} if cuerpo is None else cuerpo
     query = query or {}
     try:
         if not isinstance(cuerpo, dict):
             raise Rechazo("cuerpo debe ser un objeto")
+        _sin_actor_server(cuerpo)
         return _dispatch(metodo, partes, cuerpo, query)
     except Rechazo as e:
         return e.codigo, {"error": str(e)}
@@ -104,7 +116,7 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
     if veredictos_api.es_mia(resto):
         return veredictos_api.dispatch(metodo, partes, d, query)
     if resto and (
-        resto[0] in ("incidentes", "reglas", "avisos")
+        resto[0] in ("incidentes", "reglas", "avisos", "candidatos")
         or (len(resto) == 3 and resto[0] == "nodos" and resto[2] in ("aviso", "dependencias"))
     ):
         return aprendizaje_api.dispatch(metodo, partes, d, query)
@@ -202,8 +214,11 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             aprendizajes, encargo = creencias.para_encargo(pid, encargo)
         except Exception as e:  # mejor esfuerzo, como los adaptadores de conocimiento
             return 200, {**encargo, "aprendizajes": [], "aprendizajes_error": str(e)}
-        return 200, {**encargo, "aprendizajes": aprendizajes,
-                     "aprendizajes_texto": creencias.texto_aprendizajes(aprendizajes)}
+        return 200, {
+            **encargo,
+            "aprendizajes": aprendizajes,
+            "aprendizajes_texto": creencias.texto_aprendizajes(aprendizajes),
+        }
     if len(resto) == 3 and resto[0] == "encargos" and metodo == "POST":
         if resto[2] == "enviado":
             return 200, k.encargo_enviado(pid, resto[1], _tarjeta(d, pid))
@@ -236,6 +251,9 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             motivo=d.get("motivo") or "",
         )
     if len(resto) == 3 and resto[0] == "nodos" and resto[2] == "estado" and metodo == "POST":
+        if d.get("estado") == "cerrada" and k.nodo(pid, resto[1])["tipo"] == "ronda":
+            # el mismo cierre que /rondas/<id>/estado: con cierre_seq (v5 §8.4)
+            return _dispatch(metodo, [pid, "rondas", resto[1], "estado"], d, query)
         return 200, k.cambiar_estado(
             pid,
             resto[1],

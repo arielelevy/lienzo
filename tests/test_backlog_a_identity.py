@@ -18,8 +18,13 @@ def cli(tmp_path, monkeypatch):
     monkeypatch.setattr(cq.codex_identity, "probe", lambda pid: {"verified": False, "reason": "sin prueba actual"})
     monkeypatch.setattr(cq, "store_path", lambda: tmp_path / "queue.json")
     monkeypatch.setattr(cq.subproc, "correr", lambda *a, **kw: pytest.fail("no debe encolar"))
-    return {"agent": "codex", "pid": 4242, "cwd": str(tmp_path),
-                "session_id": "01a14774-aa3f-7062-b3f3-aa996a33ff35", "transcript_path": str(rollout)}
+    return {
+        "agent": "codex",
+        "pid": 4242,
+        "cwd": str(tmp_path),
+        "session_id": "01a14774-aa3f-7062-b3f3-aa996a33ff35",
+        "transcript_path": str(rollout),
+    }
 
 
 @pytest.mark.parametrize("transition", ["/new", "/clear", "pid-reciclado", "exec-paralelo"])
@@ -35,19 +40,34 @@ def test_live_pid_is_not_current_thread_evidence(cli, transition):
 
 def test_two_clis_and_newer_exec_rollout_in_same_repo_do_not_select_a_thread(cli, tmp_path):
     newest = tmp_path / "newest.jsonl"
-    newest.write_text(json.dumps({"type": "session_meta", "payload": {
-        "id": "01a14a6b-1acc-7db2-9dbb-b7faf4033e22", "cwd": cli["cwd"], "originator": "codex_exec"}}),
-        encoding="utf-8")
-    other = {**cli, "pid": 4243, "session_id": "01a14a6b-1acc-7db2-9dbb-b7faf4033e22",
-             "transcript_path": str(newest)}
+    newest.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": "01a14a6b-1acc-7db2-9dbb-b7faf4033e22",
+                    "cwd": cli["cwd"],
+                    "originator": "codex_exec",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    other = {**cli, "pid": 4243, "session_id": "01a14a6b-1acc-7db2-9dbb-b7faf4033e22", "transcript_path": str(newest)}
     for card in (cli, other):
         assert cq.puede_enviar(card)["puede"] is False
         assert cq.enviar(card, "mensaje", esperar=0)["estado"] == "rechazado"
 
 
 def test_uncertain_old_send_is_preserved_without_replay(cli):
-    record = {"estado": "sin_confirmacion", "at": 1, "thread": cli["session_id"],
-                  "rollout": cli["transcript_path"], "sha256": cq._sha("mensaje"), "desde": cq._iso(1)}
+    record = {
+        "estado": "sin_confirmacion",
+        "at": 1,
+        "thread": cli["session_id"],
+        "rollout": cli["transcript_path"],
+        "sha256": cq._sha("mensaje"),
+        "desde": cq._iso(1),
+    }
     cq._save({"old": record})
     before = cq.store_path().read_bytes()
     assert cq.enviar(cli, "mensaje", {"envio_id": "old"}, esperar=0)["estado"] == "rechazado"
@@ -65,8 +85,13 @@ def test_desktop_keeps_its_existing_contract(cli, monkeypatch):
 
 
 def test_measured_identity_allows_cli_but_rejects_recycled_pid_and_new_thread(cli, monkeypatch):
-    proof = {"verified": True, "pid": cli["pid"], "process_start": 123,
-                 "thread": cli["session_id"], "path": cli["transcript_path"]}
+    proof = {
+        "verified": True,
+        "pid": cli["pid"],
+        "process_start": 123,
+        "thread": cli["session_id"],
+        "path": cli["transcript_path"],
+    }
     monkeypatch.setattr(cq.codex_identity, "probe", lambda pid: proof)
     cli["codex_process_start"] = 123
     assert cq.puede_enviar(cli)["puede"] is True
@@ -96,19 +121,37 @@ def test_handle_probe_rejects_missing_or_multiple_rollouts(monkeypatch, paths):
 def test_two_measured_clis_same_cwd_remain_distinct(cli, tmp_path, monkeypatch):
     other_path = tmp_path / "rollout-other.jsonl"
     other_path.write_text("", encoding="utf-8")
-    other = {**cli, "pid": 4243, "session_id": "01a14a6b-1acc-7db2-9dbb-b7faf4033e22",
-             "transcript_path": str(other_path), "codex_process_start": 124}
+    other = {
+        **cli,
+        "pid": 4243,
+        "session_id": "01a14a6b-1acc-7db2-9dbb-b7faf4033e22",
+        "transcript_path": str(other_path),
+        "codex_process_start": 124,
+    }
     cli["codex_process_start"] = 123
-    proofs = {s["pid"]: {"verified": True, "process_start": s["codex_process_start"],
-                             "thread": s["session_id"], "path": s["transcript_path"]} for s in (cli, other)}
+    proofs = {
+        s["pid"]: {
+            "verified": True,
+            "process_start": s["codex_process_start"],
+            "thread": s["session_id"],
+            "path": s["transcript_path"],
+        }
+        for s in (cli, other)
+    }
     monkeypatch.setattr(cq.codex_identity, "probe", proofs.__getitem__)
     assert cq.puede_enviar(cli)["puede"]
     assert cq.puede_enviar(other)["puede"]
     assert not cq.puede_enviar({**cli, "pid": other["pid"]})["puede"]
 
 
-@pytest.mark.parametrize("header", [[], {"type": "session_meta", "payload": {}},
-    {"type": "session_meta", "payload": {"id": "x", "originator": "codex_exec"}}])
+@pytest.mark.parametrize(
+    "header",
+    [
+        [],
+        {"type": "session_meta", "payload": {}},
+        {"type": "session_meta", "payload": {"id": "x", "originator": "codex_exec"}},
+    ],
+)
 def test_probe_rejects_malformed_or_exec_headers(cli, monkeypatch, header):
     from pathlib import Path
 

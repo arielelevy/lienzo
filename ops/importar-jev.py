@@ -22,8 +22,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--distro", required=True)
     args = parser.parse_args()
-    result = subprocess.run(["wsl.exe", "-d", args.distro, "--", "python3", "-c", READ_KEY],
-                            capture_output=True, timeout=15, check=False)
+    result = subprocess.run(
+        ["wsl.exe", "-d", args.distro, "--", "python3", "-c", READ_KEY], capture_output=True, timeout=15, check=False
+    )
     if result.returncode:
         sys.exit("No se pudo leer la credencial de Chesstudia; no se guardo nada")
     jev_credentials.store(result.stdout.decode("utf-8").strip())

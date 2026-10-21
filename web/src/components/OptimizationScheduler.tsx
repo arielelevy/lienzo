@@ -4,8 +4,10 @@ import { api } from "../api";
 interface ResearchCase { case_key: string; area: string; priority?: number; origin?: string }
 interface Job {
   id: string; project: string; state: string; cursor: number; reason?: string; results: string[]; automatic?: boolean; source_ids?: string[] | null; source_version?: string | null;
-  kind?: string; case?: ResearchCase; attempts?: number;
+  kind?: string; case?: ResearchCase; attempts?: number; runs?: number[];
   last_run?: { code: number | null; seconds?: number; timed_out?: boolean; stopped?: string | null } | null;
+  /** transiciones pedidas a mano (reencolar, descartar), con el motivo que tenía antes */
+  history?: { at: number; from: string; to: string; reason?: string | null }[];
 }
 /** Última evaluación de la política del investigador (optimization_research_policy.evaluate). */
 interface ResearchEvaluation {
@@ -14,7 +16,7 @@ interface ResearchEvaluation {
   adapter?: { name?: string; consumption_bound?: { weekly_used_pct?: number; weekly_max_used_pct?: number; basis?: string } | null };
   authorization?: { autorizado_por?: string; fecha?: string; vence?: string | null } | null;
 }
-interface Research { last_evaluation: ResearchEvaluation | null; scope?: string; note?: string | null }
+interface Research { last_evaluation: ResearchEvaluation | null; scope?: string; note?: string | null; ceilings?: { max_starts_per_case?: number } }
 interface Status {
   research?: Research;
   enabled: boolean; reason: string;
@@ -155,6 +157,7 @@ export function OptimizationScheduler() {
           {job.case && <p className="small">Caso {job.case.area} · {job.case.case_key}{job.attempts != null ? ` · intentos ${job.attempts}` : ""}{job.last_run ? ` · última corrida: código ${job.last_run.code ?? "—"}${job.last_run.timed_out ? ", plazo agotado" : ""}${job.last_run.stopped ? `, cortada: ${job.last_run.stopped}` : ""}` : ""}</p>}
           <p className="small">{job.reason || `${job.cursor} fuentes revisadas`}</p>
           {job.kind === "research" && ["queued", "running", "paused"].includes(job.state) && <button disabled={busy} onClick={() => void command({ action: "cancel_research", job: job.id })}>Cancelar investigación</button>}
+          {job.kind === "research" && job.state === "review" && <ReviewActions job={job} busy={busy} maxStarts={status.research?.ceilings?.max_starts_per_case} command={command} />}
           {job.results.length > 0 && <p className="small dim">Las hipótesis requieren veredicto humano.</p>}
           {job.source_ids?.length ? <details><summary>Fuentes analizadas</summary><pre>{job.source_ids.join("\n")}</pre><small>Versión: {job.source_version}</small></details> : null}
           {job.results.length > 0 && <details><summary>Referencias en memoria</summary><pre>{job.results.join("\n")}</pre></details>}
@@ -162,4 +165,26 @@ export function OptimizationScheduler() {
       </ul>}
     </>}
   </section>;
+}
+
+/** Un trabajo en revisión no sale solo: el usuario lo revisa y lo reencola (si le quedan inicios y
+ *  la política lo habilita; conserva intentos y corridas) o lo descarta (queda en el historial). */
+function ReviewActions({ job, busy, maxStarts, command }: {
+  job: Job; busy: boolean; maxStarts?: number; command: (data: object) => Promise<void>;
+}) {
+  const exhausted = maxStarts != null && (job.attempts ?? 0) >= maxStarts;
+  return <details className="mejoras-revision">
+    <summary>Revisar</summary>
+    <p className="small">Intentos {job.attempts ?? 0}{maxStarts != null ? ` de ${maxStarts}` : ""} · corridas {job.runs?.length ?? 0}{job.last_run?.stopped ? ` · último corte: ${job.last_run.stopped}` : ""}</p>
+    {!!job.history?.length && <ul className="small" aria-label="Historial de revisión">
+      {job.history.map(h => <li key={h.at}>{new Date(h.at * 1000).toLocaleString("es-AR")}: {h.from} → {h.to}{h.reason ? ` (${h.reason})` : ""}</li>)}
+    </ul>}
+    {exhausted && <p className="small">Intentos agotados: el caso no se puede reencolar. Podés descartarlo.</p>}
+    <div className="mejoras-botones">
+      <button disabled={busy || exhausted} onClick={() => void command({ action: "requeue_research", job: job.id })}>Reencolar investigación</button>
+      <button disabled={busy} onClick={() => {
+        if (window.confirm("¿Descartar esta investigación? Queda en el historial y el caso no vuelve solo.")) void command({ action: "dismiss_research", job: job.id });
+      }}>Descartar</button>
+    </div>
+  </details>;
 }
