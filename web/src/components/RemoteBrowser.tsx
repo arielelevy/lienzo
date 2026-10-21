@@ -491,7 +491,8 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
       };
       channel.onclose = () => {
         if (disposed || ws !== channel) return;
-        ws = null; signature = ''; latest = null; canInput.current = false; setConnected(false); setOpened(0); uncertain();
+        // la generación era de este canal: el worker del canal nuevo no la conoce y rechazaría su release
+        ws = null; signature = ''; latest = null; current = 0; canInput.current = false; setConnected(false); setOpened(0); uncertain();
         if (++attempts > 5) { setNotice('Reconexión detenida. Revisá la conexión y volvé a intentar.'); return; }
         setNotice(`Reconectando lectura (${attempts}/5)… La última imagen puede estar desactualizada.`);
         retry = setTimeout(connect, Math.min(4000, 500 * 2 ** (attempts - 1)));

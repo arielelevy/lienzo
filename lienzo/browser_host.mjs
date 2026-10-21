@@ -144,7 +144,13 @@ async function attachPage(id) {
     const {sessionId} = await root.send('Target.attachToTarget', {targetId: id, flatten: true});
     const cdp = {sessionId, dialog: null, send: (method, params) => root.send(method, params, sessionId)};
     root.sessions.set(sessionId, cdp);
-    await cdp.send('Page.enable');
+    try { await cdp.send('Page.enable'); }
+    catch (e) {
+      // sin pages.set: el próximo pedido adjunta de cero; la sesión fallida no queda colgada en Chrome
+      root.sessions.delete(sessionId);
+      void root.send('Target.detachFromTarget', {sessionId}).catch(d => process.stderr.write(`Chrome al soltar la pestaña: ${d.message}\n`));
+      throw e;
+    }
     pages.set(id, cdp);
   }
   return pages.get(id);
@@ -320,6 +326,14 @@ async function handle(d) {
     const {targetId} = await browser.send('Target.createTarget', {url: url(d.url)});
     return {id: targetId, running: true, tabs: await tabs()};
   }
+  if (d.action === 'activate' || d.action === 'viewport') {
+    // Medido en ar-it33940 (2026-10-20): una pestaña de fondo no dio cuadros (captureScreenshot
+    // vencido) y la misma, al frente, sí. Se activa con el navegador, antes de adjuntarse.
+    if (d.action === 'viewport') { integer(d.width, 320, 1920); integer(d.height, 240, 1080); }
+    if (typeof d.tab !== 'string' || !(await tabs()).some(t => t.id === d.tab)) fail('La pestaña ya no existe', 404);
+    await browser.send('Target.activateTarget', {targetId: d.tab});
+    if (d.action === 'activate') return {ok: true};
+  }
   const cdp = await page(d.tab, ['snapshot', 'input', 'release-input', 'viewport', 'tab-state'].includes(d.action));
   if (d.action === 'viewport') {
     const width = integer(d.width, 320, 1920), height = integer(d.height, 240, 1080);
@@ -354,7 +368,6 @@ async function handle(d) {
     const result = await cdp.send('Page.navigate', {url: url(d.url)});
     if (result.errorText) fail(`No se pudo cargar la página: ${result.errorText}`, 502);
   } else if (d.action === 'reload') await cdp.send('Page.reload');
-  else if (d.action === 'activate') await cdp.send('Page.bringToFront');
   else if (d.action === 'close') await browser.send('Target.closeTarget', {targetId: d.tab});
   else if (d.action === 'history') {
     if (![-1, 1].includes(d.direction)) fail('Dirección inválida');

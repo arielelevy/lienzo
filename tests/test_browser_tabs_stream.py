@@ -217,10 +217,39 @@ def test_release_input_is_ordered_before_open_and_rejects_old_generation(tab_wor
     actions = [c for c in calls if c["action"] in ("input", "release-input", "viewport")]
     assert [c["action"] for c in actions] == ["viewport", "input", "release-input", "viewport"]
     assert actions[2]["tab"] == "a" and actions[2]["events"][0]["type"] == "keyUp"
+    # generación vieja sin nada propio apretado: soltar no manda nada y no bloquea la entrada
     send(worker, t="release-input", n=3, generation=1)
-    rejected = wait_message(output, lambda m: m.get("n") == 3)
-    assert rejected["outcome"] == "rejected"
+    assert wait_message(output, lambda m: m.get("n") == 3) == {"t": "input", "n": 3, "generation": 1}
+    send(worker, t="input", n=4, generation=1, events=[key])
+    assert wait_message(output, lambda m: m.get("n") == 4)["outcome"] == "rejected"
+    send(worker, t="release-input", n=3, generation=2)
+    assert wait_message(output, lambda m: m.get("n") == 3 and m["generation"] == 2)["outcome"] == "rejected"
     assert len([c for c in calls if c["action"] in ("input", "release-input")]) == 2
+
+
+def test_open_fallido_no_bloquea_el_release_sin_teclas(tab_worker, monkeypatch):
+    worker, _, _, _, _, calls, output = tab_worker
+    original = browser_remote.HOST.request
+
+    def request(data):
+        if data["action"] == "viewport":
+            calls.append(data)
+            return 504, {"error": "Chrome tardó demasiado en responder (Page.enable)"}
+        return original(data)
+
+    monkeypatch.setattr(browser_remote.HOST, "request", request)
+    send(worker, t="open", tab="a", generation=1, width=800, height=600)
+    assert "Page.enable" in wait_message(output, lambda m: m["t"] == "error")["message"]
+    send(worker, t="release-input", n=1, generation=1)
+    assert wait_message(output, lambda m: m.get("n") == 1) == {"t": "input", "n": 1, "generation": 1}
+    output.clear()
+    send(worker, t="release-input", n=1, generation=1)  # n repetido: nunca se acusa aunque no haya teclas
+    assert wait_message(output, lambda m: m.get("n") == 1)["outcome"] == "rejected"
+    send(worker, t="release-input", n=2, generation=1)
+    assert wait_message(output, lambda m: m.get("n") == 2) == {"t": "input", "n": 2, "generation": 1}
+    send(worker, t="input", n=3, generation=1, events=[{"kind": "text", "text": "x"}])
+    assert wait_message(output, lambda m: m.get("n") == 3)["outcome"] == "rejected"
+    assert not any(c["action"] in ("input", "release-input") for c in calls)
 
 
 def test_open_and_close_release_only_own_mouse_downs(tab_worker):

@@ -49,6 +49,35 @@ test('release-input sólo admite ups y conserva clickCount cero de cancelación'
   assert.equal(trace().length, before);
 });
 
+test('viewport inválido se rechaza sin activar ni adjuntar la pestaña', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  const start = trace().length;
+  const result = await request({action:'viewport', tab:'fixture-tab', width:5000, height:600, requestId:501});
+  assert.equal(result.status, 400);
+  assert.deepEqual(trace().slice(start).map(x=>x.method), []);
+});
+
+test('viewport trae la pestaña al frente antes de adjuntarse; activate no se adjunta', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  let start = trace().length;
+  assert.equal((await request({action:'activate', tab:'fixture-tab', requestId:601})).ok, true);
+  assert.deepEqual(trace().slice(start).map(x=>x.method), ['Target.getTargets', 'Target.activateTarget']);
+  start = trace().length;
+  assert.equal((await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:602})).width, 800);
+  const methods = trace().slice(start).map(x=>x.method);
+  assert.ok(methods.indexOf('Target.activateTarget') < methods.indexOf('Target.attachToTarget'), methods.join(','));
+});
+
+test('Page.enable vencido suelta la sesión y el próximo pedido adjunta de cero', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'Page.enable');
+  const failed = await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:701});
+  assert.equal(failed.status, 504);
+  assert.match(failed.error, /Page\.enable/);
+  assert.equal(trace().filter(x=>x.method === 'Target.detachFromTarget').length, 1);
+  assert.equal((await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:702})).width, 800);
+  assert.equal(trace().filter(x=>x.method === 'Target.attachToTarget').length, 2);
+});
+
 async function worker(t, scenario) {
   const folder = mkdtempSync(join(tmpdir(), 'lienzo-host-fixture-'));
   const data = process.platform === 'win32' ? join(folder, 'Google/Chrome/User Data')

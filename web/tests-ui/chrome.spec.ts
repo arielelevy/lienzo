@@ -145,7 +145,8 @@ for (const change of ['pc', 'modo'] as const) {
 async function streamFixture(page: Page, automaticFrames = true) {
   const http: BrowserCommand[] = [];
   const channels: {commands: BrowserCommand[]; send: (message: string | Buffer) => void; close: () => void}[] = [];
-  const control = {input: 'ack' as 'ack' | 'hold' | 'uncertain', release: 'ack' as 'ack' | 'hold', state: true};
+  // 'server': contesta release-input como browser_stream.TabWorker (rechaza una generación no abierta en este canal)
+  const control = {input: 'ack' as 'ack' | 'hold' | 'uncertain', release: 'ack' as 'ack' | 'hold' | 'server', state: true};
   const owned = {buttons: new Set<string>(), keys: new Set<string>()};
   const releases: {generation: number; reason: string; buttons: string[]; keys: string[]}[] = [];
   const releaseOwned = (generation: number, reason: string) => {
@@ -193,7 +194,8 @@ async function streamFixture(page: Page, automaticFrames = true) {
       }
       if (d.t === 'release-input') {
         releaseOwned(d.generation, 'release-input');
-        if (control.release === 'ack') ws.send(JSON.stringify({t: 'input', n: d.n, generation: d.generation}));
+        if (control.release === 'ack' || (control.release === 'server' && currentGeneration && d.generation === currentGeneration)) ws.send(JSON.stringify({t: 'input', n: d.n, generation: d.generation}));
+        else if (control.release === 'server') ws.send(JSON.stringify({t: 'error', input: true, n: d.n, generation: d.generation, outcome: 'rejected', message: 'Entrada de una selección vencida o repetida; no se envió'}));
       }
       if (d.t === 'input' && control.input !== 'hold') ws.send(JSON.stringify(control.input === 'ack'
         ? {t: 'input', n: d.n, generation: d.generation}
@@ -306,6 +308,23 @@ test('tabs stream reconecta sólo lectura y requiere habilitar entrada incierta 
   await screen.focus(); await screen.press('b');
   await expect.poll(() => f.channels[1].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
   expect(f.http.some(d => d.action === 'input' || d.action === 'frame')).toBeFalsy();
+});
+
+test('tabs stream reconecta sin mandar al canal nuevo un release de la generación del canal viejo', async ({page}) => {
+  const f = await streamFixture(page);
+  f.control.release = 'server';
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible(); await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  f.channels[0].close(); // la PC remota se actualizó y reinició: worker nuevo, sin generación abierta
+  await expect.poll(() => f.channels.length).toBe(2);
+  await expect.poll(() => f.channels[1].commands.filter(d => d.t === 'open').length).toBeGreaterThan(0);
+  const first = f.channels[1].commands.findIndex(d => d.t === 'open');
+  expect(f.channels[1].commands.slice(0, first).filter(d => d.t === 'release-input')).toEqual([]);
+  await expect(screen).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByText('selección vencida o repetida')).toHaveCount(0);
+  await expect(page.getByRole('button', {name: 'Habilitar entrada sin reenviar'})).toHaveCount(0);
+  await screen.focus(); await screen.press('b');
+  await expect.poll(() => f.channels[1].commands.filter(d => d.t === 'input').length).toBeGreaterThan(0);
 });
 
 test('tabs stream muestra captura inválida sin ocultar el último cuadro ni degradar a HTTP', async ({page}) => {

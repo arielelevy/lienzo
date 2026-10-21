@@ -332,7 +332,8 @@ class TabWorker:
                     continue
                 with self.cv:
                     target, generation = self.target, self.generation
-                    valid = target and data["generation"] == generation and data["n"] > last_n and not self.closed
+                    fresh = data["n"] > last_n
+                    valid = target and data["generation"] == generation and fresh and not self.closed
                     last_n = max(last_n, data["n"])
                 if valid:
                     if data["t"] == "release-input":
@@ -364,6 +365,9 @@ class TabWorker:
                             )
                         if code == 200 or code >= 500:
                             self._track(data["events"], uncertain=code != 200)
+                elif data["t"] == "release-input" and not self.pressed and fresh:
+                    # nada propio apretado: soltar no manda nada (p. ej. foco perdido con un open fallido)
+                    code, result = 200, {"ok": True}
                 else:
                     code, result = 409, {"error": "Entrada de una selección vencida o repetida; no se envió"}
             reply = {"n": data["n"], "generation": data["generation"]}
