@@ -1004,6 +1004,180 @@ def test_diagnostico_wsl_preserva_excepcion_y_respuesta(monkeypatch):
     assert all("causa_nativa_inyectada" in e["traceback"] for e in errors)
 
 
+@pytest.mark.parametrize("action", ["estado", "bloque", "cerrar"])
+def test_parcial_valido_no_se_descarta_por_exists_falso(canal, monkeypatch, action):
+    data = b"A" * MIB + b"WSL inocuo numero 0: cierre inmediato\n"
+    hashes = [xfer.hash_bytes(data[:MIB]), xfer.hash_bytes(data[MIB:])]
+    folder = str(canal["destino"])
+    path = os.path.join(folder, "contradiccion.bin")
+    body = {"destino": folder, "bs": MIB, "rel": "contradiccion.bin", "size": len(data)}
+    for i, block in enumerate((data[:MIB], data[MIB:])):
+        xfer.r_bloque(xfer._armar({**body, "i": i, "hash": hashes[i]}, block))
+    original_exists = os.path.exists
+    monkeypatch.setattr(os.path, "exists", lambda p: False if p == path + xfer.PARTE else original_exists(p))
+    if action == "cerrar":
+        code, response = xfer.r_cerrar({**body, "hashes": hashes, "mtime_ns": 123456789000})
+        assert code == 200, response
+        with open(path, "rb") as file:
+            assert file.read() == data
+    else:
+        if action == "bloque":
+            xfer.r_bloque(xfer._armar({**body, "i": 1, "hash": hashes[1]}, data[MIB:]))
+        state = xfer.estado_archivo(path, MIB)
+        assert state["parcial"] is True and state["bloques"] == {str(i): h for i, h in enumerate(hashes)}
+        with open(path + xfer.PARTE, "rb") as file:
+            assert file.read() == data
+
+
+def test_diario_no_verificable_no_autoriza_borrar_parcial(canal, monkeypatch):
+    path = os.path.join(canal["destino"], "diario.bin")
+    data = b"parcial propio valido"
+    body = {"destino": str(canal["destino"]), "bs": MIB, "rel": "diario.bin", "size": len(data)}
+    xfer.r_bloque(xfer._armar({**body, "i": 0, "hash": xfer.hash_bytes(data)}, data))
+    original = xfer._abrir_seguro
+
+    @contextlib.contextmanager
+    def inaccessible(candidate, mode, **kwargs):
+        if candidate == path + xfer.DIARIO and mode == "r":
+            raise PermissionError("fallo inocuo al validar diario")
+        with original(candidate, mode, **kwargs) as file:
+            yield file
+
+    monkeypatch.setattr(xfer, "_abrir_seguro", inaccessible)
+    with pytest.raises(PermissionError, match="fallo inocuo"):
+        xfer.estado_archivo(path, MIB)
+    with open(path + xfer.PARTE, "rb") as file:
+        assert file.read() == data
+
+
+def test_presencia_segura_distingue_ausencia_y_error_de_validacion(canal, monkeypatch):
+    path = str(canal["destino"] / "presencia.bin")
+    assert xfer._presente_seguro(path) is False
+    _escribir(path, b"archivo propio")
+    assert xfer._presente_seguro(path) is True
+
+    def bad_fstat(fd):
+        raise FileNotFoundError(2, "fallo inocuo después de abrir")
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(os, "fstat", bad_fstat)
+        with pytest.raises(FileNotFoundError, match="después de abrir"):
+            xfer._presente_seguro(path)
+    os.rename(path, path + ".cerrado")  # no queda un handle que impida mover en Windows
+
+
+@pytest.mark.parametrize("journal", [None, b"cabecera rota\n", b"bs 2\n", b"\xff"])
+def test_diario_ausente_o_invalido_conserva_semantica_de_reinicio(canal, journal):
+    path = str(canal["destino"] / "reinicio.bin")
+    _escribir(path + xfer.PARTE, b"parcial sin diario utilizable")
+    if journal is not None:
+        _escribir(path + xfer.DIARIO, journal)
+    xfer._asegurar_parte(path, MIB)
+    with open(path + xfer.PARTE, "rb") as file:
+        assert file.read() == b""
+    assert xfer.leer_diario(path, MIB) == {}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="validación de handle Windows")
+def test_win_presencia_no_confunde_winerror2_post_apertura_con_ausencia(canal, monkeypatch):
+    import ctypes
+    from ctypes import wintypes
+
+    path = str(canal["destino"] / "info.bin")
+    _escribir(path, b"archivo propio")
+    win_dll = ctypes.WinDLL
+    kernel = win_dll("kernel32", use_last_error=True)
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    closed = []
+
+    class Call:
+        def __init__(self, function):
+            self.function = function
+
+        def __call__(self, *args):
+            return self.function(*args)
+
+    def bad_info(*args):
+        ctypes.set_last_error(2)
+        return 0
+
+    def close(handle):
+        closed.append(handle)
+        return kernel.CloseHandle(handle)
+
+    class Kernel:
+        GetFileInformationByHandle = Call(bad_info)
+        CloseHandle = Call(close)
+
+        def __getattr__(self, name):
+            return getattr(kernel, name)
+
+    proxy = Kernel()
+    with monkeypatch.context() as patcher:
+        patcher.setattr(
+            ctypes, "WinDLL", lambda name, *a, **kw: proxy if name == "kernel32" else win_dll(name, *a, **kw)
+        )
+        with pytest.raises(FileNotFoundError) as raised:
+            xfer._win_abrir(path, carpeta=False, ausente_ok=True)
+        assert raised.value.winerror == 2
+    assert len(closed) == 1
+    os.rename(path, path + ".cerrado")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="NTSTATUS de publicación Windows")
+def test_publicacion_preserva_ntstatus_sin_cambiar_rename(canal, monkeypatch):
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    path = str(canal["destino"] / "status.bin")
+    data = b"publicacion propia con error inyectado"
+    _escribir(path + xfer.PARTE, data)
+    win_dll = ctypes.WinDLL
+    native = win_dll("ntdll")
+    calls = []
+
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [
+            ("replace", wintypes.BOOLEAN),
+            ("root", wintypes.HANDLE),
+            ("length", wintypes.DWORD),
+            ("name", wintypes.WCHAR * 1),
+        ]
+
+    class Call:
+        def __call__(self, handle, io, buffer, size, information):
+            info = RenameInfo.from_buffer(buffer)
+            name = ctypes.string_at(ctypes.addressof(buffer) + RenameInfo.name.offset, info.length).decode("utf-16-le")
+            calls.append((handle, info.root, info.replace, name, information))
+            ctypes.cast(io, ctypes.POINTER(ctypes.c_long))[0] = ctypes.c_long(0xC0000034).value
+            return ctypes.c_long(0xC0000034).value
+
+    class Native:
+        NtSetInformationFile = Call()
+
+        def __getattr__(self, name):
+            return getattr(native, name)
+
+    proxy = Native()
+    with xfer._abrir_seguro(path + xfer.PARTE, "r+b") as file:
+        with monkeypatch.context() as patcher:
+            patcher.setattr(
+                ctypes, "WinDLL", lambda name, *a, **kw: proxy if name == "ntdll" else win_dll(name, *a, **kw)
+            )
+            with pytest.raises(FileNotFoundError) as raised:
+                xfer._publicar_parte(path, file)
+        assert raised.value.ntstatus == 0xC0000034
+        assert raised.value.winerror == 2
+        assert len(calls) == 1
+        handle, root, replace, name, information = calls[0]
+        assert handle == msvcrt.get_osfhandle(file.fileno())
+        assert root and replace and name == "status.bin" and information == 10
+        file.seek(0)
+        assert file.read() == data
+    assert not os.path.exists(path)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="enlaces POSIX expuestos por UNC WSL")
 @pytest.mark.parametrize("extension", [xfer.PARTE, xfer.DIARIO])
 @pytest.mark.parametrize("action", ["estado", "bloque", "cerrar"])

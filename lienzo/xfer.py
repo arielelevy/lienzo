@@ -372,7 +372,7 @@ def _win_relativo(path: str, parent, *, carpeta: bool, crear: bool, escribir: bo
     return result.value
 
 
-def _win_abrir(path: str, *, carpeta: bool, crear: bool = False, escribir: bool = False, parent=None):
+def _win_abrir(path: str, *, carpeta: bool, crear: bool = False, escribir: bool = False, parent=None, ausente_ok=False):
     """Abre sin seguir reparse points; los archivos no comparten escritura ni borrado."""
     import ctypes
     import msvcrt
@@ -409,13 +409,18 @@ def _win_abrir(path: str, *, carpeta: bool, crear: bool = False, escribir: bool 
     kernel.GetFinalPathNameByHandleW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
     access = 0x001000A0 if carpeta else 0x80000000 | (0x40010000 if escribir else 0)
     flags = 0x00200000 | (0x02000000 if carpeta else 0)  # OPEN_REPARSE_POINT / BACKUP_SEMANTICS
-    handle = (
-        _win_relativo(path, parent, carpeta=carpeta, crear=crear, escribir=escribir)
-        if parent is not None
-        else kernel.CreateFileW(path, access, 3 if carpeta else 1, None, 4 if crear else 3, flags, None)
-    )
-    if handle == wintypes.HANDLE(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        handle = (
+            _win_relativo(path, parent, carpeta=carpeta, crear=crear, escribir=escribir)
+            if parent is not None
+            else kernel.CreateFileW(path, access, 3 if carpeta else 1, None, 4 if crear else 3, flags, None)
+        )
+        if handle == wintypes.HANDLE(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+    except FileNotFoundError:
+        if not ausente_ok:
+            raise
+        return None
     transferred = False
     try:
         info = FileInfo()
@@ -485,18 +490,26 @@ def _carpeta_fija(path: str):
 
 
 @contextlib.contextmanager
-def _abrir_seguro(path: str, mode: str, *, encoding=None):
+def _abrir_seguro(path: str, mode: str, *, encoding=None, ausente_ok=False):
     """Nunca trunca antes de validar el handle; rechaza también hardlinks de auxiliares."""
     write = mode != "rb" and mode != "r"
     create = mode.startswith(("w", "a"))
     with _carpeta_fija(path) as parent:
         if sys.platform == "win32":
-            fd = _win_abrir(path, carpeta=False, crear=create, escribir=write, parent=parent)
+            fd = _win_abrir(path, carpeta=False, crear=create, escribir=write, parent=parent, ausente_ok=ausente_ok)
         else:
             flags = (os.O_RDWR if write else os.O_RDONLY) | os.O_NOFOLLOW | os.O_NONBLOCK
             if create:
                 flags |= os.O_CREAT
-            fd = os.open(os.path.basename(path), flags, 0o600, dir_fd=parent)
+            try:
+                fd = os.open(os.path.basename(path), flags, 0o600, dir_fd=parent)
+            except FileNotFoundError:
+                if not ausente_ok:
+                    raise
+                fd = None
+        if fd is None:
+            yield None
+            return
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -509,6 +522,12 @@ def _abrir_seguro(path: str, mode: str, *, encoding=None):
             if mode.startswith("w"):
                 f.truncate(0)
             yield f
+
+
+def _presente_seguro(path: str) -> bool:
+    """Sólo una apertura ausente da False; errores de validación del handle se propagan."""
+    with _abrir_seguro(path, "rb", ausente_ok=True) as f:
+        return f is not None
 
 
 def _validar_auxiliares(path: str) -> None:
@@ -604,7 +623,9 @@ def _publicar_parte(path: str, f) -> None:
                 msvcrt.get_osfhandle(f.fileno()), ctypes.byref(status), buffer, len(buffer), 10
             )
             if code < 0:
-                raise ctypes.WinError(native.RtlNtStatusToDosError(code & 0xFFFFFFFF))
+                exc = ctypes.WinError(native.RtlNtStatusToDosError(code & 0xFFFFFFFF))
+                exc.ntstatus = code & 0xFFFFFFFF
+                raise exc
         else:
             name = os.path.basename(path)
             os.replace(name + PARTE, name, src_dir_fd=parent, dst_dir_fd=parent)
@@ -693,9 +714,11 @@ def leer_diario(path: str, bs: int) -> dict[int, str] | None:
     """{bloque: hash} de lo que el `.parte` ya tiene verificado, o None si no hay diario o es de
     otro tamano de bloque (no sirve: se tira y se empieza de nuevo)."""
     try:
-        with _abrir_seguro(path + DIARIO, "r", encoding="ascii") as f:
+        with _abrir_seguro(path + DIARIO, "r", encoding="ascii", ausente_ok=True) as f:
+            if f is None:
+                return None
             lineas = f.read().splitlines()
-    except OSError, UnicodeDecodeError:
+    except UnicodeDecodeError:
         return None
     if not lineas or lineas[0] != f"bs {bs}":
         return None
@@ -734,7 +757,7 @@ def estado_archivo(path: str, bs: int) -> dict:
     tiene y se tira."""
     with _lock_de(path), _carpeta_fija(path):
         _validar_auxiliares(path)
-        if os.path.exists(path + PARTE):
+        if _presente_seguro(path + PARTE):
             diario = leer_diario(path, bs)
             if diario is not None:
                 return {"bloques": {str(i): h for i, h in diario.items()}, "parcial": True, "size": None}
@@ -749,7 +772,7 @@ def _asegurar_parte(path: str, bs: int) -> None:
     """Crea `<archivo>.parte` y su diario si no estan. Si el destino ya tenia el archivo, el `.parte`
     arranca como copia del final (solo viajan los bloques distintos) y el diario lista sus bloques."""
     _validar_auxiliares(path)
-    if os.path.exists(path + PARTE) and leer_diario(path, bs) is not None:
+    if _presente_seguro(path + PARTE) and leer_diario(path, bs) is not None:
         return
     _tirar_parte(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -841,7 +864,7 @@ def r_cerrar(d: dict) -> tuple[int, dict]:
     prioridad_baja()
     with _lock_de(path), _carpeta_fija(path):
         _validar_auxiliares(path)
-        if not os.path.exists(path + PARTE):
+        if not _presente_seguro(path + PARTE):
             if os.path.isfile(path) and os.path.getsize(path) == size and _hashes_final(path, bs) == hashes:
                 with _abrir_seguro(path, "r+b") as f:
                     _mtime_handle(f, mtime_ns)
