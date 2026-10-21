@@ -59,7 +59,7 @@ def dirty_box(old, new, width, height, step=64):
     Las filas se comparan enteras (memcmp); las columnas de a `step` pixeles y solo en las filas
     que cambiaron; si cambio mas de la mitad de las filas (scroll) va el ancho entero sin mirar."""
     stride = width * 3
-    o, n = memoryview(old), memoryview(new)
+    o, n = bytes(old), bytes(new)  # comparar bytes es 8 veces mas rapido que memoryview
     changed = [y for y in range(height) if n[y * stride : (y + 1) * stride] != o[y * stride : (y + 1) * stride]]
     if not changed:
         return None
@@ -76,6 +76,165 @@ def dirty_box(old, new, width, height, step=64):
             if n[offset + x * 3 : offset + end * 3] != o[offset + x * 3 : offset + end * 3]:
                 left, right = min(left, x), max(right, end)
     return left, top, right, bottom
+
+
+# --- cuadros v2: copia de scroll y varios parches (el visor la pide con "v": 2 al abrir) -----------
+# FRAME_HEADER con x/y/ancho/alto en 0 y flags | FRAME_V2, despues SCROLL (dy en 0 = sin copia) y
+# la cantidad de parches; cada parche es PATCH + PNG. Medido el 2026-10-21 por la LAN contra
+# ar-it33940, scrolleando Wikipedia: 7 cuadros/s de 470 KB, casi todos completos. Un scroll
+# corre lo que ya tiene el visor y solo viaja la franja nueva, como el CopyRect de VNC.
+FRAME_V2 = 0x80
+SCROLL = struct.Struct(">hHHHHH")  # dy, x0, x1, top, bottom, parches: destino [x0,x1) x [top,bottom)
+PATCH = struct.Struct(">HHHHI")  # x, y, ancho, alto, largo del PNG
+MAX_PATCHES = 16
+ROW_GAP = 8  # filas iguales que todavia unen dos tramos cambiados en un mismo parche
+
+
+def changed_rows(old, new, width, rows, block=8):
+    """Las filas de `rows` (un range) que difieren entre dos cuadros RGB. Compara de a `block` filas
+    y baja a fila solo en los bloques distintos: casi siempre son pocos."""
+    stride = width * 3
+    o, n = bytes(old), bytes(new)  # comparar bytes es 8 veces mas rapido que memoryview
+    out = []
+    for start in range(rows.start, rows.stop, block):
+        end = min(rows.stop, start + block)
+        if n[start * stride : end * stride] != o[start * stride : end * stride]:
+            out += [
+                y for y in range(start, end) if n[y * stride : (y + 1) * stride] != o[y * stride : (y + 1) * stride]
+            ]
+    return out
+
+
+def row_spans(rows, gap=ROW_GAP):
+    """[(top, bottom)] de filas cambiadas, uniendo los tramos separados por menos de `gap` filas."""
+    spans = []
+    for y in rows:
+        if spans and y - spans[-1][1] < gap:
+            spans[-1][1] = y + 1
+        else:
+            spans.append([y, y + 1])
+    return [tuple(s) for s in spans]
+
+
+def span_box(old, new, width, top, bottom, step=32):
+    """(left, top, right, bottom) de lo que cambio dentro de las filas [top, bottom), o None."""
+    stride = width * 3
+    o, n = bytes(old), bytes(new)  # comparar bytes es 8 veces mas rapido que memoryview
+    left, right = width, 0
+    for y in range(top, bottom):
+        offset = y * stride
+        if n[offset : offset + stride] == o[offset : offset + stride]:
+            continue
+        for x in range(0, width, step):
+            end = min(width, x + step)
+            if left <= x and end <= right:
+                continue
+            if n[offset + x * 3 : offset + end * 3] != o[offset + x * 3 : offset + end * 3]:
+                left, right = min(left, x), max(right, end)
+    return (left, top, right, bottom) if right > left else None
+
+
+def dirty_rects(old, new, width, height, changed=None):
+    """Los parches que cubren lo que cambio, uno por tramo de filas (`changed`: las filas distintas,
+    si ya se sabe). Con mas de MAX_PATCHES se unen en uno solo (la caja de todos)."""
+    changed = changed_rows(old, new, width, range(height)) if changed is None else changed
+    boxes = [b for t, bt in row_spans(changed) if (b := span_box(old, new, width, t, bt))]
+    if len(boxes) > MAX_PATCHES:
+        boxes = [(min(b[0] for b in boxes), boxes[0][1], max(b[2] for b in boxes), boxes[-1][3])]
+    return boxes
+
+
+def find_scroll(old, new, width, height, changed, min_rows=24):
+    """(dy, x0, x1, top, bottom) si el cambio es un corrimiento vertical, o None. Vota con la banda
+    central de cada fila: una fila cambiada que es igual a una sola fila del cuadro anterior dice
+    cuanto se corrio (las repetidas, como las filas en blanco, no votan). Despues busca el tramo
+    corrido mas largo y hasta donde llega a los costados (barras laterales fijas quedan afuera)."""
+    if len(changed) < min_rows:
+        return None
+    stride = width * 3
+    o, n = bytes(old), bytes(new)  # comparar bytes es 8 veces mas rapido que memoryview
+    # la mitad central del ancho: una banda angosta cae en el blanco entre columnas y no vota.
+    # Las claves son bytes (hashear un memoryview lo copia igual y cuesta el triple)
+    c0, c1 = width // 4 * 3, width * 3 // 4 * 3
+    seen = {}
+    for y in range(height):
+        key = old[y * stride + c0 : y * stride + c1]
+        seen[key] = -1 if key in seen else y
+    votes = {}
+    for y in changed:
+        yo = seen.get(new[y * stride + c0 : y * stride + c1], -1)
+        if yo >= 0 and yo != y:
+            votes[y - yo] = votes.get(y - yo, 0) + 1
+    if not votes:
+        return None
+    dy, count = max(votes.items(), key=lambda kv: kv[1])
+    if count < max(min_rows // 2, len(changed) // 6):
+        return None
+
+    def same(y, a, b):
+        return n[y * stride + a : y * stride + b] == o[(y - dy) * stride + a : (y - dy) * stride + b]
+
+    lo, hi = max(0, dy), min(height, height + dy)
+    best, run = (0, 0), None
+    for y in range(lo, hi + 1):
+        if y < hi and same(y, c0, c1):
+            run = y if run is None else run
+        elif run is not None:
+            best = max(best, (run, y), key=lambda r: r[1] - r[0])
+            run = None
+    top, bottom = best
+    if bottom - top < min_rows:
+        return None
+    sample = range(top, bottom, max(1, (bottom - top) // 24))
+    x0, x1 = c0 // 3, c1 // 3
+    while x0 >= 16 and all(same(y, (x0 - 16) * 3, x0 * 3) for y in sample):
+        x0 -= 16
+    x0 = 0 if x0 < 16 and all(same(y, 0, x0 * 3) for y in sample) else x0
+    while x1 + 16 <= width and all(same(y, x1 * 3, (x1 + 16) * 3) for y in sample):
+        x1 += 16
+    x1 = width if width - x1 < 16 and all(same(y, x1 * 3, width * 3) for y in sample) else x1
+    return dy, x0, x1, top, bottom
+
+
+def shifted(old, width, scroll):
+    """El cuadro anterior con la copia de `scroll` ya aplicada: lo que el visor tiene despues de
+    correr su imagen. Contra esto se buscan los parches."""
+    dy, x0, x1, top, bottom = scroll
+    stride = width * 3
+    out = bytearray(old)
+    for y in range(top, bottom):
+        out[y * stride + x0 * 3 : y * stride + x1 * 3] = old[(y - dy) * stride + x0 * 3 : (y - dy) * stride + x1 * 3]
+    return bytes(out)
+
+
+def frame_v2(seq, rgb, width, height, last):
+    """El cuadro v2 contra `last` (RGB del cuadro anterior del mismo tamano, o None): bytes, o None si
+    no cambio nada. Completo si no hay anterior o si los parches cubren mas del 70 %."""
+    full = last is None
+    scroll = None
+    boxes = []
+    if not full:
+        if rgb == last:  # un memcmp: el caso de siempre cuando nadie toca nada
+            return None
+        changed = changed_rows(last, rgb, width, range(height))
+        if not changed:
+            return None
+        scroll = find_scroll(last, rgb, width, height, changed)
+        base = shifted(last, width, scroll) if scroll else last
+        boxes = dirty_rects(base, rgb, width, height, None if scroll else changed) if base != rgb else []
+        if not boxes and not scroll:
+            return None
+        full = sum((b[2] - b[0]) * (b[3] - b[1]) for b in boxes) > width * height * 0.7
+    if full:
+        scroll, boxes = None, [(0, 0, width, height)]
+    out = [
+        FRAME_HEADER.pack(seq, 0, 0, 0, 0, width, height, FRAME_V2 | (FRAME_FULL if full else 0)),
+        SCROLL.pack(*(scroll or (0, 0, 0, 0, 0)), len(boxes)),
+    ]
+    for box in boxes:
+        data = png(rgb, width, box)
+        out += [PATCH.pack(box[0], box[1], box[2] - box[0], box[3] - box[1], len(data)), data]
+    return b"".join(out)
 
 
 def png(rgb, width, box):
@@ -663,6 +822,7 @@ class Streamer:
         self.seq = 0
         self.idle = 0  # lecturas seguidas sin cambios
         self.last = None  # (hwnd, ancho, alto, rgb) del ultimo cuadro enviado
+        self.v2 = False
         self.closed = False
 
     def emit(self, kind, payload):
@@ -683,6 +843,7 @@ class Streamer:
             with self.cv:
                 self.hwnd, self.size, self.last, self.in_flight = hwnd, size, None, 0
                 self.refit = size is not None
+                self.v2 = data.get("v") == 2  # el visor entiende scroll y varios parches
                 self.paused = False
                 self.cv.notify_all()
             self.json({"t": "opened", "window": str(hwnd)})
@@ -762,6 +923,16 @@ class Streamer:
                     self.hwnd = None
             return None
         last = self.last
+        if self.v2:
+            payload = frame_v2(
+                self.seq + 1, rgb, width, height, last[3] if last and last[:3] == (hwnd, width, height) else None
+            )
+            if payload is None:
+                self.idle += 1
+                pause = IDLE_INTERVAL_S if self.idle < IDLE_FAST_STEPS else IDLE_SLOW_S
+                self.rest(max(0, pause - (self.clock() - started)))
+                return None
+            return self._send_frame(hwnd, width, height, rgb, payload, started)
         box = (0, 0, width, height)
         full = True
         if last and last[:3] == (hwnd, width, height):
@@ -775,12 +946,14 @@ class Streamer:
                 full = False
             else:
                 box = (0, 0, width, height)
+        header = FRAME_HEADER.pack(
+            self.seq + 1, box[0], box[1], box[2] - box[0], box[3] - box[1], width, height, FRAME_FULL if full else 0
+        )
+        return self._send_frame(hwnd, width, height, rgb, header + png(rgb, width, box), started)
+
+    def _send_frame(self, hwnd, width, height, rgb, payload, started):
         self.idle = 0
         self.seq += 1
-        header = FRAME_HEADER.pack(
-            self.seq, box[0], box[1], box[2] - box[0], box[3] - box[1], width, height, FRAME_FULL if full else 0
-        )
-        payload = header + png(rgb, width, box)
         with self.cv:
             if self.hwnd != hwnd:
                 return None  # cambio la ventana mientras se capturaba: el cuadro ya no vale

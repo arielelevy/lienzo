@@ -17,6 +17,37 @@ type Command = Record<string, unknown>;
 /** Lo que manda el worker por el canal vivo (browser_window.py --stream): texto JSON o un cuadro binario. */
 type StreamMessage = { t: string; n?: number; text?: string; message?: string; input?: boolean; cursor?: string; window?: string; windows?: {id: string; title: string}[] };
 const FRAME_HEADER = 17; // >IHHHHHHB: seq, x, y, ancho, alto, ancho total, alto total, flags
+// Cuadro v2 (browser_window.frame_v2): despues de la cabecera, la copia del scroll (>hHHHHH: dy, x0,
+// x1, top, bottom, parches) y cada parche como >HHHHI (x, y, ancho, alto, largo) + PNG.
+const FRAME_V2 = 0x80, SCROLL_BYTES = 12, PATCH_BYTES = 12;
+type V2Frame = {scroll: {dy: number; x0: number; x1: number; top: number; bottom: number} | null; patches: {x: number; y: number; blob: Blob}[]};
+
+/** Lee un cuadro v2 y verifica que la copia y cada parche caigan adentro de la imagen. */
+function parseV2(buffer: ArrayBuffer, fullWidth: number, fullHeight: number): V2Frame {
+  const view = new DataView(buffer);
+  if (buffer.byteLength < FRAME_HEADER + SCROLL_BYTES) throw new Error('Cuadro de Chrome remoto incompleto');
+  let pos = FRAME_HEADER;
+  const dy = view.getInt16(pos), x0 = view.getUint16(pos + 2), x1 = view.getUint16(pos + 4);
+  const top = view.getUint16(pos + 6), bottom = view.getUint16(pos + 8), count = view.getUint16(pos + 10);
+  pos += SCROLL_BYTES;
+  let scroll: V2Frame['scroll'] = null;
+  if (dy) {
+    if (x0 >= x1 || x1 > fullWidth || top >= bottom || bottom > fullHeight || top - dy < 0 || bottom - dy > fullHeight)
+      throw new Error('Corrimiento de Chrome remoto inválido');
+    scroll = {dy, x0, x1, top, bottom};
+  }
+  const patches: V2Frame['patches'] = [];
+  for (let i = 0; i < count; i++) {
+    if (pos + PATCH_BYTES > buffer.byteLength) throw new Error('Cuadro de Chrome remoto incompleto');
+    const x = view.getUint16(pos), y = view.getUint16(pos + 2), w = view.getUint16(pos + 4), h = view.getUint16(pos + 6), n = view.getUint32(pos + 8);
+    pos += PATCH_BYTES;
+    if (!w || !h || x + w > fullWidth || y + h > fullHeight || pos + n > buffer.byteLength) throw new Error('Dimensiones de Chrome remoto inválidas');
+    patches.push({x, y, blob: new Blob([new Uint8Array(buffer, pos, n)], {type: 'image/png'})});
+    pos += n;
+  }
+  if (pos !== buffer.byteLength) throw new Error('Cuadro de Chrome remoto inválido');
+  return {scroll, patches};
+}
 const modifiers = (e: {altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean}) =>
   Number(e.altKey) + Number(e.ctrlKey) * 2 + Number(e.metaKey) * 4 + Number(e.shiftKey) * 8;
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(n)));
@@ -181,7 +212,8 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   const openWindow = useCallback((ws: WebSocket | null) => {
     if (ws?.readyState !== WebSocket.OPEN || !windowRef.current) return;
     ws.send(JSON.stringify({t:'release'}));
-    ws.send(JSON.stringify({t: 'open', window: windowRef.current, ...physicalSize(viewport.current?.getBoundingClientRect())}));
+    // v: 2 pide cuadros con copia de scroll y varios parches; un worker viejo lo ignora y manda v1
+    ws.send(JSON.stringify({t: 'open', window: windowRef.current, v: 2, ...physicalSize(viewport.current?.getBoundingClientRect())}));
   }, []);
   // cambiar de ventana no abre otro canal ni otro worker: se le pide la nueva al mismo
   useEffect(() => { openWindow(socket.current); }, [window, openWindow]);
@@ -270,19 +302,29 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
         const seq = data.getUint32(0), x = data.getUint16(4), y = data.getUint16(6);
         const fullWidth = data.getUint16(12), fullHeight = data.getUint16(14), full = data.getUint8(16) & 1;
         const width = data.getUint16(8), height = data.getUint16(10);
-        if (!width || !height || !fullWidth || !fullHeight || x + width > fullWidth || y + height > fullHeight) {
+        const v1 = !(data.getUint8(16) & FRAME_V2);  // en v2 x/y/ancho/alto van en 0: mandan los parches
+        if (!fullWidth || !fullHeight || (v1 && (!width || !height || x + width > fullWidth || y + height > fullHeight))) {
           report(new Error('Dimensiones de Chrome remoto inválidas')); return;
         }
-        const blob = new Blob([new Uint8Array(event.data as ArrayBuffer, FRAME_HEADER)], {type: 'image/png'});
-        bytes += blob.size;
+        let frame: V2Frame;
+        try {
+          frame = !v1 ? parseV2(event.data, fullWidth, fullHeight)
+            : {scroll: null, patches: [{x, y, blob: new Blob([new Uint8Array(event.data as ArrayBuffer, FRAME_HEADER)], {type: 'image/png'})}]};
+        } catch (e) { report(e); return; }
+        bytes += event.data.byteLength;
         drawing = drawing.then(async () => {
           if (cancelled) return;
-          const bitmap = await createImageBitmap(blob);
+          // los parches se decodifican en paralelo; la copia del scroll va antes de pegarlos
+          const bitmaps = await Promise.all(frame.patches.map(p => createImageBitmap(p.blob)));
           try {
             if (cancelled) return;
             if (full || canvas.width !== fullWidth || canvas.height !== fullHeight) { canvas.width = fullWidth; canvas.height = fullHeight; }
-            canvas.getContext('2d')?.drawImage(bitmap, x, y);
-          } finally { bitmap.close(); }
+            const ctx = canvas.getContext('2d');
+            const s = frame.scroll;
+            // drawImage de un canvas sobre si mismo copia el origen antes de pintar: vale con solapamiento
+            if (ctx && s) ctx.drawImage(canvas, s.x0, s.top - s.dy, s.x1 - s.x0, s.bottom - s.top, s.x0, s.top, s.x1 - s.x0, s.bottom - s.top);
+            frame.patches.forEach((p, i) => ctx?.drawImage(bitmaps[i], p.x, p.y));
+          } finally { bitmaps.forEach(b => b.close()); }
           if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({t: 'ack', n: seq}));
           setSize(s => s && s.width === fullWidth && s.height === fullHeight ? s : {width: fullWidth, height: fullHeight});
           frames += 1;

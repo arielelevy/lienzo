@@ -1,5 +1,6 @@
 /** Propuesta de aceptación: UI real, peer y Chrome simulados explícitamente. */
 import { test, expect, type Page } from "@playwright/test";
+import { crc32, deflateSync } from "node:zlib";
 import { bloquearEscrituras } from "./tablero-fijo";
 test.use({hasTouch: true});
 
@@ -698,6 +699,64 @@ test('ofrece perfiles reales, espera permiso y desconecta sin cerrar Chrome', as
   await page.getByRole('button', {name: 'Desconectar', exact: true}).click();
   await expect(page.getByRole('button', {name: 'Conectar Chrome abierto'})).toBeVisible();
   expect(calls.some(d => d.action === 'start')).toBeFalsy();
+});
+
+/** PNG RGB sin filtros, como browser_window.png. */
+function pngRgb(width: number, height: number, pixel: (x: number, y: number) => [number, number, number]): Buffer {
+  const rows = Buffer.alloc((width * 3 + 1) * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) rows.set(pixel(x, y), y * (width * 3 + 1) + 1 + x * 3);
+  const chunk = (kind: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(kind, 'latin1'), data]);
+    const out = Buffer.alloc(12 + data.length);
+    out.writeUInt32BE(data.length, 0); body.copy(out, 4); out.writeUInt32BE(crc32(body), 8 + data.length);
+    return out;
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr.set([8, 2, 0, 0, 0], 8);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
+}
+
+/** Cuadro v2 de browser_window.frame_v2: cabecera, copia de scroll y parches. */
+function frameV2(seq: number, width: number, height: number, full: boolean, scroll: number[] | null, patches: {x: number; y: number; png: Buffer; w: number; h: number}[]): Buffer {
+  const header = Buffer.alloc(17);
+  header.writeUInt32BE(seq, 0); header.writeUInt16BE(width, 12); header.writeUInt16BE(height, 14); header.writeUInt8(0x80 | (full ? 1 : 0), 16);
+  const s = Buffer.alloc(12);
+  const [dy, x0, x1, top, bottom] = scroll ?? [0, 0, 0, 0, 0];
+  s.writeInt16BE(dy, 0); s.writeUInt16BE(x0, 2); s.writeUInt16BE(x1, 4); s.writeUInt16BE(top, 6); s.writeUInt16BE(bottom, 8); s.writeUInt16BE(patches.length, 10);
+  return Buffer.concat([header, s, ...patches.flatMap(p => {
+    const h = Buffer.alloc(12);
+    h.writeUInt16BE(p.x, 0); h.writeUInt16BE(p.y, 2); h.writeUInt16BE(p.w, 4); h.writeUInt16BE(p.h, 6); h.writeUInt32BE(p.png.length, 8);
+    return [h, p.png];
+  })]);
+}
+
+test('v2: corre la imagen con la copia del scroll y pega sólo la franja nueva', async ({page}) => {
+  const stream: Record<string, unknown>[] = [];
+  await page.route('**/auth', r => r.fulfill({json: {configured: false, authenticated: true, local: true}}));
+  await page.route('**/peers', r => r.fulfill({json: [{pc_id: 'native-peer', name: 'Globant PC', alive: true, local: false}]}));
+  await page.route('**/browser', r => {
+    const d = r.request().postDataJSON();
+    return r.fulfill({json: d.action === 'windows' ? {windows: [{id: '123', title: 'Chrome Globant'}]} : d.action === 'profiles' ? {profiles: [{id: 'Default', name: 'globant.com'}]} : {ok: true}});
+  });
+  const W = 40, H = 20;
+  const full = frameV2(1, W, H, true, null, [{x: 0, y: 0, w: W, h: H, png: pngRgb(W, H, (_x, y) => [y * 10, 0, 0])}]);
+  // scroll de 5 filas hacia arriba: las filas 0..14 vienen de 5..19 y la franja 15..19 es nueva (verde)
+  const scrolled = frameV2(2, W, H, false, [-5, 0, W, 0, 15], [{x: 0, y: 15, w: W, h: 5, png: pngRgb(W, 5, () => [0, 200, 0])}]);
+  await page.routeWebSocket('**/browser/stream*', ws => {
+    ws.onMessage(message => {
+      const d = JSON.parse(String(message)) as Record<string, unknown>;
+      stream.push(d);
+      if (d.t === 'open') { ws.send(JSON.stringify({t: 'opened', window: d.window})); ws.send(full); }
+      if (d.t === 'ack' && d.n === 1) ws.send(scrolled);
+    });
+  });
+  await page.goto('/chrome');
+  await expect.poll(() => stream.some(d => d.t === 'ack' && d.n === 2)).toBeTruthy();
+  expect(stream.find(d => d.t === 'open')).toMatchObject({v: 2});
+  const pixels = await page.evaluate(() => {
+    const ctx = document.querySelector<HTMLCanvasElement>('.remote-screen canvas')!.getContext('2d')!;
+    return [0, 10, 14, 17].map(y => Array.from(ctx.getImageData(3, y, 1, 1).data.slice(0, 3)));
+  });
+  expect(pixels).toEqual([[50, 0, 0], [150, 0, 0], [190, 0, 0], [0, 200, 0]]);
 });
 
 test('muestra la ventana completa por el canal vivo y manda el mouse sin pedir depuración remota', async ({page}) => {

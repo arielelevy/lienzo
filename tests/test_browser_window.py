@@ -404,6 +404,83 @@ def test_png_of_patch_decodes_to_the_region():
     assert zlib.decompress(idat) == (b"\x00" + bytes((9, 8, 7)) * 3) * 2
 
 
+def page(width, height, offset, header=20, sidebar=40):
+    """Una pagina con encabezado y barra lateral fijos y un contenido de filas distintas, corrido
+    `offset` filas hacia arriba (scroll)."""
+    data = bytearray()
+    for y in range(height):
+        for x in range(width):
+            if y < header:
+                data += bytes((10, 10, 10))
+            elif x < sidebar:
+                data += bytes((200, y % 251, 0))  # fija, pero distinta en cada fila (texto)
+            else:
+                r = y + offset
+                data += bytes(((r * 7) % 251, (r * 13 + x // 50) % 251, (r * 31) % 251))
+    return bytes(data)
+
+
+def apply_v2(canvas, width, payload):
+    """Lo que hace el visor con un cuadro v2: corre la imagen y pega los parches (PNG sin filtros)."""
+    *_, fw, fh, flags = module.FRAME_HEADER.unpack(payload[: module.FRAME_HEADER.size])
+    assert flags & module.FRAME_V2 and fw == width
+    pos = module.FRAME_HEADER.size
+    dy, x0, x1, top, bottom, count = module.SCROLL.unpack(payload[pos : pos + module.SCROLL.size])
+    pos += module.SCROLL.size
+    out = bytearray(canvas)
+    if dy:
+        out = bytearray(module.shifted(bytes(canvas), width, (dy, x0, x1, top, bottom)))
+    for _ in range(count):
+        x, y, w, h, n = module.PATCH.unpack(payload[pos : pos + module.PATCH.size])
+        pos += module.PATCH.size
+        data = payload[pos : pos + n]
+        pos += n
+        rows = zlib.decompress(data[data.index(b"IDAT") + 4 : data.index(b"IEND") - 4])
+        for r in range(h):
+            line = rows[r * (w * 3 + 1) + 1 : (r + 1) * (w * 3 + 1)]
+            out[((y + r) * width + x) * 3 : ((y + r) * width + x + w) * 3] = line
+    assert pos == len(payload)
+    return bytes(out), (dy, x0, x1, top, bottom), count
+
+
+def test_frame_v2_scroll_copies_the_content_and_sends_only_the_new_strip():
+    w, h = 160, 120
+    old, new = page(w, h, 0), page(w, h, 37)
+    payload = module.frame_v2(5, new, w, h, old)
+    canvas, scroll, count = apply_v2(old, w, payload)
+    assert canvas == new  # la copia mas los parches reconstruyen el cuadro exacto
+    dy, x0, x1, top, bottom = scroll
+    assert dy == -37 and x0 == 40 and x1 == w  # la barra lateral fija no se corre
+    assert count == 1 and len(payload) < len(module.png(new, w, (0, 0, w, h))) / 2
+
+
+def test_frame_v2_separate_patches_and_none_when_equal():
+    base = rgb(200, 100)
+    assert module.frame_v2(1, base, 200, 100, base) is None
+    changed = paint(paint(base, 200, 5, 2, 3, 2, (0, 0, 0)), 200, 150, 90, 4, 4, (1, 2, 3))
+    payload = module.frame_v2(2, changed, 200, 100, base)
+    canvas, scroll, count = apply_v2(base, 200, payload)
+    assert canvas == changed and scroll[0] == 0 and count == 2  # dos esquinas: dos parches, no una caja
+
+
+def test_frame_v2_full_without_previous():
+    frame = page(64, 40, 0)
+    payload = module.frame_v2(1, frame, 64, 40, None)
+    assert module.FRAME_HEADER.unpack(payload[: module.FRAME_HEADER.size])[-1] == module.FRAME_V2 | module.FRAME_FULL
+    assert apply_v2(rgb(64, 40), 64, payload)[0] == frame
+
+
+def test_streamer_uses_v2_only_when_the_viewer_asks():
+    base = rgb(8, 4)
+    streamer, out, windows, captures = make_streamer([base, base])
+    streamer.handle({"t": "open", "window": "7", "v": 2})
+    first = streamer.step()
+    assert module.FRAME_HEADER.unpack(first[: module.FRAME_HEADER.size])[-1] & module.FRAME_V2
+    streamer.handle({"t": "open", "window": "7"})
+    second = streamer.step()
+    assert not module.FRAME_HEADER.unpack(second[: module.FRAME_HEADER.size])[-1] & module.FRAME_V2
+
+
 class FakeWindows:
     def __init__(self):
         self.inputs = []
