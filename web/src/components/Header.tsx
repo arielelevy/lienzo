@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AuthInfo } from "../api";
 import { agentIds, type Agent } from "../agents";
+import { ChromeLogo } from "./ChromeCard";
 
 interface Props {
   authInfo: AuthInfo;
@@ -10,6 +11,9 @@ interface Props {
   onQuery: (q: string) => void;
   agents: Record<Agent, boolean>;
   onAgents: (a: Record<Agent, boolean>) => void;
+  /** se ven las tarjetas de las extensiones de Claude y Codex en Chrome */
+  showChrome: boolean;
+  onShowChrome: (show: boolean) => void;
   /** el de App: useRef<HTMLInputElement>(null); con @types/react 18 el tipo va sin "| null" */
   searchRef: React.RefObject<HTMLInputElement>;
   onSetup: () => void;
@@ -45,7 +49,7 @@ const Phone = () => (
 
 /** Header minimalista: marca y estado, buscador con chips por agente, acceso desde el celular
  *  (URL del tunel y QR de Authenticator, juntos) y un menu "⋯" con el resto. */
-export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, searchRef, onSetup, onShowQr, onShowTotp, onShowPairing, onHelp, onKnowledge, onUpdates, onLogout, onMenuOpen, flags, projects }: Props) {
+export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, showChrome, onShowChrome, searchRef, onSetup, onShowQr, onShowTotp, onShowPairing, onHelp, onKnowledge, onUpdates, onLogout, onMenuOpen, flags, projects }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -105,6 +109,15 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
             {a}
           </button>
         ))}
+        {/* las extensiones de Claude y Codex en Chrome (ChromeCard): no son un agente del catálogo */}
+        <button
+          className={`chip chromeext ${showChrome ? "on" : ""}`}
+          aria-pressed={showChrome}
+          title={showChrome ? "ocultar las extensiones de Chrome" : "mostrar las extensiones de Chrome"}
+          onClick={() => onShowChrome(!showChrome)}
+        >
+          <ChromeLogo size={11} /> chrome
+        </button>
       </div>
       <span className="agent-project-separator" aria-hidden="true" />
       {projects}

@@ -553,6 +553,8 @@ header .search .chip.pi.on { background: var(--pi); }
 header .search .chip.kiro.on { background: var(--kiro); }
 header .search .chip.antigravity.on { background: var(--antigravity); }
 header .search .chip.coda.on { background: var(--coda-bg); color: var(--coda); }
+header .search .chip.chromeext { gap: 4px; }
+header .search .chip.chromeext.on { background: #e8eaed; color: #202124; }
 header .search .chip:not(.on) { text-decoration: line-through; }
 header .agent-project-separator { width: 1px; height: 20px; flex: 0 0 1px; background: var(--line); margin: 0 3px; }
 /* chips de proyecto: al lado del buscador y afuera de su fondo, como un grupo propio. Un solo

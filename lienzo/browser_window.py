@@ -823,6 +823,7 @@ class Streamer:
         self.idle = 0  # lecturas seguidas sin cambios
         self.last = None  # (hwnd, ancho, alto, rgb) del ultimo cuadro enviado
         self.v2 = False
+        self.stats = {"capture": [], "encode": [], "frames": 0, "bytes": 0, "since": clock()}
         self.closed = False
 
     def emit(self, kind, payload):
@@ -924,9 +925,11 @@ class Streamer:
             return None
         last = self.last
         if self.v2:
+            captured = self.clock()
             payload = frame_v2(
                 self.seq + 1, rgb, width, height, last[3] if last and last[:3] == (hwnd, width, height) else None
             )
+            self._measure(captured - started, self.clock() - captured, len(payload) if payload else 0)
             if payload is None:
                 self.idle += 1
                 pause = IDLE_INTERVAL_S if self.idle < IDLE_FAST_STEPS else IDLE_SLOW_S
@@ -950,6 +953,29 @@ class Streamer:
             self.seq + 1, box[0], box[1], box[2] - box[0], box[3] - box[1], width, height, FRAME_FULL if full else 0
         )
         return self._send_frame(hwnd, width, height, rgb, header + png(rgb, width, box), started)
+
+    def _measure(self, capture_s, encode_s, size):
+        """Suma lo que tardo cada vuelta y cada segundo manda {"t": "stats"}: captura y armado del
+        cuadro en ms (medianas) y cuadros enviados. Es lo que dice donde se va el tiempo en la PC de
+        alla; el visor lo muestra y un visor viejo lo ignora."""
+        st = self.stats
+        st["capture"].append(capture_s * 1000)
+        st["encode"].append(encode_s * 1000)
+        st["frames"] += 1 if size else 0
+        st["bytes"] += size
+        if self.clock() - st["since"] < 1:
+            return
+        mid = lambda xs: round(sorted(xs)[len(xs) // 2], 1)
+        self.json(
+            {
+                "t": "stats",
+                "capture_ms": mid(st["capture"]),
+                "encode_ms": mid(st["encode"]),
+                "frames": st["frames"],
+                "bytes": st["bytes"],
+            }
+        )
+        self.stats = {"capture": [], "encode": [], "frames": 0, "bytes": 0, "since": self.clock()}
 
     def _send_frame(self, hwnd, width, height, rgb, payload, started):
         self.idle = 0

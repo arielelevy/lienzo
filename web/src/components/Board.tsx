@@ -52,6 +52,8 @@ interface Props {
   /** PCs de la federacion (ronda 2), la propia incluida: [] hasta que exista GET /peers. Sirve para
    *  la tira de PCs (filtro) y para pintar de gris las tarjetas de una PC caida. */
   peers?: Peer[];
+  /** el chip «chrome» del encabezado: se ven las tarjetas de las extensiones */
+  showChrome?: boolean;
   /** tira de PCs: pc_ids elegidos (vacio es "Todas") */
   pcFilter?: Set<string>;
   /** chips de proyecto: repos elegidos (por repo_key o repo); vacio es todos */
@@ -292,7 +294,7 @@ interface Move {
 /** sin proyectos elegidos: un Set estable, para no romper el useMemo del tablero en cada render */
 const NINGUNO: Set<string> = new Set();
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, onRescan, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, onRescan, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], showChrome = true, pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [context, setContext] = useState<{ x: number; y: number } | null>(null);
   const contextRef = useRef<HTMLDivElement | null>(null);
@@ -339,8 +341,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // no dice nada que la tarjeta no dijera ya
   // con un filtro de repos o «sólo coordinadoras» la extensión no entra: no es de ningún repo
   const chromes = useMemo(
-    () => (selectedRepos.size > 0 || coordOnly ? [] : chromeConexiones(peers, pcFilter)),
-    [peers, pcFilter, selectedRepos, coordOnly],
+    () => (!showChrome || selectedRepos.size > 0 || coordOnly ? [] : chromeConexiones(peers, pcFilter)),
+    [peers, pcFilter, selectedRepos, coordOnly, showChrome],
   );
   const pcColorOf = (s: Session): string | undefined => (peers.length > 1 ? peersById.get(pcOf(s, localPcId) ?? "")?.color : undefined);
   // el arrastre vive en el ref (los listeners de document lo leen al instante, sin esperar el

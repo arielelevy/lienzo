@@ -230,6 +230,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // filtro visual del header: texto + agentes. "/" enfoca la caja, Esc la limpia.
   const [query, setQuery] = useState("");
   const [agents, setAgents] = useState(allAgents);
+  const [showChrome, setShowChrome] = useState(true);
   const searchRef = useRef<HTMLInputElement>(null);
   // lo que se ve ahora: pasa los filtros (header, PCs, proyectos) y se le puede escribir. Una de la
   // columna Muerta o de una PC caida no entra: no hay a quien mandarle nada
@@ -445,6 +446,8 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         onQuery={setQuery}
         agents={agents}
         onAgents={setAgents}
+        showChrome={showChrome}
+        onShowChrome={setShowChrome}
         searchRef={searchRef}
         onSetup={onSetup}
         // el header quedo por encima del modal: estos abren otro, asi que cierran lo de atras
@@ -550,6 +553,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         showArrows={showArrows}
         query={query}
         agents={agents}
+        showChrome={showChrome}
         peers={peers}
         pcFilter={pcFilter}
         selectedRepos={selectedRepos}
