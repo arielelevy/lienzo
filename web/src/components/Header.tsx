@@ -31,6 +31,8 @@ interface Props {
   flags: readonly { grupo: "mostrar" | "auto"; label: string; desc?: string; on: boolean; toggle: () => void; title: string; danger?: boolean }[];
   /** los chips de proyecto (ProjectStrip), que van despues de los de agente */
   projects?: React.ReactNode;
+  /** auto-aprobar TODO prendido: la pestaña que cuelga del borde de arriba, con lo que lo apaga */
+  autoAprobar?: (() => void) | null;
 }
 
 const Shield = () => (
@@ -49,7 +51,7 @@ const Phone = () => (
 
 /** Header minimalista: marca y estado, buscador con chips por agente, acceso desde el celular
  *  (URL del tunel y QR de Authenticator, juntos) y un menu "⋯" con el resto. */
-export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, showChrome, onShowChrome, searchRef, onSetup, onShowQr, onShowTotp, onShowPairing, onHelp, onKnowledge, onUpdates, onLogout, onMenuOpen, flags, projects }: Props) {
+export function Header({ authInfo, connected, polling, query, onQuery, agents, onAgents, showChrome, onShowChrome, searchRef, onSetup, onShowQr, onShowTotp, onShowPairing, onHelp, onKnowledge, onUpdates, onLogout, onMenuOpen, flags, projects, autoAprobar }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -122,6 +124,16 @@ export function Header({ authInfo, connected, polling, query, onQuery, agents, o
       <span className="agent-project-separator" aria-hidden="true" />
       {projects}
       <span className="sp" />
+      {autoAprobar && (
+        // pestaña colgada del borde de arriba, del alto del encabezado y a la izquierda de Authenticator
+        // (pedido de Ariel, 2026-10-21): antes era una barra negra a lo ancho que le comia una fila al
+        // tablero. El aviso entero va para el lector de pantalla y en el title.
+        <div className="auto-aprobar-aviso" role="alert" title="AUTO-APROBAR TODO prendido: cada permiso se aprueba solo, sin mirarlo">
+          <span aria-hidden="true">☠ auto-aprobar</span>
+          <span className="sr-only">AUTO-APROBAR TODO prendido: cada permiso se aprueba solo, sin mirarlo</span>
+          <button onClick={autoAprobar}>Apagar</button>
+        </div>
+      )}
       {authInfo.remote_url && authInfo.local && (
         <button className="icon lbl" title={`abrir en el celular: ${authInfo.remote_url.replace("https://", "")}`} aria-label="QR con la URL para el celular" onClick={onShowQr}>
           <Phone />

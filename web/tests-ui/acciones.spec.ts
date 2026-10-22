@@ -117,11 +117,17 @@ test("F1: si otra PC no tomó auto-aprobar, el toast dice cuál", async ({ page 
     puesto = route.request().postDataJSON();
     return route.fulfill(json(200, { auto_continue: false, auto_retry: false, auto_aprobar: true, peers: { pcB: "timed out" } }));
   });
-  page.on("dialog", (d) => d.accept());
+  // prenderlo no pide confirmación (pedido de Ariel, 2026-10-21)
+  let dialogos = 0;
+  page.on("dialog", (d) => {
+    dialogos++;
+    void d.dismiss();
+  });
   await page.getByRole("button", { name: "más opciones" }).click();
   await page.getByRole("menuitemcheckbox", { name: /Auto-aprobar TODO/ }).click();
   expect(puesto).toEqual({ auto_aprobar: true });
   await expect(page.getByText(/notebook no lo tomó \(timed out\)/)).toBeVisible();
+  expect(dialogos).toBe(0);
   await expect(page.locator(".auto-aprobar-aviso")).toBeVisible();
 });
 

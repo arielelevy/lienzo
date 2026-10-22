@@ -138,7 +138,7 @@ function Popover({ cls, x, y, style, role, label, live, head, onEsc, onEnter, ch
 }
 
 /** cuanto se le respeta a cada costado del tablero para que la descripcion no se salga */
-const DESC_EDGE = 180;
+const DESC_EDGE = 145;
 
 /** Editor de una conexion pendiente, anclado al glifo de su flecha. */
 interface Edit {
@@ -525,7 +525,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
   return (
     <>
     {selSeg && !edit && !view && (
-      <Popover cls="desc" x={descX} y={selSeg.y} style={{ width: "auto", maxWidth: 340 }} role="status" live="polite" head={kindOf(selSeg)}>
+      <Popover cls="desc" x={descX} y={selSeg.y} style={{ width: "auto", maxWidth: 273 }} role="status" live="polite" head={kindOf(selSeg)}>
         <div>{selSeg.desc}</div>
       </Popover>
     )}

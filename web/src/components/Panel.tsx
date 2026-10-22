@@ -346,7 +346,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
     // y la tarjeta que abrio el panel se ve siempre (antes, nunca). Medido abriendo el panel en
     // cada una de las 10 tarjetas. Achicarlo mas no gana ninguna tarjeta (la grilla de subcolumnas
     // manda), asi que se queda en el ancho comodo para leer.
-    const width = Math.max(380, Math.min(720, Math.round(vw * 0.46), vw - 24));
+    const width = Math.max(306, Math.min(579, Math.round(vw * 0.46), vw - 24)); // 380 y 720 al ~81 %
     const h = Math.min(vh * 0.84, vh - 70);
     // El ancla se mide una sola vez al abrir, a proposito: si se remidiera, el panel saltaria
     // mientras el tablero se reacomoda detras. El costo es que, si la ventana se achica despues,
@@ -359,7 +359,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
       return { ...b, width: w, left: Math.round(Math.min(Math.max(b.left, 12), Math.max(12, vw - w - 12))) };
     };
     const top = (t: number) => Math.round(Math.min(Math.max(t - 8, 52), Math.max(52, vh - h - 12)));
-    if (!anchor) return dentro({ left: Math.round((vw - width) / 2), top: 56, width });
+    if (!anchor) return dentro({ left: Math.round((vw - width) / 2), top: 45, width });
     const libreDer = vw - (anchor.left + anchor.width) - 24;
     const libreIzq = anchor.left - 24;
     const alLado = Math.max(libreDer, libreIzq);
@@ -406,7 +406,7 @@ export function Panel({ session: s, others, transcriptTick, onClose, toast, deta
        styles.css). Sin eso se salian del panel: son `flex: 0 0 auto` en una fila `nowrap`, y el
        panel puede quedar en 380 px (el minimo al que se retrae para no partir una tarjeta) o en
        414 en una ventana de 900. */
-    <div className={`panel ${box.width < 700 ? "narrow" : ""} ${box.width < 470 ? "tight" : ""}`} style={{ left: box.left, top: box.top, width: box.width, height: box.height, maxHeight: box.height }}>
+    <div className={`panel ${box.width < 563 ? "narrow" : ""} ${box.width < 378 ? "tight" : ""}`} style={{ left: box.left, top: box.top, width: box.width, height: box.height, maxHeight: box.height }}>
       <div className="ph">
         <span className={`badge ${s.agent}`}>{s.agent}</span>
         {/* una linea sola: el titulo largo se corta con puntos suspensivos y va entero en el title,

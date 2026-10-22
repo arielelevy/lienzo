@@ -219,9 +219,10 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
     [toggleConfig],
   );
   const toggleAutoAprobar = useCallback(() => {
-    if (!config?.auto_aprobar && !window.confirm("PELIGRO: cada permiso que pida cualquier agente (Claude, Codex, Pi, coda) en cualquier PC se aprueba solo, sin que nadie lo mire. ¿Prenderlo?")) return;
+    // sin confirm() al prenderlo (pedido de Ariel, 2026-10-21): el switch va en rojo y la pestaña negra
+    // del encabezado queda a la vista mientras este prendido
     void toggleConfig("auto_aprobar", "AUTO-APROBAR TODO prendido: nadie revisa los permisos", "Auto-aprobar apagado");
-  }, [config, toggleConfig]);
+  }, [toggleConfig]);
   const toggleAutoRetry = useCallback(
     () => toggleConfig("auto_retry", 'Ante un error de API, se reintenta solo (una vez por error)', "Reintento automático apagado"),
     [toggleConfig],
@@ -230,7 +231,8 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   // filtro visual del header: texto + agentes. "/" enfoca la caja, Esc la limpia.
   const [query, setQuery] = useState("");
   const [agents, setAgents] = useState(allAgents);
-  const [showChrome, setShowChrome] = useState(true);
+  // las tarjetas de las extensiones de Chrome arrancan ocultas (pedido de Ariel, 2026-10-21); el chip las muestra
+  const [showChrome, setShowChrome] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   // lo que se ve ahora: pasa los filtros (header, PCs, proyectos) y se le puede escribir. Una de la
   // columna Muerta o de una PC caida no entra: no hay a quien mandarle nada
@@ -432,13 +434,8 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
 
   return (
     <div className={`${details ? "details" : ""} ${sel ? "panel-open" : ""}`}>
-      {config?.auto_aprobar && (
-        <div className="auto-aprobar-aviso" role="alert">
-          ☠ AUTO-APROBAR TODO prendido: cada permiso se aprueba solo, sin mirarlo
-          <button onClick={toggleAutoAprobar}>Apagar</button>
-        </div>
-      )}
       <Header
+        autoAprobar={config?.auto_aprobar ? toggleAutoAprobar : null}
         authInfo={authInfo}
         connected={connected}
         polling={polling}

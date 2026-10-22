@@ -97,7 +97,7 @@ const EMPTY_COLLAPSE_MS = 5_000;   // pedido de Ariel: 10 s se sentia largo
  *  para no caer a 220. Mas ancho que esto no agrega lineas de texto, solo aire.
  *  El titulo si se corta: el server los recorta a 60 caracteres, que son ~380 px, asi que a este
  *  ancho la mayoria queda con puntos suspensivos. Es a proposito: se prefiere ver mas tarjetas. */
-const ANCHO_TARJETA = 265;
+const ANCHO_TARJETA = 213; // 265 al ~81 % (pedido de Ariel, 2026-10-21: el tablero entero mas chico)
 
 /** Cuantas subcolumnas de tarjetas entran en total. No hay tope fijo: se mide el ancho que queda
  *  **para las tarjetas** (la suma de las columnas abiertas, sin su relleno ni el de `.cards`) y se
@@ -294,7 +294,7 @@ interface Move {
 /** sin proyectos elegidos: un Set estable, para no romper el useMemo del tablero en cada render */
 const NINGUNO: Set<string> = new Set();
 
-export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, onRescan, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], showChrome = true, pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
+export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, onRescan, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], showChrome = false, pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [context, setContext] = useState<{ x: number; y: number } | null>(null);
   const contextRef = useRef<HTMLDivElement | null>(null);

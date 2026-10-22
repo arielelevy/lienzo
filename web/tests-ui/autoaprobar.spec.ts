@@ -3,7 +3,7 @@ import { abrirTablero, BASE, bloquearEscrituras, instalarTablero, sesiones } fro
 
 /** Auto-aprobar TODO (peligroso) y los permisos denegados: lo que tiene que verse sí o sí. */
 
-test("con auto-aprobar prendido hay una barra negra arriba y su switch del menú va en rojo", async ({ page }) => {
+test("con auto-aprobar prendido hay una pestaña negra en el encabezado y su switch del menú va en rojo", async ({ page }) => {
   await bloquearEscrituras(page);
   await instalarTablero(page);
   // registrada DESPUES del tablero fijo, asi que gana (Playwright prueba de la ultima a la primera)
@@ -11,7 +11,15 @@ test("con auto-aprobar prendido hay una barra negra arriba y su switch del menú
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ auto_continue: false, auto_retry: false, auto_aprobar: true }) }),
   );
   await page.goto(BASE);
-  await expect(page.locator(".auto-aprobar-aviso")).toContainText("AUTO-APROBAR TODO prendido");
+  const aviso = page.locator("header .auto-aprobar-aviso");
+  await expect(aviso).toContainText("AUTO-APROBAR TODO prendido");
+  // pestaña dentro del encabezado, colgada del borde de arriba y sin agrandarlo: no una barra a lo ancho
+  const caja = await aviso.boundingBox();
+  const header = await page.locator("header").boundingBox();
+  expect(caja?.y).toBe(0);
+  expect(caja!.height).toBeLessThanOrEqual(header!.height);
+  expect(caja!.width).toBeLessThan(header!.width / 3);
+  await expect(aviso.getByRole("button", { name: "Apagar" })).toBeVisible();
   await page.getByRole("button", { name: "más opciones" }).click();
   const check = page.getByRole("menuitemcheckbox", { name: /Auto-aprobar TODO/ });
   await expect(check).toHaveClass(/danger/);
