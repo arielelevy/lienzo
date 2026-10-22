@@ -384,8 +384,8 @@ class Mirror:
         with self._lock:
             for pc_id, pm in self._peers.items():
                 vivo = bool(pm.last_seen) and (ahora - pm.last_seen) < PEER_TIMEOUT_S
-                if pm.last_seen and not vivo:
-                    # solo el que se cayo: uno recien conectado que todavia no contesto no tiene emergencia
+                if not vivo and (pm.last_seen or pm.diagnostico or pm.health):
+                    # También si arrancamos con el par caído: el diagnóstico ya confirmó el fallo.
                     caidos.append((len(out), (pm.health or {}).get("emergencia"), pm.info.get("name") or pc_id))
                 out.append(
                     {

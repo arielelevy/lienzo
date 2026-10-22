@@ -1,0 +1,17 @@
+{
+  "nombre": "resguardos-U",
+  "raiz": "..",
+  "resultados": ".temp/resultados/2026-10-22-U/runner",
+  "reglas": [
+    "Encargo U.1: aplicar la propuesta S: con cursor sólo borrar capturas de más de 30 días ya resumidas; sin cursor, retención normal.",
+    "Encargo U.2, decisión 24: ofrecer emergencia también si la PC está caída desde el arranque, conservando los canales de su última salud.",
+    "Encargo U.3: limpiar batch genérico viejo sólo si el mismo proceso Claude tiene un comando interactivo comprobado."
+  ],
+  "casos": [{
+    "id": "resguardos-backend-U",
+    "comando": ["py", "-B", "pruebas-agenticas/resguardos_U.py"],
+    "timeoutMs": 180000,
+    "cubre": ["lienzo/registro_niveles.py", "lienzo/mirror.py", "lienzo/sessions.py"]
+  }],
+  "mutaciones": []
+}

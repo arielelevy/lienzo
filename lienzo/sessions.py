@@ -1870,7 +1870,32 @@ def sweep_once() -> None:
             adopt_process(p)
         elif (p.get("external") or {}).get("desktop"):
             marcar_desktop(p)
+        else:
+            limpiar_batch_antiguo(p)
     adopt_desktop_threads()
+
+
+def limpiar_batch_antiguo(p: dict) -> None:
+    """Repara sólo la marca genérica vieja, con comando interactivo comprobado del mismo proceso."""
+    if p.get("agent") != "claude" or p.get("external") or backend.is_tmux(p):
+        return
+    marca = {"kind": "batch", "via": "comando"}
+    with lock:
+        antiguas = [
+            s for s in sessions.values() if backend.proc_key(s) == backend.proc_key(p) and s.get("external") == marca
+        ]
+    if not antiguas:
+        return
+    comando = procs.procinfo.command_line(p["pid"])
+    if not comando or procs.procinfo.claude_batch(procs.procinfo.command_args(comando)[1:]):
+        return  # lectura fallida no demuestra que sea una TUI
+    with lock:
+        for s in antiguas:
+            if backend.proc_key(s) != backend.proc_key(p) or s.get("external") != marca:
+                continue
+            s["external"], s["no_console"] = None, bool(p.get("no_console"))
+            touch(s)
+            state.log(f"{s['session_id'][:8]}: marca batch antigua limpiada; TUI interactiva (pid {p['pid']})")
 
 
 def marcar_desktop(p: dict) -> None:

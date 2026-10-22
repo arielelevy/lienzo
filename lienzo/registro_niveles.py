@@ -6,6 +6,7 @@ son de cada CLI: no se modifican ni se depuran."""
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import re
 import sqlite3
@@ -101,7 +102,7 @@ def _parte(fn, corte: dt.datetime) -> dict:
     """Cada parte por su cuenta: una base trabada no deja sin depurar el log ni los eventos."""
     try:
         return fn(corte)
-    except (OSError, sqlite3.Error) as error:
+    except (OSError, sqlite3.Error, ValueError) as error:
         return {"error": f"{type(error).__name__}: {error}"[:200]}
 
 
@@ -110,25 +111,33 @@ def _depurar_capturas(corte: dt.datetime) -> dict:
     AUTOINCREMENT SQLite lo reusaría y el cursor de réplica de otra PC se saltearía las nuevas. Cada PC
     depura su copia; borrar no es un cambio y no viaja. El archivo no se achica (sin VACUUM): las
     páginas liberadas las reusan las capturas siguientes."""
+    import research_creencias  # el investigador usa el nivel 2: evitar el ciclo al importar
+
     path = k.db_path()
     out = {"filas": 0, "bytes": 0, "quedan": 0, "archivo": 0}
     if not os.path.isfile(path):
         return out  # sin base todavía no hay crudo: no se crea por depurar
     limite = corte.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    marcas = {}
+    for proyecto, hasta in research_creencias.resguardo_capturas().items():
+        fecha = dt.datetime.fromisoformat(hasta)
+        if fecha.tzinfo is None:
+            raise ValueError(f"cursor de capturas sin zona: {proyecto}")
+        marcas[proyecto] = fecha.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    marcas_json = json.dumps(marcas)
     viejas = (
         "SELECT rowid, bytes FROM captura WHERE fecha < ? AND rowid < (SELECT MAX(rowid) FROM captura) "
+        "AND (proyecto NOT IN (SELECT key FROM json_each(?)) "
+        "OR fecha <= (SELECT value FROM json_each(?) WHERE key = captura.proyecto)) "
         "ORDER BY rowid LIMIT ?"
     )
+    parametros = (limite, marcas_json, marcas_json, LOTE_CAPTURAS)
     with k._Conexion(path) as con:
         while True:
             con.execute("BEGIN IMMEDIATE")
-            n, b = con.execute(
-                f"SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM ({viejas})", (limite, LOTE_CAPTURAS)
-            ).fetchone()
+            n, b = con.execute(f"SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM ({viejas})", parametros).fetchone()
             if n:
-                con.execute(
-                    f"DELETE FROM captura WHERE rowid IN (SELECT rowid FROM ({viejas}))", (limite, LOTE_CAPTURAS)
-                )
+                con.execute(f"DELETE FROM captura WHERE rowid IN (SELECT rowid FROM ({viejas}))", parametros)
             con.commit()
             out["filas"] += n
             out["bytes"] += b
