@@ -6,7 +6,7 @@ import { AgentImprovements } from "./AgentImprovements";
 import { Card, freeGroups, PICK_MS } from "./Card";
 import { ChromeCard, chromeConexiones } from "./ChromeCard";
 import { pcOf } from "./PcStrip";
-import { passesProjects } from "./ProjectStrip";
+import { passesProjects, repoGroups } from "./ProjectStrip";
 import type { Link, Peer, Pending, Rule, Session, State } from "../types";
 import { hasConsole, searchText, shortName, stalledReason } from "../names";
 
@@ -296,6 +296,16 @@ const NINGUNO: Set<string> = new Set();
 
 export function Board({ sessions, pending, selected, filter, onFilter, onSelect, onDecide, onAnswer, onDrop, onRescan, links, rules, onDeleteLink, onDeleteRule, onConnect, showArrows, query, agents, toast, peers = [], showChrome = false, pcFilter = NINGUNO, selectedRepos = NINGUNO, coordOnly = false, marked = NINGUNO, onMark, onClearMarked, escBlocked = false }: Props) {
   const boardRef = useRef<HTMLDivElement | null>(null);
+  const [layout, setLayout] = useState<"usual" | "projects">(() => {
+    try { return localStorage.getItem("lienzo.boardLayout") === "projects" ? "projects" : "usual"; }
+    catch { return "usual"; }
+  });
+  const chooseLayout = (mode: "usual" | "projects") => {
+    ordenar();
+    setLayout(mode);
+    try { localStorage.setItem("lienzo.boardLayout", mode); }
+    catch { toast?.("El navegador no pudo guardar el modo de orden", true); }
+  };
   const [context, setContext] = useState<{ x: number; y: number } | null>(null);
   const contextRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
@@ -438,6 +448,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // idea. Con Alt la tarjeta conecta con otra (el agarre tambien, que es la forma que funciona
     // con el dedo); sin Alt se mueve por el tablero.
     const alt = e.altKey && conecta;
+    // En grupos el lugar lo decide el proyecto. Alt sigue conectando tarjetas.
+    if (layout === "projects" && !alt) return;
     pressRef.current = { sid, x: e.clientX, y: e.clientY, alt };
   };
 
@@ -684,8 +696,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // caro y no hace falta. Las flechas se atenuan durante el movimiento (.board.moving) y vuelven a
   // su lugar al soltar, que es cuando cambia `libres`
   const arrowsVersion = useMemo(
-    () => ({ sessions, filter, selected, picked, manual, openEmpty, openDead, query, agents, laneBudget, libres }),
-    [sessions, filter, selected, picked, manual, openEmpty, openDead, query, agents, laneBudget, libres],
+    () => ({ sessions, filter, selected, picked, manual, openEmpty, openDead, query, agents, laneBudget, libres, layout }),
+    [sessions, filter, selected, picked, manual, openEmpty, openDead, query, agents, laneBudget, libres, layout],
   );
 
   // arrastre de una tarjeta a otra: linea provisoria que sigue al mouse, al soltar sobre otra
@@ -813,6 +825,72 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const renderSession = (s: Session, grupos: ReturnType<typeof freeGroups>) => {
+    // la que se esta moviendo manda sobre la posicion guardada: es la de ahora
+    const pos = layout === "projects" ? undefined : moving?.sid === s.session_id ? moving : libres[s.session_id];
+    const caja = (
+    <div
+      key={s.session_id}
+      className={`${layout === "projects" && s.coordinator ? "cluster-coordinator" : ""} ${drag?.over === s.session_id ? "droptarget" : ""} ${pos ? "libre" : ""} ${moving?.sid === s.session_id ? "moviendo" : ""}`}
+      // el tope de la derecha lo pone el CSS y no un numero fijo: al angostar la
+      // ventana la tarjeta se recuesta contra el borde en vez de salirse del
+      // tablero y estrenar un scroll horizontal
+      style={pos ? { left: `min(${pos.x}px, calc(100% - ${pos.w}px))`, top: pos.y, width: pos.w } : undefined}
+    >
+      <Card
+        session={s}
+        pending={s.pending_id ? pending[s.pending_id] : undefined}
+        rules={rules.filter((r) => r.enabled && (r.to === s.session_id || r.from === s.session_id))}
+        links={links.filter((l) => l.to === s.session_id)}
+        sessions={sessions}
+        onDeleteRule={onDeleteRule}
+        toast={toast}
+        selected={selected === s.session_id}
+        picked={picked === s.session_id}
+        related={related.get(s.session_id)}
+        freeGroup={grupos.get(s.session_id)}
+        peerDown={peerDownOf(s)}
+        pcColor={pcColorOf(s)}
+        marked={marked.has(s.session_id)}
+        onMark={
+          onMark && !peerDownOf(s)
+            ? () => {
+                // el click que cierra un arrastre tampoco marca la tarjeta
+                if (draggedRef.current) return;
+                markedAt.current = Date.now();
+                onMark(s.session_id);
+              }
+            : undefined
+        }
+        onPick={() => {
+          // el click que cierra un arrastre tampoco elige la tarjeta
+          if (draggedRef.current) return;
+          // un click simple vacia la seleccion multiple (salvo que haya sido
+          // anterior a una marca con Ctrl que llego dentro de su espera)
+          if (Date.now() - markedAt.current > PICK_MS) onClearMarked?.();
+          else return;
+          // el segundo click sobre la misma la deselecciona: es el mismo gesto de
+          // ida y vuelta, sin tener que buscar el vacio ni acordarse de Escape
+          setPicked((prev) => (prev === s.session_id ? null : s.session_id));
+        }}
+        onSelect={() => {
+          // el click que cierra un arrastre no abre el panel
+          if (draggedRef.current) {
+            draggedRef.current = false;
+            return;
+          }
+          onSelect(s.session_id);
+        }}
+        onDecide={onDecide}
+        onAnswer={onAnswer}
+        onDrop={() => onDrop(s.session_id)}
+        onGrip={noGrip}
+      />
+    </div>
+    );
+    return pos && capa ? createPortal(caja, capa, s.session_id) : caja;
+  };
+
   return (
     <>
       {context && createPortal(<div role="menu" aria-label="Área libre" className="board-context"
@@ -846,7 +924,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       {/* selector de columna, solo abajo de 900 px (una columna por vez). Un permiso pendiente en
           otra columna se marca con un punto: ahi no se ven las tarjetas, y sin la marca el pedido
           pasaba desapercibido hasta que vencia */}
-      <div className="filters">
+      <div className="board-layout" role="group" aria-label="Orden del tablero">
+        <button type="button" aria-label="Orden habitual" aria-pressed={layout === "usual"} onClick={() => chooseLayout("usual")}><span aria-hidden="true">⤢</span> Orden habitual</button>
+        <button type="button" aria-label="Por proyecto" aria-pressed={layout === "projects"} onClick={() => chooseLayout("projects")}><span aria-hidden="true">▦</span> Por proyecto</button>
+      </div>
+      <div className="filters" hidden={layout === "projects"}>
         {COLS.map(([k, label]) => {
           const pide = byState[k].some((x) => x.pending_id && pending[x.pending_id]);
           const aca = colOfState(filter) === k;
@@ -864,7 +946,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         })}
       </div>
       <div
-        className={`board ${drag ? "dragging" : ""} ${moving ? "moving" : ""} ${urgent ? "reordered" : ""}`}
+        className={`board ${layout === "projects" ? "project-layout" : ""} ${drag ? "dragging" : ""} ${moving ? "moving" : ""} ${urgent ? "reordered" : ""}`}
         ref={boardRef}
         onContextMenu={e => {
           if (escBlocked || selected || (e.target as HTMLElement).closest("[data-sid], button, input, textarea, select, a, dialog")) return;
@@ -905,7 +987,22 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
             </div>
           </>
         )}
-        {domCols.map(({ k, label, visual }) => {
+        {layout === "projects" ? (() => {
+          const list = [...byState.trabajo, ...byState.te_necesita, ...byState.muerta];
+          return <>
+            {chromes.length > 0 && <div className="cluster-chromes">{chromes.map(c => <ChromeCard key={`${c.peer.pc_id}-${c.agent}-${c.host}`} c={c} pcColor={peers.length > 1 ? c.peer.color : undefined} />)}</div>}
+            {repoGroups(list).map(group => {
+              const members = new Set(group.members);
+              const cards = list.filter(s => members.has(s.repo_key || s.repo));
+              // La coordinadora cierra el grupo centrada, con sus frentes arriba.
+              cards.sort((a, b) => Number(!!a.coordinator) - Number(!!b.coordinator));
+              return <section key={group.key} className="col project-cluster" aria-label={group.label}>
+                <h2>{group.label} <span className="n">{cards.length}</span></h2>
+                <div className="cluster-cards">{cards.map(s => renderSession(s, new Map()))}</div>
+              </section>;
+            })}
+          </>;
+        })() : domCols.map(({ k, label, visual }) => {
           const list = byState[k];
           // las libres de un mismo repo y agente se leen como un dato solo ("4 sesiones libres
           // en lienzo"), no como cuatro tarjetas que dicen exactamente lo mismo. La elegida y la
@@ -970,71 +1067,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   {/* columna ancha: subcolumnas por CSS (grilla de var(--lanes) en .col.wide .cards),
                       no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
                       y perderia su estado (pedido expandido, input de renombrar, toast) */}
-                  {list.map((s) => {
-                    // la que se esta moviendo manda sobre la posicion guardada: es la de ahora
-                    const pos = moving?.sid === s.session_id ? moving : libres[s.session_id];
-                    const caja = (
-                    <div
-                      key={s.session_id}
-                      className={`${drag?.over === s.session_id ? "droptarget" : ""} ${pos ? "libre" : ""} ${moving?.sid === s.session_id ? "moviendo" : ""}`}
-                      // el tope de la derecha lo pone el CSS y no un numero fijo: al angostar la
-                      // ventana la tarjeta se recuesta contra el borde en vez de salirse del
-                      // tablero y estrenar un scroll horizontal
-                      style={pos ? { left: `min(${pos.x}px, calc(100% - ${pos.w}px))`, top: pos.y, width: pos.w } : undefined}
-                    >
-                      <Card
-                        session={s}
-                        pending={s.pending_id ? pending[s.pending_id] : undefined}
-                        rules={rules.filter((r) => r.enabled && (r.to === s.session_id || r.from === s.session_id))}
-                        links={links.filter((l) => l.to === s.session_id)}
-                        sessions={sessions}
-                        onDeleteRule={onDeleteRule}
-                        toast={toast}
-                        selected={selected === s.session_id}
-                        picked={picked === s.session_id}
-                        related={related.get(s.session_id)}
-                        freeGroup={grupos.get(s.session_id)}
-                        peerDown={peerDownOf(s)}
-                        pcColor={pcColorOf(s)}
-                        marked={marked.has(s.session_id)}
-                        onMark={
-                          onMark && !peerDownOf(s)
-                            ? () => {
-                                // el click que cierra un arrastre tampoco marca la tarjeta
-                                if (draggedRef.current) return;
-                                markedAt.current = Date.now();
-                                onMark(s.session_id);
-                              }
-                            : undefined
-                        }
-                        onPick={() => {
-                          // el click que cierra un arrastre tampoco elige la tarjeta
-                          if (draggedRef.current) return;
-                          // un click simple vacia la seleccion multiple (salvo que haya sido
-                          // anterior a una marca con Ctrl que llego dentro de su espera)
-                          if (Date.now() - markedAt.current > PICK_MS) onClearMarked?.();
-                          else return;
-                          // el segundo click sobre la misma la deselecciona: es el mismo gesto de
-                          // ida y vuelta, sin tener que buscar el vacio ni acordarse de Escape
-                          setPicked((prev) => (prev === s.session_id ? null : s.session_id));
-                        }}
-                        onSelect={() => {
-                          // el click que cierra un arrastre no abre el panel
-                          if (draggedRef.current) {
-                            draggedRef.current = false;
-                            return;
-                          }
-                          onSelect(s.session_id);
-                        }}
-                        onDecide={onDecide}
-                        onAnswer={onAnswer}
-                        onDrop={() => onDrop(s.session_id)}
-                        onGrip={noGrip}
-                      />
-                    </div>
-                    );
-                    return pos && capa ? createPortal(caja, capa, s.session_id) : caja;
-                  })}
+                  {list.map(s => renderSession(s, grupos))}
                   </div>
                 </>
               )}
@@ -1072,11 +1105,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           esta explicando otra cosa y esto seria ruido */}
       {!sinTarjetas && (
         <p className="ayuda">
-          <span>Arrastrá una tarjeta desde su título para moverla</span>
+          <span>{layout === "projects" ? "Cada proyecto reúne sus frentes y su ★ coordinadora abajo" : "Arrastrá una tarjeta desde su título para moverla"}</span>
           <span>
             <b>Alt</b> + arrastrar la conecta con otra
           </span>
-          <span>⤢ Ordenar las devuelve a su lugar</span>
+          <span>{layout === "projects" ? "⤢ Orden habitual vuelve a las columnas" : "⤢ Ordenar las devuelve a su lugar"}</span>
         </p>
       )}
     </>

@@ -1006,6 +1006,10 @@ function curvaPorDefecto(ra: Rect, rc: Rect, { exit, enter, same, arcX }: Sides,
     const half = Math.min(HALF_GAP, Math.abs(x2 - x1) / 2);
     c1 = channelX(cols, colOf(cols, ra), dir, x1 + dir * half);
     c2 = channelX(cols, colOf(cols, rc), dir === 1 ? -1 : 1, x2 - dir * half);
+    // En grupos escalonados las «columnas» pueden solaparse en x: su canal
+    // puede quedar dentro del extremo. Cada control debe salir hacia afuera.
+    c1 = exit === "r" ? Math.max(c1, x1 + half) : Math.min(c1, x1 - half);
+    c2 = enter === "r" ? Math.max(c2, x2 + half) : Math.min(c2, x2 - half);
   }
   return [[x1, endY.from], [c1, endY.from], [c2, endY.to], [x2, endY.to]];
 }
@@ -1023,7 +1027,7 @@ export function routeItems(items: Item[], anchors: Map<string, Rect>, cards: Rec
     const pts = curvaPorDefecto(ra, rc, sideOf[i], endY[i], cols);
     // a la S se le pide el mismo aire que guarda un carril: rozar una tarjeta se lee como si la
     // cruzara, y con las tarjetas mas juntas la curva pasaba lamiendo la de al lado
-    return { ra, rc, pts, top: cubicHits(others, ...pts, 20, -LANE_CLEAR) };
+    return { ra, rc, pts, top: cubicHits(others, ...pts, 20, -LANE_CLEAR) || cubicHits([ra, rc], ...pts, 40, 0.5) };
   });
 
   // 2) los que no cruzan, como siempre
