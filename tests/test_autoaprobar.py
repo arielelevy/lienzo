@@ -252,6 +252,16 @@ def test_antigravity_permiso_de_crear_archivo_sin_pregunta_visible():
     assert au.opcion_de_permiso(otro, "antigravity") is None
 
 
+def test_antigravity_acceso_a_archivo_fuera_del_workspace_elige_solo_esta_vez():
+    """Medido el 2026-10-22 (opensyync N): «Read: … Reason: outside workspace / Allow access to this
+    file?» con tres opciones. Se aprueba la 1 (sólo esta vez), nunca la 2 que lo deja permanente."""
+    opciones = ["Yes, allow access", "Yes, and always allow non-workspace access", "No, deny access"]
+    assert au.opcion_de_permiso(_dialogo("Read:", opciones), "antigravity") == 1
+    assert au.opcion_de_permiso(_dialogo("Write:", opciones), "antigravity") == 1
+    sin_negar = _dialogo("Read:", ["Yes, allow access", "Yes, and always allow non-workspace access"])
+    assert au.opcion_de_permiso(sin_negar, "antigravity") is None
+
+
 def test_dialogo_no_suma_texto_que_no_sigue_con_otra_opcion():
     import screen
 

@@ -302,6 +302,12 @@ class Antigravity(Perfil):
         # arriba y la pregunta fuera de pantalla (medido el 2026-10-21): se reconoce por el par
         if len(ops) == 2 and (m := re.fullmatch(r"yes, allow (\w+)", ops[0][1])) and ops[1][1] == f"no, deny {m[1]}":
             return ops[0][0]
+        # leer o escribir fuera del workspace: «Yes, allow access» / «Yes, and always allow
+        # non-workspace access» / «No, deny access» (medido el 2026-10-22). Sólo esta vez, nunca la
+        # que lo deja permanente, y sólo si está la opción de negar
+        textos = [t for _, t in ops]
+        if "yes, allow access" in textos and "no, deny access" in textos:
+            return next(n for n, t in ops if t == "yes, allow access")
         if q != "requesting permission for:" or not any(t == "no, cancel" for _, t in ops):
             return None
         return next((n for n, t in ops if t == "yes, run command"), None)
