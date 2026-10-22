@@ -255,7 +255,8 @@ def consulta(facts: list) -> dict:
     }
 
 
-def run(payload: dict) -> dict:
+def run(payload: dict, despertar: bool = True) -> dict:
+    """`despertar=False` no espera el arranque de WSL: si está dormido, MotorError sin consultar."""
     text = json.dumps(payload, ensure_ascii=True, allow_nan=False)
     if len(text.encode()) > 4 * 1024 * 1024:
         raise k.Rechazo("La consulta supera 4 MiB", 413)
@@ -263,6 +264,10 @@ def run(payload: dict) -> dict:
         raise prolog_learning.MotorError(
             "Motor lógico no encontrado: cloná motor-logico junto a Lienzo o fijá LIENZO_PROLOG_ENGINE"
         )
+    if despertar:
+        prolog_learning.despertar()  # antes del turno: un arranque lento no deja ocupado al motor
+    elif prolog_learning.dormido():
+        raise prolog_learning.MotorError("WSL está dormido y no se esperó su arranque")
     if not _ocupado.acquire(blocking=False):
         raise k.Rechazo("El contraste lógico está ocupado; volvé a consultar", 409)
     try:
@@ -275,6 +280,7 @@ def run(payload: dict) -> dict:
             timeout=20,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        prolog_learning.respondio()
         if result.returncode:
             code = _codigo(result.stderr)
             raise prolog_learning.MotorError(f"El motor rechazó el contraste ({code})")
@@ -317,10 +323,11 @@ def _unificar(patron: list, args: list, ligaduras: dict) -> None:
             raise ValueError("una constante no coincide con la regla")
 
 
-def _prueba(proof, hechos: set, negables: dict, depth: int = 0) -> bool:
+def _prueba(proof, hechos: set, negables: dict, depth: int = 0, reglas=None, base=BASE) -> bool:
     """Verifica una prueba del contrato 3 contra las reglas propias, sin resolver de nuevo: cada paso
     es una regla de RULES con su cabeza y su cuerpo instanciados de forma coherente, cada hoja un
-    hecho enviado y cada negación falsa en los hechos o en el modelo Python. Devuelve si hubo recorte."""
+    hecho enviado y cada negación falsa en los hechos o en el modelo Python. Devuelve si hubo recorte.
+    `reglas` (id -> regla) y `base` (predicados que sólo vienen de hechos) son los de otro programa."""
     if depth > 200:
         raise ValueError("prueba demasiado profunda")
     if not isinstance(proof, dict):
@@ -333,17 +340,19 @@ def _prueba(proof, hechos: set, negables: dict, depth: int = 0) -> bool:
         if (fact["pred"], tuple(fact["args"])) not in hechos:
             raise ValueError("la prueba cita un hecho que no se envió")
         return False
-    regla = RULE_BY_ID.get(proof.get("rule")) if by == "rule" else None
+    regla = (RULE_BY_ID if reglas is None else reglas).get(proof.get("rule")) if by == "rule" else None
     if regla is None or not isinstance(proof.get("premises"), list):
         raise ValueError("paso de prueba desconocido")
     if fact["pred"] != regla["head"]["pred"]:
         raise ValueError("la cabeza de la regla no es el hecho probado")
     ligaduras = {}
     _unificar(regla["head"]["args"], fact["args"], ligaduras)
-    if len(proof["premises"]) != len(regla["body"]):
+    # el motor no pone las comparaciones en la prueba: se comprueban acá con las ligaduras de la regla
+    cuerpo = [item for item in regla["body"] if "cmp" not in item]
+    if len(proof["premises"]) != len(cuerpo):
         raise ValueError("la prueba no tiene una premisa por cada elemento del cuerpo")
     truncada = False
-    for item, premise in zip(regla["body"], proof["premises"], strict=True):  # todas, sin cortocircuito
+    for item, premise in zip(cuerpo, proof["premises"], strict=True):  # todas, sin cortocircuito
         if item.get("not"):
             if not isinstance(premise, dict) or set(premise) != {"not"}:
                 raise ValueError("el cuerpo pide una negación")
@@ -352,7 +361,7 @@ def _prueba(proof, hechos: set, negables: dict, depth: int = 0) -> bool:
                 raise ValueError("la negación no es la del cuerpo")
             _unificar(item["args"], lit["args"], ligaduras)
             clave = (lit["pred"], tuple(lit["args"]))
-            if lit["pred"] not in negables and lit["pred"] not in BASE:
+            if lit["pred"] not in negables and lit["pred"] not in base:
                 raise ValueError("negación que no se puede comprobar")
             if clave in hechos or tuple(lit["args"]) in negables.get(lit["pred"], ()):
                 raise ValueError("negación falsa: el literal se cumple")
@@ -365,17 +374,33 @@ def _prueba(proof, hechos: set, negables: dict, depth: int = 0) -> bool:
         if hecho["pred"] != item["pred"]:
             raise ValueError("la premisa no es la del cuerpo")
         _unificar(item["args"], hecho["args"], ligaduras)
-        if _prueba(premise, hechos, negables, depth + 1):
+        if _prueba(premise, hechos, negables, depth + 1, reglas, base):
             truncada = True
+    for item in regla["body"]:
+        if "cmp" in item and not _compara(item["cmp"], *(ligaduras.get(a, a) for a in item["args"])):
+            raise ValueError("una comparación del cuerpo no se cumple")
     return truncada
 
 
-def resultados(output: dict, facts: list) -> tuple[dict, dict]:
+def _compara(op, a, b) -> bool:
+    """Las comparaciones del contrato 2: = y != con cualquier constante; las de orden, sólo números."""
+    if isinstance(a, str) and a.startswith("?") or isinstance(b, str) and b.startswith("?"):
+        raise ValueError("comparación con una variable sin ligar")
+    if op in ("=", "!="):
+        return (a == b) == (op == "=")
+    if not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in (a, b)):
+        return False  # texto en una comparación de orden: no se cumple, como en el motor
+    return {"<": a < b, "<=": a <= b, ">": a > b, ">=": a >= b}[op]
+
+
+def resultados(output: dict, facts: list, programa=None) -> tuple[dict, dict]:
     """(pred -> tuplas, (pred, tupla) -> justificación). Una respuesta incompleta, truncada, con IDs
-    ajenos o con pruebas que no cierran contra los hechos enviados es un error."""
+    ajenos o con pruebas que no cierran contra los hechos enviados es un error. `programa` es
+    (consultas, reglas por id, predicados base, modelo Python) de otro programa; por omisión, éste."""
+    queries, reglas, base, modelo = programa or (QUERIES, RULE_BY_ID, BASE, _modelo)
     nodos = {f["args"][0] for f in facts if f["pred"] == "nodo"}
     hechos = {(f["pred"], tuple(f["args"])) for f in facts}
-    negables = _modelo(facts)  # lo que se deduce de verdad: una negación de algo de acá es falsa
+    negables = modelo(facts)  # lo que se deduce de verdad: una negación de algo de acá es falsa
     if (
         not isinstance(output, dict)
         or type(output.get("contract")) is not int
@@ -385,11 +410,11 @@ def resultados(output: dict, facts: list) -> tuple[dict, dict]:
         or not isinstance(output["engine"].get("version"), str)
         or not isinstance(output.get("program_hash"), str)
         or not isinstance(output.get("answers"), list)
-        or len(output["answers"]) != len(QUERIES)
+        or len(output["answers"]) != len(queries)
     ):
         raise ValueError("contrato 3 inválido")
     found, why = {}, {}
-    for answer, (pred, names) in zip(output["answers"], QUERIES.items(), strict=True):
+    for answer, (pred, names) in zip(output["answers"], queries.items(), strict=True):
         if not isinstance(answer, dict) or answer.get("pred") != pred or answer.get("truncated") is not False:
             raise ValueError(f"respuesta inválida o truncada en {pred}")
         if not isinstance(answer.get("results"), list) or type(answer.get("count")) is not int:
@@ -408,7 +433,7 @@ def resultados(output: dict, facts: list) -> tuple[dict, dict]:
             sources = item.get("sources")
             if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
                 raise ValueError(f"{pred} sin fuentes")
-            truncada = _prueba(proof, hechos, negables)
+            truncada = _prueba(proof, hechos, negables, 0, reglas, base)
             why[(pred, row)] = {"prueba": proof, "fuentes": sources, "prueba_truncada": truncada}
             rows.add(row)
         if len(rows) != answer["count"]:

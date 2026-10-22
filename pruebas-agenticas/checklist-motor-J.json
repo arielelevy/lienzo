@@ -1,0 +1,66 @@
+{
+  "nombre": "checklist-sostenido-por-el-motor-logico",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/checklist-motor",
+  "reglas": [
+    "Decisión 18 (Ariel, 2026-10-22): creencias, checklist y patrones activos y visibles en el tablero; nada pasa a vigente sin el veredicto de una persona.",
+    "Pedido de Ariel sobre Prolog (2026-10-22): el checklist muestra sólo lo que el motor lógico sostiene, con su prueba, y marca las cuestionadas; el cálculo Python independiente sigue como contraste.",
+    "Sin motor, o con una respuesta inválida, el checklist se sigue leyendo y cada aplicable dice que no tuvo contraste: nunca que el motor la sostiene.",
+    "Una creencia de la que deriva una regla cuestionada (directamente o por una decisión vigente que la motiva) queda cuestionada, con la prueba del motor.",
+    "Leer el checklist, el resumen o los patrones no escribe en la memoria.",
+    "Con WSL apagado, el arranque de la VM no consume el plazo de la consulta al motor: se despierta aparte, con plazo propio, y si no arranca se informa sin consultar."
+  ],
+  "precondiciones": [],
+  "casos": [
+    {
+      "id": "checklist-motor-backend",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_prolog_checklist.py",
+        "tests/test_prolog_learning.py",
+        "tests/test_prolog_contraste.py",
+        "tests/test_creencias.py",
+        "tests/test_aprendizaje_real.py",
+        "tests/test_backlog_e_evidencia.py",
+        "tests/test_ronda4_b_patrones.py",
+        "tests/test_aprendizaje.py",
+        "tests/test_conocimiento.py",
+        "tests/test_coordinar.py",
+        "tests/test_optimizacion_trabajo.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 600000,
+      "cubre": [
+        "lienzo/prolog_checklist.py",
+        "lienzo/prolog_learning.py",
+        "lienzo/prolog_contraste.py",
+        "lienzo/creencias.py",
+        "lienzo/conocimiento_api.py"
+      ]
+    },
+    {
+      "id": "checklist-motor-e2e",
+      "comando": [
+        "pwsh",
+        "-NoProfile",
+        "-File",
+        "pruebas-agenticas/checklist_motor_e2e.ps1"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "lienzo/prolog_checklist.py",
+        "lienzo/creencias.py",
+        "lienzo/conocimiento_api.py",
+        "web/src/components/AprendizajeBar.tsx",
+        "web/src/components/Learning.tsx",
+        "web/src/components/Knowledge.tsx",
+        "web/src/App.tsx"
+      ]
+    }
+  ],
+  "mutaciones": []
+}

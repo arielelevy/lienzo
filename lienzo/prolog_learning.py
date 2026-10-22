@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import aprendizaje
@@ -21,6 +22,12 @@ ENGINE = (
 )
 STATES = set(creencias.MOTIVOS)
 _busy = threading.BoundedSemaphore(1)
+WSL = os.name == "nt"
+# WSL apaga la VM tras un rato sin procesos; arrancarla tardó 8,9 s en reposo y más de 20 s con la
+# suite completa (2026-10-22), más que el plazo de una consulta. Se despierta aparte, con plazo propio.
+DESPERTAR_TRAS_S = 30
+DESPERTAR_PLAZO_S = 90
+_ultimo_ok = None  # time.monotonic() del último contacto con WSL que respondió
 
 
 class MotorError(Exception):
@@ -81,8 +88,39 @@ def snapshot(pid, context):
     return payload, python
 
 
+def dormido():
+    """WSL no respondió hace poco: la próxima consulta puede pagar el arranque de la VM."""
+    return WSL and (_ultimo_ok is None or time.monotonic() - _ultimo_ok >= DESPERTAR_TRAS_S)
+
+
+def despertar():
+    """Arranca WSL si no respondió hace poco, para que su arranque no consuma el plazo de la consulta.
+    Un fallo que no sea el plazo se deja pasar: la consulta lo informa con su propio error."""
+    global _ultimo_ok
+    if not dormido():
+        return
+    try:
+        subprocess.run(
+            ["wsl.exe", "-d", "Ubuntu", "--exec", "true"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=DESPERTAR_PLAZO_S,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except subprocess.TimeoutExpired:
+        raise MotorError(f"WSL no arrancó en {DESPERTAR_PLAZO_S} s; no se consultó el motor") from None
+    except OSError:
+        return
+    _ultimo_ok = time.monotonic()
+
+
+def respondio():
+    global _ultimo_ok
+    _ultimo_ok = time.monotonic()
+
+
 def command():
-    if os.name == "nt":
+    if WSL:
         # Ruta absoluta montada por WSL; no shell, interpolación ni reinstalación.
         drive = ENGINE.drive.rstrip(":").lower()
         path = "/mnt/" + drive + ENGINE.as_posix()[len(ENGINE.drive) :]
@@ -112,6 +150,7 @@ def run(payload):
         raise k.Rechazo("El snapshot supera 1 MiB", 413)
     if not ENGINE.is_file():
         raise MotorError("Motor lógico no encontrado: cloná motor-logico junto a Lienzo o fijá LIENZO_PROLOG_ENGINE")
+    despertar()  # antes del turno: un arranque lento no deja ocupado al motor
     if not _busy.acquire(blocking=False):
         raise k.Rechazo("El motor Prolog está ocupado; volvé a consultar", 409)
     try:
@@ -124,6 +163,7 @@ def run(payload):
             timeout=12,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        respondio()
         if result.returncode:
             raise MotorError("Prolog no pudo resolver la consulta; revisá SWI-Prolog en Ubuntu WSL")
         if len(result.stdout.encode("utf-8")) > 2 * 1024 * 1024:

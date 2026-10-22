@@ -192,6 +192,7 @@ def test_unavailable_timeout_and_invalid_result_are_visible(monkeypatch):
         raise subprocess.TimeoutExpired("swipl", 12)
 
     monkeypatch.setattr(motor, "ENGINE", Path(__file__))  # existe en cualquier PC: se prueba el proceso
+    monkeypatch.setattr(motor, "WSL", False)  # el plazo de la consulta, no el del arranque (test_wsl_*)
     monkeypatch.setattr(motor.subprocess, "run", fail)
     with pytest.raises(motor.MotorError, match="TimeoutExpired"):
         motor.run(payload())
@@ -200,6 +201,48 @@ def test_unavailable_timeout_and_invalid_result_are_visible(monkeypatch):
     )
     with pytest.raises(motor.MotorError, match="inválida"):
         motor.run(payload())
+
+
+def _llamadas(monkeypatch, salida='{"conclusions":[]}', despertar=None):
+    """subprocess.run falso que anota argv y timeout; `despertar` es lo que hace el arranque de WSL."""
+    calls = []
+
+    def fake(argv, **kw):
+        calls.append((argv, kw.get("timeout"), kw.get("stdin")))
+        if argv[-1] == "true" and despertar:
+            raise despertar
+        return subprocess.CompletedProcess(argv, 0, salida if argv[-1] != "true" else "")
+
+    monkeypatch.setattr(motor, "WSL", True)
+    monkeypatch.setattr(motor, "ENGINE", Path(__file__))
+    monkeypatch.setattr(motor, "_ultimo_ok", None)
+    monkeypatch.setattr(motor.subprocess, "run", fake)
+    return calls
+
+
+def test_wsl_en_frio_se_despierta_aparte_del_tiempo_de_la_consulta(monkeypatch):
+    """Con WSL apagado el arranque de la VM pasa los 12-20 s de la consulta (suite completa, 2026-10-22):
+    se despierta primero con un plazo propio y la consulta conserva el suyo."""
+    import prolog_contraste as pc
+
+    calls = _llamadas(monkeypatch)
+    with pytest.raises(motor.MotorError):  # la salida falsa no es válida: importa el orden de llamadas
+        motor.run(payload())
+    assert [c[0][-1] for c in calls] == ["true", "halt"]
+    assert calls[0][0][:4] == ["wsl.exe", "-d", "Ubuntu", "--exec"] and calls[0][1] >= 60
+    assert calls[0][2] is subprocess.DEVNULL and calls[1][1] == 12
+    motor._ultimo_ok = __import__("time").monotonic()  # recién usado: no se paga el arranque otra vez
+    calls.clear()
+    with pytest.raises(ValueError):
+        pc.resultados(pc.run(pc.consulta([])), [])
+    assert [c[0][-1] for c in calls] == ["halt"] and calls[0][1] == 20
+
+
+def test_wsl_que_no_arranca_se_informa_sin_consultar(monkeypatch):
+    calls = _llamadas(monkeypatch, despertar=subprocess.TimeoutExpired("wsl.exe", 90))
+    with pytest.raises(motor.MotorError, match="WSL no arrancó"):
+        motor.run(payload())
+    assert [c[0][-1] for c in calls] == ["true"]
 
 
 def test_missing_engine_is_reported_as_absence(monkeypatch, tmp_path):

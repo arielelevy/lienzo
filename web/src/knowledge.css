@@ -90,6 +90,9 @@
 .learning-cards { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 7px; }
 .learning-card { border: 1px solid var(--line); border-radius: 6px; padding: 9px 12px; background: var(--card); min-width: 0; }
 .learning-action { margin: 4px 0 3px; font-weight: 600; overflow-wrap: anywhere; }
+.learning-lead { margin: 2px 0 4px; font-size: 1.05em; font-weight: 600; }
+.learning-overview { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 3px; overflow-wrap: anywhere; }
+.knowledge-context > summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
 .learning-flag { color: var(--need); }
 .learning-uses { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .learning-verdict { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 3px; display: grid; gap: 3px; }

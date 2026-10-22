@@ -11,6 +11,7 @@ import { Forward } from "./components/Forward";
 import { Header } from "./components/Header";
 import { Login } from "./components/Login";
 import { Knowledge } from "./components/Knowledge";
+import { AprendizajeBar } from "./components/AprendizajeBar";
 import { Pairing } from "./components/Pairing";
 import { Panel } from "./components/Panel";
 import { pcOf, PcStrip, usePcFilter, usePeers } from "./components/PcStrip";
@@ -247,6 +248,23 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
   const markVisible = useCallback(() => setMarked((cur) => new Set([...cur, ...visibleToMark])), [visibleToMark]);
   const [showHelp, setShowHelp] = useState(false);
   const [showKnowledge, setShowKnowledge] = useState(false);
+  // la tira de aprendizaje abre la memoria en ese proyecto y en Aprendizaje; el menú, sin elegir
+  const [knowledgeTarget, setKnowledgeTarget] = useState<string>();
+  // la última tarjeta elegida: el aprendizaje completa con ella el contexto del trabajo. Se guarda aparte
+  // porque abrir el menú o la memoria limpia la selección antes
+  const lastSelected = useRef<string>();
+  useEffect(() => { if (selected) lastSelected.current = selected; }, [selected]);
+  const [knowledgeSession, setKnowledgeSession] = useState<string>();
+  // la elegida con un click (el tablero la marca .picked; el estado es suyo) o la del último panel abierto
+  // el click que abre la memoria (en la tira o el menú) puede deseleccionarla antes: se anota al apretar
+  const pickedAntes = useRef<string>();
+  useEffect(() => {
+    // la de justo antes del último click, no una vieja: si no había ninguna, queda vacío
+    const anotar = () => { pickedAntes.current = document.querySelector<HTMLElement>(".card.picked[data-sid]")?.dataset.sid; };
+    document.addEventListener("pointerdown", anotar, true);
+    return () => document.removeEventListener("pointerdown", anotar, true);
+  }, []);
+  const sessionElegida = () => document.querySelector<HTMLElement>(".card.picked[data-sid]")?.dataset.sid ?? pickedAntes.current ?? lastSelected.current;
   const [showUpdates, setShowUpdates] = useState(false);
   // el panel va pegado a la derecha, debajo del header: su alto sale de aca (--hh)
   useEffect(() => {
@@ -462,7 +480,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           setShowPairing(true);
         }}
         onHelp={() => setShowHelp(true)}
-        onKnowledge={() => { closeOverlays(true); setShowKnowledge(true); }}
+        onKnowledge={() => { setKnowledgeSession(sessionElegida()); closeOverlays(true); setKnowledgeTarget(undefined); setShowKnowledge(true); }}
         onUpdates={authInfo.local && updateStatus.data?.available ? () => { closeOverlays(true); setShowUpdates(true); } : undefined}
         projects={
           <ProjectStrip
@@ -518,7 +536,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
           </div>
         </div>
       )}
-      {showKnowledge && <Knowledge onClose={() => setShowKnowledge(false)} />}
+      {showKnowledge && <Knowledge key={knowledgeTarget ?? ""} initialProject={knowledgeTarget} initialView={knowledgeTarget ? "aprendizaje" : undefined} session={knowledgeSession} onClose={() => setShowKnowledge(false)} />}
       {showUpdates && <Updates peers={peers} target={updateStatus.data?.target} onClose={() => setShowUpdates(false)} />}
       {showQr && authInfo.remote_url && <UrlQr url={authInfo.remote_url} mode={authInfo.mode} onClose={() => setShowQr(false)} />}
       {showTotp && <TotpQr onClose={() => setShowTotp(false)} />}
@@ -528,6 +546,7 @@ function Dashboard({ authInfo, refreshAuth, onSetup }: { authInfo: AuthInfo; ref
         <PcStrip peers={peers} sessions={sessions} filter={pcFilter} onSelect={selectPc} onToggle={togglePc} onAll={showAllPcs} />
         <ConsultasBar />
         <RondasBar sessions={sessions} />
+        <AprendizajeBar onOpen={(p) => { setKnowledgeSession(sessionElegida()); closeOverlays(true); setKnowledgeTarget(p); setShowKnowledge(true); }} />
       </div>
       <Plugins toast={toast} />
       <Board

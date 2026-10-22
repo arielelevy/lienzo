@@ -725,6 +725,7 @@ header .pjstrip .chip.star.on { background: var(--need); border-color: var(--nee
 .ronda-chip.aviso.vencido { border-color: var(--err); opacity: .75; }
 .ronda-chip.turno { border-color: var(--need); }
 .ronda-chip.memoria { border-color: var(--err); color: var(--err); }
+.ronda-chip.aprendizaje { border-color: var(--acc); font-family: inherit; cursor: pointer; }
 .ronda-texto { max-width: 176px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .ronda-avance, .ronda-dim { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 

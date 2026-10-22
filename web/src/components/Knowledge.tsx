@@ -149,10 +149,10 @@ function Readout({ data, view }: { data: RecordData; view: View }) {
 }
 function lines(text: string) { return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); }
 
-function ProjectPanel({ id }: { id: string }) {
+function ProjectPanel({ id, initialView, session }: { id: string; initialView?: View; session?: string }) {
   const base = "/conocimiento/" + encodeURIComponent(id);
   const catalog = useCatalog(base + "/temas", topics);
-  const [view, setView] = useState<View>("briefing");
+  const [view, setView] = useState<View>(initialView ?? "briefing");
   const [queries, setQueries] = useState("");
   const [files, setFiles] = useState("");
   const [themes, setThemes] = useState("");
@@ -200,7 +200,7 @@ function ProjectPanel({ id }: { id: string }) {
   };
   return <div className="knowledge-body">
     <nav className="knowledge-nav" aria-label="Consultas de memoria">{VIEWS.map(v => <button key={v.id} type="button" aria-pressed={view === v.id} onClick={() => selectView(v.id)}>{v.label}</button>)}</nav>
-    {view === "aprendizaje" ? <Learning base={base} /> : view === "etapas" ? <Etapas base={base} /> : <div className="knowledge-workspace">
+    {view === "aprendizaje" ? <Learning base={base} session={session} /> : view === "etapas" ? <Etapas base={base} /> : <div className="knowledge-workspace">
       <form className="knowledge-query" onSubmit={e => { e.preventDefault(); void query(); }}>
         <h2>{VIEWS.find(v => v.id === view)!.label}</h2>
         {(view === "briefing" || view === "preguntar") && <>
@@ -236,9 +236,10 @@ function ProjectPanel({ id }: { id: string }) {
 }
 
 /** Panel de sólo consulta. El proyecto se elige explícitamente, sin crear ni cambiar registros. */
-export function Knowledge({ onClose }: { onClose: () => void }) {
+/** `session`: la última tarjeta elegida; el aprendizaje completa con ella el contexto del trabajo. */
+export function Knowledge({ onClose, initialProject, initialView, session }: { onClose: () => void; initialProject?: string; initialView?: View; session?: string }) {
   const catalog = useCatalog("/conocimiento/proyectos", projects);
-  const [project, setProject] = useState("");
+  const [project, setProject] = useState(initialProject ?? "");
   const box = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   const titleId = useId();
@@ -269,7 +270,7 @@ export function Knowledge({ onClose }: { onClose: () => void }) {
       {catalog.error && <div className="knowledge-feedback knowledge-error" role="alert">{catalog.error}</div>}
       {catalog.data?.length === 0 && <p className="knowledge-feedback">No hay proyectos registrados. La coordinadora puede registrar uno desde el lienzo.</p>}
       {catalog.data && catalog.data.length > 0 && !selected && <p className="knowledge-feedback">Elegí el proyecto que querés consultar.</p>}
-      {selected && <ProjectPanel key={selected} id={selected} />}
+      {selected && <ProjectPanel key={selected} id={selected} initialView={selected === initialProject ? initialView : undefined} session={session} />}
     </div>
   </div>, document.body);
 }

@@ -9,8 +9,12 @@ interface Item {
   creencia: string; texto: string; accion: string; estado: string; motivo: string;
   evidencia: string | null; excepciones: string; vigente_hasta: string | null;
   contexto: Record<string, string>; usos: Usos; revisar: boolean; cadenas?: { id: string; texto: string }[][];
+  /** null: el motor no respondió y la aplicable no tiene contraste. */
+  sostenida?: Justification | null; cuestionada_por?: (Justification & { regla: string })[];
 }
-interface Checklist { total: number; items: Item[]; no_aplican_total: number; no_aplican: Item[] }
+/** El motor lógico sobre el checklist: sostenido, con diferencias, sin respuesta o sin creencias. */
+interface Motor { estado: string; error?: string; motor?: { name: string; version: string }; program_hash?: string; hechos?: number; diferencias?: unknown[] }
+interface Checklist { total: number; items: Item[]; no_aplican_total: number; no_aplican: Item[]; motor?: Motor; cuestionadas_total: number; cuestionadas: Item[] }
 interface Belief { id: string; texto: string; estado: string; datos: { accion?: string; contexto?: Record<string, string>; fuentes?: string[]; excepciones?: string } }
 interface Evidence { id: string; texto: string }
 interface Pattern { contexto: Record<string, string>; encargos: number; fuentes: string[]; controles_declarados: Record<string, number>; controles_evidencia: { ejecutados?: unknown[]; verificados?: unknown[] }[] }
@@ -38,6 +42,14 @@ const STATES: Record<string, string> = {
   aplicable: "Aplica", sin_veredicto: "Sin veredicto", refutada: "Refutada", vencida: "Vencida",
   respaldo_retirado: "Respaldo retirado", respaldo_caido: "Respaldo caído",
   fuera_de_contexto: "Otro contexto", contexto_insuficiente: "Falta contexto", contexto_invalido: "Contexto inválido",
+  cuestionada: "Cuestionada",
+};
+const MOTOR: Record<string, string> = {
+  sostenido: "Cada aplicable está sostenida por el motor lógico, con su prueba.",
+  con_diferencias: "El motor lógico y Python no coinciden en algo: lo que no coincide queda cuestionado.",
+  no_disponible: "El motor lógico no respondió: las aplicables se muestran sin contraste.",
+  respuesta_invalida: "La respuesta del motor lógico no fue válida: las aplicables se muestran sin contraste.",
+  sin_creencias: "No hay creencias que contrastar.",
 };
 const USES = [["sirvio", "Sirvió"], ["no_aplico", "No aplicó"], ["ya_sabido", "Ya lo sabía"]] as const;
 const NAME_KEY = "lienzo.persona";
@@ -80,8 +92,10 @@ function items(v: unknown): Item[] {
   return v as Item[];
 }
 function checklist(v: unknown): Checklist {
-  if (!obj(v) || !int(v.total) || !int(v.no_aplican_total)) bad("El aprendizaje");
-  return { total: v.total as number, items: items(v.items), no_aplican_total: v.no_aplican_total as number, no_aplican: items(v.no_aplican) };
+  if (!obj(v) || !int(v.total) || !int(v.no_aplican_total) || (v.motor !== undefined && (!obj(v.motor) || typeof v.motor.estado !== "string"))) bad("El aprendizaje");
+  const sueltas = v.cuestionadas === undefined ? [] : items(v.cuestionadas);
+  return { total: v.total as number, items: items(v.items), no_aplican_total: v.no_aplican_total as number, no_aplican: items(v.no_aplican),
+    motor: v.motor as Motor | undefined, cuestionadas_total: int(v.cuestionadas_total) ? v.cuestionadas_total as number : sueltas.length, cuestionadas: sueltas };
 }
 function beliefs(v: unknown): Belief[] {
   if (!Array.isArray(v) || v.some(x => !obj(x) || typeof x.id !== "string" || typeof x.texto !== "string" || typeof x.estado !== "string" || !obj(x.datos))) bad("Las creencias");
@@ -103,6 +117,8 @@ function inDays(days: number) {
   const d = new Date(); d.setDate(d.getDate() + days);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+/** El contexto con los nombres de los campos y en su orden, para leerlo de un vistazo. */
+const ctxLabels = (c: Record<string, string>) => CONTEXT.filter(([key]) => c[key]?.trim()).map(([key, title]) => `${title}: ${c[key].trim()}`).join(" · ") || "sin completar";
 const ctxText = (c: Record<string, string> | undefined) => c && Object.keys(c).length ? Object.entries(c).map(([k, v]) => `${k}: ${v}`).join(" · ") : "cualquier contexto";
 
 function Chain({ item }: { item: Item }) {
@@ -116,6 +132,29 @@ function Chain({ item }: { item: Item }) {
       {item.cadenas?.map((c, i) => <div key={i}><dt>Cadena hasta la fuente caída</dt><dd>{[item.creencia, ...c.map(s => `${s.id} (${s.texto})`)].join(" → ")}</dd></div>)}
     </dl>
   </details>;
+}
+
+/** El contexto sugerido por la API; algo inválido es «sin sugerencia», no un error que tape lo demás. */
+function suggested(v: unknown): { contexto: Record<string, string>; fuente: string | null } {
+  if (!obj(v) || !obj(v.contexto)) return { contexto: {}, fuente: null };
+  const keys = new Set<string>(CONTEXT.map(([key]) => key));
+  const contexto = Object.fromEntries(Object.entries(v.contexto).filter(([key, x]) => keys.has(key) && typeof x === "string" && x.trim())) as Record<string, string>;
+  return { contexto, fuente: typeof v.fuente === "string" ? v.fuente : null };
+}
+
+/** Todas las creencias del proyecto de un vistazo, con su estado para lo que vas a hacer. El detalle
+ *  (prueba, cadena, uso, veredicto) sigue en las secciones de abajo. */
+function Overview({ checklist: c }: { checklist: Checklist }) {
+  const all = [...c.items, ...c.cuestionadas, ...c.no_aplican];
+  const label = (x: Item) => x.estado !== "aplicable" ? STATES[x.estado] ?? x.estado
+    : x.sostenida ? "Aplica · sostenida por el motor" : x.sostenida === null ? "Aplica · sin contraste del motor" : "Aplica";
+  const more = c.total > c.items.length || c.cuestionadas_total > c.cuestionadas.length || c.no_aplican_total > c.no_aplican.length;
+  return <section className="knowledge-section" aria-label="Creencias del proyecto"><h3>Creencias del proyecto</h3>
+    {all.length === 0
+      ? <p className="knowledge-empty">Este proyecto todavía no tiene creencias. Nacen de los patrones de los encargos y del análisis de cómo se trabaja; una persona las valida con evidencia.</p>
+      : <ul className="learning-overview">{all.map(x => <li key={x.creencia}><strong>{label(x)}</strong> · {x.accion || x.texto}</li>)}</ul>}
+    {more && <p className="knowledge-notice">Hay más creencias que las listadas; abajo se ven por grupo.</p>}
+  </section>;
 }
 
 const literal = (l: { pred: string; args: unknown[] }) => `${l.pred}(${l.args.map(a => String(a)).join(", ")})`;
@@ -194,9 +233,16 @@ function Verdict({ belief, evidence: options, onSubmit, busy }: { belief: Belief
   </form>;
 }
 
-export function Learning({ base }: { base: string }) {
+/** Al abrir, completa el contexto desde la sesión elegida (`session`) o el encargo en curso y lee solo:
+ *  nadie tiene que saber qué escribir en seis campos para ver qué aprendió el proyecto (Ariel, 2026-10-22). */
+export function Learning({ base, session }: { base: string; session?: string }) {
   const fieldId = useId();
   const [context, setContext] = useState<Record<string, string>>({});
+  const [source, setSource] = useState<string | null>(null);
+  const [contextOpen, setContextOpen] = useState(false);
+  // la sugerencia del contexto en vuelo, y si la persona ya editó o consultó: entonces no se aplica
+  const suggestion = useRef<AbortController>();
+  const touched = useRef(false);
   const [name, setName] = useState(readName);
   const [data, setData] = useState<Data>();
   const [error, setError] = useState("");
@@ -260,9 +306,27 @@ export function Learning({ base }: { base: string }) {
   };
   const edit = (key: string, value: string) => {
     prologRequest.current?.abort(); setReasoning(undefined); setReasonError(""); setReasonBusy(false);
-    request.current?.abort(); setLoading(false); setData(undefined); setNotice("");
+    request.current?.abort(); setLoading(false); setData(undefined); setNotice(""); setSource(null);
+    touched.current = true; suggestion.current?.abort();  // lo que escribe la persona gana a una sugerencia tardía
     setContext(c => ({ ...c, [key]: value }));
   };
+  // al abrir (y al cambiar de proyecto o de sesión): contexto sugerido y primera lectura, sin apretar nada
+  useEffect(() => {
+    const controller = new AbortController();
+    suggestion.current = controller; touched.current = false;
+    const query = session ? "?session_id=" + encodeURIComponent(session) : "";
+    void api.get<unknown>(base + "/contexto-sugerido" + query, { signal: controller.signal })
+      .then(suggested, () => ({ contexto: {}, fuente: null }))
+      .then(s => {
+        if (controller.signal.aborted || touched.current) return;
+        current.current = s.contexto; setContext(s.contexto); setSource(s.fuente);
+        setContextOpen(Object.keys(s.contexto).length === 0);
+        void load();
+      });
+    return () => controller.abort();
+    // load lee el contexto de `current`: la primera lectura depende sólo del proyecto y de la sesión
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base, session]);
   /** Contraste lógico de lo que espera veredicto: no depende del contexto, sólo lee y no escribe. */
   const contrastCandidates = async () => {
     contrastRequest.current?.abort();
@@ -295,13 +359,15 @@ export function Learning({ base }: { base: string }) {
   };
 
   return <div className="knowledge-workspace">
-    <form className="knowledge-query" onSubmit={e => { e.preventDefault(); void load(); }}>
+    <form className="knowledge-query" onSubmit={e => { e.preventDefault(); touched.current = true; suggestion.current?.abort(); void load(); }}>
       <h2>Aprendizaje</h2>
-      <p className="knowledge-note">Qué aprendió el proyecto, para qué trabajo sirve y en qué se apoya. Consultar no cambia nada.</p>
-      <fieldset className="knowledge-context"><legend>Contexto de trabajo</legend>
-        <p className="knowledge-note">Lo que no completes queda sin informar: una creencia que lo exige sale como «Falta contexto».</p>
+      <p className="learning-lead">Qué aprendió este proyecto y qué aplica a lo que vas a hacer.</p>
+      <p className="knowledge-note">Cada creencia la valida una persona con evidencia; el motor lógico confirma cuáles se sostienen. Leer no cambia nada.</p>
+      <details className="knowledge-context" open={contextOpen} onToggle={e => setContextOpen(e.currentTarget.open)}>
+        <summary>Lo que vas a hacer: {ctxLabels(context)}{source ? ` · completado desde ${source}` : ""}</summary>
+        <p className="knowledge-note">Se completa solo desde la sesión elegida o el encargo en curso; cambialo si hace falta. Una creencia que exige un dato que falta sale como «Falta contexto».</p>
         {CONTEXT.map(([key, title]) => <div key={key}><label htmlFor={fieldId + "-" + key}>{title}</label><input id={fieldId + "-" + key} maxLength={100} value={context[key] ?? ""} onChange={e => edit(key, e.target.value)} /></div>)}
-      </fieldset>
+      </details>
       <label htmlFor={fieldId + "-name"}>Tu nombre (firma veredictos y uso)</label>
       <input id={fieldId + "-name"} maxLength={100} value={name} onChange={e => { setName(e.target.value); saveName(e.target.value); }} />
       <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : "Consultar aprendizaje"}</button>{loading && <button type="button" onClick={cancel}>Cancelar consulta</button>}<button type="button" disabled={reasonBusy || loading} onClick={() => void infer()}>{reasonBusy ? "Razonando…" : "Contrastar con Prolog"}</button><button type="button" disabled={contrastBusy} onClick={() => void contrastCandidates()}>{contrastBusy ? "Contrastando…" : "Contrastar candidatos"}</button></div>
@@ -314,21 +380,37 @@ export function Learning({ base }: { base: string }) {
       {reasoning && <section className="knowledge-section" aria-label="Razonamiento Prolog"><h3>Razonamiento Prolog</h3><p>{reasoning.motor} respondió · {reasoning.conclusiones.length} creencias analizadas · {reasoning.diferencias.length} diferencias con Python.</p><p className="knowledge-note">Consulta de sólo lectura sobre el mismo contexto y evidencia. No valida ni modifica creencias.</p>{reasoning.conclusiones.length === 0 && <p>No hay creencias registradas para contrastar.</p>}<ul>{reasoning.conclusiones.map(c => <li key={c.id}>{c.id}: {STATES[c.status] ?? c.status}{c.chains.map((path, i) => <div key={i}>{path.join(" → ")}</div>)}</li>)}</ul><details><summary>Snapshot y comparación</summary><p className="knowledge-value">{reasoning.snapshot}</p>{reasoning.diferencias.map(d => <p key={d.id}>{d.id}: Python {d.python} · Prolog {d.prolog}</p>)}</details></section>}
       {contrastError && <p role="alert" className="knowledge-error">{contrastError}. No se contrastaron los candidatos; nada cambió.</p>}
       {contrast && <ContrastSection c={contrast} />}
-      {!loading && !error && !data && <p className="knowledge-empty">Completá el contexto del trabajo y consultá.</p>}
+      {!loading && !error && !data && <p className="knowledge-empty">Cambiaste lo que vas a hacer: consultá para ver qué aplica.</p>}
       {data && <>
+        <Overview checklist={data.checklist} />
         <section className="knowledge-section"><h3>Aplica a este contexto</h3>
           <p>{data.checklist.total} aplicables{data.checklist.total > data.checklist.items.length ? `; mostrando ${data.checklist.items.length}` : ""}.</p>
+          {data.checklist.motor && <p className={data.checklist.motor.estado === "sostenido" || data.checklist.motor.estado === "sin_creencias" ? "knowledge-note" : "knowledge-notice"} role="status">
+            {MOTOR[data.checklist.motor.estado] ?? data.checklist.motor.estado}{data.checklist.motor.motor ? ` ${data.checklist.motor.motor.name} ${data.checklist.motor.motor.version}` : ""}{data.checklist.motor.error ? ` (${data.checklist.motor.error})` : ""}</p>}
           {data.checklist.items.length === 0 ? <p className="knowledge-empty">Nada validado aplica a este contexto todavía. Abajo está por qué no aplica lo demás y qué espera veredicto.</p>
             : <ul className="learning-cards">{data.checklist.items.map(item => <li key={item.creencia} className="learning-card">
               <div className="knowledge-node-status"><strong>{STATES[item.estado]}</strong>{item.revisar && <strong className="learning-flag">Revisar: no aplicó varias veces</strong>}</div>
               <p className="learning-action">{item.accion}</p>
               <p className="knowledge-note">{item.motivo}. Usos: {item.usos.sirvio} sirvió · {item.usos.no_aplico} no aplicó · {item.usos.ya_sabido} ya se sabía.</p>
+              {item.sostenida ? <Why label="Sostenida por el motor lógico: ver la prueba" j={item.sostenida} />
+                : item.sostenida === null && <p className="knowledge-note">Sin contraste del motor lógico.</p>}
               <Chain item={item} />
               <div className="learning-uses" role="group" aria-label={"Uso de " + item.creencia}>
                 {USES.map(([value, text]) => <button key={value} type="button" disabled={busy !== ""} onClick={() => void write(item.creencia + value, `/creencias/${item.creencia}/uso`, { resultado: value }, `Uso registrado: ${text}.`)}>{text}</button>)}
               </div>
             </li>)}</ul>}
         </section>
+        {data.checklist.cuestionadas_total > 0 && <section className="knowledge-section"><h3>Cuestionadas</h3>
+          <p className="knowledge-note">Aplicarían por contexto y veredicto, pero el motor lógico no las sostiene. Revisalas antes de seguirlas.</p>
+          <ul className="learning-cards">{data.checklist.cuestionadas.map(item => <li key={item.creencia} className="learning-card">
+            <div className="knowledge-node-status"><strong className="learning-flag">Cuestionada</strong></div>
+            <p className="learning-action">{item.accion}</p>
+            <p className="knowledge-note">{item.motivo}.</p>
+            {item.cuestionada_por?.map(q => <Why key={q.regla} label={`Regla cuestionada ${q.regla.slice(0, 8)}: ver la prueba`} j={q} />)}
+            <Chain item={item} />
+          </li>)}</ul>
+          {data.checklist.cuestionadas_total > data.checklist.cuestionadas.length && <p className="knowledge-notice">Se muestran {data.checklist.cuestionadas.length} de {data.checklist.cuestionadas_total}.</p>}
+        </section>}
         <section className="knowledge-section"><h3>No aplica, y por qué</h3>
           {data.checklist.no_aplican.length === 0 ? <p className="knowledge-empty">No hay otras creencias en este proyecto.</p>
             : <ul className="learning-cards">{data.checklist.no_aplican.map(item => <li key={item.creencia} className="learning-card">

@@ -58,13 +58,16 @@ test('una sola vista reemplaza creencias, checklist y patrones', async ({ page }
 
 test('consulta con contexto y muestra aplicable, por qué no aplica y cadena caída sin escribir', async ({ page }, info) => {
   const requests = await prepare(page);
-  expect(requests.some(r => r.path.endsWith('/checklist'))).toBe(false);
+  // abre leyendo sola, sin contexto (agregado de Ariel, 2026-10-22)
+  await expect(page.getByRole('region', { name: 'Creencias del proyecto' })).toBeVisible();
+  expect(requests.filter(r => r.path.endsWith('/checklist')).length).toBe(1);
   await page.getByLabel('Tipo de trabajo', { exact: true }).fill(' bugfix ');
   await page.getByRole('button', { name: 'Consultar aprendizaje', exact: true }).click();
-  await expect(page.getByText('Acción b1', { exact: true })).toBeVisible();
-  const check = requests.find(r => r.path.endsWith('/checklist'))!;
+  await expect(page.getByText('Acción b1', { exact: true }).first()).toBeVisible();
+  await expect.poll(() => requests.filter(r => r.path.endsWith('/checklist')).length).toBe(2);
+  const check = requests.filter(r => r.path.endsWith('/checklist')).at(-1)!;
   expect(Object.fromEntries(new URLSearchParams(check.query))).toEqual({ tipo_trabajo: 'bugfix', limite: '20' });
-  await expect(page.getByText('Respaldo caído', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'No aplica, y por qué', exact: true }).locator('..').getByText('Respaldo caído', { exact: true })).toBeVisible();
   await page.getByText('Ver evidencia · b2', { exact: true }).click();
   await expect(page.getByText('b2 → h9 (hallazgo rechazado)', { exact: true })).toBeVisible();
   await expect(page.getByText('Propuesta b3', { exact: false })).toBeVisible();
@@ -124,7 +127,7 @@ test('respuesta tardía se descarta al editar el contexto y al cambiar de proyec
   release();
   await page.getByRole('button', { name: 'Aprendizaje', exact: true }).click();
   await page.getByRole('button', { name: 'Consultar aprendizaje', exact: true }).click();
-  await expect(page.getByText('Acción b1', { exact: true })).toBeVisible();
+  await expect(page.getByText('Acción b1', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Acción vieja', { exact: true })).toHaveCount(0);
 });
 
@@ -137,7 +140,7 @@ test('formato inválido o error HTTP se ven; proyecto vacío muestra vacío hone
     return attempt === 1 ? { total: 'x' } : { contexto: {}, total: 0, items: [], no_aplican_total: 0, no_aplican: [] };
   });
   const read = page.getByRole('button', { name: 'Consultar aprendizaje', exact: true });
-  await read.click(); await expect(page.getByRole('alert')).toContainText('formato esperado');
+  await expect(page.getByRole('alert')).toContainText('formato esperado');  // la lectura al abrir
   await read.click();
   await expect(page.getByText(/Nada validado aplica a este contexto todavía/)).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);

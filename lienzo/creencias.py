@@ -137,6 +137,104 @@ def listar(pid):
         return [k._fila(row) for row in rows]
 
 
+_EN_CURSO = ("pendiente", "enviado", "entregado", "verificando")
+
+
+def contexto_sugerido(pid, session_id=None, tarjeta=None):
+    """El contexto de trabajo para precompletar el aprendizaje (agregado de Ariel, 2026-10-22): el del
+    encargo más nuevo que tomó la sesión y, si ése no aporta nada (o la sesión no tomó ninguno acá), el
+    del encargo en curso más nuevo del proyecto; más agente y modelo de la tarjeta. `sin_clasificar`
+    no se sugiere y los valores se recortan como los valida la API. Es una sugerencia: no escribe."""
+    with k._abrir(pid) as con:
+        rows = []
+        if session_id:
+            # por clave_ingesta, como _ronda_de_sesion: el id del nodo sesion cambia si cambia el remote
+            rows += con.execute(
+                "SELECT e.* FROM nodo s JOIN vinculo v ON v.a=s.id AND v.relacion='ejecutado_por' AND v.activo=1 "
+                "JOIN nodo e ON e.id=v.de AND e.tipo='encargo' WHERE s.proyecto=? AND s.clave_ingesta=? "
+                "ORDER BY e.fecha DESC, e.id DESC LIMIT 1",
+                (pid, f"sesion:{session_id}"),
+            ).fetchall()
+        marcas = ",".join("?" * len(_EN_CURSO))
+        rows += con.execute(
+            f"SELECT * FROM nodo WHERE proyecto=? AND tipo='encargo' AND estado IN ({marcas}) "
+            "AND json_extract(datos,'$.contexto_desarrollo.tipo_trabajo') IS NOT NULL "
+            "AND json_extract(datos,'$.contexto_desarrollo.tipo_trabajo')!='sin_clasificar' "
+            "ORDER BY fecha DESC, id DESC LIMIT 1",
+            (pid, *_EN_CURSO),
+        ).fetchall()
+    context, task = {}, None
+    for row in rows:  # el primero que aporte algo
+        candidate = k._fila(row)
+        datos = candidate["datos"] if isinstance(candidate["datos"], dict) else {}
+        context = _sugeribles(datos.get("contexto_desarrollo"))
+        if context:
+            task = candidate
+            break
+    for key, campo in (("agente", "agent"), ("modelo", "model")):
+        val = (tarjeta or {}).get(campo)
+        if isinstance(val, str) and val.strip():
+            context[key] = val.strip()[:100]
+    if task:
+        fuente = f"encargo {task['datos'].get('letra') or task['id'][:8]} ({task['estado']})"
+    else:
+        fuente = "la sesión elegida" if context else None
+    return {"contexto": context, "encargo": task["id"] if task else None, "fuente": fuente}
+
+
+def _sugeribles(raw):
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: val.strip()[:100]
+        for key, val in raw.items()
+        if key in CONTEXTO and isinstance(val, str) and val.strip() and val.strip() != "sin_clasificar"
+    }
+
+
+def resumen():
+    """Por proyecto, cuánto aprendizaje hay para mirar: creencias por estado, reglas cuestionadas y
+    encargos con o sin tipo de trabajo. Sólo los que tienen algo; leer no cambia nada."""
+    import patrones_desarrollo  # depende de este módulo
+
+    names = {p["id"]: p.get("nombre") or p["id"] for p in k.proyectos()}
+    with k._Conexion(k.db_path()) as con:
+        con.execute("BEGIN")  # los tres conteos de la misma foto
+        states = con.execute(
+            "SELECT proyecto, estado, count(*) FROM nodo WHERE tipo='decision' "
+            "AND json_extract(datos,'$.clase')='creencia_operativa' GROUP BY 1, 2"
+        ).fetchall()
+        questioned = con.execute(
+            "SELECT proyecto, count(*) FROM nodo WHERE tipo='regla' AND estado='cuestionada' GROUP BY 1"
+        ).fetchall()
+        tasks = con.execute(
+            "SELECT proyecto, json_extract(datos,'$.contexto_desarrollo.tipo_trabajo'), count(*) FROM nodo "
+            "WHERE tipo='encargo' GROUP BY 1, 2"
+        ).fetchall()
+    out = {
+        pid: {
+            "proyecto": pid,
+            "nombre": name,
+            "creencias": {},
+            "reglas_cuestionadas": 0,
+            "encargos_clasificados": 0,
+            "encargos_sin_clasificar": 0,
+        }
+        for pid, name in names.items()
+    }
+    for pid, state, n in states:
+        if pid in out:
+            out[pid]["creencias"][state] = n
+    for pid, n in questioned:
+        if pid in out:
+            out[pid]["reglas_cuestionadas"] = n
+    for pid, kind, n in tasks:
+        if pid in out:
+            typed = isinstance(kind, str) and kind != patrones_desarrollo.SIN_CLASIFICAR
+            out[pid]["encargos_clasificados" if typed else "encargos_sin_clasificar"] += n
+    return [x for x in out.values() if x["creencias"] or x["reglas_cuestionadas"] or x["encargos_clasificados"]]
+
+
 def _vigente(data, ahora=None):
     try:
         expires = dt.datetime.fromisoformat(data["vigente_hasta"])
@@ -211,25 +309,30 @@ def _item(node, state, chains):
     return item
 
 
+def _leer(con, pid):
+    """Las creencias del proyecto y sus apoyos activos a evidencia, dentro de la transacción de `con`."""
+    rows = con.execute(
+        "SELECT * FROM nodo WHERE proyecto=? AND tipo='decision' "
+        "AND json_extract(datos,'$.clase')='creencia_operativa' ORDER BY estado_fecha DESC,id",
+        (pid,),
+    ).fetchall()
+    apoyos = {
+        (row["de"], row["a"])
+        for row in con.execute(
+            "SELECT v.de, v.a FROM vinculo v JOIN nodo e ON e.id=v.a AND e.tipo='evidencia' AND e.proyecto=? "
+            "WHERE v.relacion='apoya' AND v.activo=1",
+            (pid,),
+        )
+    }
+    return [k._fila(row) for row in rows], apoyos
+
+
 def evaluar(pid, context):
     """Cada creencia del proyecto con su estado para este contexto y el motivo, en una lectura."""
     context = _contexto(context)
     with k._abrir(pid) as con:
         con.execute("BEGIN")  # creencias, apoyos y respaldos de la misma foto: un veredicto en medio no se mezcla
-        rows = con.execute(
-            "SELECT * FROM nodo WHERE proyecto=? AND tipo='decision' "
-            "AND json_extract(datos,'$.clase')='creencia_operativa' ORDER BY estado_fecha DESC,id",
-            (pid,),
-        ).fetchall()
-        apoyos = {
-            (row["de"], row["a"])
-            for row in con.execute(
-                "SELECT v.de, v.a FROM vinculo v JOIN nodo e ON e.id=v.a AND e.tipo='evidencia' AND e.proyecto=? "
-                "WHERE v.relacion='apoya' AND v.activo=1",
-                (pid,),
-            )
-        }
-        nodes = [k._fila(row) for row in rows]
+        nodes, apoyos = _leer(con, pid)
         # el subgrafo de respaldos se carga una vez y sólo si alguna creencia llega a necesitarlo
         grafo = []
 
@@ -244,9 +347,17 @@ def evaluar(pid, context):
 
 def checklist(pid, context, *, limite=8):
     """Aplicables primero (hasta `limite`) y, aparte, por qué no aplican las demás."""
+    _limite(limite)
+    return armar(pid, *evaluar(pid, context), limite=limite)
+
+
+def _limite(limite):
     if type(limite) is not int or not 1 <= limite <= 20:
         raise k.Rechazo("limite debe estar entre 1 y 20")
-    context, evaluated = evaluar(pid, context)
+
+
+def armar(pid, context, evaluated, *, limite=8):
+    """El checklist a partir de las creencias ya evaluadas (aquí o por el motor lógico)."""
     items = [x for x in evaluated if x["estado"] == "aplicable"]
     others = [x for x in evaluated if x["estado"] != "aplicable"]
     return {
@@ -264,12 +375,23 @@ def para_encargo(pid, task, *, limite=3):
     no que se siguió. Devuelve (items, nodo actualizado)."""
     if task["tipo"] != "encargo":
         raise k.Rechazo("se requiere un encargo")
+    import prolog_checklist  # depende de este módulo
+
     context = task["datos"].get("contexto_desarrollo")
     if not isinstance(context, dict):
         return [], task
-    items = checklist(pid, context, limite=limite)["items"]
+    # sin esperar el arranque de WSL: la coordinadora corta a los 20 s y su reintento sería 409
+    items = prolog_checklist.checklist(pid, context, limite=limite, esperar_wsl=False)["items"]
     if items:
-        shown = [{"creencia": x["creencia"], "evidencia": x["evidencia"], "fecha": k.ahora()} for x in items]
+        shown = [
+            {
+                "creencia": x["creencia"],
+                "evidencia": x["evidencia"],
+                "sostenida": bool(x["sostenida"]),
+                "fecha": k.ahora(),
+            }
+            for x in items
+        ]
         task = k.actualizar_datos(
             pid,
             task["id"],
@@ -289,7 +411,8 @@ def texto_aprendizajes(items):
         "Validados por una persona para este tipo de trabajo. Si alguno no aplica, decilo en el informe.",
     ]
     for item in items:
-        lines.append(f"- {item['accion']} (creencia {item['creencia']}, evidencia {item['evidencia']})")
+        contraste = "" if item.get("sostenida") else "; sin contraste del motor lógico"
+        lines.append(f"- {item['accion']} (creencia {item['creencia']}, evidencia {item['evidencia']}{contraste})")
         if item["excepciones"]:
             lines.append(f"  Excepciones: {item['excepciones']}")
     return "\n".join(lines)

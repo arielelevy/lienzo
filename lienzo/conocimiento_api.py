@@ -5,13 +5,16 @@ ruta ya sin el primer tramo `conocimiento`.
     GET  /conocimiento/proyectos                      lista
     POST /conocimiento/proyectos                      {id, nombre?, remotes?, carpetas?}
     GET  /conocimiento/resolver?repo_key=&cwd=&pc=    {proyecto|null}
+    GET  /conocimiento/aprendizaje-resumen            por proyecto: creencias por estado y reglas cuestionadas
     GET  /conocimiento/<p>                            resumen
     POST /conocimiento/<p>/rondas                     {objetivo, coordinadora?, autor?}
     POST /conocimiento/<p>/rondas/<id>/estado         {estado, por, motivo?}   (cerrada hace el cierre)
     POST /conocimiento/<p>/encargos                   {ronda, letra, texto, contexto_desarrollo{tipo_trabajo,..}, archivos?, autor?}
                                                       + aprendizajes aplicables al contexto
-    GET  /conocimiento/<p>/checklist?<contexto>       aplicables y, aparte, por qué no aplica cada otra
-    POST /conocimiento/<p>/creencias/<id>/uso         {resultado: sirvio|no_aplico|ya_sabido, por, encargo?, nota?}
+    GET  /conocimiento/<p>/checklist?<contexto>       aplicables sostenidas por el motor lógico, cuestionadas y,
+                                                      aparte, por qué no aplica cada otra (prolog_checklist)
+    GET  /conocimiento/<p>/contexto-sugerido?session_id=   contexto del encargo de la sesión (o en curso) + su tarjeta
+    POST /conocimiento/<p>/creencias/<id>/uso        {resultado: sirvio|no_aplico|ya_sabido, por, encargo?, nota?}
     POST /conocimiento/<p>/encargos/<id>/enviado      {session_id, agent?, model?, pc?, cwd?}
     POST /conocimiento/<p>/encargos/<id>/estado       {estado, por, motivo?}
     POST /conocimiento/<p>/entregas                   {encargo, revision, cuerpo, autor?, origen?}
@@ -48,6 +51,7 @@ import creencias
 import identity
 import patrones_desarrollo
 import patrones_evidencia
+import prolog_checklist
 import prolog_learning
 import registro_niveles
 import sessions as ses
@@ -148,6 +152,8 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             raise Rechazo(f"{e} tiene un lienzo sin replica de la memoria", 409) from e
         except OSError as e:
             raise Rechazo(f"replica: {e}", 503) from e
+    if partes == ["aprendizaje-resumen"] and metodo == "GET":
+        return 200, creencias.resumen()
     if partes == ["resolver"] and metodo == "GET":
         return 200, {"proyecto": k.resolver_proyecto(_q(query, "repo_key"), _q(query, "cwd"), _q(query, "pc"))}
     if not partes:
@@ -172,7 +178,21 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
         return 200, creencias.registrar_uso(pid, resto[1], d)
     if resto == ["checklist"] and metodo == "GET":
         contexto = {key: _q(query, key) for key in creencias.CONTEXTO if _q(query, key) is not None}
-        return 200, creencias.checklist(pid, contexto, limite=_entero(_q(query, "limite"), "limite", 8))
+        return 200, prolog_checklist.checklist(pid, contexto, limite=_entero(_q(query, "limite"), "limite", 8))
+    if resto == ["contexto-sugerido"] and metodo == "GET":
+        sid = _q(query, "session_id")
+        tarjeta = None
+        if sid:
+            with ses.lock:  # la local se copia bajo su lock; la espejada (mirror tiene el suyo), afuera
+                tarjeta = dict(ses.sessions.get(sid) or {})
+            tarjeta = tarjeta or dict(ses.find_session(sid) or {})
+            # una tarjeta de otro proyecto no sugiere nada acá: su agente no es el de este trabajo. Se
+            # resuelve como el resto del lienzo, por carpeta y si no por remote
+            if tarjeta and (tarjeta.get("cwd") or tarjeta.get("repo_key")):
+                suyo = k.resolver_proyecto(tarjeta.get("repo_key"), tarjeta.get("cwd"), tarjeta.get("pc"))
+                if suyo != pid:
+                    sid, tarjeta = None, None
+        return 200, creencias.contexto_sugerido(pid, session_id=sid, tarjeta=tarjeta)
     if resto == ["razonamiento"] and metodo == "POST":
         return prolog_learning.inferir(pid, d.get("contexto", {}))
     if resto == ["patrones-desarrollo"] and metodo == "GET":

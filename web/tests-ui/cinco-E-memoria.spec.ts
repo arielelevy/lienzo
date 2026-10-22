@@ -29,8 +29,7 @@ test('cancelar consulta descarta respuesta tardía y permite consultar de nuevo'
   await page.getByRole('button', { name: 'más opciones', exact: true }).click();
   await page.getByRole('menuitem', { name: /Memoria/ }).click();
   await page.getByLabel('Proyecto', { exact: true }).selectOption('uno');
-  await page.getByRole('button', { name: 'Aprendizaje', exact: true }).click();
-  await page.getByRole('button', { name: 'Consultar aprendizaje', exact: true }).click();
+  await page.getByRole('button', { name: 'Aprendizaje', exact: true }).click();  // abre leyendo sola
   await expect.poll(() => count).toBe(1);
   await page.getByRole('button', { name: 'Cancelar consulta' }).click();
   release();

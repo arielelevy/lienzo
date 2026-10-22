@@ -42,7 +42,13 @@ async function prepare(page: Page, reply: () => { status: number; body: unknown 
       return route.fulfill({ status: r.status, contentType: 'application/json', body: JSON.stringify(r.body) });
     }
     const body = path.endsWith('/proyectos') ? [{ id: 'uno', nombre: 'Uno' }, { id: 'dos', nombre: 'Dos' }]
-      : path.endsWith('/temas') ? { temas: [] } : { vigente: [], abierto: [], otros: [] };
+      : path.endsWith('/temas') ? { temas: [] }
+      // Aprendizaje abre leyendo solo: un proyecto sin creencias, para que el contraste sea lo único en juego
+      : path.endsWith('/checklist') ? { contexto: {}, total: 0, items: [], no_aplican_total: 0, no_aplican: [] }
+      : path.endsWith('/creencias') ? []
+      : path.endsWith('/nodos') ? { total: 0, nodos: [] }
+      : path.endsWith('/patrones-desarrollo') ? { revisados: 0, sin_clasificar: 0, muestra_parcial: false, patrones: [] }
+      : { vigente: [], abierto: [], otros: [] };
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
   await page.goto(BASE);

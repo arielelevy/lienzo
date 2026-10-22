@@ -45,7 +45,10 @@ async function selectProject(page: Page, id = "lienzo") {
 test("selección explícita, navegación, recarga y cierre sin escrituras", async ({ page }) => {
   const requests = await prepare(page);
   await expect(page.getByLabel("Proyecto", { exact: true })).toHaveValue("");
-  expect(requests.every(r => new URL(r.url).pathname === "/conocimiento/proyectos")).toBe(true);
+  // antes de elegir proyecto sólo se lee el catálogo y el resumen global del chip de aprendizaje
+  // (AprendizajeBar): nada de un proyecto en particular ni ninguna escritura
+  const lecturasPermitidas = ["/conocimiento/proyectos", "/conocimiento/aprendizaje-resumen"];
+  expect(requests.every(r => lecturasPermitidas.includes(new URL(r.url).pathname))).toBe(true);
   await selectProject(page);
   await page.getByRole("button", { name: "Leer briefing", exact: true }).click();
   await expect(page.getByText("Ruta validada", { exact: true })).toBeVisible();
