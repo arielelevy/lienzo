@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.7**: tarjeta de Claude en Chrome y auto-aprobación de permisos largos y de archivos en Antigravity.
+Versión **0.6.8**: vista por pestañas de Chrome fluida y nítida, tablero más chico y auto-aprobar como pestaña del encabezado.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.7.md).
+[Novedades, validación y límites](docs/releases/0.6.8.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
