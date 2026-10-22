@@ -108,8 +108,8 @@ details.fold > summary,
 /* el aire vertical entre tarjetas es fijo (--card-gap-y): las flechas corren por el canal
    horizontal, que es el que tiene los 30 px. El carril de arriba y el de abajo siguen saliendo de
    --lane-h, que crece con cuantas flechas lleve */
-.board[data-lanes] .col:not(.wide) .cards .card { margin-bottom: var(--card-gap-y, 13px); }
-.board[data-lanes] .col.wide .cards > div { margin-bottom: var(--card-gap-y, 13px); }
+.board[data-lanes] .col:not(.wide) .cards .card { margin-bottom: var(--card-gap-y, 14px); }
+.board[data-lanes] .col.wide .cards > div { margin-bottom: var(--card-gap-y, 14px); }
 /* entre dos columnas alcanza un hilo: las flechas corren por los carriles de adentro, no por
    el canal de afuera. El aire grande (--col-gap) es el que separa tarjetas, que es donde se ven */
 .col + .col { margin-left: var(--col-sep, 7px); }
@@ -165,7 +165,7 @@ details.fold > summary,
    siempre el mismo que en una columna simple (8 px), aunque la de al lado sea mas alta */
 /* subcolumnas por CSS: la grilla vive en card.css (.board .col.wide .cards). Todas las tarjetas
    siguen siendo hijas del mismo nodo (React no las remonta al reordenar). */
-.col.wide .cards > div { margin-bottom: var(--card-gap-y, 13px); }
+.col.wide .cards > div { margin-bottom: var(--card-gap-y, 14px); }
 .col.wide .cards .card { margin-bottom: 0; }
 .col.collapsed .vlabel { cursor: pointer; border-radius: 6px; min-width: 16px; }
 .col.collapsed .vlabel:hover { background: var(--card); color: var(--fg); }
@@ -370,7 +370,7 @@ details.fold > summary,
 
 /* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y
    click en el vacio lo cierra (--hh es el alto del header, que mide App) */
-:root { --hh: 37px; --col-gap: 24px; --col-sep: 7px; --card-gap-y: 13px; }
+:root { --hh: 37px; --col-gap: 26px; --col-sep: 7px; --card-gap-y: 14px; } /* separacion entre tarjetas +10 % (pedido de Ariel, 2026-10-21) */
 /* el panel se abre sobre la tarjeta que lo abrio y el tablero de atras se atenua y se difumina.
    left, top, width (y en el celular height) van en el style, calculados en Panel.tsx: el ancho
    se declara en un solo lado, porque el clamp del left necesita el mismo numero. Aca no va
