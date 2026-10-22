@@ -23,6 +23,13 @@ def test_preferences_are_opt_in_and_do_not_expose_keys(isolated):
     assert "Responde breve" in text and "No comprimas archivos" in text and not warnings
 
 
+def test_configure_writes_through_the_single_atomic_writer(isolated, monkeypatch):
+    writes = []
+    monkeypatch.setattr(state, "atomic_write", lambda path, text: writes.append((path, json.loads(text))))
+    improvements.configure({"rtk": True})
+    assert writes == [(str(isolated / "agent-improvements.json"), {"brief": False, "rtk": True})]
+
+
 @pytest.mark.parametrize("data", [{}, {"brief": 1}, {"rtk": "true"}, {"command": "whoami"}])
 def test_bad_config_does_not_change_preferences(isolated, data):
     with pytest.raises(ValueError):

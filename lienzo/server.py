@@ -547,10 +547,7 @@ def _leer_config_pendiente() -> dict[str, bool]:
 
 def _guardar_config_pendiente(d: dict[str, bool]) -> None:
     try:
-        tmp = CONFIG_PENDIENTE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f)
-        os.replace(tmp, CONFIG_PENDIENTE_FILE)
+        state.atomic_write(CONFIG_PENDIENTE_FILE, json.dumps(d))
     except OSError as e:
         log(f"no se pudo guardar el auto-aprobar pendiente para otras PCs: {e}")
 
@@ -793,8 +790,8 @@ def reconcile_peer_rules(pc: str, remote_ids: set[str]) -> None:
 def _stream_sse(handler: BaseHTTPRequestHandler, initial_json: str, extra_client_lists: list[list]) -> None:
     """Bucle SSE compartido por `/events` (tablero) y `/peer/events` (otro PC): un chunk inicial con
     el snapshot que ya arma cada llamador, despues cada mensaje que llegue a la cola propia (que se
-    registra en `clients`, la verdad local, y ademas en `extra_client_lists`), y un ping cada 15 s
-    si no llego nada. Extraido de lo que antes era Handler._sse, sin cambiar el formato del wire."""
+    registra en `clients`, la verdad local, y ademas en `extra_client_lists`), y un ping cada
+    `federation.SSE_PING_S` si no llego nada. Extraido de lo que antes era Handler._sse, sin cambiar el formato del wire."""
     q: queue.Queue = queue.Queue(maxsize=1000)
     with lock:
         lleno = len(clients) >= MAX_SSE
@@ -833,7 +830,7 @@ def _stream_sse(handler: BaseHTTPRequestHandler, initial_json: str, extra_client
         chunk(f"data: {initial_json}\n\n".encode())
         while registered():
             try:
-                data = q.get(timeout=15)
+                data = q.get(timeout=federation.SSE_PING_S)
                 if not registered():
                     break
                 chunk(f"data: {data}\n\n".encode())

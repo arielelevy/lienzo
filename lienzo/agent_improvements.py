@@ -4,8 +4,6 @@ inyecta cada una al lanzar vive en el catalogo (lienzo/tools/)."""
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 import threading
 from pathlib import Path
 
@@ -34,14 +32,7 @@ def configure(data: dict) -> dict:
         merged = preferences() | data
         root = Path(state.LIENZO)
         root.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(dir=root, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(merged, stream)
-            os.replace(name, root / "agent-improvements.json")
-        finally:
-            if os.path.exists(name):
-                os.unlink(name)
+        state.atomic_write(str(root / "agent-improvements.json"), json.dumps(merged))
     return status()
 
 

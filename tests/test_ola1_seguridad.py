@@ -179,6 +179,15 @@ def test_put_config_auto_aprobar_dice_que_pc_no_lo_recibio_y_lo_reintenta(srv, a
     assert leer_json(aislado["tmp"] / "config_pendiente.json") == {}
 
 
+def test_config_pendiente_se_guarda_con_la_escritura_atomica_unica(aislado, monkeypatch):
+    """atomico.py es la unica escritura atomica del lienzo: un .tmp con nombre fijo choca con otro
+    hilo (WinError 32) y no reintenta."""
+    escrituras = []
+    monkeypatch.setattr(st, "atomic_write", lambda path, text: escrituras.append((path, json.loads(text))))
+    server._guardar_config_pendiente({"pcC": False})
+    assert escrituras == [(server.CONFIG_PENDIENTE_FILE, {"pcC": False})]
+
+
 def test_put_config_sin_auto_aprobar_no_trae_peers(srv, aislado):
     code, _, res = pedir(srv, "PUT", "/config", {"auto_continue": True})
     assert code == 200 and "peers" not in res and aislado["espejo"].llamadas == []

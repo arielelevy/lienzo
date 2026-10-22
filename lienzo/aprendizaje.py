@@ -27,7 +27,6 @@ _PALABRA = re.compile(r"\w+")
 RESPALDOS_CAIDOS = {("hallazgo", "rechazado"), ("medicion", "rechazada"), ("decision", "revertida")}
 # relaciones por las que un nodo depende de otro (quien cita a quien), para `dependencias`
 RELACIONES_DEPENDENCIA = ("motivada_por", "apoya", "derivada_de", "contesta")
-ESTADOS_LECCION = ("vigente", "cuestionada")
 LIMITE_INCIDENTES_AGENTE = 50  # por proyecto, los mas nuevos
 
 _SQL_GRUPO = """

@@ -477,11 +477,6 @@ def _revisar_turnos() -> None:
             _pasar_turno(recurso)  # esperaba memoria: puede que ya alcance
 
 
-def turnos_de(sid: str) -> list[str]:
-    with lock:
-        return [r for r, t in _datos["turnos"].items() if (t.get("dueno") or {}).get("session_id") == sid]
-
-
 # --- presion de memoria ------------------------------------------------------------------------
 
 
