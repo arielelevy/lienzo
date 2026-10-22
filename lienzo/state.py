@@ -381,7 +381,10 @@ def claude_slug(cwd: str) -> str:
 
 
 def repo_of(cwd: str | None) -> str:
-    return os.path.basename((cwd or "").rstrip("\\/")) or "?"
+    """El nombre de la carpeta; si no tiene (una raiz como `D:\\`), la ruta misma cortada a 20
+    caracteres en vez de «?» (pedido de Ariel, 2026-10-22). «?» sólo sin carpeta conocida."""
+    limpio = (cwd or "").rstrip("\\/")
+    return os.path.basename(limpio) or (cwd or "").strip()[:20] or "?"
 
 
 def parse_ts(raw) -> dt.datetime | None:
