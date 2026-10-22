@@ -1,0 +1,70 @@
+{
+  "nombre": "investigador-claude-azure-encargo-G",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/investigador-claude-azure",
+  "reglas": [
+    "Decisión 1 de Ariel (2026-10-22): adaptador Azure (gpt-6.1-sol, arielfoundry) para el investigador con tope de USD 5 por mes, sólo proyectos propios (ni Globant ni clientes), ledger de costo por llamada, corte duro al tope, key en el almacén de Lienzo (DPAPI) y sin sustituir a Codex automáticamente.",
+    "Decisión 17 de Ariel (2026-10-22): evaluador e investigador en segundo plano con Claude mientras Codex no tenga >= 20 % del semanal; Jev y la memoria eligen, el investigador sólo lee, el resultado estructurado va a la memoria; se respetan cola, scheduler, pausa por actividad y límites.",
+    "docs/APRENDIZAJE.md y optimization_research_policy: sin máximo comprobable antes de enviar no hay ejecución; un fallo deja evidencia y no se reintenta solo; nunca se imputa cero a un cargo sin uso informado."
+  ],
+  "casos": [
+    {
+      "id": "claude-azure-contratos",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_research_ledger.py",
+        "tests/test_research_azure.py",
+        "tests/test_research_claude.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 240000,
+      "cubre": [
+        "lienzo/optimization_research.py",
+        "lienzo/optimization_research_policy.py",
+        "lienzo/optimization_research_ledger.py",
+        "lienzo/optimization_research_runner.py",
+        "lienzo/optimization_cost.py",
+        "lienzo/optimization_queue.py",
+        "lienzo/optimization_scheduler.py",
+        "lienzo/research_azure_call.py",
+        "lienzo/jev_credentials.py"
+      ]
+    },
+    {
+      "id": "investigador-regresion",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_optimization_research.py",
+        "tests/test_optimization_research_unit.py",
+        "tests/test_optimization_research_runner.py",
+        "tests/test_optimization_queue.py",
+        "tests/test_optimization_cost.py",
+        "tests/test_optimization_scheduler.py",
+        "tests/test_optimization_cancel_races.py",
+        "tests/test_optimization_intentos.py",
+        "tests/test_jev_credentials.py",
+        "tests/test_jev.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "lienzo/optimization_research.py",
+        "lienzo/optimization_research_policy.py",
+        "lienzo/optimization_research_runner.py",
+        "lienzo/optimization_queue.py",
+        "lienzo/optimization_cost.py",
+        "lienzo/optimization_scheduler.py",
+        "lienzo/jev_credentials.py"
+      ]
+    }
+  ],
+  "mutaciones": []
+}

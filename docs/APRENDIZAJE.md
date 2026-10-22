@@ -75,6 +75,8 @@ La brevedad o una menor cantidad de llamadas no son un oráculo de calidad.
 | `optimization_research.py` | Investigador CLI: selección, paquete, esquema, validación, memoria, adaptadores |
 | `optimization_research_policy.py` | Modos, autorización y techos del investigador |
 | `optimization_research_quota.py` | Cuota de la suscripción Codex leída en vivo, sin inferencia |
+| `optimization_research_ledger.py` | Reserva y liquidación del investigador pago (Azure), tope mensual |
+| `research_azure_call.py` | Hijo aislado del adaptador Azure: una llamada, sin herramientas |
 | `optimization_research_runner.py` | Proceso propio cancelable, con plazo y sin tocar procesos ajenos |
 
 Preferencias e instrucciones al lanzar están en `agent_improvements.py`, `launch.py` y
@@ -186,17 +188,38 @@ propuesta, vinculadas con `apoya` y `motivada_por`; requieren veredicto. Nada ca
 Los fallos y cancelaciones dejan evidencia `investigacion_cli_fallida`, sin reintento automático.
 
 **Política y consumo.** Sólo el modo `read_only` puede habilitarse; experimentos aislados y aplicar
-cambios quedan bloqueados. `optimization_cost.cli_maximum` exige una cota de USD 0 verificada con
-fundamento antes de enviar; sin ella, bloqueado. No hay ledger CLI para montos mayores que cero.
+cambios quedan bloqueados. `optimization_cost.cli_maximum` exige una cota verificada con fundamento
+antes de enviar; sin ella, bloqueado. Un máximo mayor que cero sólo vale con el ledger del investigador
+(`optimization_research_ledger.py`) leído antes y dentro del disponible del mes y del tope por ejecución.
 
 - Codex usa la suscripción. Ariel lo autorizó el 2026-10-16 a correr mientras quede al menos 20 % de la
   ventana semanal (uso <= 80 %). La cuota se lee en vivo (`codex app-server`, `account/rateLimits/read`)
   antes de cada inicio y cada minuto de ejecución; bloquea con créditos cobrables, control de gasto o
   límite alcanzado, o si la lectura falla. Es cuota de la cuenta: incluye el uso de las dos PCs.
-- El otro adaptador sólo aplica a proyectos de una regla local fuera de Git
+- Claude (decisión 17 de Ariel, 2026-10-22) reemplaza a Codex cuando Codex no tiene al menos 20 % del
+  semanal: `adapter_for` lee la cuota de Codex y, si bloquea por cualquier motivo, elige Claude y deja el
+  motivo en `selected_because`. Usa la suscripción de Claude leída en vivo (`cuotas.read_claude`: uso
+  semanal <= 80 % y 5 h < 90 %) antes de cada inicio y cada minuto. Corre `claude -p --restricted
+  --safe-mode --tools Read,Grep,Glob --permission-mode dontAsk --no-session-persistence --json-schema`,
+  sin variables de facturación por API (`ANTHROPIC_API_KEY` y afines se quitan del entorno del hijo).
+  `--safe-mode` apaga los hooks: la corrida no aparece como sesión en el tablero. El costo de lista que
+  informa la CLI se guarda como medida; con la suscripción no se cobra. Un uso extra habilitado en la
+  organización no se ve desde Lienzo.
+- Azure (decisión 1, 2026-10-22): `azure-openai`, deployment `gpt-6.1-sol` de `arielfoundry`, una llamada
+  a la Responses API sin herramientas ni lectura del repo (`research_azure_call.py`, `python -I`, sólo
+  https a Azure, sin proxy ni redirecciones). Nunca se elige solo: una persona lo pide por trabajo
+  («Revisar con Azure» y «Encolar con Azure», o `adapter: "azure-openai"` en el comando). Sólo proyectos
+  propios de la lista de la decisión, con todas sus carpetas bajo `D:/Apps`. Tope USD 5 por mes calendario
+  UTC: antes de lanzar se reserva el máximo del paquete (bytes del prompt y del esquema como tokens de
+  entrada, más 16 000 de salida, a USD 5 y 15 por millón, el peor caso de la Retail Prices API del
+  2026-10-22); se liquida con el uso informado o queda la reserva entera como cargo desconocido. Tope
+  por ejecución USD 1.5, 4 por día, 300 s. La key vive en el almacén DPAPI de Lienzo
+  (`~/.lienzo/private/azure-openai.dpapi`); la carga una persona con `py ops/importar-azure.py`.
+- coda-dgx sólo aplica a proyectos de una regla local fuera de Git
   (`lienzo/extensiones/investigador-reglas.json`) y exige autorización firmada.
 - `~/.lienzo/research-authorization.json` (versión 1, firma `persona:<nombre>`, vencimiento, topes y
-  `presupuesto_usd` "0") restringe a Codex y es obligatorio para el otro adaptador. Si es inválido, bloquea.
+  `presupuesto_usd` "0") restringe a Codex o a Claude y es obligatorio para coda-dgx. No puede autorizar
+  Azure ni ningún gasto. Si es inválido, bloquea.
 - Techos del código: 900 s por ejecución, 6 ejecuciones en 24 h móviles, 20 MB de salida (stdout +
   stderr, contados durante la ejecución: al pasarlos se mata el árbol propio) y 2 inicios por caso.
   Una autorización puede bajarlos, no subirlos. La respuesta de Codex (`result.json`) no puede pasar

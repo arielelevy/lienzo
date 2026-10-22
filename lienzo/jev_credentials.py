@@ -1,4 +1,7 @@
-"""Clave OpenRouter privada: DPAPI del usuario en Windows, 0600 en POSIX."""
+"""Claves privadas de Lienzo: DPAPI del usuario en Windows, 0600 en POSIX.
+
+`jev` es la clave OpenRouter de Jev; `azure-openai`, la del investigador Azure. Cada nombre es un archivo
+aparte en `~/.lienzo/private`; la clave nunca se imprime ni pasa por argv."""
 
 from __future__ import annotations
 
@@ -9,9 +12,13 @@ from pathlib import Path
 
 import state
 
+NAMES = ("jev", "azure-openai")
 
-def path() -> Path:
-    return Path(state.LIENZO) / "private" / ("jev.dpapi" if os.name == "nt" else "jev.key")
+
+def path(name: str = "jev") -> Path:
+    if name not in NAMES:
+        raise ValueError("credencial desconocida")
+    return Path(state.LIENZO) / "private" / (f"{name}.dpapi" if os.name == "nt" else f"{name}.key")
 
 
 def _dpapi(data: bytes, *, decrypt: bool = False) -> bytes:
@@ -49,13 +56,13 @@ def _dpapi(data: bytes, *, decrypt: bool = False) -> bytes:
         kernel.LocalFree(ctypes.cast(target.data, ctypes.c_void_p))
 
 
-def store(key: str) -> None:
+def store(key: str, name: str = "jev") -> None:
     if not isinstance(key, str) or not key.strip() or len(key) > 4096 or any(c.isspace() for c in key):
         raise ValueError("credencial invalida")
     payload = key.encode()
     if os.name == "nt":
         payload = _dpapi(payload)
-    target = path()
+    target = path(name)
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temporary = tempfile.mkstemp(dir=target.parent)
     try:
@@ -69,10 +76,10 @@ def store(key: str) -> None:
             os.unlink(temporary)
 
 
-def load() -> str:
-    target = path()
+def load(name: str = "jev") -> str:
+    target = path(name)
     if not target.is_file():
-        raise ValueError("Jev no tiene credencial en esta PC")
+        raise ValueError(("Jev" if name == "jev" else name) + " no tiene credencial en esta PC")
     if os.name != "nt" and target.stat().st_mode & 0o077:
         raise ValueError("la credencial debe tener permisos 0600")
     data = target.read_bytes()
@@ -80,10 +87,10 @@ def load() -> str:
         data = _dpapi(data, decrypt=True)
     key = data.decode("utf-8")
     if not key or len(key) > 4096 or any(c.isspace() for c in key):
-        raise ValueError("credencial Jev invalida")
+        raise ValueError(f"credencial {name} invalida")
     return key
 
 
-def available() -> bool:
+def available(name: str = "jev") -> bool:
     # Solo presencia: no descifrar un secreto ni hacer red por cada GET.
-    return path().is_file()
+    return path(name).is_file()

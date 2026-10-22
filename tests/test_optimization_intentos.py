@@ -49,7 +49,7 @@ def scheduler(monkeypatch):
     sch.outcome = {"status": "stopped", "reason": ENTORNO[0], "meta": {"stopped": ENTORNO[0]}}
     sch.calls, sch.evaluations = [], []
 
-    def evaluate(project, adapter, runs_today):
+    def evaluate(project, adapter, runs_today, adapter_runs_today=None):
         sch.evaluations.append(project)
         return adapter, dict(sch.decision)
 

@@ -14,6 +14,7 @@ from atomico import atomic_write
 STATES = ("queued", "running", "paused", "review", "observed", "failed", "cancelled")
 ACTIVE = ("queued", "running", "paused")
 MAX_RESEARCH_ATTEMPTS = 10
+REQUESTABLE_ADAPTERS = ("codex", "claude", "azure-openai")  # lo que una persona puede pedir por trabajo
 
 
 class Queue:
@@ -82,6 +83,8 @@ class Queue:
                 attempts = job.get("attempts")
                 if type(job.get("cancel_requested", False)) is not bool:
                     raise ValueError("cancelación de investigación inválida")
+                if job.get("adapter") is not None and job["adapter"] not in REQUESTABLE_ADAPTERS:
+                    raise ValueError("adaptador de investigación inválido")
                 if type(attempts) is not int or not 0 <= attempts <= MAX_RESEARCH_ATTEMPTS:
                     raise ValueError("intentos de investigación inválidos")
                 if not isinstance(job.get("runs"), list) or not all(
@@ -125,11 +128,14 @@ class Queue:
                 raise
             return dict(job)
 
-    def enqueue_research(self, project: str, case: dict, *, automatic=False):
+    def enqueue_research(self, project: str, case: dict, *, automatic=False, adapter=None):
         """Un caso por clave en todo el historial (observado, fallido o cancelado no se repite solo) y a lo
-        sumo una investigación activa por proyecto. Devuelve None si no encola."""
+        sumo una investigación activa por proyecto. `adapter` lo pide una persona (p. ej. azure-openai);
+        sin él, el scheduler elige. Devuelve None si no encola."""
         if not isinstance(case, dict) or not isinstance(case.get("case_key"), str) or case.get("project") != project:
             raise ValueError("caso de investigación inválido")
+        if adapter is not None and (automatic or adapter not in REQUESTABLE_ADAPTERS):
+            raise ValueError("adaptador de investigación inválido o pedido automático")
         with self.lock:
             research = [j for j in self.jobs if j.get("kind") == "research"]
             if any(j["case"]["case_key"] == case["case_key"] for j in research):
@@ -140,6 +146,8 @@ class Queue:
                 raise ValueError("cola llena; revisar historial antes de agregar trabajos")
             job = {"id": str(uuid.uuid4()), "project": project, "state": "queued", "cursor": 0, "results": []}
             job.update(kind="research", case=dict(case), attempts=0, runs=[], automatic=automatic)
+            if adapter is not None:
+                job["adapter"] = adapter
             job.update(created_at=time.time(), source_version=case["case_key"], source_ids=case.get("source_ids"))
             self.jobs.append(job)
             try:
@@ -149,9 +157,19 @@ class Queue:
                 raise
             return dict(job)
 
-    def research_runs_since(self, since: float) -> int:
+    def research_runs_since(self, since: float, adapter: str | None = None) -> int:
+        """Inicios desde `since`; con `adapter`, sólo los de ese adaptador (cada uno tiene su tope diario).
+        Un inicio sin adaptador registrado (anterior al registro) cuenta para todos."""
         with self.lock:
-            return sum(1 for j in self.jobs if j.get("kind") == "research" for t in j["runs"] if t >= since)
+            count = 0
+            for job in self.jobs:
+                if job.get("kind") != "research":
+                    continue
+                names = job.get("run_adapters") or []
+                for i, moment in enumerate(job["runs"]):
+                    name = names[i] if i < len(names) else None
+                    count += moment >= since and (adapter is None or name in (None, adapter))
+            return count
 
     def configure(self, enabled: bool):
         if type(enabled) is not bool:

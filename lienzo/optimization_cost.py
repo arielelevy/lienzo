@@ -100,15 +100,31 @@ def cli_maximum(limits: dict) -> str:
 
     Se acredita USD 0 sólo con fundamento leído antes de enviar (p. ej. suscripción sin créditos
     cobrables, leída en vivo). Tokens o créditos informados después de la ejecución no son un máximo;
-    una clave compartida tampoco. No hay ledger CLI para montos mayores que cero."""
+    una clave compartida tampoco. Un máximo mayor que cero sólo con el ledger del investigador leído
+    antes de enviar (`ledger`), dentro del disponible del mes y del tope por ejecución; la reserva real
+    se hace justo antes de lanzar (optimization_research_ledger.reserve)."""
     bound = limits.get("consumption_bound") if isinstance(limits, dict) else None
     if not isinstance(bound, dict) or bound.get("verified") is not True:
         raise ValueError(CLI_BLOCK + ": consumo sin máximo comprobable antes de enviar")
-    if bound.get("unit") != "usd" or bound.get("maximum") != "0" or not bound.get("basis"):
-        raise ValueError(CLI_BLOCK + ": sólo se acredita USD 0 con fundamento; no hay ledger CLI")
+    if bound.get("unit") != "usd" or not isinstance(bound.get("maximum"), str) or not bound.get("basis"):
+        raise ValueError(CLI_BLOCK + ": sólo se acredita un máximo en USD con fundamento")
     if not limits.get("cancellable") or not limits.get("timeout"):
         raise ValueError(CLI_BLOCK + ": falta cancelación propia o timeout")
-    return "0"
+    try:
+        amount = Decimal(bound["maximum"])
+    except ArithmeticError as error:
+        raise ValueError(CLI_BLOCK + ": máximo ilegible") from error
+    if amount == 0:
+        return "0"
+    ledger = bound.get("ledger")
+    if amount < 0 or not isinstance(ledger, dict) or ledger.get("read") is not True:
+        raise ValueError(CLI_BLOCK + ": un máximo mayor que cero requiere el ledger del investigador leído")
+    if amount > Decimal(ledger["available_usd"]) or amount > Decimal(ledger["max_usd_per_run"]):
+        raise ValueError(
+            f"tope de gasto: máximo USD {amount} supera el disponible del mes USD {ledger['available_usd']} "
+            f"o el tope por ejecución USD {ledger['max_usd_per_run']}"
+        )
+    return str(amount)
 
 
 def status() -> dict:

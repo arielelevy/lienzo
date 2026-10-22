@@ -35,6 +35,7 @@ class Scheduler:
         self.project_cursor = 0
         self.trabajo_visto = {}  # proyecto -> monotonic del ultimo analisis de como se trabaja
         self.research_adapter = research.adapter_for  # proyecto -> adaptador; las pruebas lo reemplazan
+        self.research_named = research.adapter_named  # adaptador pedido por trabajo; las pruebas lo reemplazan
         self.research_view = None  # última evaluación de política; un GET no lee la cuota
         self.research_visto = {}  # proyecto -> monotonic de la última selección automática
 
@@ -85,18 +86,22 @@ class Scheduler:
                 raise ValueError("proyecto inválido")
             conocimiento.proyecto(data["project"])
             self.queue.enqueue(data["project"])
-        elif action in ("research_check", "enqueue_research") and set(data) == {"action", "project"}:
+        elif action in ("research_check", "enqueue_research") and set(data) - {"adapter"} == {"action", "project"}:
+            # `adapter` lo pide una persona para este trabajo (Azure nunca se elige solo: decisión 1)
             if not isinstance(data["project"], str):
                 raise ValueError("proyecto inválido")
+            named = data.get("adapter")
+            if named is not None and named not in research.NAMED:
+                raise ValueError("adaptador pedido desconocido")
             conocimiento.proyecto(data["project"])
-            decision = self._research_evaluate(data["project"])
+            decision = self._research_evaluate(data["project"], named)
             taken = {j["case"]["case_key"] for j in self.queue.view()["jobs"] if j.get("kind") == "research"}
             cases = research.select(data["project"], exclude=taken)
             if action == "research_check":
                 return {**self.status(), "research_preview": cases}
             if not decision["enabled"]:
                 raise ValueError("investigador bloqueado: " + "; ".join(decision["reasons"]))
-            if not cases or not self.queue.enqueue_research(data["project"], cases[0]):
+            if not cases or not self.queue.enqueue_research(data["project"], cases[0], adapter=named):
                 raise ValueError("sin casos nuevos o hay una investigación activa en el proyecto")
         elif action == "enqueue_research_unit" and set(data) == {"action", "project", "folders"}:
             # una ronda, ola o feature que abarca varias carpetas de coordinación (p. ej. dos días)
@@ -312,10 +317,18 @@ class Scheduler:
             return True
         return False
 
-    def _research_evaluate(self, project):
+    def _adapter(self, project, named=None):
+        """El adaptador pedido para el trabajo, o el que elige la regla (Codex con cuota, si no Claude)."""
+        return self.research_named(named, project) if named else self.research_adapter(project)
+
+    def _research_evaluate(self, project, named=None):
         since = time.time() - 86400  # tope diario en 24 h móviles
+        adapter = self._adapter(project, named)
         _, decision = research.evaluate(
-            project, self.research_adapter(project), runs_today=self.queue.research_runs_since(since)
+            project,
+            adapter,
+            runs_today=self.queue.research_runs_since(since),
+            adapter_runs_today=self.queue.research_runs_since(since, adapter.name),
         )
         self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
         return decision
@@ -344,8 +357,12 @@ class Scheduler:
                 self.queue.change(jid, state="review", reason="intentos agotados; sin reintento automático")
                 return
         since = time.time() - 86400
+        chosen = self._adapter(project, job.get("adapter"))
         adapter, decision = research.evaluate(
-            project, self.research_adapter(project), runs_today=self.queue.research_runs_since(since)
+            project,
+            chosen,
+            runs_today=self.queue.research_runs_since(since),
+            adapter_runs_today=self.queue.research_runs_since(since, chosen.name),
         )
         self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
         with self.queue.lock:
@@ -366,6 +383,7 @@ class Scheduler:
                 state="running",
                 attempts=attempts,
                 runs=[*job["runs"], time.time()],
+                run_adapters=[*job.get("run_adapters", [None] * len(job["runs"])), adapter.name],
                 reason="investigando",
                 pid=None,
             )
@@ -405,6 +423,19 @@ class Scheduler:
         elif outcome["status"] == "stopped" and why == RESEARCH_CANCELLED:
             evidence = research.record_failure(project, job["case"], meta, why)
             self.queue.change(jid, state="cancelled", pid=None, evidence=evidence, last_run=meta, reason=why)
+        elif outcome["status"] == "stopped" and (meta or {}).get("launched") is False:
+            # nada se lanzó (tope mensual o ledger): no gasta el inicio del caso ni el tope diario
+            self.queue.change(
+                jid,
+                state="paused",
+                pid=None,
+                attempts=job["attempts"],
+                runs=job["runs"],
+                run_adapters=job.get("run_adapters", [None] * len(job["runs"])),
+                reason=why,
+                not_before=time.time() + RESEARCH_BACKOFF_S,
+            )
+            self.reason, self.good_samples = why, 0
         elif outcome["status"] == "stopped":
             # un corte del entorno (actividad, agentes, memoria o cuota) pospone: retomar en el próximo
             # tick gastaría el otro inicio del caso en las mismas condiciones. La pausa del usuario no.

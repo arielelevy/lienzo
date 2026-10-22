@@ -27,7 +27,7 @@ def current(sch):
     return sch.queue.view()["jobs"][0]
 
 
-def evaluate(_, adapter, runs_today):
+def evaluate(_, adapter, runs_today, adapter_runs_today=None):
     return adapter, {"enabled": True, "reasons": []}
 
 
@@ -37,7 +37,7 @@ def test_cancel_during_policy_never_restarts_or_overwrites(sch, monkeypatch, ena
     entered, release = threading.Event(), threading.Event()
     launched, errors = [], []
 
-    def slow_policy(_, adapter, runs_today):
+    def slow_policy(_, adapter, runs_today, adapter_runs_today=None):
         entered.set()
         assert release.wait(5)
         return adapter, {"enabled": enabled, "reasons": ["blocked"]}

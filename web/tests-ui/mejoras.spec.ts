@@ -121,7 +121,7 @@ test("investigador Codex: cuota de suscripción, bloqueo, candidatos y cancelaci
   });
   await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
   await page.getByRole("menuitem", { name: "Mejoras de agentes…" }).click();
-  const inv = page.getByRole("region", { name: "Aprendizaje en segundo plano" }).getByLabel("Investigador Codex");
+  const inv = page.getByRole("region", { name: "Aprendizaje en segundo plano" }).getByLabel("Investigador", { exact: true });
   await expect(inv.getByText(/no el presupuesto en USD de Jev/)).toBeVisible();
   await expect(inv.getByText(/sin evaluar en este proceso/)).toBeVisible();
   await expect(inv.getByRole("button", { name: "Encolar investigación" })).toBeDisabled();
@@ -141,6 +141,55 @@ test("investigador Codex: cuota de suscripción, bloqueo, candidatos y cancelaci
   await expect(trabajos.getByText("lienzo · cancelled")).toBeVisible();
   await expect(trabajos.getByRole("button", { name: "Cancelar investigación" })).toHaveCount(0);
   expect(writes).toEqual([{ action: "research_check", project: "lienzo" }, { action: "research_check", project: "lienzo" }, { action: "cancel_research", job: "inv1" }]);
+});
+
+test("investigador: Claude cuando Codex no tiene cuota y Azure sólo a pedido con su tope", async ({ page }) => {
+  await abrirTablero(page);
+  await page.route("**/agent-improvements", route => route.fulfill(json(settings)));
+  const claude = { enabled: true, state: "enabled", reasons: [], runs_today: 0, project: "lienzo", limits: { max_runs_per_day: 6, max_weekly_used_pct: 80 },
+    adapter: { name: "claude", selected_because: "codex: uso semanal 90 % supera el tope 80 %", consumption_bound: { weekly_used_pct: 13 } }, budget_granted_usd: "0" };
+  const azure = { enabled: true, state: "enabled", reasons: [], runs_today: 0, project: "lienzo", limits: { max_runs_per_day: 4, monthly_budget_usd: "5" },
+    adapter: { name: "azure-openai", budget: { month: "2026-10", budget_usd: "5", spent_usd: "0.08", available_usd: "4.92", open_reservations: 0 } }, budget_granted_usd: "5" };
+  let status: Record<string, unknown> = { enabled: true, reason: "quieto", projects: [{ id: "lienzo", name: "Lienzo" }], jobs: [],
+    research: { last_evaluation: null, scope: "sólo lectura", note: "sin evaluar en este proceso" } };
+  const writes: Record<string, unknown>[] = [];
+  let background = false;
+  await page.route("**/agent-improvements/scheduler", route => {
+    if (route.request().method() === "PUT") {
+      const data = route.request().postDataJSON();
+      if (data.action !== "activity") writes.push(data);
+      if (data.action === "research_check") {
+        status = { ...status, research: { ...(status.research as object), last_evaluation: data.adapter ? azure : claude, note: null } };
+        return route.fulfill(json({ ...status, research_preview: [] }));
+      }
+      if (data.action === "enqueue_research") status = { ...status, jobs: [{ id: "j1", project: "lienzo", state: "queued", cursor: 0, results: [], kind: "research", adapter: data.adapter, attempts: 0, case: { case_key: "c-1", area: "herramientas" } }] };
+      return route.fulfill(json(status));
+    }
+    // el scheduler de fondo reescribe la última evaluación con otro proyecto y el adaptador por defecto
+    return route.fulfill(json(background ? { ...status, research: { ...(status.research as object), last_evaluation: { ...claude, project: "chess" } } } : status));
+  });
+  await page.locator(".board").dispatchEvent("contextmenu", { clientX: 800, clientY: 600 });
+  await page.getByRole("menuitem", { name: "Mejoras de agentes…" }).click();
+  const region = page.getByRole("region", { name: "Aprendizaje en segundo plano" });
+  const inv = region.getByLabel("Investigador", { exact: true });
+  await region.getByRole("combobox").selectOption("lienzo");
+  await inv.getByRole("button", { name: "Revisar investigador" }).click();
+  await expect(inv.getByText("Elegido claude porque codex: uso semanal 90 % supera el tope 80 %.")).toBeVisible();
+  await expect(inv.getByRole("button", { name: "Encolar con Azure" })).toBeDisabled();
+  await inv.getByRole("button", { name: "Revisar con Azure" }).click();
+  await expect(inv.getByLabel("Presupuesto del investigador")).toHaveText("Mes 2026-10 · gastado USD 0.08 de 5 · disponible USD 4.92");
+  await expect(inv.getByRole("button", { name: "Encolar investigación" })).toBeDisabled();
+  background = true;
+  await page.waitForResponse(r => r.url().endsWith("/agent-improvements/scheduler") && r.request().method() === "GET", { timeout: 8000 });
+  await expect(inv.getByRole("button", { name: "Encolar con Azure" })).toBeEnabled();
+  await expect(inv.getByRole("button", { name: "Encolar investigación" })).toBeDisabled();
+  await inv.getByRole("button", { name: "Encolar con Azure" }).click();
+  await expect(page.getByRole("list", { name: "Trabajos" }).getByText("azure-openai", { exact: true })).toBeVisible();
+  expect(writes).toEqual([
+    { action: "research_check", project: "lienzo" },
+    { action: "research_check", project: "lienzo", adapter: "azure-openai" },
+    { action: "enqueue_research", project: "lienzo", adapter: "azure-openai" },
+  ]);
 });
 
 test("piloto distingue habilitado de apto y pausa llamadas automáticas", async ({ page }) => {

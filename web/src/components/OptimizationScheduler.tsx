@@ -4,7 +4,7 @@ import { api } from "../api";
 interface ResearchCase { case_key: string; area: string; priority?: number; origin?: string }
 interface Job {
   id: string; project: string; state: string; cursor: number; reason?: string; results: string[]; automatic?: boolean; source_ids?: string[] | null; source_version?: string | null;
-  kind?: string; case?: ResearchCase; attempts?: number; runs?: number[];
+  kind?: string; case?: ResearchCase; attempts?: number; runs?: number[]; adapter?: string;
   last_run?: { code: number | null; seconds?: number; timed_out?: boolean; stopped?: string | null } | null;
   /** transiciones pedidas a mano (reencolar, descartar), con el motivo que tenía antes */
   history?: { at: number; from: string; to: string; reason?: string | null }[];
@@ -13,7 +13,13 @@ interface Job {
 interface ResearchEvaluation {
   enabled: boolean; reasons: string[]; runs_today: number; project?: string; evaluated_at?: number;
   limits: { max_runs_per_day?: number; max_weekly_used_pct?: number; max_seconds?: number };
-  adapter?: { name?: string; consumption_bound?: { weekly_used_pct?: number; weekly_max_used_pct?: number; basis?: string } | null };
+  adapter?: {
+    name?: string; consumption_bound?: { weekly_used_pct?: number; weekly_max_used_pct?: number; basis?: string } | null;
+    /** por qué no se eligió Codex (decisión 17: Claude mientras Codex no tenga cuota) */
+    selected_because?: string | null;
+    /** ledger mensual del adaptador pago (Azure, decisión 1) */
+    budget?: { month: string; budget_usd: string; spent_usd: string; available_usd: string; open_reservations: number } | null;
+  };
   authorization?: { autorizado_por?: string; fecha?: string; vence?: string | null } | null;
 }
 interface Research { last_evaluation: ResearchEvaluation | null; scope?: string; note?: string | null; ceilings?: { max_starts_per_case?: number } }
@@ -78,7 +84,10 @@ export function OptimizationScheduler() {
   };
   const budget = status?.budget;
   const [preview, setPreview] = useState<ResearchCase[] | null>(null);
-  const check = async () => {
+  /** La evaluación que pidió esta persona: el scheduler de fondo reescribe la última del server con
+   *  otros proyectos o con el adaptador por defecto, y encolar no puede decidirse con esa. */
+  const [checked, setChecked] = useState<{ project: string; adapter: string | null; evaluation: ResearchEvaluation | null } | null>(null);
+  const check = async (adapter?: string) => {
     setPreview(null);
     const lifecycle = guard.current;
     if (lifecycle.pending) return;
@@ -86,13 +95,18 @@ export function OptimizationScheduler() {
     const epoch = ++lifecycle.epoch;
     setBusy(true); setError("");
     try {
-      const result = await api.put<Status & { research_preview?: ResearchCase[] }>("/agent-improvements/scheduler", { action: "research_check", project });
-      if (lifecycle.active && epoch === lifecycle.epoch) { setStatus(result); setPreview(result.research_preview ?? []); }
+      const result = await api.put<Status & { research_preview?: ResearchCase[] }>("/agent-improvements/scheduler", { action: "research_check", project, ...(adapter ? { adapter } : {}) });
+      if (lifecycle.active && epoch === lifecycle.epoch) {
+        setStatus(result); setPreview(result.research_preview ?? []);
+        setChecked({ project, adapter: adapter ?? null, evaluation: result.research?.last_evaluation ?? null });
+      }
     } catch (e) { if (lifecycle.active && epoch === lifecycle.epoch) setError((e as Error).message); }
     finally { lifecycle.pending = false; if (lifecycle.active && epoch === lifecycle.epoch) setBusy(false); }
   };
-  const evaluation = status?.research?.last_evaluation;
+  const mine = checked && checked.project === project ? checked : null;
+  const evaluation = mine?.evaluation ?? status?.research?.last_evaluation;
   const weekly = evaluation?.adapter?.consumption_bound?.weekly_used_pct;
+  const adapterBudget = evaluation?.adapter?.budget;
   return <section className="mejoras-scheduler" aria-label="Aprendizaje en segundo plano">
     <div className="mejoras-seccion-cabecera">
       <div>
@@ -130,9 +144,9 @@ export function OptimizationScheduler() {
           <button disabled={busy || !project} onClick={() => void command({ action: "enqueue_off_on", project })}>Comparar RTK cuando esté libre</button>
         </div>
       </div>
-      {status.research && <div className="mejoras-investigador" aria-label="Investigador Codex">
-        <div className="mejoras-titulo"><h4>Investigador Codex</h4>{evaluation && <span className={`chip estado ${evaluation.enabled ? "ok" : "pausa"}`}>{evaluation.enabled ? "habilitado" : "bloqueado"}</span>}</div>
-        <p className="small dim">Usa la suscripción de Codex, no el presupuesto en USD de Jev. {status.research.scope}</p>
+      {status.research && <div className="mejoras-investigador" aria-label="Investigador">
+        <div className="mejoras-titulo"><h4>Investigador</h4>{evaluation?.adapter?.name && <span className="chip">{evaluation.adapter.name}</span>}{evaluation && <span className={`chip estado ${evaluation.enabled ? "ok" : "pausa"}`}>{evaluation.enabled ? "habilitado" : "bloqueado"}</span>}</div>
+        <p className="small dim">Usa la suscripción de Codex y, cuando Codex no tiene cuota, la de Claude; no el presupuesto en USD de Jev. Azure sólo a pedido, con tope mensual. {status.research.scope}</p>
         {!evaluation && <p className="small">{status.research.note || "Sin evaluar"}: «Revisar investigador» lee la cuota en vivo.</p>}
         {evaluation && <>
           <p className="small">
@@ -141,19 +155,23 @@ export function OptimizationScheduler() {
             {` · ejecuciones hoy ${evaluation.runs_today}`}{evaluation.limits.max_runs_per_day != null ? `/${evaluation.limits.max_runs_per_day}` : ""}
             {evaluation.project ? ` · ${evaluation.project}` : ""}
           </p>
+          {evaluation.adapter?.selected_because && <p className="small">Elegido {evaluation.adapter.name} porque {evaluation.adapter.selected_because}.</p>}
+          {adapterBudget && <p className="small" aria-label="Presupuesto del investigador">Mes {adapterBudget.month} · gastado USD {adapterBudget.spent_usd} de {adapterBudget.budget_usd} · disponible USD {adapterBudget.available_usd}{adapterBudget.open_reservations ? ` · ${adapterBudget.open_reservations} reserva(s) abierta(s)` : ""}</p>}
           {evaluation.authorization && <p className="small dim">Autorizó {evaluation.authorization.autorizado_por} el {evaluation.authorization.fecha}{evaluation.authorization.vence ? `, vence ${evaluation.authorization.vence}` : ""}.</p>}
           {!!evaluation.reasons.length && <ul aria-label="Motivos de bloqueo" className="small">{evaluation.reasons.map(r => <li key={r}>{r}</li>)}</ul>}
         </>}
         <div className="mejoras-botones">
           <button disabled={busy || !project} onClick={() => void check()}>Revisar investigador</button>
-          <button disabled={busy || !project || !evaluation?.enabled} onClick={() => void command({ action: "enqueue_research", project })}>Encolar investigación</button>
+          <button disabled={busy || !project || !mine?.evaluation?.enabled || mine.adapter !== null} onClick={() => void command({ action: "enqueue_research", project })}>Encolar investigación</button>
+          <button disabled={busy || !project} onClick={() => void check("azure-openai")}>Revisar con Azure</button>
+          <button disabled={busy || !project || !mine?.evaluation?.enabled || mine.adapter !== "azure-openai"} onClick={() => void command({ action: "enqueue_research", project, adapter: "azure-openai" })}>Encolar con Azure</button>
         </div>
         {preview && <p className="small">{preview.length ? `Casos candidatos: ${preview.map(c => `${c.area} (${c.case_key})`).join(", ")}` : "Sin casos nuevos para investigar."}</p>}
       </div>}
       <h4>Trabajos <span className="small dim">{status.jobs.length ? `${status.jobs.length} en la lista` : "ninguno en cola"}</span></h4>
       {status.jobs.length > 0 && <ul className="mejoras-trabajos" aria-label="Trabajos">
         {status.jobs.map(job => <li key={job.id} data-estado={job.state}>
-          <div className="mejoras-trabajo-cabecera"><strong>{job.project} · {job.state}</strong>{job.kind === "research" && <span className="chip">investigación</span>}<span className="chip">{job.automatic ? "automático" : "solicitado"}</span><span className="chip">{job.results.length} {job.kind === "research" ? "propuestas" : "hipótesis"}</span></div>
+          <div className="mejoras-trabajo-cabecera"><strong>{job.project} · {job.state}</strong>{job.kind === "research" && <span className="chip">investigación</span>}{job.adapter && <span className="chip">{job.adapter}</span>}<span className="chip">{job.automatic ? "automático" : "solicitado"}</span><span className="chip">{job.results.length} {job.kind === "research" ? "propuestas" : "hipótesis"}</span></div>
           {job.case && <p className="small">Caso {job.case.area} · {job.case.case_key}{job.attempts != null ? ` · intentos ${job.attempts}` : ""}{job.last_run ? ` · última corrida: código ${job.last_run.code ?? "—"}${job.last_run.timed_out ? ", plazo agotado" : ""}${job.last_run.stopped ? `, cortada: ${job.last_run.stopped}` : ""}` : ""}</p>}
           <p className="small">{job.reason || `${job.cursor} fuentes revisadas`}</p>
           {job.kind === "research" && ["queued", "running", "paused"].includes(job.state) && <button disabled={busy} onClick={() => void command({ action: "cancel_research", job: job.id })}>Cancelar investigación</button>}

@@ -51,12 +51,25 @@ class _Output:
             return  # tubería cerrada al matar el árbol
 
 
-def run(argv, *, stdin_text, cwd, timeout, should_stop, max_output, on_start=None, poll=POLL_SECONDS, env=None):
+def run(
+    argv,
+    *,
+    stdin_text,
+    cwd,
+    timeout,
+    should_stop,
+    max_output,
+    on_start=None,
+    poll=POLL_SECONDS,
+    env=None,
+    env_remove=(),
+):
     """Corre `argv` y devuelve code, stdout, stderr, seconds, stopped, timed_out, output_exceeded y pid.
 
     `stopped` es el motivo devuelto por `should_stop()` cuando cortó; `timed_out` marca el plazo;
     `output_exceeded` marca que stdout + stderr pasaron `max_output` bytes y se mató el árbol. Nunca
-    levanta por el proceso: un fallo al lanzar devuelve `subproc.NO_ARRANCO`."""
+    levanta por el proceso: un fallo al lanzar devuelve `subproc.NO_ARRANCO`. `env_remove` quita variables
+    heredadas (p. ej. una clave de API que cambiaría la suscripción por facturación)."""
     started = time.monotonic()
     extra = {"creationflags": subproc.CREATE_NO_WINDOW} if subproc.WINDOWS else {"start_new_session": True}
     result = {
@@ -80,7 +93,11 @@ def run(argv, *, stdin_text, cwd, timeout, should_stop, max_output, on_start=Non
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=cwd,
-            env={**os.environ, **subproc.ENV_SIN_PROMPTS, **(env or {})},
+            env={
+                k: v
+                for k, v in {**os.environ, **subproc.ENV_SIN_PROMPTS, **(env or {})}.items()
+                if k.upper() not in {name.upper() for name in env_remove}
+            },
             **extra,
         )
     except OSError as error:
