@@ -10,6 +10,7 @@ import { CardNeeds } from "./CardNeeds";
 import { ChromeLogo } from "./ChromeCard";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
+import { QUIETA_OPCIONES, useMinutosQuieta, usePantallaQuieta } from "../hooks/usePantallaQuieta";
 import "../card.css";
 
 /** Renombrar en el lugar: `start` abre un input con el titulo actual (seleccionado); Enter guarda
@@ -328,6 +329,10 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     return () => window.clearInterval(timer);
   }, []);
   const actions = useCardActions(s, toast);
+  // pantalla quieta: corre y su pantalla no cambió en `quietaMin` minutos (0 = aviso apagado)
+  const [quietaMin, setQuietaMin] = useMinutosQuieta();
+  const quietaDesde = usePantallaQuieta(s, quietaMin === 0 || !!peerDown); // PC caída: no hay pantalla que leer
+  const quieta = quietaDesde !== null && now - quietaDesde >= quietaMin * 60_000 ? Math.floor((now - quietaDesde) / 60_000) : 0;
   const { busy, scheduleContinue, quickSend, toggleCoordinator, toggleStopped } = actions;
   const rename = useRename(s, toast);
   // el grupo de libres se abre y se cierra para todas sus tarjetas a la vez (ver `useGroupOpen`)
@@ -597,6 +602,11 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               ✓
             </span>
           ) : null}
+          {quieta > 0 && (
+            <span className="chip quieta" role="status" title={`Figura corriendo y su pantalla no cambia hace ${quieta} min: puede estar colgada. El aviso se va cuando la pantalla cambie; los minutos se eligen en el menú ⋯`}>
+              pantalla quieta · {quieta} min
+            </span>
+          )}
           {s.envio_pendiente && s.alive !== false && (
             <span className="st sending" title="mandado; espera que el agente lo tome">
               enviando…
@@ -686,6 +696,14 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
             onClick={() => { closeMenu(); void workClipboard.copy(); }}>Copiar trabajo · Ctrl+C</button>
           <button type="button" role="menuitem" disabled={!workClipboard.canPaste}
             onClick={() => { closeMenu(); workClipboard.paste(); }}>Pegar trabajo · Ctrl+V</button>
+          <button
+            type="button"
+            role="menuitem"
+            title="aviso en las tarjetas que corren con la pantalla sin cambios; vale para todas"
+            onClick={() => setQuietaMin(QUIETA_OPCIONES[(QUIETA_OPCIONES.indexOf(quietaMin) + 1) % QUIETA_OPCIONES.length])}
+          >
+            Pantalla quieta: {quietaMin ? `aviso a los ${quietaMin} min` : "sin aviso"}
+          </button>
           {withConsole && (
             <button
               type="button"

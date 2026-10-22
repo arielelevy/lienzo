@@ -44,6 +44,21 @@ IDLE_INTERVAL_S = 0.04  # sin cambios se mira 25 veces por segundo durante IDLE_
 IDLE_SLOW_S = 0.15  # ...y despues 6 veces por segundo; la entrada del visor vuelve al ritmo rapido
 IDLE_FAST_STEPS = 50
 PREFETCH_MAX_AGE_S = 0.15  # una captura adelantada mas vieja (se espero un acuse) se descarta
+PASTE_MAX_CHARS = 16000  # lo pegado viaja en un pedido del visor, acotado a 64 KiB por browser_stream
+CLIPBOARD_MAX_BYTES = 2_000_000  # lo copiado alla que se trae a esta PC
+CLIPBOARD_FRESH_S = 1.0  # una copia se atribuye a Chrome solo si la mirada anterior es asi de reciente
+
+
+def ctrl(key):
+    """Ctrl + tecla y Ctrl suelto al final, como lo manda el visor."""
+    return [
+        {"kind": "key", "type": "keyDown", "keyCode": key, "modifiers": 2},
+        {"kind": "key", "type": "keyUp", "keyCode": key, "modifiers": 2},
+        {"kind": "key", "type": "keyUp", "keyCode": 17, "modifiers": 0},
+    ]
+
+
+CTRL_C, CTRL_V = ctrl(67), ctrl(86)
 
 
 class MonitorInfo(c.Structure):
@@ -268,6 +283,9 @@ class Windows:
         self.pressed = set()
         self.mouse_pressed = set()
         self.previous_frame = None
+        # copy/paste y la mirada del hilo de captura no se pisan; lo visto o escrito por el visor no
+        # se anuncia como copia hecha alla
+        self.clipboard_lock = threading.RLock()
         self.user.GetWindowDC.restype = w.HDC
         self.user.GetDC.restype = w.HDC
         self.user.WindowFromPoint.restype = w.HWND
@@ -287,6 +305,17 @@ class Windows:
         self.user.GetClipboardData.argtypes = [w.UINT]
         self.user.GetClipboardData.restype = w.HANDLE
         self.user.GetClipboardSequenceNumber.restype = w.DWORD
+        self.user.OpenClipboard.argtypes = [w.HWND]
+        self.user.SetClipboardData.argtypes = [w.UINT, w.HANDLE]
+        self.user.SetClipboardData.restype = w.HANDLE
+        self.user.CreateWindowExW.argtypes = [w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, *[c.c_int] * 4]
+        self.user.CreateWindowExW.argtypes += [w.HWND, w.HMENU, w.HINSTANCE, c.c_void_p]
+        self.user.CreateWindowExW.restype = w.HWND
+        self.user.DestroyWindow.argtypes = [w.HWND]
+        self.kernel.GlobalAlloc.argtypes = [w.UINT, c.c_size_t]
+        self.kernel.GlobalAlloc.restype = w.HANDLE
+        self.kernel.GlobalFree.argtypes = [w.HANDLE]
+        self.kernel.GlobalFree.restype = w.HANDLE
         self.kernel.GlobalLock.argtypes = [w.HANDLE]
         self.kernel.GlobalLock.restype = c.c_void_p
         self.kernel.GlobalUnlock.argtypes = [w.HANDLE]
@@ -332,6 +361,7 @@ class Windows:
             (self.kernel, "QueryFullProcessImageNameW", [w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD)]),
         ]:
             getattr(dll, name).argtypes = args
+        self.clipboard_seen = self.user.GetClipboardSequenceNumber()
 
     def owner(self, hwnd):
         pid = w.DWORD()
@@ -757,45 +787,123 @@ class Windows:
                     self.pressed.discard(key)
             elif kind == "text":
                 self.text(event.get("text"))
+            elif kind == "paste":
+                self.paste(hwnd, event.get("text"))
             else:
                 fail("Entrada de ventana desconocida")
         return {"ok": True}
 
     def copy(self, hwnd):
         """Copia sólo por pedido del visor; nunca devuelve el portapapeles anterior."""
-        previous = self.user.GetClipboardSequenceNumber()
-        self.release()
-        self.input(
-            hwnd,
-            [
-                {"kind": "key", "type": "keyDown", "keyCode": 67, "modifiers": 2},
-                {"kind": "key", "type": "keyUp", "keyCode": 67, "modifiers": 2},
-                {"kind": "key", "type": "keyUp", "keyCode": 17, "modifiers": 0},
-            ],
-        )
-        deadline = time.monotonic() + 1.5
-        while time.monotonic() < deadline:
-            if not self.active(hwnd) or not self.chrome(hwnd):
-                fail("Cambió la ventana activa; no se leyó el portapapeles")
-            if self.user.GetClipboardSequenceNumber() != previous and self.user.OpenClipboard(None):
+        with self.clipboard_lock:
+            previous = self.user.GetClipboardSequenceNumber()
+            try:
+                self.release()
+                self.input(hwnd, CTRL_C)
+                deadline = time.monotonic() + 1.5
+                while time.monotonic() < deadline:
+                    if not self.active(hwnd) or not self.chrome(hwnd):
+                        fail("Cambió la ventana activa; no se leyó el portapapeles")
+                    if self.user.GetClipboardSequenceNumber() != previous:
+                        text = self.clipboard_text()
+                        if text is not None:
+                            return text
+                    time.sleep(0.02)
+                fail("Chrome no copió texto nuevo. Seleccioná el texto y volvé a copiar.")
+            finally:
+                self.clipboard_seen = self.user.GetClipboardSequenceNumber()
+
+    def clipboard_text(self):
+        """El texto del portapapeles de esta PC, o None si otro programa lo tiene abierto. Solo lo
+        llaman copy y pull, que ya comprobaron que es lo recién copiado en Chrome."""
+        if not self.user.OpenClipboard(None):
+            return None
+        try:
+            handle = self.user.GetClipboardData(13)  # CF_UNICODETEXT
+            if not handle:
+                fail("Lo copiado no es texto; sólo se trae texto")
+            size = self.kernel.GlobalSize(handle)
+            if size > CLIPBOARD_MAX_BYTES:
+                fail("El texto copiado es demasiado grande para traerlo")
+            pointer = self.kernel.GlobalLock(handle)
+            if not pointer:
+                fail("Windows no permitió leer el texto copiado")
+            try:
+                return c.string_at(pointer, size).decode("utf-16-le").split("\0", 1)[0]
+            finally:
+                self.kernel.GlobalUnlock(handle)
+        finally:
+            self.user.CloseClipboard()
+
+    def paste(self, hwnd, text):
+        """Pegar del visor: el texto de la otra PC pasa al portapapeles de esta y Chrome recibe
+        Ctrl+V; la página ve un pegado real y lo pegado queda para volver a pegarlo acá."""
+        if not isinstance(text, str) or not text:
+            fail("Sólo se pega texto, y el portapapeles no tenía")
+        if len(text) > PASTE_MAX_CHARS:
+            fail(f"El texto pegado supera {PASTE_MAX_CHARS} caracteres; no se pegó")
+        data = (text.replace("\r\n", "\n").replace("\n", "\r\n") + "\0").encode("utf-16-le")
+        with self.clipboard_lock:
+            # sin ventana dueña, Windows rechaza SetClipboardData: una de mensajes, sólo para esto
+            owner = self.user.CreateWindowExW(0, "STATIC", None, 0, 0, 0, 0, 0, c.c_void_p(-3), None, None, None)
+            if not owner:
+                fail("Windows no dejó preparar el portapapeles; no se pegó")
+            try:
+                for _ in range(10):
+                    if self.user.OpenClipboard(owner):
+                        break
+                    time.sleep(0.02)
+                else:
+                    fail("Otro programa tiene abierto el portapapeles allá; volvé a pegar")
                 try:
-                    handle = self.user.GetClipboardData(13)  # CF_UNICODETEXT
-                    if not handle:
-                        fail("La selección no contiene texto para copiar")
-                    size = self.kernel.GlobalSize(handle)
-                    if size > 2_000_000:
-                        fail("El texto seleccionado es demasiado grande para copiar")
-                    pointer = self.kernel.GlobalLock(handle)
+                    self.user.EmptyClipboard()
+                    handle = self.kernel.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+                    pointer = handle and self.kernel.GlobalLock(handle)
                     if not pointer:
-                        fail("Windows no permitió leer el texto copiado")
-                    try:
-                        return c.string_at(pointer, size).decode("utf-16-le").split("\0", 1)[0]
-                    finally:
-                        self.kernel.GlobalUnlock(handle)
+                        if handle:
+                            self.kernel.GlobalFree(handle)
+                        fail("Windows no dio memoria para el portapapeles; no se pegó")
+                    c.memmove(pointer, data, len(data))
+                    self.kernel.GlobalUnlock(handle)
+                    if not self.user.SetClipboardData(13, handle):
+                        self.kernel.GlobalFree(handle)
+                        fail("Windows no aceptó el texto en el portapapeles; no se pegó")
                 finally:
                     self.user.CloseClipboard()
-            time.sleep(0.02)
-        fail("Chrome no copió texto nuevo. Seleccioná el texto y volvé a copiar.")
+            finally:
+                self.user.DestroyWindow(owner)
+            self.clipboard_seen = self.user.GetClipboardSequenceNumber()
+            self.input(hwnd, CTRL_V)
+
+    def clipboard_changed(self, hwnd):
+        """El número del portapapeles si cambió desde la última mirada, con esa misma ventana de
+        Chrome al frente y la mirada anterior reciente (una copia hecha allá, p. ej. con el menú
+        contextual); si no, None. Otra ventana del mismo Chrome o un hueco sin mirar (visor en
+        pausa, cuadros sin acusar) no se atribuyen: ahí pudo copiarse una contraseña. No lee el
+        contenido: el visor lo pide con un gesto (pull). Con copy o paste en curso, espera."""
+        if not self.clipboard_lock.acquire(blocking=False):
+            return None
+        try:
+            now = time.monotonic()
+            fresh = now - getattr(self, "clipboard_checked", float("-inf")) <= CLIPBOARD_FRESH_S
+            self.clipboard_checked = now
+            sequence = self.user.GetClipboardSequenceNumber()
+            if sequence == self.clipboard_seen:
+                return None
+            self.clipboard_seen = sequence
+            return sequence if fresh and self.user.GetForegroundWindow() == hwnd else None
+        finally:
+            self.clipboard_lock.release()
+
+    def pull(self, sequence):
+        """Lo copiado allá, sólo si sigue siendo la copia anunciada por clipboard_changed."""
+        with self.clipboard_lock:
+            if self.user.GetClipboardSequenceNumber() != sequence:
+                fail("Lo copiado allá cambió; copiá de nuevo")
+            text = self.clipboard_text()
+            if text is None:
+                fail("Otro programa tiene abierto el portapapeles allá; volvé a intentar")
+            return text
 
     def send_mouse(self, flags, delta=0):
         """Entrada Win32 con resultado verificable; mouse_event no informa si se insertó."""
@@ -885,6 +993,7 @@ class Streamer:
         self.idle = 0  # lecturas seguidas sin cambios
         self.last = None  # (hwnd, ancho, alto, rgb) del ultimo cuadro enviado
         self.v2 = False
+        self.clipboard_ready = None  # numero del portapapeles anunciado al visor, hasta que lo pida
         self._prefetch = None  # (hwnd, futuro de la captura, cuando arranco)
         self._executor = None
         self.stats = {"capture": [], "encode": [], "frames": 0, "bytes": 0, "since": clock()}
@@ -911,6 +1020,7 @@ class Streamer:
                 self.v2 = data.get("v") == 2  # el visor entiende scroll y varios parches
                 self.paused = False
                 self.cv.notify_all()
+            self.clipboard_ready = None
             self.json({"t": "opened", "window": str(hwnd)})
         elif kind == "size":
             size = (bounded(data.get("width"), 320, 3840), bounded(data.get("height"), 200, 2160))
@@ -939,6 +1049,14 @@ class Streamer:
                 fail("Todavía no hay una ventana abierta")
             try:
                 self.json({"t": "clipboard", "text": self.windows.copy(self.hwnd)})
+            except (ValueError, UnicodeError) as exc:
+                self.json({"t": "error", "input": True, "message": str(exc)})
+        elif kind == "pull":
+            ready, self.clipboard_ready = self.clipboard_ready, None
+            try:
+                if ready is None:
+                    fail("No hay nada copiado allá para traer")
+                self.json({"t": "clipboard", "text": self.windows.pull(ready)})
             except (ValueError, UnicodeError) as exc:
                 self.json({"t": "error", "input": True, "message": str(exc)})
         elif kind == "ack":
@@ -984,6 +1102,10 @@ class Streamer:
             if cursor != self.last_cursor:
                 self.json({"t": "cursor", "cursor": cursor})
                 self.last_cursor = cursor
+            copied = self.windows.clipboard_changed(hwnd)
+            if copied is not None:
+                self.clipboard_ready = copied
+                self.json({"t": "clipboard-ready"})
         except ValueError as exc:
             self.json({"t": "error", "message": str(exc)})
             with self.cv:

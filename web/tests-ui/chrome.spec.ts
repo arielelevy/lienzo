@@ -855,3 +855,60 @@ test('muestra la ventana completa por el canal vivo y manda el mouse sin pedir d
     {kind: 'text', text: 'ñ'},
   ]);
 });
+
+test('ventana real: pegar pasa el texto local al portapapeles de allá y lo copiado allá se trae con un clic', async ({page}) => {
+  const stream: Record<string, unknown>[] = [];
+  await page.route('**/auth', r => r.fulfill({json: {configured: false, authenticated: true, local: true}}));
+  await page.route('**/peers', r => r.fulfill({json: [{pc_id: 'native-peer', name: 'Globant PC', alive: true, local: false}]}));
+  await page.route('**/browser', r => {
+    const d = r.request().postDataJSON();
+    return r.fulfill({json: d.action === 'windows' ? {windows: [{id: '123', title: 'Chrome Globant'}]}
+      : d.action === 'profiles' ? {profiles: [{id: 'Default', name: 'globant.com'}]} : {ok: true}});
+  });
+  const header = Buffer.alloc(17);
+  header.writeUInt32BE(1, 0); header.writeUInt16BE(1, 8); header.writeUInt16BE(1, 10);
+  header.writeUInt16BE(1280, 12); header.writeUInt16BE(800, 14); header.writeUInt8(1, 16);
+  const frame = Buffer.concat([header, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4AWP4z8AAAAMBAQDbfS68AAAAAElFTkSuQmCC', 'base64')]);
+  let socket: {send: (data: string) => void} | null = null;
+  await page.routeWebSocket('**/browser/stream*', ws => {
+    socket = ws;
+    ws.onMessage(message => {
+      const d = JSON.parse(String(message)) as Record<string, unknown>;
+      stream.push(d);
+      if (d.t === 'open') { ws.send(JSON.stringify({t: 'opened', window: d.window})); ws.send(frame); }
+      if (d.t === 'input') ws.send(JSON.stringify({t: 'input', n: d.n}));
+      if (d.t === 'pull') ws.send(JSON.stringify({t: 'clipboard', text: 'copiado con el menú de allá · ñ'}));
+    });
+  });
+  await page.goto('/chrome');
+  const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+  await expect(screen).toBeVisible();
+  await expect.poll(() => stream.some(d => d.t === 'ack')).toBeTruthy();
+  const paste = (text: string) => screen.evaluate((el, value) => {
+    const data = new DataTransfer();
+    if (value) data.setData('text/plain', value);
+    el.dispatchEvent(new ClipboardEvent('paste', {clipboardData: data, bubbles: true, cancelable: true}));
+  }, text);
+  const events = () => stream.filter(d => d.t === 'input').flatMap(d => d.events as Record<string, unknown>[]);
+  // pegar: un solo evento «paste» con el texto, sin teclearlo letra por letra
+  await paste('línea 1\nñ 🧉');
+  await expect.poll(events).toEqual([{kind: 'paste', text: 'línea 1\nñ 🧉'}]);
+  // tope de tamaño y sólo texto: no sale nada y se avisa
+  await paste('x'.repeat(16001));
+  await expect(page.getByRole('alert')).toContainText('supera 16.000 caracteres');
+  await paste('');
+  await expect(page.getByRole('alert')).toContainText('Sólo se pega texto');
+  expect(events()).toHaveLength(1);
+  // lo copiado allá se anuncia sin contenido y no se pide hasta el clic
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.evaluate(() => navigator.clipboard.writeText('lo de esta PC'));
+  socket!.send(JSON.stringify({t: 'clipboard-ready'}));
+  const ready = page.getByRole('status').filter({hasText: 'Copiaste algo en Globant PC'});
+  await expect(ready).toBeVisible();
+  expect(stream.some(d => d.t === 'pull')).toBeFalsy();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('lo de esta PC');
+  await ready.getByRole('button', {name: 'Copiar acá'}).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('copiado con el menú de allá · ñ');
+  await expect(ready).toBeHidden();
+  expect(stream.filter(d => d.t === 'pull')).toHaveLength(1);
+});

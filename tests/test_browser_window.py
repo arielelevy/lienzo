@@ -39,6 +39,7 @@ def test_copy_waits_for_new_clipboard_and_preserves_unicode(monkeypatch):
     import ctypes
 
     windows = module.Windows.__new__(module.Windows)
+    windows.clipboard_lock = module.threading.RLock()
     content = ("selección ñ 🧉\0").encode("utf-16-le")
     buffer = ctypes.create_string_buffer(content)
     sequence = [1]
@@ -63,6 +64,7 @@ def test_copy_waits_for_new_clipboard_and_preserves_unicode(monkeypatch):
 
 def test_copy_rejects_stale_clipboard(monkeypatch):
     windows = module.Windows.__new__(module.Windows)
+    windows.clipboard_lock = module.threading.RLock()
     windows.user = SimpleNamespace(GetClipboardSequenceNumber=lambda: 7)
     windows.release = lambda: None
     windows.input = lambda hwnd, events: None
@@ -528,6 +530,17 @@ class FakeWindows:
     def cursor(self):
         return "default"
 
+    copied = None
+    pulled = ()
+
+    def clipboard_changed(self, hwnd):
+        copied, self.copied = self.copied, None
+        return copied
+
+    def pull(self, sequence):
+        self.pulled = [*self.pulled, sequence]
+        return "copiado allá"
+
 
 def make_streamer(frames):
     out = io.BytesIO()
@@ -631,3 +644,164 @@ def test_capture_thread_crash_is_reported_and_ends_the_worker():
     assert "AttributeError" in json.loads(records(out)[-1][1])["message"]
     streamer.run(iter(['{"t": "windows"}']))
     assert not any(b"Chrome" in payload for _, payload in records(out))  # stdin ya no se atiende
+
+
+class FakeClipboard:
+    """Portapapeles de Windows en memoria: número de secuencia, dueño y un solo texto."""
+
+    def __init__(self, text=None, sequence=1):
+        import ctypes
+
+        self.ctypes = ctypes
+        self.sequence = sequence
+        self.text = text
+        self.open = None
+        self.buffers = {}
+        self.freed = []
+        self.events = []
+
+    def user(self, **extra):
+        def open_clipboard(owner):
+            if self.open is not None:
+                return False
+            self.open = owner
+            return True
+
+        def close():
+            self.open = None
+            return True
+
+        def empty():
+            self.text = None
+            self.sequence += 1
+            return True
+
+        def set_data(fmt, handle):
+            if not self.open:  # sin ventana dueña, Windows rechaza SetClipboardData
+                return None
+            raw = self.buffers[handle].raw
+            self.text = raw.decode("utf-16-le").split("\0", 1)[0]
+            return handle
+
+        def get_data(fmt):
+            if self.text is None:
+                return None
+            data = (self.text + "\0").encode("utf-16-le")
+            self.buffers[999] = self.ctypes.create_string_buffer(data, len(data))
+            return 999
+
+        return SimpleNamespace(
+            GetClipboardSequenceNumber=lambda: self.sequence,
+            OpenClipboard=open_clipboard,
+            CloseClipboard=close,
+            EmptyClipboard=empty,
+            SetClipboardData=set_data,
+            GetClipboardData=get_data,
+            CreateWindowExW=lambda *args: 4242,
+            DestroyWindow=lambda hwnd: True,
+            keybd_event=lambda key, scan, flags, extra_info: self.events.append((key, flags)),
+            **extra,
+        )
+
+    def kernel(self):
+        def alloc(flags, size):
+            handle = 100 + len(self.buffers)
+            self.buffers[handle] = self.ctypes.create_string_buffer(size)
+            return handle
+
+        return SimpleNamespace(
+            GlobalAlloc=alloc,
+            GlobalFree=lambda handle: self.freed.append(handle),
+            GlobalLock=lambda handle: self.ctypes.addressof(self.buffers[handle]),
+            GlobalUnlock=lambda handle: True,
+            GlobalSize=lambda handle: len(self.buffers[handle]),
+        )
+
+
+def clipboard_windows(board, foreground=True):
+    windows = module.Windows.__new__(module.Windows)
+    windows.user = board.user(GetForegroundWindow=lambda: 123)
+    windows.kernel = board.kernel()
+    windows.pressed = set()
+    windows.mouse_pressed = set()
+    windows.clipboard_lock = module.threading.RLock()
+    windows.clipboard_seen = board.sequence
+    windows.focus = lambda hwnd: None
+    windows.rect = lambda hwnd: SimpleNamespace(left=0, top=0, right=100, bottom=100)
+    windows.active = lambda hwnd: foreground
+    windows.chrome = lambda hwnd: True
+    return windows
+
+
+def test_paste_puts_local_text_in_the_remote_clipboard_and_presses_ctrl_v():
+    board = FakeClipboard(text="lo que había allá")
+    windows = clipboard_windows(board)
+    windows.input(123, [{"kind": "paste", "text": "línea 1\nñ 🧉"}])
+    assert board.text == "línea 1\r\nñ 🧉"  # CF_UNICODETEXT usa CRLF
+    assert board.open is None
+    assert (86, 0) in board.events and (17, 0) in board.events  # Ctrl+V abajo
+    assert board.events[-1] == (17, 2)  # y Ctrl suelto al final
+    assert windows.clipboard_seen == board.sequence  # lo pegado no se anuncia como copia de allá
+
+
+@pytest.mark.parametrize("text", [None, 5, "", "x" * (module.PASTE_MAX_CHARS + 1)])
+def test_paste_rejects_non_text_empty_or_oversized_without_touching_the_clipboard(text):
+    board = FakeClipboard(text="lo que había allá")
+    windows = clipboard_windows(board)
+    with pytest.raises(ValueError):
+        windows.input(123, [{"kind": "paste", "text": text}])
+    assert board.text == "lo que había allá" and board.events == []
+
+
+def test_paste_reports_a_clipboard_held_by_another_program(monkeypatch):
+    board = FakeClipboard(text="lo que había allá")
+    board.open = 77  # otro programa lo tiene abierto
+    windows = clipboard_windows(board)
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    with pytest.raises(ValueError, match="portapapeles"):
+        windows.input(123, [{"kind": "paste", "text": "hola"}])
+    assert board.events == []  # sin texto puesto no se aprieta Ctrl+V
+
+
+def test_remote_copy_is_announced_without_content_only_with_that_chrome_window_in_front(monkeypatch):
+    board = FakeClipboard(text="viejo", sequence=5)
+    windows = clipboard_windows(board)
+    clock = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    assert windows.clipboard_changed(123) is None  # sin cambios desde que se abrió
+    board.text, board.sequence = "copiado en Chrome", 6
+    assert windows.clipboard_changed(123) == 6
+    assert windows.clipboard_changed(123) is None  # se anuncia una sola vez
+    front = [77]
+    windows.user.GetForegroundWindow = lambda: front[0]  # otra ventana (u otro Chrome) al frente
+    board.text, board.sequence = "copiado en otro programa", 7
+    assert windows.clipboard_changed(123) is None
+    front[0] = 123
+    board.text, board.sequence = "contraseña copiada mientras no se miraba", 8
+    clock[0] += 30  # visor en pausa: nadie miró en 30 s
+    assert windows.clipboard_changed(123) is None
+    assert windows.clipboard_changed(123) is None  # y no se anuncia después
+
+
+def test_pull_reads_only_the_announced_copy():
+    board = FakeClipboard(text="copiado en Chrome", sequence=6)
+    windows = clipboard_windows(board)
+    assert windows.pull(6) == "copiado en Chrome"
+    board.text, board.sequence = "otra cosa", 7
+    with pytest.raises(ValueError, match="cambió"):
+        windows.pull(6)
+
+
+def test_streamer_announces_remote_copy_and_pulls_it_on_request():
+    streamer, out, windows, _ = make_streamer([rgb(8, 4)])
+    streamer.handle({"t": "open", "window": "7"})
+    windows.copied = 9
+    streamer.step()
+    streamer.handle({"t": "pull"})
+    texts = [json.loads(payload) for kind, payload in records(out) if kind == "J"]
+    assert {"t": "clipboard-ready"} in texts
+    assert texts[-1] == {"t": "clipboard", "text": "copiado allá"}
+    assert windows.pulled == [9]
+    streamer.handle({"t": "pull"})  # sin otra copia anunciada no se lee nada
+    texts = [json.loads(payload) for kind, payload in records(out) if kind == "J"]
+    assert texts[-1]["t"] == "error" and windows.pulled == [9]

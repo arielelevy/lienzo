@@ -64,6 +64,11 @@ function waitForBrowserRetry(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Tope de lo pegado en la ventana real (browser_window.PASTE_MAX_CHARS); en bytes, el pedido al
+ *  worker no pasa de 64 KiB (browser_stream.MAX_COMMAND) aun con escapes JSON. */
+const PASTE_MAX_CHARS = 16000;
+const PASTE_MAX_BYTES = 48000;
+
 async function writeClipboard(text: string) {
   if (navigator.clipboard) return navigator.clipboard.writeText(text);
   // Los visores abiertos por HTTP en la LAN no tienen Clipboard API.
@@ -152,6 +157,7 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   const [inputEpoch, setInputEpoch] = useState(0);
   const [stats, setStats] = useState({input: 0, fps: 0, kbps: 0, remote: ''});
   const [notice, setNotice] = useState('');
+  const [copied, setCopied] = useState(false);
   const [cursor, setCursor] = useState('default');
   const [busy, setBusy] = useState(false);
   const [size, setSize] = useState<{width: number; height: number} | null>(null);
@@ -264,11 +270,12 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
             if ('cursor' in value && typeof value.cursor !== 'string') throw new Error('Mensaje de Chrome remoto inválido');
             m = value as StreamMessage;
           } catch { report(new Error('Mensaje de Chrome remoto inválido')); return; }
-          if (m.t === 'clipboard') {
+          if (m.t === 'clipboard-ready') setCopied(true);
+          else if (m.t === 'clipboard') {
             if (typeof m.text !== 'string') { setInputError('Texto copiado inválido'); return; }
             void writeClipboard(m.text).catch(e => { if (!cancelled) setInputError(`No se pudo copiar en esta PC: ${(e as Error).message}`); });
           }
-          else if (m.t === 'opened') { attempts = 0; setNotice(''); }
+          else if (m.t === 'opened') { attempts = 0; setNotice(''); setCopied(false); }
           // tiempos de la PC de allá (browser_window.Streamer._measure): dónde se va cada cuadro
           else if (m.t === 'stats' && typeof m.capture_ms === 'number' && typeof m.encode_ms === 'number') setStats(s => ({...s, remote: `captura ${Math.round(m.capture_ms!)} ms · armado ${Math.round(m.encode_ms!)} ms`}));
           else if (m.t === 'cursor' && m.cursor && ['default', 'pointer', 'text', 'wait', 'crosshair', 'nwse-resize', 'nesw-resize', 'ew-resize', 'ns-resize', 'move', 'not-allowed', 'progress', 'help'].includes(m.cursor)) setCursor(m.cursor);
@@ -426,6 +433,15 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
       : <div className="remote-empty">Cargando ventana de Chrome…</div>}
     {inputError && <div className="remote-input-warning" role="alert">{inputError}{inputBlocked && <button onClick={()=>socket.current?.close()}>Reconectar entrada sin reenviar</button>}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
     {notice && <div className="remote-capture-notice" role="status">{notice}</div>}
+    {/* una copia hecha allá (menú contextual, botón de la página) se anuncia sin su contenido y se
+        trae sólo con este clic. El texto llega después por el canal: igual que con Ctrl+C, un
+        navegador que exige el gesto en el mismo instante puede negar la escritura y se avisa */}
+    {copied && <div className="remote-capture-notice" role="status" style={{left: 'auto', right: 9}}>Copiaste algo en {peer.name}
+      <button onClick={() => {
+        setCopied(false);
+        if (socket.current?.readyState !== WebSocket.OPEN) { setInputError('Chrome remoto está reconectando'); return; }
+        setInputError(''); socket.current.send(JSON.stringify({t: 'pull'}));
+      }}>Copiar acá</button><button aria-label="Descartar lo copiado allá" onClick={() => setCopied(false)}>×</button></div>}
   </div><div className="remote-status">{peer.name} · Chrome real · Usás el mouse y teclado de esa PC. Cerrar esta vista deja Chrome abierto.</div></>;
 }
 
@@ -1014,7 +1030,17 @@ function RemoteScreen({image, canvas, cursor, format = 'jpeg', native = false, s
       gesture.lastX = e.clientX; gesture.lastY = e.clientY;
     }}
     onWheel={e => mouse(e, "mouseWheel")} onContextMenu={e => e.preventDefault()}
-    onPaste={e => { e.preventDefault(); enqueue({kind: "text", text: e.clipboardData.getData("text/plain")}); }}>
+    onPaste={e => {
+      e.preventDefault();
+      const text = e.clipboardData.getData("text/plain");
+      if (!native) { enqueue({kind: "text", text}); return; }
+      // ventana real: el texto pasa al portapapeles de allá y Chrome recibe Ctrl+V (browser_window.paste)
+      if (!text) { onError(new Error('Sólo se pega texto, y el portapapeles no tenía')); return; }
+      if (text.length > PASTE_MAX_CHARS || new TextEncoder().encode(JSON.stringify(text)).length > PASTE_MAX_BYTES) {
+        onError(new Error(`El texto pegado supera ${PASTE_MAX_CHARS.toLocaleString('es-AR')} caracteres; no se pegó`)); return;
+      }
+      enqueue({kind: "paste", text});
+    }}>
     {canvas ? <div ref={holder} className="remote-canvas-holder" /> : <img src={`data:image/${format};base64,${image}`} alt="Contenido de la pestaña remota" draggable={false} />}
   </div>;
 }
