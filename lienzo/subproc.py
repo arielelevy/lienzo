@@ -35,6 +35,33 @@ NO_ARRANCO = 127  # como la shell con un comando que no existe: OSError al lanza
 ENV_SIN_PROMPTS = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
 
 
+# SetErrorMode: sin el cuadro modal de Windows cuando un hijo no arranca. Medido el 2026-10-21: con la
+# RAM al límite, el `git ls-remote` de health (cada 300 s) hacía fallar a git-remote-https.exe con
+# 0xc0000142 y Windows le mostraba a Ariel «Application Error» en el escritorio. El modo se hereda a
+# todo lo que el server lanza (salvo CREATE_DEFAULT_ERROR_MODE): el hijo falla con su código y
+# `correr` lo devuelve como cualquier otro error, sin que nadie tenga que cerrar un cartel.
+SEM_FAILCRITICALERRORS = 0x0001
+SEM_NOGPFAULTERRORBOX = 0x0002
+SEM_NOOPENFILEERRORBOX = 0x8000
+SIN_CUADROS = SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+
+
+def sin_cuadros_de_error() -> int | None:
+    """Apaga los cuadros de error del sistema para este proceso y sus hijos. Devuelve el modo nuevo
+    (None fuera de Windows o si la llamada no está). Conserva los bits que ya hubiera."""
+    if not WINDOWS:
+        return None
+    try:
+        import ctypes
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        modo = k32.GetErrorMode() | SIN_CUADROS
+        k32.SetErrorMode(modo)
+        return k32.GetErrorMode()
+    except OSError, AttributeError:
+        return None
+
+
 def _matar_arbol(p: subprocess.Popen) -> None:
     """Mata `p` y todo lo que lanzó. Nunca levanta: si ya terminó, no hay nada que matar."""
     if WINDOWS:

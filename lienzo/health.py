@@ -536,6 +536,11 @@ def _ls_remote(url: str, timeout_s: float = 20, cwd: str | None = None, config: 
             estado = "timeout"  # git no termino: red muy lenta, o el credential manager esperando un login
         elif rc == subproc.NO_ARRANCO:
             return "error"  # git no esta instalado o no arranca: probar otra vez no cambia nada
+        elif rc & 0xFFFFFFFF == 0xC0000142:
+            # STATUS_DLL_INIT_FAILED: git (o su git-remote-https) no llego a arrancar. Se anota con la
+            # hora para atribuir el aviso de Windows a este ls-remote (encargo A, 2026-10-21)
+            log(f"git ls-remote no arranco (0xC0000142) para {url}")
+            estado = "error"
         else:
             estado = clasificar_git(rc, err)
         if estado in ("ok", "sin_red"):

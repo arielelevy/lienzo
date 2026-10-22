@@ -353,6 +353,16 @@ def test_ls_remote_colgado_vence_y_no_bloquea(monkeypatch):
     assert health._ls_remote("https://h/r.git") == "vencida"
 
 
+def test_ls_remote_que_no_arranca_se_anota_con_su_codigo(monkeypatch):
+    """git-remote-https con 0xc0000142 (2026-10-21): queda en el log para atribuir el aviso de
+    Windows, y cuenta como error, no como credencial vencida."""
+    anotado = []
+    monkeypatch.setattr(health, "log", anotado.append)
+    monkeypatch.setattr(health.subproc, "correr", lambda argv, **k: (0xC0000142, "", ""))
+    assert health._ls_remote("https://h/r.git") == "error"
+    assert anotado and "0xC0000142" in anotado[0] and "https://h/r.git" in anotado[0]
+
+
 def test_cannot_prompt_no_es_vencida_sino_no_verificable():
     """Bug 8: el GCM que no puede pedir la credencial no mando nada al servidor; no prueba que venza."""
     err = "fatal: Cannot prompt because user interactivity has been disabled.\nfatal: unable to get password from user"

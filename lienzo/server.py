@@ -71,6 +71,7 @@ import rules as rl
 import secretos
 import sessions as ses
 import state
+import subproc
 import tailchrome
 import tailchrome_process
 import tmux
@@ -3321,6 +3322,7 @@ def instalar_excepthook() -> None:
 def main() -> int:
     global LISTENERS
     instalar_excepthook()
+    subproc.sin_cuadros_de_error()  # un git que no arranca no deja un cartel modal en el escritorio
     ap = argparse.ArgumentParser(prog="lienzo-server")
     ap.add_argument("--port", type=int, default=7321)
     ap.add_argument(
