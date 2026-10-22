@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.11**: Kiro con auto-aprobar de subagentes y una sola tarjeta, ventana completa de Chrome más liviana, cambio solo a pestañas con la PC bloqueada y pestañas por perfil.
+Versión **0.6.12**: Kiro aprueba los subagentes con «(f)» y deja de preguntar; incluye 0.6.11 (ventana completa más liviana, cambio solo a pestañas con la PC bloqueada, pestañas por perfil).
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.11.md).
+[Novedades, validación y límites](docs/releases/0.6.12.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
