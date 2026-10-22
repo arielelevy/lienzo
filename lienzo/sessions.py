@@ -3257,6 +3257,9 @@ def load_sessions() -> tuple[int, int]:
                 # tarjeta vieja (plan multi-PC F0): repo_key no estaba, pero el cwd ya alcanza
                 # para calcularlo, a diferencia de pc (constante) que ya vino con el setdefault
                 s["repo_key"] = identity.repo_key(s["cwd"])
+            if s.get("repo") == "?" and s.get("cwd"):
+                # guardada con «?» (raiz de disco, antes de repo_of con ruta): se recalcula junto con repo_key
+                apply_repo(s, s["cwd"])
             if s.get("state") not in STATES:
                 s["state"], s["state_since"] = "termino", s.get("state_since") or now()
             if not backend.agent_alive(s):

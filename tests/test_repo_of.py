@@ -26,3 +26,17 @@ def test_ruta_sin_nombre_se_corta_a_20():
 def test_sin_carpeta_sigue_el_signo():
     assert state.repo_of(None) == "?"
     assert state.repo_of("") == "?"
+
+
+def test_tarjeta_guardada_con_signo_se_recalcula_al_cargar(tmp_path, monkeypatch):
+    import json
+
+    import sessions
+
+    monkeypatch.setattr(sessions.state, "SESSIONS", str(tmp_path))
+    monkeypatch.setattr(sessions.backend, "agent_alive", lambda s: True)
+    monkeypatch.setattr(sessions, "sessions", {})
+    card = {"session_id": "sess_raiz", "agent": "kiro", "cwd": "D:\\", "repo": "?", "repo_key": "?", "state": "termino"}
+    (tmp_path / "sess_raiz.json").write_text(json.dumps(card), encoding="utf-8")
+    sessions.load_sessions()
+    assert sessions.sessions["sess_raiz"]["repo"] == "D:\\"
