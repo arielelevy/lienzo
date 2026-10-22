@@ -40,3 +40,16 @@ def test_tarjeta_guardada_con_signo_se_recalcula_al_cargar(tmp_path, monkeypatch
     (tmp_path / "sess_raiz.json").write_text(json.dumps(card), encoding="utf-8")
     sessions.load_sessions()
     assert sessions.sessions["sess_raiz"]["repo"] == "D:\\"
+
+
+def test_proyecto_largo_se_corta_al_medio_en_el_titulo():
+    import work_titles as wt
+
+    repo = "cliente-proyecto-migracion-datos-2026"
+    titulo = wt.project_title({"title": "", "repo": repo})
+    etiqueta = titulo.split(" | ")[0]
+    assert len(etiqueta) == wt.MAX_PROYECTO and "…" in etiqueta
+    assert etiqueta.startswith("cliente-pro") and etiqueta.endswith("datos-2026")
+    # releer el título ya armado no duplica el proyecto
+    assert wt.project_title({"title": titulo, "repo": repo}) == titulo
+    assert wt.project_title({"title": "", "repo": "lienzo"}) == "lienzo | sesión"

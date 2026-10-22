@@ -98,6 +98,14 @@ interface RepoGroup {
  *  porque en una PC la carpeta tenia remote y en la otra no (repo_key distinto, mismo nombre). La
  *  clave del grupo es el menor de sus miembros, estable mientras no cambien las sesiones; la
  *  etiqueta, el `repo` mas repetido. Orden: el que mas sesiones tiene primero. */
+/** un nombre de proyecto largo cortado al medio con «…», como el título de la tarjeta
+ *  (work_titles.corto_medio, pedido de Ariel 2026-10-22); el nombre entero queda en el title */
+export function cortoMedio(texto: string, maximo = 24): string {
+  if (texto.length <= maximo) return texto;
+  const cabeza = Math.floor((maximo - 1) / 2);
+  return `${texto.slice(0, cabeza)}…${texto.slice(-(maximo - 1 - cabeza))}`;
+}
+
 export function repoGroups(sessions: Session[]): RepoGroup[] {
   // union-find sobre «k:<repo_key|repo>» y «n:<nombre en minusculas>»
   const padre = new Map<string, string>();
@@ -175,7 +183,7 @@ export function ProjectStrip({ groups, selected, coordOnly, onSelectRepo, onTogg
           title={`ver solo las sesiones de ${g.label} (Ctrl + click suma o saca proyectos)`}
           onClick={(e) => (e.ctrlKey || e.metaKey ? onToggleRepo(g.key) : onSelectRepo(g.key))}
         >
-          {g.label}
+          {cortoMedio(g.label)}
           <sub className="n">{g.count}</sub>
         </button>
       ))}
