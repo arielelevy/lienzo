@@ -18,6 +18,12 @@ import conocimiento as k
 DIMENSIONES = {"herramientas", "contexto", "memoria", "olas", "pruebas", "coordinacion", "capacidades"}
 CONTEXTO = {"agente", "modelo", "fase", "tipo_trabajo", "tecnologia", "area", "version_agente", "version_modelo"}
 USOS = {"sirvio", "no_aplico", "ya_sabido"}
+# dos alcances (pedido de Ariel, 2026-10-22): lo propio de cada proyecto y cómo se trabaja con Lienzo
+# (coordinación, frentes, verificación, releases), que vive en el proyecto `lienzo` y vale para todos
+ALCANCES = {"proyecto", "proceso_lienzo"}
+PROYECTO_LIENZO = "lienzo"
+REVISIONES = {"aceptar", "rechazar", "corregir"}
+REVISION_DIAS = 90  # la vigencia de lo aceptado en un clic; se renueva aceptándola de nuevo
 MOTIVOS = {
     "aplicable": "Validada por una persona, vigente, con respaldo activo y del mismo contexto",
     "refutada": "Una persona la refutó o fue reemplazada",
@@ -29,6 +35,8 @@ MOTIVOS = {
     "fuera_de_contexto": "Exige otro contexto de trabajo",
     "contexto_invalido": "Su contexto registrado no es válido: requiere revisión",
 }
+# sólo en la vista del proyecto, sin contexto: no es un estado del checklist ni del motor lógico
+MOTIVO_VIGENTE = "Validada por una persona, vigente y con respaldo activo"
 # una fuente motiva la creencia por el grafo: así un rechazo posterior se ve como respaldo caído.
 # La evidencia no tiene estado que caiga y `apoya` queda reservado al veredicto humano.
 _FUENTES_QUE_MOTIVAN = {"hallazgo", "medicion", "incidente", "decision"}
@@ -40,6 +48,14 @@ def _contexto(value):
             "contexto admite agente, modelo, fase, tipo_trabajo, tecnologia, area, version_agente y version_modelo"
         )
     return {key: k._texto(val, key, 100) for key, val in value.items()}
+
+
+def _alcance(pid, value):
+    if not isinstance(value, str) or value not in ALCANCES:
+        raise k.Rechazo("alcance debe ser proyecto o proceso_lienzo")
+    if value == "proceso_lienzo" and pid != PROYECTO_LIENZO:
+        raise k.Rechazo("las creencias de proceso de Lienzo viven en el proyecto lienzo")
+    return value
 
 
 def _creencia(con, pid, nid):
@@ -74,6 +90,9 @@ def proponer(pid, data, *, autor, con=None):
         "excepciones": data.get("excepciones", ""),
     }
     payload["excepciones"] = k._texto(payload["excepciones"], "excepciones", 2000) if payload["excepciones"] else ""
+    # sin alcance vale «proyecto»: así la clave de una propuesta repetida no cambia respecto de las anteriores
+    if _alcance(pid, data.get("alcance", "proyecto")) != "proyecto":
+        payload["alcance"] = data["alcance"]
     digest = hashlib.sha256(json.dumps([text, payload], sort_keys=True).encode()).hexdigest()
     belief = k.crear_nodo(pid, "decision", text, payload, autor=autor, clave_ingesta="creencia:" + digest, con=con)
     # sólo al nacer: repetir la propuesta no reactiva un vínculo que alguien retiró
@@ -95,25 +114,133 @@ def resolver(pid, nid, data):
     if not isinstance(result, str) or result not in ("validada", "refutada"):
         raise k.Rechazo("resultado debe ser validada o refutada")
     with k._abrir(pid) as con:
+        evidence = k._texto(data.get("evidencia"), "evidencia", 64)
+        until = data.get("vigente_hasta") if result == "validada" else None
+        return _veredicto(con, pid, nid, por, result, evidence, motive, until)
+
+
+def _veredicto(con, pid, nid, por, result, evidence_id, motive, until):
+    """El veredicto dentro de la transacción de `con`; `until` sólo cuenta al validar."""
+    node = _creencia(con, pid, nid)
+    evidence = k._nodo(con, pid, evidence_id)
+    if evidence["tipo"] != "evidencia":
+        raise k.Rechazo("el veredicto requiere un nodo evidencia")
+    if result == "validada" and node["estado"] not in ("propuesta", "vigente"):
+        raise k.Rechazo("una creencia refutada requiere una propuesta nueva", 409)
+    if result == "validada":
+        k.vincular(pid, nid, "apoya", evidence["id"], autor=por, motivo=motive, con=con)
+    fields = {
+        "resultado": result,
+        "evidencia_veredicto": evidence["id"],
+        "confianza": "veredicto humano",
+        "veredicto_por": por,
+        "veredicto_fecha": k.ahora(),
+    }
+    if result == "validada":
+        fields["vigente_hasta"] = _vencimiento(until)
+    k.actualizar_datos(pid, nid, fields, por=por, motivo=motive, con=con)
+    k.cambiar_estado(pid, nid, "vigente" if result == "validada" else "revertida", por=por, motivo=motive, con=con)
+    return k._nodo(con, pid, nid)
+
+
+def _persona(data):
+    por = k._texto(data.get("por"), "por", 200)
+    if not por.startswith("persona:") or not por[8:].strip():
+        raise k.Rechazo("el veredicto requiere persona:<nombre>", 403)
+    return por
+
+
+_MOTIVO_REVISION = {
+    "aceptar": "aceptada en la revisión del proyecto",
+    "rechazar": "rechazada en la revisión del proyecto",
+    "corregir": "corregida en la revisión del proyecto",
+}
+
+
+def revisar(pid, nid, data):
+    """Veredicto en un clic desde la vista del proyecto (pedido de Ariel, 2026-10-22): aceptar, rechazar o
+    corregir. La evidencia es la revisión misma: un nodo `evidencia` de clase `revision_humana` firmado por la
+    persona, con qué decidió y sobre qué texto, creado en la misma transacción que el veredicto (si algo
+    falla no queda una revisión suelta). Aceptar una vigente la renueva sin acortar su vigencia. Corregir
+    crea la sucesora (mismo contexto, dimensión y alcance, salvo que se cambie) ya validada, la vincula con
+    `reemplaza` y retira la original."""
+    por = _persona(data)
+    action = data.get("accion")
+    if not isinstance(action, str) or action not in REVISIONES:
+        raise k.Rechazo("accion debe ser aceptar, rechazar o corregir")
+    motive = k._texto(data["motivo"], "motivo", 2000) if data.get("motivo") else _MOTIVO_REVISION[action]
+    new = {}
+    if action == "corregir":
+        new["accion"] = k._texto(data.get("accion_nueva"), "accion_nueva", 1000)
+        if data.get("texto_nuevo"):
+            new["texto"] = k._texto(data["texto_nuevo"], "texto_nuevo", 2000)
+        if data.get("alcance") is not None:
+            new["alcance"] = _alcance(pid, data["alcance"])
+    with k._abrir(pid) as con:
+        con.execute("BEGIN IMMEDIATE")  # leer, dejar la revisión y decidir sin que otra persona se cruce
         node = _creencia(con, pid, nid)
-        evidence = k._nodo(con, pid, k._texto(data.get("evidencia"), "evidencia", 64))
-        if evidence["tipo"] != "evidencia":
-            raise k.Rechazo("el veredicto requiere un nodo evidencia")
-        if result == "validada" and node["estado"] not in ("propuesta", "vigente"):
-            raise k.Rechazo("una creencia refutada requiere una propuesta nueva", 409)
-        if result == "validada":
-            k.vincular(pid, nid, "apoya", evidence["id"], autor=por, motivo=motive, con=con)
-        fields = {
-            "resultado": result,
-            "evidencia_veredicto": evidence["id"],
-            "confianza": "veredicto humano",
-            "veredicto_por": por,
-            "veredicto_fecha": k.ahora(),
-        }
-        if result == "validada":
-            fields["vigente_hasta"] = _vencimiento(data.get("vigente_hasta"))
-        k.actualizar_datos(pid, nid, fields, por=por, motivo=motive, con=con)
-        k.cambiar_estado(pid, nid, "vigente" if result == "validada" else "revertida", por=por, motivo=motive, con=con)
+        if node["estado"] not in ("propuesta", "vigente"):
+            raise k.Rechazo("la creencia ya fue refutada o reemplazada: no se revisa de nuevo", 409)
+        revision = {"creencia": nid, "estado": node["estado"], "texto": node["texto"], "decision": action}
+        evidence = k.crear_nodo(
+            pid,
+            "evidencia",
+            f"Revisión de {por[8:].strip()}: {action} «{node['datos'].get('accion') or node['texto']}»"[:2000],
+            {"clase": "revision_humana", "revision": {**revision, "motivo": motive, "correccion": new}},
+            autor=por,
+            motivo="revisión de una creencia",
+            con=con,
+        )
+        until = dt.datetime.now(dt.UTC) + dt.timedelta(days=REVISION_DIAS)
+        if _vigente(node["datos"]):  # renovar nunca acorta lo que otra persona validó por más tiempo
+            until = max(until, dt.datetime.fromisoformat(node["datos"]["vigente_hasta"]))
+        until = until.isoformat()
+        if action == "aceptar":
+            return {"creencia": _veredicto(con, pid, nid, por, "validada", evidence["id"], motive, until)}
+        if action == "rechazar":
+            return {"creencia": _veredicto(con, pid, nid, por, "refutada", evidence["id"], motive, None)}
+        datos = node["datos"]
+        sources = [
+            s
+            for s in datos.get("fuentes") or []
+            if isinstance(s, str) and con.execute("SELECT 1 FROM nodo WHERE id=? AND proyecto=?", (s, pid)).fetchone()
+        ]
+        successor = proponer(
+            pid,
+            {
+                "dimension": datos.get("dimension"),
+                "texto": new.get("texto", node["texto"]),
+                "accion": new["accion"],
+                "contexto": datos.get("contexto", {}),
+                "fuentes": [*sources[:29], evidence["id"]],
+                "excepciones": datos.get("excepciones", ""),
+                "alcance": new.get("alcance", datos.get("alcance", "proyecto")),
+            },
+            autor=por,
+            con=con,
+        )
+        successor = _veredicto(con, pid, successor["id"], por, "validada", evidence["id"], motive, until)
+        k.vincular(pid, successor["id"], "reemplaza", nid, autor=por, motivo=motive, con=con)
+        if node["estado"] == "vigente":
+            k.actualizar_datos(pid, nid, {"reemplazada_por": successor["id"]}, por=por, motivo=motive, con=con)
+            k.cambiar_estado(pid, nid, "reemplazada", por=por, motivo=motive, con=con)
+            old = k._nodo(con, pid, nid)
+        else:
+            old = _veredicto(con, pid, nid, por, "refutada", evidence["id"], motive, None)
+        return {"creencia": old, "nueva": successor}
+
+
+def cambiar_alcance(pid, nid, data):
+    """Reclasifica una creencia entre proyecto y proceso de Lienzo sin recrearla ni tocar su veredicto: es
+    su ámbito, no su validez. Lo hace una persona o la coordinadora."""
+    por = k._texto(data.get("por"), "por", 200)
+    if k.rol_de(por) not in (k.C, k.P) or not por.split(":", 1)[1].strip():
+        raise k.Rechazo("el alcance lo cambia persona:<nombre> o coordinadora:<sesión>", 403)
+    scope = _alcance(pid, data.get("alcance"))
+    with k._abrir(pid) as con:
+        con.execute("BEGIN IMMEDIATE")
+        _creencia(con, pid, nid)
+        k.actualizar_datos(pid, nid, {"alcance": scope}, por=por, motivo="alcance: " + scope, con=con)
         return k._nodo(con, pid, nid)
 
 
@@ -171,15 +298,19 @@ def contexto_sugerido(pid, session_id=None, tarjeta=None):
         if context:
             task = candidate
             break
-    for key, campo in (("agente", "agent"), ("modelo", "model")):
-        val = (tarjeta or {}).get(campo)
+    del_encargo = f"encargo {task['datos'].get('letra') or task['id'][:8]} ({task['estado']})" if task else None
+    fuentes = dict.fromkeys(context, del_encargo)
+    card = tarjeta or {}
+    sid = card.get("session_id")
+    de_tarjeta = f"la sesión {sid[:8]}" if isinstance(sid, str) and sid else "la sesión elegida"
+    for key, campo in (("agente", "agent"), ("modelo", "model"), ("version_agente", "version")):
+        val = card.get(campo)
         if isinstance(val, str) and val.strip():
             context[key] = val.strip()[:100]
-    if task:
-        fuente = f"encargo {task['datos'].get('letra') or task['id'][:8]} ({task['estado']})"
-    else:
-        fuente = "la sesión elegida" if context else None
-    return {"contexto": context, "encargo": task["id"] if task else None, "fuente": fuente}
+            fuentes[key] = de_tarjeta
+    fuente = del_encargo or (de_tarjeta if context else None)
+    # cada dato dice de dónde salió (pedido de Ariel, 2026-10-22); `fuente` resume, para lo ya existente
+    return {"contexto": context, "encargo": task["id"] if task else None, "fuente": fuente, "fuentes": fuentes}
 
 
 def _sugeribles(raw):
@@ -262,6 +393,7 @@ def _evaluar(node, context, apoyos, cadenas, ahora=None):
 
 
 def _vigencia(data, context, chains, ahora=None):
+    """`context` None: la vista del proyecto, que informa el contexto exigido sin exigirlo."""
     if chains:
         return "respaldo_caido"
     if not _vigente(data, ahora):
@@ -273,6 +405,8 @@ def _vigencia(data, context, chains, ahora=None):
         or not all(isinstance(v, str) for v in required.values())
     ):
         return "contexto_invalido"  # metadata rota no se lee como «cualquier contexto»
+    if context is None:
+        return "vigente"
     if any(key not in context for key in required):
         return "contexto_insuficiente"
     if any(context[key] != val for key, val in required.items()):
@@ -296,17 +430,25 @@ def _item(node, state, chains):
         "accion": data.get("accion", ""),
         "dimension": data.get("dimension", ""),
         "estado": state,
-        "motivo": MOTIVOS[state],
+        "motivo": MOTIVO_VIGENTE if state == "vigente" else MOTIVOS[state],
         "evidencia": data.get("evidencia_veredicto"),
         "excepciones": data.get("excepciones", ""),
         "vigente_hasta": data.get("vigente_hasta"),
         "contexto": data["contexto"] if isinstance(data.get("contexto"), dict) else {},
+        "alcance": data.get("alcance") if data.get("alcance") in ALCANCES else "proyecto",
         "usos": usos,
         "revisar": revisar,
     }
     if chains:
         item["cadenas"] = chains
+    found = data.get("contraste")
+    if isinstance(found, dict) and isinstance(found.get("resultado"), str):
+        # lo que el motor dijo de la propuesta al guardarla (S): una observación con fecha, no el estado actual
+        item["contraste"] = {key: found[key] for key in _CONTRASTE if key in found}
     return item
+
+
+_CONTRASTE = ("resultado", "motivo", "observaciones", "fecha", "motor")
 
 
 def _leer(con, pid):
@@ -330,9 +472,25 @@ def _leer(con, pid):
 def evaluar(pid, context):
     """Cada creencia del proyecto con su estado para este contexto y el motivo, en una lectura."""
     context = _contexto(context)
+    return context, _evaluadas(pid, context)
+
+
+def _evaluadas(pid, context):
+    return _evaluadas_con_reglas(pid, context)[0]
+
+
+def _evaluadas_con_reglas(pid, context):
+    """Las evaluadas y, de la misma foto, las reglas cuestionadas derivadas de cada creencia (V-4)."""
     with k._abrir(pid) as con:
         con.execute("BEGIN")  # creencias, apoyos y respaldos de la misma foto: un veredicto en medio no se mezcla
         nodes, apoyos = _leer(con, pid)
+        questioned = {}
+        for belief, rule in con.execute(
+            "SELECT v.a, r.id FROM vinculo v JOIN nodo r ON r.id=v.de AND r.proyecto=? AND r.tipo='regla' "
+            "AND r.estado='cuestionada' WHERE v.relacion='derivada_de' AND v.activo=1 ORDER BY r.id",
+            (pid,),
+        ):
+            questioned.setdefault(belief, []).append(rule)
         # el subgrafo de respaldos se carga una vez y sólo si alguna creencia llega a necesitarlo
         grafo = []
 
@@ -342,7 +500,41 @@ def evaluar(pid, context):
             return grafo[0].cadenas(nid) if nid in grafo[0].nodos else []
 
         evaluated = [(node, *_evaluar(node, context, apoyos, cadenas)) for node in nodes]
-    return context, [_item(node, state, chains) for node, state, chains in evaluated]
+    return [_item(node, state, chains) for node, state, chains in evaluated], questioned
+
+
+_ORDEN_VISTA = {"sin_veredicto": 0, "vigente": 1}  # lo que espera veredicto, arriba
+
+
+def _vista(pid):
+    """Sin contexto, con lo que el motor dejó dicho (V-4): el contraste guardado de cada propuesta y las
+    reglas derivadas que quedaron cuestionadas. La prueba actual del motor está en el filtro."""
+    items, questioned = _evaluadas_con_reglas(pid, None)
+    for item in items:
+        item["reglas_cuestionadas"] = questioned.get(item["creencia"], [])
+    return items
+
+
+def vista_proyecto(pid):
+    """El aprendizaje de un proyecto sin pedir contexto (pedido de Ariel, 2026-10-22: «el aprendizaje es por
+    proyecto»): cada creencia con su estado propio y el contexto exigido como dato. Dos bloques: las del
+    proyecto y las de cómo se trabaja con Lienzo (alcance proceso_lienzo del proyecto `lienzo`), que valen
+    para todos; en `lienzo` las de proceso van sólo en su bloque. Leer no cambia nada."""
+    own = _vista(pid)
+    if pid == PROYECTO_LIENZO:
+        process = [x for x in own if x["alcance"] == "proceso_lienzo"]
+        own = [x for x in own if x["alcance"] != "proceso_lienzo"]
+    else:
+        try:
+            process = [x for x in _vista(PROYECTO_LIENZO) if x["alcance"] == "proceso_lienzo"]
+        except k.Rechazo:  # una PC sin el proyecto lienzo registrado no tiene aprendizaje de proceso
+            process = []
+
+    def block(items):
+        items = sorted(items, key=lambda x: _ORDEN_VISTA.get(x["estado"], 2))
+        return {"total": len(items), "items": items}
+
+    return {"id": pid, "proyecto": block(own), "lienzo": block(process)}
 
 
 def checklist(pid, context, *, limite=8):
@@ -388,6 +580,7 @@ def para_encargo(pid, task, *, limite=3):
                 "creencia": x["creencia"],
                 "evidencia": x["evidencia"],
                 "sostenida": bool(x["sostenida"]),
+                "proyecto": x.get("proyecto", pid),
                 "fecha": k.ahora(),
             }
             for x in items
@@ -412,7 +605,11 @@ def texto_aprendizajes(items):
     ]
     for item in items:
         contraste = "" if item.get("sostenida") else "; sin contraste del motor lógico"
-        lines.append(f"- {item['accion']} (creencia {item['creencia']}, evidencia {item['evidencia']}{contraste})")
+        # una de proceso vive en lienzo: el uso se declara allá (revisión V-5)
+        dueno = f" del proyecto {item['proyecto']}" if item.get("alcance") == "proceso_lienzo" else ""
+        lines.append(
+            f"- {item['accion']} (creencia {item['creencia']}{dueno}, evidencia {item['evidencia']}{contraste})"
+        )
         if item["excepciones"]:
             lines.append(f"  Excepciones: {item['excepciones']}")
     return "\n".join(lines)

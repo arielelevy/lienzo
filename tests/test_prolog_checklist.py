@@ -407,7 +407,7 @@ def test_contexto_sugerido_por_http_lee_la_tarjeta_viva(monkeypatch):
     code, out = api.dispatch("GET", [pid, "contexto-sugerido"], None, {"session_id": "s-viva"})
     assert code == 200 and out["contexto"] == {"agente": "codex", "modelo": "gpt-5"}
     code, out = api.dispatch("GET", [pid, "contexto-sugerido"], None, {})
-    assert code == 200 and out == {"contexto": {}, "encargo": None, "fuente": None}
+    assert code == 200 and out == {"contexto": {}, "encargo": None, "fuente": None, "fuentes": {}, "session_id": None}
 
 
 def test_una_tarjeta_de_otro_proyecto_no_sugiere(monkeypatch, tmp_path):

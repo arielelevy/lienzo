@@ -396,7 +396,18 @@ def checklist(pid, context, *, limite=8, esperar_wsl=True):
     cuestionadas aparte y por qué no aplica el resto."""
     creencias._limite(limite)
     context, items, motor = sostener(pid, context, esperar_wsl=esperar_wsl)
+    for item in items:
+        item["proyecto"] = pid
+    extra = {}
+    if pid != creencias.PROYECTO_LIENZO:
+        # las de proceso de Lienzo valen para todos (revisión V-5): se evalúan y contrastan en su proyecto
+        # dueño, con su motor, y se suman una vez; las propias de lienzo nunca salen de lienzo
+        try:
+            _, own, extra["motor_proceso"] = sostener(creencias.PROYECTO_LIENZO, context, esperar_wsl=esperar_wsl)
+        except k.Rechazo:  # una PC sin el proyecto lienzo registrado no tiene aprendizaje de proceso
+            own = []
+        items += [{**x, "proyecto": creencias.PROYECTO_LIENZO} for x in own if x["alcance"] == "proceso_lienzo"]
     cuestionadas = [x for x in items if x["estado"] == "cuestionada"]
     out = creencias.armar(pid, context, [x for x in items if x["estado"] != "cuestionada"], limite=limite)
     # tres listas disjuntas: aplicables sostenidas, cuestionadas y las que no aplican con su motivo
-    return {**out, "motor": motor, "cuestionadas_total": len(cuestionadas), "cuestionadas": cuestionadas[:50]}
+    return {**out, "motor": motor, **extra, "cuestionadas_total": len(cuestionadas), "cuestionadas": cuestionadas[:50]}

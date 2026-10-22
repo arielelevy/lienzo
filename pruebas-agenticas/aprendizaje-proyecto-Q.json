@@ -1,0 +1,48 @@
+{
+  "nombre": "aprendizaje-proyecto-Q",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/aprendizaje-proyecto-Q",
+  "reglas": [
+    "Abrir Aprendizaje de un proyecto muestra todas sus creencias con su estado sin pedir contexto, y aparte las de proceso de Lienzo (alcance proceso_lienzo del proyecto lienzo), que valen para todos (pedido de Ariel, 2026-10-22).",
+    "Aceptar, rechazar o corregir una creencia es un clic firmado por persona:<nombre>; la evidencia es la revisión misma (nodo evidencia de clase revision_humana). Corregir crea la sucesora vigente con `reemplaza` y retira la original. Nada sin nombre.",
+    "El alcance (proyecto o proceso_lienzo) se cambia sin recrear la creencia ni tocar su veredicto, sólo en el proyecto lienzo y por persona o coordinadora.",
+    "El contexto es un filtro opcional y plegado. Sin tarjeta elegida se completa con la sesión viva más reciente del proyecto y el encargo en curso; cada dato dice de dónde salió. La versión del agente sale de su transcripción.",
+    "El texto libre lo interpreta Claude por la vía del investigador (-p --restricted --safe-mode, sin herramientas, sin clave de API, plazo corto). Sólo propone tipo, tecnología, área y fase del vocabulario; no guarda nada. Si no responde, se dice y los campos quedan para completar a mano.",
+    "La suite nunca llama a la IA: el parser se prueba con respuestas fijas."
+  ],
+  "precondiciones": [],
+  "casos": [
+    {
+      "id": "aprendizaje-proyecto-backend",
+      "comando": ["py", "-B", "-m", "pytest", "tests/test_aprendizaje_proyecto.py", "tests/test_creencias.py", "tests/test_prolog_checklist.py", "tests/test_prolog_learning.py", "tests/test_aprendizaje.py", "tests/test_aprendizaje_real.py", "tests/test_research_creencias.py", "tests/test_conocimiento.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 600000,
+      "cubre": ["lienzo/creencias.py", "lienzo/conocimiento_api.py", "lienzo/contexto_ia.py"]
+    },
+    {
+      "id": "aprendizaje-proyecto-web",
+      "comando": ["node", "node_modules/typescript/bin/tsc", "-b"],
+      "cwd": "web",
+      "timeoutMs": 300000,
+      "cubre": ["web/src/components/Learning.tsx"]
+    },
+    {
+      "id": "aprendizaje-proyecto-lint",
+      "comando": ["node", "node_modules/eslint/bin/eslint.js", "--max-warnings=0", "src/components/Learning.tsx", "tests-ui/aprendizaje.spec.ts", "tests-ui/aprendizaje-real.spec.ts", "tests-ui/checklist-motor.spec.ts", "tests-ui/checklist-motor-real.spec.ts"],
+      "cwd": "web",
+      "timeoutMs": 300000,
+      "cubre": ["web/src/components/Learning.tsx"]
+    },
+    {
+      "id": "aprendizaje-proyecto-ui",
+      "comando": ["pwsh.exe", "-NoProfile", "-File", "pruebas-agenticas/aprendizaje_ui_Q.ps1", "-Specs", "tests-ui/aprendizaje.spec.ts,tests-ui/checklist-motor.spec.ts,tests-ui/contraste-candidatos.spec.ts,tests-ui/cinco-E-memoria.spec.ts,tests-ui/conocimiento.spec.ts,tests-ui/mejoras.spec.ts,tests-ui/etapas.spec.ts"],
+      "timeoutMs": 600000,
+      "cubre": ["web/src/components/Learning.tsx", "web/src/knowledge.css"]
+    },
+    {
+      "id": "aprendizaje-proyecto-e2e",
+      "comando": ["pwsh.exe", "-NoProfile", "-File", "pruebas-agenticas/aprendizaje_e2e_Q.ps1"],
+      "timeoutMs": 600000,
+      "cubre": ["lienzo/creencias.py", "lienzo/conocimiento_api.py", "web/src/components/Learning.tsx"]
+    }
+  ]
+}

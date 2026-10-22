@@ -13,8 +13,14 @@ ruta ya sin el primer tramo `conocimiento`.
                                                       + aprendizajes aplicables al contexto
     GET  /conocimiento/<p>/checklist?<contexto>       aplicables sostenidas por el motor lógico, cuestionadas y,
                                                       aparte, por qué no aplica cada otra (prolog_checklist)
-    GET  /conocimiento/<p>/contexto-sugerido?session_id=   contexto del encargo de la sesión (o en curso) + su tarjeta
+    GET  /conocimiento/<p>/contexto-sugerido?session_id=   contexto del encargo de la sesión (o en curso) + su tarjeta;
+                                                      sin session_id, la sesión viva más reciente del proyecto
     POST /conocimiento/<p>/creencias/<id>/uso        {resultado: sirvio|no_aplico|ya_sabido, por, encargo?, nota?}
+    GET  /conocimiento/<p>/creencias-proyecto         todas las creencias sin contexto: del proyecto y de proceso de Lienzo
+    POST /conocimiento/<p>/creencias/<id>/revision   {accion: aceptar|rechazar|corregir, por: persona:, motivo?,
+                                                      accion_nueva?, texto_nuevo?, alcance?}  veredicto en un clic
+    POST /conocimiento/<p>/creencias/<id>/alcance    {alcance: proyecto|proceso_lienzo, por}
+    POST /conocimiento/<p>/interpretar-contexto       {texto} la IA propone tipo, tecnología, área y fase; no guarda
     POST /conocimiento/<p>/encargos/<id>/enviado      {session_id, agent?, model?, pc?, cwd?}
     POST /conocimiento/<p>/encargos/<id>/estado       {estado, por, motivo?}
     POST /conocimiento/<p>/entregas                   {encargo, revision, cuerpo, autor?, origen?}
@@ -44,9 +50,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime as dt
 
 import aprendizaje_api
 import conocimiento as k
+import contexto_ia
 import creencias
 import identity
 import patrones_desarrollo
@@ -55,6 +63,7 @@ import prolog_checklist
 import prolog_learning
 import registro_niveles
 import sessions as ses
+import transcripts
 import veredictos_api
 from conocimiento import Rechazo
 from conocimiento_params import _entero, _q
@@ -82,6 +91,50 @@ def _tarjeta(d: dict, pid: str | None = None) -> dict:
             )
         raise Rechazo(f"el lienzo no conoce la sesion {sid}", 404)
     return {k2: s.get(k2) for k2 in ("session_id", "agent", "model", "pc", "cwd")}
+
+
+def _sesion_reciente(pid: str) -> dict | None:
+    """La tarjeta local viva de `pid` con actividad más reciente, o None. Se resuelve como el resto del
+    lienzo: por carpeta y si no por remote, una vez por carpeta distinta."""
+    with ses.lock:
+        vivas = [dict(s) for s in ses.sessions.values() if s.get("alive") and (s.get("cwd") or s.get("repo_key"))]
+    nunca = dt.datetime.min.replace(tzinfo=dt.UTC)
+    vivas.sort(key=lambda s: ses.parse_ts(s.get("last_event_ts") or s.get("started")) or nunca, reverse=True)
+    resueltos = {}
+    for s in vivas:
+        clave = (s.get("repo_key"), s.get("cwd"), s.get("pc"))
+        if clave not in resueltos:
+            resueltos[clave] = k.resolver_proyecto(*clave)
+        if resueltos[clave] == pid:
+            return s
+    return None
+
+
+def _version_agente(tarjeta: dict) -> str | None:
+    """La versión de la CLI según su transcripción, con los lectores de `transcripts`: Claude la anota en
+    cada línea (vale la última); Codex, en `session_meta` al principio. Otro agente o una transcripción
+    ilegible: None, no se inventa."""
+    path, agent = tarjeta.get("transcript_path"), tarjeta.get("agent")
+    if not isinstance(path, str) or not path or agent not in ("claude", "codex"):
+        return None
+    try:
+        if agent == "claude":
+            lines, _ = transcripts.tail_lines(path)
+            found = [d["version"] for d in transcripts.iter_json(lines) if isinstance(d.get("version"), str)]
+        else:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                head = f.read(transcripts.TAIL_BYTES).splitlines()
+            found = [
+                d["payload"]["cli_version"]
+                for d in transcripts.iter_json(head)
+                if d.get("type") == "session_meta"
+                and isinstance(d.get("payload"), dict)
+                and isinstance(d["payload"].get("cli_version"), str)
+            ][:1]
+    except OSError:
+        return None
+    found = [v.strip()[:100] for v in found if v.strip()]
+    return found[-1] if found else None
 
 
 def _replica_con(pid: str, pc: str) -> bool:
@@ -176,12 +229,21 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
         return 200, creencias.resolver(pid, resto[1], d)
     if len(resto) == 3 and resto[0] == "creencias" and resto[2] == "uso" and metodo == "POST":
         return 200, creencias.registrar_uso(pid, resto[1], d)
+    if len(resto) == 3 and resto[0] == "creencias" and resto[2] == "revision" and metodo == "POST":
+        return 200, creencias.revisar(pid, resto[1], d)
+    if len(resto) == 3 and resto[0] == "creencias" and resto[2] == "alcance" and metodo == "POST":
+        return 200, creencias.cambiar_alcance(pid, resto[1], d)
+    if resto == ["creencias-proyecto"] and metodo == "GET":
+        return 200, creencias.vista_proyecto(pid)
+    if resto == ["interpretar-contexto"] and metodo == "POST":
+        return contexto_ia.interpretar(pid, d.get("texto"))
     if resto == ["checklist"] and metodo == "GET":
         contexto = {key: _q(query, key) for key in creencias.CONTEXTO if _q(query, key) is not None}
         return 200, prolog_checklist.checklist(pid, contexto, limite=_entero(_q(query, "limite"), "limite", 8))
     if resto == ["contexto-sugerido"] and metodo == "GET":
         sid = _q(query, "session_id")
         tarjeta = None
+        elegida = bool(sid)
         if sid:
             with ses.lock:  # la local se copia bajo su lock; la espejada (mirror tiene el suyo), afuera
                 tarjeta = dict(ses.sessions.get(sid) or {})
@@ -192,7 +254,14 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
                 suyo = k.resolver_proyecto(tarjeta.get("repo_key"), tarjeta.get("cwd"), tarjeta.get("pc"))
                 if suyo != pid:
                     sid, tarjeta = None, None
-        return 200, creencias.contexto_sugerido(pid, session_id=sid, tarjeta=tarjeta)
+        # sin tarjeta elegida: la sesión viva más reciente de este proyecto (encargo Q). Una elegida de otro
+        # proyecto no cae a otra sesión: la persona eligió esa, y no es de este trabajo
+        if not elegida:
+            tarjeta = _sesion_reciente(pid)
+            sid = tarjeta.get("session_id") if tarjeta else None
+        if tarjeta:
+            tarjeta = {**tarjeta, "session_id": sid, "version": _version_agente(tarjeta)}
+        return 200, {**creencias.contexto_sugerido(pid, session_id=sid, tarjeta=tarjeta), "session_id": sid}
     if resto == ["razonamiento"] and metodo == "POST":
         return prolog_learning.inferir(pid, d.get("contexto", {}))
     if resto == ["patrones-desarrollo"] and metodo == "GET":

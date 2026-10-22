@@ -25,10 +25,13 @@ const SIN_MOTOR = {
 const RESUMEN = [{ proyecto: 'dos', nombre: 'Dos', creencias: { propuesta: 2, vigente: 1 }, reglas_cuestionadas: 1, encargos_clasificados: 3, encargos_sin_clasificar: 1 },
   { proyecto: 'nada', nombre: 'Nada', creencias: { revertida: 1 }, reglas_cuestionadas: 0, encargos_clasificados: 2, encargos_sin_clasificar: 0 }];
 
-const SUGERIDO = { contexto: { tipo_trabajo: 'bugfix', agente: 'claude' }, encargo: 'e1', fuente: 'encargo B (enviado)' };
+const SUGERIDO = { contexto: { tipo_trabajo: 'bugfix', agente: 'claude' }, encargo: 'e1', fuente: 'encargo B (enviado)', fuentes: { tipo_trabajo: 'encargo B (enviado)', agente: 'la sesión 0000aaaa' } };
+// la vista del proyecto (encargo Q): todas sus creencias sin contexto; las de proceso de Lienzo, aparte
+const VISTA = { id: 'dos', proyecto: { total: 3, items: [item('b4', 'sin_veredicto'), item('b1', 'vigente'), item('b3', 'vencida')] }, lienzo: { total: 0, items: [] } };
+const VACIA = { id: 'uno', proyecto: { total: 0, items: [] }, lienzo: { total: 0, items: [] } };
 const NADA = { contexto: { tipo_trabajo: 'bugfix' }, total: 0, items: [], no_aplican_total: 0, no_aplican: [], motor: { estado: 'sin_creencias' }, cuestionadas_total: 0, cuestionadas: [] };
 
-async function prepare(page: Page, checklist: unknown = SOSTENIDO, sugerido: unknown = { contexto: {}, encargo: null, fuente: null }) {
+async function prepare(page: Page, checklist: unknown = SOSTENIDO, sugerido: unknown = { contexto: {}, encargo: null, fuente: null }, vista: unknown = VISTA) {
   const requests: { method: string; path: string; query: string }[] = [];
   await bloquearEscrituras(page);
   await instalarTablero(page);
@@ -41,7 +44,7 @@ async function prepare(page: Page, checklist: unknown = SOSTENIDO, sugerido: unk
       : path.endsWith('/proyectos') ? [{ id: 'uno', nombre: 'Uno' }, { id: 'dos', nombre: 'Dos' }]
       : path.endsWith('/temas') ? { temas: [] }
       : path.endsWith('/checklist') ? checklist
-      : path.endsWith('/creencias') ? []
+      : path.endsWith('/creencias-proyecto') ? vista
       : path.endsWith('/nodos') ? { total: 0, nodos: [] }
       : path.endsWith('/patrones-desarrollo') ? { revisados: 0, sin_clasificar: 0, muestra_parcial: false, patrones: [] }
       : { vigente: [], abierto: [], otros: [] };
@@ -51,9 +54,11 @@ async function prepare(page: Page, checklist: unknown = SOSTENIDO, sugerido: unk
   return requests;
 }
 
+/** El checklist es un filtro opcional y plegado (encargo Q): se despliega, se completa y se consulta. */
 async function consultar(page: Page) {
+  await page.getByText(/^Filtrar por lo que vas a hacer/).click();
   await page.getByLabel('Tipo de trabajo', { exact: true }).fill('bugfix');
-  await page.getByRole('button', { name: 'Consultar aprendizaje', exact: true }).click();
+  await page.getByRole('button', { name: 'Ver qué aplica', exact: true }).click();
 }
 
 test('la tira muestra sólo proyectos con algo para mirar y abre su memoria en Aprendizaje', async ({ page }) => {
@@ -91,7 +96,7 @@ test('la aplicable trae la prueba del motor y la cuestionada va aparte con su re
   await expect(noAplican.getByText('Acción b2', { exact: true })).toHaveCount(0);
   await expect(noAplican.getByText('Acción b3', { exact: true })).toBeVisible();
   await page.getByRole('dialog', { name: 'Memoria del proyecto' }).screenshot({ path: info.outputPath('checklist-motor.png') });
-  expect(requests.filter(r => r.path.endsWith('/checklist')).length).toBe(2);  // la de abrir y la del botón
+  expect(requests.filter(r => r.path.endsWith('/checklist')).length).toBe(1);  // sólo la del botón: abrir no lo pide
   expect(requests.every(r => r.method === 'GET')).toBe(true);
 });
 
@@ -99,7 +104,7 @@ test('sin motor la aplicable se muestra y dice que no tuvo contraste', async ({ 
   await prepare(page, SIN_MOTOR);
   await page.getByRole('list', { name: 'aprendizaje por proyecto' }).getByRole('button', { name: /Dos/ }).click();
   await consultar(page);
-  await expect(page.getByText('Acción b1', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Aplica a lo que vas a hacer' }).getByText('Acción b1', { exact: true })).toBeVisible();
   await expect(page.getByText('El motor lógico no respondió: las aplicables se muestran sin contraste. (Motor lógico no encontrado)')).toBeVisible();
   await expect(page.getByText('Sin contraste del motor lógico.', { exact: true })).toBeVisible();
   await expect(page.getByText('Sostenida por el motor lógico: ver la prueba')).toHaveCount(0);
@@ -111,7 +116,7 @@ test('un checklist viejo sin datos del motor se sigue leyendo', async ({ page })
   await prepare(page, { ...viejo, items: [item('b1', 'aplicable')] });
   await page.getByRole('list', { name: 'aprendizaje por proyecto' }).getByRole('button', { name: /Dos/ }).click();
   await consultar(page);
-  await expect(page.getByText('Acción b1', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Aplica a lo que vas a hacer' }).getByText('Acción b1', { exact: true })).toBeVisible();
   await expect(page.getByText('Sin contraste del motor lógico.')).toHaveCount(0);
 });
 
@@ -131,50 +136,49 @@ test('si hay más cuestionadas que las mostradas lo dice', async ({ page }) => {
   await expect(page.getByText('Se muestran 1 de 70.', { exact: true })).toBeVisible();
 });
 
-test('abre leyendo sola, con el contexto del encargo de la tarjeta elegida y una línea que dice para qué sirve', async ({ page }, info) => {
+test('abre con lo aprendido del proyecto y el contexto de la tarjeta elegida plegado en el filtro', async ({ page }, info) => {
   const requests = await prepare(page, SOSTENIDO, SUGERIDO);
   await page.locator(`.card[data-sid="${SID.coordinadora}"]`).click();
   await expect(page.locator('.card.picked')).toHaveAttribute('data-sid', SID.coordinadora);
   await page.getByRole('list', { name: 'aprendizaje por proyecto' }).getByRole('button', { name: /Dos/ }).click();
   const dialog = page.getByRole('dialog', { name: 'Memoria del proyecto' });
-  await expect(dialog.getByText('Qué aprendió este proyecto y qué aplica a lo que vas a hacer.', { exact: true })).toBeVisible();
-  const overview = dialog.getByRole('region', { name: 'Creencias del proyecto' });
-  await expect(overview.getByText('Aplica · sostenida por el motor')).toBeVisible();
-  await expect(overview.getByText('Cuestionada', { exact: true })).toBeVisible();
-  await expect(overview.getByText('Vencida', { exact: true })).toBeVisible();
-  await expect(dialog.getByText('Lo que vas a hacer: Tipo de trabajo: bugfix · Agente: claude · completado desde encargo B (enviado)')).toBeVisible();
-  await expect(dialog.getByLabel('Tipo de trabajo', { exact: true })).toBeHidden();  // completado: los campos quedan plegados
+  await expect(dialog.getByText('Lo que aprendió este proyecto.', { exact: true })).toBeVisible();
+  const own = dialog.getByRole('region', { name: 'De este proyecto' });
+  await expect(own.getByText('Espera tu veredicto', { exact: true })).toBeVisible();
+  await expect(own.getByText('Vigente', { exact: true })).toBeVisible();
+  await expect(own.getByText('Vencida', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Filtrar por lo que vas a hacer (opcional) · Tipo de trabajo: bugfix · Agente: claude · completado desde encargo B (enviado)')).toBeVisible();
+  await expect(dialog.getByLabel('Tipo de trabajo', { exact: true })).toBeHidden();  // el filtro queda plegado
   const sug = requests.find(r => r.path.endsWith('/contexto-sugerido'))!;
   expect(new URLSearchParams(sug.query).get('session_id')).toBe(SID.coordinadora);
-  const check = requests.find(r => r.path.endsWith('/checklist'))!;
-  expect(Object.fromEntries(new URLSearchParams(check.query))).toEqual({ tipo_trabajo: 'bugfix', agente: 'claude', limite: '20' });
+  expect(requests.filter(r => r.path.endsWith('/checklist'))).toHaveLength(0);  // abrir no pide contexto
   await dialog.screenshot({ path: info.outputPath('aprendizaje-abre-solo.png') });
-  // cambiar lo que vas a hacer: se despliega, se edita y se vuelve a consultar
-  await dialog.getByText(/^Lo que vas a hacer:/).click();
+  // desplegar el filtro: el contexto sugerido ya está, se edita y se consulta
+  await dialog.getByText(/^Filtrar por lo que vas a hacer/).click();
+  await expect(dialog.getByText('de la sesión 0000aaaa')).toBeVisible();
   await dialog.getByLabel('Tipo de trabajo', { exact: true }).fill('refactor');
-  await expect(dialog.getByText(/^Lo que vas a hacer: Tipo de trabajo: refactor · Agente: claude$/)).toBeVisible();
-  await expect(dialog.getByText('Cambiaste lo que vas a hacer: consultá para ver qué aplica.')).toBeVisible();
-  await dialog.getByRole('button', { name: 'Consultar aprendizaje', exact: true }).click();
+  await expect(dialog.getByText(/^Filtrar por lo que vas a hacer \(opcional\) · Tipo de trabajo: refactor · Agente: claude$/)).toBeVisible();
+  await dialog.getByRole('button', { name: 'Ver qué aplica', exact: true }).click();
   await expect.poll(() => requests.filter(r => r.path.endsWith('/checklist')).at(-1)?.query).toContain('tipo_trabajo=refactor');
   expect(requests.every(r => r.method === 'GET')).toBe(true);
 });
 
-test('un proyecto sin creencias abre explicando de dónde salen, con los campos a la vista', async ({ page }) => {
-  const requests = await prepare(page, NADA);
+test('un proyecto sin creencias abre explicando de dónde salen', async ({ page }) => {
+  const requests = await prepare(page, NADA, undefined, VACIA);
   await page.getByRole('button', { name: 'más opciones', exact: true }).click();
   await page.getByRole('menuitem', { name: /Memoria/ }).click();
   await page.getByLabel('Proyecto', { exact: true }).selectOption('uno');
   await page.getByRole('button', { name: 'Aprendizaje', exact: true }).click();
-  const overview = page.getByRole('region', { name: 'Creencias del proyecto' });
-  await expect(overview).toContainText('Este proyecto todavía no tiene creencias');
+  await expect(page.getByRole('region', { name: 'De este proyecto' })).toContainText('Este proyecto todavía no tiene creencias propias');
+  await page.getByText(/^Filtrar por lo que vas a hacer/).click();
+  await page.getByRole('button', { name: 'Ver qué aplica', exact: true }).click();
   await expect(page.getByText('No hay creencias que contrastar.')).toBeVisible();
-  await expect(page.getByLabel('Tipo de trabajo', { exact: true })).toBeVisible();  // nada sugerido: abiertos
   const sug = requests.find(r => r.path.endsWith('/contexto-sugerido'))!;
   expect(sug.query).toBe('');  // sin tarjeta elegida no se manda sesión
 });
 
 test('una sugerencia tardía no pisa lo que la persona ya escribió', async ({ page }) => {
-  const requests = await prepare(page, NADA);
+  const requests = await prepare(page, NADA, undefined, VACIA);
   let release!: () => void;
   const delay = new Promise<void>(resolve => { release = resolve; });
   await page.route('**/conocimiento/uno/contexto-sugerido**', async route => {
@@ -185,10 +189,10 @@ test('una sugerencia tardía no pisa lo que la persona ya escribió', async ({ p
   await page.getByRole('menuitem', { name: /Memoria/ }).click();
   await page.getByLabel('Proyecto', { exact: true }).selectOption('uno');
   await page.getByRole('button', { name: 'Aprendizaje', exact: true }).click();
-  await page.getByText(/^Lo que vas a hacer:/).click();  // mientras llega la sugerencia, plegado: se despliega
+  await page.getByText(/^Filtrar por lo que vas a hacer/).click();  // mientras llega la sugerencia
   await page.getByLabel('Tipo de trabajo', { exact: true }).fill('refactor');
   release();
-  await page.getByRole('button', { name: 'Consultar aprendizaje', exact: true }).click();
+  await page.getByRole('button', { name: 'Ver qué aplica', exact: true }).click();
   await expect.poll(() => requests.filter(r => r.path.endsWith('/checklist')).at(-1)?.query ?? '').toContain('tipo_trabajo=refactor');
   await expect(page.getByLabel('Tipo de trabajo', { exact: true })).toHaveValue('refactor');
   await expect(page.getByText(/completado desde/)).toHaveCount(0);
