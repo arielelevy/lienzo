@@ -1,6 +1,6 @@
 [project]
 name = "lienzo"
-version = "0.6.8"
+version = "0.6.9"
 description = "Tablero para sesiones de agentes CLI y sus integraciones"
 readme = "README.md"
 license = { file = "LICENSE" }

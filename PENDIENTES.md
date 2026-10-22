@@ -4,9 +4,27 @@ Esta es la única lista de trabajo. El [historial importado de MEJORAS.md](#hist
 conserva hechos y decisiones con su fecha; DISENO.es.md describe la arquitectura y
 docs/PRODUCTO.md las decisiones de producto.
 
-Fecha: 2026-10-10.
+Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
 Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las specs.
+
+### Ronda nocturna del 2026-10-21/22 (cerrada el 2026-10-22)
+
+Pedido de Ariel: «terminá todo lo pendiente», con la otra PC prendida. Frentes A–F y R, todos Claude
+(Codex al 89 % semanal). Commits en `main` desde `ddc5d49`; release 0.6.8 publicada y aplicada en las
+dos PCs. Coordinación y evidencia: `.temp/coordinacion/2026-10-21/ronda-noche/coordinacion.md` y
+`.temp/resultados/noche-*/`; revisiones en `review/2026-10-21/code-review-noche-*.md`.
+
+- Cerradas con evidencia: reimportación legacy, sincronización de memoria por `marcas`, Codex tras
+  `/new`/`/clear`, cola de Codex al cerrar, contrato de plugins, latencia LAN del canal Chrome, panel de
+  PCs (sin cola DGX), aviso de tarjeta quieta.
+- Hecho sin casilla previa: vista por pestañas de Chrome con screencast (25 c/s, anda con la PC
+  bloqueada sobre el Chrome real), tablero al ~81 %, auto-aprobar como pestaña sin confirmación,
+  cuadros de error de Windows apagados para los hijos del server, borrado del espejo por handle,
+  falla WSL atribuida a `systemd-tmpfiles` sobre `/tmp`, título del launch en la tarjeta, limpieza de
+  `~/.lienzo/launch`, partición de `sessions.py` (`hooks_eventos.py`) y código muerto borrado.
+- Error de la coordinadora: `64fb252` salió con `launch.py` importando un módulo no commiteado;
+  corregido en `4014c88` antes de que alguna PC actualizara.
 
 ### Estado de la ronda del 2026-10-20 (consolidado el 2026-10-21)
 
@@ -127,6 +145,7 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   medida fue de 90 a 669 MB, pero el compromiso estaba al 47%: no demuestra agotamiento.
   Sólo el último aviso quedó a 21 s de despertar; la suspensión no explica todos los avisos.
   Evidencia: `.temp/coordinacion/2026-10-21/git-popup-wake-correlation.json`.
+  Avance 2026-10-22: el cartel modal ya no sale (89ec553, SetErrorMode heredado por los hijos del server) y el código queda en el log con la URL. Lanzadores observados: health cada 300 s, codex.exe y claude.exe de sesiones. Coincidió con RAM al límite; la DLL causante sigue sin atribuir.
 
 - [ ] Verificar y corregir los ocho hallazgos de la [auditoría Codex total](review/2026-10-21/code-review-codex-total.md)
   antes de cerrar la release: B01 auxiliares de transferencia fuera de raíz; B02 rehabilitación
@@ -157,10 +176,12 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
 - [ ] Probar el contrato Chrome sin emulación con visor remoto real después de la publicación
   conjunta de UI y remota autorizada. Medir parpadeo, zoom/pinch, dimensiones y entrada con
   `basis` vigente; conservar rechazo 409 ante tamaño viejo. Complementa la latencia LAN pendiente.
+  Avance 2026-10-22: vista por pestañas usada por Ariel desde ar-it33940 sobre su Chrome real; con la PC bloqueada ~14,5 c/s sin cortes (bandera de oclusión en sus accesos directos). Falta zoom/pinch y clics con la PC bloqueada.
 - [ ] Diseñar autenticación humana para `persona:` y `coordinadora:` y credenciales con alcances
   externos para nivel 3. El rechazo del actor `server` no impide la suplantación de esos actores;
   los conteos de `externo()` no constituyen un token limitado. Vinculado a los tres niveles de registro.
-- [ ] Resolver la reimportación legacy: `_importar_una` usa `INSERT OR IGNORE` y puede dejar
+- [x] Resolver la reimportación legacy: `_importar_una` usa `INSERT OR IGNORE` y puede dejar
+  Hecho 2026-10-22 (ca6c073): procedencia por fila, CAS, conflictos visibles, filas inválidas omitidas y anotadas; 31 pruebas nuevas, sólo bases sintéticas.
   nodos y vínculos viejos aunque entren cambios de una base que siguió creciendo. Diseñar
   actualización, procedencia e idempotencia sin importar bases reales por esta consolidación.
   Fuente: `.temp/coordinacion/2026-10-20/C-memoria/diseno-importador-legacy.md`.
@@ -338,15 +359,18 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
 - [ ] Arrancar habitualmente mediante `lienzo-server.cmd` para disponer del relanzamiento.
   El proceso iniciado directamente con Python rechaza POST /restart de forma segura; este
   reinicio requirió detener el PID identificado y levantar un proceso nuevo.
-- [ ] Revisar continuidad de mensajes Codex encolados al cerrar una CLI, y la sucesión de
+- [x] Revisar continuidad de mensajes Codex encolados al cerrar una CLI, y la sucesión de
+  Hecho 2026-10-22 (encargo D, uso real): la CLI ya no usa la cola; cerrar tras un envío deja el acuse visible en la tarjeta muerta, otra CLI en la misma carpeta no lo hereda y un envío a la muerta se rechaza con motivo.
   títulos/reglas cuando una sesión Desktop nueva comparte repo con un encargo CLI cerrado.
   No reutilizar el proceso ni el nombre de un emisor auxiliar como identidad de sesión.
 - [ ] Evaluar handles fijados en copias si se necesita resistir sustituciones hostiles de
   rutas entre validación y uso; el rechazo actual de junctions existentes no elimina TOCTOU.
+  Avance 2026-10-22 (db944d5): `r_borrar` ya borra por el handle del padre fijado. Queda para decidir: el emisor (`Trabajo._leer`) lee el origen por nombre; fijarlo obliga a decidir qué hacer con hardlinks de origen.
 
 ### P0 — Falla grave de continuidad de la coordinadora (2026-10-17)
 
-- [ ] **Reidentificar el hilo activo de una Codex CLI después de `/new` o `/clear`, y rechazar
+- [x] **Reidentificar el hilo activo de una Codex CLI después de `/new` o `/clear`, y rechazar
+  Hecho 2026-10-22 (f785c61, 272e850; uso real con PID propio): la tarjeta pasa al hilo nuevo con el primer turno tras `/new` y `/clear`; `/status` se vuelve a teclear con cada rollout nuevo.
   el envío por cola si no puede vincularse al proceso actual.** Reportado por la coordinadora
   de opensyync `48befe79`, después de publicar 0.2.0. No se reprodujo todavía en una CLI propia.
   Caso reportado: PID31904 conservó tarjeta `01a14774-aa3f-7062-b3f3-aa996a33ff35` y rollout
@@ -469,7 +493,8 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
 - [ ] Mostrar tools, integraciones y formas de trabajo sin confundir función con empaquetado.
   Estado: metadatos de formato/compatibilidad/límites e inventario de plugins locales implementados.
   Un plugin puede no tener tools ni GitHub. Cargado no equivale a conectado o sano.
-- [ ] Implementar el contrato uniforme de incorporación de plugins:
+- [x] Implementar el contrato uniforme de incorporación de plugins:
+  Hecho 2026-10-22 (encargo D): carpeta real validada con un plugin mínimo (`declarado`), uno inválido (`error`, cuatro motivos) y uno viejo sin manifiesto (`cargado`); Stepwise sigue `cargado`.
   identidad/versión, compatibilidad, capacidades, configuración, permisos, ciclo de vida, estado,
   evidencia y relaciones opcionales. El manifiesto no obliga a tener endpoints, interfaz o tools.
   Criterio: validar un plugin mínimo y uno inválido, sin romper las extensiones existentes.
@@ -552,6 +577,7 @@ Lo hecho está en el README («Rondas largas») y en `code-review-2026-10-16.md`
   `mutar.mjs --sin-cache` y la compuerta sobre el estado commiteado.
 - [ ] Medir con dos PCs: un aviso a un frente de otra PC se confirma leyendo `last_reply` del espejo,
   sin probar todavía con la otra PC real; `POST /avisos/<id>/ack` se manda al lienzo de quien creó el aviso.
+  Avance 2026-10-21 (encargo R): el `ACK` por línea desde ar-it33940 quedó registrado acá. El ack por API desde otra PC no existe: el server no reenvía `/avisos/<id>/ack`.
 - [ ] Medir con una restauración real tras reiniciar la PC que Claude y Codex hereden reglas y título
   (cubierto con pruebas sobre el registro; no con agentes reales).
 
@@ -635,7 +661,8 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
 
 ### Multiplataforma
 
-- [ ] **Evaluar una forma más óptima de sincronizar las bases de memoria entre PCs** (pedido de Ariel,
+- [x] **Evaluar una forma más óptima de sincronizar las bases de memoria entre PCs** (pedido de Ariel,
+  Hecho 2026-10-22 (57d5761): pedido `marcas` por vuelta; vuelta ociosa 41→1 pedido, 494→19 ms de CPU, 769→27 ms; compatible con pares viejos. Medido con dos procesos locales, no entre las dos PCs reales.
   2026-10-10). Hoy cada server le pide a cada par, cada 120 s, los cambios y capturas nacidos allá desde su
   cursor (`lienzo/replica.py`, `/peer/conocimiento`), en lotes, aunque no haya nada nuevo; los cuerpos van
   aparte. Lo que habría que medir y comparar:
@@ -1031,12 +1058,14 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
 - [ ] Sincronizar el portapapeles en modo ventana.
   - Evidencia: lienzo/browser_window.py no implementa clipboard. web/src/components/RemoteBrowser.tsx: onPaste manda texto local, pero eso no sincroniza el portapapeles remoto; el copy por CDP es otro modo.
   - Origen: `docs/code-review-2026-10-07.md` (historial de Git). Gravedad: **media**.
+  Avance 2026-10-22 (69d0bb9): implementado y probado localmente (pegar texto hasta 16.000 caracteres; copia remota avisada sin contenido y traída con «Copiar acá»). Falta probarlo en uso real.
 
 - [ ] *(Opcional, 2026-10-15: Ariel lo descartó por ahora, el canal WebSocket anda bien.)* Evaluar transporte no ordenado para movimientos mediante WebRTC/UDP.
   - Evidencia: lienzo/browser_stream.py y lienzo/ws.py usan WebSocket ordenado; no hay transporte WebRTC/UDP para la entrada.
   - Origen: `docs/code-review-2026-10-07.md, Canal vivo` (historial de Git). Gravedad: **baja**.
 
-- [ ] Medir latencia sostenida por LAN después del canal WebSocket.
+- [x] Medir latencia sostenida por LAN después del canal WebSocket.
+  Hecho 2026-10-21 (encargo R, desde ar-it33940, 300 s): ida y vuelta mediana 12,6 ms / p95 33 ms; entre cuadros mediana 52 ms / p95 183 ms. Falta el tiempo cambio→vista.
   - Evidencia: lienzo/browser_stream.py: serve_viewer; docs/code-review-2026-10-07.md registra cuadros locales y la caída de ar-it33940 antes de medir el canal nuevo por LAN. No hay medición nueva en este encargo.
   - Origen: `docs/code-review-2026-10-07.md, Detective del canal vivo` (historial de Git). Gravedad: **media**.
 
@@ -1057,6 +1086,7 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
 - [ ] Verificar un lanzamiento real en otra PC desde el selector de proyecto/PC del tablero; la UI está implementada y sus recorridos con fixtures pasan.
   - Evidencia: lienzo/server.py: accion_launch implementa POST /sessions/launch; la búsqueda de sessions/launch en web/src no tiene coincidencias.
   - Origen: `docs/ronda3/` (historial de Git). Gravedad: **media**.
+  Avance 2026-10-21 (encargo R): `POST /sessions/launch` desde ar-it33940 hacia ariel anduvo (tarjeta, respuesta y `/exit`); el título pedido no llegaba y se corrigió con titulo_lanzado. Falta hacerlo desde el selector de la UI.
 
 ## Alcance de la consolidación
 
@@ -1099,9 +1129,11 @@ la configuración y la verificación remota real. No se habilita ninguna lista a
 
 ### Propuestas de interfaz y reparto
 
-- [ ] Un panel «PCs» con la latencia y la memoria libre de cada una en vivo, y la cola del DGX.
+- [x] Un panel «PCs» con la latencia y la memoria libre de cada una en vivo, y la cola del DGX.
+  Hecho 2026-10-22 (5d4f820): la tira ya mostraba memoria y latencia; la latencia ahora se mide en el sondeo de 15 s. La cola del DGX no tiene fuente real y no se agregó.
 - [ ] `coordinar.repartir(proyecto, modulos, pcs)`: reparto automático según `capacidad`.
-- [ ] Aviso en el tablero cuando una tarjeta lleva N minutos `corriendo` sin que cambie su pantalla.
+- [x] Aviso en el tablero cuando una tarjeta lleva N minutos `corriendo` sin que cambie su pantalla.
+  Hecho 2026-10-22 (69d0bb9): «pantalla quieta · N min», 5 por defecto, configurable. Lo calcula el tablero cada 60 s; pasar el dato al server queda para después de la partición de sessions.py.
 
 Las tres Ideas siguen pendientes como propuestas: los hechos históricos de salud de PCs
 y `coordinar.estancada` no prueban el panel con cola DGX ni el aviso automático del tablero.

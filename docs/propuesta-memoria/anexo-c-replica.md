@@ -58,8 +58,15 @@ el mismo informe entregado en las dos), el remoto entra igual, sin la clave, y q
 
 ## Operación
 
-- `POST /peer/conocimiento {op}`: `proyectos`, `cambios`, `capturas`, `cuerpo`. Sólo lee la base de
-  la PC que atiende.
+- `POST /peer/conocimiento {op}`: `marcas`, `proyectos`, `cambios`, `capturas`, `cuerpo`. Sólo lee la
+  base de la PC que atiende.
+- Cada vuelta empieza con un solo pedido `marcas` (2026-10-21): por proyecto, el último `seq_origen` y
+  el último rowid de captura nacidos en el par. Sólo se piden cambios o capturas de un proyecto cuya
+  marca pasa el cursor local. Una vuelta ociosa bajó de 41 pedidos y 494 ms de CPU a 1 pedido y 19 ms
+  (769 a 27 ms de reloj). Un par de la versión anterior contesta 400 a `marcas`: se vuelve al ciclo por
+  proyecto y se reintenta `marcas` a los 15 minutos.
+- El historial importado de una base vieja con marca `legado:` no decide qué edición de un par es la
+  más nueva.
 - El server sincroniza cada 120 s con los pares vivos; `POST /conocimiento/replicar {pc?}` lo fuerza;
   `GET /conocimiento/<p>/replica` muestra cursores, choques, duplicados y pendientes.
 - Un par con un lienzo sin réplica responde «ruta desconocida»: se avisa una vez y se reintenta a

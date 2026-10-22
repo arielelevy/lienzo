@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.8**: vista por pestañas de Chrome fluida y nítida, tablero más chico y auto-aprobar como pestaña del encabezado.
+Versión **0.6.9**: vista por pestañas más liviana al scrollear, portapapeles en la ventana completa, memoria entre PCs por marcas y sessions.py partido.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.8.md).
+[Novedades, validación y límites](docs/releases/0.6.9.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
@@ -125,6 +125,11 @@ Click en una tarjeta la elige y resalta sus conexiones; doble click abre el pane
 título a otro lugar (⤢ Ordenar las devuelve); con Alt, el arrastre conecta con otra tarjeta. Las
 posiciones y los filtros viven en el navegador.
 
+Desde 0.6.8 todo se ve a ~81 %, con los estilos reescalados sin `zoom`: las líneas de 1–2 px, los
+blancos de clic de 24 y 44 px y la vista de celular quedan iguales. Las tarjetas tienen 10 % más de
+separación y el título «Lienzo» es más grande. Las tarjetas de las extensiones de Chrome (Claude y
+Codex) arrancan ocultas; el chip «chrome» las muestra.
+
 ![Alt + arrastrar lleva una tarjeta sobre otra para conectarlas](docs/img/arrastre.png)
 
 Ctrl+click arma una selección múltiple: Enviar a todas, Interrumpir (un Esc a cada una) o
@@ -138,6 +143,11 @@ coordinadora del repo: es a quien van los avisos «cuando termine». Según el c
 «Continuar a las HH:MM» (límite de uso) o «↻ Reintentar» (error de API). Los menús numerados de la
 TUI («Switch model?») se muestran con sus opciones y se eligen desde ahí.
 
+Una tarjeta en «corriendo» cuya pantalla no cambia hace N minutos (sin contar spinners ni segundos)
+muestra «pantalla quieta · N min» hasta que cambie: puede estar colgada. Son 5 minutos por defecto;
+el menú ⋯ de la tarjeta los cambia (3, 5, 10, 15, 30 o sin aviso) para todas, y la elección vive
+en el navegador.
+
 ### Contestar, aprobar, adjuntar
 
 ![El panel de una sesión: turnos, mensajes a otras sesiones y la caja para contestar](docs/img/panel.png)
@@ -149,9 +159,13 @@ TUI («Switch model?») se muestran con sus opciones y se eligen desde ahí.
   Si Codex usa un daemon compartido y la terminal no tiene abierto su rollout, Lienzo consulta
   `/status` automáticamente cuando el editor está vacío y la terminal libre. El UUID publicado
   por esa TUI permite encontrar su transcripción exacta y unir la tarjeta provisional con la de
-  los hooks. La consulta se limita a una por minuto después de identificarla; no ejecuta un turno
-  del modelo. Con un borrador, un diálogo o trabajo en curso, espera. El vínculo es de lectura:
-  los mensajes siguen entrando por la consola, sin habilitar la cola CLI.
+  los hooks. Teclea `/status` una vez por proceso, y otra cada vez que el proceso abre un rollout
+  que el último `/status` no vio (tras `/new` o `/clear` y su primer turno); no ejecuta un turno
+  del modelo. Con un borrador, un diálogo o trabajo en curso, espera y reintenta cada 15 s como
+  mucho. Tras `/new` o `/clear` Codex deja abierto el rollout viejo: la tarjeta sigue al hilo nuevo
+  por el nombre único de su pie, que se lee en UTF-8. Verificado con un Codex real: la tarjeta pasó
+  al hilo nuevo con el mismo PID, y en siete chequeos ociosos no tecleó nada. El vínculo es de
+  lectura: los mensajes siguen entrando por la consola, sin habilitar la cola CLI.
 - Permisos: Permitir o Denegar desde la tarjeta (nunca «permitir siempre»; vence a los 60 s).
 - Denegados: lo que una regla, política o clasificador le niega al agente aparece como
   «Denegado: herramienta» con un botón «Autorizar y que reintente». Una denegación anterior al
@@ -196,6 +210,14 @@ que indicarles la carpeta. El Lienzo de la PC
 elegida lanza el proceso en una terminal nueva, sin exigir una sesión activa previa, y la tarjeta
 aparece sola. «Otra carpeta…» abre un proyecto nuevo dentro de las carpetas permitidas.
 
+En Windows el lanzamiento escribe `~/.lienzo/launch/<token>.cmd` y, al lado, `<token>.json` con el
+título pedido y el agente. La tarjeta nueva lo encuentra subiendo por los padres de su PID hasta el
+`cmd.exe` de ese `.cmd`, y toma ese título salvo que ya tenga uno puesto a mano. Un `.cmd` de otra
+carpeta, otro agente o un `.json` roto no titulan nada. Antes, la tarjeta salía como «sesión sin
+transcripción identificada» o con el primer pedido, y el título sólo llegaba a la ventana. Cada
+lanzamiento borra los `.cmd` y `.json` propios (nombre de 12 hex) de más de 7 días, nunca el que
+está en uso ni archivos con otro nombre; lo que no se puede borrar se saltea.
+
 ![Lanzar CLI: proyecto, PC y agente](docs/img/lanzar.png)
 
 ### Mejoras de agentes
@@ -206,7 +228,8 @@ aprendizaje en segundo plano, con su estado, presupuesto y trabajos. Configura e
 lanzamientos. El perfil de respuestas breves se inspira en [Caveman](https://github.com/JuliusBrussee/caveman):
 mantiene idioma, comandos, errores y pruebas; no instala su proxy ni comprime archivos. La preferencia
 **RTK** añade instrucciones para usar [RTK](https://github.com/rtk-ai/rtk) explícitamente en comandos
-compatibles. No modifica hooks, permisos ni `AGENTS.md`. Los agentes ya abiertos conservan su contexto.
+compatibles: compacta lecturas, búsquedas y salidas largas, no sólo estas últimas. No modifica
+hooks, permisos ni `AGENTS.md`. Los agentes ya abiertos conservan su contexto.
 
 El panel de una sesión tiene **Mejoras**: muestra una ventana de turnos, recuentos y sugerencias con
 referencias. Leer mucho código o recibir texto largo no demuestra desperdicio. El consumo se conserva
@@ -310,7 +333,9 @@ En el menú ⋯, apagadas por defecto:
 - Continuar solo tras límite de uso: programa «Continuar» un minuto después de la hora de vuelta.
 - Reintentar solo tras un error de API: «Continuar» diez segundos después.
 - ☠ Auto-aprobar TODO: aprueba sin mirar cada permiso de cualquier agente, **en todas las PCs
-  emparejadas**. Barra negra arriba mientras está prendido; cada aprobación queda en `lienzo.log`.
+  emparejadas**. Se prende sin cuadro de confirmación. Mientras está prendido, una pestaña negra
+  cuelga del encabezado, a la izquierda de Authenticator, con Apagar; cada aprobación queda en
+  `lienzo.log`.
   Sólo desde la LAN. Contesta los permisos que llegan por hook (Claude Code, Codex, Pi), el cartel
   de coda y, desde el 2026-10-08, el permiso que la TUI dibuja como diálogo de opciones sin hook
   («Would you like to run the following command?» de Codex, «Do you want to proceed?» de Claude):
@@ -366,7 +391,7 @@ flowchart LR
     L <-->|"WebSocket / TCP · :7322 · mensajes cifrados y autenticados"| R["Lienzo en la PC remota"]
     R <-->|"Pipes del proceso"| W["Worker de ventana · Windows"]
     W -->|"Entrada Win32 · mouse y teclado"| C["Chrome real · perfil elegido"]
-    C -->|"PrintWindow · ventana y popups propios"| W
+    C -->|"Copia de pantalla o PrintWindow · ventana y popups propios"| W
 ```
 
 **Transporte y latencia.** La vista de ventana completa usa WebSocket (RFC 6455) sobre **TCP**;
@@ -374,8 +399,10 @@ no usa UDP ni RDP. La conexión se abre con un Upgrade HTTP y permanece abierta:
 pedido HTTP por cada movimiento o cuadro. Entre PCs, cada mensaje va cifrado y autenticado
 con un contador por sentido. UDP se usa para descubrir PCs en la LAN, no para transmitir Chrome.
 
-El worker compara capturas y envía PNG binario de la región modificada, o un cuadro completo
-cuando corresponde. Si no cambia la imagen, no la reenvía. El visor confirma los cuadros dibujados
+Si la ventana está visible y sin tapar, el worker copia lo ya compuesto en pantalla; si no, usa
+`PrintWindow` (que en cada cuadro hacía parpadear la ventana real). Compara capturas y envía PNG
+binario de la región modificada, o un cuadro completo cuando corresponde. Si no cambia la imagen,
+no la reenvía. El visor confirma los cuadros dibujados
 y hay como máximo **dos sin confirmar**, para acotar la cola. Los movimientos consecutivos
 conservan la posición más reciente y se despachan con `requestAnimationFrame`; clics y teclas
 no esperan la siguiente captura. La entrada despierta la captura en reposo y una vista oculta
@@ -383,12 +410,18 @@ pausa las imágenes. Imagen y entrada comparten el transporte TCP: la congestió
 agregar demora. No hay una medición publicada de latencia de extremo a extremo ni una garantía
 de equivalencia con RDP.
 
+**Portapapeles en la ventana completa.** Pegar en el visor manda el texto local (hasta 16.000
+caracteres) al portapapeles de la PC remota y le teclea Ctrl+V a Chrome; sólo se pega texto. Una
+copia hecha allá se avisa sin mostrar su contenido y recién viaja al tocar «Copiar acá», y sólo si
+esa ventana de Chrome estaba al frente; si cambió la ventana activa, no se lee el portapapeles.
+
 **Vista por pestañas** ofrece otra forma de navegar, con pestañas, dirección/búsqueda,
 atrás, adelante y recarga propios de Lienzo. Usa la depuración remota de Chrome. Las dos PCs
 necesitan esta versión de Lienzo; la que ejecuta Chrome necesita **Chrome instalado y
 Node.js 24 o posterior**. Para usar sus perfiles existentes (el personal, el del trabajo), elegí uno
-y tocá **Abrir perfil en esa PC**. En el Chrome de destino, versión 144 o posterior, habilitá
-`chrome://inspect/#remote-debugging`. Tocá **Conectar Chrome abierto** en Lienzo y aceptá el aviso
+y tocá **Abrir perfil en esa PC**. En el Chrome de destino, versión 144 o posterior, abrí
+`chrome://inspect/#remote-debugging` y tildá «Allow remote debugging»: se hace frente a esa PC.
+Tocá **Conectar Chrome abierto** en Lienzo y aceptá el aviso
 de Chrome en el destino. Chrome decide qué perfil comparte; con varios abiertos usa su perfil
 predeterminado. Abrir un perfil desde Lienzo no garantiza que Chrome comparta ese perfil.
 **Desconectar** deja Chrome y sus pestañas abiertos. No se copian cookies ni se modifican sus
@@ -396,12 +429,26 @@ preferencias para habilitar la conexión. La autorización inicial requiere inte
 Chrome de destino; no se promete que este modo funcione sin monitor o sesión gráfica activa.
 
 Con ambas PCs actualizadas, esta vista usa un canal WebSocket persistente y la misma conexión
-CDP ya autorizada. Envía capturas JPEG completas, hasta diez por segundo, con un solo cuadro
-pendiente de confirmación. La captura y la entrada se procesan por separado: el mouse y el
-teclado no esperan que termine la imagen. Una pestaña admite un visor a la vez. Al cambiar de
-pestaña o tamaño se descartan cuadros de la selección anterior; los clics y las teclas no se
-reenvían automáticamente tras un error o una desconexión. El funcionamiento con Windows
-bloqueado depende también de Chrome y del estado de su compositor; requiere prueba en destino.
+CDP ya autorizada. Chrome empuja los cuadros con `Page.startScreencast` a la resolución real del
+dispositivo (JPEG 90): 25 cuadros por segundo contra 9,5 del sondeo anterior, y la primera imagen de
+una pestaña nueva en 24 ms contra 948. Mientras la página se desplaza los cuadros salen a 1x y
+calidad 80, y la nitidez vuelve a los 300 ms de quedar quieta: en un scroll denso, de 20 a 25,5
+cuadros por segundo y de 11 a 4,9 MB/s. Una pestaña oculta o minimizada pasa a capturas espaciadas,
+con un aviso.
+
+La captura y la entrada se procesan por separado. El movimiento del mouse no espera la confirmación
+de Chrome: gana el último (con la ventana tapada cada move tardaba 5 s y terminaba en 504; ahora,
+10 a 28 ms). Clic, tecla y rueda siguen confirmados y nunca se reenvían, tampoco tras un error o una
+desconexión. Una pestaña admite un visor a la vez; una reconexión rápida de la interfaz espera a que
+el visor anterior la suelte. Al cambiar de pestaña o tamaño se descartan cuadros de la selección
+anterior. Una pestaña restaurada que Chrome no había cargado contesta 409 enseguida, en vez de un
+504 a los 8 s.
+
+Con la PC bloqueada anda sobre el Chrome real si Chrome arrancó con
+`--disable-features=CalculateNativeWinOcclusion`. Medido el 2026-10-21: ~14,5 cuadros por segundo
+bloqueada contra 21–23 desbloqueada; sin la bandera, 0,3. Chrome 155 ya no la ofrece en
+`chrome://flags`: va en los accesos directos de Chrome. Un perfil abierto desde Lienzo con
+**Abrir perfil en esa PC** ya la lleva.
 
 La alternativa **Usar un perfil separado de Lienzo → Abrir Chrome** usa un perfil persistente en
 `~/.lienzo/chrome-remoto`, en modo headless, sin monitor. **Cerrar Chrome** cierra sólo ese proceso.
@@ -413,8 +460,8 @@ El canal de peers autentica los pedidos y cifra el contenido y las entradas del 
 puerto de control de Chrome queda en loopback, sin abrir otro puerto en la LAN. No acepta comandos
 CDP arbitrarios ni navegación directa a `file:` o `javascript:` en la vista por pestañas. En esa vista,
 Ctrl+C copia texto seleccionado y
-Ctrl+V pega texto; los diálogos JavaScript se contestan dentro de la vista. La imagen se actualiza
-por capturas: no transmite audio. Las descargas se deshabilitan sólo en el perfil separado;
+Ctrl+V pega texto; los diálogos JavaScript se contestan dentro de la vista. Transmite imagen, no
+audio. Las descargas se deshabilitan sólo en el perfil separado;
 en Chrome habitual se conserva su configuración y los archivos quedan en la PC remota. Carga de archivos, ventanas
 del sistema y extensiones no están integradas en la vista por pestañas.
 
@@ -491,8 +538,19 @@ como una dimensión de cada tabla; los cuerpos de encargos e informes y la evide
 `~/.lienzo/proyectos/<proyecto>/`. Se replica entre las PCs
 emparejadas por el canal firmado (cada 120 s, o `POST /conocimiento/replicar`): cada PC trae de las
 demás los cambios nacidos allá, los proyectos se unen por remote, y los choques y duplicados quedan
-para la coordinadora ([anexo C](docs/propuesta-memoria/anexo-c-replica.md)). Las bases no
-se suben a Git.
+para la coordinadora ([anexo C](docs/propuesta-memoria/anexo-c-replica.md)). Cada vuelta empieza
+con un solo pedido `marcas`, que dice por proyecto hasta dónde llegan los cambios y capturas del par,
+y sólo se pide lo que pasa el cursor local. Una vuelta ociosa bajó de 41 pedidos y 494 ms de CPU a
+1 pedido y 19 ms. Un par de la versión anterior contesta 400 a `marcas`: se sigue con el ciclo viejo
+por proyecto y se reintenta a los 15 minutos. Las bases no se suben a Git.
+
+Las bases viejas por proyecto se reimportan con procedencia: cada nodo y vínculo anota de qué base y
+revisión vino y una huella. Una reimportación actualiza lo que cambió allá y no acá (CAS contra esa
+huella), no hace nada si no hubo cambios y deja un choque visible, en vez de pisar, si la fila se
+editó de los dos lados. Una fila que viola una restricción se omite y queda anotada, sin abortar el
+resto. Si la base vieja no tiene historial nuevo, el arranque no recorre sus filas: con 5000 nodos,
+de 0,13 a 0,002 s. El historial importado con marca `legado:` no decide qué edición de un par es la
+más nueva.
 El diseño detallado está en [v5](docs/propuesta-memoria/v5.md).
 
 ### Plugins locales
@@ -701,13 +759,18 @@ Por qué no llega una PC: el chip de la tira dice el motivo cuando una PC está 
 La etiqueta de esta PC se muestra aunque sea la única: su menú derecho conserva Actualizar
 cuando hay una versión pendiente. Con varias PCs también aparece Todas para filtrar el tablero.
 
-Arriba del tablero, un chip por PC con sus tarjetas, memoria libre, CPU, temperatura y latencia. En
+Arriba del tablero, un chip por PC con sus tarjetas, memoria libre, CPU, temperatura y latencia. La
+latencia se mide en el sondeo de salud de cada 15 s, así está viva aunque no haya tráfico; una PC
+caída no muestra un número viejo. En
 rojo si pasa de 85 °C, si no le entra otro agente sin bajar de 1,5 GB libres o si un agente se
 quedó sin cuota. En violeta, la credencial de git: cada PC prueba con `git ls-remote` el
 `origin` de los repos con sesión viva (y los de `git_check`) y distingue `vencida`, `no verificable`,
 `sin red` y `timeout`. Click en el violeta le pasa a esa PC la credencial que tiene esta, cifrada
 (lo mismo que `coordinar.pasar_credencial_git`); con «sin red» o «timeout» avisa que otra credencial
-no lo arregla. Una PC caída se ve en ○ y sus tarjetas quedan grises.
+no lo arregla. Una PC caída se ve en ○ y sus tarjetas quedan grises. El server apaga los cuadros de
+error de Windows para los procesos que lanza: con la memoria al límite, `git-remote-https.exe` de
+este chequeo fallaba con 0xc0000142 y dejaba un cartel modal en el escritorio. Ese código queda
+ahora en el log, con la URL.
 
 ![tira de PCs](docs/img/tira-pcs.png)
 
@@ -748,7 +811,8 @@ credencial. Un `robocopy /Z /MT` hecho en casa:
   vuelve a pasar.
 - Sólo lo que cambió, comparando hashes por bloque (tamaño y fecha no alcanzan).
 - Nunca borra en el destino, salvo `espejo: true`, que primero lista lo que borraría y espera
-  `POST /xfer/<id>/confirmar`.
+  `POST /xfer/<id>/confirmar`. El espejo borra por el handle fijado de la carpeta padre y rechaza
+  enlaces: una junction puesta entre validar y borrar no lo hace borrar fuera del destino.
 - No mata la máquina. Topes `mbps` y `disco_mbps`, prioridad baja de CPU y disco, y se frena si
   cualquiera de las dos PCs baja de 1,5 GB libres (sigue sola cuando se libera).
 - Rutas permitidas. Origen y destino tienen que caer en `copy_roots` del `config.json` de su PC
@@ -902,7 +966,9 @@ resto de `/peer/*` (firmado). Un envío, un lanzamiento, un adjunto o un secreto
 ```
 lienzo/
   server.py        HTTP + SSE, túnel, hilos, listener de peers (7322) y sus rutas /peer/*
-  sessions.py      registro de sesiones, máquina de estados, eventos de hooks, barrido, envío
+  sessions.py      registro de sesiones, máquina de estados, barrido, envío
+  hooks_eventos.py eventos de hooks aplicados a su tarjeta (pid, prompt, stop, notificaciones, coda)
+                   y consumo de ~/.lienzo/events; salió de sessions.py sin cambiar el código
   hook.py          hook único de los agentes; espera de permisos con nonce
   transcripts.py   lectura de transcripciones, digest por turno, límite de uso, denegados
   procs.py, procinfo.py, backend.py, tmux.py   procesos y fuentes (Windows, tmux de WSL/Linux)
@@ -919,7 +985,8 @@ lienzo/
   red.py           Tailscale (tailnet, IP propia) y el diagnóstico de un peer que no llega
   health.py        memoria, CPU, temperatura, capacidad, credenciales de git
   cuenta_github.py cuenta de gh con push para cada repo de github.com
-  launch.py        lanzar sesiones (.cmd en Windows, tmux fuera)
+  launch.py        lanzar sesiones (.cmd en Windows, tmux fuera); limpia los de más de 7 días
+  titulo_lanzado.py   el título pedido al lanzar, para la tarjeta del proceso que nació de ahí
   restore.py       restaurar sesiones tras un reinicio
   secretos.py      secretos entre PCs
   xfer.py          copiar archivos entre PCs
@@ -950,6 +1017,10 @@ cd web; npm run build; npm run lint
 cd web; npm run test:ui            # interfaz en el navegador (Playwright, con el server andando)
 ```
 
+Las pruebas de WSL trabajan en `/var/tmp`, no en `/tmp`: el arranque de la distro vacía `/tmp`
+(systemd-tmpfiles) y eso era la falla intermitente de las transferencias. Una guarda lee las reglas
+de tmpfiles reales.
+
 La configuración de [pruebas agénticas](pruebas-agenticas/README.md) ejecuta las suites existentes
 con el runner del plugin instalado: pytest, ESLint, build, tests TypeScript y Playwright. Guarda
 logs e historial SQLite en `pruebas-agenticas/resultados/`. Excluye las capturas de documentación
@@ -977,7 +1048,8 @@ plugin sigue sin certificar: falta baseline aprobado y no se ejecutaron las muta
                               mem_aviso_gb, max_sesiones_por_repo
   auth.json                   clave TOTP del acceso remoto
   peer.json, peers.json       identidad de esta PC y PCs emparejadas (con la clave del par)
-  launch/                     un .cmd por sesión lanzada desde el tablero
+  launch/                     un .cmd y un .json (título y agente) por sesión lanzada desde el
+                              tablero; se borran a los 7 días
   restaurar.json              sesiones para relanzar tras un reinicio
   sucesion.json               muertas con reglas estacionadas y quién sucedió a quién
   rondas.json                 avisos coordinados, turnos y sus políticas
@@ -985,7 +1057,8 @@ plugin sigue sin certificar: falta baseline aprobado y no se ejecutaron las muta
   proyectos/<proyecto>/       cuerpos de encargos e informes y evidencia de cada proyecto
   xfer/                       copias entre PCs (trabajos/) y hashes de lo recibido (hashes.db)
   chrome-remoto/              perfil separado de Chrome para la vista por pestañas
-  *.corrupto-<fecha>          un JSON que no se pudo leer, apartado en vez de pisarlo
+  *.corrupto-<fecha>          un JSON que no se pudo leer, apartado en vez de pisarlo; los JSON
+                              de estado se escriben por la escritura atómica de atomico.py
   lienzo.log                  una línea por hecho
 ```
 
@@ -1029,6 +1102,9 @@ no implican que se hayan reproducido nuevamente en esta revisión.
 - Chrome en modo ventana requiere una sesión Windows abierta y desbloqueada. Los popups propios
   se recortan al borde de la ventana compartida y algunas sombras pueden verse con fondo negro.
   No transmite audio. El parpadeo reportado en la vista por pestañas sigue sin causa confirmada.
+- La vista por pestañas con la PC bloqueada necesita que Chrome haya arrancado con
+  `--disable-features=CalculateNativeWinOcclusion`; sin eso baja a 0,3 cuadros por segundo. Falta
+  verla en uso real desde la otra PC.
 
 ## Antigravity CLI (Windows)
 
