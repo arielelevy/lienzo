@@ -69,6 +69,8 @@ def red(tmp_path, monkeypatch):
     monkeypatch.setattr(k.state, "log", lambda msg: None)
     monkeypatch.setattr(replica.state, "log", lambda msg: None)
     replica._sin_soporte.clear()
+    replica._sin_marcas.clear()
+    replica._cuerpos_completos.clear()
     return Red(tmp_path, monkeypatch)
 
 
@@ -330,10 +332,10 @@ def test_un_proyecto_roto_no_frena_a_los_demas(red, monkeypatch):
         k.crear_nodo("otro", "tema", "x", autor="c")
     original = replica._sincronizar_proyecto
 
-    def rompe(pc, forward, remoto, pid):
+    def rompe(pc, forward, remoto, pid, *resto):
         if remoto == "teorema":
             raise KeyError("campo")
-        return original(pc, forward, remoto, pid)
+        return original(pc, forward, remoto, pid, *resto)
 
     monkeypatch.setattr(replica, "_sincronizar_proyecto", rompe)
     res = red.sync("pcB", "pcA")
@@ -437,14 +439,14 @@ def test_un_par_con_otro_esquema_se_trata_como_sin_soporte(red):
 
     def forward(pc, metodo, ruta, cuerpo):
         code, res = red.forward(pc, metodo, ruta, cuerpo)
-        if cuerpo.get("op") == "proyectos":
+        if cuerpo.get("op") in ("proyectos", "marcas"):
             res = {**res, "esquema": 3}  # A responde como un lienzo de esquema 3
         calls.append(cuerpo.get("op"))
         return code, res
 
     with red.en("pcB"), pytest.raises(replica.SinSoporte):
         replica.sincronizar("pcA", forward)
-    assert calls == ["proyectos"]  # no pidio cambios con numeros que no se comparan
+    assert calls == ["marcas"]  # no pidio cambios con numeros que no se comparan
 
 
 def test_un_nodo_que_existe_en_otro_proyecto_no_se_pisa(red):

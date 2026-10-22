@@ -81,7 +81,7 @@ def _nodo_viejo(con, pid, nid, tipo, texto, datos="{}", estado=None):
     )
 
 
-def escribir_vieja(sql: str, args=(), motivo="tarde", nodo_id=None, vinculo=(None, None, None)):
+def escribir_vieja(sql: str, args=(), motivo="tarde", nodo_id=None, vinculo=(None, None, None), fecha=TARDE):
     """El server viejo sigue escribiendo: la fila y su cambio en la base vieja (el de un vinculo lleva
     de, relacion y a, como los anota el server)."""
     con = sqlite3.connect(_vieja())
@@ -89,7 +89,7 @@ def escribir_vieja(sql: str, args=(), motivo="tarde", nodo_id=None, vinculo=(Non
     con.execute(
         "INSERT INTO cambio (proyecto, nodo_id, de, relacion, a, accion, nuevo, autor, motivo, origen, fecha)"
         " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        ("p", nodo_id, *vinculo, "estado", "{}", "c", motivo, "{}", TARDE),
+        ("p", nodo_id, *vinculo, "estado", "{}", "c", motivo, "{}", fecha),
     )
     con.commit()
     con.close()
@@ -596,3 +596,35 @@ def test_una_captura_nueva_no_relee_la_prosa(monkeypatch):
     monkeypatch.setattr(k, "_rellenar_prosa", no)
     reabrir()
     assert _central("SELECT id FROM captura") == [("c1",)]
+
+
+def test_el_historial_legado_no_cuenta_para_decidir_la_edicion_mas_nueva_de_un_par():
+    """Una edicion de la base vieja que aca no se aplico (choque) no es el estado del nodo: no puede frenar
+    a la edicion de un par que es mas nueva que lo que el nodo tiene."""
+    base_vieja()
+    reabrir()
+    k.actualizar_datos("p", "t-p", {"nota": "aca"}, por="coordinadora:c")
+    escribir_vieja(
+        "UPDATE nodo SET texto = 'halving alla' WHERE id = 't-p'", nodo_id="t-p", fecha="2099-01-01T00:00:00.000Z"
+    )
+    reabrir()
+    assert _central("SELECT pc LIKE 'legado:%' FROM cambio WHERE fecha LIKE '2099%'") == [(1,)]
+    n = {"id": "t-p", "tipo": "tema", "texto": "halving de B", "datos": {"nota": "aca"}, "autor": "c", "origen": {}}
+    c = {"pc": "pcB", "seq_origen": 1, "accion": "texto", "fecha": "2098-01-01T00:00:00.000Z", "nuevo": n}
+    with k._abrir("p") as con:
+        con.execute("BEGIN IMMEDIATE")
+        assert replica.aplicar(con, "p", c)
+    assert k.nodo("p", "t-p")["texto"] == "halving de B"
+
+
+def test_un_nodo_con_solo_historial_legado_no_lo_pisa_una_edicion_mas_vieja_de_un_par():
+    base_vieja()
+    reabrir()
+    with sqlite3.connect(k.db_path()) as con:
+        con.execute("UPDATE cambio SET pc = 'legado:x', seq_origen = seq WHERE nodo_id = 't-p'")
+    n = {"id": "t-p", "tipo": "tema", "texto": "de B en 2001", "datos": {}, "autor": "c", "origen": {}}
+    c = {"pc": "pcB", "seq_origen": 1, "accion": "texto", "fecha": "2001-01-01T00:00:00.000Z", "nuevo": n}
+    with k._abrir("p") as con:
+        con.execute("BEGIN IMMEDIATE")
+        replica.aplicar(con, "p", c)
+    assert k.nodo("p", "t-p")["texto"] == "halving"

@@ -15,6 +15,11 @@ con `{op, ...}` en el cuerpo (un POST para que la firma cubra los parametros).
   `replica_pendiente` y se reintenta en cada vuelta.
 - Las capturas (inmutables) se copian por id desde el rowid de origen. Los cuerpos de encargos e
   informes y los artefactos de evidencia se piden aparte y se verifican por hash cuando lo hay.
+- Cada vuelta empieza con `marcas`: la lista de proyectos con, por proyecto, el ultimo seq de origen y el
+  ultimo rowid de captura que nacieron en el par. Solo se piden cambios o capturas de un proyecto cuya
+  marca pasa el cursor: una vuelta sin novedades es un pedido, no 1 + 2 por proyecto (medido en
+  .temp/resultados/noche-B/, encargo B del 2026-10-21). Un par de la version anterior contesta 400 a
+  `marcas` (pide el proyecto antes de mirar la op): se vuelve a `proyectos` y se le pide todo, como antes.
 - Los proyectos se unen por remote (anexo A: el remote une la misma carpeta en dos PCs). Uno sin
   remote no se replica: no hay como saber que es el mismo. Uno que solo existe en el par se crea aca
   con su id (o `-2`) y sus remotes, sin carpeta en esta PC.
@@ -41,7 +46,10 @@ CICLO_S = 120  # cada cuanto el server sincroniza con los pares vivos
 _lock = threading.Lock()  # una sincronizacion a la vez por proceso
 _sin_soporte: dict[str, float] = {}  # par viejo sin la ruta -> cuando se vio; se reintenta pasado SIN_SOPORTE_S
 SIN_SOPORTE_S = 900  # la otra PC se actualiza con un pull: no se la saltea hasta el reinicio
+_sin_marcas: dict[str, float] = {}  # par de la version anterior (sin `marcas`) -> cuando se vio; mismo plazo
 _cuerpos_fallidos: dict[tuple[str, str, str], float] = {}  # (par, proyecto, ruta) -> cuando fallo
+# (par, proyecto remoto) -> (proyecto local, cuando se revisaron sus cuerpos con ese par)
+_cuerpos_completos: dict[tuple[str, str], tuple[str, float]] = {}
 REINTENTO_CUERPO_S = 1800
 SUBCARPETAS = ("rondas", "capturas", "evidencia")  # lo unico que un par puede pedir o traer
 
@@ -58,6 +66,8 @@ def atender(d: dict) -> tuple[int, dict]:
         op = d.get("op")
         if op == "proyectos":
             return 200, {"pc": identity.pc_id(), "esquema": k.VERSION_ESQUEMA, "proyectos": _proyectos_replicables()}
+        if op == "marcas":
+            return 200, {"pc": identity.pc_id(), "esquema": k.VERSION_ESQUEMA, "proyectos": _marcas_propias()}
         pid = k._texto(d.get("proyecto"), "proyecto", 64)
         k.proyecto(pid)
         if op == "cambios":
@@ -80,6 +90,27 @@ def _entero(v, defecto: int = 0) -> int:
 
 def _proyectos_replicables() -> list[dict]:
     return [{"id": p["id"], "nombre": p.get("nombre"), "remotes": p.get("remotes") or []} for p in k.proyectos()]
+
+
+def _marcas_propias() -> list[dict]:
+    """Los proyectos replicables con lo ultimo que nacio aca en cada uno: el seq de origen mas alto de sus
+    cambios y el rowid mas alto de sus capturas, con el mismo filtro que `_cambios_propios` y
+    `_capturas_propias` (0 si no hay). Dos consultas para todos los proyectos."""
+    proyectos = _proyectos_replicables()
+    if not proyectos or not os.path.isfile(k.db_path()):
+        # sin base todavia no nacio nada aca: no se crea por una lectura de un par
+        return [{**p, "marcas": {"cambio": 0, "captura": 0}} for p in proyectos]
+    yo = identity.pc_id()
+    with k._Conexion(k.db_path()) as con:
+        cambios = dict(
+            con.execute("SELECT proyecto, MAX(seq_origen) FROM cambio WHERE pc = ? GROUP BY proyecto", (yo,)).fetchall()
+        )
+        capturas = dict(
+            con.execute("SELECT proyecto, MAX(rowid) FROM captura WHERE pc = ? GROUP BY proyecto", (yo,)).fetchall()
+        )
+    return [
+        {**p, "marcas": {"cambio": cambios.get(p["id"]) or 0, "captura": capturas.get(p["id"]) or 0}} for p in proyectos
+    ]
 
 
 def _cambios_propios(pid: str, desde: int, limite: int) -> dict:
@@ -134,7 +165,10 @@ def _cuerpo(pid: str, ruta: str) -> dict:
 
 
 def _pedir(forward, pc: str, cuerpo: dict) -> dict:
-    code, res = forward(pc, "POST", "/conocimiento", cuerpo)
+    return _respuesta(pc, *forward(pc, "POST", "/conocimiento", cuerpo))
+
+
+def _respuesta(pc: str, code: int, res: dict) -> dict:
     if code == 404 and "desconocida" in str((res or {}).get("error", "")):
         raise SinSoporte(pc)
     if code != 200:
@@ -173,13 +207,19 @@ def sincronizar(pc: str, forward) -> dict:
     mirror.MIRROR.forward (o el de las pruebas). Devuelve, por proyecto, cuanto se aplico."""
     with _lock:
         res = {"pc": pc, "proyectos": [], "sin_remote": []}
-        lista = _pedir(forward, pc, {"op": "proyectos"})
+        lista = _listar(forward, pc)
         if lista.get("pc") == identity.pc_id():
             raise OSError("el par respondio con el pc_id de esta PC")
         if lista.get("esquema") != k.VERSION_ESQUEMA:
             # (pc, seq_origen) identifica un cambio en toda la base desde el esquema 4: con otro esquema los
             # numeros no se comparan. Se espera a que la otra PC se actualice (code review 2026-10-10)
             raise SinSoporte(pc)
+        try:
+            cursores, pendientes = _estado_local(pc)
+        except sqlite3.Error as e:  # sin la foto, cada proyecto hace su vuelta entera y su error queda en el
+            state.log(f"replica: no pude leer los cursores de {pc} ({e}); vuelta completa por proyecto")
+            cursores, pendientes = {}, {}
+        quietos: list[str] = []
         for remoto in lista.get("proyectos") or []:
             pid = None
             try:
@@ -187,7 +227,15 @@ def sincronizar(pc: str, forward) -> dict:
                 if pid is None:
                     res["sin_remote"].append(remoto.get("id"))
                     continue
-                res["proyectos"].append(_sincronizar_proyecto(pc, forward, remoto["id"], pid))
+                marcas = remoto.get("marcas") if isinstance(remoto.get("marcas"), dict) else None
+                if _quieto(pc, remoto["id"], pid, marcas, cursores):
+                    # nada nuevo alla, cursores en su lugar y cuerpos revisados: no se abre la base por el
+                    out = _resultado(pid, remoto["id"])
+                    out["pendientes"] = _reintentar_pendientes(pid) if pendientes.get(pid) else 0
+                    res["proyectos"].append(out)
+                    quietos.append(remoto["id"])
+                    continue
+                res["proyectos"].append(_sincronizar_proyecto(pc, forward, remoto["id"], pid, marcas))
             except SinSoporte:
                 raise
             except Exception as e:  # un proyecto roto no frena a los demas; queda dicho y en el log
@@ -195,7 +243,73 @@ def sincronizar(pc: str, forward) -> dict:
                 res["proyectos"].append(
                     {"proyecto": pid, "remoto": remoto.get("id"), "error": f"{type(e).__name__}: {e}"}
                 )
+        if quietos:  # la vuelta termino bien tambien para ellos: una escritura para todos, no una por proyecto
+            try:
+                with k._Conexion(k.db_path()) as con:
+                    con.executemany(
+                        "UPDATE replica_cursor SET fecha = ? WHERE peer = ? AND proyecto_remoto = ?",
+                        [(k.ahora(), pc, r) for r in quietos],
+                    )
+            except sqlite3.Error as e:  # solo la fecha: lo traido en la vuelta ya quedo confirmado
+                state.log(f"replica: no pude anotar la vuelta con {pc} en los cursores: {e}")
         return res
+
+
+def _estado_local(pc: str) -> tuple[dict, dict]:
+    """De una vez para toda la vuelta: los cursores de `pc` ((proyecto remoto, clase) -> (ultimo, proyecto
+    local)) y cuantos cambios esperan en cada proyecto. Sin base todavia, nada."""
+    if not os.path.isfile(k.db_path()):
+        return {}, {}
+    with k._Conexion(k.db_path()) as con:
+        cursores = {
+            (r[0], r[1]): (r[2], r[3])
+            for r in con.execute(
+                "SELECT proyecto_remoto, clase, ultimo, proyecto FROM replica_cursor WHERE peer = ?", (pc,)
+            )
+        }
+        pendientes = dict(con.execute("SELECT proyecto, COUNT(*) FROM replica_pendiente GROUP BY proyecto").fetchall())
+    return cursores, pendientes
+
+
+def _alcanzada(marcas: dict | None, clase: str, cursor: int) -> bool:
+    """Lo ultimo que nacio en el par en esta clase ya esta aca. Sin marcas (par anterior), nunca."""
+    return marcas is not None and _entero(marcas.get(clase)) <= cursor
+
+
+def _quieto(pc: str, remoto: str, pid: str, marcas: dict | None, cursores: dict) -> bool:
+    """Un proyecto del par sin nada que hacer en esta vuelta: las dos marcas alcanzadas por cursores que ya
+    existen y apuntan a este proyecto (la vuelta completa los crea o los corrige), su carpeta en su lugar
+    (si no, la vuelta completa da el error), y los cuerpos que sus nodos citan revisados hace menos de
+    REINTENTO_CUERPO_S (asi un cuerpo que se borro o que todavia no se pudo traer se vuelve a buscar)."""
+    revisado = _cuerpos_completos.get((pc, remoto))
+    if revisado is None or revisado[0] != pid or time.monotonic() - revisado[1] >= REINTENTO_CUERPO_S:
+        return False
+    if not os.path.isdir(k._carpeta(pid)):
+        return False
+    for clase in ("cambio", "captura"):
+        ultimo, local = cursores.get((remoto, clase), (0, None))
+        if local != pid or not _alcanzada(marcas, clase, ultimo):
+            return False
+    return True
+
+
+def _listar(forward, pc: str) -> dict:
+    """Los proyectos del par, con sus marcas si las conoce. Un par de la version anterior contesta a
+    `marcas` el 400 de su `atender`, que pide el proyecto antes de mirar la op: se le pide `proyectos` (sin
+    marcas: se trae todo) y no se le vuelve a preguntar por SIN_SOPORTE_S. Cualquier otro fallo de
+    `marcas` (si el texto de ese 400 cambiara, tambien) hace esa vuelta con `proyectos` y la siguiente
+    vuelve a probar. Un 404 «desconocida» sigue siendo SinSoporte."""
+    if time.monotonic() - _sin_marcas.get(pc, -SIN_SOPORTE_S) >= SIN_SOPORTE_S:
+        code, res = forward(pc, "POST", "/conocimiento", {"op": "marcas"})
+        if code == 200 or (code == 404 and "desconocida" in str((res or {}).get("error", ""))):
+            _sin_marcas.pop(pc, None)
+            return _respuesta(pc, code, res)
+        error = str((res or {}).get("error", ""))
+        if code == 400 and "proyecto debe ser" in error:
+            _sin_marcas[pc] = time.monotonic()
+        else:  # marcas lee la base del par (proyectos no): ocupada o rota, esta vuelta se hace como antes
+            state.log(f"replica: marcas de {pc} dio {code} {error}; esta vuelta va sin marcas")
+    return _pedir(forward, pc, {"op": "proyectos"})
 
 
 def _cursor(con, pc: str, remoto: str, clase: str) -> int:
@@ -215,11 +329,18 @@ def _mover_cursor(con, pid: str, pc: str, remoto: str, clase: str, ultimo: int) 
     )
 
 
-def _sincronizar_proyecto(pc: str, forward, remoto: str, pid: str) -> dict:
-    out = {"proyecto": pid, "remoto": remoto, "cambios": 0, "capturas": 0, "cuerpos": 0, "pendientes": 0}
+def _resultado(pid: str, remoto: str) -> dict:
+    """Lo que informa la vuelta de un proyecto (la completa y la de uno quieto)."""
+    return {"proyecto": pid, "remoto": remoto, "cambios": 0, "capturas": 0, "cuerpos": 0, "pendientes": 0}
+
+
+def _sincronizar_proyecto(pc: str, forward, remoto: str, pid: str, marcas: dict | None = None) -> dict:
+    out = _resultado(pid, remoto)
     while True:
         with k._abrir(pid) as con:
             desde = _cursor(con, pc, remoto, "cambio")
+        if _alcanzada(marcas, "cambio", desde):
+            break
         lote = _pedir(forward, pc, {"op": "cambios", "proyecto": remoto, "desde": desde, "limite": LOTE})
         cambios = lote.get("cambios") or []
         if cambios:
@@ -231,10 +352,15 @@ def _sincronizar_proyecto(pc: str, forward, remoto: str, pid: str) -> dict:
                 _mover_cursor(con, pid, pc, remoto, "cambio", max(int(c["seq_origen"]) for c in cambios))
         if not lote.get("hay_mas"):
             break
+    if out["cambios"]:  # nodos nuevos pueden citar cuerpos que tiene otro par: se revisan con todos
+        for clave in [c for c, (local, _) in _cuerpos_completos.items() if local == pid]:
+            _cuerpos_completos.pop(clave, None)
     out["pendientes"] = _reintentar_pendientes(pid)
     while True:
         with k._abrir(pid) as con:
             desde = _cursor(con, pc, remoto, "captura")
+        if _alcanzada(marcas, "captura", desde):
+            break
         lote = _pedir(forward, pc, {"op": "capturas", "proyecto": remoto, "desde": desde, "limite": LOTE})
         caps = lote.get("capturas") or []
         if caps:
@@ -316,8 +442,13 @@ def _aplicar(con, pid: str, c: dict) -> None:
 
 
 def _ultimo_cambio(con, nid: str) -> tuple[str, str] | None:
+    """La edicion aplicada mas nueva del nodo, (fecha, pc). El historial `legado:` de una base vieja (una
+    edicion que aca no se aplico por un choque) no es el estado del nodo: cuenta solo si el nodo no tiene
+    otro historial, para que una edicion mas vieja de un par no lo pise sin comparar."""
     r = con.execute(
-        "SELECT fecha, pc FROM cambio WHERE nodo_id = ? ORDER BY fecha DESC, pc DESC LIMIT 1", (nid,)
+        "SELECT fecha, pc FROM cambio WHERE nodo_id = ?"
+        " ORDER BY (pc IS NOT NULL AND pc LIKE 'legado:%'), fecha DESC, pc DESC LIMIT 1",
+        (nid,),
     ).fetchone()
     return (r[0], r[1] or "") if r else None
 
@@ -502,6 +633,9 @@ def _traer_cuerpos(pc: str, forward, remoto: str, pid: str) -> int:
                     "INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)", (nid, datos.decode("utf-8", "replace"))
                 )
         hechos += 1
+    # revisado: hasta REINTENTO_CUERPO_S, una vuelta sin novedades no lo vuelve a mirar (lo que no se pudo
+    # traer tampoco se reintentaba antes de ese plazo: `_cuerpos_fallidos`)
+    _cuerpos_completos[(pc, remoto)] = (pid, time.monotonic())
     return hechos
 
 
