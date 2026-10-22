@@ -231,18 +231,18 @@ def test_el_cartel_de_aprobaciones_pendientes_de_subagentes_es_un_dialogo():
     assert d["selected"] == 1 and len(d["options"]) == 4
 
 
-def test_el_auto_aprobar_elige_approve_all_pending_y_nunca_el_futuro():
+def test_el_auto_aprobar_elige_aprobar_y_auto_aprobar_lo_futuro():
+    """Ariel, 2026-10-22: con «(f)» Kiro deja de preguntar por los subagentes; si no está, «(a)»."""
     import screen
 
     d = screen.dialog(PENDIENTES)
-    assert au.opcion_de_permiso(d, "kiro") == 1
-    # con el cursor en otra opcion sigue eligiendo (a), nunca (f)
+    assert au.opcion_de_permiso(d, "kiro") == 2
+    # con el cursor en otra opcion elige igual (f)
     otra = [l.replace("❯", " ") for l in PENDIENTES]
     otra[7] = "   ❯ (f) Approve all pending and auto-approve future subagent requests"
     d = screen.dialog(otra)
-    assert d and d["selected"] == 2 and au.opcion_de_permiso(d, "kiro") == 1
-    # sin la opcion (a), no contesta
-    sin_a = [l for l in PENDIENTES if "(a)" not in l]
-    sin_a[6] = "   ❯ (f) Approve all pending and auto-approve future subagent requests"
-    assert au.opcion_de_permiso(screen.dialog(sin_a), "kiro") is None
+    assert d and d["selected"] == 2 and au.opcion_de_permiso(d, "kiro") == 2
+    # sin (f), (a)
+    sin_f = [l for l in PENDIENTES if "(f)" not in l]
+    assert au.opcion_de_permiso(screen.dialog(sin_f), "kiro") == 1
     assert au.opcion_de_permiso(screen.dialog(PENDIENTES), "claude") is None

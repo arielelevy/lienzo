@@ -240,9 +240,11 @@ class Kiro(Perfil):
         numeros, se elige con flechas): permite «Allow», nunca «Always allow»."""
         q, ops = _dialogo_plano(dialog)
         if re.fullmatch(r"\d+ tool approvals? pending", q):
-            # permisos de sus subagentes: «(a) Approve all pending», nunca «(f) ... auto-approve future
-            # subagent requests», que deja aprobado lo que venga (pedido de Ariel, 2026-10-22)
-            return next((n for n, t in ops if t == "(a) approve all pending"), None)
+            # permisos de sus subagentes: «(f) Approve all pending and auto-approve future subagent
+            # requests», así Kiro deja de preguntar por los subagentes (pedido de Ariel, 2026-10-22, que
+            # cambió el criterio inicial de elegir sólo «(a)»); si (f) no está, «(a) Approve all pending»
+            f = next((n for n, t in ops if t.startswith("(f) approve all pending and auto-approve future")), None)
+            return f or next((n for n, t in ops if t == "(a) approve all pending"), None)
         allow_deny = any(t.startswith("allow") for _, t in ops) and any(t.startswith("deny") for _, t in ops)
         if not ("requires approval" in q or "requiere permiso" in q or allow_deny):
             return None
