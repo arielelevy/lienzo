@@ -32,10 +32,11 @@ try:
     sh("new-session", "-d", "-s", SESS, "-x", "200", "-y", "50", "-c", cwd, "python3", "-i", "-u")
     time.sleep(1.2)
 
-    # 1) DISCOVER: el pane con el python aparece, con su pid real y su cwd
-    ag = [a for a in T.find_agent_panes({"python3", "python"}) if a["cwd"] == cwd]
-    check(bool(ag), "find_agent_panes encuentra el pane del python con su cwd (/tmp)")
-    target = ag[0]["target"] if ag else f"{SESS}:0.0"
+    # 1) DISCOVER: el pane del python aparece en list_panes, con su cwd
+    pane_id = sh("display-message", "-p", "-t", SESS, "#{pane_id}").stdout.strip()
+    ag = [p for p in T.list_panes() if p["target"] == pane_id and p["cwd"] == cwd]
+    check(bool(ag), "list_panes encuentra el pane del python con su cwd (/tmp)")
+    target = pane_id or f"{SESS}:0.0"
 
     # 2) SEND: el REPL ejecuta lo que se le teclea (prueba dura: escribe un archivo)
     marca = "MARCA_" + uuid.uuid4().hex[:8]

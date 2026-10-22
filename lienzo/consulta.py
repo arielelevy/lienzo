@@ -119,12 +119,6 @@ def espera(sid: str) -> bool:
         return any(c["estado"] in ABIERTAS and sid in c["pendientes"] for c in CONSULTAS.values())
 
 
-def de_tarjeta(sid: str) -> dict | None:
-    with lock:
-        c = next((c for c in CONSULTAS.values() if c["estado"] in ABIERTAS and sid in _participantes(c)), None)
-        return resumen(c) if c else None
-
-
 def _participantes(c: dict) -> list[str]:
     return [*c["investigadores"], *([c["revisor"]] if c["revisor"] else [])]
 

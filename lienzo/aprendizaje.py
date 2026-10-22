@@ -316,24 +316,6 @@ def reglas_cuestionadas(pid: str, *, con=None) -> list[dict]:
     return out
 
 
-def por_cuestionar(pid: str) -> list[tuple[dict, list[dict]]]:
-    """Solo lectura: las reglas `vigente` que `cuestionar` pasaria a cuestionada, cada una con sus
-    episodios posteriores. Una sola conexion para todas."""
-    with k._abrir(pid) as con:
-        con.execute("BEGIN")
-        grupos = {}
-        filas = con.execute(
-            "SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'regla' AND estado = 'vigente' ORDER BY fecha, id", (pid,)
-        ).fetchall()
-        out = []
-        for r in filas:
-            regla = k._fila(r)
-            eps = _episodios_posteriores(con, pid, regla, _incidentes_origen(con, pid, regla["id"]), grupos)
-            if eps:
-                out.append((regla, eps))
-    return out
-
-
 def cuestionar(pid: str, *, con=None) -> list[dict]:
     """Pasa a `cuestionada` cada regla `vigente` derivada de un incidente cuyo grupo de recurrencia
     tiene un episodio posterior a `datos.vigente_desde`, con `por="server"` y los ids en

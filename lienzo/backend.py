@@ -67,8 +67,8 @@ def _tarjeta_tmux(a: dict, distro: str | None) -> dict:
 def _tmux_sweep() -> list[dict]:
     """Todos los agentes claude/codex (en tmux o sueltos), con la forma de procs.sweep() mas `cwd`,
     `target` (el pane, o None si esta suelto), `backend` y `distro` (siempre que el agente venga de
-    WSL —tambien la default—; nativo va sin distro). Los panes se consultan una vez por distro (la
-    misma forma de list_panes_todas, adentro de all_agents), asi el barrido ve los agentes de todas
+    WSL —tambien la default—; nativo va sin distro). Los panes se consultan una vez por distro
+    (adentro de all_agents), asi el barrido ve los agentes de todas
     las distros, no solo los de la default. Con una sola distro (o nativo) es el camino de hoy: una
     sola llamada a all_agents, en serie. Los sueltos van en solo lectura (no_console): se ven y se
     leen, pero no se les escribe (no hay pane; ver docs/porting-linux-2026-09-08.md)."""

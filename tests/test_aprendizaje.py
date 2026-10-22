@@ -619,10 +619,6 @@ def test_medicion_300_incidentes_cadena_de_40_y_20_reglas(proy):
     assert ap.recurrencia(P, cadena[39])["cantidad"] == 40
 
     t0 = time.perf_counter()
-    cand = ap.por_cuestionar(P)
-    t_eval = (time.perf_counter() - t0) * 1000
-    assert {r["id"] for r, _ in cand} == set(reglas)
-    t0 = time.perf_counter()
     q = ap.cuestionar(P)
     t_cue = (time.perf_counter() - t0) * 1000
     assert {x["id"] for x in q} == set(reglas) and all(x["recien"] for x in q)
@@ -634,9 +630,6 @@ def test_medicion_300_incidentes_cadena_de_40_y_20_reglas(proy):
     p = ap.parecidos(P, ids[100])
     t_par = (time.perf_counter() - t0) * 1000
     assert p and p[0]["misma_herramienta"] and p[0]["mismo_agente"]
-    print(
-        f"\nmedicion: recurrencia={t_rec:.1f}ms por_cuestionar(20)={t_eval:.1f}ms cuestionar(20)={t_cue:.1f}ms parecidos={t_par:.1f}ms"
-    )
+    print(f"\nmedicion: recurrencia={t_rec:.1f}ms cuestionar(20)={t_cue:.1f}ms parecidos={t_par:.1f}ms")
     assert t_rec < 100, t_rec
-    assert t_eval < 200, t_eval
     assert t_cue < 200, t_cue

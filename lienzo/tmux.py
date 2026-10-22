@@ -201,31 +201,6 @@ def list_panes(distro: str | None = None) -> list[dict]:
     return out
 
 
-def list_panes_todas() -> list[dict]:
-    """Todos los panes de TODAS las distros de WSL descubiertas: una llamada por distro y los
-    resultados unidos, asi el barrido ve los agentes de todas (no solo los de la default). Con 0 o
-    1 distro es el camino de hoy: `list_panes()` directo, en serie, sin `-d`. Con mas de una, un
-    hilo por distro (misma forma que `fan_out` de server.py). Una distro que no corre o falla
-    devuelve [] (rc != 0 por subproc.correr, que nunca levanta) y no corta a las demas."""
-    ds = distros()
-    if len(ds) <= 1:
-        return list_panes()
-    out: list[dict] = []
-
-    def una(distro: str) -> None:
-        try:
-            out.extend(list_panes(distro))
-        except Exception:  # una distro rota es un bug, que no corte a las demas
-            logging.getLogger(__name__).info("list_panes de %s fallo; distro salteada", distro)
-
-    hilos = [threading.Thread(target=una, args=(d,), daemon=True) for d in ds]
-    for h in hilos:
-        h.start()
-    for h in hilos:
-        h.join()
-    return out
-
-
 def _ps_all(distro: str | None = None) -> dict[int, tuple[int, str, str]]:
     """Foto de los procesos de la distro pedida (o la default): pid -> (ppid, comm, command). `ps -axo`
     con cabeceras vacias es la sintaxis que comparten Linux y macOS (BSD): una sola llamada, sin
@@ -331,26 +306,6 @@ def target_valid(target: str, pid: int | None, distro: str | None = None) -> boo
     if pp is None:
         return False
     return int(pid) == pp or int(pid) in _descendants(pp, distro=distro)
-
-
-def find_agent_panes(names: set[str]) -> list[dict]:
-    """Panes cuyo arbol de procesos tiene un agente (comm que empieza con alguno de `names`, p.ej.
-    claude / codex / node). Devuelve (target, pid del agente, cwd = el del pane, comm, command). Una
-    sola foto de `ps`, sin /proc; el cwd es pane_current_path, que sirve en Mac y Linux."""
-    snap = _ps_all()
-    res: list[dict] = []
-    for p in list_panes():
-        if p["pane_pid"] is None:
-            continue
-        for q in _descendants(p["pane_pid"], snap):
-            info = snap.get(q)
-            if not info:
-                continue
-            c = info[1]
-            if c and any(c == n or c.startswith(n) for n in names):
-                res.append({"target": p["target"], "pid": q, "cwd": p["cwd"], "cmd": c, "command": info[2]})
-                break
-    return res
 
 
 def _wsl_run(*args: str, distro: str | None = None) -> subprocess.CompletedProcess | None:

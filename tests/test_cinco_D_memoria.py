@@ -45,15 +45,12 @@ def test_lote_reutiliza_componente_y_relee_tras_retiro(monkeypatch):
         return original(*args)
 
     monkeypatch.setattr(ap, "_grupo", contar)
-    candidatos = ap.por_cuestionar(pid)
-    assert len(candidatos) == 3
-    assert all(len(episodios) == 3 for _, episodios in candidatos)
-    assert len(llamadas) == 1
+    cuestionadas = ap.cuestionar(pid)
+    assert len(cuestionadas) == 3 and all(x["recien"] for x in cuestionadas)
+    assert all(x["recurrencias"] == 3 for x in cuestionadas)
+    assert len(llamadas) == 2  # una lectura bajo BEGIN IMMEDIATE y otra ficha en snapshot nuevo
     llamadas.clear()
     k.retirar_vinculo(pid, incidentes[3], "repite", incidentes[2], por=coord, motivo="distinta causa")
-    candidatos = ap.por_cuestionar(pid)
-    assert all(len(episodios) == 2 for _, episodios in candidatos)
+    releidas = ap.reglas_cuestionadas(pid)
+    assert len(releidas) == 3 and all(x["recurrencias"] == 2 for x in releidas)
     assert len(llamadas) == 1
-    llamadas.clear()
-    assert len(ap.cuestionar(pid)) == 3
-    assert len(llamadas) == 2  # una lectura bajo BEGIN IMMEDIATE y otra ficha en snapshot nuevo

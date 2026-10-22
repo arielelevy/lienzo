@@ -268,56 +268,6 @@ def test_invalidar_distros_fuerza_re_parseo(wsl, wsl_llamadas):
     assert len(vistos) == 2
 
 
-# --- list_panes_todas(): unir los panes de todas las distros (tarea 3) ---
-
-
-def test_list_panes_todas_une_dos_distros(wsl, monkeypatch):
-    """Con mas de una distro, una llamada por distro (en paralelo) y los resultados unidos."""
-    monkeypatch.setattr(tmux, "distros", lambda: ["ubuntu", "debian"])
-    panes = {
-        "ubuntu": [{"target": "%0", "pane_pid": 5, "cmd": "bash", "cwd": "/a"}],
-        "debian": [{"target": "%1", "pane_pid": 6, "cmd": "bash", "cwd": "/b"}],
-    }
-    vistos = []
-
-    def list_panes_falso(distro=None):
-        vistos.append(distro)
-        return panes[distro]
-
-    monkeypatch.setattr(tmux, "list_panes", list_panes_falso)
-    assert sorted(tmux.list_panes_todas(), key=lambda p: p["target"]) == panes["ubuntu"] + panes["debian"]
-    assert sorted(vistos) == ["debian", "ubuntu"]
-
-
-def test_list_panes_todas_distro_que_falla_salteada(wsl, monkeypatch):
-    """Una distro que no corre (rc != 0, list_panes devuelve []) o levanta: se saltea sin excepcion
-    y las demas aparecen."""
-    monkeypatch.setattr(tmux, "distros", lambda: ["ubuntu", "rota"])
-    vivas = [{"target": "%0", "pane_pid": 5, "cmd": "bash", "cwd": "/x"}]
-
-    def list_panes_falso(distro=None):
-        if distro == "rota":
-            raise RuntimeError("wsl.exe -d rota exploto")
-        return vivas
-
-    monkeypatch.setattr(tmux, "list_panes", list_panes_falso)
-    assert tmux.list_panes_todas() == vivas  # sin excepcion, la viva aparece
-
-
-def test_list_panes_todas_una_sola_distro_camino_de_hoy(wsl, tmux_llamadas, monkeypatch):
-    """Con 0 o 1 distro es el camino de hoy: list_panes() directo, en serie, sin -d."""
-    monkeypatch.setattr(tmux, "distros", lambda: ["ubuntu"])
-    assert tmux.list_panes_todas() == []
-    assert tmux_llamadas == [["wsl.exe", "tmux", "list-panes", "-a", "-F", FMT]]
-
-
-def test_list_panes_todas_sin_distros_camino_de_hoy(wsl, tmux_llamadas, monkeypatch):
-    """Sin distros descubiertas (o en nativo), tambien el camino de hoy: list_panes() directo."""
-    monkeypatch.setattr(tmux, "distros", list)
-    assert tmux.list_panes_todas() == []
-    assert tmux_llamadas == [["wsl.exe", "tmux", "list-panes", "-a", "-F", FMT]]
-
-
 # --- wsl_unc_home(): la home UNC por distro (tarea 4) ---
 
 BASH_PRINTF = 'printf "%s\\n%s" "$WSL_DISTRO_NAME" "$HOME"'

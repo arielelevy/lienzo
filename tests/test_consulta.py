@@ -195,7 +195,6 @@ def test_cancelar_y_recargar_de_disco(mundo, monkeypatch):
     monkeypatch.setattr(consulta, "CONSULTAS", {})
     consulta.cargar()
     assert consulta.ver(cid)["estado"] == "abierta" and consulta.espera(A)
-    assert consulta.de_tarjeta(B)["id"] == cid
     assert consulta.cancelar(cid)[0] == 200 and not consulta.espera(A)
     assert consulta.listar()[0]["estado"] == "cancelada"
 
