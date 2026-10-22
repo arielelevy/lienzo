@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.9**: vista por pestañas más liviana al scrollear, portapapeles en la ventana completa, memoria entre PCs por marcas y sessions.py partido.
+Versión **0.6.10**: vista por pestañas sin franjas, creencias y checklist con el motor lógico, etapas por encargo, investigador con Claude y Azure con tope, y acceso de emergencia entre PCs.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.9.md).
+[Novedades, validación y límites](docs/releases/0.6.10.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
@@ -60,8 +60,11 @@ retoma por `--resume-id`. El rol de coordinadora requiere un canal de envío dis
 
 Una consola que cambia de `session_id` sin cambiar de proceso (un `/clear`, un resume) le pasa sus
 conexiones a la tarjeta nueva. Una tarjeta que muere deja estacionadas sus reglas, las suyas y las que
-le avisaban, en `~/.lienzo/sucesion.json`. La sesión que la retoma (restaurada, con el mismo id o con
-otro) las hereda junto con el título, también después de reiniciar el server.
+le avisaban, en `~/.lienzo/sucesion.json`. Sólo las hereda una sucesora real, junto con el título y
+también después de reiniciar el server: la que retoma con el mismo id, la restaurada desde el lienzo
+o una a la que el lienzo le pone el mismo título. Otra sesión cualquiera del mismo agente en la
+carpeta ya no se las lleva. Una coordinadora reabierta a mano recupera sus avisos sólo si tenía
+título y la nueva recibe el mismo.
 
 Al pegar trabajo en otra tarjeta y detener la original, las reglas pendientes en ambas
 direcciones pasan a la copia, junto con la marca de coordinadora. También funciona al copiar
@@ -110,9 +113,16 @@ WSL y les escribe por `wsl.exe`.
 Para escribirle a un agente, tiene que haber nacido adentro de tmux (en Unix un PTY es de quien lo
 creó). Leerlo no lo necesita: uno abierto suelto aparece en solo lectura. `./lienzo-new.sh claude`
 abre uno en tmux, y `POST /sessions/launch` en Mac/Linux/WSL siempre usa tmux. El server arranca con
-`./lienzo-server.sh`. Probado: un tablero de Windows manejando agentes en tmux de WSL. Sin probar:
-el server nativo en Linux y un Mac. Lienzo no usa `TIOCSTI` (apagado en los kernels modernos por
-seguridad).
+`./lienzo-server.sh`. Probado: un tablero de Windows manejando agentes en tmux de WSL.
+
+Probado el 2026-10-22: el server nativo en Linux (Ubuntu de WSL, Python 3.14, con su propio
+`~/.lienzo`) emparejado con una instancia de Windows, con salud, latencia y espejo en los dos
+sentidos, y el hook de un Claude en tmux que manda `TMUX_PANE` como destino de lo que se teclea.
+En el camino se arreglaron tres cosas: `--peer-port` es también el puerto que se anuncia al
+emparejar, una IP de origen de beacon detrás de NAT se sondea antes de mover el espejo a ella (con
+WSL en red NAT los beacons llegan desde la puerta del NAT), y en Linux la CPU se lee de
+`/proc/stat`. Un Mac sigue sin probar. Lienzo no usa `TIOCSTI` (apagado en los kernels modernos
+por seguridad).
 
 ## Uso
 
@@ -129,6 +139,10 @@ Desde 0.6.8 todo se ve a ~81 %, con los estilos reescalados sin `zoom`: las lín
 blancos de clic de 24 y 44 px y la vista de celular quedan iguales. Las tarjetas tienen 10 % más de
 separación y el título «Lienzo» es más grande. Las tarjetas de las extensiones de Chrome (Claude y
 Codex) arrancan ocultas; el chip «chrome» las muestra.
+
+Un nombre de proyecto de más de 24 caracteres se corta al medio con «…» en el título de la tarjeta
+y en los chips de proyecto: queda el principio y el final, que es lo que distingue
+«cliente-proyecto-…-2026» de su vecino. El nombre entero sigue en el tooltip del chip.
 
 ![Alt + arrastrar lleva una tarjeta sobre otra para conectarlas](docs/img/arrastre.png)
 
@@ -147,6 +161,12 @@ Una tarjeta en «corriendo» cuya pantalla no cambia hace N minutos (sin contar 
 muestra «pantalla quieta · N min» hasta que cambie: puede estar colgada. Son 5 minutos por defecto;
 el menú ⋯ de la tarjeta los cambia (3, 5, 10, 15, 30 o sin aviso) para todas, y la elección vive
 en el navegador.
+
+Un `claude -p` corriendo en el mismo repo ya no marca como headless la tarjeta de una TUI viva. El
+barrido adivinaba la transcripción de un proceso sin hooks como la más nueva de la carpeta, y así
+la marca del proceso batch pasaba a la tarjeta interactiva, que después rechazaba los envíos con
+409. Una transcripción adivinada que pertenece a otra sesión viva, con otro PID, ya no toca esa
+tarjeta.
 
 ### Contestar, aprobar, adjuntar
 
@@ -167,6 +187,8 @@ en el navegador.
   al hilo nuevo con el mismo PID, y en siete chequeos ociosos no tecleó nada. El vínculo es de
   lectura: los mensajes siguen entrando por la consola, sin habilitar la cola CLI.
 - Permisos: Permitir o Denegar desde la tarjeta (nunca «permitir siempre»; vence a los 60 s).
+  Los de Antigravity se contestan en su terminal o, con Auto-aprobar TODO prendido, los contesta el
+  lienzo (ver [Las automatizaciones](#las-automatizaciones)).
 - Denegados: lo que una regla, política o clasificador le niega al agente aparece como
   «Denegado: herramienta» con un botón «Autorizar y que reintente». Una denegación anterior al
   pedido en curso no vuelve a aparecer.
@@ -209,6 +231,10 @@ en los últimos 14 días que recuerda el server (`~/.lienzo/recientes.json`, `GE
 que indicarles la carpeta. El Lienzo de la PC
 elegida lanza el proceso en una terminal nueva, sin exigir una sesión activa previa, y la tarjeta
 aparece sola. «Otra carpeta…» abre un proyecto nuevo dentro de las carpetas permitidas.
+
+Una sesión lanzada en la raíz de un disco (`D:\`) no tiene nombre de carpeta: su proyecto se
+muestra con la ruta, cortada a 20 caracteres, en vez de «?». «?» queda sólo cuando no se conoce
+ninguna carpeta. Las tarjetas guardadas con «?» se recalculan desde su carpeta al cargar el server.
 
 En Windows el lanzamiento escribe `~/.lienzo/launch/<token>.cmd` y, al lado, `<token>.json` con el
 título pedido y el agente. La tarjeta nueva lo encuentra subiendo por los padres de su PID hasta el
@@ -260,6 +286,30 @@ El scheduler analiza incidentes nuevos de la memoria cuando hay 180 segundos de 
 dos muestras de recursos aptas y ningún agente ocupado ni permiso vigente. Encola automáticamente
 por proyecto y versión de fuentes, con cooldown de 120 segundos y hasta 100 trabajos; sus propias
 hipótesis no generan otra ronda. Las hipótesis quedan propuestas, con evidencia y veredicto pendiente.
+
+**Qué agente investiga.** El investigador usa Codex mientras le quede al menos 20 % del cupo
+semanal. Si no, o si Codex queda bloqueado por otro motivo, usa Claude con la suscripción, en sólo
+lectura (`claude -p` con `Read`, `Grep` y `Glob`, sin hooks ni persistencia de sesión) y sin
+`ANTHROPIC_API_KEY` en el proceso hijo, así que no factura por API y no aparece como tarjeta en el
+tablero. La cuota de Claude se lee antes de empezar y cada 5 minutos durante la corrida (semanal
+hasta 80 %, ventana de 5 h por debajo de 90 %). El panel muestra qué adaptador se eligió y por qué.
+Una corrida real sobre un caso de lienzo tardó 59 s y dejó una evidencia y tres propuestas que
+esperan veredicto. El techo de 6 corridas por día es de todo el investigador; el tope de cada
+autorización se cuenta por adaptador.
+
+**Azure, sólo a pedido.** El adaptador `azure-openai` (deployment `gpt-6.1-sol`) nunca se elige
+solo: se pide por trabajo con «Revisar con Azure» o «Encolar con Azure», y sólo para proyectos
+propios (lienzo, motor-logico, opensyync, pruebas-agenticas, chess y teorema) con todas sus
+carpetas bajo `D:/Apps`. Un proyecto de la regla de coda-dgx no va a ningún otro adaptador. Hace
+una llamada a la Responses API sin herramientas, desde `research_azure_call.py` con `python -I`,
+sólo por https a hosts de Azure. El ledger (`~/.lienzo/research-ledger.sqlite`) reserva el peor
+caso antes de cada llamada (bytes del prompt y del esquema como tokens de entrada más 16.000 de
+salida, a USD 5 y 15 por millón), liquida con el uso que informa Azure y corta en seco a USD 5 por
+mes calendario UTC. Además: USD 1,5 por ejecución, 4 ejecuciones por día y 300 s cada una. Sin uso
+informado después de enviar, la reserva queda entera como cargo desconocido; si no se envió nada,
+se liquida en cero. La key va al almacén DPAPI con `py ops/importar-azure.py` (usa `az` con
+`--subscription` y no imprime la key); hasta cargarla, Azure queda bloqueado y el panel lo dice.
+Todavía no se hizo ninguna llamada paga: se probó con una key sintética y un doble HTTP local.
 
 Una investigación interrumpida por actividad, memoria o cuota espera 30 minutos antes de volver
 a intentarlo; los intentos ya usados siguen contando. Una pausa manual no agrega esa espera.
@@ -340,7 +390,11 @@ En el menú ⋯, apagadas por defecto:
   de coda y, desde el 2026-10-08, el permiso que la TUI dibuja como diálogo de opciones sin hook
   («Would you like to run the following command?» de Codex, «Do you want to proceed?» de Claude):
   elige la opción que permite según cómo redacta cada TUI (su perfil en `agentes.py`; Kiro va con
-  Allow/Deny). No contesta una pregunta de verdad, el cambio de modelo ni la confianza en una
+  Allow/Deny). En Antigravity contesta crear o editar un archivo, correr un comando (también cuando
+  el comando es largo, el encabezado «Requesting permission for:» quedó fuera de pantalla y las
+  opciones ocupan varias líneas: alcanza el «Run this command?» visible) y el acceso a un archivo
+  fuera del workspace. En este último elige «Yes, allow access», sólo esta vez y sólo si está la
+  opción de negar; nunca la que lo deja permanente. No contesta una pregunta de verdad, el cambio de modelo ni la confianza en una
   carpeta, y en ese caso la tarjeta dice por qué («auto-aprobar no lo contesta: …»). No cubre lo que
   el agente se deniega solo (por ejemplo, los «comandos que piden confirmación» de coda, o lo que
   frena el clasificador del auto mode de Claude Code). La prueba real está en
@@ -444,6 +498,14 @@ el visor anterior la suelte. Al cambiar de pestaña o tamaño se descartan cuadr
 anterior. Una pestaña restaurada que Chrome no había cargado contesta 409 enseguida, en vez de un
 504 a los 8 s.
 
+Mientras un visor mira una pestaña, la pestaña toma el tamaño CSS del visor con su densidad de
+píxeles real, así la vista no tiene franjas negras. Vuelve a su tamaño cuando el visor cambia de
+pestaña, cierra, no llega a abrir o pierde el socket. Sólo el dueño del stream ajusta la pestaña
+(en 0.5.5, dos visores ajustando por turnos hacían parpadear la ventana real), la interfaz manda un
+tamaño por gesto después de 300 ms y repetir un tamaño no manda nada. Medido en un Chrome aislado:
+605 px de franjas arriba y abajo con un visor de 700×1000 y 477 px a los costados con uno de
+1400×520; ahora 0. El ajuste cambia la página también en la ventana real de la otra PC.
+
 Con la PC bloqueada anda sobre el Chrome real si Chrome arrancó con
 `--disable-features=CalculateNativeWinOcclusion`. Medido el 2026-10-21: ~14,5 cuadros por segundo
 bloqueada contra 21–23 desbloqueada; sin la bandera, 0,3. Chrome 155 ya no la ofrece en
@@ -529,6 +591,33 @@ El motor requiere SWI-Prolog (Ubuntu WSL en Windows) y el repo `motor-logico` ju
 o una ruta explícita en `LIENZO_PROLOG_ENGINE`. Su ausencia o una respuesta inválida se informa
 como error. La procedencia humana se basa en el autor declarado en la memoria: todavía no hay
 una credencial humana separada que certifique esa identidad.
+
+**Creencias y checklist.** Una creencia es una decisión propuesta sobre cómo trabajar en el
+proyecto; sólo un veredicto de una persona con evidencia la vuelve vigente. La pestaña Aprendizaje
+abre con «Creencias del proyecto» y el estado de cada una, y explica en una línea para qué sirve.
+Al abrirla lee sola: completa el contexto de trabajo con el encargo de la tarjeta elegida, o con el
+encargo en curso (`GET /conocimiento/<p>/contexto-sugerido`, sólo lee), sin pisar lo que la persona
+ya escribió o consultó. El checklist lista sólo las creencias que el motor lógico (contrato 3)
+sostiene, con su prueba, y marca como cuestionadas las que el motor objeta o donde su lectura y el
+cálculo Python independiente no coinciden. Sin motor, cada ítem dice que no tiene contraste, nunca
+que el motor lo sostiene. Crear un encargo no espera a que arranque WSL: con el motor dormido, el
+checklist del encargo va «sin contraste del motor lógico». Un chip en el encabezado resume el
+aprendizaje de cada proyecto y abre su memoria.
+
+**Etapas por encargo.** Cada encargo recorre pendiente → implementación → revisión → verificación →
+aprobado, en la pestaña «Etapas» de la memoria, con la evidencia y el historial por ronda. El
+server sólo lo pasa a revisión cuando llega un informe nuevo: un turno cerrado o la respuesta del
+agente no aprueban nada. Pasar a verificación, aprobar o devolver a implementación es de la
+coordinadora o de una persona con nombre (los demás reciben 403). Cada avance cita evidencia del
+proyecto recibida en la etapa que deja, y devolver exige motivo. Después de una devolución, sólo
+un informe con revisión nueva lo vuelve a revisión.
+
+**Depuración del crudo.** Un hilo del server borra una vez por día lo crudo de más de 30 días:
+capturas de la memoria (conservando el `rowid` más alto, para que los cursores de réplica sigan
+valiendo), líneas viejas de `lienzo.log` y `.tmp` huérfanos de los hooks. Las transcripciones de
+las CLI y los adjuntos no se tocan. Cada parte corre aunque otra falle. La primera corrida real
+recortó `lienzo.log` en 4040 líneas; una simulación a 7 días sobre una copia borró 5641 capturas
+en 1,96 s.
 
 Las funciones de `skills/lienzo/coordinar.py` incluyen `briefing`, `preguntar`, `vista`,
 `veredicto`, `cerrar_ronda`, `pendientes_memoria`, `recurrencia`, `cuestionar` y `lecciones`.
@@ -620,6 +709,17 @@ calla una sola vez, y el pedido vence a los 30 min (`coordinar.enviar(s, texto, 
 
 El método está en la skill, en la sección «Rondas largas».
 
+### Repartir una ronda entre PCs
+
+`coordinar.repartir(proyecto, {modulo: [rutas]}, [pcs])` sugiere qué módulo va a qué PC: módulos
+disjuntos (si dos se pisan, `ValueError`), carga pareja por cantidad de rutas, una sesión commiter
+por PC y la rama `ronda-<fecha>`. No lanza ni toca nada: el plan se le muestra a Ariel y, con su OK,
+`coordinar.aprobar_reparto(plan)`. En cada PC su commiter corre
+`coordinar.sincronizar_ronda(cwd, plan, pc)`: `pull --rebase` y `push`, nunca `--force`. Frena y
+avisa sin subir nada si hay cambios sin commitear, si lo commiteado toca archivos de otra PC
+(`fuera`) o si el rebase da conflicto (`conflicto`, con el rebase abortado y el commit local
+intacto).
+
 ## Acceso desde el celular
 
 Opcional: `.\lienzo-server.cmd --remote`. En la PC, Acceso remoto genera una clave TOTP y dos QR
@@ -648,6 +748,25 @@ Un listener aparte (7322) atiende sólo `/peer/*`, en la IP de LAN (nunca `0.0.0
 pedido va firmado con HMAC de la clave del par, ventana de ±30 s y nonce.
 `py -3.14 install.py --peer` abre 7322 TCP y 7323 UDP sólo en el perfil Privado del firewall, y en
 cualquier perfil sólo entre IP de Tailscale (100.64.0.0/10 de los dos lados).
+`--peer-port` es también el puerto que se anuncia al emparejar (antes se anunciaba 7322 aunque se
+escuchara en otro).
+
+### Acceso de emergencia
+
+Cuando una PC deja de responder, su chip en la tira queda en ○ y dice por qué (sin ARP, puerto
+cerrado, otra red, Tailscale caído). Al lado aparece ⛑ con el canal de emergencia que haya:
+
+- **Tailscale**, si las dos lo tienen: la tira dice que lo prendas en la otra y con qué IP 100.x se
+  encuentran; el lienzo conecta solo.
+- **Tailchrome**, si de un lado está el cliente de Tailscale y del otro sólo la extensión. El puente
+  se abre en la PC de la extensión hacia la IP 100.x de la otra: si es esta PC, ⛑ es un enlace a
+  `/tailchrome`; si es la otra, dice qué abrir allá.
+- Si ninguna de las dos tiene Tailscale, lo dice: dos PCs sólo con la extensión no están cubiertas.
+
+Cada PC anuncia sus canales en la salud (`emergencia: {tailscale, tailchrome}`), así la otra sabe
+qué ofrecer aunque ya no le conteste. ⛑ aparece sólo para una PC que se vio alguna vez. El enlace
+a `/tailchrome` sólo funciona desde el tablero abierto en esa misma PC (la página atiende sólo
+localhost); desde otra máquina se muestra como texto.
 
 ### Cuando la red no deja verse a las PCs: Tailscale
 
@@ -751,7 +870,8 @@ Por qué no llega una PC: el chip de la tira dice el motivo cuando una PC está 
   reinicio (no lo que se cerró a propósito). `POST /restaurar {session_id | all: true, pc?}` los
   relanza retomando la conversación, de a uno, mirando la memoria libre. La restaurada hereda reglas
   y título aunque cambie de `session_id`. Con varios frentes del mismo agente en la carpeta gana el
-  mismo id, después la restaurada desde el lienzo (en orden), después el mismo título. Un envío al id
+  mismo id, después la restaurada desde el lienzo (en orden), después el mismo título; ninguna otra
+  hereda. Titular una tarjeta provisoria del barrido (`pid-N`) no la vuelve sucesora. Un envío al id
   viejo contesta 404 con `sucesora` (no se redirige solo); `coordinar.enviar` reintenta ahí.
 
 ### La tira de PCs
@@ -767,7 +887,8 @@ quedó sin cuota. En violeta, la credencial de git: cada PC prueba con `git ls-r
 `origin` de los repos con sesión viva (y los de `git_check`) y distingue `vencida`, `no verificable`,
 `sin red` y `timeout`. Click en el violeta le pasa a esa PC la credencial que tiene esta, cifrada
 (lo mismo que `coordinar.pasar_credencial_git`); con «sin red» o «timeout» avisa que otra credencial
-no lo arregla. Una PC caída se ve en ○ y sus tarjetas quedan grises. El server apaga los cuadros de
+no lo arregla. Una PC caída se ve en ○, sus tarjetas quedan grises y el chip ofrece el canal de
+[acceso de emergencia](#acceso-de-emergencia) que haya. El server apaga los cuadros de
 error de Windows para los procesos que lanza: con la memoria al límite, `git-remote-https.exe` de
 este chequeo fallaba con 0xc0000142 y dejaba un cartel modal en el escritorio. Ese código queda
 ahora en el log, con la URL.
@@ -839,12 +960,24 @@ Las consultas remotas `POST /run {pc, command, cwd}` admiten `command: "status"`
 entre PCs emparejadas sin configuración adicional: muestran el estado de Git y el último commit.
 La carpeta debe estar en `launch_roots`. `run_allowlist` configura los demás comandos y puede
 bloquear una consulta incorporada con un valor `null`. No se aceptan argumentos del pedido.
+Aunque un comando esté en `run_allowlist`, se niegan `-fu`, `--force` y sus abreviaturas
+(`--forc`), `--upload-pack`, `--receive-pack`, `--exec`, `--output` y `--strategy`. Cada pedido a
+`/peer/run`, se ejecute o no, deja una línea en `~/.lienzo/remote_run.jsonl` (`GET /run/log`): peer,
+nombre del comando, carpeta, código HTTP, exit, duración y caracteres de salida. No guarda el argv
+ni la salida.
+
+Cada pedido que el lienzo rechaza (401, 403 o Host no válido, en el tablero o en el listener de
+peers) queda en `~/.lienzo/rechazos.jsonl`: hora, IP, ruta sin query, método, motivo, peer
+declarado, Origin y User-Agent. No guarda cuerpos, query, cookies ni firmas. El mismo rechazo se
+anota una vez por minuto y la línea siguiente cuenta los omitidos; el archivo rota a 1 MB. Se lee
+con `GET /rechazos`, sólo desde la PC o la LAN. Si un cliente dice que la API le negó el acceso y
+ahí no hay nada, el bloqueo ocurrió antes del server.
 
 Un peer emparejado puede teclear en los agentes de la otra PC, lanzar sesiones y copiarle archivos
 dentro de `copy_roots`. Lo mitiga: listener aparte sólo para `/peer/*`, bind a la IP de LAN, firewall
 sólo en perfil Privado, firma con ventana y nonce en cada pedido, `launch_roots` y `copy_roots`,
 peers revocables, tope de 4. Un pedido sin firma recibe 401 sin que se lea el cuerpo, y el motivo de
-cada 401 queda en el log. **Con auto-aprobar prendido, una PC emparejada puede ejecutar comandos en
+cada 401 queda en el log y en `rechazos.jsonl`. **Con auto-aprobar prendido, una PC emparejada puede ejecutar comandos en
 las otras.**
 
 ## Lienzo en la investigación científica
@@ -916,6 +1049,7 @@ además la cookie de sesión.
 | GET, POST | `/avisos`, `/avisos/<id>`, `/avisos/<id>/ack` | avisos coordinados con confirmaciones (`{texto, a, de?, vence_min?}`; ack `{session_id, nota?}`) |
 | GET, POST, DELETE, PUT | `/turnos`, `/turnos/<recurso>`, `/turnos/<recurso>/politica` | turnos de recursos pesados: pedir (`{session_id, ttl_min?, motivo?}`), soltar (`?session_id=`), política |
 | GET | `/memoria` | memoria libre, umbral y sesiones quietas sugeridas para cerrar |
+| GET | `/rechazos?n=200`, `/run/log?n=200` | últimos pedidos rechazados (401, 403, Host no válido) y últimos `/peer/run`, hasta 2000; sólo desde la PC o la LAN |
 | GET | `/trabajo/<proyecto>` | cómo se trabaja en las últimas 72 h: métricas y hallazgos sobre el umbral (sólo lee) |
 | POST | `/consultas` | `{pregunta, investigadores, vueltas?, revisor?, coordinador?, espera_min?, enfoques?, vuelta1?, revisar_sintesis?}`; abre una consulta entre investigadores, devuelve `{id, tope_turnos}` |
 | GET | `/consultas`, `/consultas/<id>` | las últimas consultas (resumen); una entera, con las respuestas por vuelta |
@@ -942,6 +1076,7 @@ además la cookie de sesión.
 | GET | `/conocimiento/<p>` | resumen: nodos por tipo y estado, rondas, último cambio |
 | POST | `/conocimiento/<p>/rondas`, `/rondas/<id>/estado` | abrir una ronda (`{objetivo}`); suspender, reabrir o cerrar (`{estado, por}`) |
 | POST | `/conocimiento/<p>/encargos`, `/encargos/<id>/enviado`, `/encargos/<id>/estado` | registrar un encargo (`{ronda, letra, texto, archivos?}`); la tarjeta que lo tomó (`{session_id, agent?, model?, pc?, cwd?}`); abandonarlo o reabrirlo |
+| POST | `/conocimiento/<p>/nodos/<id>/estado` sobre un encargo | etapas: `verificando`, `aprobado` o vuelta a `enviado`, con `por` de coordinadora o persona y `origen.evidencia` de la etapa que deja; devolver exige `motivo` (403 a otros) |
 | POST | `/conocimiento/<p>/entregas` | `{encargo, revision, cuerpo}`; la entrega explícita de un informe, con hash; idempotente por (encargo, revisión, hash). Si el cuerpo termina con un bloque ```` ```conocimiento ```` (JSON con nodos y vínculos), se valida entero y se incorpora al grafo, o queda `pendiente_de_vincular` con los errores por posición en `datos.conocimiento` |
 | GET, POST | `/conocimiento/<p>/nodos`, `/nodos/<id>`, `/nodos/<id>/estado`, `/vinculos`, `/vinculos/retirar` | nodos (hallazgo, decisión, alternativa, incidente, regla, medición, pregunta, tema, evidencia) con estado y transiciones; vínculos tipados |
 | GET | `/conocimiento/<p>/buscar?q=&tipo=&saltos=`, `/cambios?desde=`, `/cuerpo?ruta=` | búsqueda BM25 (FTS5) con expansión por el grafo; historial de cambios; el texto de un encargo o informe |
@@ -949,6 +1084,9 @@ además la cookie de sesión.
 | GET | `/conocimiento/<p>/briefing`, `/preguntar?q=&offset=&limite=`, `/vista?tema=`, `/pendientes`, `/duplicados`, `/temas` | recuperación, vistas y pendientes de revisión |
 | GET, POST | `/conocimiento/<p>/incidentes/<id>/parecidos`, `/recurrencia`, `/reglas/cuestionadas`, `/reglas/cuestionar`, `/avisos`, `/nodos/<id>/dependencias` | aprendizaje operativo; sólo cuestionar escribe |
 | GET | `/conocimiento/lecciones?agente=&modelo=&proyectos=` | reglas y lecciones por agente entre proyectos locales |
+| GET | `/conocimiento/<p>/checklist?<contexto>` | creencias aplicables que sostiene el motor lógico, con su prueba; las cuestionadas, y por qué no aplica cada otra |
+| GET | `/conocimiento/<p>/contexto-sugerido?session_id=` | contexto de trabajo del encargo de esa sesión, o del encargo en curso (sólo lee) |
+| GET | `/conocimiento/aprendizaje-resumen` | por proyecto: creencias por estado y reglas cuestionadas (el chip del encabezado) |
 | GET | `/events` | SSE con cada cambio |
 | POST | `/browser` | `{pc, action, ...}`; perfiles, ventanas y acciones de Chrome en la PC elegida |
 | GET | `/browser/stream?pc=<pc_id>` | WebSocket persistente del modo ventana: imagen, cursor y entradas |
@@ -977,12 +1115,18 @@ lienzo/
   consulta.py      consulta entre investigadores: vueltas, síntesis, revisión y vigilancia
   rondas.py        avisos coordinados con ack, turnos de recursos pesados y presión de memoria
   optimizacion_trabajo.py   cómo se trabaja: esperas, acuses, avisos y difusiones, para el sueño
+  optimization_research_ledger.py   ledger de Azure: reserva el peor caso, liquida, tope de USD 5/mes
+  research_azure_call.py   la llamada a Azure, en un proceso hijo con python -I y sólo https a Azure
+  prolog_checklist.py      checklist de creencias sostenido por el motor lógico, con su prueba
+  registro_niveles.py      niveles del registro y depuración diaria del crudo a 30 días
+  bitacora.py      rechazos.jsonl y remote_run.jsonl: JSONL rotado a 1 MB, lectura de las últimas N
   state.py         estado compartido, config, log
   federation.py    firma HMAC, peers.json, beacon, cliente SSE, transporte HTTP
   pairing.py       emparejamiento con SPAKE2
   mirror.py        espejo de cada peer, enrutado y salud
   beacon.py        beacon UDP (7323)
   red.py           Tailscale (tailnet, IP propia) y el diagnóstico de un peer que no llega
+  emergencia.py    canales de emergencia de esta PC (Tailscale, Tailchrome) y cuál ofrecer hacia otra
   health.py        memoria, CPU, temperatura, capacidad, credenciales de git
   cuenta_github.py cuenta de gh con push para cada repo de github.com
   launch.py        lanzar sesiones (.cmd en Windows, tmux fuera); limpia los de más de 7 días
@@ -1002,6 +1146,7 @@ skills/lienzo-infografias/   infografías SVG estáticas del lienzo con el kit d
                    build.mjs las escribe en docs/img/infografias
 tests/             pytest
 pruebas-agenticas/ configuración del plugin; resultados locales ignorados por Git
+ops/importar-azure.py   carga la key de Azure OpenAI al almacén DPAPI, sin imprimirla
 install.py         hooks y regla de firewall (--peer)
 lienzo-server.cmd / .sh   arranque
 lienzo-new.sh      abre un agente adentro de tmux
@@ -1057,9 +1202,14 @@ plugin sigue sin certificar: falta baseline aprobado y no se ejecutaron las muta
   proyectos/<proyecto>/       cuerpos de encargos e informes y evidencia de cada proyecto
   xfer/                       copias entre PCs (trabajos/) y hashes de lo recibido (hashes.db)
   chrome-remoto/              perfil separado de Chrome para la vista por pestañas
+  rechazos.jsonl              pedidos rechazados (401, 403, Host no válido), sin cuerpos ni
+                              credenciales; rota a 1 MB en rechazos.jsonl.1
+  remote_run.jsonl            cada pedido a /peer/run, sin argv ni salida; rota igual
+  research-ledger.sqlite      reservas y cargos de Azure del investigador
+  private/azure-openai.dpapi  la key de Azure OpenAI, cifrada con DPAPI
   *.corrupto-<fecha>          un JSON que no se pudo leer, apartado en vez de pisarlo; los JSON
                               de estado se escriben por la escritura atómica de atomico.py
-  lienzo.log                  una línea por hecho
+  lienzo.log                  una línea por hecho; lo de más de 30 días se depura una vez por día
 ```
 
 ## Si el server no contesta
@@ -1105,6 +1255,20 @@ no implican que se hayan reproducido nuevamente en esta revisión.
 - La vista por pestañas con la PC bloqueada necesita que Chrome haya arrancado con
   `--disable-features=CalculateNativeWinOcclusion`; sin eso baja a 0,3 cuadros por segundo. Falta
   verla en uso real desde la otra PC.
+- La vista por pestañas sin franjas vale para visores entre 320×240 y 1920×1080; fuera de ese rango
+  vuelven las franjas. Zoom y pinch en el visor siguen sin probar.
+- No quedan en `rechazos.jsonl` el 403 del listener propio de `claude_pipe.py` ni el 400 del
+  handshake WebSocket (`ws.py`).
+- `POST /run`, el reparto entre PCs (`repartir` / `sincronizar_ronda`) y el acceso de emergencia
+  todavía no se usaron entre las dos PCs reales. Un Mac sigue sin probar.
+- El espejo toma la IP de origen del beacon, no las que el par anuncia firmadas: detrás de un NAT
+  se sondea antes de usarla, pero corregirlo de raíz cambia el formato del beacon.
+- Una coordinadora reabierta a mano sin el título de la anterior no recupera sus reglas
+  estacionadas. Una tarjeta TUI que ya había quedado marcada como headless antes del arreglo
+  conserva la marca: el arreglo evita marcas nuevas, no limpia las viejas.
+- Azure del investigador no hizo ninguna llamada paga: falta cargar la key y la primera corrida
+  real. Un error HTTP después de enviar queda como cargo desconocido por la reserva entera (hasta
+  USD 1,25).
 
 ## Antigravity CLI (Windows)
 
@@ -1118,7 +1282,9 @@ Esta integración permite pantalla y envío de texto a la terminal. Chat puede c
 visible parcial de SQLite bajo demanda, si la propiedad nativa del archivo de presencia y la
 fecha de creación del proceso identifican una sola conversación. No ofrece coordinadora, reglas `on_stop`,
 cuotas ni restauración automática de esas tarjetas. El estado de actividad no se confirma por
-transcripción. Los permisos se resuelven en la terminal, sin aprobación automática específica.
+transcripción. Los permisos se contestan en la terminal; con ☠ Auto-aprobar TODO prendido, el
+lienzo contesta crear o editar archivos, correr comandos y el acceso puntual fuera del workspace
+(ver [Las automatizaciones](#las-automatizaciones)).
 El inicio de sesión se hace en Antigravity; WSL no está soportado por esta integración.
 La tarjeta muestra «actividad sin confirmar»: el estado operativo de la API lleva
 `state_source: "unverified"` y no certifica que esté trabajando o que haya terminado.

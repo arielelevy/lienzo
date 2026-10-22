@@ -24,6 +24,12 @@ Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
   portapapeles de la ventana completa, clics con la PC bloqueada, `marcas` entre las dos PCs.
 - [ ] Revisar las 3 propuestas del investigador (G) y los 60 candidatos del contraste lógico.
 - [ ] Confirmar si `ledsage` y `gmi-global` son proyectos propios (Azure sólo para propios).
+- [ ] Limpiar las marcas «headless» que quedaron en tarjetas vivas antes de 19747a2 (la de J siguió dando 409
+  a `/send`; el arreglo evita marcas nuevas, no borra las viejas).
+- [ ] El espejo toma como dirección de un par la IP de origen del beacon, no las IPs que el par anuncia firmadas
+  (hallazgo 5 del code review de K, cambio de diseño en la federación).
+- [ ] Una coordinadora reabierta a mano sin el mismo título no recupera sus reglas (efecto buscado de 19747a2):
+  evaluar un «adoptar reglas de…» explícito en la tarjeta.
 
 ### Ronda nocturna del 2026-10-21/22 (cerrada el 2026-10-22)
 
