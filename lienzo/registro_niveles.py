@@ -1,12 +1,26 @@
-"""Proyecciones de registro. No modifica ni depura fuentes o transcripciones."""
+"""Los tres niveles del registro. El 1 es el crudo que guarda el lienzo (capturas, lienzo.log y eventos
+de hooks que nadie consumió) y se depura a los RETENCION_DIAS (decisión 5 de Ariel, 2026-10-22); el 2
+(`herramientas`) es para el investigador y el 3 (`externo`) para sistemas externos. Las transcripciones
+son de cada CLI: no se modifican ni se depuran."""
 
 from __future__ import annotations
 
+import datetime as dt
+import os
 import re
+import sqlite3
+import threading
+import time
+import traceback
 
 import agent_evaluation
 import conocimiento as k
+import state
 import transcripts
+
+RETENCION_DIAS = 30
+LOTE_CAPTURAS = 2000  # filas por transacción: el lock de escritura dura poco aunque haya mucho viejo
+_FECHA = re.compile(rb"\d{4}-\d{2}-\d{2}")
 
 
 def herramientas(session: dict, *, limite: int = 80) -> dict:
@@ -66,3 +80,151 @@ def externo(proyecto: str) -> dict:
             (proyecto,),
         ).fetchall()
     return {"nivel": 3, "proyecto": proyecto, "actividad": [dict(row) for row in rows]}
+
+
+def depurar_crudo(dias: int = RETENCION_DIAS, *, ahora: dt.datetime | None = None) -> dict:
+    """Nivel 1: borra lo crudo anterior al corte (ahora menos `dias`) y devuelve qué se fue y cuánto pesa."""
+    if not 1 <= dias <= 3650:
+        raise ValueError("dias debe estar entre 1 y 3650")
+    ahora = ahora or dt.datetime.now(dt.UTC)
+    corte = ahora - dt.timedelta(days=dias)
+    return {
+        "dias": dias,
+        "corte": corte.isoformat(timespec="seconds"),
+        "capturas": _parte(_depurar_capturas, corte),
+        "log": _parte(_depurar_log, corte),
+        "eventos": _parte(_depurar_eventos, corte),
+    }
+
+
+def _parte(fn, corte: dt.datetime) -> dict:
+    """Cada parte por su cuenta: una base trabada no deja sin depurar el log ni los eventos."""
+    try:
+        return fn(corte)
+    except (OSError, sqlite3.Error) as error:
+        return {"error": f"{type(error).__name__}: {error}"[:200]}
+
+
+def _depurar_capturas(corte: dt.datetime) -> dict:
+    """Capturas con fecha (UTC, formato de `k.ahora`) anterior al corte. Nunca la de rowid más alto: sin
+    AUTOINCREMENT SQLite lo reusaría y el cursor de réplica de otra PC se saltearía las nuevas. Cada PC
+    depura su copia; borrar no es un cambio y no viaja. El archivo no se achica (sin VACUUM): las
+    páginas liberadas las reusan las capturas siguientes."""
+    path = k.db_path()
+    out = {"filas": 0, "bytes": 0, "quedan": 0, "archivo": 0}
+    if not os.path.isfile(path):
+        return out  # sin base todavía no hay crudo: no se crea por depurar
+    limite = corte.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    viejas = (
+        "SELECT rowid, bytes FROM captura WHERE fecha < ? AND rowid < (SELECT MAX(rowid) FROM captura) "
+        "ORDER BY rowid LIMIT ?"
+    )
+    with k._Conexion(path) as con:
+        while True:
+            con.execute("BEGIN IMMEDIATE")
+            n, b = con.execute(
+                f"SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM ({viejas})", (limite, LOTE_CAPTURAS)
+            ).fetchone()
+            if n:
+                con.execute(
+                    f"DELETE FROM captura WHERE rowid IN (SELECT rowid FROM ({viejas}))", (limite, LOTE_CAPTURAS)
+                )
+            con.commit()
+            out["filas"] += n
+            out["bytes"] += b
+            if n < LOTE_CAPTURAS:
+                break
+        out["quedan"] = con.execute("SELECT COUNT(*) FROM captura").fetchone()[0]
+    out["archivo"] = os.path.getsize(path)
+    return out
+
+
+def _depurar_log(corte: dt.datetime) -> dict:
+    """lienzo.log es de sólo agregado y cronológico: se corta en la primera línea fechada desde el día del
+    corte (fecha local, como la escribe `state.log`); las líneas sin fecha (tracebacks) van con la
+    anterior. La cola se copia a un temporal, se vuelve a copiar lo que llegó mientras tanto y se
+    reemplaza; si el archivo está en uso (Windows) queda entero hasta la próxima vuelta. Una línea que
+    llegue entre la última comprobación y el reemplazo se pierde: la ventana es de microsegundos una vez
+    por día y `state.log` no tiene lock que compartir."""
+    path = state.LOG
+    try:
+        antes = os.path.getsize(path)
+    except OSError:
+        return {"lineas": 0, "antes": 0, "despues": 0}
+    desde = corte.astimezone().strftime("%Y-%m-%d").encode()
+    lineas, offset = 0, None
+    with open(path, "rb") as f:
+        for linea in iter(f.readline, b""):
+            m = _FECHA.match(linea)
+            if m and m.group() >= desde:
+                offset = f.tell() - len(linea)
+                break
+            lineas += 1
+        else:
+            offset = f.tell()  # todo viejo (o sin fechas): no queda nada
+    if not lineas:
+        return {"lineas": 0, "antes": antes, "despues": antes}
+    tmp = f"{path}.{os.getpid()}.depurando"
+    try:
+        with open(path, "rb") as src, open(tmp, "wb") as dst:
+            src.seek(offset)
+            esperas = 0
+            while True:
+                bloque = src.read(1 << 20)
+                if bloque:
+                    dst.write(bloque)
+                    continue
+                if os.path.getsize(path) <= src.tell():
+                    break
+                esperas += 1  # una línea a medio escribir: el tamaño llegó antes que los datos
+                if esperas > 100:
+                    raise TimeoutError("lienzo.log no se asienta")
+                time.sleep(0.01)
+        os.replace(tmp, path)
+    except OSError as error:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return {"lineas": 0, "antes": antes, "despues": antes, "error": type(error).__name__}
+    return {"lineas": lineas, "antes": antes, "despues": os.path.getsize(path)}
+
+
+def _depurar_eventos(corte: dt.datetime) -> dict:
+    """Eventos de hooks a medio escribir (`.tmp`) que quedaron huérfanos: los `.json` los consume
+    `hooks_eventos`, y uno trabado es un error a mirar, no crudo para borrar."""
+    out = {"archivos": 0, "bytes": 0}
+    try:
+        nombres = os.listdir(state.EVENTS)
+    except OSError:
+        return out
+    tope = corte.timestamp()
+    for nombre in nombres:
+        if not nombre.endswith(".tmp"):
+            continue
+        p = os.path.join(state.EVENTS, nombre)
+        try:
+            st = os.stat(p)
+            if st.st_mtime >= tope:
+                continue
+            os.remove(p)
+        except OSError:
+            continue
+        out["archivos"] += 1
+        out["bytes"] += st.st_size
+    return out
+
+
+def bucle(parar: threading.Event | None = None, *, arranque_s: float = 600.0, cada_s: float = 86400.0) -> None:
+    """Hilo del server: depura el crudo una vez por día (la primera, `arranque_s` después de arrancar) y lo
+    deja en lienzo.log. Un error se registra y se reintenta en la próxima vuelta."""
+    parar = parar or threading.Event()
+    if parar.wait(arranque_s):
+        return
+    while True:
+        try:
+            state.log(f"registro: crudo depurado a {RETENCION_DIAS} días {depurar_crudo()}")
+        except Exception:  # un hilo de mantenimiento no puede morir por una vuelta
+            state.log("registro: falló la depuración del crudo\n" + traceback.format_exc())
+        if parar.wait(cada_s):
+            return

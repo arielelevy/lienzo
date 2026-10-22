@@ -64,6 +64,7 @@ import pantalla_coda
 import plugins
 import recientes
 import red
+import registro_niveles
 import remote_run
 import replica
 import restore
@@ -3444,6 +3445,8 @@ def main() -> int:
     threading.Thread(target=config_peers_loop, daemon=True).start()
     # la memoria por proyecto se replica con los pares vivos (anexo C de v5)
     threading.Thread(target=replica.bucle, args=(mirror.MIRROR,), name="replica", daemon=True).start()
+    # nivel 1 del registro: el crudo se depura a los 30 dias (decision 5 de Ariel, 2026-10-22)
+    threading.Thread(target=registro_niveles.bucle, name="registro", daemon=True).start()
     threading.Thread(target=vigia_loop, name="vigia", daemon=True).start()
     threading.Thread(target=consulta_loop, name="consulta", daemon=True).start()
     plugins.cargar()  # lienzo/extensiones/*.py, si los hay en esta PC (Git los ignora)

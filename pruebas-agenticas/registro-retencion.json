@@ -1,0 +1,50 @@
+{
+  "nombre": "registro-retencion-encargo-I",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/registro-retencion",
+  "reglas": [
+    "Decisión 5 de Ariel (2026-10-22): los registros crudos (nivel 1) se retienen 30 días; la depuración automática está autorizada.",
+    "PENDIENTES.md, ciclo de tres niveles: crudo (todo), nivel 2 cómo se hizo para el investigador, nivel 3 resumen para sesiones y sistemas externos; un consumidor externo recibe sólo el 3 y el investigador el 2 y el 3 sin transcripciones.",
+    "Las transcripciones son de cada CLI: Lienzo no las modifica ni las depura.",
+    "La réplica entre PCs lee capturas por rowid ascendente con cursor por par: depurar no puede reusar rowids."
+  ],
+  "casos": [
+    {
+      "id": "retencion-crudo",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_registro_retencion.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 120000,
+      "cubre": [
+        "lienzo/registro_niveles.py"
+      ]
+    },
+    {
+      "id": "niveles-2-3-y-rtk",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_backlog_d_registro.py",
+        "tests/test_comparar_rtk.py",
+        "tests/test_optimization_research.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 180000,
+      "cubre": [
+        "lienzo/registro_niveles.py",
+        "lienzo/tools/rtk.py",
+        "lienzo/optimization_research.py"
+      ]
+    }
+  ],
+  "mutaciones": []
+}
