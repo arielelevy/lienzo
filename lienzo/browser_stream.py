@@ -308,22 +308,32 @@ class TabWorker:
                 return
             with self.cv:
                 # Invalidar antes de esperar viewport: una captura anterior no puede publicarse.
+                previous = self.target
                 self.generation = generation
                 self.paused = True
                 self.target = None
                 self.awaiting = None
             with _tab_lock:
                 owner = _tab_owners.get(target)
-                if owner is not None and owner is not self:
-                    raise ValueError("La pestaña ya tiene un visor abierto")
-                for key in [key for key, owner in _tab_owners.items() if owner is self]:
-                    del _tab_owners[key]
-                _tab_owners[target] = self
-                _tab_lock.notify_all()
+                taken = owner is not None and owner is not self
+                if not taken:
+                    # la anterior vuelve a su tamaño antes de soltar su propiedad: otro visor no la ajusta en el medio
+                    if previous and previous != target:
+                        self._unfit(previous)
+                    for key in [key for key, owner in _tab_owners.items() if owner is self]:
+                        del _tab_owners[key]
+                    _tab_owners[target] = self
+                    _tab_lock.notify_all()
+            if taken:
+                # el cambio no se hizo: la anterior sigue propia pero sin visor; vuelve a su tamaño
+                if previous:
+                    self._unfit(previous)
+                raise ValueError("La pestaña ya tiene un visor abierto")
             code, result = browser_remote.HOST.request(
-                {"action": "viewport", "tab": target, "width": width, "height": height}
+                {"action": "viewport", "tab": target, "width": width, "height": height, "fit": True}
             )
             if code != 200:
+                self._unfit(target)
                 self.json(
                     {
                         "t": "error",
@@ -397,9 +407,16 @@ class TabWorker:
         self.bounded(css_height, 1, 2160)
         return css_width, css_height
 
+    @staticmethod
+    def _unfit(target):
+        """La pestaña vuelve a su tamaño real. Sin efecto si este visor nunca la ajustó o si ya no existe."""
+        code, result = browser_remote.HOST.request({"action": "unfit", "tab": target})
+        if code != 200:
+            state.log(f"Chrome tabs: no se pudo devolver la pestaña a su tamaño: {result.get('error', code)}")
+
     def _size(self, data):
-        """El visor cambió de tamaño: sin open, sin release y sin generación nueva. En existing sólo cambia la
-        escala de la captura; en lienzo el host emula el tamaño nuevo."""
+        """El visor cambió de tamaño: sin open, sin release y sin generación nueva. La pestaña toma el tamaño
+        CSS nuevo del visor (existing con fit y lienzo); el host no vuelve a emular un tamaño repetido."""
         width = self.bounded(data.get("width"), 320, 1920)
         height = self.bounded(data.get("height"), 240, 1080)
         with self.cv:
@@ -407,7 +424,7 @@ class TabWorker:
             if not target or data.get("generation") != self.generation:
                 return
         code, result = browser_remote.HOST.request(
-            {"action": "viewport", "tab": target, "width": width, "height": height}
+            {"action": "viewport", "tab": target, "width": width, "height": height, "fit": True}
         )
         if code != 200:
             self.json(
@@ -662,6 +679,9 @@ class TabWorker:
                         self.json({"t": "error", "generation": self.generation, "message": message})
                     except OSError, ValueError, ConnectionError:
                         state.log("Chrome tabs: el visor se cerró antes de recibir el error de liberación")
+                # visor cerrado, desconectado o caído: la pestaña vuelve a su tamaño en esa PC
+                if self.target:
+                    self._unfit(self.target)
             finally:
                 with self.cv:
                     self.release_finished = True

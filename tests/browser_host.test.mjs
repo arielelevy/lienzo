@@ -258,6 +258,62 @@ test('existing: dos visores con tamaños distintos y frame HTTP no alternan el t
   assert.equal(overrides, 0);
 });
 
+// Pedido de Ariel (2026-10-22, franjas negras): el dueño del stream de una pestaña la ajusta al tamaño CSS de su visor
+// a DPR real mientras la mira, un solo override por tamaño nuevo, y al soltarla la pestaña vuelve a su tamaño.
+test('existing: fit ajusta la pestaña al visor una vez por tamaño y unfit la devuelve', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  const start = trace().length;
+  const methods = () => trace().slice(start).map(x => x.method);
+  await request({action:'viewport', tab:'fixture-tab', width:700, height:1000, fit:true, requestId:851});
+  await request({action:'viewport', tab:'fixture-tab', width:700, height:1000, fit:true, requestId:852});
+  await request({action:'snapshot', tab:'fixture-tab', width:700, height:1000, requestId:853});
+  await request({action:'frame', tab:'fixture-tab', width:900, height:600, requestId:854}); // otro visor por HTTP
+  await request({action:'viewport', tab:'fixture-tab', width:900, height:600, requestId:855}); // sin fit: sólo lee
+  const overrides = trace().slice(start).filter(x => x.method === 'Emulation.setDeviceMetricsOverride');
+  assert.deepEqual(overrides.map(x => x.params), [{width:700, height:1000, deviceScaleFactor:0, mobile:false}], methods().join(','));
+  await request({action:'viewport', tab:'fixture-tab', width:1400, height:520, fit:true, requestId:856});
+  assert.equal(trace().slice(start).filter(x => x.method === 'Emulation.setDeviceMetricsOverride').length, 2);
+  // el único clear previo es el de adjuntarse (deshace lo que pudo dejar otra versión)
+  const clears = () => methods().filter(m => m === 'Emulation.clearDeviceMetricsOverride').length - 1;
+  assert.equal(clears(), 0);
+  assert.deepEqual(await request({action:'unfit', tab:'fixture-tab', requestId:857}), {ok:true, requestId:857});
+  assert.equal(clears(), 1);
+  await request({action:'unfit', tab:'fixture-tab', requestId:858}); // ya suelta: no vuelve a tocar la pestaña
+  assert.equal(clears(), 1);
+  // tras soltarla, el mismo tamaño vuelve a emularse
+  await request({action:'viewport', tab:'fixture-tab', width:1400, height:520, fit:true, requestId:859});
+  assert.equal(trace().slice(start).filter(x => x.method === 'Emulation.setDeviceMetricsOverride').length, 3);
+  assert.equal(methods().filter(m => m === 'Target.activateTarget').length, 0);
+});
+
+test('existing: un unfit que vence sigue pendiente y el próximo unfit vuelve a limpiar', {timeout:15000}, async t => {
+  // el primer clear es el de adjuntarse; vence el segundo, el del unfit
+  const {request, trace} = await worker(t, 'Emulation.clearDeviceMetricsOverride', '1280x800', 'visible', {TEST_BROWSER_HOST_DROP_NTH:'2'});
+  await request({action:'viewport', tab:'fixture-tab', width:700, height:1000, fit:true, requestId:871});
+  const start = trace().length;
+  assert.equal((await request({action:'unfit', tab:'fixture-tab', requestId:872})).status, 504);
+  assert.equal((await request({action:'unfit', tab:'fixture-tab', requestId:873})).ok, true);
+  assert.equal(trace().slice(start).filter(x => x.method === 'Emulation.clearDeviceMetricsOverride').length, 2);
+});
+
+test('existing: un fit que vence igual se limpia con unfit (Chrome pudo aplicarlo tarde)', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'Emulation.setDeviceMetricsOverride');
+  assert.equal((await request({action:'viewport', tab:'fixture-tab', width:700, height:1000, fit:true, requestId:881})).status, 504);
+  const start = trace().length;
+  assert.equal((await request({action:'unfit', tab:'fixture-tab', requestId:882})).ok, true);
+  assert.deepEqual(trace().slice(start).map(x => x.method), ['Emulation.clearDeviceMetricsOverride']);
+});
+
+test('existing: unfit de una pestaña no adjunta no la adjunta ni la activa; fit inválido se rechaza', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  const start = trace().length;
+  assert.equal((await request({action:'unfit', tab:'fixture-tab', requestId:861})).ok, true);
+  assert.deepEqual(trace().slice(start).map(x => x.method), []);
+  const bad = await request({action:'viewport', tab:'fixture-tab', width:800, height:600, fit:'si', requestId:862});
+  assert.equal(bad.status, 400);
+  assert.deepEqual(trace().slice(start).map(x => x.method), []);
+});
+
 test('existing: cuadros empujados a resolución real, sin clip, sin emular y con acuse al llevarlos', {timeout:15000}, async t => {
   const {request, trace} = await worker(t, 'cast-stream');
   const first = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600, requestId:901});

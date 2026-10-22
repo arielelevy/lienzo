@@ -456,6 +456,29 @@ test('tabs stream con el tamaño quieto no reabre ni cambia el tamaño pedido (s
   expect(sizes.size).toBe(1);
 });
 
+// Pedido de Ariel (2026-10-22): la pestaña toma el tamaño CSS del visor, así el cuadro llena el visor sin franjas;
+// un gesto de resize lento (pasos cada 200 ms) manda un solo size.
+for (const [label, width, height] of [['más alto que ancho', 520, 900], ['más ancho que alto', 1400, 560]] as const) {
+  test(`tabs stream pide el tamaño CSS del visor ${label} y un gesto de resize manda un solo size`, async ({page}) => {
+    await page.setViewportSize({width, height});
+    const f = await streamFixture(page);
+    const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});
+    await expect(screen).toBeVisible();
+    const view = await page.locator('.remote-viewport').last().boundingBox();
+    const open = f.channels[0].commands.filter(d => d.t === 'open').at(-1)!;
+    expect([open.width, open.height]).toEqual([Math.round(view!.width), Math.round(view!.height)]);
+    expect(Number(open.height) > Number(open.width)).toBe(height > width);
+    for (let step = 1; step <= 5; step++) { await page.setViewportSize({width: width + step * 12, height}); await page.waitForTimeout(200); }
+    await expect.poll(() => f.channels[0].commands.filter(d => d.t === 'size').length).toBe(1);
+    await page.waitForTimeout(400);
+    const sizes = f.channels[0].commands.filter(d => d.t === 'size');
+    const after = await page.locator('.remote-viewport').last().boundingBox();
+    expect(sizes, JSON.stringify(sizes)).toHaveLength(1);
+    expect([sizes[0].width, sizes[0].height]).toEqual([Math.round(after!.width), Math.round(after!.height)]);
+    expect(f.channels[0].commands.filter(d => d.t === 'open')).toHaveLength(1);
+  });
+}
+
 test('tabs stream muestra captura inválida sin ocultar el último cuadro ni degradar a HTTP', async ({page}) => {
   const f = await streamFixture(page);
   const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});

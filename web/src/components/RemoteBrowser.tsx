@@ -445,6 +445,9 @@ function ChromeWindow({peer, toolbarSlot}: {peer: Peer; toolbarSlot: HTMLDivElem
   </div><div className="remote-status">{peer.name} · Chrome real · Usás el mouse y teclado de esa PC. Cerrar esta vista deja Chrome abierto.</div></>;
 }
 
+/** Espera tras el último cambio de tamaño del visor antes de pedirle a la pestaña el tamaño nuevo. */
+const TAB_RESIZE_MS = 300;
+
 /** Canal de pestañas del HOST CDP existente. No comparte decoder ni framing con Win32. */
 function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React.RefObject<HTMLDivElement | null>, onState: (reply: Reply, tab: string) => void) {
   const [canvas] = useState(() => document.createElement('canvas'));
@@ -518,7 +521,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
       const next = `${selected.current}:${width}:${height}`;
       if (!force && signature === next) return;
       if (!force && current && signature.startsWith(`${selected.current}:`)) {
-        // misma pestaña, otro tamaño de visor: sólo cambia la escala de la captura; sin open ni release
+        // misma pestaña, otro tamaño de visor: la pestaña toma el tamaño CSS nuevo del visor (sin franjas); sin open ni release
         signature = next;
         ws.send(JSON.stringify({t: 'size', generation: current, width, height}));
         return;
@@ -632,7 +635,8 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
     };
     release.current = () => request('release-input');
     const visibility = () => { if (ws?.readyState === WebSocket.OPEN) { if (document.hidden) releaseInput(); ws.send(JSON.stringify({t: document.hidden ? 'pause' : 'resume'})); } };
-    const observer = new ResizeObserver(() => { clearTimeout(resize); resize = setTimeout(() => select(), 150); });
+    // un solo size por gesto: cada tamaño nuevo rehace el layout de la pestaña también en la ventana de esa PC
+    const observer = new ResizeObserver(() => { clearTimeout(resize); resize = setTimeout(() => select(), TAB_RESIZE_MS); });
     if (viewport.current) observer.observe(viewport.current);
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('blur', releaseInput);

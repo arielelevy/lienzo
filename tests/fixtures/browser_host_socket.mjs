@@ -14,6 +14,8 @@ let frames = 0;
 let worlds = 0;
 let replaced = false;
 let casts = 0;
+let matches = 0;
+const dropNth = Number(process.env.TEST_BROWSER_HOST_DROP_NTH || 1);
 // el cuadro mide lo que la pestaña (en CSS); cast-stale-size simula uno de antes de un resize
 const frameSize = () => {
   const [deviceWidth, deviceHeight] = (scenario === 'cast-stale-size' ? '900x600' : process.env.TEST_BROWSER_HOST_VIEW || '1280x800').split('x').map(Number);
@@ -37,7 +39,7 @@ class FixtureSocket extends EventTarget {
   send(line) {
     const command = JSON.parse(line);
     appendFileSync(process.env.TEST_BROWSER_HOST_TRACE, JSON.stringify({method:command.method,
-      ...(['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Page.captureScreenshot', 'Runtime.evaluate', 'Page.startScreencast'].includes(command.method) ? {params:command.params} : {}), ns:process.hrtime.bigint().toString()}) + '\n');
+      ...(['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Page.captureScreenshot', 'Runtime.evaluate', 'Page.startScreencast', 'Emulation.setDeviceMetricsOverride'].includes(command.method) ? {params:command.params} : {}), ns:process.hrtime.bigint().toString()}) + '\n');
     process.stderr.write('CDP ' + command.method + '\n');
     const reply = result => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({id:command.id, result})}));
     // TEST_BROWSER_HOST_FAIL_RECAST: el segundo Page.startScreencast (el del cambio de modo) falla
@@ -50,7 +52,9 @@ class FixtureSocket extends EventTarget {
     const late = scenario === 'late-screenshot' && command.method === 'Page.captureScreenshot';
     if (command.method === 'Target.getTargets') targetRequests++;
     const eligible = command.method !== 'Target.getTargets' || targetRequests > 1;
-    if (!dropped && eligible && (command.method === scenario || late)) {
+    // TEST_BROWSER_HOST_DROP_NTH: vence la n-ésima llamada del método del escenario (por defecto la primera)
+    if (command.method === scenario) matches++;
+    if (!dropped && eligible && ((command.method === scenario && matches >= dropNth) || late)) {
       dropped = true;
       if (late) realTimeout(() => reply({data:'expired-image'}), 100);
       return;

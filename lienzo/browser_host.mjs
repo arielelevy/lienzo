@@ -168,7 +168,7 @@ async function attachPage(id) {
     root.sessions.set(sessionId, cdp);
     try {
       await cdp.send('Page.enable');
-      // existing: la pestaña es del usuario; se deshace una vez lo que pudo dejar una versión que emulaba
+      // existing: la pestaña es del usuario; al adjuntarse se deshace lo que pudo dejar otra sesión o versión
       if (!chrome) await cdp.send('Emulation.clearDeviceMetricsOverride');
     }
     catch (e) {
@@ -186,7 +186,8 @@ async function attachPage(id) {
 const TIMING = process.env.LIENZO_BROWSER_TIMING === '1';
 const traced = (cdp, source) => { if (TIMING) cdp.source = source; };
 
-// Chrome habitual (existing): nunca se emula el tamaño; se lee el real y se captura sin tocar layout ni scroll.
+// Chrome habitual (existing): sólo se emula el tamaño con viewport fit (el dueño del stream de esa pestaña) y hasta
+// el unfit; se lee el tamaño de la pestaña (el emulado, si lo hay) y se captura sin tocar scroll.
 // innerWidth/innerHeight y no cssVisualViewport: el cuadro (screencast o captura sin clip) incluye la barra de
 // scroll (medido 2026-10-21: 1479 px a DPR 1,5 = 986 CSS, con clientWidth 970,7). Se leen en un mundo aislado:
 // un script de la página no puede falsear innerWidth ni visibilityState ahí.
@@ -597,7 +598,20 @@ async function handle(d) {
     await browser.send('Target.activateTarget', {targetId: d.tab});
     return {ok: true};
   }
-  if (d.action === 'viewport') { integer(d.width, 320, 1920); integer(d.height, 240, 1080); }
+  if (d.action === 'unfit') {
+    // sólo una sesión ya adjunta pudo emular: soltar nunca adjunta ni activa. Una pestaña cerrada no tiene qué limpiar.
+    const cdp = pages.get(d.tab);
+    if (cdp?.fit) {
+      // fit se borra recién con el clear confirmado: si falla, el próximo unfit lo vuelve a intentar
+      await cdp.send('Emulation.clearDeviceMetricsOverride').catch(e => { if (!cdp.gone) throw e; });
+      cdp.fit = null;
+    }
+    return {ok: true};
+  }
+  if (d.action === 'viewport') {
+    integer(d.width, 320, 1920); integer(d.height, 240, 1080);
+    if (d.fit !== undefined && typeof d.fit !== 'boolean') fail('Ajuste de tamaño inválido');
+  }
   const cdp = await page(d.tab, ['snapshot', 'input', 'release-input', 'viewport', 'tab-state'].includes(d.action));
   const timedOut = e => {
     if (e.status === 504) e.message += '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla';
@@ -605,8 +619,19 @@ async function handle(d) {
   };
   if (d.action === 'viewport') {
     const width = integer(d.width, 320, 1920), height = integer(d.height, 240, 1080);
-    // existing: el tamaño del visor sólo escala la captura; se informa el tamaño real de la pestaña
-    if (!chrome) return realViewport(cdp).then(v => ({width: v.width, height: v.height}));
+    // existing: sin fit el tamaño del visor sólo escala la captura. Con fit (sólo el dueño del stream de esa pestaña)
+    // la pestaña toma el tamaño CSS del visor a su DPR real (deviceScaleFactor 0) hasta el unfit; se manda sólo
+    // cuando el tamaño cambia: repetir el mismo no vuelve a hacer layout en la ventana de esa PC.
+    // Se informa siempre el tamaño leído de la pestaña, que es sobre el que se mapea la entrada.
+    if (!chrome) {
+      if (d.fit && cdp.fit !== `${width}x${height}`) {
+        // marcado antes de mandarlo: un override vencido que Chrome aplica tarde igual se limpia con unfit
+        cdp.fit = 'incierto';
+        await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 0, mobile: false});
+        cdp.fit = `${width}x${height}`;
+      }
+      return realViewport(cdp).then(v => ({width: v.width, height: v.height}));
+    }
     // lienzo (headless propio): el override cambia la pestaña; se manda sólo cuando cambia el tamaño
     if (cdp.size !== `${width}x${height}`) {
       await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});

@@ -424,7 +424,9 @@ def test_open_and_close_release_only_own_mouse_downs(tab_worker):
     send(worker, t="input", n=2, generation=2, events=[mouse])
     wait_message(output, lambda m: m.get("n") == 2)
     worker.close()
-    assert calls[-1]["tab"] == "b" and calls[-1]["events"][0]["type"] == "mouseReleased"
+    # al cerrar: primero se suelta el botón y después la pestaña vuelve a su tamaño
+    assert calls[-2]["tab"] == "b" and calls[-2]["events"][0]["type"] == "mouseReleased"
+    assert calls[-1] == {"action": "unfit", "tab": "b"}
     gate.set()
 
 
@@ -625,3 +627,67 @@ def test_opened_y_cuadros_llevan_el_tamano_css_real_y_basis_llega_al_host(tab_wo
     wait_message(output, lambda m: m.get("n") == 1)
     sent = next(c for c in calls if c["action"] == "input")
     assert sent["basis"] == {"width": 3840, "height": 2160}
+
+
+def test_visor_ajusta_la_pestana_y_la_devuelve_al_cambiar_y_al_cerrar(tab_worker):
+    # pedido de Ariel (2026-10-22): sin franjas mientras se mira; al soltarla la pestaña vuelve a su tamaño
+    worker, gate, capturing, _, _, calls, output = tab_worker
+    gate.set()
+    send(worker, t="open", tab="a", generation=1, width=700, height=1000)
+    wait_message(output, lambda m: m["t"] == "opened" and m["generation"] == 1)
+    send(worker, t="size", generation=1, width=1400, height=520)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline and (worker.width, worker.height) != (1400, 520):
+        time.sleep(0.01)
+    send(worker, t="open", tab="b", generation=2, width=900, height=700)
+    wait_message(output, lambda m: m["t"] == "opened" and m["generation"] == 2)
+    worker.close()
+    sizes = [
+        (c["action"], c["tab"], c.get("width"), c.get("fit")) for c in calls if c["action"] in ("viewport", "unfit")
+    ]
+    assert sizes == [
+        ("viewport", "a", 700, True),
+        ("viewport", "a", 1400, True),
+        ("unfit", "a", None, None),
+        ("viewport", "b", 900, True),
+        ("unfit", "b", None, None),
+    ]
+
+
+def test_open_fallido_devuelve_la_pestana_a_su_tamano(tab_worker, monkeypatch):
+    worker, gate, _, _, _, calls, output = tab_worker
+    original = browser_remote.HOST.request
+
+    def request(data):
+        if data["action"] == "viewport":
+            calls.append(data)
+            return 504, {"error": "Chrome tardó demasiado en responder (Runtime.evaluate)"}
+        return original(data)
+
+    monkeypatch.setattr(browser_remote.HOST, "request", request)
+    send(worker, t="open", tab="a", generation=1, width=800, height=600)
+    wait_message(output, lambda m: m["t"] == "error")
+    assert [c["action"] for c in calls if c["action"] in ("viewport", "unfit")] == ["viewport", "unfit"]
+    worker.close()
+    assert [c["action"] for c in calls if c["action"] == "unfit"] == ["unfit"]  # sin pestaña abierta no hay otro
+
+
+def test_cambio_a_pestana_ajena_conserva_la_vista_ajustada(tab_worker):
+    worker, gate, _, _, _, calls, output = tab_worker
+    gate.set()
+    send(worker, t="open", tab="a", generation=1, width=700, height=1000)
+    wait_message(output, lambda m: m["t"] == "opened")
+    other_output = []
+    other = module.TabWorker(lambda *args: other_output.append(args), lambda: None)
+    try:
+        send(other, t="open", tab="b", generation=1, width=800, height=600)
+        wait_message(other_output, lambda m: m["t"] == "opened")
+        send(worker, t="open", tab="b", generation=2, width=900, height=700)
+        assert "ya tiene un visor" in wait_message(output, lambda m: m["t"] == "error")["message"]
+        # rechazo temprano: la vista de a sigue abierta y ajustada; nada se suelta ni se devuelve
+        assert not any(c["action"] == "unfit" for c in calls)
+        assert worker.target == "a" and module._tab_owners["a"] is worker and module._tab_owners["b"] is other
+    finally:
+        other.close()
+        for thread in other.threads:
+            thread.join(3)

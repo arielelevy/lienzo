@@ -1,0 +1,68 @@
+{
+  "nombre": "chrome-pestanas-fit-M",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/chrome-fit-M",
+  "reglas": [
+    "Pedido de Ariel (2026-10-22, encargo M): mientras un visor mira una pestaña, la pestaña toma el tamaño CSS del visor a su DPR real; el cuadro llena el visor sin franjas.",
+    "Al soltarla (desconectar, cambiar de pestaña, cerrar el visor, caída del socket o del host) la pestaña vuelve a su tamaño real en esa PC.",
+    "Sin parpadeo: un solo override por tamaño nuevo; repetir el mismo tamaño no rehace el layout; la UI manda un solo size por gesto de resize (debounce).",
+    "Sólo el dueño del stream de una pestaña la ajusta; el frame HTTP y otros lectores no emulan ni alternan su tamaño. Ninguna operación activa la pestaña salvo elegirla.",
+    "Se conserva el 409 por basis viejo, el screencast a DPR real y los cuadros livianos al scrollear (0.6.9)."
+  ],
+  "precondiciones": [],
+  "casos": [
+    {
+      "id": "host-fit-node",
+      "comando": [
+        "node",
+        "--test",
+        "tests/browser_host.test.mjs"
+      ],
+      "timeoutMs": 180000,
+      "cubre": [
+        "lienzo/browser_host.mjs"
+      ]
+    },
+    {
+      "id": "stream-fit-pytest",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_browser_tabs_stream.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 180000,
+      "cubre": [
+        "lienzo/browser_stream.py"
+      ]
+    },
+    {
+      "id": "ui-tabs-visor-alto-y-ancho",
+      "comando": [
+        "pwsh",
+        "-NoProfile",
+        "-Command",
+        "Set-Location web; npx playwright test --config tests-ui/playwright.config.ts tests-ui/chrome.spec.ts -g 'tabs stream' --workers=2; exit $LASTEXITCODE"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "web/src/components/RemoteBrowser.tsx"
+      ]
+    },
+    {
+      "id": "chrome-real-aislado-fit",
+      "comando": [
+        "node",
+        "pruebas-agenticas/chrome_fit_real.mjs",
+        "--fit"
+      ],
+      "timeoutMs": 120000,
+      "cubre": [
+        "lienzo/browser_host.mjs"
+      ]
+    }
+  ]
+}
