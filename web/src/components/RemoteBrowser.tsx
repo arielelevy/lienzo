@@ -7,6 +7,7 @@ import "../remote-browser.css";
 
 /** `context`: el browserContextId del perfil de Chrome de la pestaña (browser_host.mjs). */
 type Tab = { id: string; title: string; url: string; context?: string };
+type ActiveTarget = {id: string; context: string; window: string; windowId: number};
 type Reply = {
   windows?: {id: string; title: string; profile?: string}[];
   profiles?: {id: string; name: string}[]; prepared?: boolean;
@@ -16,7 +17,7 @@ type Reply = {
 };
 type Command = Record<string, unknown>;
 /** Lo que manda el worker por el canal vivo (browser_window.py --stream): texto JSON o un cuadro binario. */
-type StreamMessage = { t: string; locked?: boolean; n?: number; capture_ms?: number; encode_ms?: number; text?: string; message?: string; input?: boolean; cursor?: string; window?: string; windows?: {id: string; title: string}[] };
+type StreamMessage = { t: string; locked?: boolean; activeTarget?: ActiveTarget | null; n?: number; capture_ms?: number; encode_ms?: number; text?: string; message?: string; input?: boolean; cursor?: string; window?: string; windows?: {id: string; title: string}[] };
 const FRAME_HEADER = 17; // >IHHHHHHB: seq, x, y, ancho, alto, ancho total, alto total, flags
 // Cuadro v2 (browser_window.frame_v2): despues de la cabecera, la copia del scroll (>hHHHHH: dy, x0,
 // x1, top, bottom, parches) y cada parche como >HHHHI (x, y, ancho, alto, largo) + PNG.
@@ -121,7 +122,7 @@ export function RemoteBrowser() {
   const mode = useRef({native: true, auto: false, locked: false});
   const [auto, setAuto] = useState(false);
   const [lockNotice, setLockNotice] = useState<LockNotice>('');
-  const [activeTitle, setActiveTitle] = useState('');
+  const [activeTarget, setActiveTarget] = useState<ActiveTarget | null>(null);
   const chooseMode = (value: boolean) => {
     mode.current = {...mode.current, native: value, auto: false};
     // volver a la ventana completa con la PC bloqueada deja la imagen quieta: se dice, para que no parezca colgada
@@ -129,13 +130,13 @@ export function RemoteBrowser() {
   };
   // sólo un cambio de estado mueve la vista: otro aviso del mismo bloqueo (tras reconectar) no la saca
   // de donde la dejó la persona. La histéresis está en el worker (browser_window.LockWatch)
-  const desktop = useCallback((locked: boolean, title: string) => {
+  const desktop = useCallback((locked: boolean, target: ActiveTarget | null) => {
     const m = mode.current;
     if (locked === m.locked) return;
     m.locked = locked;
     if (locked && m.native) {
       mode.current = {...m, native: false, auto: true};
-      setActiveTitle(title); setNative(false); setAuto(true); setLockNotice('locked');
+      setActiveTarget(target); setNative(false); setAuto(true); setLockNotice('locked');
     } else if (!locked && m.auto) {
       mode.current = {...m, native: true, auto: false};
       setNative(true); setAuto(false); setLockNotice('unlocked');
@@ -195,22 +196,22 @@ export function RemoteBrowser() {
     </div>
     {lockNotice && peer && <div className="remote-lock-notice" role="status">
       {lockNotice === 'locked'
-        ? <>{peer.name} está bloqueada: Windows no deja ver ni usar la ventana completa. Pasé a la vista por pestañas, en la pestaña activa; al desbloquearla vuelvo solo a la ventana completa.
+        ? <>{peer.name} está bloqueada: Windows no deja ver ni usar la ventana completa. {activeTarget ? 'Pasé a la vista por pestañas, en la pestaña activa comprobada.' : 'La vista por pestañas queda en pausa: elegí la pestaña y el perfil para continuar.'} Al desbloquearla vuelvo solo a la ventana completa.
           <button onClick={() => chooseMode(false)}>Quedarme en pestañas</button></>
         : lockNotice === 'still' ? <>{peer.name} sigue bloqueada: la imagen queda quieta y la entrada no llega hasta desbloquearla.</>
         : <>{peer.name} se desbloqueó: volví a la ventana completa.</>}
       <button aria-label="Cerrar aviso de bloqueo" onClick={() => setLockNotice('')}>×</button>
     </div>}
-    {peer ? <ChromeMode key={peer.pc_id} peer={peer} native={native} auto={auto} activeTitle={activeTitle} onDesktop={desktop} toolbarSlot={toolbarSlot} /> : <div className="remote-empty">No se encuentra la PC. Revisá la conexión desde el tablero.</div>}
+    {peer ? <ChromeMode key={peer.pc_id} peer={peer} native={native} auto={auto} activeTarget={activeTarget} onDesktop={desktop} toolbarSlot={toolbarSlot} /> : <div className="remote-empty">No se encuentra la PC. Revisá la conexión desde el tablero.</div>}
   </main>;
 }
 
 /** Con la vista por pestañas puesta por el bloqueo, la ventana completa sigue montada en espera
  *  (pausada, sin capturar): es la que se entera del desbloqueo para volver. */
-function ChromeMode({peer, native, auto, activeTitle, onDesktop, toolbarSlot}: {peer: Peer; native: boolean; auto: boolean; activeTitle: string; onDesktop: (locked: boolean, title: string) => void; toolbarSlot: HTMLDivElement | null}) {
+function ChromeMode({peer, native, auto, activeTarget, onDesktop, toolbarSlot}: {peer: Peer; native: boolean; auto: boolean; activeTarget: ActiveTarget | null; onDesktop: (locked: boolean, target: ActiveTarget | null) => void; toolbarSlot: HTMLDivElement | null}) {
   return <>
     {(native || auto) && <ChromeWindow peer={peer} standby={!native} onDesktop={onDesktop} toolbarSlot={toolbarSlot} />}
-    {!native && <BrowserDesktop peer={peer} preferTitle={auto ? activeTitle : ''} />}
+    {!native && <BrowserDesktop peer={peer} autoTarget={auto ? activeTarget : undefined} />}
   </>;
 }
 
@@ -223,7 +224,7 @@ function physicalSize(box: DOMRect | undefined): {width: number; height: number}
 
 /** Ventana completa de Chrome por el canal vivo: la PC dueña empuja cada cuadro apenas cambia y el
  *  mouse sale por el mismo socket, sin esperar la imagen. */
-function ChromeWindow({peer, standby = false, onDesktop, toolbarSlot}: {peer: Peer; standby?: boolean; onDesktop?: (locked: boolean, title: string) => void; toolbarSlot: HTMLDivElement | null}) {
+function ChromeWindow({peer, standby = false, onDesktop, toolbarSlot}: {peer: Peer; standby?: boolean; onDesktop?: (locked: boolean, target: ActiveTarget | null) => void; toolbarSlot: HTMLDivElement | null}) {
   const [windows, setWindows] = useState<NonNullable<Reply['windows']>>([]);
   const [window, setWindow] = useState('');
   const [profiles, setProfiles] = useState<NonNullable<Reply['profiles']>>([]);
@@ -248,8 +249,8 @@ function ChromeWindow({peer, standby = false, onDesktop, toolbarSlot}: {peer: Pe
   const report = useCallback((e: unknown) => { if (live.current) setError((e as Error).message); }, []);
   const title = windows.find(w=>w.id === window)?.title.replace(/ - Google Chrome$/, '') ?? '';
   useEffect(() => { if (!standby) document.title = title || `Chrome · ${peer.name}`; }, [title, peer.name, standby]);
-  const desktopState = useRef({onDesktop, title, standby});
-  useEffect(() => { desktopState.current = {onDesktop, title, standby}; }, [onDesktop, title, standby]);
+  const desktopState = useRef({onDesktop, window, standby});
+  useEffect(() => { desktopState.current = {onDesktop, window, standby}; }, [onDesktop, window, standby]);
   const refresh = useCallback(async () => {
     const r = await call({action: 'windows'});
     if (!live.current) return [];
@@ -351,7 +352,12 @@ function ChromeWindow({peer, standby = false, onDesktop, toolbarSlot}: {peer: Pe
             if ('cursor' in value && typeof value.cursor !== 'string') throw new Error('Mensaje de Chrome remoto inválido');
             m = value as StreamMessage;
           } catch { report(new Error('Mensaje de Chrome remoto inválido')); return; }
-          if (m.t === 'desktop') { if (typeof m.locked === 'boolean') desktopState.current.onDesktop?.(m.locked, desktopState.current.title); }
+          if (m.t === 'desktop') {
+            const target = m.activeTarget;
+            const checked = target && target.window === desktopState.current.window && typeof target.id === 'string'
+              && typeof target.context === 'string' && Number.isInteger(target.windowId) ? target : null;
+            if (typeof m.locked === 'boolean') desktopState.current.onDesktop?.(m.locked, checked);
+          }
           else if (m.t === 'clipboard-ready') setCopied(true);
           else if (m.t === 'clipboard') {
             if (typeof m.text !== 'string') { setInputError('Texto copiado inválido'); return; }
@@ -748,7 +754,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
   };
 }
 
-function BrowserDesktop({peer, preferTitle = ''}: {peer: Peer; preferTitle?: string}) {
+function BrowserDesktop({peer, autoTarget}: {peer: Peer; autoTarget?: ActiveTarget | null}) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [tab, setTab] = useState("");
   const [running, setRunning] = useState(false);
@@ -773,8 +779,8 @@ function BrowserDesktop({peer, preferTitle = ''}: {peer: Peer; preferTitle?: str
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { document.title = `Chrome · ${peer.name} · Lienzo`; }, [peer.name]);
-  // la pestaña activa de la ventana que se estaba viendo (su título es el de la ventana): es la primera que se elige
-  const preferred = useRef(preferTitle);
+  const preferred = useRef(autoTarget);
+  const requireChoice = useRef(autoTarget !== undefined);
 
   const call = useCallback((command: Command, signal?: AbortSignal): Promise<Reply> => {
     const execute = () => {
@@ -830,11 +836,11 @@ function BrowserDesktop({peer, preferTitle = ''}: {peer: Peer; preferTitle?: str
     if (result.tabs) {
       const next = result.tabs;
       setTabs(next);
-      // la pestaña activa al bloquearse se elige una sola vez; después, la primera como siempre
-      const prefer = next.length ? preferred.current : '';
-      if (prefer) preferred.current = '';
+      // El bloqueo sólo elige un target/context comprobado por la PC dueña. Sin identidad, pausa.
+      const prefer = preferred.current;
       setTab(current => next.some(t => t.id === current) ? current
-        : (next.find(t => prefer && t.title === prefer)?.id ?? next[0]?.id ?? ""));
+        : (next.find(t => prefer && t.id === prefer.id && t.context === prefer.context)?.id
+          ?? (requireChoice.current ? '' : next[0]?.id ?? '')));
     }
   }, []);
   const streamEnabled = peer.health?.capabilities?.includes('browser.tabs.stream.v1') === true;
@@ -941,6 +947,7 @@ function BrowserDesktop({peer, preferTitle = ''}: {peer: Peer; preferTitle?: str
     viewport.current?.querySelector<HTMLElement>(".remote-screen")?.focus();
   };
   const selectTab = (id: string) => {
+    preferred.current = null;
     setTab(id); setEditing(false); setError(""); setReadNotice(''); setReadStopped(false);
     void action({action: "activate", tab: id});
   };
@@ -999,7 +1006,7 @@ function BrowserDesktop({peer, preferTitle = ''}: {peer: Peer; preferTitle?: str
           <small>Chrome decide qué perfil comparte. Con varios abiertos usa su perfil predeterminado; abrir uno desde acá no cambia esa selección.</small>
           <details><summary>Usar un perfil separado de Lienzo</summary><p>Funciona sin monitor y conserva sus propios inicios de sesión.</p><button disabled={busy} onClick={() => void action({action: 'start'})}>Abrir Chrome</button></details>
         </div>
-        : !tab ? <div className="remote-empty"><h1>No hay pestañas abiertas</h1><button disabled={busy} onClick={() => void action({action: "new", url: "about:blank"})}>Nueva pestaña</button></div>
+        : !tab ? <div className="remote-empty"><h1>{tabs.length ? 'Elegí la pestaña y el perfil' : 'No hay pestañas abiertas'}</h1>{tabs.length ? <p>No se pudo comprobar cuál corresponde a la ventana. Elegila en la lista para continuar.</p> : <button disabled={busy} onClick={() => void action({action: "new", url: "about:blank"})}>Nueva pestaña</button>}</div>
         : (streamEnabled ? stream.frame?.tab !== tab : frame.tab !== tab || !frame.image) ? <div className="remote-empty">Cargando página…</div> : null}
       {ready && frame.tab === tab && frame.dialog && <BrowserDialog dialog={frame.dialog} onAnswer={(accept, text) => void action({action: "dialog", tab, accept, text})} />}
       {streamEnabled && (stream.notice || stream.error || stream.inputError || stream.hidden) && <div className="remote-capture-notice">

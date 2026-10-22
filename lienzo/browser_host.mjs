@@ -151,6 +151,50 @@ async function tabs() {
   return list;
 }
 
+const sameBounds = (a, b) => ['left', 'top', 'width', 'height'].every(k => Number.isInteger(a?.[k]) && a[k] === b?.[k]);
+
+async function targetVisible(id) {
+  // La consulta de identidad no usa page(): adjuntarse por esa vía limpia emulación de otro visor.
+  if (pages.has(id)) return (await evaluate(pages.get(id), 'document.visibilityState')).result?.value === 'visible';
+  const root = browser;
+  const {sessionId} = await root.send('Target.attachToTarget', {targetId:id, flatten:true});
+  try {
+    const cdp = {send:(method, params) => root.send(method, params, sessionId)};
+    return (await evaluate(cdp, 'document.visibilityState')).result?.value === 'visible';
+  } finally {
+    await root.send('Target.detachFromTarget', {sessionId});
+  }
+}
+
+/** HWND y windowId son identificadores distintos. Sólo unirlos con PID y rectángulo únicos;
+ *  títulos repetidos, perfiles desconocidos y ventanas superpuestas nunca eligen una cuenta. */
+async function resolveWindow(d) {
+  const uncertain = {activeTarget:null, reason:'No se pudo comprobar la identidad de la pestaña y el perfil; elegilos en la lista.'};
+  if (!browser || !Array.isArray(d.nativeWindows) || d.nativeWindows.length > 100) return uncertain;
+  const native = d.nativeWindows.find(w => w.id === d.window);
+  if (!native || !Number.isSafeInteger(native.pid) || native.pid <= 0) return uncertain;
+  const {processInfo} = await browser.send('SystemInfo.getProcessInfo');
+  if (processInfo.filter(p => p.type === 'browser').length !== 1 || !processInfo.some(p => p.type === 'browser' && p.id === native.pid)) return uncertain;
+  if (d.nativeWindows.filter(w => w.pid === native.pid && sameBounds(w.bounds, native.bounds)).length !== 1) return uncertain;
+  const targets = await tabs();
+  const catalog = await Promise.all(targets.map(async tab => ({tab, ...await browser.send('Browser.getWindowForTarget', {targetId:tab.id})})));
+  const matching = catalog.filter(w => sameBounds(w.bounds, native.bounds));
+  if (!matching.length || new Set(matching.map(w => w.windowId)).size !== 1) return uncertain;
+  const visible = [];
+  for (const item of matching) {
+    if (!item.tab.context) return uncertain;
+    if (await targetVisible(item.tab.id)) visible.push(item);
+  }
+  if (visible.length !== 1) return uncertain;
+  const selected = visible[0];
+  // Una pestaña puede moverse o navegar durante la lectura: confirmar identidad y ventana otra vez.
+  const latest = (await tabs()).find(t => t.id === selected.tab.id && t.context === selected.tab.context);
+  const current = await browser.send('Browser.getWindowForTarget', {targetId:selected.tab.id});
+  if (!latest || current.windowId !== selected.windowId || !sameBounds(current.bounds, native.bounds)
+    || !await targetVisible(selected.tab.id)) return uncertain;
+  return {activeTarget:{id:latest.id, context:latest.context, window:d.window, windowId:current.windowId}};
+}
+
 async function page(id, cached = false) {
   if (cached && pages.has(id)) return pages.get(id);
   if (attaching.has(id)) return attaching.get(id);
@@ -571,6 +615,7 @@ function connectExisting(autoApprove = false) {
 
 async function handle(d) {
   if (!d || typeof d !== 'object') fail('Pedido inválido');
+  if (d.action === 'resolve-window') return resolveWindow(d);
   if (d.action === 'profiles') return {profiles: profiles()};
   if (d.action === 'prepare') {
     if (d.setup !== undefined && typeof d.setup !== 'boolean') fail('Modo de apertura inválido');

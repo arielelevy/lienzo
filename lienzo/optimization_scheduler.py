@@ -27,6 +27,7 @@ from optimization_queue import ACTIVE, Queue
 class Scheduler:
     def __init__(self):
         self.queue = Queue()
+        self.publishing = set()  # protegido por queue.lock; no cancelar después de la primera escritura
         self.last_ui = time.monotonic()
         self.reason = "esperando señales de inactividad"
         self.good_samples = 0
@@ -142,7 +143,12 @@ class Scheduler:
             if not self.queue.enqueue_research(data["project"], creencias_research.case(data["project"])):
                 raise ValueError("esa vuelta ya se hizo hoy o hay una investigación activa en el proyecto")
         elif action == "cancel_research" and set(data) == {"action", "job"}:
-            self.queue.cancel_research(data["job"])
+            if not isinstance(data["job"], str):
+                raise ValueError("trabajo inválido")
+            with self.queue.lock:
+                if data["job"] in self.publishing:
+                    raise ValueError("publicación ya iniciada; no se puede cancelar esta vuelta")
+                self.queue.cancel_research(data["job"])
         elif action in ("requeue_research", "dismiss_research") and set(data) == {"action", "job"}:
             # acciones explícitas sobre un trabajo en revisión; nunca las dispara la cola sola
             if not isinstance(data["job"], str):
@@ -494,6 +500,14 @@ class Scheduler:
             )
         finally:
             self.queue.change(jid, pid=None)  # el proceso propio terminó; conservar cancelación persistida
+        with self.queue.lock:
+            current = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
+            if current.get("cancel_requested"):
+                outcome = {**outcome, "status": "stopped", "reason": RESEARCH_CANCELLED}
+            elif outcome["status"] == "ok" and _is_creencias(job):
+                # Punto irreversible: record escribe en varias bases antes de consultar Prolog.
+                # Cancelar desde ahora se rechaza; las lecturas de cola siguen libres durante WSL.
+                self.publishing.add(jid)
         if outcome["status"] == "ok" and _is_creencias(job):
             # fuera del lock de la cola: el contraste puede despertar WSL y el estado no debe trabarse
             try:
@@ -505,10 +519,13 @@ class Scheduler:
                 why = f"registro de la vuelta falló: {type(error).__name__}: {error}"[:300]
                 outcome = {**outcome, "status": "failed", "reason": why}
         with self.queue.lock:
-            current = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
-            if current.get("cancel_requested"):
-                outcome = {**outcome, "status": "stopped", "reason": RESEARCH_CANCELLED}
-            self._research_result(job, outcome)
+            try:
+                current = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
+                if current.get("cancel_requested"):
+                    outcome = {**outcome, "status": "stopped", "reason": RESEARCH_CANCELLED}
+                self._research_result(job, outcome)
+            finally:
+                self.publishing.discard(jid)
 
     def _research_result(self, job, outcome):
         """Se registra bajo el lock de cola: cancelar y publicar el resultado tienen un orden único."""

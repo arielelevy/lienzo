@@ -15,6 +15,9 @@ let worlds = 0;
 let replaced = false;
 let casts = 0;
 let matches = 0;
+const sessionTargets = new Map();
+let identityReads = 0;
+let identityWindows = 0;
 const dropNth = Number(process.env.TEST_BROWSER_HOST_DROP_NTH || 1);
 // el cuadro mide lo que la pestaña (en CSS); cast-stale-size simula uno de antes de un resize
 const frameSize = () => {
@@ -68,7 +71,20 @@ class FixtureSocket extends EventTarget {
       return;
     }
     if (command.method === 'Target.getTargets') result = {targetInfos:[{type:'page', targetId:replaced ? 'fixture-tab-2' : 'fixture-tab', title:'fixture', url:'about:blank', browserContextId:'fixture-context'}]};
-    if (command.method === 'Target.attachToTarget') result = {sessionId:'session-' + ++attached};
+    if (scenario.startsWith('identity') && command.method === 'Target.getTargets') result = {targetInfos:[
+      {type:'page',targetId:'wrong-profile',title:'GitHub',url:'https://github.com/',browserContextId:'first'},
+      {type:'page',targetId:'right-profile',title:'GitHub',url:'https://github.com/',...(scenario === 'identity-no-context' ? {} : {browserContextId:'second'})},
+    ]};
+    if (command.method === 'SystemInfo.getProcessInfo') result = {processInfo:[{type:'browser',id:42}]};
+    if (command.method === 'Browser.getWindowForTarget') result = {
+      windowId:command.params.targetId === 'wrong-profile' && scenario !== 'identity-multi-visible' ? 1 : 2,
+      bounds:{left:command.params.targetId === 'wrong-profile' && !['identity-overlap','identity-multi-visible'].includes(scenario) ? 0 : 100,top:0,width:800,height:600,windowState:'normal'},
+    };
+    if (scenario === 'identity-moved' && command.method === 'Browser.getWindowForTarget' && command.params.targetId === 'right-profile' && ++identityWindows > 1) result.bounds.left = 101;
+    if (command.method === 'Target.attachToTarget') {
+      result = {sessionId:'session-' + ++attached};
+      sessionTargets.set(result.sessionId, command.params.targetId);
+    }
     if (command.method === 'Page.captureScreenshot') result = {data:'fixture-image'};
     if (command.method === 'Page.getNavigationHistory') result = {currentIndex:0, entries:[{id:1}]};
     if (command.method === 'Page.getFrameTree') result = {frameTree:{frame:{id:'fixture-frame'}}};
@@ -79,7 +95,9 @@ class FixtureSocket extends EventTarget {
       const view = scenario === 'resize-before-input' && layoutRequests > 1 ? '900x600' : process.env.TEST_BROWSER_HOST_VIEW || '1280x800';
       result = {result:{type:'object', value:[...view.split('x').map(Number), visibility]}};
     } else if (command.method === 'Runtime.evaluate' && command.params.expression === 'document.visibilityState') {
-      result = {result:{type:'string', value:visibility}};
+      const right = sessionTargets.get(command.sessionId) === 'right-profile';
+      const switched = scenario === 'identity-switched' && right && ++identityReads > 1;
+      result = {result:{type:'string', value:(scenario === 'identity-hidden' && right) || switched ? 'hidden' : visibility}};
     }
     if (pushes && (command.method === 'Page.startScreencast' || (scenario === 'cast-stream' && command.method === 'Page.screencastFrameAck')
       || (scenario === 'cast-scroll' && command.method === 'Page.screencastFrameAck' && frames < 8))) frame();

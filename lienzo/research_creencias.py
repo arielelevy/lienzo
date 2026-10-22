@@ -662,7 +662,12 @@ def _contrast(pid: str, ids: list[str]) -> dict:
         kinds = sorted({o["tipo"] for o in found["observaciones"]})
         if "contradice" in kinds:
             result = "contradice"
-        elif set(kinds) & set(CUESTIONAN) or not data.get("concluyente"):
+        elif (
+            set(kinds) & set(CUESTIONAN)
+            or not data.get("concluyente")
+            or found.get("evidencia_independiente") != "humana"
+            or found.get("listo_para_revision") is not True
+        ):
             result = "cuestionada"
         else:
             result = "sostenida"
@@ -670,6 +675,7 @@ def _contrast(pid: str, ids: list[str]) -> dict:
             "resultado": result,
             "observaciones": kinds,
             "evidencia_independiente": found.get("evidencia_independiente"),
+            "listo_para_revision": found.get("listo_para_revision"),
             "concluyente": data.get("concluyente"),
             "motor": data.get("motor"),
             "reglas": data.get("reglas"),

@@ -41,7 +41,7 @@ def isolated(monkeypatch, tmp_path):
     return root
 
 
-def fixed_contrast(observations=None, code=200):
+def fixed_contrast(observations=None, code=200, independent="ausente", ready=False, conclusive=True):
     def contrastar(pid):
         if code != 200:
             return code, {"error": "motor ausente", "code": "prolog_unavailable"}
@@ -53,7 +53,7 @@ def fixed_contrast(observations=None, code=200):
                 )
             ]
         return 200, {
-            "concluyente": True,
+            "concluyente": conclusive,
             "reglas": "contraste-1",
             "motor": "fijo",
             "program_hash": "h",
@@ -61,8 +61,8 @@ def fixed_contrast(observations=None, code=200):
             "candidatos": {
                 i: {
                     "observaciones": [{"tipo": t, "con": []} for t in (observations or {}).get("all", [])],
-                    "evidencia_independiente": "ausente",
-                    "listo_para_revision": False,
+                    "evidencia_independiente": independent,
+                    "listo_para_revision": ready,
                 }
                 for i in ids
             },
@@ -283,7 +283,7 @@ def test_record_proposes_contrasted_beliefs_and_moves_the_cursor():
     local = k.nodo(PROJECT, by_project[PROJECT]["id"])
     for node in (process, local):
         assert node["estado"] == "propuesta" and node["datos"]["clase"] == "creencia_operativa"
-        assert node["datos"]["contraste"]["resultado"] == "sostenida"
+        assert node["datos"]["contraste"]["resultado"] == "cuestionada"
     assert process["datos"]["alcance"] == "proceso_lienzo"
     assert local["datos"].get("alcance", "proyecto") == "proyecto"
     vuelta = k.nodo(PROJECT, saved["evidence"])
@@ -353,10 +353,44 @@ def test_runs_with_busy_agents_when_resources_spare_and_leaves_contrasted_propos
     assert research_job["case"]["kind"] == "creencias" and research_job["state"] == "observed"
     assert len(adapter.launched) == 1
     belief_id = research_job["results"][0]
-    assert k.nodo(rc.PROCESO, belief_id)["datos"]["contraste"]["resultado"] == "sostenida"
+    assert k.nodo(rc.PROCESO, belief_id)["datos"]["contraste"]["resultado"] == "cuestionada"
     status = scheduler.status()["creencias"]
     assert status["proyectos"][PROJECT]["pendientes"]["memoria"] == 1  # vista calculada antes de la vuelta
     assert status["fondo"]["min_gb"] == activity.FONDO_GB
+
+
+@pytest.mark.parametrize(
+    ("independent", "ready", "expected"),
+    [
+        ("ausente", False, "cuestionada"),
+        ("no_verificada", False, "cuestionada"),
+        ("humana", False, "cuestionada"),
+        ("humana", None, "cuestionada"),
+        ("humana", True, "sostenida"),
+    ],
+)
+def test_support_requires_independent_human_evidence(monkeypatch, independent, ready, expected):
+    monkeypatch.setattr(prolog_contraste, "contrastar", fixed_contrast(independent=independent, ready=ready))
+    incident()
+    case, data = pack()
+    saved = record_with(case, data, data["lectura"], [belief(data, [data["fuentes"]["memoria"][0]["ref"]])])
+    assert set(saved["contraste"].values()) == {expected}
+
+
+def test_disagreement_between_engines_never_supports_even_with_human_evidence(monkeypatch):
+    monkeypatch.setattr(
+        prolog_contraste,
+        "contrastar",
+        fixed_contrast(
+            independent="humana",
+            ready=True,
+            conclusive=False,
+        ),
+    )
+    incident()
+    case, data = pack()
+    saved = record_with(case, data, data["lectura"], [belief(data, [data["fuentes"]["memoria"][0]["ref"]])])
+    assert set(saved["contraste"].values()) == {"cuestionada"}
 
 
 def test_tight_memory_or_user_pause_keeps_it_from_starting(monkeypatch):
@@ -485,6 +519,37 @@ def test_record_failure_leaves_failed_job_with_evidence_and_cursor_untouched(mon
     [job] = scheduler.queue.view()["jobs"]
     assert job["state"] == "failed" and "base trabada" in job["reason"] and job.get("evidence")
     assert rc.estado(PROJECT)["cursor"]["vueltas"] == 0
+
+
+def test_cancel_before_publication_creates_no_beliefs_and_keeps_actual_cursor(monkeypatch):
+    incident()
+    scheduler = scheduler_with(FakeAdapter())
+    scheduler.command({"action": "enqueue_creencias", "project": PROJECT})
+    before = rc.cursor(PROJECT)
+    original = scheduler.queue.change
+    cancelled = []
+
+    def change(jid, **values):
+        if values == {"pid": None} and not cancelled:
+            cancelled.append(scheduler.command({"action": "cancel_research", "job": jid}))
+        return original(jid, **values)
+
+    monkeypatch.setattr(scheduler.queue, "change", change)
+    scheduler.tick(busy())
+    scheduler.tick(busy())
+    assert cancelled
+    [job] = scheduler.queue.view()["jobs"]
+    assert job["state"] == "cancelled" and job["results"] == []
+    assert rc.cursor(PROJECT) == before  # estado() absorbe metadatos irrelevantes al consultar
+    for pid in (PROJECT, rc.PROCESO):
+        with k._abrir(pid) as con:
+            assert con.execute("SELECT count(*) FROM nodo WHERE tipo='decision'").fetchone()[0] == 0
+            assert (
+                con.execute(
+                    "SELECT count(*) FROM nodo WHERE json_extract(datos, '$.clase')='investigacion_creencias'"
+                ).fetchone()[0]
+                == 0
+            )
 
 
 def test_status_returns_a_copy_of_the_belief_view():

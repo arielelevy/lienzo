@@ -10,6 +10,35 @@ import { createInterface } from 'node:readline';
 const host = fileURLToPath(new URL('../lienzo/browser_host.mjs', import.meta.url));
 const preload = fileURLToPath(new URL('./fixtures/browser_host_socket.mjs', import.meta.url));
 
+test('V-3: el target activo se resuelve por proceso y ventana, con títulos repetidos', async t => {
+  const {request, trace} = await worker(t, 'identity');
+  const result = await request({action:'resolve-window', window:'202', nativeWindows:[
+    {id:'101',pid:42,bounds:{left:0,top:0,width:800,height:600}},
+    {id:'202',pid:42,bounds:{left:100,top:0,width:800,height:600}},
+  ]});
+  assert.deepEqual(result.activeTarget, {id:'right-profile',context:'second',window:'202',windowId:2});
+  assert.equal(trace().some(x => x.method === 'Target.activateTarget'), false);
+  assert.equal(trace().some(x => x.method.startsWith('Emulation.') || x.method.startsWith('Input.')), false);
+});
+
+for (const reason of ['process', 'overlap', 'bounds']) test(`V-3: identidad ${reason} ambigua no elige target`, async t => {
+  const {request} = await worker(t, 'identity');
+  const bounds = {left:100,top:0,width:800,height:600};
+  const nativeWindows = [{id:'202',pid:reason === 'process' ? 99 : 42,bounds:reason === 'bounds' ? {...bounds,left:900} : bounds}];
+  if (reason === 'overlap') nativeWindows.push({id:'203',pid:42,bounds});
+  const result = await request({action:'resolve-window',window:'202',nativeWindows});
+  assert.equal(result.activeTarget, null);
+  assert.match(result.reason, /identidad/);
+});
+
+for (const reason of ['overlap', 'multi-visible', 'no-context', 'hidden', 'switched', 'moved']) test(`V-3: CDP ${reason} no acredita pestaña activa`, async t => {
+  const {request} = await worker(t, `identity-${reason}`);
+  const result = await request({action:'resolve-window',window:'202',nativeWindows:[
+    {id:'202',pid:42,bounds:{left:100,top:0,width:800,height:600}},
+  ]});
+  assert.equal(result.activeTarget, null);
+});
+
 test('IPC correlacionado: input termina mientras screenshot sigue pendiente, sin abrir otro socket', {timeout:15000}, async t => {
   const {request, trace} = await worker(t, 'Page.captureScreenshot');
   const snapshot = request({action:'snapshot', tab:'fixture-tab', width:800, height:600, requestId:101});

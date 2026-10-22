@@ -68,6 +68,35 @@ def _error(message: str) -> bytes:
     return json.dumps({"t": "error", "message": message}, ensure_ascii=True).encode("ascii")
 
 
+def _native_windows(window):
+    """Metadatos Win32 en proceso propio: Windows() fija DPI una sola vez y no debe tocar el server."""
+    code = """
+import json, sys
+from browser_window import Windows
+windows = Windows()
+windows.target(sys.argv[1])
+catalog = []
+for item in windows.windows():
+    hwnd = int(item['id'])
+    rect = windows.rect(hwnd)
+    catalog.append({'id': item['id'], 'pid': windows.owner(hwnd),
+                    'bounds': {'left': rect.left, 'top': rect.top,
+                               'width': rect.right - rect.left, 'height': rect.bottom - rect.top}})
+print(json.dumps(sorted(catalog, key=lambda item: item['id'])))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(window)],
+        cwd=str(Path(__file__).parent),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    return json.loads(result.stdout)
+
+
 class Worker:
     """El proceso de captura y entrada de esta PC. `deliver(opcode, payload)` lleva lo que emite
     hacia el visor; `on_exit()` avisa cuando el proceso termina."""
@@ -78,6 +107,7 @@ class Worker:
         self.deliver = deliver
         self.on_exit = on_exit
         self.lock = threading.Lock()
+        self.window = None
         self.process = subprocess.Popen(
             [sys.executable, str(Path(__file__).with_name("browser_window.py")), "--stream"],
             stdin=subprocess.PIPE,
@@ -104,6 +134,11 @@ class Worker:
                 payload = out.read(n - 1)
                 if len(payload) != n - 1:
                     break
+                if kind == ord("J"):
+                    data = json.loads(payload)
+                    if data.get("t") == "desktop" and data.get("locked") is True:
+                        data.update(self._active_target())
+                        payload = json.dumps(data, ensure_ascii=True).encode("ascii")
                 self.deliver(ws.TEXT if kind == ord("J") else ws.BINARY, payload)
         except OSError, ValueError, ConnectionError:
             pass  # el visor se fue o el pipe se cerro: se termina igual
@@ -116,8 +151,31 @@ class Worker:
 
     def send(self, line: bytes) -> None:
         with self.lock:
+            data = json.loads(line)
+            if data.get("t") == "open":
+                self.window = data.get("window")
             self.process.stdin.write(line)
             self.process.stdin.flush()
+
+    def _active_target(self):
+        """Sólo lectura en la PC dueña; un error deja el visor pausado, nunca adivina por título."""
+        try:
+            window = self.window
+            catalog = _native_windows(window)
+            code, result = browser_remote.request(
+                {
+                    "action": "resolve-window",
+                    "window": window,
+                    "nativeWindows": catalog,
+                }
+            )
+            if code == 200 and self.window == window and _native_windows(window) == catalog:
+                return result
+            reason = result.get("error", "Chrome no pudo comprobar la identidad de la ventana")
+        except Exception as error:
+            reason = f"{type(error).__name__}: {error}"
+        state.log(f"Chrome bloqueo: identidad no comprobada: {reason}")
+        return {"activeTarget": None, "reason": "No se pudo comprobar la pestaña y el perfil; elegilos en la lista."}
 
     def close(self) -> None:
         with self.lock:

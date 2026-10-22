@@ -69,10 +69,13 @@ def test_cancel_during_policy_never_restarts_or_overwrites(sch, monkeypatch, ena
 
 
 @pytest.mark.parametrize("status", ["ok", "stopped"])
-def test_cancel_after_runner_result_wins_and_survives_restart(sch, monkeypatch, status):
+@pytest.mark.parametrize("kind", [None, "creencias"])
+def test_cancel_after_runner_result_wins_and_survives_restart(sch, monkeypatch, status, kind):
     monkeypatch.setattr(s.research, "evaluate", evaluate)
     original_change = sch.queue.change
     accepted = []
+    publications = []
+    monkeypatch.setattr(s.creencias_research, "record", lambda *a: publications.append(a))
 
     def change(jid, **values):
         if values == {"pid": None} and not accepted:
@@ -89,13 +92,59 @@ def test_cancel_after_runner_result_wins_and_survives_restart(sch, monkeypatch, 
             "reason": "actividad del usuario",
             "meta": {},
             "result": {},
+            "lectura": {},
         },
     )
-    sch._research_step(enqueue(sch))
+    job = sch.queue.enqueue_research("p", {"case_key": "k1", "project": "p", "kind": kind})
+    sch._research_step(job)
+    assert publications == []
     assert accepted
     assert current(sch)["state"] == "cancelled"
     assert current(sch)["attempts"] == 1
     assert s.Queue().view()["jobs"][0]["state"] == "cancelled"
+
+
+def test_publication_boundary_rejects_cancel_without_holding_queue_lock(sch, monkeypatch):
+    monkeypatch.setattr(s.research, "evaluate", evaluate)
+    monkeypatch.setattr(
+        s.research,
+        "investigate",
+        lambda *a, **kw: {
+            "status": "ok",
+            "result": {},
+            "meta": {},
+            "lectura": {},
+        },
+    )
+    entered, release = threading.Event(), threading.Event()
+    errors = []
+
+    def record(*args):
+        entered.set()  # misma barrera que un contraste lento
+        assert release.wait(5)
+        return {"evidence": "e", "creencias": []}
+
+    monkeypatch.setattr(s.creencias_research, "record", record)
+    job = sch.queue.enqueue_research("p", {"case_key": "k1", "project": "p", "kind": "creencias"})
+
+    def run():
+        try:
+            sch._research_step(job)
+        except Exception as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        assert current(sch)["state"] == "running"  # consulta no bloqueada por el contraste
+        with pytest.raises(ValueError, match="publicación ya iniciada"):
+            sch.command({"action": "cancel_research", "job": job["id"]})
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive() and not errors
+    assert current(sch)["state"] == "observed"
 
 
 def test_cancel_and_restart_transitions_keep_history_and_clear_stale_pid(sch):

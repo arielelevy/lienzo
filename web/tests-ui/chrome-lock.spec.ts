@@ -3,15 +3,18 @@ import {bloquearEscrituras} from './tablero-fijo';
 
 // La PC de Chrome se bloquea: la ventana completa no sirve (Windows no deja capturar ni mandar
 // entrada) y la vista pasa sola a «Vista por pestañas» de la pestaña activa; al desbloquear vuelve.
-async function lockFlow(page: Page) {
+async function lockFlow(page: Page, duplicate = false, checked = false) {
   await bloquearEscrituras(page);
   await page.route('**/auth', r => r.fulfill({json:{configured:false,authenticated:true,local:true}}));
   await page.route('**/peers', r => r.fulfill({json:[{pc_id:'flow',name:'Fixture',alive:true,local:false}]}));
+  const browserCommands: Record<string, unknown>[] = [];
   await page.route('**/browser', r => {
-    const action = r.request().postDataJSON().action;
-    if (action === 'windows') return r.fulfill({json:{windows:[{id:'123',title:'Pestaña activa - Google Chrome'}]}});
+    const command = r.request().postDataJSON();
+    browserCommands.push(command);
+    const action = command.action;
+    if (action === 'windows') return r.fulfill({json:{windows:[{id:'123',title:'Pestaña activa - Google Chrome'}, ...(duplicate ? [{id:'456',title:'Pestaña activa - Google Chrome'}] : [])]}});
     if (action === 'profiles') return r.fulfill({json:{profiles:[{id:'Default',name:'Fixture'}]}});
-    return r.fulfill({json:{running:true, tabs:[{id:'a',title:'Otra pestaña',url:'https://a.test/'},{id:'b',title:'Pestaña activa',url:'https://b.test/'}]}});
+    return r.fulfill({json:{running:true, tabs:[{id:'a',title:duplicate ? 'Pestaña activa' : 'Otra pestaña',url:'https://a.test/',context:'first'},{id:'b',title:'Pestaña activa',url:'https://b.test/',context:'second'}]}});
   });
   const commands: {t:string; desktop?:boolean}[] = [];
   let reply: (message:string) => void = () => {};
@@ -26,19 +29,21 @@ async function lockFlow(page: Page) {
   });
   await page.goto('/chrome');
   await expect(page.getByRole('application', {name:'Página remota: mouse y teclado'})).toBeVisible();
-  const desktop = (locked: boolean) => reply(JSON.stringify({t:'desktop', locked}));
+  const desktop = (locked: boolean) => reply(JSON.stringify({t:'desktop', locked,
+    ...(checked ? {activeTarget:{id:'b',context:'second',window:'123',windowId:2}} : {})}));
   const windowButton = page.getByRole('button', {name:'Chrome real · ventana completa', includeHidden:true});
   const tabsButton = page.getByRole('button', {name:'Vista por pestañas', includeHidden:true});
-  return {commands, desktop, windowButton, tabsButton};
+  return {commands, desktop, windowButton, tabsButton, browserCommands};
 }
 
-test('al bloquearse pasa a la pestaña activa con aviso y al desbloquear vuelve a la ventana', async ({page}) => {
+test('al bloquearse pide elegir pestaña y al desbloquear vuelve a la ventana', async ({page}) => {
   const {commands, desktop, windowButton, tabsButton} = await lockFlow(page);
   expect(commands.find(d => d.t === 'open')?.desktop).toBe(true);
   desktop(true);
   await expect(tabsButton).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('status').filter({hasText:'Fixture está bloqueada'})).toBeVisible();
-  await expect(page.getByRole('tab', {name:'Pestaña activa'})).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', {name:'Elegí la pestaña y el perfil'})).toBeVisible();
+  await expect(page.getByRole('tab', {selected:true})).toHaveCount(0);
   // la ventana completa queda en espera para enterarse del desbloqueo, sin capturar
   await expect.poll(() => commands.at(-1)?.t).toBe('pause');
   const before = commands.length;
@@ -48,6 +53,28 @@ test('al bloquearse pasa a la pestaña activa con aviso y al desbloquear vuelve 
   // retoma la captura (al volver a verse, el visor también puede mandar su tamaño después)
   await expect.poll(() => commands.slice(before).some(d => d.t === 'resume')).toBe(true);
   await expect(page.getByRole('application', {name:'Página remota: mouse y teclado'})).toBeVisible();
+});
+
+test('títulos duplicados en dos perfiles no eligen ni operan una pestaña hasta elegirla', async ({page}) => {
+  const {desktop, browserCommands} = await lockFlow(page, true);
+  desktop(true);
+  await expect(page.getByRole('heading', {name:'Elegí la pestaña y el perfil'})).toBeVisible();
+  await expect(page.getByRole('tab', {selected:true})).toHaveCount(0);
+  await expect(page.getByRole('status').filter({hasText:'Fixture está bloqueada'})).not.toContainText('en la pestaña activa');
+  expect(browserCommands.filter(c => ['frame','activate','input'].includes(String(c.action)))).toEqual([]);
+  await page.getByRole('tab').nth(1).click();
+  await expect(page.getByRole('tab').nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => browserCommands.some(c => c.action === 'activate' && c.tab === 'b')).toBe(true);
+  expect(browserCommands.filter(c => c.tab === 'a')).toEqual([]);
+});
+
+test('identidad comprobada elige automáticamente el target del segundo perfil aunque el título se repita', async ({page}) => {
+  const {desktop} = await lockFlow(page, true, true);
+  desktop(true);
+  await expect(page.getByRole('tab').nth(1)).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab').nth(0)).toHaveAttribute('aria-selected', 'false');
+  await expect(page.getByRole('heading', {name:'Elegí la pestaña y el perfil'})).toHaveCount(0);
+  await expect(page.getByRole('status').filter({hasText:'Fixture está bloqueada'})).toContainText('pestaña activa comprobada');
 });
 
 test('si la persona elige pestañas durante el bloqueo, al desbloquear se queda ahí', async ({page}) => {
