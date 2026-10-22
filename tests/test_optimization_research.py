@@ -128,6 +128,8 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setattr(quota, "read_codex", lambda *a, **kw: pytest.fail("no leer la cuota real en pruebas"))
     monkeypatch.setattr(s.activity, "cancellation_reason", lambda _: None)
     monkeypatch.setattr(s.health, "_memoria", lambda: (8.0, 16.0))
+    # el investigador de creencias (encargo S) tiene su propia prueba: acá no se descubre solo
+    monkeypatch.setattr(s.Scheduler, "_creencias_discover", lambda self: None)
 
 
 def incident(text="pytest largo", **data):

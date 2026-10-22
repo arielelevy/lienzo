@@ -24,6 +24,9 @@ import subproc
 POLL_SECONDS = 0.5
 CHUNK = 65536
 JOIN_SECONDS = 2
+# prioridad baja: el investigador corre aunque haya agentes trabajando y no les quita CPU (Ariel, 2026-10-22)
+BELOW_NORMAL = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0x4000)
+NICE = 10
 
 
 class _Output:
@@ -71,7 +74,9 @@ def run(
     levanta por el proceso: un fallo al lanzar devuelve `subproc.NO_ARRANCO`. `env_remove` quita variables
     heredadas (p. ej. una clave de API que cambiaría la suscripción por facturación)."""
     started = time.monotonic()
-    extra = {"creationflags": subproc.CREATE_NO_WINDOW} if subproc.WINDOWS else {"start_new_session": True}
+    extra = (
+        {"creationflags": subproc.CREATE_NO_WINDOW | BELOW_NORMAL} if subproc.WINDOWS else {"start_new_session": True}
+    )
     result = {
         "code": None,
         "stdout": "",
@@ -104,6 +109,11 @@ def run(
         result.update(code=subproc.NO_ARRANCO, stderr=f"no se pudo lanzar {argv[0]}: {type(error).__name__}")
         return result
     result["pid"] = p.pid
+    if not subproc.WINDOWS:
+        try:  # después de lanzar: preexec_fn no es seguro en un server con hilos
+            os.setpriority(os.PRIO_PROCESS, p.pid, NICE)
+        except OSError:
+            pass
     output = _Output(max_output)
     readers = [
         threading.Thread(target=output.reader, args=(name, pipe), daemon=True)

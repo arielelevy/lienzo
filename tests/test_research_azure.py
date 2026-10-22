@@ -33,6 +33,8 @@ CHILD = Path(r.__file__).with_name("research_azure_call.py")
 
 @pytest.fixture(autouse=True)
 def own_project(monkeypatch, tmp_path):
+    # el investigador de creencias (encargo S) tiene su propia prueba: acá no se descubre solo
+    monkeypatch.setattr("optimization_scheduler.Scheduler._creencias_discover", lambda self: None)
     folder = tmp_path / "apps" / PROJECT
     folder.mkdir(parents=True)
     k.registrar_proyecto(PROJECT, carpetas=[{"pc": "ariel", "cwd": str(folder)}])

@@ -1,0 +1,41 @@
+{
+  "nombre": "creencias-fondo-S",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/creencias-fondo-S",
+  "reglas": [
+    "Encargo S (Ariel, 2026-10-22): el investigador corre aunque haya agentes trabajando si sobran recursos (>= 3 GB libres, CPU tranquila, cuota del agente >= 20 % semanal), de a uno y con prioridad baja; se pausa sólo si la PC se pone justa o el usuario lo pausa. Topes diarios, cancelación y deduplicación se mantienen.",
+    "Lee informes, encargos y evidencias de la memoria, registros de coordinación subidos, code reviews y fallas de pruebas; sólo lectura.",
+    "Cada mejora queda como creencia propuesta (creencias.proponer) contrastada con el motor lógico (sostenida / contradice / cuestionada) guardada en la propuesta; nada pasa a vigente sin veredicto de Ariel.",
+    "Cursor por proyecto y por tipo de fuente; lo más reciente primero con tope; nunca relee lo leído salvo cambio de hash; cada vuelta deja una evidencia de qué leyó y qué concluyó.",
+    "Alcance: proceso_lienzo va al proyecto lienzo; lo propio de cada proyecto, a ese proyecto."
+  ],
+  "casos": [
+    {
+      "id": "creencias-contratos",
+      "comando": ["py", "-m", "pytest", "tests/test_research_creencias.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 180000,
+      "cubre": [
+        "lienzo/research_creencias.py",
+        "lienzo/optimization_scheduler.py",
+        "lienzo/optimization_activity.py",
+        "lienzo/optimization_queue.py",
+        "lienzo/optimization_research_runner.py",
+        "lienzo/optimization_research.py"
+      ]
+    },
+    {
+      "id": "investigador-regresion",
+      "comando": [
+        "py", "-m", "pytest",
+        "tests/test_optimization_research.py", "tests/test_optimization_scheduler.py", "tests/test_optimization_queue.py",
+        "tests/test_optimization_activity.py", "tests/test_optimization_research_runner.py", "tests/test_research_claude.py",
+        "tests/test_research_azure.py", "tests/test_optimization_cancel_races.py", "tests/test_optimization_intentos.py",
+        "tests/test_optimization_research_unit.py", "tests/test_backlog_c_guards.py", "tests/test_agent_improvements_api.py",
+        "tests/test_optimizacion_trabajo.py", "tests/test_optimization_pilot.py", "tests/test_optimization_experiment.py",
+        "-q", "-p", "no:cacheprovider"
+      ],
+      "timeoutMs": 300000,
+      "cubre": ["lienzo/optimization_scheduler.py", "lienzo/optimization_research.py", "lienzo/optimization_queue.py"]
+    }
+  ]
+}

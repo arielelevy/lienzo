@@ -19,8 +19,9 @@ import optimization_pilot as pilot
 import optimization_research as research
 import optimization_research_policy as research_policy
 import patrones_desarrollo
+import research_creencias as creencias_research
 import state
-from optimization_queue import Queue
+from optimization_queue import ACTIVE, Queue
 
 
 class Scheduler:
@@ -38,6 +39,9 @@ class Scheduler:
         self.research_named = research.adapter_named  # adaptador pedido por trabajo; las pruebas lo reemplazan
         self.research_view = None  # última evaluación de política; un GET no lee la cuota
         self.research_visto = {}  # proyecto -> monotonic de la última selección automática
+        self.creencias_visto = {}  # proyecto -> monotonic de la última mirada a su cursor de creencias
+        self.creencias_view = {}  # proyecto -> cursor y pendientes de la última mirada; un GET no recorre fuentes
+        self.fondo_samples = 0  # muestras seguidas con recursos de sobra mientras hay agentes: no son ratos quietos
 
     def status(self):
         budget = optimization_budget.Budget().status()
@@ -69,6 +73,19 @@ class Scheduler:
                 "note": "sin evaluar en este proceso" if self.research_view is None else None,
             },
             "projects": [{"id": p["id"], "name": p.get("nombre", p["id"])} for p in conocimiento.proyectos()],
+            "creencias": {
+                "scope": "investigador de creencias: mejoras del proceso de desarrollo como creencias propuestas, "
+                "contrastadas con el motor lógico; nada pasa a vigente sin veredicto",
+                "cada_s": CREENCIAS_CADA_S,
+                "fondo": {
+                    "admite": list(activity.FONDO_ADMITE),
+                    "min_gb": activity.FONDO_GB,
+                    "max_cpu_pct": activity.MAX_CPU,
+                    "prioridad": "baja",
+                    "de_a_uno": True,
+                },
+                "proyectos": dict(self.creencias_view),
+            },
         }
 
     def command(self, data):
@@ -114,6 +131,16 @@ class Scheduler:
                 raise ValueError("investigador bloqueado: " + "; ".join(decision["reasons"]))
             if not self.queue.enqueue_research(data["project"], research.unit.case(data["project"], root, folders)):
                 raise ValueError("esa unidad ya se investigó o hay una investigación activa en el proyecto")
+        elif action == "enqueue_creencias" and set(data) == {"action", "project"}:
+            # una vuelta de creencias pedida por una persona: la misma política y el mismo tope diario
+            if not isinstance(data["project"], str):
+                raise ValueError("proyecto inválido")
+            conocimiento.proyecto(data["project"])
+            decision = self._research_evaluate(data["project"])
+            if not decision["enabled"]:
+                raise ValueError("investigador bloqueado: " + "; ".join(decision["reasons"]))
+            if not self.queue.enqueue_research(data["project"], creencias_research.case(data["project"])):
+                raise ValueError("esa vuelta ya se hizo hoy o hay una investigación activa en el proyecto")
         elif action == "cancel_research" and set(data) == {"action", "job"}:
             self.queue.cancel_research(data["job"])
         elif action in ("requeue_research", "dismiss_research") and set(data) == {"action", "job"}:
@@ -181,6 +208,10 @@ class Scheduler:
         if not self.queue.view()["enabled"]:
             reason = "pausado por el usuario"
         job = self.queue.next_job()
+        if reason in activity.FONDO_ADMITE:
+            self._fondo(signals, reason)
+            return
+        self.fondo_samples = 0
         if reason:
             self.reason, self.good_samples = reason, 0
             if job and job["state"] == "running":
@@ -195,8 +226,12 @@ class Scheduler:
             if self._pilot_tick():
                 return
             self._discover()
+            self._creencias_discover()
             return
         self.reason = "analizando memoria local; sin gasto"
+        self._guarded_step(job)
+
+    def _guarded_step(self, job):
         try:
             self._step(job)
         except Exception as error:
@@ -209,6 +244,65 @@ class Scheduler:
                     state="cancelled" if cancelled else "failed",
                     reason=RESEARCH_CANCELLED if cancelled else self.reason,
                 )
+
+    def _fondo(self, signals, busy):
+        """Agentes trabajando o usuario activo: sólo el investigador de creencias, si sobran recursos, de a
+        uno y con prioridad baja (pedido de Ariel, 2026-10-22). Lo demás espera un rato quieto."""
+        for job in self.queue.view()["jobs"]:
+            if job["state"] == "running" and not _is_creencias(job):
+                self.queue.change(job["id"], state="paused")
+        self.good_samples = 0  # un rato con agentes no cuenta para arrancar lo que pide quietud
+        tight = activity.fondo_reason(signals)
+        if tight:
+            self.reason, self.fondo_samples = f"{busy}; segundo plano en pausa: {tight}", 0
+            return
+        self.fondo_samples += 1
+        if self.fondo_samples < 2:
+            self.reason = "esperando segunda muestra de recursos"
+            return
+        now = time.time()
+        job = next(
+            (
+                j
+                for j in self.queue.view()["jobs"]
+                if _is_creencias(j) and j["state"] in ACTIVE and j.get("not_before", 0) <= now
+            ),
+            None,
+        )
+        if job is None:
+            self.reason = f"{busy}; investigador de creencias sin vuelta pendiente"
+            self._creencias_discover()
+            return
+        self.reason = "investigador de creencias en segundo plano (prioridad baja)"
+        self._guarded_step(job)
+
+    def _creencias_discover(self):
+        """A lo sumo cada CREENCIAS_CADA_S por proyecto: mira cursores hasta el primer proyecto con algo nuevo
+        y le encola una vuelta. Nunca con otra investigación activa: de a una por vez."""
+        if not self.queue.view()["enabled"] or any(
+            j.get("kind") == "research" and j["state"] in ACTIVE for j in self.queue.view()["jobs"]
+        ):
+            return
+        for project in conocimiento.proyectos():
+            pid = project["id"]
+            if time.monotonic() - self.creencias_visto.get(pid, -1e9) < CREENCIAS_CADA_S:
+                continue
+            self.creencias_visto[pid] = time.monotonic()
+            try:
+                view = creencias_research.estado(pid)
+                self.creencias_view[pid] = {**view, "calculado_en": time.time()}
+                if not any(view["pendientes"].values()):
+                    continue
+                decision = self._research_evaluate(pid)
+                if not decision["enabled"]:
+                    # la política (cuota, tope diario) bloquea a todos: no se relee la cuota proyecto por proyecto
+                    self.creencias_visto = {p["id"]: time.monotonic() for p in conocimiento.proyectos()}
+                    self.reason = "investigador de creencias bloqueado: " + "; ".join(decision["reasons"])
+                elif self.queue.enqueue_research(pid, creencias_research.case(pid, view["pendientes"]), automatic=True):
+                    self.reason = f"vuelta de creencias encolada en {pid}"
+            except Exception as error:
+                self.reason = f"cursor de creencias bloqueado en {pid}: {type(error).__name__}"
+            return
 
     def _pilot_tick(self):
         budget = optimization_budget.Budget()
@@ -308,7 +402,7 @@ class Scheduler:
             self._cancelled(job)
 
     def _cancelled(self, job):
-        reason = activity.cancellation_reason(self.last_ui)
+        reason = activity.fondo_stop() if _is_creencias(job) else activity.cancellation_reason(self.last_ui)
         if not self.queue.view()["enabled"]:
             reason = "pausado por el usuario"
         if reason:
@@ -339,6 +433,8 @@ class Scheduler:
             return RESEARCH_CANCELLED
         if not self.queue.view()["enabled"]:
             return RESEARCH_PAUSED
+        if _is_creencias(job):
+            return activity.fondo_stop()
         reason = activity.cancellation_reason(self.last_ui)
         if reason:
             return reason
@@ -398,6 +494,16 @@ class Scheduler:
             )
         finally:
             self.queue.change(jid, pid=None)  # el proceso propio terminó; conservar cancelación persistida
+        if outcome["status"] == "ok" and _is_creencias(job):
+            # fuera del lock de la cola: el contraste puede despertar WSL y el estado no debe trabarse
+            try:
+                saved = creencias_research.record(
+                    project, job["case"], outcome["result"], outcome["meta"], outcome["lectura"]
+                )
+                outcome = {**outcome, "saved": saved}
+            except Exception as error:
+                why = f"registro de la vuelta falló: {type(error).__name__}: {error}"[:300]
+                outcome = {**outcome, "status": "failed", "reason": why}
         with self.queue.lock:
             current = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
             if current.get("cancel_requested"):
@@ -408,7 +514,19 @@ class Scheduler:
         """Se registra bajo el lock de cola: cancelar y publicar el resultado tienen un orden único."""
         jid, project = job["id"], job["project"]
         meta, why = outcome.get("meta"), outcome.get("reason")
-        if outcome["status"] == "ok":
+        if outcome["status"] == "ok" and _is_creencias(job):
+            saved = outcome["saved"]
+            self.queue.change(
+                jid,
+                state="observed",
+                pid=None,
+                evidence=saved["evidence"],
+                results=creencias_research.proposals(saved),
+                last_run=meta,
+                reason="vuelta de creencias registrada; propuestas contrastadas sin veredicto",
+            )
+            self.reason = "vuelta de creencias registrada; propuestas pendientes de veredicto"
+        elif outcome["status"] == "ok":
             saved = research.record(project, job["case"], outcome["result"], meta)
             self.queue.change(
                 jid,
@@ -502,7 +620,12 @@ class Scheduler:
         self.trabajo_visto[project] = time.monotonic()
 
 
+def _is_creencias(job) -> bool:
+    return job.get("kind") == "research" and (job.get("case") or {}).get("kind") == "creencias"
+
+
 TRABAJO_CADA_S = 3600
+CREENCIAS_CADA_S = 1800
 RESEARCH_EVERY_S = 1800
 RESEARCH_BACKOFF_S = 1800
 RESEARCH_CANCELLED = "cancelado por el usuario"

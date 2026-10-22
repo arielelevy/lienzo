@@ -87,6 +87,32 @@ def block_reason(signals: dict) -> str | None:
     return None
 
 
+FONDO_GB = 3.0  # investigador de creencias con agentes trabajando: sólo si sobran recursos (Ariel, 2026-10-22)
+FONDO_ADMITE = ("agentes trabajando o permisos pendientes", "actividad del usuario")
+
+
+def fondo_reason(signals: dict) -> str | None:
+    """Con agentes trabajando o el usuario activo, el investigador de creencias igual arranca si sobran
+    recursos: >= FONDO_GB libres y CPU tranquila. None si puede."""
+    for key in ("cpu_pct", "mem_free_gb"):
+        value = signals.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            return f"señal desconocida: {key}"
+    if signals["mem_free_gb"] < FONDO_GB:
+        return "memoria justa para el segundo plano"
+    if signals["cpu_pct"] > MAX_CPU:
+        return "CPU ocupada"
+    return None
+
+
+def fondo_stop() -> str | None:
+    """Durante una vuelta en segundo plano sólo la corta la PC justa de memoria (la CPU la sube la CLI propia)."""
+    free, _ = health._memoria()
+    if free is None or free < FONDO_GB:
+        return "memoria justa para el segundo plano"
+    return None
+
+
 def cancellation_reason(last_ui: float) -> str | None:
     idle = idle_seconds()
     if idle is None or idle < QUIET_SECONDS or time.monotonic() - last_ui < QUIET_SECONDS:

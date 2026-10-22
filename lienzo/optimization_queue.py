@@ -142,6 +142,7 @@ class Queue:
                 return None
             if any(j["project"] == project and j["state"] in ACTIVE for j in research):
                 return None
+            self._prune_belief_rounds()
             if len(self.jobs) >= 100:
                 raise ValueError("cola llena; revisar historial antes de agregar trabajos")
             job = {"id": str(uuid.uuid4()), "project": project, "state": "queued", "cursor": 0, "results": []}
@@ -156,6 +157,27 @@ class Queue:
                 self.jobs.pop()
                 raise
             return dict(job)
+
+    def _prune_belief_rounds(self):
+        """Con la cola llena se van las vueltas de creencias terminadas más viejas: su registro vive en la
+        memoria y su clave lleva el día, así que no se repiten. Sólo las de más de un día: sus inicios ya no
+        cuentan para el tope diario. Ningún otro trabajo se borra."""
+        day_ago = time.time() - 86400
+        while len(self.jobs) >= 100:
+            old = next(
+                (
+                    j
+                    for j in self.jobs
+                    if j.get("kind") == "research"
+                    and j["case"].get("kind") == "creencias"
+                    and j["state"] in ("observed", "failed", "cancelled")
+                    and max([*j.get("runs", []), j.get("created_at", 0)]) < day_ago
+                ),
+                None,
+            )
+            if old is None:
+                return
+            self.jobs.remove(old)
 
     def research_runs_since(self, since: float, adapter: str | None = None) -> int:
         """Inicios desde `since`; con `adapter`, sólo los de ese adaptador (cada uno tiene su tope diario).

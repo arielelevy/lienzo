@@ -395,6 +395,10 @@ def _unit_packet(case: dict) -> dict:
 
 def case_root(case: dict) -> Path:
     """Raíz del repo donde corre y se validan las refs: la del proyecto para una unidad, Lienzo si no."""
+    if case.get("kind") == "creencias":
+        import research_creencias
+
+        return research_creencias.case_root(case)
     if case.get("kind") == "unit":
         return unit.resolve_folders(case["project"], case["folders"])[0]
     return Path(state.ROOT)
@@ -934,7 +938,7 @@ class ClaudeAdapter:
             "--output-format",
             "json",
             "--json-schema",
-            json.dumps(SCHEMA, ensure_ascii=False),
+            _schema_text(work),
         ]
         if self.model:
             argv += ["--model", self.model]
@@ -1064,7 +1068,7 @@ class AzureOpenAIAdapter:
         """Reserva el máximo de este paquete. ValueError (definitivo) si el paquete pasa sus topes;
         ledger.BudgetExceeded o ledger.Unreadable (del entorno) si no entra en el mes o no hay ledger."""
         a = self.auth
-        size = len((work / "prompt.md").read_bytes()) + len(json.dumps(SCHEMA).encode("utf-8"))
+        size = len((work / "prompt.md").read_bytes()) + len(_schema_text(work).encode("utf-8"))
         if size > a["max_prompt_bytes"]:
             raise ValueError(f"paquete de {size} bytes supera el máximo de {a['max_prompt_bytes']} para Azure")
         amount = self._cost(size + AZURE_OVERHEAD_TOKENS, a["max_output_tokens"])
@@ -1086,7 +1090,7 @@ class AzureOpenAIAdapter:
             "max_output_tokens": a["max_output_tokens"],
             "timeout": max(30, seconds - 10),
             "prompt": (work / "prompt.md").read_text(encoding="utf-8"),
-            "schema": SCHEMA,
+            "schema": json.loads(_schema_text(work)),
         }
         return [sys.executable, "-I", str(self.child), str(work)], json.dumps(payload, ensure_ascii=False)
 
@@ -1145,6 +1149,21 @@ def evaluate(project: str, adapter=None, runs_today: int = 0, now=None, adapter_
 NOT_SENT = {"input_tokens": 0, "output_tokens": 0, "sin_envio": 1}
 
 
+def _schema_text(work: Path) -> str:
+    """El esquema del trabajo (investigate lo escribe en schema.json); el del investigador si no está."""
+    path = work / "schema.json"
+    return path.read_text(encoding="utf-8") if path.exists() else json.dumps(SCHEMA, ensure_ascii=False)
+
+
+def _spec(case: dict):
+    """Paquete, prompt, esquema y validación del caso: los de creencias (encargo S) o los del investigador."""
+    if case.get("kind") == "creencias":
+        import research_creencias as own
+
+        return own.packet, own.prompt, own.SCHEMA, own.validate, own.PROMPT_VERSION
+    return packet, prompt, SCHEMA, validate, PROMPT_VERSION
+
+
 def _settle(adapter, reservation: dict, usage) -> dict:
     """Liquida sin cortar la ejecución: si el ledger falla, la reserva sigue abierta y cuenta entera."""
     try:
@@ -1158,19 +1177,20 @@ def investigate(job: dict, adapter, decision: dict, *, should_stop, on_start=Non
     if decision.get("enabled") is not True:
         raise ValueError("investigador bloqueado por política; no se lanza la CLI")
     case = job["case"]
+    build_packet, build_prompt, schema, check, version = _spec(case)
     root = Path(root or case_root(case))
     limits = decision["limits"]
-    data = packet(case)
+    data = build_packet(case)
     work = Path(state.LIENZO) / "research" / case["case_key"]
     work.mkdir(parents=True, exist_ok=True)
     result_path = work / "result.json"
     result_path.unlink(missing_ok=True)  # nunca validar la respuesta de una ejecución anterior
-    atomic_write(str(work / "schema.json"), json.dumps(SCHEMA, ensure_ascii=False))
+    atomic_write(str(work / "schema.json"), json.dumps(schema, ensure_ascii=False))
     tools = getattr(adapter, "tools", True)
     base_text, base_warnings = (
         agent_improvements.launch_instructions(adapter.agent, None, "general") if tools else ("", [])
     )
-    atomic_write(str(work / "prompt.md"), prompt(data, base_text, tools))
+    atomic_write(str(work / "prompt.md"), build_prompt(data, base_text, tools))
     reservation = None
     if hasattr(adapter, "reserve"):  # pago por uso: reservar el máximo antes de lanzar, o no se lanza
         try:
@@ -1243,8 +1263,8 @@ def investigate(job: dict, adapter, decision: dict, *, should_stop, on_start=Non
         },
         "raw_output": raw,
         "stderr_tail": redact(run["stderr"][-1500:]),
-        "prompt_version": PROMPT_VERSION,
         "redactions_packet": data["redactions"],
+        "prompt_version": version,
     }
     if run["output_exceeded"]:
         reason = f"salida mayor a {limits['max_output_bytes']} bytes: se mató el árbol propio"
@@ -1257,7 +1277,7 @@ def investigate(job: dict, adapter, decision: dict, *, should_stop, on_start=Non
     try:
         if result_path.stat().st_size > MAX_RESULT_BYTES:
             return {"status": "failed", "reason": f"respuesta mayor a {MAX_RESULT_BYTES} bytes", "meta": meta}
-        result = validate(json.loads(result_path.read_text(encoding="utf-8")), data, root)
+        result = check(json.loads(result_path.read_text(encoding="utf-8")), data, root)
     except FileNotFoundError:
         return {"status": "failed", "reason": "la CLI no dejó respuesta estructurada", "meta": meta}
     except ValueError as error:
@@ -1265,4 +1285,6 @@ def investigate(job: dict, adapter, decision: dict, *, should_stop, on_start=Non
     counts = {}
     result = redact_deep(result, counts)  # la CLI pudo leer un secreto fuera del paquete
     meta["redactions_result"] = counts
+    if "lectura" in data:  # creencias: lo que el cursor suma si la vuelta se registra
+        return {"status": "ok", "result": result, "meta": meta, "lectura": data["lectura"]}
     return {"status": "ok", "result": result, "meta": meta}
