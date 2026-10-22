@@ -96,6 +96,14 @@ export function CardNeeds({ session: s, pending: p, quick, writable, actions, on
           )}
         </div>
       )}
+      {/* el auto-aprobar contestó por esta sesión: sin esto quedaba sólo en el log (Kiro no tiene
+          hooks y su tarjeta seguía en «corriendo» sin rastro del permiso; pedido de Ariel, 2026-10-22) */}
+      {/* sólo del turno en curso: una vez terminado, lo aprobado antes del cierre ya es historia */}
+      {s.auto_aprobado && !p && !s.dialog && (s.state !== "termino" || Date.parse(s.auto_aprobado.at) >= Date.parse(s.state_since)) && (
+        <div className="dim small auto-aprobado" title={`el auto-aprobar lo contestó solo (${s.auto_aprobado.via})`}>
+          auto-aprobado {hhmm(new Date(s.auto_aprobado.at))}: <code>{s.auto_aprobado.que}</code>
+        </div>
+      )}
       {/* diálogo de la TUI ("Switch model?"): no es un permiso, no dispara hooks y nadie lo ve
           desde afuera; se lee de la pantalla cada 5 s. Un permiso pendiente le gana (el server ya
           no publica el diálogo en ese caso) */}

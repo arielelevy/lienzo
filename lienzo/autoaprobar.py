@@ -126,6 +126,7 @@ class DialogoDeCoda(ProveedorPermisos):
 
 
 OMITIDO = "auto_aprobar_omitido"  # en la tarjeta: por que el auto-aprobar vio el dialogo y no lo contesto
+APROBADO = "auto_aprobado"  # en la tarjeta: lo ultimo que el auto-aprobar contesto por ella
 
 
 def opcion_de_permiso(dialog: dict | None, agent: str | None) -> int | None:
@@ -216,8 +217,8 @@ def ronda(ahora: float | None = None) -> list[tuple[Pedido, int]]:
             _estaba_prendido = False
             with state.lock:  # recien apagado: el aviso de los dialogos no corresponde mas
                 for s in state.sessions.values():
-                    if s.get(OMITIDO):
-                        s[OMITIDO] = None
+                    if s.get(OMITIDO) or s.get(APROBADO):
+                        s[OMITIDO] = s[APROBADO] = None
                         ses.touch(s)
         return []
     _estaba_prendido = True
@@ -249,8 +250,21 @@ def ronda(ahora: float | None = None) -> list[tuple[Pedido, int]]:
                 continue
             _intentados[p.id] = (ahora, code < 500)
             state.log(f"AUTO-APROBADO ({prov.nombre}) {p.agente} {p.session_id[:8]}: {p.que} -> {code}")
+            if 200 <= code < 300:
+                anotar_en_tarjeta(p, prov.nombre)
             hechos.append((p, code))
     return hechos
+
+
+def anotar_en_tarjeta(p: Pedido, via: str) -> None:
+    """Deja en la tarjeta que el auto-aprobar contesto y que. Antes quedaba solo en el log: la
+    tarjeta de Kiro seguia en «corriendo» sin rastro del permiso (pedido de Ariel, 2026-10-22)."""
+    with state.lock:
+        s = state.sessions.get(p.session_id)
+        if s is None:
+            return
+        s[APROBADO] = {"que": p.que[:200], "at": ses.now(), "via": via}
+        ses.touch(s)
 
 
 def loop() -> None:

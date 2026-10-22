@@ -50,6 +50,9 @@ class Perfil:
     persist_unhooked: ClassVar[bool] = False
     after_dialog: ClassVar[str] = "termino"
     live_dialog_with_hooks: ClassVar[bool] = False
+    # sin hook idle_prompt: el turno que la transcripcion cierra con una pregunta lleva la tarjeta a
+    # «te necesita», como hace el Notification de Claude (hooks_eventos.hook_notification)
+    pregunta_al_terminar: ClassVar[bool] = False
     supported_platforms: ClassVar[tuple[str, ...]] = ("win32", "linux", "darwin")
 
     @property
@@ -228,6 +231,7 @@ class Kiro(Perfil):
     persist_unhooked = True
     after_dialog = "corriendo"
     live_dialog_with_hooks = True
+    pregunta_al_terminar = True
     supported_platforms = ("win32",)  # identidad verificada con el motor de V3 en Windows
     preguntas_de_permiso = ()
 
@@ -235,6 +239,10 @@ class Kiro(Perfil):
         """Kiro V3 pide «requires approval» con Allow / Always allow / Deny / Always deny (sin
         numeros, se elige con flechas): permite «Allow», nunca «Always allow»."""
         q, ops = _dialogo_plano(dialog)
+        if re.fullmatch(r"\d+ tool approvals? pending", q):
+            # permisos de sus subagentes: «(a) Approve all pending», nunca «(f) ... auto-approve future
+            # subagent requests», que deja aprobado lo que venga (pedido de Ariel, 2026-10-22)
+            return next((n for n, t in ops if t == "(a) approve all pending"), None)
         allow_deny = any(t.startswith("allow") for _, t in ops) and any(t.startswith("deny") for _, t in ops)
         if not ("requires approval" in q or "requiere permiso" in q or allow_deny):
             return None
@@ -242,6 +250,8 @@ class Kiro(Perfil):
 
     def permission_reason(self, dialog: dict | None) -> str:
         q, ops = _dialogo_plano(dialog)
+        if re.fullmatch(r"\d+ tool approvals? pending", q):
+            return "es el cartel de permisos de subagentes pero no se leyo «(a) Approve all pending»: contestalo en la terminal"
         if "requires approval" in q or "requiere permiso" in q or any(t.startswith("allow") for _, t in ops):
             return "es un permiso de Kiro pero no se leyo la opcion «Allow»: contestalo en la terminal"
         return super().permission_reason(dialog)

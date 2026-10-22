@@ -86,18 +86,22 @@ export function useNotifications({ sessions, pending, onOpen, toast }: Options) 
   }, [pending, sessions, fire]);
 
   useEffect(() => {
-    const now = new Set<string>();
-    for (const s of Object.values(sessions)) if (s.state === "te_necesita" && s.needs?.kind === "permission") now.add(s.session_id);
+    // clave sesion + hora del aviso (needs.since): un aviso nuevo sin salir de «te necesita» (un
+    // diálogo tras otro, o de diálogo a permiso) tambien avisa; el mismo redibujado, no
+    const now = new Map<string, string>();
+    // "dialog": el permiso o la pregunta que la TUI dibuja sin hook (Kiro, Codex, Antigravity), leído de la pantalla
+    for (const s of Object.values(sessions)) if (s.state === "te_necesita" && (s.needs?.kind === "permission" || s.needs?.kind === "dialog")) now.set(`${s.session_id}@${s.needs.since ?? ""}`, s.session_id);
     const prev = permNeedRef.current;
-    permNeedRef.current = now;
+    permNeedRef.current = new Set(now.keys());
     const armed = armedRef.current;
     if (hasData) armedRef.current = true;
     if (!prev || !armed) return;
-    for (const sid of now) {
-      if (prev.has(sid)) continue;
+    for (const [key, sid] of now) {
+      if (prev.has(key)) continue;
       const s = sessions[sid];
       if (!s || s.pending_id) continue; // el pending ya avisa con mas detalle
-      fire(sid, `${s.repo} pide permiso: ${s.needs?.tool ?? ""}`.trim(), (s.needs?.detail ?? "").slice(0, 200));
+      const title = s.needs?.kind === "dialog" ? `${s.repo} espera que elijas en la terminal` : `${s.repo} pide permiso: ${s.needs?.tool ?? ""}`.trim();
+      fire(sid, title, (s.needs?.detail ?? "").slice(0, 200));
     }
   }, [sessions, hasData, fire]);
 

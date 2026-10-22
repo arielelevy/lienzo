@@ -135,6 +135,51 @@ def coda_interactive(args: list[str]) -> bool:
     )
 
 
+# subcomandos de kiro-cli 2.x que no abren la TUI (kiro-cli --help, 2026-10-22)
+KIRO_SUBCOMMANDS = (
+    "agent",
+    "login",
+    "logout",
+    "whoami",
+    "profile",
+    "settings",
+    "diagnostic",
+    "issue",
+    "crew",
+    "mcp",
+    "powers",
+    "update",
+    "serve",
+    "help",
+    # no estan en el --help de 2.x pero existen o existieron fuera de la TUI (ACP para editores)
+    "acp",
+    "doctor",
+    "translate",
+    "inline",
+    "integrations",
+)
+
+
+def kiro_interactive(args: list[str]) -> bool:
+    """La TUI de Kiro; no un subcomando ni el ayudante del motor. Medido el 2026-10-22: `kiro-cli --v3`
+    lanza bun (tui.js), y bun lanza `kiro-cli chat _ windows-kas-process -- node acp-server.js`, que
+    tambien es kiro-cli.exe y salia como otra tarjeta «sesion sin transcripcion identificada»."""
+    options = args[: args.index("--")] if "--" in args else args
+    if any(a in ("windows-kas-process", "--no-interactive", "--help", "-h", "--version", "-V") for a in options):
+        return False
+    valued = {"--resume-id", "--repo", "--agent", "--model", "--profile"}
+    index = 0
+    while index < len(options):
+        arg = options[index]
+        if arg in valued:
+            index += 2
+        elif arg.startswith("-"):
+            index += 1
+        else:
+            return arg not in KIRO_SUBCOMMANDS
+    return True
+
+
 class _PBI(ctypes.Structure):
     """PROCESS_BASIC_INFORMATION."""
 
@@ -453,6 +498,8 @@ def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
                 return None
             if v == "antigravity" and cmdline and not antigravity_interactive(command_args(cmdline)[1:]):
                 return None
+            if v == "kiro" and cmdline and not kiro_interactive(command_args(cmdline)[1:]):
+                return None
             return v
     return None
 
@@ -462,7 +509,10 @@ def process_agent(pid: int) -> str | None:
     name = os.path.basename(exe or "").lower()
     codex = name == "codex.exe" or name.startswith("codex.exe.")
     antigravity = name == "agy.exe" or name.startswith("agy.exe.")
-    cmdline = command_line(pid) if codex or antigravity or name in ("node.exe", "pi.exe", "coda.exe") else None
+    kiro = name == "kiro-cli.exe" or name.startswith("kiro-cli.exe.")
+    cmdline = command_line(pid) if codex or antigravity or kiro or name in ("node.exe", "pi.exe", "coda.exe") else None
+    # Kiro sin comando legible sigue contando: marcar muerta la TUI (y avisar «murio trabajando») es
+    # peor que dejar pasar al ayudante en ese caso raro
     if (codex or antigravity) and not cmdline:
         return None  # sin poder leer el comando no se puede distinguir el helper de la TUI
     return agent_of(exe, cmdline)

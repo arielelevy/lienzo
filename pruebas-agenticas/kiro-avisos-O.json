@@ -1,0 +1,87 @@
+{
+  "nombre": "kiro-avisos-O",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/kiro-avisos-O",
+  "reglas": [
+    "Una Kiro V3 tiene una sola tarjeta: el ayudante `kiro-cli chat _ windows-kas-process` (hijo de bun) no es una sesión; la TUI `kiro-cli --v3` sí (encargo O, 2026-10-22).",
+    "Cuando el auto-aprobar contesta un permiso (2xx), la tarjeta lo muestra con qué, cuándo y por dónde; un intento que no entró no se anota.",
+    "Kiro, sin hook idle_prompt, pasa a «te necesita» (idle) cuando su transcripción cierra el turno con una pregunta, una vez por turno, y vuelve a corriendo cuando empieza otro turno. Los demás agentes sin hooks no cambian.",
+    "El navegador avisa también cuando una tarjeta pasa a «te necesita» por un diálogo de la TUI, sin duplicar el aviso de un permiso con pendiente.",
+    "El cartel de Kiro «N tool approval(s) pending» (permisos de subagentes, opciones por letra) es un diálogo: el auto-aprobar elige «(a) Approve all pending», nunca «(f)», y se contesta con Enter sobre el cursor (medido en una Kiro real el 2026-10-22)."
+  ],
+  "precondiciones": [],
+  "casos": [
+    {
+      "id": "kiro-avisos-backend",
+      "comando": [
+        "py",
+        "-B",
+        "-m",
+        "pytest",
+        "tests/test_kiro_avisos.py",
+        "tests/test_kiro.py",
+        "tests/test_autoaprobar.py",
+        "tests/test_procs.py",
+        "tests/test_ola2_agentes.py",
+        "tests/test_transcripts.py",
+        "tests/test_kiro_screen.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "lienzo/procinfo.py",
+        "lienzo/autoaprobar.py",
+        "lienzo/sessions.py",
+        "lienzo/agentes.py"
+      ]
+    },
+    {
+      "id": "kiro-avisos-web",
+      "comando": [
+        "node",
+        "node_modules/typescript/bin/tsc",
+        "-b"
+      ],
+      "cwd": "web",
+      "timeoutMs": 300000,
+      "cubre": [
+        "web/src/components/CardNeeds.tsx",
+        "web/src/hooks/useNotifications.ts",
+        "web/src/types.ts"
+      ]
+    },
+    {
+      "id": "kiro-avisos-lint",
+      "comando": [
+        "node",
+        "node_modules/eslint/bin/eslint.js",
+        "--max-warnings=0",
+        "src/components/CardNeeds.tsx",
+        "src/hooks/useNotifications.ts",
+        "src/types.ts"
+      ],
+      "cwd": "web",
+      "timeoutMs": 300000,
+      "cubre": [
+        "web/src/components/CardNeeds.tsx",
+        "web/src/hooks/useNotifications.ts"
+      ]
+    },
+    {
+      "id": "kiro-avisos-ui",
+      "comando": [
+        "pwsh.exe",
+        "-NoProfile",
+        "-File",
+        "pruebas-agenticas/kiro_avisos_ui.ps1"
+      ],
+      "timeoutMs": 300000,
+      "cubre": [
+        "web/src/components/CardNeeds.tsx",
+        "web/src/hooks/useNotifications.ts"
+      ]
+    }
+  ]
+}

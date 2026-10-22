@@ -1214,8 +1214,27 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
         s["last_reply"] = turn_say(t) or s["last_reply"]
     if not turn_say(t) and (waiting := perfil(s["agent"]).waiting_text(t)):
         s["last_reply"] = waiting
+    pregunta = perfil(s["agent"]).pregunta_al_terminar
+    final = (t.get("final") or "").strip()
+    turno = t.get("id") or t.get("ts_start") or f"final:{final[-200:]}"
+    if (
+        pregunta
+        and (s.get("needs") or {}).get("kind") == "idle"
+        and (not t.get("ended") or turno != s.get("pregunta_turno"))
+    ):
+        # otro turno (abierto, o ya cerrado entre dos lecturas): la pregunta se contesto, sin hook que lo diga
+        set_state(s, "corriendo")
     if s["state"] != "muerta" and not s.get("needs"):
         set_state(s, "termino" if t.get("ended") else "corriendo")
+        if (
+            pregunta
+            and s["state"] == "termino"
+            and turno != s.get("pregunta_turno")
+            and final.rstrip("*_ ").endswith("?")
+        ):
+            # una vez por turno: releer el mismo turno no la vuelve a pedir si ya se la saco
+            s["pregunta_turno"] = turno
+            set_needs(s, {"kind": "idle", "detail": short(final, 300), "where": "terminal"})
 
 
 def _par_denegado(x: dict) -> list:
@@ -3158,6 +3177,10 @@ def screen_once() -> None:
             # permiso (autoaprobar.DialogoDePermiso, 2026-10-08); la confianza en una carpeta, el
             # cambio de modelo o una pregunta de verdad los decide el humano
             needs = s.get("needs") or {}
+            if d and needs.get("kind") == "idle" and perfil(s["agent"]).pregunta_al_terminar:
+                # la pregunta del fin de turno (Kiro) quedo atras: hay un dialogo en pantalla
+                set_state(s, "corriendo")
+                needs = {}
             if d and not needs and s["state"] in ("termino", "corriendo") and not lo_contesta_el_auto_aprobar(s, d):
                 set_needs(s, {"kind": "dialog", "detail": short(d.get("question") or "", 300), "where": "terminal"})
                 touch(s)

@@ -66,6 +66,8 @@ export interface Session {
   dialog?: TuiDialog | null;
   /** con auto-aprobar prendido: por que vio este dialogo y NO lo contesto (no es un permiso) */
   auto_aprobar_omitido?: string | null;
+  /** lo ultimo que el auto-aprobar contesto por esta sesion: que, cuando (ISO) y por donde */
+  auto_aprobado?: { que: string; at: string; via: string } | null;
   started: string;
   last_event: string | null;
   alive: boolean;

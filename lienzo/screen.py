@@ -183,7 +183,7 @@ def dialog(lines: list[str]) -> dict | None:
     Devuelve {"question", "options": [{"n", "text"}], "selected"} o None. Para no confundirlo con
     una lista numerada cualquiera de la salida se piden tres cosas: dos opciones o mas, numeradas
     1..n corridas, y exactamente una con el cursor (❯ o >) adelante."""
-    if kiro := _dialog_kiro(lines):
+    if kiro := _dialog_kiro(lines) or _dialog_kiro_pendientes(lines):
         return kiro
     run: list[tuple[int, dict]] = []
     best: list[tuple[int, dict]] = []
@@ -245,6 +245,37 @@ def _dialog_kiro(lines: list[str]) -> dict | None:
         result["question"] = "Kiro requiere permiso (comando parcialmente visible)"
         result["truncated"] = True
     return result
+
+
+_PENDIENTES_RE = re.compile(r"(\d+ tool approvals? pending)")
+# «❯ (a) Approve all pending» / «  (f) Approve all pending and auto-approve future subagent requests»
+_OPT_LETRA_RE = re.compile(r"^(?P<cur>[>❯›])?\s*(?P<txt>\([a-z]\)\s+\S.*)$")
+
+
+def _dialog_kiro_pendientes(lines: list[str]) -> dict | None:
+    """Cartel de Kiro V3 con los permisos de sus subagentes (medido por Ariel el 2026-10-22):
+    «⚠ 1 tool approval pending» y abajo opciones por letra, sin numero, con el cursor en una. Se
+    numeran 1..k en orden; se contesta con flechas y Enter como el permiso comun de Kiro."""
+    q = next((i for i in range(len(lines) - 1, -1, -1) if _PENDIENTES_RE.search(lines[i])), None)
+    if q is None:
+        return None
+    best = []
+    for i in range(q + 1, min(q + 9, len(lines))):
+        m = _OPT_LETRA_RE.match(lines[i].strip())
+        if not m:
+            if best:
+                break
+            continue
+        best.append((i, {"n": len(best) + 1, "text": m.group("txt").strip(), "cursor": bool(m.group("cur"))}))
+    if len(best) < 2 or sum(o["cursor"] for _, o in best) != 1:
+        return None
+    return {
+        "question": _PENDIENTES_RE.search(lines[q]).group(1),
+        "detail": " ".join(l.strip() for l in lines[max(0, q - 6) : q] if "approval needed" in l)[:400],
+        "options": [{"n": o["n"], "text": o["text"]} for _, o in best],
+        "selected": next(o["n"] for _, o in best if o["cursor"]),
+        "teclas": "flechas",
+    }
 
 
 # como arranca la pregunta de un dialogo de la TUI (permiso de Codex o Claude, confianza, modelo)
