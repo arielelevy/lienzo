@@ -8,6 +8,23 @@ Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
 Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las specs.
 
+### Decisiones de Ariel del 2026-10-22 que agregan trabajo
+
+Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
+
+- [ ] ar-it33940 siempre disponible (decisión 11): Lienzo arranca al iniciar sesión y la PC no se suspende
+  enchufada; sin inicio de sesión automático.
+- [ ] Cierres del plan multi-PC con ar-it33940 real (decisión 21): aprobar un permiso de allá desde acá,
+  lanzar un frente con la ★ y que el informe vuelva solo, regla real de firewall de `install.py --peer`.
+- [ ] Chrome de Globant en ar-it33940 (decisión 25): misma receta que el Chrome de Ariel (bandera de oclusión
+  en accesos directos y «Allow remote debugging») y verificar la vista por pestañas.
+- [ ] Investigación semanal de herramientas de la comunidad (decisión 8), con Claude y propuestas para decidir.
+- [ ] coda real de Globant (decisión 14): `PreCompact`/`PostCompact` y la herramienta `read`.
+- [ ] Lista de comprobación de uso real (decisión 16): puntero, checkbox de descargas, flujo nativo,
+  portapapeles de la ventana completa, clics con la PC bloqueada, `marcas` entre las dos PCs.
+- [ ] Revisar las 3 propuestas del investigador (G) y los 60 candidatos del contraste lógico.
+- [ ] Confirmar si `ledsage` y `gmi-global` son proyectos propios (Azure sólo para propios).
+
 ### Ronda nocturna del 2026-10-21/22 (cerrada el 2026-10-22)
 
 Pedido de Ariel: «terminá todo lo pendiente», con la otra PC prendida. Frentes A–F y R, todos Claude
@@ -177,7 +194,8 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   conjunta de UI y remota autorizada. Medir parpadeo, zoom/pinch, dimensiones y entrada con
   `basis` vigente; conservar rechazo 409 ante tamaño viejo. Complementa la latencia LAN pendiente.
   Avance 2026-10-22: vista por pestañas usada por Ariel desde ar-it33940 sobre su Chrome real; con la PC bloqueada ~14,5 c/s sin cortes (bandera de oclusión en sus accesos directos). Falta zoom/pinch y clics con la PC bloqueada.
-- [ ] Diseñar autenticación humana para `persona:` y `coordinadora:` y credenciales con alcances
+- [x] Diseñar autenticación humana para `persona:` y `coordinadora:` y credenciales con alcances
+  Cerrado 2026-10-22 como riesgo aceptado (decisión 4 de Ariel): la LAN de casa es de confianza.
   externos para nivel 3. El rechazo del actor `server` no impide la suplantación de esos actores;
   los conteos de `externo()` no constituyen un token limitado. Vinculado a los tres niveles de registro.
 - [x] Resolver la reimportación legacy: `_importar_una` usa `INSERT OR IGNORE` y puede dejar
@@ -195,8 +213,10 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   coordinada. Reutiliza el pendiente transversal de circuito integrado y batería global.
   Conservar logs, fallos exploratorios y límites de sandbox. No sumar focales solapadas como
   cobertura global ni aceptar tareas, propuestas, mutaciones o baselines por pasar pruebas.
-- [ ] Obtener contexto y error reproducible de Dot antes de proponer un arreglo.
-- [ ] Decidir presupuesto, credencial, proyectos permitidos, alcance externo y ledger del
+- [x] Obtener contexto y error reproducible de Dot antes de proponer un arreglo.
+  Cerrado 2026-10-22 (decisión 2): queda el registro de rechazos (d9aa9bb, `GET /rechazos`) para capturar la próxima falla.
+- [x] Decidir presupuesto, credencial, proyectos permitidos, alcance externo y ledger del
+  Hecho 2026-10-22 (decisión 1, 34d3799): Azure sólo a pedido, proyectos propios, tope duro USD 5/mes con ledger. Falta que Ariel cargue la key con `py ops/importar-azure.py`.
   adaptador Azure antes de implementarlo o activarlo. No sustituir automáticamente Codex.
 
 
@@ -356,7 +376,8 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   permisos ni modos para eludir rechazos. Exige una prueba real de sesión nueva.
 - [ ] Ejecutar una batería global completa cuando se retome esa validación; aceptar baseline
   y mutaciones sólo tras revisión humana. Las pruebas focales no se publican como globales.
-- [ ] Arrancar habitualmente mediante `lienzo-server.cmd` para disponer del relanzamiento.
+- [x] Arrancar habitualmente mediante `lienzo-server.cmd` para disponer del relanzamiento.
+  Pasa a práctica (decisión 19): regla vigente en `~/.codex/AGENTS.md`.
   El proceso iniciado directamente con Python rechaza POST /restart de forma segura; este
   reinicio requirió detener el PID identificado y levantar un proceso nuevo.
 - [x] Revisar continuidad de mensajes Codex encolados al cerrar una CLI, y la sucesión de
@@ -440,7 +461,8 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
 
 ### Ciclo aparte — Tres niveles de registro (pedido de Ariel, 2026-10-17)
 
-- [ ] **Guardar lo que pasa en Lienzo en tres niveles y que cada consumidor lea el suyo.**
+- [x] **Guardar lo que pasa en Lienzo en tres niveles y que cada consumidor lea el suyo.**
+  Hecho 2026-10-22 (decisión 5, 84aa7b8): nivel 1 crudo con depuración diaria a 30 días; niveles 2 y 3 ya existían.
   1. Crudo: todo (transcripciones, salidas completas, eventos). Se depura cada tanto con una retención que
      decide Ariel; depurar es borrar, no se automatiza sin esa decisión.
   2. Cómo se hizo el trabajo: llamadas, tiempos, esperas, quién hizo qué. Es para el investigador.
@@ -453,7 +475,8 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   Estado (2026-10-17): nivel 2 del investigador desde capturas hecho (por sesión y hasta 60 eventos
   recientes, redactados; el crudo no viaja). Faltan las llamadas a herramientas por paso, el nivel 3
   para sistemas externos y la depuración del crudo.
-- [ ] Llevar la instrucción de RTK de la base agéntica (`lienzo/tools/rtk.py`) a todo lo que lee un agente
+- [x] Llevar la instrucción de RTK de la base agéntica (`lienzo/tools/rtk.py`) a todo lo que lee un agente
+  Cerrado 2026-10-22 (encargo I): la instrucción ya cubre `rtk read`, `rg`, `find`, `git` y `recall`; lo prueba `test_rtk_base_comun`.
   (`rtk read`, `rtk rg`, `rtk find`, `rtk git`, `rtk recall`), no sólo a las salidas largas. La base la
   comparten las sesiones y el investigador.
 
@@ -482,7 +505,8 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   fuera de Lienzo por decisión de Ariel, 2026-10-17; siguen instalados en Claude Code).
   Estado: fichas implementadas y UI compilada/probada; backend activo observado con cinco fichas
   anteriores. La activación debe coordinarse: había dos sesiones corriendo y tres con turno terminado.
-- [ ] Instalar y comprobar Better Claude en el entorno autorizado.
+- [x] Instalar y comprobar Better Claude en el entorno autorizado.
+  Descartado 2026-10-22 (decisión 6 de Ariel).
   Verificar manifiestos, activación y compatibilidad de Image Preview/Sub Meter/Commit en Claude Code.
   Mantener visible que Image Preview necesita verificación Windows, Sub Meter depende de suscripción,
   y Commit puede hacer commit/push en modo no interactivo. No ejecutar /commit como prueba automática.
@@ -511,20 +535,25 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
 - [ ] Preparar investigación periódica de tools, integraciones y formas de trabajo de la comunidad.
   Relacionar cada candidata con necesidades observadas y guardar fuentes, fecha, alternativas,
   costos, permisos, mantenimiento y riesgos relevantes.
-- [ ] Definir frecuencia y presupuesto de esa investigación, con propuestas para decisión de Ariel.
+- [x] Definir frecuencia y presupuesto de esa investigación, con propuestas para decisión de Ariel.
+  Decidido 2026-10-22 (decisión 8): semanal, con Claude, propuestas para que Ariel decida.
   Descubrir o recomendar no autoriza instalar, activar ni modificar proyectos.
 
 ### Transversal — Diseño, Markdown, calidad y entrega
 
-- [ ] Mantener arquitectura, plan y tareas/features según alcance y riesgo, sin imponer SDD.
+- [x] Mantener arquitectura, plan y tareas/features según alcance y riesgo, sin imponer SDD.
+  Pasa a práctica (decisión 19): regla vigente en `~/.codex/AGENTS.md`.
   Proceso flexible y calidad no negociable: no reducir revisión, pruebas o información necesaria
   para producir un número mejor de tiempo, longitud o tokens.
-- [ ] Mantener alineados Producto, Arquitectura, Aprendizaje y Plugins con lo construido.
+- [x] Mantener alineados Producto, Arquitectura, Aprendizaje y Plugins con lo construido.
+  Pasa a práctica (decisión 19): regla vigente en `~/.codex/AGENTS.md`.
   Unificar y eliminar documentos intermedios/obsoletos preservando decisiones y evidencia útil.
   Estado: 13 specs retiradas; 26 Markdown revisados por enlaces, sin enlaces locales rotos.
-- [ ] Mantener esta lista como única fuente de tareas; no cerrar casillas sin pedido explícito.
+- [x] Mantener esta lista como única fuente de tareas; no cerrar casillas sin pedido explícito.
+  Pasa a práctica (decisión 19): regla vigente en `~/.codex/AGENTS.md`.
   Distinguir implementación, prueba local, aceptación, activación y medición en uso real.
-- [ ] Aplicar Explorer → Analyser → Designer → Executor → Detective y code-audit a los cambios.
+- [x] Aplicar Explorer → Analyser → Designer → Executor → Detective y code-audit a los cambios.
+  Pasa a práctica (decisión 19): pruebas agénticas y code review obligatorios en `~/.codex/AGENTS.md`.
   Conservar logs/errores y el veredicto real; no aprobar baselines ni mutaciones por cuenta propia.
   Estado medido: 45 contratos del catálogo, 7 recorridos UI y 52 pruebas de creencias/patrones pasan;
   build/lint verificados. Compuertas código 1 por baseline ausente; no hay PASS certificado.
@@ -558,6 +587,7 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
     una dependencia bloquea su ejecución hasta disponer del insumo; un fallo de verificación permite
     devolverlo a implementación; los límites frenan reintentos sin avance; ninguna tarea se marca
     completada sin pedido explícito de Ariel.
+  Avance 2026-10-22 (decisión 15, 516f7ab): etapas explícitas por encargo, visibles en Memoria → Etapas; un turno cerrado no aprueba. Quedan dependencias entre encargos, worktree por frente y límites de gasto y reintentos.
 
   Origen: conversación con Ariel del 2026-10-12 sobre Prime Agent.
   Referencia: https://www.primeintellect.ai/blog/prime-agent-rust.
@@ -569,7 +599,8 @@ ejecutada hoy. Las referencias de código de esta consolidación se revisaron es
 
 Lo hecho está en el README («Rondas largas») y en `code-review-2026-10-16.md`.
 
-- [ ] Reiniciar el server de 7321 entre olas de OpenSyync: lo coordina su coordinadora (pedido del
+- [x] Reiniciar el server de 7321 entre olas de OpenSyync: lo coordina su coordinadora (pedido del
+  Cerrado 2026-10-22 como obsoleto (decisión 20).
   2026-10-16, no reiniciar mientras esté en ronda). Hasta entonces el tablero nuevo pide `/avisos` y
   `/memoria` y recibe 404, y Playwright `humo` y `salud` fallan contra 7321 por esos errores de consola.
 - [ ] Aprobar o descartar `pruebas-agenticas/resultados/casos-rondas.nuevo.json` (rondas-focal,
@@ -635,7 +666,8 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
 - [x] Reglas `on_stop` agotadas por el tope total viejo: no se reactivan solas. Se reactivan editándolas
   con `limit:"rate"`.
   **Cerrado el 2026-10-15:** al arrancar, `rules.reactivar_agotadas_por_tope_viejo` las prende de nuevo (tests/test_rules_frecuencia.py).
-- [ ] Hook en Unix: destino por `TMUX_PANE` sin probar (falta una PC Linux). Origen: code review del 2026-10-10.
+- [x] Hook en Unix: destino por `TMUX_PANE` sin probar (falta una PC Linux). Origen: code review del 2026-10-10.
+  Hecho 2026-10-22 (3dbe685, encargo K): verificado con un Claude en tmux en WSL; lo enviado llegó al pane `%0`.
 - [x] Un diálogo de permiso que el auto-aprobar va a contestar pasa la tarjeta a `te_necesita` unos 5 s:
   `answer_dialog` limpia `dialog` pero el estado vuelve recién en la pasada de pantalla siguiente. La
   columna vacía se abre y se cierra y corre el tablero. Medido el 2026-10-15: unas 36 aprobaciones en una
@@ -1048,6 +1080,7 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
 - [ ] Verificar el servidor nativo en Linux y macOS, incluido emparejamiento.
   - Evidencia: lienzo/backend.py: sweep; lienzo/tmux.py: _ps_all. El documento de origen registra simulación de plataforma y pruebas desde Windows/WSL, no una corrida nativa completa; esta revisión no ejecutó esas plataformas.
   - Origen: `docs/porting-linux-2026-09-08.md, Integrado a main; README.md, Limitaciones` (historial de Git). Gravedad: **media**.
+  Avance 2026-10-22 (decisión 13, 3dbe685): server nativo en WSL Ubuntu emparejado en los dos sentidos, con tres bugs corregidos. macOS sin probar.
 
 ### Chrome remoto
 
@@ -1103,15 +1136,18 @@ Objetivo: coordinar una o varias NUC sin pantalla desde una sola PC, con control
 PC perdio las credenciales de git, la sesion 4 del curso quedo sin publicar y no habia forma segura de
 arreglarlo desde aca.
 
-- [ ] Acceso de emergencia: documentar Tailscale o RDP y mostrar en la tira de PCs si la NUC no responde.
+- [x] Acceso de emergencia: documentar Tailscale o RDP y mostrar en la tira de PCs si la NUC no responde.
+  Hecho 2026-10-22 (decisión 24, 3dbe685): la tira ofrece Tailscale o Tailchrome según lo que tenga cada PC. Falta verlo con ar-it33940 real.
 
-- [ ] Arranque autonomo de la NUC (pedido por el usuario, 2026-10-03; sin implementar): `install.py --headless`
+- [x] Arranque autonomo de la NUC (pedido por el usuario, 2026-10-03; sin implementar): `install.py --headless`
+  Descartado 2026-10-22 (decisión 9); lo que sirve pasa a ar-it33940 (decisión 11, ítem nuevo).
    que deja auto-login, una tarea al iniciar sesion que levanta `lienzo-server.cmd`, plan de energia sin
    suspension y reinicio tras corte de luz. Las codas necesitan consola abierta: tiene que haber una sesion
    de usuario iniciada, un servicio no alcanza. Opt-in, y `install.py --headless --quitar` lo deshace.
    Ademas: que el server llame a `restaurar(todas=True)` al arrancar en una PC marcada `headless`,
    respetando la memoria libre.
-- [ ] **`POST /run` para comandos acotados en una PC remota** (pedido por el usuario, 2026-10-03; sin
+- [x] **`POST /run` para comandos acotados en una PC remota** (pedido por el usuario, 2026-10-03; sin
+  Hecho 2026-10-22 (decisión 10, d9aa9bb): `/peer/run` registra cada pedido y niega más variantes peligrosas de git. Falta cargar la lista por PC en `config.json` y probarlo entre las dos PCs.
    implementar): solo para peers emparejados, firmado como el resto de `/peer/*`, con una lista de
    comandos permitidos por PC en `config.json` (git status/fetch/log/cherry-pick/tag/push sin --force,
    pytest, ruff, cr-rate), cwd dentro de `launch_roots`, salida y codigo de retorno devueltos y log de cada
@@ -1131,7 +1167,8 @@ la configuración y la verificación remota real. No se habilita ninguna lista a
 
 - [x] Un panel «PCs» con la latencia y la memoria libre de cada una en vivo, y la cola del DGX.
   Hecho 2026-10-22 (5d4f820): la tira ya mostraba memoria y latencia; la latencia ahora se mide en el sondeo de 15 s. La cola del DGX no tiene fuente real y no se agregó.
-- [ ] `coordinar.repartir(proyecto, modulos, pcs)`: reparto automático según `capacidad`.
+- [x] `coordinar.repartir(proyecto, modulos, pcs)`: reparto automático según `capacidad`.
+  Hecho 2026-10-22 (decisión 23, 3dbe685): sugerencia con módulos disjuntos, OK de Ariel, rama `ronda-<fecha>` sin `--force`. Falta probarlo entre dos PCs reales.
 - [x] Aviso en el tablero cuando una tarjeta lleva N minutos `corriendo` sin que cambie su pantalla.
   Hecho 2026-10-22 (69d0bb9): «pantalla quieta · N min», 5 por defecto, configurable. Lo calcula el tablero cada 60 s; pasar el dato al server queda para después de la partición de sessions.py.
 
