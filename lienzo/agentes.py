@@ -239,6 +239,16 @@ class Kiro(Perfil):
         """Kiro V3 pide «requires approval» con Allow / Always allow / Deny / Always deny (sin
         numeros, se elige con flechas): permite «Allow», nunca «Always allow»."""
         q, ops = _dialogo_plano(dialog)
+        if q == "trust this workspace?":
+            # Se reevalúa tanto al detectar el cartel como antes de contestarlo.
+            import launch
+
+            if [t for _, t in ops] != ["trust, continue", "don't trust, exit"]:
+                return None
+            folder = (dialog or {}).get("detail")
+            if not isinstance(folder, str) or not launch._cwd_allowed(folder, launch._allowed_roots()):
+                return None
+            return ops[0][0]
         if re.fullmatch(r"\d+ tool approvals? pending", q):
             # permisos de sus subagentes: «(f) Approve all pending and auto-approve future subagent
             # requests», así Kiro deja de preguntar por los subagentes (pedido de Ariel, 2026-10-22, que
@@ -252,6 +262,8 @@ class Kiro(Perfil):
 
     def permission_reason(self, dialog: dict | None) -> str:
         q, ops = _dialogo_plano(dialog)
+        if q == "trust this workspace?":
+            return "confianza de Kiro omitida: carpeta no autorizada por launch_roots o dialogo incompleto"
         if re.fullmatch(r"\d+ tool approvals? pending", q):
             return "es el cartel de permisos de subagentes pero no se leyo «(a) Approve all pending»: contestalo en la terminal"
         if "requires approval" in q or "requiere permiso" in q or any(t.startswith("allow") for _, t in ops):

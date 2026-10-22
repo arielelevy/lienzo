@@ -183,7 +183,7 @@ def dialog(lines: list[str]) -> dict | None:
     Devuelve {"question", "options": [{"n", "text"}], "selected"} o None. Para no confundirlo con
     una lista numerada cualquiera de la salida se piden tres cosas: dos opciones o mas, numeradas
     1..n corridas, y exactamente una con el cursor (❯ o >) adelante."""
-    if kiro := _dialog_kiro(lines) or _dialog_kiro_pendientes(lines):
+    if kiro := _dialog_kiro_confianza(lines) or _dialog_kiro(lines) or _dialog_kiro_pendientes(lines):
         return kiro
     run: list[tuple[int, dict]] = []
     best: list[tuple[int, dict]] = []
@@ -222,6 +222,35 @@ def dialog(lines: list[str]) -> dict | None:
     ):
         result["teclas"] = "flechas"
     return result
+
+
+def _dialog_kiro_confianza(lines: list[str]) -> dict | None:
+    """Confianza de workspace de Kiro; conserva la carpeta separada del texto explicativo."""
+    q = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].strip() == "Trust this workspace?"), None)
+    if q is None:
+        return None
+    body = [l.strip() for l in lines[q + 1 :] if l.strip() and not set(l.strip()) <= set(RULE_CHARS)]
+    if not body:
+        return None
+    folder = body[0]
+    if not (re.match(r"^[A-Za-z]:[/\\]", folder) or folder.startswith("/")):
+        return None
+    options = []
+    for raw in body[1:]:
+        label = sin_cursor(raw)
+        if label in ("Trust, continue", "Don't trust, exit"):
+            options.append({"n": len(options) + 1, "text": label, "cursor": raw.startswith("❯")})
+    if [o["text"] for o in options] != ["Trust, continue", "Don't trust, exit"]:
+        return None
+    if sum(o["cursor"] for o in options) != 1:
+        return None
+    return {
+        "question": "Trust this workspace?",
+        "detail": folder,
+        "options": [{"n": o["n"], "text": o["text"]} for o in options],
+        "selected": next(o["n"] for o in options if o["cursor"]),
+        "teclas": "flechas",
+    }
 
 
 def _dialog_kiro(lines: list[str]) -> dict | None:
