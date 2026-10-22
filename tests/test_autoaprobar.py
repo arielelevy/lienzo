@@ -262,6 +262,39 @@ def test_antigravity_acceso_a_archivo_fuera_del_workspace_elige_solo_esta_vez():
     assert au.opcion_de_permiso(sin_negar, "antigravity") is None
 
 
+PANTALLA_COMANDO_LARGO = [
+    "C:/Users/ArielLevy/.codex/plugins/cache/pruebas-agenticas/",
+    "pruebas-agenticas/0.5.26/runner/ejecutar.mjs",
+    "--help",
+    "",
+    "Run this command?",
+    "> 1. Yes, run command",
+    "  2. Yes, and always allow in this conversation for commands",
+    "that start with 'node",
+    "C:/Users/ArielLevy/.codex/plugins/cache/pruebas-",
+    "agenticas/pruebas-agenticas...'",
+    "  3. Yes, and always allow for commands that start with 'node",
+    "C:/Users/ArielLevy/.codex/plugins/cache/pruebas-",
+    "agenticas/pruebas-agenticas...' (Persist to settings.json)",
+    "  4. No, cancel",
+    "",
+    "  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
+    "esc to cancel                            Gemini 3.8 Flash · high",
+]
+
+
+def test_antigravity_comando_largo_sin_encabezado_visible(monkeypatch):
+    """Medido el 2026-10-22 (opensyync N): el comando es tan largo que «Requesting permission for:»
+    queda fuera de pantalla y la opción 2 ocupa tres renglones. Se reconoce por «Run this command?»
+    y las cuatro opciones; se aprueba la 1."""
+    import screen
+
+    dialog = screen.dialog(PANTALLA_COMANDO_LARGO)
+    assert dialog and [o["n"] for o in dialog["options"]] == [1, 2, 3, 4]
+    assert dialog["options"][3]["text"] == "No, cancel"
+    assert au.opcion_de_permiso(dialog, "antigravity") == 1
+
+
 def test_dialogo_no_suma_texto_que_no_sigue_con_otra_opcion():
     import screen
 

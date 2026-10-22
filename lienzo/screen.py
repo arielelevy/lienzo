@@ -190,7 +190,7 @@ def dialog(lines: list[str]) -> dict | None:
     # renglones que continuan la opcion de arriba: Antigravity parte «...start with 'python -c "»
     # y sigue el comando abajo, y sin esto el dialogo terminaba en la 2 y perdia «4. No, cancel»
     # (medido el 2026-10-21: auto-aprobar decia «no es un permiso»). Se suman solo si llega la
-    # opcion siguiente
+    # opcion siguiente. Hasta 4: con una ruta larga la opcion 2 ocupo tres renglones (2026-10-22)
     resto: list[str] = []
     for i, raw in enumerate(lines):
         linea = _sin_borde(raw)
@@ -201,7 +201,7 @@ def dialog(lines: list[str]) -> dict | None:
             resto = []
             run.append((i, {"n": int(m.group("n")), "text": m.group("txt").strip(), "cursor": bool(m.group("cur"))}))
             continue
-        if run and not m and linea and len(resto) < 2 and not set(linea) <= set(RULE_CHARS):
+        if run and not m and linea and len(resto) < 4 and not set(linea) <= set(RULE_CHARS):
             resto.append(linea)
             continue
         resto = []

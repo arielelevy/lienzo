@@ -308,7 +308,11 @@ class Antigravity(Perfil):
         textos = [t for _, t in ops]
         if "yes, allow access" in textos and "no, deny access" in textos:
             return next(n for n, t in ops if t == "yes, allow access")
-        if q != "requesting permission for:" or not any(t == "no, cancel" for _, t in ops):
+        # con un comando largo el encabezado queda fuera de pantalla: alcanza la pregunta visible
+        # «Run this command?» al final del detalle (medido el 2026-10-22)
+        detalle = ((dialog or {}).get("detail") or "").strip().lower()
+        pide = q == "requesting permission for:" or detalle.endswith("run this command?")
+        if not pide or not any(t == "no, cancel" for _, t in ops):
             return None
         return next((n for n, t in ops if t == "yes, run command"), None)
 
