@@ -16,8 +16,9 @@ Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
   enchufada; sin inicio de sesión automático.
 - [ ] Cierres del plan multi-PC con ar-it33940 real (decisión 21): aprobar un permiso de allá desde acá,
   lanzar un frente con la ★ y que el informe vuelva solo, regla real de firewall de `install.py --peer`.
-- [ ] Chrome de Globant en ar-it33940 (decisión 25): misma receta que el Chrome de Ariel (bandera de oclusión
+- [x] Chrome de Globant en ar-it33940 (decisión 25): misma receta que el Chrome de Ariel (bandera de oclusión
   en accesos directos y «Allow remote debugging») y verificar la vista por pestañas.
+  Hecho según Ariel (2026-10-22): ese Chrome ya tiene la bandera y la vista anda.
 - [ ] Investigación semanal de herramientas de la comunidad (decisión 8), con Claude y propuestas para decidir.
 - [ ] coda real de Globant (decisión 14): `PreCompact`/`PostCompact` y la herramienta `read`.
 - [ ] Lista de comprobación de uso real (decisión 16): puntero, checkbox de descargas, flujo nativo,
