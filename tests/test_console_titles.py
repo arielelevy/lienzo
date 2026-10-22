@@ -58,13 +58,13 @@ def test_sync_updates_card_and_console_without_sending(monkeypatch):
     assert len(saved) == 1 and renamed == [(42, card["title"])]
     ct.sync_once()
     assert len(saved) == 1  # no duplicar el prefijo ni guardar otra vez la tarjeta
-    assert len(renamed) == 1  # no volver a escribir por el ciclo periódico
+    assert len(renamed) == 2  # releer la consola: el helper sólo escribe cuando difiere
     card["title"] = "lienzo | encargo A - RTK/Jev"
     ct.sync_once()
-    assert renamed[-1] == (42, card["title"]) and len(renamed) == 2
+    assert renamed[-1] == (42, card["title"]) and len(renamed) == 3
     card["pid"] = 43
     ct.sync_once()
-    assert renamed[-1] == (43, card["title"]) and len(renamed) == 3
+    assert renamed[-1] == (43, card["title"]) and len(renamed) == 4
 
 
 def test_failed_title_is_visible_and_not_retried_until_change(monkeypatch):
@@ -107,7 +107,7 @@ def test_manual_sync_reapplies_title_after_cached_attempt(monkeypatch):
     ct.sync_once()
     ct.sync_once()
     ct.sync_once(force=True)
-    assert calls == ["lienzo | tarea", "lienzo | tarea"]
+    assert calls == ["lienzo | tarea", "lienzo | tarea", "lienzo | tarea"]
     assert card["title"] == "lienzo | tarea"
 
 
@@ -163,10 +163,13 @@ def test_tmux_checks_owner_and_renames_without_shell(monkeypatch):
     monkeypatch.setattr(ct.tmux, "target_valid", lambda *a: True)
     calls = []
     monkeypatch.setattr(
-        ct.tmux, "_tmux", lambda *a, **kw: calls.append((a, kw)) or SimpleNamespace(returncode=0, stderr="")
+        ct.tmux, "_tmux", lambda *a, **kw: calls.append((a, kw)) or SimpleNamespace(returncode=0, stdout="", stderr="")
     )
     assert ct.native_title({"target": "%2", "pid": 42, "distro": "Ubuntu"}, "Chess - trabajo")["ok"]
-    assert calls == [(("rename-window", "-t", "%2", "Chess - trabajo"), {"distro": "Ubuntu"})]
+    assert calls == [
+        (("display-message", "-p", "-t", "%2", "#{window_name}"), {"distro": "Ubuntu"}),
+        (("rename-window", "-t", "%2", "Chess - trabajo"), {"distro": "Ubuntu"}),
+    ]
 
 
 def test_auto_title_keeps_console_prefix(monkeypatch):
@@ -214,3 +217,50 @@ def test_bad_ai_title_does_not_ping_pong_with_typed_prompt():
         sessions.choose_title(card, "Parpadeo y borrado de archivos")
         vistos.add(card["title"])
     assert vistos == {"ordenemos el repo"}
+
+
+@pytest.mark.parametrize("agent", ["coda", "codex", "kiro"])
+def test_agent_overwrite_is_repaired_without_rewriting_unchanged_title(monkeypatch, agent):
+    card = {
+        "session_id": "s",
+        "agent": agent,
+        "pid": 42,
+        "alive": True,
+        "repo": "lienzo",
+        "title": "lienzo | encargo Y - prueba",
+    }
+    monkeypatch.setattr(state, "sessions", {"s": card})
+    monkeypatch.setattr(sessions, "touch", lambda s: None)
+    console = {"title": agent.upper(), "writes": 0}
+
+    def conditional_title(s, title):
+        changed = console["title"] != title
+        if changed:
+            console["writes"] += 1
+            console["title"] = title
+        return {"ok": True, "changed": changed}
+
+    monkeypatch.setattr(ct, "native_title", conditional_title)
+    ct.sync_once()
+    ct.sync_once()
+    assert console["writes"] == 1
+    console["title"] = agent.upper()  # el agente pisó la ventana al empezar otro turno
+    ct.sync_once()
+    assert console["title"] == card["title"]
+    assert console["writes"] == 2
+
+
+def test_tmux_does_not_rewrite_matching_window_title(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ct.backend, "is_tmux", lambda s: True)
+    monkeypatch.setattr(ct.tmux, "target_valid", lambda *a: True)
+    calls = []
+    monkeypatch.setattr(
+        ct.tmux,
+        "_tmux",
+        lambda *a, **kw: calls.append(a) or SimpleNamespace(returncode=0, stdout="lienzo | encargo Y\n", stderr=""),
+    )
+    result = ct.native_title({"target": "%2", "pid": 42}, "lienzo | encargo Y")
+    assert result == {"ok": True, "changed": False}
+    assert calls == [("display-message", "-p", "-t", "%2", "#{window_name}")]

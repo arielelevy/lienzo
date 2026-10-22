@@ -14,7 +14,7 @@ for (const width of [1440, 320]) {
     await page.goto(BASE);
     const version = page.getByRole("complementary", { name: "Versión de Lienzo" });
     await expect(version).toHaveText(/^v\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/);
-    await expect(page.getByRole("group", { name: "Cuotas de Claude y Codex" })).toBeVisible();
+    await expect(page.getByRole("group", { name: "Cuotas de Claude, Codex y Kiro" })).toBeVisible();
     const badge = await version.boundingBox();
     const quotas = await page.locator(".cuotas").boundingBox();
     expect(badge).not.toBeNull();

@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -28,6 +29,7 @@ import conocimiento
 import consulta
 import hooks_eventos
 import identity
+import native_follow
 import procs
 import recientes
 import restore
@@ -2210,6 +2212,10 @@ def liveness_pass(sweep_every: float) -> None:
         clave = f"liveness {sid[:8]}"
         try:
             check_liveness(sid)
+            with lock:
+                native_card = sessions.get(sid)
+            if native_card is not None:
+                native_follow.schedule(sys.modules[__name__], native_card)
             state.avisar_si_cambia(clave, None)
         except Exception:
             state.avisar_si_cambia(clave, f"{clave} fallo:\n{traceback.format_exc()}")
@@ -2681,6 +2687,24 @@ def _menu_remote_control_abierto(s: dict) -> bool:
 
 
 def nombrar_nativo(s: dict, nombre: str, esperar_dialogo: float = 10.0) -> tuple[int, dict]:
+    """Serializa pedidos manuales y automáticos sobre la misma consola."""
+    with lock:
+        if s.get("native_sync_busy"):
+            return 409, {
+                "ok": False,
+                "code": "native_deferred",
+                "error": "se está actualizando el nombre nativo; esperá a que termine",
+            }
+        s["native_sync_busy"] = True
+    try:
+        return _nombrar_nativo(s, nombre, esperar_dialogo)
+    finally:
+        with lock:
+            s["native_sync_busy"] = False
+            touch(s)
+
+
+def _nombrar_nativo(s: dict, nombre: str, esperar_dialogo: float) -> tuple[int, dict]:
     """Deja una sesion de Claude Code visible en el canal nativo con `nombre`: teclea `/rename` y
     `/remote-control`, y contesta el dialogo de Remote Control desde aca (sin esto habia que ir a
     cada consola a darle Enable). Sin Remote Control, ListAgents de otra PC no la ve. Va por
@@ -2689,13 +2713,25 @@ def nombrar_nativo(s: dict, nombre: str, esperar_dialogo: float = 10.0) -> tuple
     if s.get("agent") != "claude":
         return 409, {"ok": False, "error": "solo Claude Code tiene canal nativo"}
     if s.get("state") == "corriendo":
-        return 409, {"ok": False, "error": "esta corriendo: se nombra cuando quede quieta"}
+        return 409, {"ok": False, "code": "native_deferred", "error": "esta corriendo: se nombra cuando quede quieta"}
+    if s.get("typing"):
+        return 409, {
+            "ok": False,
+            "code": "native_deferred",
+            "error": "está escribiendo: se nombra cuando la caja quede libre",
+        }
     if frenado := send_blocked(s) or dialogo_abierto(s):
         return frenado
     if _menu_remote_control_abierto(s):  # quedo de una vez anterior: teclear encima lo eligiria
         run_send(s, "", enter=False, key="escape")
         time.sleep(1)
     for texto in (f"/rename {nombre}", "/remote-control"):
+        if s.get("state") == "corriendo" or s.get("typing"):
+            return 409, {
+                "ok": False,
+                "code": "native_deferred",
+                "error": "empezó otro turno: se detuvo el cambio de nombre nativo",
+            }
         code, out = run_send(s, texto)
         if code != 200:
             return code, out
@@ -2734,6 +2770,9 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     owner = _mirror_owner(sid)
     if owner is not None:
         return _mirror_forward(owner, "POST", f"/sessions/{sid}/send", {"text": text, "attachments": attachments})
+    with lock:
+        if s.get("native_sync_busy"):
+            return 409, {"ok": False, "error": "se está actualizando el nombre nativo; reintentá cuando termine"}
     if s.get("agent") in ("codex", "pi") and text.strip().lower() in ("/exit", "/quit"):
         return 400, {
             "ok": False,

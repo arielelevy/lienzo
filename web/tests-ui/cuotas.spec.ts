@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { CuotasResponse } from "../src/api";
-import { abrirTablero } from "./tablero-fijo";
+import { abrirTablero, SID } from "./tablero-fijo";
 
 /** Cuotas de Claude y Codex (ronda 2026-10-17): el indicador abajo a la derecha y el lanzamiento
  *  balanceado, contra GET /cuotas y POST /sessions/launch interceptados. Los números son los medidos
@@ -24,7 +24,7 @@ const json = (data: unknown, status = 200) => ({ status, contentType: "applicati
 /** Antes de abrir el tablero: su `**\/*` cae con fallback a esta ruta. Devuelve las URLs pedidas. */
 async function servirCuotas(page: Page, primera: CuotasResponse, remedida?: CuotasResponse) {
   const pedidos: string[] = [];
-  await page.route("**/cuotas*", route => {
+  await page.route(url => url.pathname === "/cuotas", route => {
     const url = new URL(route.request().url());
     pedidos.push(url.pathname + url.search);
     return route.fulfill(json(url.searchParams.get("refrescar") === "1" && remedida ? remedida : primera));
@@ -43,7 +43,7 @@ async function abrirLanzar(page: Page) {
 test("lectura ok: Claude y Codex lado a lado abajo a la derecha, con su medición; un click vuelve a medir", async ({ page }, testInfo) => {
   const pedidos = await servirCuotas(page, lectura(), lectura({}, REMEDIDO));
   await abrirTablero(page);
-  const grupo = page.getByRole("group", { name: "Cuotas de Claude y Codex" });
+  const grupo = page.getByRole("group", { name: "Cuotas de Claude, Codex y Kiro" });
   const claude = grupo.getByRole("button", { name: /^Claude Code:/ });
   const codex = grupo.getByRole("button", { name: /^Codex:/ });
   await expect(claude).toContainText("82 % usado semanal · 11 % usado 5 h");
@@ -91,7 +91,7 @@ test("sin elegible: ninguno conviene y el lanzamiento automático no lanza (409 
   const motivo = "Claude 95 % y Codex 92 % en 5 h";
   await servirCuotas(page, lectura({ claude: llena(95, 70), codex: llena(92, 40), sugerido: null, motivo }));
   await abrirTablero(page);
-  const grupo = page.getByRole("group", { name: "Cuotas de Claude y Codex" });
+  const grupo = page.getByRole("group", { name: "Cuotas de Claude, Codex y Kiro" });
   await expect(grupo.getByText("conviene", { exact: true })).toHaveCount(0);
   await expect(grupo.getByRole("button", { name: /^Codex:/ })).toHaveAttribute("title", new RegExp(`Ninguno con margen: ${motivo}`));
   await expect(grupo.locator(".cuota.alta")).toHaveCount(2);
@@ -114,7 +114,7 @@ test("sin elegible: ninguno conviene y el lanzamiento automático no lanza (409 
 test("lanzamiento automático: manda auto y dice qué eligió el server y por qué, sin volver a pedir cuotas", async ({ page }) => {
   const pedidos = await servirCuotas(page, lectura());
   await abrirTablero(page);
-  await expect(page.getByRole("group", { name: "Cuotas de Claude y Codex" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Cuotas de Claude, Codex y Kiro" })).toBeVisible();
   let payload: Record<string, unknown> | undefined;
   await page.route("**/sessions/launch", route => {
     payload = route.request().postDataJSON();
@@ -149,10 +149,10 @@ test("lanzamiento manual con menos margen: avisa antes y después, sin bloquear"
 });
 
 test("un server sin /cuotas no muestra el indicador ni pistas en el lanzamiento", async ({ page }) => {
-  await page.route("**/cuotas*", route => route.fulfill(json({ error: "ruta desconocida" }, 404)));
+  await page.route(url => url.pathname === "/cuotas", route => route.fulfill(json({ error: "ruta desconocida" }, 404)));
   await abrirTablero(page);
   await expect(page.locator(".card").first()).toBeVisible();
-  await expect(page.getByRole("group", { name: "Cuotas de Claude y Codex" })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Cuotas de Claude, Codex y Kiro" })).toHaveCount(0);
   const dialog = await abrirLanzar(page);
   await expect(dialog.locator(".cuotas-pista")).toHaveCount(0);
   await dialog.getByRole("combobox", { name: "Agente", exact: true }).selectOption("auto");
@@ -163,9 +163,57 @@ test("refresca solo cada 5 min, no antes", async ({ page }) => {
   await page.clock.install();
   const pedidos = await servirCuotas(page, lectura());
   await abrirTablero(page);
-  await expect(page.getByRole("group", { name: "Cuotas de Claude y Codex" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Cuotas de Claude, Codex y Kiro" })).toBeVisible();
   await page.clock.runFor("04:50");
   expect(pedidos).toHaveLength(1);
   await page.clock.runFor("00:15");
   await expect.poll(() => pedidos.length).toBe(2);
+});
+
+test("Kiro muestra créditos mensuales, mensajes desconocidos y renovación; refresca sin inventar cuota semanal", async ({ page }, testInfo) => {
+  const kiro = { ok: true, plan: "KIRO PRO", five_hour: null, weekly: null,
+    credits: { used: 130.37, limit: 1000, available: 869.63 }, messages: null,
+    resets_at: "2026-11-01", read_at: MEDIDO, error: null };
+  const pedidos = await servirCuotas(page, lectura({ kiro }), lectura({ kiro: { ...kiro, read_at: REMEDIDO } }));
+  await abrirTablero(page);
+  const boton = page.getByRole("button", { name: /^Kiro/ });
+  await expect(boton).toContainText("130.37 usados · 869.63 disponibles de 1000");
+  await expect(boton).toContainText("Mensajes por mes: no informado");
+  await expect(boton).toContainText("Renueva 2026-11-01");
+  await expect(boton).not.toHaveAttribute("title", /5 h:|Semana:/);
+  await boton.click();
+  await expect(boton).toContainText(hora(REMEDIDO));
+  expect(pedidos).toEqual(["/cuotas", "/cuotas?refrescar=1"]);
+  await page.screenshot({ path: testInfo.outputPath("cuotas-kiro-1440.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(boton).toBeVisible();
+  const box = await page.getByRole("group", { name: "Cuotas de Claude, Codex y Kiro" }).boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath("cuotas-kiro-390.png") });
+});
+
+test("renombrar una Claude quieta guarda el título sin duplicar el /native del servidor", async ({ page }) => {
+  const titulos: unknown[] = [];
+  const nativos: string[] = [];
+  await servirCuotas(page, lectura());
+  await abrirTablero(page);
+  await page.route("**/sessions/*/title", route => {
+    titulos.push(route.request().postDataJSON());
+    return route.fulfill(json({ ok: true }));
+  });
+  await page.route("**/sessions/*/native", route => {
+    nativos.push(route.request().url());
+    return route.fulfill(json({ ok: true, native_name: "demo-Y" }));
+  });
+  const titulo = page.locator(`.card[data-sid="${SID.mapas}"] .title`);
+  await titulo.dblclick();
+  await expect(page.locator(".panel")).toBeVisible();
+  await titulo.dblclick();
+  await page.getByRole("textbox", { name: "nuevo título", exact: true }).fill("demo - encargo Y - nombre");
+  await page.getByRole("textbox", { name: "nuevo título", exact: true }).press("Enter");
+  await expect(page.getByText("título guardado", { exact: true })).toBeVisible();
+  await page.waitForTimeout(300); // deja que salgan las solicitudes encadenadas al PUT, si las hubiera
+  expect(titulos).toEqual([{ title: "demo - encargo Y - nombre" }]);
+  expect(nativos).toEqual([]);
 });

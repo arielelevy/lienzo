@@ -25,8 +25,13 @@ def native_title(card: dict, title: str) -> dict:
         target = card.get("target")
         if not tmux.target_valid(target, card.get("pid"), card.get("distro")):
             return {"ok": False, "error": "el pane ya no pertenece a esta sesión"}
+        before = tmux._tmux("display-message", "-p", "-t", target, "#{window_name}", distro=card.get("distro"))
+        if before.returncode:
+            return {"ok": False, "error": before.stderr.strip()}
+        if before.stdout.rstrip("\r\n") == title:
+            return {"ok": True, "changed": False}
         result = tmux._tmux("rename-window", "-t", target, title, distro=card.get("distro"))
-        return {"ok": result.returncode == 0, "error": result.stderr.strip()}
+        return {"ok": result.returncode == 0, "changed": result.returncode == 0, "error": result.stderr.strip()}
     if sys.platform != "win32":
         return {"ok": False, "error": "consola sin backend de título compatible"}
     rc, out, err = subproc.correr(
@@ -81,9 +86,14 @@ def sync_once(*, force: bool = False) -> None:
             signature = (card["pid"], title, card.get("agent"), card.get("target"), card.get("distro"))
             if not force and _attempted.get(card["session_id"]) == signature:
                 continue
-            # Registrar el intento antes del helper: un fallo se informa, no se repite cada ciclo.
+            # Reserva durante el helper; sólo los fallos se conservan para no repetirlos cada ciclo.
             _attempted[card["session_id"]] = signature
         result = native_title(card, title)
+        if result.get("ok"):
+            with state.lock:
+                _attempted.pop(card["session_id"], None)
+            # Un éxito no se cachea: CODA/Codex/Kiro pueden pisar el título sin cambiar la tarjeta.
+            # El helper lee primero y sólo escribe cuando difiere (también en tmux).
         error = None if result.get("ok") else result.get("error") or "no se pudo cambiar el título de la consola"
         state.avisar_si_cambia(f"título de consola {card['session_id'][:8]}", error)
         if result.get("changed"):

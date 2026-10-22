@@ -205,6 +205,15 @@ export interface CuotaAgente {
   /** ISO: cuándo se midió */
   read_at: string | null;
   error: string | null;
+  credits?: RecursoMensual | null;
+  messages?: RecursoMensual | null;
+  resets_at?: string | null;
+}
+
+export interface RecursoMensual {
+  used: number;
+  limit: number | null;
+  available: number | null;
 }
 
 export type AgenteCuota = "claude" | "codex";
@@ -212,6 +221,7 @@ export type AgenteCuota = "claude" | "codex";
 export interface CuotasResponse {
   claude: CuotaAgente;
   codex: CuotaAgente;
+  kiro?: CuotaAgente;
   /** el de menor uso semanal entre los que tienen lectura y 5 h < 90 %; null si ninguno */
   sugerido: AgenteCuota | null;
   motivo: string;

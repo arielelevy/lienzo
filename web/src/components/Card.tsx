@@ -34,14 +34,7 @@ function useRename(s: Session, toast: ToastFn) {
     try {
       await sessionsApi.title(s.session_id, title);
       toast("título guardado");
-      // el mismo nombre en el canal nativo: sin esto ListAgents la sigue mostrando como «chess-f6».
-      // Una consola ocupada encolaria el /rename, asi que solo con la sesion quieta
-      if (s.agent === "claude" && s.state !== "corriendo") {
-        sessionsApi
-          .native(s.session_id)
-          .then((r) => toast(`en ListAgents: ${r.native_name}`))
-          .catch((e) => toast(failMsg("nombrar en el canal nativo")(e), true));
-      }
+      // El servidor sincroniza el nombre nativo cuando Claude queda quieto, también por copycat.
     } catch (e) {
       toast(failMsg("renombrar")(e), true);
     }

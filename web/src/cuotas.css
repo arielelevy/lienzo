@@ -1,0 +1,7 @@
+.cuotas {
+  max-width: calc(100vw - 28px);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.cuotas .cuota { max-width: 100%; overflow-wrap: anywhere; }
+.cuotas .cuota.kiro { border-left-color: var(--acc); }

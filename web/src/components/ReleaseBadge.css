@@ -15,5 +15,6 @@
 }
 
 @media (max-width: 380px) {
-  .release-badge { bottom: 96px; }
+  /* con la fila de Kiro las cuotas ocupan tres renglones a 320 px: la versión sube por encima */
+  .release-badge { bottom: 150px; }
 }

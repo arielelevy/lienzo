@@ -20,10 +20,13 @@ Cuando el usuario pide "lanzá N sub CLI" pide terminales reales, que son las qu
 Los subagentes de la herramienta Agent no aparecen en el tablero: sirven para una consulta acotada,
 no para repartir trabajo.
 
-**Para hablarle a otra sesión, el lienzo siempre, también entre PCs.** Encargo con
+**Para hablarle a otra sesión, primero el lienzo, también entre PCs.** Encargo con
 `POST /sessions/<sid>/send` (con `from` y `link_to`, para que quede la flecha) y la vuelta con una
 regla `on_stop` cuyo `text` lleve `{respuesta}`. `SendMessage` por el canal nativo no deja rastro en
-el tablero: el usuario lo pidió explícito el 2026-10-09 («usá lienzo, armá la conexión»). Un
+el tablero: el usuario lo pidió explícito el 2026-10-09 («usá lienzo, armá la conexión»).
+Si el lienzo no puede escribirle a la tarjeta, el canal nativo de Claude (`ListAgents`/`SendMessage`)
+es el respaldo (pedido de Ariel, 2026-10-22). Buscá el nombre nativo actualizado del título y avisá
+por qué usaste el respaldo. Un
 encargo a otra PC dice qué no tocar (git pull, reiniciar el server, configs de seguridad) y que lo
 que pida permiso se lo informe al usuario en vez de forzarlo.
 
@@ -126,18 +129,23 @@ cuenta de claude.ai (verificado el 2026-10-05: `chesstudia-I`, en otra PC, recib
   trae en `native_name`.
 - Una sesión que ya corre se nombra con `POST /sessions/<sid>/native` (`{name?}`; sin `name`
   sale del título): teclea `/rename` y `/remote-control` y contesta solo el diálogo de Remote
-  Control. Solo con la sesión quieta (409 si está corriendo). Renombrar la tarjeta con ✎ en el
-  tablero hace lo mismo.
+  Control. Solo con la sesión quieta (409 si está corriendo).
+- El nombre nativo sigue solo al título puesto en el lienzo, también al heredar un título por copycat.
+  Si Claude está corriendo, espera a que quede quieto. Hace un intento por nombre y proceso;
+  `native_sync_error` informa un fallo y `/native` permite el intento manual. Sólo aplica a Claude.
+- El título de la ventana se mantiene también para CODA, Codex y Kiro: se vuelve a leer en cada ciclo
+  y sólo se escribe si difiere de la tarjeta. Si el agente lo pisa al arrancar o en otro turno, se
+  repone sin mandar teclas. Esto es distinto del `/rename` nativo, exclusivo de Claude.
 - Sin eso, `ListAgents` muestra nombres automáticos (`chess-f6`) y no ve las sesiones de otra PC.
   En cada PC conviene `"remoteControlAtStartup": true` en `~/.claude/settings.json`, para que
   también las sesiones abiertas a mano queden publicadas; eso lo prende el usuario.
 
-La coordinadora usa el lienzo para todo, también entre dos sesiones de Claude. Medido el
+La coordinadora usa el lienzo como canal principal, también entre dos sesiones de Claude. Medido el
 2026-09-26 con seis sesiones de un mismo repo:
 
 - Los nombres nativos no decían qué frente era cada uno. `ListAgents` devolvió `app-77`,
   `app-48`, `app-37`, `app-3e`, sin título. Desde el 2026-10-05 el lienzo las nombra (ver arriba),
-  pero una sesión abierta a mano sigue saliendo así hasta que se la nombra. El lienzo direcciona por
+  y una sesión abierta a mano recibe el nombre al ponerle título en el lienzo y quedar quieta. El lienzo direcciona por
   `session_id` con el título a la vista.
 - Hablarle a una sesión ocupada no necesita el canal nativo. Un `POST /sessions/<sid>/send` a una
   sesión que está trabajando le llega igual en el turno en curso, como mensaje intercalado (salvo un
@@ -145,8 +153,8 @@ La coordinadora usa el lienzo para todo, también entre dos sesiones de Claude. 
 - El lienzo deja rastro y el nativo no: la flecha con `from` y `link_to`, el historial en
   `GET /links` y las reglas `on_stop` que traen los informes solos.
 
-El canal nativo queda para cuando no hay lienzo (el server caído) o para una sesión que no está en el
-tablero. Entre frentes no se abre ninguno de los dos: todo pasa por la coordinadora, que es lo que
+El canal nativo es el respaldo cuando el lienzo no puede escribirle a una tarjeta (también si el
+server cayó), o para una sesión que no está en el tablero. Entre frentes no se abre ninguno de los dos: todo pasa por la coordinadora, que es lo que
 evita los bucles.
 
 ## Consulta entre investigadores

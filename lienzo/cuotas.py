@@ -1,10 +1,12 @@
-"""Cuotas de las suscripciones de Claude y Codex (lo mismo que /usage y /status) y la sugerencia de lanzamiento.
+"""Cuotas de Claude, Codex y Kiro y sugerencia de lanzamiento entre las ventanas semanales comparables.
 
 Claude: GET https://api.anthropic.com/api/oauth/usage con el token OAuth de `<CLAUDE_CONFIG_DIR o ~/.claude>/
 .credentials.json`. El token va sólo a ese host, sin redirecciones; nunca se loguea, se guarda ni aparece en
 una respuesta o un error (los errores se arman con textos fijos, códigos HTTP y nombres de excepción).
 Codex: `optimization_research_quota.read_codex` (codex app-server, sin inferencia), con cada ventana mapeada
 por su duración. Una lectura fallida es `ok: false` con el motivo y ventanas `null`: nunca se inventan números.
+Kiro: ACP `_kiro/account/getUsage` (el /usage de la TUI), sin sesión ni inferencia. Créditos y mensajes
+mensuales separados; un recurso ausente queda null. No participa del balance semanal Claude/Codex.
 
 Caché por agente (5 min; un fallo, 30 s). Cada agente se lee en su hilo: uno lento o caído no frena al otro.
 """
@@ -15,16 +17,18 @@ import datetime as dt
 import json
 import math
 import os
+import queue
 import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
+import kiro_quota
 import optimization_research_quota as codex_quota
 
 AGENTS = ("claude", "codex")
-NAMES = {"claude": "Claude", "codex": "Codex"}
+NAMES = {"claude": "Claude", "codex": "Codex", "kiro": "Kiro"}
 CLAUDE_URL = "https://api.anthropic.com/api/oauth/usage"
 CACHE_S, FAIL_CACHE_S = 300, 30
 READ_TIMEOUT = 10  # cada lector corta solo antes de esto
@@ -141,7 +145,20 @@ def read_codex(timeout: float = READ_TIMEOUT) -> dict:
     }
 
 
-READERS = {"claude": read_claude, "codex": read_codex}  # las pruebas los reemplazan
+def read_kiro(timeout: float = READ_TIMEOUT) -> dict:
+    try:
+        usage = kiro_quota.read_usage(timeout)
+    except (OSError, ValueError, KeyError, TypeError, queue.Empty) as error:
+        return {
+            **_failure(f"uso de Kiro no disponible: {type(error).__name__}"),
+            "credits": None,
+            "messages": None,
+            "resets_at": None,
+        }
+    return {**_failure(""), **usage, "ok": True, "error": None}
+
+
+READERS = {"claude": read_claude, "codex": read_codex, "kiro": read_kiro}  # las pruebas los reemplazan
 _cache: dict[str, tuple[float, dict]] = {}
 _inflight: dict[str, threading.Event] = {}
 _lock = threading.Lock()
@@ -182,10 +199,10 @@ def iniciar() -> None:
         _start(agent, False)
 
 
-def leer_todas(refrescar: bool = False, espera: float = READ_TIMEOUT + 5) -> dict:
-    """Las dos lecturas en paralelo, esperando a lo sumo `espera` segundos en total. Una que no volvió a
+def leer_todas(refrescar: bool = False, espera: float = READ_TIMEOUT + 5, *, agents: tuple | None = None) -> dict:
+    """Las lecturas en paralelo, esperando a lo sumo `espera` segundos en total. Una que no volvió a
     tiempo queda como fallo («no volvió en N s») y sigue en curso: llena la caché para la próxima."""
-    started = {agent: _start(agent, refrescar) for agent in AGENTS}
+    started = {agent: _start(agent, refrescar) for agent in (READERS if agents is None else agents)}
     deadline = time.monotonic() + espera
     result = {}
     for agent, value in started.items():
@@ -232,8 +249,8 @@ def sugerir(readings: dict) -> tuple[str | None, str]:
     return best, reason
 
 
-def estado(refrescar: bool = False, espera: float = READ_TIMEOUT + 5) -> dict:
-    readings = leer_todas(refrescar, espera)
+def estado(refrescar: bool = False, espera: float = READ_TIMEOUT + 5, *, agents: tuple | None = None) -> dict:
+    readings = leer_todas(refrescar, espera, agents=agents)
     suggested, reason = sugerir(readings)
     return {**readings, "sugerido": suggested, "motivo": reason}
 
@@ -257,7 +274,7 @@ def aviso(agent: str, status: dict) -> str | None:
 
 def para_lanzar(agent: str) -> dict:
     """Lo que acompaña a un lanzamiento: la cuota del agente lanzado, la sugerencia y un aviso opcional."""
-    status = estado(espera=LAUNCH_WAIT_S)
+    status = estado(espera=LAUNCH_WAIT_S, agents=AGENTS)
     cuotas = {"sugerido": status["sugerido"], "motivo": status["motivo"]}
     if agent in AGENTS:
         cuotas[agent] = status[agent]
@@ -266,7 +283,7 @@ def para_lanzar(agent: str) -> dict:
 
 def resolver_auto() -> tuple[str | None, dict]:
     """`agent: "auto"`: el sugerido con las lecturas de este momento (caché ≤ 5 min)."""
-    status = estado(espera=LAUNCH_WAIT_S)
+    status = estado(espera=LAUNCH_WAIT_S, agents=AGENTS)
     return status["sugerido"], status
 
 
