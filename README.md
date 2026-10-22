@@ -380,7 +380,7 @@ Lo mismo por API: `POST /sessions/launch {pc?, cwd, agent, title?, model?, modo?
 
 **Kiro (0.6.11):** una tarjeta por sesión (el ayudante `windows-kas-process` no cuenta); pasa a «te necesita»
 cuando termina con una pregunta; el auto-aprobar contesta también el cartel de permisos de sus subagentes con
-«(a) Approve all pending», nunca «(f)». Para cualquier agente, la tarjeta muestra lo último que el auto-aprobar
+«(f) Approve all pending and auto-approve future subagent requests», así no vuelve a preguntar (si no está, «(a)»). Para cualquier agente, la tarjeta muestra lo último que el auto-aprobar
 contestó en el turno en curso.
 
 En el menú ⋯, apagadas por defecto:
