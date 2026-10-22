@@ -20,6 +20,8 @@ import procs
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 _cache = {}
 _running = set()
+_estado = {}  # (pid, start) -> {"tecleado", "vistos", "intento"}
+REINTENTO_S = 15  # una consola ocupada no recibió /status: otro intento, sin apurar el barrido
 _lock = threading.Lock()
 
 
@@ -29,6 +31,28 @@ def request_scan():
         for key in list(_cache):
             if key not in _running:
                 del _cache[key]
+                _estado.pop(key, None)
+
+
+def _rollouts(pid):
+    """Los rollouts que el proceso tiene abiertos, o None si no se pudieron leer todos."""
+    import codex_identity
+
+    try:
+        return frozenset(codex_identity._snapshot(pid, observation=True)[1])
+    except OSError, ValueError, AttributeError, TypeError:
+        return None
+
+
+def _puede_teclear(key, abiertos, tick):
+    """Con el lock. Una vez por proceso, y otra cada vez que /new o /clear y su primer turno abren
+    un rollout que el último /status no vio. Sin inventario comparable, no: teclear de más no se
+    compensa. Un intento sin tecleo (consola ocupada) no gasta el permiso, sólo espera REINTENTO_S."""
+    e = _estado.setdefault(key, {"tecleado": False, "vistos": None, "intento": None})
+    if e["tecleado"] and e["vistos"] is None:
+        e["vistos"] = abiertos  # base sin teclear: el /status anterior no pudo inventariar
+    nuevo = not e["tecleado"] or (abiertos is not None and e["vistos"] is not None and not abiertos <= e["vistos"])
+    return nuevo and (e["intento"] is None or tick - e["intento"] >= REINTENTO_S)
 
 
 def idle(snapshot):
@@ -63,7 +87,8 @@ def session_from_status(lines):
     return ids[0] if len(ids) == 1 else None
 
 
-def query_console(pid, start):
+def query_console(pid, start, info=None):
+    """El UUID que publica /status, o None. `info["tecleo"]` dice si llegó a escribir /status."""
     import screen
     import send
 
@@ -76,6 +101,8 @@ def query_console(pid, start):
     again = screen.read_screen(pid)
     if not idle(again) or again.get("lines") != before.get("lines"):
         return None
+    if info is not None:
+        info["tecleo"] = True  # desde acá el intento cuenta, aunque inject falle a mitad
     result = send.inject(pid, "/status", expected_start=start)
     if not result.get("ok"):
         return None
@@ -125,20 +152,26 @@ def discover(pid):
     if not start:
         return None
     key = (pid, start)
+    abiertos = _rollouts(pid)
     tick = time.monotonic()
     with _lock:
         previous = _cache.get(key)
-        if previous:
-            # La prueba vence, el permiso de teclear no se renueva con el tiempo.
-            return previous[1] if tick - previous[0] < 60 else None
+        if previous is None:
+            _estado.pop(key, None)  # el permiso vive con la entrada de la caché
+        if key in _running or not _puede_teclear(key, abiertos, tick):
+            # La prueba vence, el permiso de teclear no se renueva con el tiempo: sólo con un
+            # rollout nuevo del mismo proceso (2026-10-22, PID 35236: /new y /clear).
+            return previous[1] if previous and tick - previous[0] < 60 else None
         # No dos consultas simultáneas sobre la misma consola.
-        _cache[key] = (tick, None)
+        _cache[key] = (tick, previous[1] if previous else None)
         _running.add(key)
+        _estado[key]["intento"] = tick
         # Sólo retirar otras encarnaciones del mismo PID: purgar por edad
         # permitiría volver a teclear en una CLI que sigue abierta.
         for old in list(_cache):
             if old[0] == pid and old != key and old not in _running:
                 del _cache[old]
+                _estado.pop(old, None)
     try:
         result = subprocess.run(
             [sys.executable, __file__, "--pid", str(pid), "--start", str(start)],
@@ -149,7 +182,9 @@ def discover(pid):
             timeout=8,
             creationflags=0x00000008,  # DETACHED_PROCESS, igual que screen.py/send.py
         )
-        sid = json.loads(result.stdout).get("thread") if result.returncode == 0 else None
+        answer = json.loads(result.stdout) if result.returncode == 0 else {}
+        sid = answer.get("thread")
+        tecleo = answer.get("tecleo", True)  # sin el dato, se cuenta como tecleado: nunca de más
         path = rollout(sid) if isinstance(sid, str) and re.fullmatch(UUID, sid) else None
         proof = (
             {
@@ -165,10 +200,12 @@ def discover(pid):
             else None
         )
     except OSError, ValueError, AttributeError, subprocess.TimeoutExpired:
-        proof = None
+        proof, tecleo = None, True
     with _lock:
         _cache[key] = (time.monotonic(), proof)
         _running.discard(key)
+        if tecleo and key in _estado:
+            _estado[key].update(tecleado=True, vistos=abiertos)
     return proof
 
 
@@ -177,8 +214,9 @@ if __name__ == "__main__":
     parser.add_argument("--pid", type=int, required=True)
     parser.add_argument("--start", type=int, required=True)
     args = parser.parse_args()
+    info = {"tecleo": False}
     try:
-        result = query_console(args.pid, args.start)
+        result = query_console(args.pid, args.start, info)
     except Exception:
         result = None
-    print(json.dumps({"thread": result}))
+    print(json.dumps({"thread": result, "tecleo": info["tecleo"]}))
