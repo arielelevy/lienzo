@@ -29,6 +29,9 @@ Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
   a `/send`; el arreglo evita marcas nuevas, no borra las viejas).
 - [ ] El espejo toma como dirección de un par la IP de origen del beacon, no las IPs que el par anuncia firmadas
   (hallazgo 5 del code review de K, cambio de diseño en la federación).
+- [ ] El acceso de emergencia (3dbe685) no aparece para ar-it33940 caída: `/peers` trae `emergencia: null`
+  aunque el diagnóstico dice «cambió de red» y su nodo Tailchrome `ar-it33940-lienzo` existe (offline). Medido el
+  2026-10-22 ~16:00. Además, el ayudante de Tailchrome de ar-it33940 no se reconectó solo tras cambiar de red.
 - [ ] Una coordinadora reabierta a mano sin el mismo título no recupera sus reglas (efecto buscado de 19747a2):
   evaluar un «adoptar reglas de…» explícito en la tarjeta.
 
