@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.10**: vista por pestañas sin franjas, creencias y checklist con el motor lógico, etapas por encargo, investigador con Claude y Azure con tope, y acceso de emergencia entre PCs.
+Versión **0.6.11**: Kiro con auto-aprobar de subagentes y una sola tarjeta, ventana completa de Chrome más liviana, cambio solo a pestañas con la PC bloqueada y pestañas por perfil.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.10.md).
+[Novedades, validación y límites](docs/releases/0.6.11.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
@@ -378,6 +378,11 @@ Lo mismo por API: `POST /sessions/launch {pc?, cwd, agent, title?, model?, modo?
 
 ### Las automatizaciones
 
+**Kiro (0.6.11):** una tarjeta por sesión (el ayudante `windows-kas-process` no cuenta); pasa a «te necesita»
+cuando termina con una pregunta; el auto-aprobar contesta también el cartel de permisos de sus subagentes con
+«(a) Approve all pending», nunca «(f)». Para cualquier agente, la tarjeta muestra lo último que el auto-aprobar
+contestó en el turno en curso.
+
 En el menú ⋯, apagadas por defecto:
 
 - Continuar solo tras límite de uso: programa «Continuar» un minuto después de la hora de vuelta.
@@ -401,6 +406,11 @@ En el menú ⋯, apagadas por defecto:
   `pruebas-agenticas/e2e_autoaprobar.py` (lanza un Codex, gasta un turno).
 
 ### Chrome remoto
+
+**Desde 0.6.11:** la ventana completa manda menos datos (en LAN simulada, 26 cuadros por segundo y 11 MB cada
+30 s contra 16–19 y 44–53 MB); si la PC de Chrome se bloquea, el visor pasa solo a «Vista por pestañas» en la
+pestaña activa y vuelve al desbloquear, salvo que el modo se haya elegido a mano; y las pestañas se agrupan por
+perfil de Chrome (lo lee del AppUserModelID de cada ventana de Windows).
 
 **Traer descargas:** clic derecho sobre la tarjeta de una PC en la tira superior del tablero →
 **Traer descargas…**. Muestra los 30 archivos terminados más recientes de su carpeta Descargas,
