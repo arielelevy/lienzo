@@ -1,5 +1,6 @@
-"""RTK: comprime la salida de comandos largos. Lienzo instala el binario (ops/preparar-mejoras.py, con
-SHA-256 publicado) y, al lanzar, le indica al agente usarlo por ruta absoluta. No instala hooks."""
+"""RTK: compacta lecturas, búsquedas y salidas largas de los agentes. Lienzo instala el binario
+(ops/preparar-mejoras.py, con SHA-256 publicado) y, al lanzar, le indica al agente usarlo por ruta
+absoluta. No instala hooks."""
 
 from __future__ import annotations
 
@@ -54,7 +55,7 @@ TOOL = Tool(
     nombre="RTK",
     tipo="mejora",
     origen="https://github.com/rtk-ai/rtk",
-    descripcion="Comprime salidas largas de comandos; el agente lo invoca explícitamente.",
+    descripcion="Compacta lecturas, búsquedas y salidas largas; el agente lo invoca explícitamente.",
     version=VERSION,
     preferencia="rtk",
     modos=("general", "ingenieria-reversa"),
