@@ -1,0 +1,26 @@
+{
+  "nombre": "tarjetas-ajenas-N",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/tarjetas-ajenas-N",
+  "reglas": [
+    "Una corrida externa (claude -p, un orquestador) no le cambia la marca `external` ni `no_console` a la tarjeta de otra sesión cuyo proceso sigue vivo: el /send a esa TUI no responde 409 «corrida headless» (encargo N, 2026-10-22).",
+    "La corrida externa cuyo barrido adivinó la transcripción de otra sesión viva tiene su propia tarjeta de solo lectura, sin esa transcripción.",
+    "Las reglas estacionadas de un frente cerrado sólo las hereda una sucesora real: el mismo session_id (resume), una restaurada desde el lienzo o una sesión con el mismo título puesto por el lienzo (al lanzarla o renombrándola). Una sesión nueva sin relación en la misma carpeta no hereda nada.",
+    "Lo de sucesion.json que sirve se conserva: restaurar tras reinicio sigue heredando reglas y título."
+  ],
+  "precondiciones": [],
+  "casos": [
+    {
+      "id": "tarjetas-ajenas-backend",
+      "comando": ["py", "-B", "-m", "pytest", "tests/test_tarjetas_ajenas.py", "tests/test_sucesion_reglas.py", "tests/test_ola1_sesiones.py", "tests/test_rondas_revision.py", "tests/test_server.py", "tests/test_apps_escritorio.py", "tests/test_codex_transcript_observation.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 300000,
+      "cubre": ["lienzo/sessions.py"]
+    },
+    {
+      "id": "tarjetas-ajenas-e2e",
+      "comando": ["py", "-B", "pruebas-agenticas/tarjetas_ajenas_e2e.py"],
+      "timeoutMs": 300000,
+      "cubre": ["lienzo/sessions.py", "lienzo/hooks_eventos.py"]
+    }
+  ]
+}

@@ -64,6 +64,7 @@ def test_la_restaurada_con_otro_id_hereda_sus_reglas_y_su_titulo(entorno):
     informe = next(r for r in st.rules.items if r["id"] == "informe")
     assert informe["parked_from"] == VIEJA and informe["enabled"] is False  # antes se borraba
 
+    server.preparar_sucesion({"session_id": VIEJA, "cwd": CWD, "agent": "claude", "title": None})
     nueva = tarjeta(NUEVA)
     assert ses.adopt_dead_target(dict(nueva)) == VIEJA
     por_id = {r["id"]: r for r in st.rules.items}

@@ -109,7 +109,9 @@ def test_dos_sucesoras_a_la_vez_heredan_una_sola_vez(aislado, monkeypatch):
     """E2: dos sesiones nuevas en la misma carpeta y del mismo agente nacen juntas. Sin el lock las
     dos veian a la muerta como candidata; una heredaba y la otra moria con KeyError en su hilo."""
     old = "d" * 8
-    monkeypatch.setattr(ses, "DEAD_TARGETS", {old: {"cwd": "D:/x", "agent": "claude", "since": time.time()}})
+    monkeypatch.setattr(
+        ses, "DEAD_TARGETS", {old: {"cwd": "D:/x", "agent": "claude", "since": time.time(), "restaurada": time.time()}}
+    )
     monkeypatch.setattr(ses, "mirror", None)
     heredadas = []
     monkeypatch.setattr(ses, "retarget_rules", lambda o, n: heredadas.append((o, n)) or 1)

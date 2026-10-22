@@ -88,6 +88,7 @@ def test_una_regla_apagada_vuelve_apagada_tras_restaurar(entorno):
     st.rules.items.append({"id": "uno", "kind": "on_stop", "from": A, "to": COORD, "text": "x", "enabled": False})
     st.rules.items.append({"id": "on", "kind": "on_stop", "from": COORD, "to": A, "text": "y", "enabled": False})
     ses.drop_session(A, "muerta", muerta=True)
+    server.preparar_sucesion({"session_id": A, "cwd": r"D:\Apps\opensyync", "agent": "claude", "title": None})
     nueva = ses.new_session(N, "claude", "hook")
     nueva["cwd"] = r"D:\Apps\opensyync"
     st.sessions[N] = nueva

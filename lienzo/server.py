@@ -902,7 +902,8 @@ def preparar_sucesion(e: dict) -> None:
     """Antes de relanzar la restaurable `e`: si su tarjeta muerta sigue en el tablero (se restaura
     antes de los 60 s), se da de baja como muerta, asi sus reglas se estacionan; y la entrada de
     sucesion queda marcada `restaurada`, para que la sesion que nazca (con el mismo id o con otro)
-    herede reglas y titulo antes que otra del mismo agente en la carpeta (sessions._prioridad_sucesora)."""
+    herede reglas y titulo. Desde el 2026-10-22 una sesion cualquiera de la carpeta ya no hereda: solo
+    el mismo id, una restaurada o una con el mismo titulo puesto por el lienzo (sessions._prioridad_sucesora)."""
     sid = e["session_id"]
     with lock:
         vieja = sessions.get(sid)

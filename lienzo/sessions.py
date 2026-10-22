@@ -665,20 +665,45 @@ def retarget_rules(old: str, new: str) -> int:
 _norm_cwd = identity.norm_cwd
 
 
-def _prioridad_sucesora(old: str, v: dict, s: dict) -> tuple | None:
+def _prioridad_sucesora(old: str, v: dict, s: dict, solo_titulo: bool = False) -> tuple | None:
     """Orden para elegir de quien es sucesora `s` (mayor gana), o None si no puede serlo. Con varios
     frentes del mismo agente en la misma carpeta (las rondas de OpenSyync) «la mas nueva» elegia mal:
     primero el mismo id (un resume que lo conserva), despues una restaurada desde el lienzo (la mas
-    vieja primero: se relanzan de a una), despues el mismo titulo, y al final la muerta mas nueva."""
+    vieja primero: se relanzan de a una), despues el mismo titulo; la muerta mas nueva solo desempata.
+
+    Sin ninguna de las tres no es sucesora: una sesion abierta a mano en la carpeta de un frente
+    cerrado heredaba sus reglas y le mandaba informes vacios a la coordinadora (2026-10-22). El titulo
+    cuenta solo si lo puso el lienzo (lanzada con ese titulo, o renombrada a el: set_title). Con
+    `solo_titulo` (un renombre) solo vale el titulo: la restaurada espera a su proceso relanzado."""
     if v.get("agent") != s.get("agent") or _norm_cwd(v.get("cwd")) != _norm_cwd(s.get("cwd")):
         return None
     mismo_id = old == s["session_id"]
     restaurada = float(v.get("restaurada") or 0)
-    mismo_titulo = bool(v.get("title")) and v.get("title") == s.get("title")
+    mismo_titulo = bool(v.get("title")) and s.get("title_source") == "user" and v.get("title") == s.get("title")
+    if not (mismo_titulo if solo_titulo else mismo_id or restaurada or mismo_titulo):
+        return None
     return (mismo_id, restaurada > 0, -restaurada, mismo_titulo, float(v.get("since") or 0))
 
 
-def adopt_dead_target(s: dict) -> str | None:
+def sucesora_por_titulo(s: dict) -> bool:
+    """¿Hay una muerta que `s` heredaria por su titulo? Con el lock. Barato: lo mira set_title antes de
+    lanzar el hilo. Una provisoria del barrido (`pid-N`) no: al llegar su id real se da de baja y
+    SUCESORAS y las otras PCs quedarian apuntando a un id que ya no existe."""
+    if s["session_id"].startswith(("pid-", "tmux-")):
+        return False
+    return any(_prioridad_sucesora(old, v, s, solo_titulo=True) for old, v in DEAD_TARGETS.items())
+
+
+def adoptar_por_titulo(sid: str, titulo: str) -> str | None:
+    """El hilo de un renombre: si la tarjeta sigue con ese titulo (un segundo renombre rapido lo
+    cancela), hereda de la muerta con el mismo titulo."""
+    with lock:
+        s = sessions.get(sid)
+        copia = dict(s) if s is not None and s.get("title") == titulo and s.get("title_source") == "user" else None
+    return adopt_dead_target(copia, solo_titulo=True) if copia else None
+
+
+def adopt_dead_target(s: dict, solo_titulo: bool = False) -> str | None:
     """Si `s` (recien nacida) es la sucesora de una sesion que murio con reglas (mismo agente, misma
     carpeta, hace menos de SUCESION_MAX_S; ver _prioridad_sucesora), hereda sus reglas aca y en las
     otras PCs, las que le avisaban y las suyas, y su titulo. Devuelve el id viejo, o None."""
@@ -692,7 +717,11 @@ def adopt_dead_target(s: dict) -> str | None:
     with lock:
         for k in [k for k, v in DEAD_TARGETS.items() if ahora - v["since"] > SUCESION_MAX_S]:
             DEAD_TARGETS.pop(k, None)
-        candidatas = [(p, old) for old, v in DEAD_TARGETS.items() if (p := _prioridad_sucesora(old, v, s)) is not None]
+        candidatas = [
+            (p, old)
+            for old, v in DEAD_TARGETS.items()
+            if (p := _prioridad_sucesora(old, v, s, solo_titulo)) is not None
+        ]
         if not candidatas:
             return None
         old = max(candidatas)[1]
@@ -729,9 +758,9 @@ def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
             return False
     links.remove(lambda l: sid in (l["from"], l["to"]))
     if muerta and card:
-        # las que le AVISABAN y las SUYAS quedan estacionadas: si vuelve a abrirse una sesion igual en
-        # esa carpeta (la coordinadora que se reabrio, un frente restaurado tras reiniciar la PC), las
-        # hereda (adopt_dead_target). Antes las suyas se borraban: al restaurar, ningun frente avisaba
+        # las que le AVISABAN y las SUYAS quedan estacionadas: las hereda su sucesora real (un resume,
+        # un frente restaurado tras reiniciar la PC, o la coordinadora reabierta que el lienzo titula
+        # igual; ver _prioridad_sucesora). Antes las suyas se borraban: al restaurar, ningun frente avisaba
         n = park_rules_to(sid) + park_rules_from(sid)
         if n:
             with lock:
@@ -1415,6 +1444,10 @@ def set_title(s: dict, title: str) -> None:
     if title := short(title, 120):
         with lock:
             s["title"], s["title_source"] = title, "user"
+            heredar = sucesora_por_titulo(s)
+        if heredar:
+            # con el titulo de un frente muerto en esta carpeta pasa a ser su sucesora (_prioridad_sucesora)
+            en_hilo(adoptar_por_titulo, s["session_id"], title)
         return
     with lock:
         s["title"] = s["title_source"] = None
@@ -1684,7 +1717,7 @@ def adopt_process(p: dict) -> None:
     """Agente vivo que ninguna tarjeta reclama: si su transcripcion ya tiene tarjeta, esa recupera
     el pid (venia de una corrida anterior); si no, se abre una nueva."""
     cwd = p.get("cwd") or backend.cwd_of(p)  # en tmux el cwd viene del pane; en win32, del backend
-    codex_proof = None
+    codex_proof, adivinada = None, False
     if p["agent"] == "codex":
         codex_proof = codex_identity.transcript_identity(p["pid"])
         sid, tpath = (
@@ -1695,14 +1728,17 @@ def adopt_process(p: dict) -> None:
     elif p["agent"] == "pi" and not p.get("pi_guess_allowed"):
         sid, tpath = p.get("pi_session") or (None, None)
     else:
-        sid, tpath = (
-            p.get("pi_session")
-            or p.get("coda_session")
-            or p.get("kiro_session")
-            or guess_transcript(p["agent"], cwd, p.get("created"), transcript_home(p))
-        )
+        exacta = p.get("pi_session") or p.get("coda_session") or p.get("kiro_session")
+        sid, tpath = exacta or guess_transcript(p["agent"], cwd, p.get("created"), transcript_home(p))
+        adivinada = not exacta  # por carpeta y fecha: puede ser la de otra sesion
     with lock:
         s = sessions.get(sid) if sid else None
+        if s is not None and adivinada and s.get("pid") not in (None, p["pid"]) and backend.agent_alive(s):
+            # la transcripcion adivinada (la mas nueva de la carpeta) es de otra sesion viva: un
+            # `claude -p` del mismo repo le pasaba su marca y la TUI de J quedo como «corrida
+            # headless» con el /send en 409 (2026-10-22). Este proceso tiene su propia tarjeta
+            state.log(f"barrido: {p['agent']} pid {p['pid']}: la transcripcion {sid[:8]} es de otra sesion viva")
+            s, sid, tpath = None, None, None
         if s is not None:
             if codex_proof and s.get("pid") != p["pid"] and s.get("pid") and backend.agent_alive(s):
                 state.log(f"barrido: hilo Codex {sid[:8]} observado en dos procesos; no se reasigna")

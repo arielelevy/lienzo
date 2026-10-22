@@ -2040,6 +2040,7 @@ def test_la_coordinadora_que_se_reabre_en_la_misma_carpeta_hereda_sus_avisos(ais
     monkeypatch.setattr(ses, "mirror", None)
     vieja = ses.new_session("aaaaaaaa-0000-4000-8000-000000000001", "claude", "hook")
     vieja["cwd"] = r"D:\Apps\gestor"
+    vieja["title"], vieja["title_source"] = "gestor - coordinadora", "user"
     st.sessions[vieja["session_id"]] = vieja
     monkeypatch.setattr(
         rl.rules, "items", [{"id": "r1", "kind": "on_stop", "from": "coda", "to": vieja["session_id"], "enabled": True}]
@@ -2052,6 +2053,10 @@ def test_la_coordinadora_que_se_reabre_en_la_misma_carpeta_hereda_sus_avisos(ais
     assert ses.adopt_dead_target(otra) is None  # otra carpeta: no es sucesora
     nueva = ses.new_session("cccccccc-0000-4000-8000-000000000003", "claude", "hook")
     nueva["cwd"] = "d:/apps/gestor/"
+    # desde el 2026-10-22 abrirla en la carpeta no alcanza (heredaba cualquier sesion nueva): hace
+    # falta el titulo de la muerta, puesto por el lienzo (al lanzarla o renombrandola)
+    assert ses.adopt_dead_target(nueva) is None
+    nueva["title"], nueva["title_source"] = "gestor - coordinadora", "user"
     assert ses.adopt_dead_target(nueva) == vieja["session_id"]
     r = rl.rules.items[0]
     assert r["to"] == nueva["session_id"] and r["enabled"] is True and "parked_to" not in r
