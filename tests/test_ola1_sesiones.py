@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ruff: noqa: I001
 # `from lienzo import server` agrega lienzo/ al sys.path y engancha rules a sessions (ver test_server)
 from lienzo import server  # noqa: F401
+import hooks_eventos
 import sessions as ses
 import state as st
 
@@ -294,10 +295,10 @@ def test_un_evento_que_no_se_puede_borrar_se_aplica_una_sola_vez(aislado, tmp_pa
     eventos = tmp_path / "events"
     eventos.mkdir()
     (eventos / "0001-ev.json").write_text('{"hook_event_name": "Stop", "session_id": "x"}', encoding="utf-8")
-    monkeypatch.setattr(ses, "EVENTS", str(eventos))
-    monkeypatch.setattr(ses, "_aplicados", {})
+    monkeypatch.setattr(hooks_eventos, "EVENTS", str(eventos))
+    monkeypatch.setattr(hooks_eventos, "_aplicados", {})
     aplicados = []
-    monkeypatch.setattr(ses, "apply_event", aplicados.append)
+    monkeypatch.setattr(hooks_eventos, "apply_event", aplicados.append)
     real_remove = os.remove
 
     def remove(p):
@@ -307,13 +308,13 @@ def test_un_evento_que_no_se_puede_borrar_se_aplica_una_sola_vez(aislado, tmp_pa
 
     monkeypatch.setattr(ses.os, "remove", remove)
     for _ in range(3):
-        ses.consume_once()
+        hooks_eventos.consume_once()
     assert len(aplicados) == 1
     assert len([m for m in aislado if "0001-ev.json" in m]) == 1
     # cuando por fin se puede borrar, se borra y deja de ocupar lugar en el set
     monkeypatch.setattr(ses.os, "remove", real_remove)
-    ses.consume_once()
-    assert not (eventos / "0001-ev.json").exists() and ses._aplicados == {}
+    hooks_eventos.consume_once()
+    assert not (eventos / "0001-ev.json").exists() and hooks_eventos._aplicados == {}
 
 
 # 1.7 transiciones: cierre de turno y muerte -----------------------------------------------------
@@ -344,9 +345,9 @@ def test_el_cierre_de_turno_sale_solo_de_corriendo_o_te_necesita_a_termino(aisla
 def test_session_end_no_avisa_que_murio_trabajando(aislado, hilos, monkeypatch):
     """SessionEnd es /exit o /clear: avisar a la coordinadora que «murio con un encargo» seria falso."""
     monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
-    ses.apply_event({"hook_event_name": "UserPromptSubmit", "session_id": "f" * 8, "prompt": "x"})
+    hooks_eventos.apply_event({"hook_event_name": "UserPromptSubmit", "session_id": "f" * 8, "prompt": "x"})
     assert st.sessions["f" * 8]["state"] == "corriendo"
-    ses.apply_event({"hook_event_name": "SessionEnd", "session_id": "f" * 8, "reason": "clear"})
+    hooks_eventos.apply_event({"hook_event_name": "SessionEnd", "session_id": "f" * 8, "reason": "clear"})
     s = st.sessions["f" * 8]
     assert s["state"] == "muerta" and s["alive"] is False and s["dead_since"]
     assert [h for h in hilos if h[0] == "on_died_working"] == []
@@ -356,7 +357,9 @@ def test_evento_con_pid_muerto_nace_muerta_sin_avisar(aislado, hilos, monkeypatc
     """El evento quedo en la cola con el server apagado (o el agente lo escribio al cerrarse): prueba
     que la sesion existio, no que murio trabajando AHORA; no se avisa."""
     monkeypatch.setattr(ses.backend, "agent_alive", lambda s: False)
-    ses.apply_event({"hook_event_name": "UserPromptSubmit", "session_id": "9" * 8, "prompt": "x", "pid": 4242})
+    hooks_eventos.apply_event(
+        {"hook_event_name": "UserPromptSubmit", "session_id": "9" * 8, "prompt": "x", "pid": 4242}
+    )
     s = st.sessions["9" * 8]
     assert s["state"] == "muerta" and s["alive"] is False and s["dead_since"]
     assert [h for h in hilos if h[0] == "on_died_working"] == []
@@ -468,9 +471,9 @@ def test_load_sessions_avisa_de_una_tarjeta_corrupta(aislado, tmp_path):
 
 
 def test_sin_carpeta_de_eventos_se_avisa_una_vez(aislado, tmp_path, monkeypatch):
-    monkeypatch.setattr(ses, "EVENTS", str(tmp_path / "no-existe"))
+    monkeypatch.setattr(hooks_eventos, "EVENTS", str(tmp_path / "no-existe"))
     for _ in range(3):
-        ses.consume_once()
+        hooks_eventos.consume_once()
     assert len([m for m in aislado if "no-existe" in m]) == 1
 
 

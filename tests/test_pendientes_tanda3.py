@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lienzo import server
 import backend
 import procinfo
-import sessions as ses
+import hooks_eventos
 import state as st
 
 
@@ -62,17 +62,23 @@ def aislado(tmp_path, monkeypatch):
 def test_el_pane_del_hook_es_el_destino_de_la_tarjeta_de_tmux(aislado, monkeypatch):
     monkeypatch.setattr(backend, "NAME", "tmux")
     sid = "20000000-0000-4000-8000-000000000002"
-    ses.apply_event({"session_id": sid, "hook_event_name": "SessionStart", "agent": "claude", "tmux_pane": "%7"})
+    hooks_eventos.apply_event(
+        {"session_id": sid, "hook_event_name": "SessionStart", "agent": "claude", "tmux_pane": "%7"}
+    )
     assert st.sessions[sid]["target"] == "%7"
     # un valor que no es un id de pane no se toma
-    ses.apply_event({"session_id": sid, "hook_event_name": "Stop", "agent": "claude", "tmux_pane": "%7; rm -rf"})
+    hooks_eventos.apply_event(
+        {"session_id": sid, "hook_event_name": "Stop", "agent": "claude", "tmux_pane": "%7; rm -rf"}
+    )
     assert st.sessions[sid]["target"] == "%7"
 
 
 def test_en_windows_el_pane_no_pisa_nada(aislado, monkeypatch):
     monkeypatch.setattr(backend, "NAME", "win32")
     sid = "20000000-0000-4000-8000-000000000003"
-    ses.apply_event({"session_id": sid, "hook_event_name": "SessionStart", "agent": "claude", "tmux_pane": "%7"})
+    hooks_eventos.apply_event(
+        {"session_id": sid, "hook_event_name": "SessionStart", "agent": "claude", "tmux_pane": "%7"}
+    )
     assert st.sessions[sid]["target"] is None
 
 

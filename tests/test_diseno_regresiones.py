@@ -268,7 +268,12 @@ def test_xfer_rejects_junction_under_allowed_root(tmp_path, monkeypatch):
     (outside / "private.txt").write_text("unchanged", encoding="utf-8")
     link = root / "escape"
     if os.name == "nt":
-        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)], check=True, capture_output=True)
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+            check=True,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+        )
     else:
         link.symlink_to(outside, target_is_directory=True)
     monkeypatch.setattr(xfer.state, "load_config", lambda: {"copy_roots": [str(root)]})
@@ -288,6 +293,7 @@ def test_server_script_entrypoint_imports_without_repo_on_pythonpath(tmp_path):
         text=True,
         timeout=20,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        stdin=subprocess.DEVNULL,
     )
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout.lower()
@@ -325,6 +331,7 @@ print("flat_bootstrap_import_ok")
         text=True,
         timeout=20,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        stdin=subprocess.DEVNULL,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "flat_bootstrap_import_ok"

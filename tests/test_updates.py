@@ -12,7 +12,7 @@ from lienzo.updates import UpdateError, Updater
 def repo(tmp_path):
     def git(cwd, *args):
         return subprocess.run(
-            ["git", *map(str, args)], cwd=cwd, check=True, capture_output=True, text=True
+            ["git", *map(str, args)], cwd=cwd, check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL
         ).stdout.strip()
 
     origin, source, checkout = (tmp_path / name for name in ("origin.git", "source", "checkout"))

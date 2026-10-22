@@ -11,6 +11,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lienzo"))
 
 import backend
+import guardia_monkeypatch
+
+guardia_monkeypatch.instalar()  # un monkeypatch sobre lienzo/ que no tiene efecto, falla
 
 _MONOTONIC = time.monotonic  # el real: hay pruebas que reemplazan time.monotonic por un reloj finito
 

@@ -9,6 +9,7 @@ import json
 import time
 from types import SimpleNamespace
 
+import hooks_eventos
 import pytest
 import sessions as ses
 import state as st
@@ -43,9 +44,9 @@ def test_sin_confirmacion_no_figura_corriendo_y_avisa(tarjeta):
     s, _ = tarjeta
     code, _ = ses.send_to_session(s, "hacé el informe", [])
     assert code == 200 and s["state"] == "termino" and s["envio_pendiente"]
-    assert not ses.envio_sin_confirmar(s, time.time())  # todavia dentro del plazo
-    _hace(s, ses.ENVIO_SIN_CONFIRMAR_S + 1)
-    assert ses.envio_sin_confirmar(s, time.time())
+    assert not hooks_eventos.envio_sin_confirmar(s, time.time())  # todavia dentro del plazo
+    _hace(s, hooks_eventos.ENVIO_SIN_CONFIRMAR_S + 1)
+    assert hooks_eventos.envio_sin_confirmar(s, time.time())
     assert s["state"] == "te_necesita" and s["needs"]["kind"] == "sin_enviar"
     assert "hacé el informe" in s["needs"]["detail"] and s["envio_pendiente"] is None
 
@@ -53,10 +54,10 @@ def test_sin_confirmacion_no_figura_corriendo_y_avisa(tarjeta):
 def test_el_user_prompt_submit_confirma(tarjeta):
     s, _ = tarjeta
     ses.send_to_session(s, "hola", [])
-    ses.hook_prompt_submit(s, {"prompt": "hola"})
+    hooks_eventos.hook_prompt_submit(s, {"prompt": "hola"})
     assert s["state"] == "corriendo" and s["envio_pendiente"] is None and s["prompt_via"] == "lienzo"
-    _hace_desde = time.time() + ses.ENVIO_SIN_CONFIRMAR_S + 5
-    assert not ses.envio_sin_confirmar(s, _hace_desde)
+    _hace_desde = time.time() + hooks_eventos.ENVIO_SIN_CONFIRMAR_S + 5
+    assert not hooks_eventos.envio_sin_confirmar(s, _hace_desde)
 
 
 def test_hook_antes_de_que_vuelva_send(tarjeta, monkeypatch):
@@ -65,7 +66,7 @@ def test_hook_antes_de_que_vuelva_send(tarjeta, monkeypatch):
 
     def con_hook_en_el_medio(s2, final, **kw):
         out = real(s2, final, **kw)
-        ses.hook_prompt_submit(s2, {"prompt": final})  # el UserPromptSubmit llega antes que la respuesta
+        hooks_eventos.hook_prompt_submit(s2, {"prompt": final})  # el UserPromptSubmit llega antes que la respuesta
         return out
 
     monkeypatch.setattr(ses, "run_send", con_hook_en_el_medio)
@@ -78,11 +79,11 @@ def test_con_el_agente_trabajando_espera_a_que_termine(tarjeta):
     s["state"] = "corriendo"  # turno anterior en curso: el mensaje queda en cola
     ses.send_to_session(s, "en cola", [])
     s["envio_pendiente"]["at"] -= 300
-    assert not ses.envio_sin_confirmar(s, time.time())  # trabajando: no se avisa
+    assert not hooks_eventos.envio_sin_confirmar(s, time.time())  # trabajando: no se avisa
     ses.set_state(s, "termino")  # cerro el turno y no tomo la cola
-    assert not ses.envio_sin_confirmar(s, time.time())  # se cuenta desde que quedo libre
-    _hace(s, ses.ENVIO_SIN_CONFIRMAR_S + 1)
-    assert ses.envio_sin_confirmar(s, time.time()) and s["needs"]["kind"] == "sin_enviar"
+    assert not hooks_eventos.envio_sin_confirmar(s, time.time())  # se cuenta desde que quedo libre
+    _hace(s, hooks_eventos.ENVIO_SIN_CONFIRMAR_S + 1)
+    assert hooks_eventos.envio_sin_confirmar(s, time.time()) and s["needs"]["kind"] == "sin_enviar"
 
 
 def test_sin_hooks_sigue_como_antes(tarjeta):
@@ -110,7 +111,7 @@ def test_consola_que_no_consumio_queda_registrada(tarjeta):
 def test_enter_a_mano_despues_del_aviso_lo_limpia(tarjeta):
     s, _ = tarjeta
     ses.send_to_session(s, "quedo en el editor", [])
-    _hace(s, ses.ENVIO_SIN_CONFIRMAR_S + 1)
-    assert ses.envio_sin_confirmar(s, time.time())
-    ses.hook_prompt_submit(s, {"prompt": "quedo en el editor"})  # Ariel aprieta Enter en la terminal
+    _hace(s, hooks_eventos.ENVIO_SIN_CONFIRMAR_S + 1)
+    assert hooks_eventos.envio_sin_confirmar(s, time.time())
+    hooks_eventos.hook_prompt_submit(s, {"prompt": "quedo en el editor"})  # Ariel aprieta Enter en la terminal
     assert s["state"] == "corriendo" and s["needs"] is None

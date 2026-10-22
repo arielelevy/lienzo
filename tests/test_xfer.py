@@ -807,6 +807,7 @@ def test_junction_cambiada_antes_de_abrir_parte_no_altera_victima(canal, tmp_pat
             check=True,
             capture_output=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
 
     monkeypatch.setattr(xfer, "_asegurar_parte", redirect)
@@ -849,6 +850,7 @@ def test_espejo_no_borra_por_junction_puesta_tras_validar(canal, tmp_path, monke
             check=True,
             capture_output=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
         swapped.append(True)
 
@@ -1045,6 +1047,7 @@ def test_base_wsl_de_las_pruebas_sobrevive_al_arranque_de_la_distro():
             capture_output=True,
             timeout=120,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         pytest.skip(f"WSL Ubuntu no disponible: {type(exc).__name__}")
@@ -1394,6 +1397,7 @@ def test_wsl_auxiliar_symlink_no_altera_victima(canal, monkeypatch, extension, a
         check=True,
         capture_output=True,
         creationflags=subprocess.CREATE_NO_WINDOW,
+        stdin=subprocess.DEVNULL,
     )
     linux = created.stdout.decode().strip()
     prefix = WSL_BASE_LINUX + "/"
@@ -1406,6 +1410,7 @@ def test_wsl_auxiliar_symlink_no_altera_victima(canal, monkeypatch, extension, a
             check=True,
             capture_output=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
         victim = os.path.join(folder, "victima.bin")
         content = b"bs 1048576\n" if extension == xfer.DIARIO else b"victima intacta"
@@ -1429,6 +1434,7 @@ def test_wsl_auxiliar_symlink_no_altera_victima(canal, monkeypatch, extension, a
             check=True,
             capture_output=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )
         monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [allowed]})
         body = {
@@ -1456,4 +1462,5 @@ def test_wsl_auxiliar_symlink_no_altera_victima(canal, monkeypatch, extension, a
             check=True,
             capture_output=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            stdin=subprocess.DEVNULL,
         )

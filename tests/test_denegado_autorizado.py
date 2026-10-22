@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ruff: noqa: I001
 from lienzo import server
+import hooks_eventos
 import sessions as ses
 import state as st
 from test_server import aislado  # noqa: F401
@@ -40,7 +41,7 @@ def test_lo_autorizado_no_vuelve_en_el_mismo_turno_y_lo_nuevo_si(aislado):  # no
     assert s["last_denied"]["detalle"] == "node cdp.mjs drive"
     assert s["last_denied"]["n"] == 1 and [x["detalle"] for x in s["last_denied"]["todas"]] == ["node cdp.mjs drive"]
     # un pedido nuevo olvida lo autorizado: la misma denegacion en otro turno es nueva
-    ses.hook_prompt_submit(s, {})
+    hooks_eventos.hook_prompt_submit(s, {})
     assert s["denied_ok"] is None
     ses.set_denied(s, {**CLIC, "turno": "t2", "n": 1, "todas": [{**CLIC, "turno": "t2"}]})
     assert s["last_denied"]["detalle"] == "node cdp.mjs click"
@@ -60,20 +61,20 @@ def test_denegacion_de_coda_conserva_su_comando_y_no_vuelve_tras_autorizarla(ais
         "tools": 3,
         "sub": False,
     }
-    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
     s = ses.new_session(SID, "coda", "hook")
     s.update(pid=1, state="corriendo", last_cmd="irm https://x | iex")
     with ses.lock:
         st.sessions[SID] = s
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["last_denied"]["detalle"] == "irm https://x | iex"
     visto = s["last_denied"]["visto"]
     s["last_cmd"] = "curl.exe -sL https://y"  # coda siguio con otro comando, aprobado
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["last_denied"]["detalle"] == "irm https://x | iex" and s["last_denied"]["visto"] == visto
     ses.autorizar_denegado(s)
     s["last_cmd"] = "grep kiro"
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["last_denied"] is None
 
 
@@ -103,7 +104,7 @@ def test_el_hook_del_propio_mensaje_de_autorizacion_no_hace_volver_el_aviso(aisl
 
     def teclea_y_llega_el_hook(tarjeta_, texto, att):
         ses.mark_sent(tarjeta_, texto)
-        ses.hook_prompt_submit(tarjeta_, {"prompt": texto, "prompt_id": "p2"})  # el hook gana la carrera
+        hooks_eventos.hook_prompt_submit(tarjeta_, {"prompt": texto, "prompt_id": "p2"})  # el hook gana la carrera
         return 200, {"chars": len(texto)}
 
     monkeypatch.setattr(server, "send_to_session", teclea_y_llega_el_hook)
@@ -117,11 +118,11 @@ def test_el_hook_del_propio_mensaje_de_autorizacion_no_hace_volver_el_aviso(aisl
     ses.set_denied(s2, {**DRIVE, "n": 1, "todas": [DRIVE]})
     monkeypatch.setattr(server, "send_to_session", lambda t, texto, att: (ses.mark_sent(t, texto), (200, {}))[1])
     server.accion_send(s2, {"text": "autorizo drive", "attachments": [], "autoriza_denegado": True})
-    ses.hook_prompt_submit(s2, {"prompt": "autorizo drive", "prompt_id": "p3"})
+    hooks_eventos.hook_prompt_submit(s2, {"prompt": "autorizo drive", "prompt_id": "p3"})
     ses.set_denied(s2, {**DRIVE, "n": 1, "todas": [DRIVE]})
     assert s2["last_denied"] is None
     # un pedido del usuario en la terminal, despues, si olvida lo autorizado
-    ses.hook_prompt_submit(s2, {"prompt": "otra cosa", "prompt_id": "p4"})
+    hooks_eventos.hook_prompt_submit(s2, {"prompt": "otra cosa", "prompt_id": "p4"})
     assert s2["denied_ok"] is None and not s2["autorizando"]
 
 

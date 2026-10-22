@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import sessions as ses
+import hooks_eventos
 
 from lienzo import server
 
@@ -36,7 +36,7 @@ def test_la_tarjeta_real_hereda_el_titulo_de_la_provisoria():
         "coordinator": True,
     }
     real = {"session_id": "uuid", "title": "Bien el diagnostico. Reintenta", "title_source": "prompt"}
-    ses.heredar_de_provisoria(prov, real)
+    hooks_eventos.heredar_de_provisoria(prov, real)
     assert (
         real["title"] == "ariel.levy - encargo F - mutacion" and real["title_source"] == "user" and real["coordinator"]
     )

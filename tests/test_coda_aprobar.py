@@ -14,6 +14,7 @@ sys.path.insert(0, ROOT)
 
 # ruff: noqa: I001
 from lienzo import server  # noqa: F401
+import hooks_eventos
 import sessions as ses
 import state as st
 
@@ -76,5 +77,5 @@ def test_el_cartel_en_pantalla_pone_la_coda_en_te_necesita(monkeypatch):
     assert s["state"] == "te_necesita" and n["where"] == "terminal" and n["coda_at"].startswith("screen:")
     assert "npm run build" in n["detail"]
     # la proxima herramienta la libera
-    ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "ls"}, "host_ts": "t"})
+    hooks_eventos.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "ls"}, "host_ts": "t"})
     assert s["state"] == "corriendo" and s["needs"] is None

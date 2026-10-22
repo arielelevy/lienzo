@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lienzo import server
 import federation as fed
 import pantalla_coda
+import rules_api
 import state as st
 import subproc
 
@@ -460,14 +461,14 @@ def test_dos_altas_iguales_a_la_vez_dejan_una_sola_regla(aislado, monkeypatch):
     a, b = "f0000000-0000-4000-8000-00000000000a", "f0000000-0000-4000-8000-00000000000b"
     for sid in (a, b):
         st.sessions[sid] = {"session_id": sid, "agent": "claude", "pid": 1}
-    original = server.find_enabled
+    original = rules_api.find_enabled  # create_rule vive en rules_api y lee su propio find_enabled
 
     def lento(pred):
         r = original(pred)
         time.sleep(0.2)  # ensancha la ventana entre «no hay otra igual» y el alta
         return r
 
-    monkeypatch.setattr(server, "find_enabled", lento)
+    monkeypatch.setattr(rules_api, "find_enabled", lento)
     d = {"kind": "on_stop", "from": a, "to": b, "text": "seguí"}
     codigos = []
     hilos = [threading.Thread(target=lambda: codigos.append(server.create_rule(dict(d))[0])) for _ in range(2)]

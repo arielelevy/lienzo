@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lienzo import server  # noqa: F401
 import identity
 import rules as rl
+import hooks_eventos
 import sessions as ses
 import state as st
 
@@ -73,7 +74,7 @@ def ev(name: str, sid: str = SID, **k) -> dict:
 
 def test_evento_de_hook_trae_pc_y_repo_key(aislado):
     cwd = make_repo(aislado, "proj", "git@github.com:foo/bar.git")
-    ses.apply_event(ev("SessionStart", cwd=cwd, host_ts=st.now()))
+    hooks_eventos.apply_event(ev("SessionStart", cwd=cwd, host_ts=st.now()))
     s = st.sessions[SID]
     assert s["pc"] == identity.pc_id()
     assert s["repo_key"] == identity.repo_key(cwd) == "github.com/foo/bar"

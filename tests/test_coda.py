@@ -7,6 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import hooks_eventos
+
 import install
 from lienzo import coda, procinfo, transcripts
 
@@ -157,14 +159,14 @@ def test_pretooluse_muestra_el_avance_en_la_tarjeta():
 
     s = ses.new_session(SID, "coda", "hook")
     s["state"] = "corriendo"
-    ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "cd /mnt/d/x && ruff check\n."}})
-    ses.coda_tool(s, {"tool_name": "read", "tool_input": {"path": r"D:\Apps\demo\docs\02.md"}}, sub=True)
-    ses.coda_tool(s, {"tool_name": "edit", "tool_input": {"path": "a.py"}})
+    hooks_eventos.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "cd /mnt/d/x && ruff check\n."}})
+    hooks_eventos.coda_tool(s, {"tool_name": "read", "tool_input": {"path": r"D:\Apps\demo\docs\02.md"}}, sub=True)
+    hooks_eventos.coda_tool(s, {"tool_name": "edit", "tool_input": {"path": "a.py"}})
     assert s["tool_count"] == 3
     assert s["last_cmd"] == "ruff check ."
     assert s["last_files"] == ["a.py", "02.md"]
     assert s["last_reply"] == "usando edit"
-    ses.coda_tool(s, {"tool_name": "grep", "tool_input": {}}, sub=True)
+    hooks_eventos.coda_tool(s, {"tool_name": "grep", "tool_input": {}}, sub=True)
     assert s["last_reply"] == "usando grep (subagente)"
 
 
@@ -182,7 +184,7 @@ def test_pretooluse_ask_user_es_una_pregunta_no_un_permiso():
         "host_ts": "2026-10-09T12:18:38.000-03:00",
         "tool_input": {"question": "¿Seguimos con Kiro o con Pi?", "options": ["kiro", "pi"]},
     }
-    ses.coda_tool(s, ev)
+    hooks_eventos.coda_tool(s, ev)
     assert s["state"] == "te_necesita"
     assert s["needs"]["kind"] == "question"
     assert s["needs"]["tool"] == "ask_user"
@@ -190,10 +192,10 @@ def test_pretooluse_ask_user_es_una_pregunta_no_un_permiso():
     assert s["needs"]["where"] == "terminal" and s["needs"]["via"] == "tool"
     assert s["needs"]["coda_at"] == "tool:2026-10-09T12:18:38.000-03:00"
     # la herramienta siguiente es la respuesta ya dada: vuelve a corriendo
-    ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "kiro-cli"}})
+    hooks_eventos.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "kiro-cli"}})
     assert s["state"] == "corriendo" and s["needs"] is None
     # un subagente que pregunta no le pregunta al usuario
-    ses.coda_tool(s, {"tool_name": "ask_user", "tool_input": {"question": "x"}}, sub=True)
+    hooks_eventos.coda_tool(s, {"tool_name": "ask_user", "tool_input": {"question": "x"}}, sub=True)
     assert s["state"] == "corriendo"
 
 
@@ -207,19 +209,19 @@ def test_ask_user_sin_auto_aprobar_vuelve_a_la_pregunta_tras_el_permiso(monkeypa
     monkeypatch.setattr(st, "log", lambda m: None)
     ask = {"cause": None, "tool": "ask_user", "sub": False, "at": "2026-10-09T15:18:39.000Z"}
     act = {"running": True, "asking": ask, "last_at": None, "last_tool": "ask_user", "tools": 1, "sub": False}
-    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
     s = ses.new_session(SID, "coda", "hook")
     s["pid"], s["state"] = 1, "corriendo"
-    ses.coda_tool(s, {"tool_name": "ask_user", "tool_input": {"question": "¿Kiro o Pi?"}})
+    hooks_eventos.coda_tool(s, {"tool_name": "ask_user", "tool_input": {"question": "¿Kiro o Pi?"}})
     assert s["needs"]["kind"] == "question"
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["needs"]["kind"] == "permission" and s["needs"]["tool"] == "ask_user"
     act["asking"] = None  # se permitio: el `ask` deja el log
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["state"] == "te_necesita"
     assert s["needs"]["kind"] == "question" and s["needs"]["detail"] == "¿Kiro o Pi?"
     # la pregunta se contesta en la terminal: la herramienta siguiente vuelve a corriendo
-    ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "kiro-cli"}})
+    hooks_eventos.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "kiro-cli"}})
     assert s["state"] == "corriendo"
 
 
@@ -232,20 +234,20 @@ def test_ask_user_abierto_antes_del_reinicio_se_ve_en_la_relectura(monkeypatch):
 
     monkeypatch.setattr(st, "log", lambda m: None)
     act = {"running": True, "asking": None, "last_at": None, "last_tool": "ask_user", "tools": 1, "sub": False}
-    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
     s = ses.new_session(SID, "coda", "hook")
     s.update(pid=1, state="corriendo", last_event="PreToolUse", last_reply="usando ask_user")
     s["last_event_ts"] = "2026-10-09T12:21:32.000-03:00"
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["state"] == "te_necesita" and s["needs"]["kind"] == "question" and s["needs"]["tool"] == "ask_user"
-    ses.coda_log_activity(s)  # la siguiente relectura no la toca
+    hooks_eventos.coda_log_activity(s)  # la siguiente relectura no la toca
     assert s["needs"]["kind"] == "question"
     # otra herramienta en curso, o un turno cerrado: nada que preguntar
     for ultimo, corre in (("usando bash", True), ("usando ask_user", False)):
         s2 = ses.new_session(SID, "coda", "hook")
         s2.update(pid=1, state="corriendo", last_event="PreToolUse", last_reply=ultimo)
         act["running"] = corre
-        ses.coda_log_activity(s2)
+        hooks_eventos.coda_log_activity(s2)
         assert s2["needs"] is None, ultimo
     act["running"] = True
 
@@ -256,7 +258,7 @@ def test_el_turno_abierto_de_coda_muestra_en_vivo_lo_que_vio_el_hook():
     from lienzo import server  # noqa: F401, I001
     import sessions as ses
 
-    ses.CODA_VIVO.pop(SID, None)
+    hooks_eventos.CODA_VIVO.pop(SID, None)
     s = ses.new_session(SID, "coda", "hook")
     s["state"] = "corriendo"
     viejo = {
@@ -264,7 +266,7 @@ def test_el_turno_abierto_de_coda_muestra_en_vivo_lo_que_vio_el_hook():
         "host_ts": "2026-10-09T12:00:00.000-03:00",
         "tool_input": {"command": "turno anterior"},
     }
-    ses.coda_tool(s, viejo)
+    hooks_eventos.coda_tool(s, viejo)
     for ev in (
         {
             "tool_name": "bash",
@@ -282,7 +284,7 @@ def test_el_turno_abierto_de_coda_muestra_en_vivo_lo_que_vio_el_hook():
             "tool_input": {"question": "¿Kiro o Pi?"},
         },
     ):
-        ses.coda_tool(s, ev)
+        hooks_eventos.coda_tool(s, ev)
     abierto = {
         "ts_start": "2026-10-09T12:21:04.659-03:00",
         "ended": False,
@@ -290,12 +292,12 @@ def test_el_turno_abierto_de_coda_muestra_en_vivo_lo_que_vio_el_hook():
         "tools": 0,
         "says": [],
     }
-    t = ses.coda_vivo_en_turno(SID, abierto)
+    t = hooks_eventos.coda_vivo_en_turno(SID, abierto)
     assert t["tools"] == 3 and t["commands"] == ["winget search kiro"]
     assert t["files"] == ["D:/apps/lienzo/README.md"] and t["questions"] == ["¿Kiro o Pi?"]
     assert t["says"][-1] == "en vivo: 3 herramientas, la última ask_user"
-    assert ses.coda_vivo_en_turno(SID, {**abierto, "ended": True}) == {**abierto, "ended": True}
-    ses.CODA_VIVO.pop(SID, None)
+    assert hooks_eventos.coda_vivo_en_turno(SID, {**abierto, "ended": True}) == {**abierto, "ended": True}
+    hooks_eventos.CODA_VIVO.pop(SID, None)
 
 
 def test_pretooluse_despues_del_cierre_reabre_el_turno():
@@ -305,10 +307,10 @@ def test_pretooluse_despues_del_cierre_reabre_el_turno():
     s = ses.new_session(SID, "coda", "hook")
     s["state"], s["state_since"] = "termino", "2026-09-25T00:27:37.000-03:00"
     # PreToolUse del turno anterior que llega tarde: no reabre nada
-    ses.coda_tool(s, {"tool_name": "bash", "host_ts": "2026-09-25T00:27:30.000-03:00", "tool_input": {}})
+    hooks_eventos.coda_tool(s, {"tool_name": "bash", "host_ts": "2026-09-25T00:27:30.000-03:00", "tool_input": {}})
     assert s["state"] == "termino"
     # sin UserPromptSubmit, una herramienta posterior es un turno en curso
-    ses.coda_tool(s, {"tool_name": "read", "host_ts": "2026-09-25T00:28:00.000-03:00", "tool_input": {}})
+    hooks_eventos.coda_tool(s, {"tool_name": "read", "host_ts": "2026-09-25T00:28:00.000-03:00", "tool_input": {}})
     assert s["state"] == "corriendo"
     assert s["last_reply"] == "usando read"
 
@@ -354,13 +356,13 @@ def test_corte_de_cuota_temporal_no_queda_en_la_tarjeta(tmp_path, monkeypatch):
     assert coda.activity(4242)["error"].startswith("coda sin cuota")
     s = ses.new_session(SID, "coda", "hook")
     s.update(pid=4242, state="corriendo")
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["last_error"].startswith("coda sin cuota")
     # siguio corriendo herramientas en el mismo turno: el corte fue temporal
     lineas.append({"pid": 4242, "clientName": "cli", "msg": "authorization.decision", "toolName": "bash"})
     log.write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")
     assert "error" not in coda.activity(4242)
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["last_error"] is None
 
 
@@ -407,10 +409,10 @@ def test_compactacion_de_coda_no_cuenta_como_fin_de_turno(monkeypatch):
     monkeypatch.setattr(ses, "on_turn_end", lambda sid: None)
     s = {"session_id": "a" * 36, "agent": "coda", "state": "corriendo", "state_since": "x", "needs": None}
     s["compacting"] = ses.time.time()
-    ses.hook_stop(s, {"last_assistant_message": "resumen"})
+    hooks_eventos.hook_stop(s, {"last_assistant_message": "resumen"})
     assert s["state"] == "corriendo" and not s.get("last_reply")
-    s["compacting"] = ses.time.time() - ses.COMPACTING_MAX_S - 1  # PostCompact nunca llego
-    ses.hook_stop(s, {"last_assistant_message": "listo"})
+    s["compacting"] = ses.time.time() - hooks_eventos.COMPACTING_MAX_S - 1  # PostCompact nunca llego
+    hooks_eventos.hook_stop(s, {"last_assistant_message": "listo"})
     assert s["state"] == "termino" and s["last_reply"] == "listo"
     assert "PreCompact" in __import__("install").CODA_EVENTS and "PostCompact" in __import__("install").CODA_EVENTS
 
@@ -453,14 +455,14 @@ def test_compact_abortado_por_coda_devuelve_la_tarjeta_sin_disparar_on_stop(monk
 
     monkeypatch.undo()
     monkeypatch.setattr(st, "log", lambda m: None)
-    monkeypatch.setattr(ses, "hook_prompt_submit", lambda s, ev: None)
+    monkeypatch.setattr(ses.hooks_eventos, "hook_prompt_submit", lambda s, ev: None)
     # el UserPromptSubmit del mismo /compact puede llegar despues del PreCompact: la marca reciente queda
     s2 = {"session_id": "d" * 36, "agent": "coda", "state": "termino", "compacting": ses.time.time()}
-    ses.apply_hook(s2, {"hook_event_name": "UserPromptSubmit"}, "UserPromptSubmit", False)
+    hooks_eventos.apply_hook(s2, {"hook_event_name": "UserPromptSubmit"}, "UserPromptSubmit", False)
     assert s2["compacting"]
     # una marca vieja (PostCompact nunca llego) la limpia el pedido siguiente
-    s2["compacting"] = ses.time.time() - ses.COMPACTING_CARRERA_S - 1
-    ses.apply_hook(s2, {"hook_event_name": "UserPromptSubmit"}, "UserPromptSubmit", False)
+    s2["compacting"] = ses.time.time() - hooks_eventos.COMPACTING_CARRERA_S - 1
+    hooks_eventos.apply_hook(s2, {"hook_event_name": "UserPromptSubmit"}, "UserPromptSubmit", False)
     assert s2["compacting"] is None
 
 
@@ -473,7 +475,7 @@ def test_permiso_enviado_que_sigue_abierto_devuelve_los_botones(monkeypatch):
     monkeypatch.setattr(st, "log", lambda m: None)
     ask = {"cause": "command-policy", "tool": "bash", "sub": False, "at": "2026-10-03T01:03:27.675Z"}
     act = {"running": True, "asking": ask, "last_at": None, "last_tool": "bash", "tools": 3, "sub": False}
-    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
     s = {
         "session_id": "b" * 36,
         "agent": "coda",
@@ -489,15 +491,14 @@ def test_permiso_enviado_que_sigue_abierto_devuelve_los_botones(monkeypatch):
             "sent_ts": ses.time.time(),
         },
     }
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["needs"]["where"] == "enviado"  # recien enviado: se espera
-    s["needs"]["sent_ts"] = ses.time.time() - ses.CODA_SENT_RETRY_S - 1
-    ses.coda_log_activity(s)
+    s["needs"]["sent_ts"] = ses.time.time() - hooks_eventos.CODA_SENT_RETRY_S - 1
+    hooks_eventos.coda_log_activity(s)
     assert s["needs"]["where"] == "terminal"
 
 
 def test_una_denegacion_de_coda_llega_a_la_tarjeta_una_sola_vez(monkeypatch):
-    import sessions as ses
     import state as st
 
     logs = []
@@ -512,7 +513,7 @@ def test_una_denegacion_de_coda_llega_a_la_tarjeta_una_sola_vez(monkeypatch):
         "sub": False,
         "denied": den,
     }
-    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
     s = {
         "session_id": "d" * 36,
         "agent": "coda",
@@ -523,10 +524,10 @@ def test_una_denegacion_de_coda_llega_a_la_tarjeta_una_sola_vez(monkeypatch):
         "needs": None,
         "last_cmd": "git push --force",
     }
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["last_denied"]["tool"] == "bash" and s["last_denied"]["detalle"] == "git push --force"
     assert "comando que pide" in s["last_denied"]["motivo"]
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert sum("DENEGADO" in x for x in logs) == 1
 
 
@@ -534,7 +535,6 @@ def test_la_denegacion_del_turno_anterior_no_vuelve_despues_de_un_pedido_nuevo(m
     """Medido el 2026-10-04 en ar-it33940: cada «Autorizar y que reintente» borraba la marca (pedido
     nuevo) y la lectura siguiente del log, que todavia no tenia el «prompt started» del turno nuevo,
     volvia a poner la denegacion del turno anterior: el boton no se iba y Ariel lo apreto 15 veces."""
-    import sessions as ses
     import state as st
 
     monkeypatch.setattr(st, "log", lambda m: None)
@@ -548,7 +548,7 @@ def test_la_denegacion_del_turno_anterior_no_vuelve_despues_de_un_pedido_nuevo(m
         "sub": False,
         "denied": den,
     }
-    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
     s = {
         "session_id": "e" * 36,
         "agent": "coda",
@@ -561,11 +561,11 @@ def test_la_denegacion_del_turno_anterior_no_vuelve_despues_de_un_pedido_nuevo(m
         "last_denied": None,  # el pedido nuevo la acaba de borrar
         "prompt_ts": "2026-10-04T21:00:00.349-03:00",  # 00:00:00 UTC: despues de la denegacion
     }
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["last_denied"] is None
     # una denegacion del turno en curso si llega
     act["denied"] = {**den, "at": "2026-10-05T00:00:05Z"}
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["last_denied"] and s["last_denied"]["tool"] == "bash"
 
 
@@ -578,13 +578,15 @@ def test_propose_policy_de_coda_pone_la_tarjeta_en_te_necesita_y_la_siguiente_he
     monkeypatch.setattr(st, "log", lambda m: None)
     monkeypatch.setattr(ses, "on_turn_end", lambda sid: None)
     s = {"session_id": "e" * 36, "agent": "coda", "state": "corriendo", "state_since": "x", "needs": None}
-    ses.coda_tool(s, {"tool_name": "propose_policy", "tool_input": {"rule": "git reset --hard"}, "host_ts": "t1"})
+    hooks_eventos.coda_tool(
+        s, {"tool_name": "propose_policy", "tool_input": {"rule": "git reset --hard"}, "host_ts": "t1"}
+    )
     n = s["needs"]
     assert s["state"] == "te_necesita" and n["kind"] == "permission" and n["where"] == "terminal" and n["coda_at"]
     assert "git reset --hard" in n["detail"]
     # el log no muestra un ask: igual no se limpia (lo cierra la proxima herramienta)
     monkeypatch.setattr(
-        ses.coda,
+        hooks_eventos.coda,
         "activity",
         lambda pid: {
             "running": True,
@@ -596,9 +598,9 @@ def test_propose_policy_de_coda_pone_la_tarjeta_en_te_necesita_y_la_siguiente_he
         },
     )
     s["pid"], s["hooked"] = 1, True
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["state"] == "te_necesita"
-    ses.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "ls"}, "host_ts": "t2"})
+    hooks_eventos.coda_tool(s, {"tool_name": "bash", "tool_input": {"command": "ls"}, "host_ts": "t2"})
     assert s["state"] == "corriendo" and s["needs"] is None
 
 
@@ -652,22 +654,22 @@ def test_permiso_de_un_subagente_de_fondo_se_ve_con_la_tarjeta_en_termino(monkey
     monkeypatch.setattr(st, "log", lambda m: None)
     ask = {"tool": "bash", "cause": "command-policy", "sub": True, "at": "2026-10-10T15:25:01.798Z"}
     act = {"running": False, "tools": 16, "last_tool": "bash", "sub": True, "last_at": ask["at"], "asking": ask}
-    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
     s = {"session_id": "e" * 36, "agent": "coda", "pid": 9, "state": "termino", "state_since": "x", "needs": None}
     s["hooked"] = True
-    assert ses.coda_log_activity(s)
+    assert hooks_eventos.coda_log_activity(s)
     assert s["state"] == "te_necesita" and s["needs"]["kind"] == "permission" and s["needs"]["de_fondo"]
     assert s["needs"]["coda_at"] == ask["at"] and "subagente" in s["needs"]["detail"]
 
     disparos = []
     monkeypatch.setattr(ses, "on_turn_end", lambda sid: disparos.append(sid))
     act["asking"] = None  # contestado
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["state"] == "termino" and s["needs"] is None and disparos == []
 
     # un permiso de la TUI (no de subagente) con el turno cerrado sigue sin contar: es de un turno viejo
     act["asking"] = {**ask, "sub": False, "at": "otro"}
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["state"] == "termino" and s["needs"] is None
 
 
@@ -681,12 +683,12 @@ def test_permiso_de_fondo_contestado_no_vuelve_a_ofrecer_permitir(monkeypatch):
     monkeypatch.setattr(ses, "touch", lambda s: None)
     ask = {"tool": "bash", "cause": "command-policy", "sub": True, "at": "t-fondo"}
     act = {"running": False, "tools": 3, "last_tool": "bash", "sub": True, "last_at": "t-fondo", "asking": ask}
-    monkeypatch.setattr(ses.coda, "activity", lambda pid: act)
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
     sid = "f" * 36
     s = {"session_id": sid, "agent": "coda", "pid": 9, "state": "termino", "state_since": "x", "needs": None}
     s["hooked"] = True
     monkeypatch.setitem(ses.sessions, sid, s)
-    ses.coda_log_activity(s)
+    hooks_eventos.coda_log_activity(s)
     assert s["state"] == "te_necesita" and s["needs"]["de_fondo"]
     ses._pantalla_mirada.pop(sid, None)
     assert ses.coda_mirar_fondo(s) == "t-fondo"
@@ -695,7 +697,7 @@ def test_permiso_de_fondo_contestado_no_vuelve_a_ofrecer_permitir(monkeypatch):
     monkeypatch.setattr(ses, "read_screen", lambda s: {"lines": ["┃ Ask anything..."]})
     assert ses.coda_fondo_en_pantalla(s, "t-fondo")
     assert s["state"] == "termino" and s["needs"] is None
-    ses.coda_log_activity(s)  # el log todavia lo muestra abierto: no vuelve
+    hooks_eventos.coda_log_activity(s)  # el log todavia lo muestra abierto: no vuelve
     assert s["state"] == "termino" and s["needs"] is None
 
 

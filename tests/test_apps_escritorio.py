@@ -8,6 +8,7 @@ import time
 
 import agentes
 import backend
+import hooks_eventos
 import procs
 import pytest
 import sessions
@@ -143,7 +144,7 @@ def test_claim_pid_del_motor_de_desktop(monkeypatch):
     monkeypatch.setattr(procs.procinfo, "process_agent", lambda pid: "claude")
     monkeypatch.setattr(backend, "is_tmux", lambda d: False)
     s = sessions.new_session("dddd", "claude", "hook")
-    sessions.claim_pid(s, {"pid": 90, "agent_exe": MOTOR_DESKTOP})
+    hooks_eventos.claim_pid(s, {"pid": 90, "agent_exe": MOTOR_DESKTOP})
     assert s["external"]["kind"] == "claude-desktop" and s["no_console"] is True
 
 
@@ -407,15 +408,15 @@ def test_desktop_no_le_quita_la_tarjeta_a_una_cli_viva(monkeypatch):
     monkeypatch.setattr(backend, "is_tui", lambda d: d.get("pid") == 100)
     s = sessions.new_session("gggg", "claude", "hook")
     state.sessions["gggg"] = s
-    sessions.claim_pid(s, {"pid": 100, "agent_exe": CLI_CLAUDE})
-    sessions.claim_pid(s, {"pid": 200, "agent_exe": MOTOR_VIRTUAL})  # Desktop con la CLI viva
+    hooks_eventos.claim_pid(s, {"pid": 100, "agent_exe": CLI_CLAUDE})
+    hooks_eventos.claim_pid(s, {"pid": 200, "agent_exe": MOTOR_VIRTUAL})  # Desktop con la CLI viva
     assert s["pid"] == 100 and s["external"] is None and s["no_console"] is False
     assert list(state.sessions) == ["gggg"]  # sin duplicado
     vivos[100] = False  # `claude --desktop --resume`: la CLI se cierra y la retoma la app
-    sessions.claim_pid(s, {"pid": 200, "agent_exe": MOTOR_VIRTUAL})
+    hooks_eventos.claim_pid(s, {"pid": 200, "agent_exe": MOTOR_VIRTUAL})
     assert s["pid"] == 200 and s["external"] == desktop and s["no_console"] is True
     vivos[300] = True  # y `claude --resume` en una terminal la vuelve personal
-    sessions.claim_pid(s, {"pid": 300, "agent_exe": CLI_CLAUDE})
+    hooks_eventos.claim_pid(s, {"pid": 300, "agent_exe": CLI_CLAUDE})
     assert s["pid"] == 300 and s["external"] is None
 
 

@@ -18,6 +18,7 @@ def test_direct_server_help_from_unrelated_directory(tmp_path):
         text=True,
         timeout=30,
         check=False,
+        stdin=subprocess.DEVNULL,
     )
     assert result.returncode == 0, result.stderr
     assert "usage: lienzo-server" in result.stdout

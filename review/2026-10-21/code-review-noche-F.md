@@ -58,3 +58,68 @@ Verificación:
 - Focales: 127 verdes antes y 123 después (las 4 de diferencia son las borradas).
 - Ruff limpio en las 9 rutas.
 - `tmux_smoke.py` sólo se compiló. No se corrió porque no hay distro WSL corriendo y despertar una tiene su costo.
+
+## Lote 5 (paso 0): guardias de la partición
+
+Archivos: `tests/guardia_monkeypatch.py` (nuevo), `tests/test_guardia_monkeypatch.py` (nuevo), `tests/conftest.py`, `tests/test_integration_guards.py`, `tests/test_ola1_seguridad.py`, `tests/test_server.py`.
+
+Hubo tres pasadas de `code-review` medium. Todos los hallazgos se corrigieron y cada uno tiene su caso en `test_guardia_monkeypatch.py`:
+
+- **Falsos positivos** (rompían pruebas válidas):
+  - paquetes con `__init__`;
+  - import dentro de una función (`import x` y `from x import y`). Es el caso de D en `codex_identity.py:179-182` y el de 5 pruebas del repo: `claude_pipe_cableado`, `desktop_interaction`, `console_titles` y `release_recovery`;
+  - imports relativos de varios niveles;
+  - `alias.attr += 1`;
+  - comprensiones que tapaban un alias;
+  - reexportación por nombre (`from otro import m`);
+  - cadenas de atributos resueltas con el mapa de imports de cada módulo;
+  - el módulo que se lee por `globals()` (`transcripts`).
+- **Falsos negativos** (dejaban pasar parches sin efecto):
+  - nombres en defaults y decoradores;
+  - stores contados como lecturas;
+  - `global` sin lectura;
+  - locales que tapaban globales;
+  - textos sueltos de cualquier archivo, como la clave `s["compacting"]`. Ahora un texto solo cuenta en un archivo con un `getattr` dinámico real; el `__getattr__` de reexportación no cuenta;
+  - `self.state.lock`.
+- **Robustez:**
+  - un archivo a medio escribir deja pasar y no queda recordado (antes apagaba la guardia toda la sesión);
+  - la forma de texto `setattr("mod.attr", v)` también se revisa;
+  - el detector de `import server` cubre `import_module`, `__import__` e imports relativos, y no marca un `server.py` de un subpaquete.
+
+Lo que la guardia encontró en el código de hoy (corregido):
+- `ses.guess_pi` → `agentes.guess_pi`.
+- `server.find_enabled` → `rules_api.find_enabled`: la demora que ensancha la carrera no se aplicaba.
+- `state.ADJUNTOS`: parche redundante, borrado.
+
+Verificación:
+- Rojo de la guardia con HEAD sin la línea de `conftest`: `lote5-guardia-rojo.log`.
+- Suite global con la guardia final (`suite-4.log`): ningún «no tiene efecto».
+- Las correcciones de la tercera pasada están cubiertas por 32 casos y por la suite global, pero no tuvieron una cuarta revisión.
+
+## Lote 6 (paso 2): hooks_eventos.py
+
+Archivos:
+- código: `lienzo/hooks_eventos.py` (nuevo), `lienzo/sessions.py`, `lienzo/rules.py`;
+- prueba nueva: `tests/test_particion_sessions.py`;
+- pruebas migradas: `tests/test_apps_escritorio.py`, `test_backend_tmux.py`, `test_captura.py`, `test_coda.py`, `test_coda_aprobar.py`, `test_denegado_autorizado.py`, `test_ejecuciones_externas.py`, `test_envio_confirmado.py`, `test_integration_guards.py`, `test_ola1_sesiones.py`, `test_pc_fields.py`, `test_pendientes_tanda3.py`, `test_pregunta.py`, `test_red_resiliente.py`, `test_reinicio_explicito.py`, `test_restore.py`, `test_server.py` y `test_stale_send_notice.py`.
+
+`code-review` medium. No encontró cambio de comportamiento:
+- cada definición es idéntica a HEAD salvo los prefijos;
+- no hay estado duplicado;
+- el ciclo de imports se resuelve en los dos órdenes;
+- los parches migrados alcanzan al código.
+
+Hallazgos corregidos:
+1. Las pruebas usaban lo movido vía `sessions`. Ahora apuntan a `hooks_eventos`.
+2. La compatibilidad tenía 30 nombres. Ahora `__getattr__` solo atiende `consume_events` y `coda_vivo_en_turno`, que todavía importa `server.py`. Se va en el lote de `server.py`.
+3. El orden de import era frágil. Ahora `test_particion_sessions.py` cubre:
+   - 4 órdenes en un intérprete limpio;
+   - ningún uso de `hooks_eventos` al importar `sessions`, ni `from hooks_eventos import` arriba de todo;
+   - ningún nombre ni estado definido en los dos módulos.
+
+Integrado a pedido de la coordinadora: el diff de D `titulo-lanzado-arbol-F.diff`. Agrega `titulo_lanzado.aplicar` en `adopt_process` (`sessions.py`) y en `claim_pid` (`hooks_eventos.py`). `tests/test_titulo_lanzado.py` estaba en rojo en `suite-4.log` y queda en verde.
+
+Verificación:
+- 492 focales antes y después del movimiento.
+- Conjunto final: 748 verdes (`paso2-final.log`).
+- Ruff limpio en todas las rutas.

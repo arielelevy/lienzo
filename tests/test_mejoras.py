@@ -32,7 +32,7 @@ def test_paired_peer_can_query_git_without_local_allowlist(monkeypatch, tmp_path
 
     import remote_run
 
-    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True, stdin=subprocess.DEVNULL)
     subprocess.run(
         [
             "git",
@@ -49,6 +49,7 @@ def test_paired_peer_can_query_git_without_local_allowlist(monkeypatch, tmp_path
         ],
         check=True,
         capture_output=True,
+        stdin=subprocess.DEVNULL,
     )
     monkeypatch.setattr(state, "load_config", lambda: {"launch_roots": [str(tmp_path)]})
     request = {"command": command, "cwd": str(tmp_path)}

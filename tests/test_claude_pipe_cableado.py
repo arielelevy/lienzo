@@ -185,7 +185,7 @@ def test_launch_opt_in_uses_public_settings_not_environment(tmp_path, monkeypatc
     assert "LIENZO_CLAUDE_BRIDGE_SECRET" not in cmd + settings
     closed = []
     monkeypatch.setattr(runtime, "close", closed.append)
-    monkeypatch.setattr(launch, "_launch_cmd", lambda *a: (_ for _ in ()).throw(OSError("failed")))
+    monkeypatch.setattr(launch, "_launch_cmd", lambda *a, **k: (_ for _ in ()).throw(OSError("failed")))
     with pytest.raises(OSError):
         launch.launch(str(tmp_path), "failed", "claude", claude_pipe=True)
     assert closed == [prepared[-1]]
@@ -227,6 +227,6 @@ def test_arbitrary_error_is_not_published_and_launch_limit_is_readable(tmp_path,
     monkeypatch.setattr(launch.agent_improvements, "launch_instructions", lambda *a: ("", []))
     reason = "límite de enlaces Claude alcanzado; cerrá los enlaces sin uso"
     monkeypatch.setattr(runtime, "prepare_launch", lambda sid: (_ for _ in ()).throw(ValueError(reason)))
-    monkeypatch.setattr(launch, "_launch_cmd", lambda *a: pytest.fail("no proceso tras rechazo"))
+    monkeypatch.setattr(launch, "_launch_cmd", lambda *a, **k: pytest.fail("no proceso tras rechazo"))
     result = launch.launch(str(tmp_path), "limit", "claude", claude_pipe=True)
     assert result == {"ok": False, "code": 409, "error": reason}

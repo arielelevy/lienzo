@@ -146,7 +146,7 @@ def test_launch_checks_before_spawning_and_exposes_failure(monkeypatch):
         events.append("check")
         return "sin red"
 
-    def spawn(*args):
+    def spawn(*args, **kwargs):
         events.append("spawn")
         return {"ok": True}
 

@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import captura
 import conocimiento as k
 import conocimiento_api as api
+import hooks_eventos
 import veredictos
 from conocimiento import Rechazo
 
@@ -647,12 +648,14 @@ def enganche(tmp_path, monkeypatch):
 
 
 def test_el_hook_del_pedido_y_el_cierre_de_turno_capturan(enganche):
-    ses, rl, eventos = enganche["ses"], enganche["rl"], enganche["eventos"]
+    rl, eventos = enganche["rl"], enganche["eventos"]
     sid = "aaaa0000-0000-4000-8000-000000000001"
     base = {"session_id": sid, "agent": "claude", "cwd": "D:/Apps/demo"}
-    ses.apply_event({**base, "hook_event_name": "SessionStart"})
-    ses.apply_event({**base, "hook_event_name": "UserPromptSubmit", "prompt": "medí la cola", "prompt_id": "p1"})
-    ses.apply_event({**base, "hook_event_name": "Stop", "last_assistant_message": "la cola tarda 2 ms"})
+    hooks_eventos.apply_event({**base, "hook_event_name": "SessionStart"})
+    hooks_eventos.apply_event(
+        {**base, "hook_event_name": "UserPromptSubmit", "prompt": "medí la cola", "prompt_id": "p1"}
+    )
+    hooks_eventos.apply_event({**base, "hook_event_name": "Stop", "last_assistant_message": "la cola tarda 2 ms"})
     rl.fire_on_stop(sid)  # lo que dispara on_turn_end en su hilo
     tipos = [e["tipo"] for e in eventos]
     assert tipos[0] == "vista" and "pedido" in tipos and tipos[-1] == "respuesta"
@@ -666,7 +669,7 @@ def test_el_envio_del_tablero_lleva_su_origen_y_el_hook_que_vuelve_no_duplica(en
     ses, server, eventos = enganche["ses"], enganche["server"], enganche["eventos"]
     sid = "aaaa0000-0000-4000-8000-000000000002"
     base = {"session_id": sid, "agent": "claude", "cwd": "D:/Apps/demo"}
-    ses.apply_event({**base, "hook_event_name": "SessionStart"})
+    hooks_eventos.apply_event({**base, "hook_event_name": "SessionStart"})
     s = enganche["st"].sessions[sid]
     monkeypatch.setattr(ses, "send_blocked", lambda s: None)
     monkeypatch.setattr(ses, "dialogo_abierto", lambda s: None)
@@ -676,7 +679,7 @@ def test_el_envio_del_tablero_lleva_su_origen_y_el_hook_que_vuelve_no_duplica(en
     envio = next(e for e in eventos if e["tipo"] == "envio")
     assert envio["texto"] == "encargo C" and envio["origen"] == {"de": "coord-1", "kind": "send"}
     # el UserPromptSubmit de lo que tecleo el lienzo no se captura otra vez como pedido
-    ses.apply_event({**base, "hook_event_name": "UserPromptSubmit", "prompt": "encargo C", "prompt_id": "p9"})
+    hooks_eventos.apply_event({**base, "hook_event_name": "UserPromptSubmit", "prompt": "encargo C", "prompt_id": "p9"})
     assert [e["tipo"] for e in eventos].count("pedido") == 0
 
 

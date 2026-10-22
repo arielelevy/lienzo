@@ -103,6 +103,7 @@ def test_launch_rejects_real_windows_junction_escape(tmp_path):
         [os.environ["COMSPEC"], "/d", "/c", "mklink", "/J", str(redirected), str(outside)],
         check=True,
         capture_output=True,
+        stdin=subprocess.DEVNULL,
     )
     try:
         assert redirected.is_junction()

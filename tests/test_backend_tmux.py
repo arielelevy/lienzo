@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # el orden importa: `from lienzo import server` agrega lienzo/ al sys.path (ver test_server.py)
 from lienzo import server  # noqa: F401
 import backend
+import hooks_eventos
 import sessions as ses
 import state as st
 import tmux
@@ -66,7 +67,7 @@ def test_un_hook_de_windows_no_se_lleva_la_tarjeta_de_tmux_con_el_mismo_pid(aisl
     win = ses.new_session("10000000-0000-4000-8000-000000000001", "claude", "hook")
     st.sessions[win["session_id"]] = win
     with st.lock:
-        ses.claim_pid(win, {"pid": PID, "hook_event_name": "SessionStart"})
+        hooks_eventos.claim_pid(win, {"pid": PID, "hook_event_name": "SessionStart"})
     assert st.sessions.get("tmux-4242") is wsl, "la de WSL no es un duplicado de la de Windows"
     assert win["pid"] == PID
 
@@ -152,7 +153,7 @@ def test_la_provisoria_del_barrido_cede_sus_reglas_a_la_sesion_con_hooks(aislado
     real = ses.new_session("10000000-0000-4000-8000-000000000002", "claude", "hook")
     st.sessions[real["session_id"]] = real
     with st.lock:
-        ses.claim_pid(real, {"pid": PID, "hook_event_name": "SessionStart"})
+        hooks_eventos.claim_pid(real, {"pid": PID, "hook_event_name": "SessionStart"})
     assert f"pid-{PID}" not in st.sessions
     assert ses.rules.items[0]["from"] == "10000000-0000-4000-8000-000000000002"
 

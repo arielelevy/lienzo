@@ -19,6 +19,7 @@ from lienzo import server
 import launch
 import mirror
 import restore
+import hooks_eventos
 import sessions as ses
 import state as st
 from test_launch import FakePopen, aislado as aislado_launch, con_roots  # noqa: F401
@@ -68,7 +69,7 @@ def archivo(reg) -> list:
 def test_resume_session_start_preserves_existing_identity_and_active_work(reg, before, expected):
     session = card(reg, agent="codex", pid=42, alive=True, state=before, coordinator=True, copycat_of=UUID2)
     st.sessions[UUID] = session
-    ses.apply_hook(session, {"pid": 42, "session_id": UUID}, "SessionStart", created=False)
+    hooks_eventos.apply_hook(session, {"pid": 42, "session_id": UUID}, "SessionStart", created=False)
     assert session["state"] == expected and session["alive"] is True
     assert session["session_id"] == UUID and session["pid"] == 42
     assert session["coordinator"] and session["copycat_of"] == UUID2
@@ -79,7 +80,7 @@ def test_old_session_start_cannot_revive_dead_pid(reg, monkeypatch):
     st.sessions[UUID] = session
     monkeypatch.setattr(ses.backend, "agent_alive", lambda value: False)
     monkeypatch.setattr(ses, "read_transcript", lambda value: None)
-    ses.apply_event({"hook_event_name": "SessionStart", "session_id": UUID, "agent": "codex", "pid": 42})
+    hooks_eventos.apply_event({"hook_event_name": "SessionStart", "session_id": UUID, "agent": "codex", "pid": 42})
     assert session["alive"] is False and session["state"] == "muerta"
     assert session["pid"] == 41 and session["session_id"] == UUID
 
@@ -209,7 +210,7 @@ def test_drop_session_de_agente_desconocido_no_guarda(reg):
 def test_sessionend_a_proposito_no_queda_restaurable(reg, reason):
     # estaba guardada de forma incremental, viva; el usuario escribe /exit: el SessionEnd la borra
     restore.remember(card(reg), ended=False)
-    ses.apply_event(
+    hooks_eventos.apply_event(
         {
             "hook_event_name": "SessionEnd",
             "session_id": UUID,
@@ -229,14 +230,16 @@ def test_sessionend_other_o_sin_razon_si_queda_restaurable(reg, reason):
     ev = {"hook_event_name": "SessionEnd", "session_id": UUID, "agent": "claude", "cwd": str(reg / "cwd")}
     if reason:
         ev["reason"] = reason
-    ses.apply_event(ev)
+    hooks_eventos.apply_event(ev)
     ses.drop_session(UUID, "muerta hace mas de 60 s", muerta=True)
     assert [e["session_id"] for e in restore.restorables()] == [UUID]
 
 
 def test_sessionstart_limpia_la_razon_de_la_vida_anterior(reg):
-    ses.apply_event({"hook_event_name": "SessionEnd", "session_id": UUID, "agent": "claude", "reason": "exit"})
-    ses.apply_event({"hook_event_name": "SessionStart", "session_id": UUID, "agent": "claude"})
+    hooks_eventos.apply_event(
+        {"hook_event_name": "SessionEnd", "session_id": UUID, "agent": "claude", "reason": "exit"}
+    )
+    hooks_eventos.apply_event({"hook_event_name": "SessionStart", "session_id": UUID, "agent": "claude"})
     assert st.sessions[UUID]["end_reason"] is None
 
 

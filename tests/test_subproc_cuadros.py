@@ -29,6 +29,7 @@ def test_hijo_hereda_el_modo_sin_cuadros():
         capture_output=True,
         text=True,
         timeout=60,
+        stdin=subprocess.DEVNULL,
     )
     assert r.returncode == 0, r.stderr
     propio, hijo = (int(x) for x in r.stdout.split())

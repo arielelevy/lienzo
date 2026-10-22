@@ -4,6 +4,7 @@ reglas; una sesion personal no cambia."""
 
 import datetime as dt
 
+import hooks_eventos
 import procinfo
 import procs
 import pytest
@@ -63,7 +64,7 @@ def test_claim_pid_marca_externa_y_sin_consola(monkeypatch):
     )
     monkeypatch.setattr(backend, "is_tui", lambda d: True)
     s = sessions.new_session("aaaa", "claude", "hook")
-    sessions.claim_pid(s, {"pid": 99, "agent_exe": "claude.exe"})
+    hooks_eventos.claim_pid(s, {"pid": 99, "agent_exe": "claude.exe"})
     assert s["external"]["kind"] == "orquestador" and s["no_console"] is True
 
 
@@ -73,7 +74,7 @@ def test_claim_pid_de_una_sesion_personal_no_cambia(monkeypatch):
     monkeypatch.setattr(backend, "external_origin", lambda d: None)
     monkeypatch.setattr(backend, "is_tui", lambda d: True)
     s = sessions.new_session("bbbb", "claude", "hook")
-    sessions.claim_pid(s, {"pid": 98, "agent_exe": "claude.exe"})
+    hooks_eventos.claim_pid(s, {"pid": 98, "agent_exe": "claude.exe"})
     assert s["external"] is None and s["no_console"] is False
 
 
@@ -84,12 +85,12 @@ def test_retomar_en_terminal_propia_vuelve_personal(monkeypatch):
     monkeypatch.setattr(backend, "external_origin", lambda d: origen["v"])
     monkeypatch.setattr(backend, "is_tui", lambda d: origen["v"] is None)
     s = sessions.new_session("cccc", "claude", "hook")
-    sessions.claim_pid(s, {"pid": 500, "agent_exe": "claude.exe"})
+    hooks_eventos.claim_pid(s, {"pid": 500, "agent_exe": "claude.exe"})
     assert s["external"]["kind"] == "orquestador"
     origen["v"] = None  # el mismo proceso: la marca (de un plugin o del arbol) se conserva
-    sessions.claim_pid(s, {"pid": 500, "agent_exe": "claude.exe"})
+    hooks_eventos.claim_pid(s, {"pid": 500, "agent_exe": "claude.exe"})
     assert s["external"] is not None
-    sessions.claim_pid(s, {"pid": 501, "agent_exe": "claude.exe"})  # `claude --resume` en una terminal
+    hooks_eventos.claim_pid(s, {"pid": 501, "agent_exe": "claude.exe"})  # `claude --resume` en una terminal
     assert s["external"] is None and s["no_console"] is False
 
 

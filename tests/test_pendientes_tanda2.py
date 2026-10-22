@@ -91,7 +91,7 @@ def test_compose_send_tipea_la_ruta_de_wsl_y_guarda_la_de_windows(monkeypatch, t
 
 
 def test_lanzar_coda_con_modelo_avisa_que_cambia_el_default(monkeypatch, tmp_path):
-    monkeypatch.setattr(launch, "_launch_cmd", lambda *a: {"ok": True})
+    monkeypatch.setattr(launch, "_launch_cmd", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(launch, "_launch_tmux", lambda *a: {"ok": True})
     monkeypatch.setattr(launch, "_exe_path", lambda name: "coda.exe")
     monkeypatch.setattr(launch, "_cuota_coda", lambda: "ok")

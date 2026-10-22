@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # sys.path y engancha rules a sessions; recien despues se pueden importar los modulos sueltos.
 from lienzo import server
 import rules as rl
+import hooks_eventos
 import sessions as ses
 import state as st
 
@@ -65,34 +66,34 @@ def ev(name: str, **k) -> dict:
 
 
 def test_stop_tardio_del_pedido_anterior_no_pisa_el_corriendo(aislado):
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="primero", host_ts=local(-60)))
-    ses.apply_event(ev("Stop", prompt_id="A", last_assistant_message="listo el primero", host_ts=local(-30)))
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="primero", host_ts=local(-60)))
+    hooks_eventos.apply_event(ev("Stop", prompt_id="A", last_assistant_message="listo el primero", host_ts=local(-30)))
     s = st.sessions[SID]
     assert s["state"] == "termino" and s["last_reply"] == "listo el primero"
 
     # el segundo pedido estaba encolado: Claude Code lo arranca 60 ms despues del turn_duration y
     # los dos hooks (async) corren juntos; el UserPromptSubmit de B queda escrito antes que el Stop de A
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="segundo", host_ts=local(0.2)))
-    ses.apply_event(ev("Stop", prompt_id="A", last_assistant_message="listo el primero", host_ts=local(0.3)))
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="segundo", host_ts=local(0.2)))
+    hooks_eventos.apply_event(ev("Stop", prompt_id="A", last_assistant_message="listo el primero", host_ts=local(0.3)))
     assert s["state"] == "corriendo", "el Stop del pedido A no debe cerrar el turno del pedido B"
     assert s["last_prompt"] == "segundo"
 
     # el Stop del propio pedido si cierra
-    ses.apply_event(ev("Stop", prompt_id="B", last_assistant_message="listo el segundo", host_ts=local(40)))
+    hooks_eventos.apply_event(ev("Stop", prompt_id="B", last_assistant_message="listo el segundo", host_ts=local(40)))
     assert s["state"] == "termino" and s["last_reply"] == "listo el segundo"
 
 
 def test_stop_lejano_con_otro_prompt_id_si_cierra(aislado):
     # un Stop con prompt_id distinto pero lejos del ultimo UserPromptSubmit no es "tardio": es un
     # turno que arranco sin hook (aviso de tarea en segundo plano, por ejemplo) y termino
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="uno", host_ts=local(-60)))
-    ses.apply_event(ev("Stop", prompt_id="Z", host_ts=local(-20)))
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="uno", host_ts=local(-60)))
+    hooks_eventos.apply_event(ev("Stop", prompt_id="Z", host_ts=local(-20)))
     assert st.sessions[SID]["state"] == "termino"
 
 
 def test_stop_sin_prompt_id_cierra_como_siempre(aislado):
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="uno", host_ts=local(-60)))
-    ses.apply_event(ev("Stop", host_ts=local(-59.9)))
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="uno", host_ts=local(-60)))
+    hooks_eventos.apply_event(ev("Stop", host_ts=local(-59.9)))
     assert st.sessions[SID]["state"] == "termino"
 
 
@@ -248,7 +249,7 @@ def test_contestada_en_la_terminal_la_tarjeta_vuelve_a_corriendo(aislado, monkey
     s["pending_id"] = "req-9"
     with open(aislado / "req-9.json", "w", encoding="utf-8") as f:
         f.write("{}")
-    ses.apply_event(ev("PermissionTimeout", host_ts=local(60)))  # el cierre que manda el hook al vencer
+    hooks_eventos.apply_event(ev("PermissionTimeout", host_ts=local(60)))  # el cierre que manda el hook al vencer
     assert s["state"] == "te_necesita", "el timeout no contesta nada: solo dice donde hay que contestar"
     s["pending_id"] = "req-9"  # PermissionTimeout ya lo limpia; aca se mide el borrado del archivo
     ses.refresh_from_transcript(s)
@@ -391,11 +392,11 @@ def evp(name: str, sid: str, **k) -> dict:
 def sesion_vieja(aislado):
     tp_old = str(aislado / f"{OLD}.jsonl")
     open(tp_old, "w").close()
-    ses.apply_event(evp("SessionStart", OLD, transcript_path=tp_old, host_ts=local(-600)))
-    ses.apply_event(
+    hooks_eventos.apply_event(evp("SessionStart", OLD, transcript_path=tp_old, host_ts=local(-600)))
+    hooks_eventos.apply_event(
         evp("UserPromptSubmit", OLD, prompt_id="A", prompt="hace algo", transcript_path=tp_old, host_ts=local(-500))
     )
-    ses.apply_event(
+    hooks_eventos.apply_event(
         evp("Stop", OLD, prompt_id="A", last_assistant_message="hecho", transcript_path=tp_old, host_ts=local(-400))
     )
     old = st.sessions[OLD]
@@ -437,11 +438,11 @@ def sesion_vieja(aislado):
 def test_clear_la_sesion_nueva_hereda_pid_reglas_y_links(aislado, con_pid):
     logs = con_pid
     sesion_vieja(aislado)
-    ses.apply_event(evp("SessionEnd", OLD, reason="clear", host_ts=local(-10)))
+    hooks_eventos.apply_event(evp("SessionEnd", OLD, reason="clear", host_ts=local(-10)))
     assert st.sessions[OLD]["state"] == "muerta"
 
     tp_new = str(aislado / f"{NEW}.jsonl")
-    ses.apply_event(evp("SessionStart", NEW, source="clear", transcript_path=tp_new, host_ts=local(-9.9)))
+    hooks_eventos.apply_event(evp("SessionStart", NEW, source="clear", transcript_path=tp_new, host_ts=local(-9.9)))
     assert OLD not in st.sessions, "la vieja se da de baja"
     new = st.sessions[NEW]
     assert new["pid"] == PID and new["no_console"] is False
@@ -452,10 +453,10 @@ def test_clear_la_sesion_nueva_hereda_pid_reglas_y_links(aislado, con_pid):
     assert not os.path.exists(os.path.join(st.SESSIONS, f"{OLD}.json"))
 
     # y la nueva sigue recibiendo sus eventos con normalidad
-    ses.apply_event(
+    hooks_eventos.apply_event(
         evp("UserPromptSubmit", NEW, prompt_id="B", prompt="segui", transcript_path=tp_new, host_ts=local(0))
     )
-    ses.apply_event(
+    hooks_eventos.apply_event(
         evp("Stop", NEW, prompt_id="B", last_assistant_message="listo", transcript_path=tp_new, host_ts=local(30))
     )
     assert new["state"] == "termino"
@@ -466,7 +467,7 @@ def test_sin_session_end_pero_con_transcripcion_propia_tambien_continua(aislado,
     sesion_vieja(aislado)
     tp_new = str(aislado / f"{NEW}.jsonl")
     open(tp_new, "w").close()
-    ses.apply_event(
+    hooks_eventos.apply_event(
         evp("UserPromptSubmit", NEW, prompt_id="B", prompt="hola", transcript_path=tp_new, host_ts=local(0))
     )
     assert OLD not in st.sessions
@@ -480,7 +481,7 @@ def test_prueba_manual_del_hook_no_roba_el_pid(aislado, con_pid):
     # session_id inventado, mismo pid, sin SessionEnd previo y sin transcripcion propia (o con una
     # que no existe): la duena sigue viva y se queda con el pid y con sus reglas
     for tp in (None, str(aislado / "no-existe.jsonl"), old["transcript_path"]):
-        ses.apply_event(
+        hooks_eventos.apply_event(
             evp(
                 "UserPromptSubmit",
                 NEW,
@@ -506,7 +507,7 @@ def test_state_nunca_queda_en_none(aislado, monkeypatch):
     # tarjeta guardada con el estado roto: apply_event la normaliza antes de tocarla
     s["state"] = None
     st.sessions[SID] = s
-    ses.apply_event(ev("Notification", notification_type="tool_use", host_ts=local(0)))
+    hooks_eventos.apply_event(ev("Notification", notification_type="tool_use", host_ts=local(0)))
     assert s["state"] in st.STATES
     # set_state rechaza valores fuera del contrato
     ses.set_state(s, "corriendo")
@@ -539,7 +540,6 @@ class _Run:
 
 def test_send_cuenta_y_muestra_el_mensaje_real(aislado, monkeypatch):
     monkeypatch.setattr(ses.backend, "agent_alive", lambda pid: True)
-    monkeypatch.setattr(st, "ADJUNTOS", str(aislado / "adjuntos"))
     monkeypatch.setattr(ses, "ADJUNTOS", str(aislado / "adjuntos"))
     typed = []
     monkeypatch.setattr(
@@ -711,7 +711,7 @@ def test_titulo_del_adjunto_le_gana_al_ai_title(aislado):
     assert s["last_prompt"].startswith("# Encargo B"), "la tarjeta muestra el contenido, no el envoltorio"
     assert s["last_attachment"] == str(md)
     # el hook real: UserPromptSubmit con el envoltorio, y despues el ai-title de la transcripcion no lo pisa
-    ses.apply_event(
+    hooks_eventos.apply_event(
         ev("UserPromptSubmit", prompt_id="A", prompt=f"{ses.ATTACH_WRAPPER} Adjunto: {md}", host_ts=local(0))
     )
     assert s["title"] == "Encargo B: tarjetas y flechas de la fase 2"
@@ -747,10 +747,12 @@ def test_lo_tipeado_en_la_terminal_no_renombra_la_tarjeta(aislado):
     s = ses.new_session(SID, "claude", "hook")
     st.sessions[SID] = s
     # la tarjeta todavia no tiene nombre: el primer pedido tipeado se lo pone (poner no es cambiar)
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="arrancamos con el tablero", host_ts=local(0)))
+    hooks_eventos.apply_event(
+        ev("UserPromptSubmit", prompt_id="A", prompt="arrancamos con el tablero", host_ts=local(0))
+    )
     assert (s["title"], s["title_source"], s["prompt_via"]) == ("arrancamos con el tablero", "prompt", "terminal")
     # ya nombrada: lo que se tipea despues se ve en la tarjeta, pero no la renombra
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="proba de nuevo", host_ts=local(10)))
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="proba de nuevo", host_ts=local(10)))
     assert s["title"] == "arrancamos con el tablero" and s["last_prompt"] == "proba de nuevo"
     ses.choose_title(s, None)  # el refresco de la transcripcion tampoco
     assert s["title"] == "arrancamos con el tablero"
@@ -765,10 +767,12 @@ def test_el_encargo_que_manda_el_lienzo_si_renombra_la_tarjeta(aislado, monkeypa
     code, _ = ses.send_to_session(s, "Encargo R2: revisar el backend", [])
     assert code == 200 and s["prompt_via"] == "lienzo"
     # el hook del mismo texto se reconoce como encargo, no como algo tipeado
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="C", prompt="Encargo R2: revisar el backend", host_ts=local(0)))
+    hooks_eventos.apply_event(
+        ev("UserPromptSubmit", prompt_id="C", prompt="Encargo R2: revisar el backend", host_ts=local(0))
+    )
     assert (s["title"], s["prompt_via"], s["sent_mark"]) == ("Encargo R2: revisar el backend", "lienzo", None)
     # y el siguiente pedido, tipeado en la terminal, ya no lo pisa
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="D", prompt="dale, segui", host_ts=local(10)))
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="D", prompt="dale, segui", host_ts=local(10)))
     assert s["title"] == "Encargo R2: revisar el backend" and s["prompt_via"] == "terminal"
 
 
@@ -777,25 +781,29 @@ def test_idle_prompt_solo_es_te_necesita_con_pregunta_o_sin_pedido(aislado):
         "Notification", notification_type="idle_prompt", message="Claude is waiting for your input", host_ts=local(60)
     )
     # informe entregado sin pregunta: queda en termino, sin needs
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="hace X", host_ts=local(-60)))
-    ses.apply_event(ev("Stop", prompt_id="A", last_assistant_message="Listo, quedó en X.", host_ts=local(0)))
-    ses.apply_event(idle)
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="A", prompt="hace X", host_ts=local(-60)))
+    hooks_eventos.apply_event(ev("Stop", prompt_id="A", last_assistant_message="Listo, quedó en X.", host_ts=local(0)))
+    hooks_eventos.apply_event(idle)
     s = st.sessions[SID]
     assert s["state"] == "termino" and s["needs"] is None
     # la respuesta termina en pregunta: si te necesita
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="hace Y", host_ts=local(10)))
-    ses.apply_event(ev("Stop", prompt_id="B", last_assistant_message="Hice Y. ¿Sigo con Z?", host_ts=local(20)))
-    ses.apply_event(idle)
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="B", prompt="hace Y", host_ts=local(10)))
+    hooks_eventos.apply_event(
+        ev("Stop", prompt_id="B", last_assistant_message="Hice Y. ¿Sigo con Z?", host_ts=local(20))
+    )
+    hooks_eventos.apply_event(idle)
     assert s["state"] == "te_necesita" and s["needs"]["kind"] == "idle"
     # tarjeta libre, nunca tuvo pedido: te_necesita/idle como hoy (para "Darle trabajo")
     st.sessions.clear()
-    ses.apply_event(ev("SessionStart", host_ts=local(0)))
-    ses.apply_event(idle)
+    hooks_eventos.apply_event(ev("SessionStart", host_ts=local(0)))
+    hooks_eventos.apply_event(idle)
     s = st.sessions[SID]
     assert s["state"] == "te_necesita" and s["needs"]["kind"] == "idle"
     # permission_prompt no cambia
-    ses.apply_event(ev("UserPromptSubmit", prompt_id="C", prompt="hace W", host_ts=local(30)))
-    ses.apply_event(ev("Notification", notification_type="permission_prompt", message="Bash", host_ts=local(31)))
+    hooks_eventos.apply_event(ev("UserPromptSubmit", prompt_id="C", prompt="hace W", host_ts=local(30)))
+    hooks_eventos.apply_event(
+        ev("Notification", notification_type="permission_prompt", message="Bash", host_ts=local(31))
+    )
     assert s["state"] == "te_necesita" and s["needs"]["kind"] == "permission"
 
 
@@ -858,9 +866,9 @@ def test_coordinadora_una_por_repo(aislado, con_pid):
 def test_coordinadora_se_hereda_con_el_pid(aislado, con_pid):
     old = sesion_vieja(aislado)
     old["coordinator"] = True
-    ses.apply_event(evp("SessionEnd", OLD, reason="clear", host_ts=local(-10)))
+    hooks_eventos.apply_event(evp("SessionEnd", OLD, reason="clear", host_ts=local(-10)))
     tp_new = str(aislado / f"{NEW}.jsonl")
-    ses.apply_event(evp("SessionStart", NEW, source="clear", transcript_path=tp_new, host_ts=local(-9.9)))
+    hooks_eventos.apply_event(evp("SessionStart", NEW, source="clear", transcript_path=tp_new, host_ts=local(-9.9)))
     assert st.sessions[NEW]["coordinator"] is True
 
 
@@ -1171,8 +1179,8 @@ def test_dos_hilos_sobre_la_misma_tarjeta_no_la_dejan_en_un_estado_imposible(ais
 
     def hooks():
         for _ in range(rondas):
-            ses.apply_event(ev("PermissionRequest", tool_name="Bash", tool_use_id="t1", host_ts=local(0)))
-            ses.apply_event(ev("PermissionDecision", host_ts=local(1)))
+            hooks_eventos.apply_event(ev("PermissionRequest", tool_name="Bash", tool_use_id="t1", host_ts=local(0)))
+            hooks_eventos.apply_event(ev("PermissionDecision", host_ts=local(1)))
         parar.set()
 
     def liveness():
@@ -1716,7 +1724,9 @@ def test_la_marca_de_detenida_se_levanta_con_el_pedido_siguiente(aislado, monkey
     origen, copia, typed = _traspaso(monkeypatch)
     ses.hand_over(copia, origen)
     assert origen["stopped_by"] == SID
-    ses.apply_event(evp("UserPromptSubmit", OLD, prompt_id="Z", prompt="seguí vos igual", transcript_path=None))
+    hooks_eventos.apply_event(
+        evp("UserPromptSubmit", OLD, prompt_id="Z", prompt="seguí vos igual", transcript_path=None)
+    )
     assert origen["stopped_by"] is None and origen["state"] == "corriendo"
 
 

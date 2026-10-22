@@ -6,9 +6,11 @@ from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
+import agentes
 
 # El fixture existente inicializa los modulos del servidor y aisla el estado en tmp.
+import hooks_eventos
+import pytest
 from test_server import aislado, server, ses, st  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("aislado")
@@ -100,7 +102,7 @@ def test_cross_agent_text_transport(monkeypatch, origin, target):
     assert typed == [text]
     # 'corriendo' lo confirma el agente (2026-10-14): hasta su UserPromptSubmit, el envio queda pendiente
     assert s["state"] == "termino" and s["envio_pendiente"]
-    ses.hook_prompt_submit(s, {"prompt": text})
+    hooks_eventos.hook_prompt_submit(s, {"prompt": text})
     assert s["state"] == "corriendo" and s["envio_pendiente"] is None and s["prompt_via"] == "lienzo"
 
 
@@ -117,7 +119,7 @@ def test_pi_only_settled_event_closes_turn(monkeypatch):
     sid = "pi-lifecycle"
 
     def event(name, **extra):
-        ses.apply_event({"agent": "pi", "session_id": sid, "hook_event_name": name, **extra})
+        hooks_eventos.apply_event({"agent": "pi", "session_id": sid, "hook_event_name": name, **extra})
 
     event("SessionStart", pi_idle=True)
     event("PiBusy")
@@ -150,7 +152,7 @@ def test_pi_reload_binds_exact_log_and_replaces_sweep_card(tmp_path, monkeypatch
             message("a", "u", "assistant", text("Respuesta del log"), stopReason="stop"),
         ],
     )
-    ses.apply_event(
+    hooks_eventos.apply_event(
         {
             "agent": "pi",
             "session_id": "pi-session",
@@ -251,7 +253,8 @@ def test_pi_shared_project_never_guesses_by_activity(monkeypatch):
         "sweep",
         lambda: [{"pid": pid, "agent": "pi", "exe": "node.exe", "created": st.now()} for pid in (42, 43)],
     )
-    monkeypatch.setattr(ses, "guess_pi", lambda *args: pytest.fail("dos Pi en un cwd: identidad ambigua"))
+    # agentes.guess_transcript llama a guess_pi; sessions solo lo reexporta
+    monkeypatch.setattr(agentes, "guess_pi", lambda *args: pytest.fail("dos Pi en un cwd: identidad ambigua"))
     ses.sweep_once()
     assert len(st.sessions) == 2
     assert all(s["transcript_path"] is None for s in st.sessions.values())
@@ -279,7 +282,9 @@ def test_event_from_dead_process_does_not_make_an_immortal_card(monkeypatch, nam
     # toca las tarjetas sin pid: no se moria nunca y habia que borrarla a mano
     monkeypatch.setattr(ses.backend._win, "agent_alive", lambda pid: False)
     sid = "pi-muerto"
-    ses.apply_event({"agent": "pi", "session_id": sid, "hook_event_name": name, "pid": 4242, "cwd": "D:/Apps/chess"})
+    hooks_eventos.apply_event(
+        {"agent": "pi", "session_id": sid, "hook_event_name": name, "pid": 4242, "cwd": "D:/Apps/chess"}
+    )
     s = st.sessions[sid]
     assert s["alive"] is False
     assert s["state"] == "muerta"
@@ -295,6 +300,6 @@ def test_event_from_dead_pid_does_not_kill_a_card_whose_own_process_lives(monkey
     s = ses.new_session(sid, "pi", "hook")
     s.update(pid=7, alive=True)
     st.sessions[sid] = s
-    ses.apply_event({"agent": "pi", "session_id": sid, "hook_event_name": "PiMetadata", "pid": 4242})
+    hooks_eventos.apply_event({"agent": "pi", "session_id": sid, "hook_event_name": "PiMetadata", "pid": 4242})
     assert s["alive"] is True
     assert s["state"] != "muerta"

@@ -22,7 +22,7 @@ def check(cond: bool, msg: str) -> None:
 
 
 def sh(*a: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["tmux", *a], capture_output=True, text=True)
+    return subprocess.run(["tmux", *a], capture_output=True, text=True, stdin=subprocess.DEVNULL)
 
 
 try:

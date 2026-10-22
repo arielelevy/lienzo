@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ruff: noqa: I001
 from lienzo import server  # noqa: F401  (agrega lienzo/ al sys.path y engancha los modulos)
 import hook
+import hooks_eventos
 import sessions as ses
 import state as st
 
@@ -157,7 +158,7 @@ def test_la_tarjeta_dice_pregunta_y_no_permiso(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "broadcast", lambda ev: None)
     monkeypatch.setattr(st, "log", lambda msg: None)
     st.sessions.clear()
-    ses.apply_event(dict(PEDIDO))
+    hooks_eventos.apply_event(dict(PEDIDO))
     needs = st.sessions[SID]["needs"]
     assert st.sessions[SID]["state"] == "te_necesita"
     assert needs["kind"] == "question"
@@ -172,7 +173,9 @@ def test_un_posttooluse_sin_id_no_borra_la_pregunta(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "broadcast", lambda ev: None)
     monkeypatch.setattr(st, "log", lambda msg: None)
     st.sessions.clear()
-    ses.apply_event(dict(PEDIDO))
-    ses.apply_event({"hook_event_name": "PostToolUse", "session_id": SID, "agent": "claude", "tool_use_id": None})
+    hooks_eventos.apply_event(dict(PEDIDO))
+    hooks_eventos.apply_event(
+        {"hook_event_name": "PostToolUse", "session_id": SID, "agent": "claude", "tool_use_id": None}
+    )
     assert st.sessions[SID]["state"] == "te_necesita"
     st.sessions.clear()

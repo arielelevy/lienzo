@@ -20,6 +20,7 @@ import captura
 import conocimiento
 import consulta
 import entregas_informes as informes
+import hooks_eventos
 import identity
 import rondas
 import sessions as ses
@@ -778,7 +779,7 @@ def _evaluar_on_stop(sid: str, cerrada: dict) -> None:
     with lock:
         s = sessions.get(sid)
         if s and any(suya(r) for r in rules.items):
-            if ses.compacting(s):
+            if hooks_eventos.compacting(s):
                 state.log(f"on_stop de {sid[:8]} no disparado: la sesion esta compactando")
                 return
             if s.get("last_error"):

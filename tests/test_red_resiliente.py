@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lienzo import server
 import federation as fed
 import mirror
+import hooks_eventos
 import sessions as ses
 import state as st
 
@@ -91,15 +92,15 @@ def _ev(name: str, **k) -> dict:
 
 def test_consola_trabada_no_deja_sin_respuesta_a_sessions(server_local, monkeypatch):
     """El camino exacto de las 14:57:33: un Notification idle_prompt que se loguea con `lock`
-    tomado (sessions.hook_notification) mientras la consola no acepta texto. Antes, ese hilo se
+    tomado (hooks_eventos.hook_notification) mientras la consola no acepta texto. Antes, ese hilo se
     quedaba en el print con el lock en la mano y GET /sessions no contestaba nunca."""
     consola = ConsolaTrabada()
     monkeypatch.setattr(sys, "stdout", consola)
     try:
-        ses.apply_event(_ev("UserPromptSubmit", prompt_id="A", prompt="hace algo"))
-        ses.apply_event(_ev("Stop", prompt_id="A", last_assistant_message="listo, quedo hecho."))
+        hooks_eventos.apply_event(_ev("UserPromptSubmit", prompt_id="A", prompt="hace algo"))
+        hooks_eventos.apply_event(_ev("Stop", prompt_id="A", last_assistant_message="listo, quedo hecho."))
         hook = threading.Thread(
-            target=ses.apply_event, args=(_ev("Notification", notification_type="idle_prompt"),), daemon=True
+            target=hooks_eventos.apply_event, args=(_ev("Notification", notification_type="idle_prompt"),), daemon=True
         )
         hook.start()
         time.sleep(0.5)

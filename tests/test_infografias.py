@@ -42,6 +42,7 @@ def _build(tmp_path: Path, *args: str, skill: Path = SKILL, env: dict | None = N
         encoding="utf-8",
         env=entorno,
         timeout=timeout,
+        stdin=subprocess.DEVNULL,
     )
 
 

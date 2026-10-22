@@ -7,6 +7,7 @@ import datetime as dt
 import hashlib
 import json
 
+import hooks_eventos
 import pytest
 import sessions as ses
 import transcripts
@@ -43,11 +44,11 @@ def card(monkeypatch):
 
 def test_later_confirmed_delivery_clears_only_stale_notice_without_claiming_turn_end(card):
     receipt = copy.deepcopy(card["envio_codex"])
-    assert ses.clear_stale_send_notice(card) is True
+    assert hooks_eventos.clear_stale_send_notice(card) is True
     assert card["needs"] is None
     assert card["envio_codex"] == receipt
     assert card["state"] == "te_necesita"  # a receipt alone is not proof of the execution phase
-    assert ses.clear_stale_send_notice(card) is False
+    assert hooks_eventos.clear_stale_send_notice(card) is False
 
 
 def test_missing_transcript_explains_uncertainty_without_changing_receipt(card):
@@ -75,7 +76,7 @@ def test_missing_transcript_does_not_relabel_other_notices(card, agent, path, ki
 def test_reported_card_uses_notice_offset_and_original_send_timestamp(card):
     card["needs"]["since"] = "2026-10-18T11:47:43.553-03:00"
     card["envio_codex"].update(envio_id="df66b2f1382606928efebdf4", at=1792334976.2462003)
-    assert ses.clear_stale_send_notice(card) is True
+    assert hooks_eventos.clear_stale_send_notice(card) is True
     assert card["needs"] is None
 
 
@@ -83,7 +84,7 @@ def test_reported_card_uses_notice_offset_and_original_send_timestamp(card):
 def test_dead_or_non_codex_card_is_not_changed(card, changes):
     card.update(changes)
     before = copy.deepcopy(card)
-    assert ses.clear_stale_send_notice(card) is False
+    assert hooks_eventos.clear_stale_send_notice(card) is False
     assert card == before
 
 
@@ -91,14 +92,14 @@ def test_dead_or_non_codex_card_is_not_changed(card, changes):
 def test_real_permission_or_question_is_preserved(card, kind):
     card["needs"]["kind"] = kind
     before = copy.deepcopy(card)
-    assert ses.clear_stale_send_notice(card) is False
+    assert hooks_eventos.clear_stale_send_notice(card) is False
     assert card == before
 
 
 def test_pending_permission_is_preserved_even_if_notice_shape_is_stale(card):
     card["pending_id"] = "actual-permission"
     before = copy.deepcopy(card)
-    assert ses.clear_stale_send_notice(card) is False
+    assert hooks_eventos.clear_stale_send_notice(card) is False
     assert card == before
 
 
@@ -106,7 +107,7 @@ def test_pending_permission_is_preserved_even_if_notice_shape_is_stale(card):
 def test_failure_newer_than_or_equal_to_receipt_is_preserved(card, sent_at):
     card["envio_codex"]["at"] = sent_at
     before = copy.deepcopy(card)
-    assert ses.clear_stale_send_notice(card) is False
+    assert hooks_eventos.clear_stale_send_notice(card) is False
     assert card == before
 
 
@@ -128,14 +129,14 @@ def test_failure_newer_than_or_equal_to_receipt_is_preserved(card, sent_at):
 def test_uncertain_or_invalid_receipt_does_not_clear_notice(card, changes):
     card["envio_codex"].update(changes)
     notice = copy.deepcopy(card["needs"])
-    assert ses.clear_stale_send_notice(card) is False
+    assert hooks_eventos.clear_stale_send_notice(card) is False
     assert card["needs"] == notice
 
 
 @pytest.mark.parametrize("since", [None, "invalid"])
 def test_notice_without_valid_time_is_preserved(card, since):
     card["needs"]["since"] = since
-    assert ses.clear_stale_send_notice(card) is False
+    assert hooks_eventos.clear_stale_send_notice(card) is False
     assert card["needs"] is not None
 
 
@@ -184,25 +185,27 @@ def test_later_user_input_clears_old_notice_without_confirming_unmatched_send(ca
 @pytest.mark.parametrize("entered", [None, "invalid", iso(99), iso(100)])
 def test_old_or_unverifiable_input_does_not_clear_unconfirmed_notice(card, entered):
     card["envio_codex"].update(estado="sin_confirmacion", confirmacion_final=False)
-    assert not ses.clear_stale_send_notice(card, {"prompt": "pedido", "prompt_ts": entered, "ts_start": iso(120)})
+    assert not hooks_eventos.clear_stale_send_notice(
+        card, {"prompt": "pedido", "prompt_ts": entered, "ts_start": iso(120)}
+    )
     assert card["needs"]["kind"] == "sin_enviar"
 
 
 @pytest.mark.parametrize("prompt", ["", "(turno anterior al corte)", "<system-reminder>recordatorio</system-reminder>"])
 def test_background_or_missing_prompt_does_not_clear_notice(card, prompt):
     card["envio_codex"].update(estado="sin_confirmacion", confirmacion_final=False)
-    assert not ses.clear_stale_send_notice(card, {"prompt": prompt, "prompt_ts": iso(120)})
+    assert not hooks_eventos.clear_stale_send_notice(card, {"prompt": prompt, "prompt_ts": iso(120)})
 
 
 @pytest.mark.parametrize("kind", ["permission", "question", "denied", "idle"])
 def test_later_input_does_not_clear_a_different_kind_of_notice(card, kind):
     card["needs"]["kind"] = kind
-    assert not ses.clear_stale_send_notice(card, {"prompt": "nuevo pedido", "prompt_ts": iso(120)})
+    assert not hooks_eventos.clear_stale_send_notice(card, {"prompt": "nuevo pedido", "prompt_ts": iso(120)})
 
 
 def test_later_input_does_not_clear_pending_permission(card):
     card["pending_id"] = "permission-still-open"
-    assert not ses.clear_stale_send_notice(card, {"prompt": "nuevo pedido", "prompt_ts": iso(120)})
+    assert not hooks_eventos.clear_stale_send_notice(card, {"prompt": "nuevo pedido", "prompt_ts": iso(120)})
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -257,7 +260,7 @@ def test_unconfirmed_send_after_later_input_never_recreates_enter_warning(card):
         envio_pendiente={"at": 110},
     )
     card["envio_codex"].update(estado="encolado", confirmacion_final=False)
-    assert ses.envio_sin_confirmar(card, 200) is True
+    assert hooks_eventos.envio_sin_confirmar(card, 200) is True
     assert card["needs"] is None and card["state"] == "termino"
     assert card["envio_codex"]["estado"] == "sin_confirmacion"
     assert card["envio_codex"]["confirmacion_final"] is False
@@ -269,14 +272,14 @@ def test_old_send_timeout_never_replaces_a_real_blocking_notice(card, kind):
     card.update(state_since=iso(100), sent_mark="unmatched", envio_pendiente={"at": 110})
     card["needs"]["kind"] = kind
     before = copy.deepcopy(card)
-    assert ses.envio_sin_confirmar(card, 200) is False
+    assert hooks_eventos.envio_sin_confirmar(card, 200) is False
     assert card == before
 
 
 def test_old_send_timeout_never_replaces_a_pending_permission(card):
     card.update(state_since=iso(100), sent_mark="unmatched", envio_pendiente={"at": 110}, pending_id="still-open")
     before = copy.deepcopy(card)
-    assert ses.envio_sin_confirmar(card, 200) is False
+    assert hooks_eventos.envio_sin_confirmar(card, 200) is False
     assert card == before
 
 
