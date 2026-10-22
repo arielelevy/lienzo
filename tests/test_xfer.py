@@ -8,10 +8,12 @@ vuelve a pedir, un archivo que cambia en el origen mientras viaja, una ruta fuer
 una firma vieja."""
 
 import contextlib
+import fnmatch
 import hashlib
 import http.client
 import json
 import os
+import re
 import secrets
 import socket
 import subprocess
@@ -34,6 +36,12 @@ import xfer
 
 MIB = 1024 * 1024
 PC_ORIGEN = "a1a1a1a1a1a1"
+
+# La distro se apaga sola a los ~30 s sin uso y el primer acceso UNC la vuelve a levantar; ese
+# arranque corre `systemd-tmpfiles --remove --boot` y la regla `D /tmp` vacía /tmp con la prueba
+# en curso (cierre 409 con ceros, WinError 2). Medido el 2026-10-21 (noche) en .temp/resultados/noche-A.
+WSL_BASE_LINUX = "/var/tmp"
+WSL_BASE = "\\\\wsl.localhost\\Ubuntu" + WSL_BASE_LINUX.replace("/", "\\")
 
 
 def _puerto_libre() -> int:
@@ -818,6 +826,64 @@ def test_junction_cambiada_antes_de_abrir_parte_no_altera_victima(canal, tmp_pat
     assert code == 200 if blocked else code in (400, 403), response
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="junction nativa de Windows")
+@pytest.mark.parametrize("punto", ["unir", "permitido"])
+def test_espejo_no_borra_por_junction_puesta_tras_validar(canal, tmp_path, monkeypatch, punto):
+    """El borrado del espejo validaba la ruta y después borraba por nombre: una junction puesta en
+    el medio llevaba el borrado afuera del destino. `punto` es la última validación por ruta antes
+    de la sustitución; después de `permitido` sólo quedan los handles fijados."""
+    folder = canal["destino"] / "sub"
+    folder.mkdir()
+    (folder / "a.bin").write_bytes(b"del destino")
+    outside = tmp_path / "exterior-espejo"
+    outside.mkdir()
+    victim = outside / "a.bin"
+    victim.write_bytes(b"intacta")
+    target = os.path.normcase(str(folder / "a.bin"))
+    swapped = []
+
+    def swap():
+        folder.rename(canal["destino"] / "sub-original")
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(folder), str(outside)],
+            check=True,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        swapped.append(True)
+
+    original = getattr(xfer, punto)
+
+    def validar_y_sustituir(*args):
+        out = original(*args)
+        ruta = out if punto == "unir" else args[0]
+        if not swapped and out is not None and os.path.normcase(os.path.normpath(ruta)) == target:
+            swap()
+        return out
+
+    monkeypatch.setattr(xfer, punto, validar_y_sustituir)
+    code, response = xfer.atender_peer(
+        ["borrar"], json.dumps({"destino": str(canal["destino"]), "rels": ["sub/a.bin"]}).encode()
+    )
+    assert swapped, "la sustitución tiene que ocurrir entre la validación y el borrado"
+    assert victim.read_bytes() == b"intacta"
+    assert (code, response) == (200, {"borrados": 0, "rechazados": 1})
+
+
+def test_espejo_borra_dentro_del_destino_sin_crear_carpetas(canal):
+    destino = canal["destino"]
+    (destino / "sub").mkdir()
+    (destino / "sub" / "a.bin").write_bytes(b"sobra")
+    (destino / "b.bin").write_bytes(b"sobra")
+    os.link(destino / "b.bin", destino / "b-otro.bin")  # borrar un nombre no toca el otro
+    rels = ["sub/a.bin", "b.bin", "no-esta.bin", "vieja/sub/c.bin", "../fuera.bin"]
+    body = {"destino": str(destino), "rels": rels}
+    assert xfer.atender_peer(["borrar"], json.dumps(body).encode()) == (200, {"borrados": 2, "rechazados": 0})
+    assert not (destino / "sub" / "a.bin").exists() and not (destino / "b.bin").exists()
+    assert (destino / "b-otro.bin").read_bytes() == b"sobra"
+    assert not (destino / "vieja").exists()
+
+
 def test_control_creacion_carpetas_nuevas_y_publicacion(canal):
     rel = "nueva/anidada/control.txt"
     data = b"control normal"
@@ -949,14 +1015,54 @@ def test_destino_legitimo_con_nombre_nativo(canal, monkeypatch, kind):
     assert (canal["destino"] / "alias.txt").read_bytes() == data
 
 
+def _regla_que_la_vacia(ruta: str, config: str) -> str | None:
+    """La línea de tmpfiles.d que borra `ruta` en un `--remove --boot`, o None. `D` vacía el
+    contenido de su directorio y `R` borra el directorio entero; los especificadores `%x` y los
+    comodines se comparan como `*`."""
+    for line in config.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or parts[0].startswith("#") or parts[0][0] not in "DR":
+            continue
+        patron = re.sub(r"%.", "*", parts[1]).rstrip("/")
+        if fnmatch.fnmatchcase(ruta, patron + "/*") or (parts[0][0] == "R" and fnmatch.fnmatchcase(ruta, patron)):
+            return line
+    return None
+
+
+def test_regla_que_la_vacia_lee_tmpfiles():
+    config = "# x\nD /tmp 1777 root root 30d\nR! /var/tmp/systemd-private-%b-*\nd /var/tmp 1777 root root 30d\n"
+    assert _regla_que_la_vacia("/tmp/lienzo-E-xfer-x", config) == "D /tmp 1777 root root 30d"
+    assert _regla_que_la_vacia("/var/tmp/systemd-private-abc-unidad", config).startswith("R!")
+    assert _regla_que_la_vacia("/var/tmp/lienzo-E-xfer-x", config) is None
+    assert _regla_que_la_vacia("/tmp", config) is None  # D no borra el directorio, sólo su contenido
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="UNC WSL desde Windows")
+def test_base_wsl_de_las_pruebas_sobrevive_al_arranque_de_la_distro():
+    try:
+        out = subprocess.run(
+            ["wsl.exe", "-d", "Ubuntu", "--", "systemd-tmpfiles", "--cat-config"],
+            capture_output=True,
+            timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        pytest.skip(f"WSL Ubuntu no disponible: {type(exc).__name__}")
+    if out.returncode != 0:
+        pytest.skip(f"systemd-tmpfiles no disponible en Ubuntu (rc {out.returncode})")
+    assert _regla_que_la_vacia(WSL_BASE_LINUX + "/lienzo-E-xfer-x", out.stdout.decode("utf-8", "replace")) is None
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="UNC WSL desde Windows")
 @pytest.mark.parametrize("leer_antes", [False, True], ids=["cierre-inmediato", "con-observacion"])
 def test_wsl_unc_archivo_inocuo(canal, monkeypatch, leer_antes):
-    base = "\\\\wsl.localhost\\Ubuntu\\tmp"
+    base = WSL_BASE
     try:
         own = tempfile.TemporaryDirectory(prefix="lienzo-E-xfer-", dir=base)
     except OSError as exc:
-        pytest.skip(f"WSL Ubuntu /tmp no disponible: {type(exc).__name__}, winerror={getattr(exc, 'winerror', None)}")
+        pytest.skip(
+            f"WSL Ubuntu {WSL_BASE_LINUX} no disponible: {type(exc).__name__}, winerror={getattr(exc, 'winerror', None)}"
+        )
     with own as folder:
         monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [folder]})
         # No se pide a WSL soltar caché de un archivo de pocos bytes ni se inicia un peer.
@@ -1027,11 +1133,13 @@ def _registrar_error_wsl(func, errors):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="UNC WSL desde Windows")
 def test_wsl_unc_diez_cierres_inmediatos(canal, monkeypatch, record_property, tmp_path):
-    base = "\\\\wsl.localhost\\Ubuntu\\tmp"
+    base = WSL_BASE
     try:
         own = tempfile.TemporaryDirectory(prefix="lienzo-E-xfer-diez-", dir=base)
     except OSError as exc:
-        pytest.skip(f"WSL Ubuntu /tmp no disponible: {type(exc).__name__}, winerror={getattr(exc, 'winerror', None)}")
+        pytest.skip(
+            f"WSL Ubuntu {WSL_BASE_LINUX} no disponible: {type(exc).__name__}, winerror={getattr(exc, 'winerror', None)}"
+        )
     with own as folder:
         monkeypatch.setattr(st, "load_config", lambda: {"copy_roots": [folder]})
         monkeypatch.setattr(xfer, "soltar_cache", lambda path: None)
@@ -1279,17 +1387,18 @@ def test_publicacion_preserva_ntstatus_sin_cambiar_rename(canal, monkeypatch):
 @pytest.mark.parametrize("extension", [xfer.PARTE, xfer.DIARIO])
 @pytest.mark.parametrize("action", ["estado", "bloque", "cerrar"])
 def test_wsl_auxiliar_symlink_no_altera_victima(canal, monkeypatch, extension, action):
-    if not os.path.isdir("\\\\wsl.localhost\\Ubuntu\\tmp"):
-        pytest.skip("WSL Ubuntu /tmp no disponible")
+    if not os.path.isdir(WSL_BASE):
+        pytest.skip(f"WSL Ubuntu {WSL_BASE_LINUX} no disponible")
     created = subprocess.run(
-        ["wsl.exe", "-d", "Ubuntu", "--", "mktemp", "-d", "/tmp/lienzo-E-xfer-link-XXXXXXXX"],
+        ["wsl.exe", "-d", "Ubuntu", "--", "mktemp", "-d", WSL_BASE_LINUX + "/lienzo-E-xfer-link-XXXXXXXX"],
         check=True,
         capture_output=True,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
     linux = created.stdout.decode().strip()
-    assert linux.startswith("/tmp/lienzo-E-xfer-link-") and "/" not in linux[len("/tmp/") :]
-    folder = "\\\\wsl.localhost\\Ubuntu\\tmp\\" + linux.removeprefix("/tmp/")
+    prefix = WSL_BASE_LINUX + "/"
+    assert linux.startswith(prefix + "lienzo-E-xfer-link-") and "/" not in linux[len(prefix) :]
+    folder = os.path.join(WSL_BASE, linux.removeprefix(prefix))
     try:
         allowed = os.path.join(folder, "permitida")
         subprocess.run(

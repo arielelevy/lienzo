@@ -303,7 +303,7 @@ def _lock_de(path: str) -> threading.Lock:
         return _locks.setdefault(_norm(path), threading.Lock())
 
 
-def _win_relativo(path: str, parent, *, carpeta: bool, crear: bool, escribir: bool):
+def _win_relativo(path: str, parent, *, carpeta: bool, crear: bool, escribir: bool, access=None, share=None):
     """Equivalente Windows de openat: resuelve un solo nombre desde el directorio fijado."""
     import ctypes
     from ctypes import wintypes
@@ -346,7 +346,8 @@ def _win_relativo(path: str, parent, *, carpeta: bool, crear: bool, escribir: bo
     native.NtCreateFile.restype = ctypes.c_long
     native.RtlNtStatusToDosError.argtypes = [wintypes.ULONG]
     native.RtlNtStatusToDosError.restype = wintypes.ULONG
-    access = 0x001000A0 if carpeta else 0x80100000 | (0x40010000 if escribir else 0)
+    if access is None:
+        access = 0x001000A0 if carpeta else 0x80100000 | (0x40010000 if escribir else 0)
     # Directorios: TRAVERSE + READ_ATTRIBUTES + SYNCHRONIZE; OBJ_DONT_REPARSE sigue activo.
     options = 0x21 if carpeta else 0x00200060
     code = native.NtCreateFile(
@@ -356,7 +357,7 @@ def _win_relativo(path: str, parent, *, carpeta: bool, crear: bool, escribir: bo
         ctypes.byref(status),
         None,
         0,
-        3 if carpeta else 1,
+        share if share is not None else 3 if carpeta else 1,
         3 if crear else 1,
         options,
         None,
@@ -451,8 +452,9 @@ def _win_abrir(path: str, *, carpeta: bool, crear: bool = False, escribir: bool 
 
 
 @contextlib.contextmanager
-def _carpeta_fija(path: str):
-    """Recorre y fija ancestros sin enlaces; en POSIX conserva el dir_fd del padre."""
+def _carpeta_fija(path: str, *, crear: bool = True):
+    """Recorre y fija ancestros sin enlaces; en POSIX conserva el dir_fd del padre. Sin `crear`,
+    una carpeta que falta levanta FileNotFoundError en vez de crearse."""
     if permitido(path) is None:
         raise Rechazo(403, "auxiliar fuera del destino físico o enlazado")
     parent = os.path.dirname(os.path.abspath(path))
@@ -466,7 +468,7 @@ def _carpeta_fija(path: str):
                 if not part:
                     continue
                 cursor = os.path.join(cursor, part)
-                handle, close = _win_abrir(cursor, carpeta=True, crear=True, parent=handle)
+                handle, close = _win_abrir(cursor, carpeta=True, crear=crear, parent=handle)
                 stack.callback(close, handle)
             yield handle
         else:
@@ -479,6 +481,8 @@ def _carpeta_fija(path: str):
                 try:
                     child = os.open(part, flags, dir_fd=fd)
                 except FileNotFoundError:
+                    if not crear:
+                        raise
                     try:
                         os.mkdir(part, dir_fd=fd)
                     except FileExistsError:
@@ -562,6 +566,40 @@ def _quitar_seguro(path: str) -> None:
                     raise ctypes.WinError(ctypes.get_last_error())
         else:
             os.unlink(os.path.basename(path), dir_fd=parent)
+
+
+def _borrar_seguro(path: str) -> None:
+    """Borra un archivo del destino por su nombre dentro del padre fijado, sin crear carpetas ni
+    seguir enlaces. Como DeleteFile, pide sólo DELETE y comparte todo; borrar un nombre de un
+    hardlink no toca los otros. Un enlace o algo que no es archivo vuelve Rechazo 403."""
+    name = os.path.basename(path)
+    with _carpeta_fija(path, crear=False) as parent:
+        if sys.platform != "win32":
+            if not stat.S_ISREG(os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode):
+                raise Rechazo(403, "el archivo a borrar es un enlace o no es un archivo")
+            os.unlink(name, dir_fd=parent)
+            return
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.GetFileInformationByHandleEx.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        # DELETE + READ_ATTRIBUTES + SYNCHRONIZE, share lectura/escritura/borrado; el archivo se
+        # abre como reparse point (no se sigue) y FILE_NON_DIRECTORY_FILE rechaza carpetas.
+        handle = _win_relativo(path, parent, carpeta=False, crear=False, escribir=False, access=0x00110080, share=7)
+        try:
+            tag = (wintypes.DWORD * 2)()  # FILE_ATTRIBUTE_TAG_INFO
+            if not kernel.GetFileInformationByHandleEx(handle, 9, ctypes.byref(tag), ctypes.sizeof(tag)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if tag[0] & 0x400:
+                raise Rechazo(403, "el archivo a borrar es un enlace o no es un archivo")
+            delete = wintypes.BOOLEAN(True)
+            if not kernel.SetFileInformationByHandle(handle, 4, ctypes.byref(delete), ctypes.sizeof(delete)):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            kernel.CloseHandle(handle)
 
 
 def _mtime_handle(f, ns: int) -> None:
@@ -954,19 +992,27 @@ def r_borrar(d: dict) -> dict:
     rels = d.get("rels")
     if not isinstance(rels, list):
         raise Rechazo(400, "rels invalido")
-    n = 0
+    n, rechazados = 0, 0
     for rel in rels:
         if not rel_ok(rel):
             continue
-        path = unir(raiz, rel)
-        with _lock_de(path):
-            try:
-                os.remove(path)
-                n += 1
-            except FileNotFoundError:
-                pass
-    log(f"xfer espejo: {n} archivos borrados en {raiz}")
-    return {"borrados": n}
+        # Por el handle del padre fijado, no por nombre: una junction puesta después de validar
+        # llevaba el borrado afuera del destino. Lo que tiene un enlace en el camino no se borra
+        # y se cuenta, sin frenar el resto.
+        try:
+            path = unir(raiz, rel)
+            with _lock_de(path):
+                _borrar_seguro(path)
+            n += 1
+        except FileNotFoundError:
+            pass
+        except Rechazo:
+            rechazados += 1
+    log(
+        f"xfer espejo: {n} archivos borrados en {raiz}"
+        + (f", {rechazados} con enlaces sin borrar" if rechazados else "")
+    )
+    return {"borrados": n, "rechazados": rechazados}
 
 
 def atender_peer(rest: list[str], raw: bytes) -> tuple[int, dict]:
@@ -1358,6 +1404,8 @@ class Trabajo:
             code, res = self._pedir_json("borrar", {"destino": self.destino, "rels": self.borraria}, TIMEOUT_LARGO_S)
             if code != 200:
                 raise Rechazo(code, res.get("error") or f"borrar: {code}")
+            if res.get("rechazados"):
+                self._error(f"espejo: {res['rechazados']} archivos no se borraron por un enlace en su camino")
         faltan = self.archivos_total - self.archivos_hechos
         self.estado = "terminado" if faltan == 0 else "con_errores"
         self.detalle = (
