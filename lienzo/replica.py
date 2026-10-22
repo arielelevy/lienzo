@@ -332,17 +332,7 @@ def _aplicar_nodo(con, pid: str, c: dict, n: dict) -> None:
     valores["datos"] = _js(valores["datos"])
     valores["origen"] = _js(valores["origen"])
     if actual is None:
-        clave = n.get("clave_ingesta")
-        if clave:
-            otro = con.execute("SELECT id FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, clave)).fetchone()
-            if otro is not None:
-                # lo mismo registrado en las dos PCs con ids distintos: se sugiere, no se fusiona
-                con.execute(
-                    "INSERT OR IGNORE INTO replica_duplicado (proyecto, nodo_local, nodo_remoto, clave, fecha)"
-                    " VALUES (?,?,?,?,?)",
-                    (pid, otro[0], nid, clave, k.ahora()),
-                )
-                clave = None
+        clave = k.clave_libre(con, pid, nid, n.get("clave_ingesta"))  # registrado en las dos PCs: duplicado
         con.execute(
             "INSERT INTO nodo (id, proyecto, tipo, texto, datos, estado, estado_fecha, estado_por, autor, origen, ronda,"
             " fecha, clave_ingesta) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",

@@ -308,6 +308,24 @@ CREATE TABLE IF NOT EXISTS importada (
   ultimo_seq INTEGER NOT NULL,
   fecha TEXT NOT NULL
 );
+"""
+# procedencia de cada fila mutable traida de una base vieja: de que base (`ruta`), en que revision de esa
+# base (su MAX(seq)) y con que huella quedo aca. Fuera de ESQUEMA porque una base ya en la version 4 no lo
+# vuelve a correr: `_importar_una` la crea si falta, sin subir la version (la replica exige la misma)
+IMPORTADA_FILA = """
+CREATE TABLE IF NOT EXISTS importada_fila (
+  ruta TEXT NOT NULL,
+  tabla TEXT NOT NULL CHECK (tabla IN ('nodo','vinculo')),
+  clave TEXT NOT NULL,
+  huella TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  fecha TEXT NOT NULL,
+  PRIMARY KEY (ruta, tabla, clave)
+);
+"""
+ESQUEMA += (
+    IMPORTADA_FILA
+    + """
 CREATE TABLE IF NOT EXISTS replica_pendiente (
   proyecto TEXT NOT NULL,
   pc TEXT NOT NULL,
@@ -318,6 +336,7 @@ CREATE TABLE IF NOT EXISTS replica_pendiente (
   PRIMARY KEY (pc, seq_origen)
 );
 """
+)
 
 _lock = threading.RLock()  # el indice y las carpetas; la base tiene sus propias transacciones
 _sesion_proyecto: dict[str, str] = {}  # session_id -> proyecto, para los adaptadores (bajo _lock)
@@ -834,11 +853,15 @@ def _importar_viejas(con: sqlite3.Connection) -> list[str]:
     saltea (no se renombra) sin frenar a las demas. Mismos ids, el historial en su orden y la prosa de sus
     cuerpos. Los cambios de esta PC reciben su seq nuevo como seq de origen: el esquema 3, donde ese numero
     era por base, no llego a correr en vivo, asi que ningun par los conoce con el viejo. `importada`
-    recuerda hasta que cambio se trajo cada archivo: reimportar solo suma lo nuevo. Lo que ya estaba (un
-    id repetido) no se pisa, y se cuenta en el log. Devuelve las rutas importadas enteras."""
+    recuerda hasta que cambio se trajo cada archivo e `importada_fila` con que huella quedo cada nodo y
+    vinculo: una base sin cambios nuevos no se vuelve a recorrer, y una que los tiene trae lo que cambio
+    alla sin pisar lo editado aca (`_importar_una`). El log cuenta las filas nuevas, actualizadas, choques
+    e ignoradas (ya estaban, o violan una restriccion de la central). Devuelve las rutas importadas enteras."""
     base = raiz()
     if not os.path.isdir(base):
         return []
+    for sentencia in _sentencias(IMPORTADA_FILA):  # una base ya en la version 4 no la tiene: una vez por pasada
+        con.execute(sentencia)
     local = identity.pc_id()
     importadas = []
     for pid in sorted(os.listdir(base)):
@@ -847,7 +870,7 @@ def _importar_viejas(con: sqlite3.Connection) -> list[str]:
             continue
         con.execute("SAVEPOINT vieja")
         try:
-            ignoradas = _importar_una(con, pid, vieja, local)
+            cuenta = _importar_una(con, pid, vieja, local)
             con.execute("RELEASE vieja")
         except (sqlite3.Error, OSError, ValueError) as e:
             con.execute("ROLLBACK TO vieja")
@@ -855,28 +878,60 @@ def _importar_viejas(con: sqlite3.Connection) -> list[str]:
             state.log(f"conocimiento: la base vieja de {pid} no se pudo importar ({e}); queda donde esta")
             continue
         importadas.append(vieja)
-        aviso = f"; {ignoradas} fila(s) ya estaban y no se pisaron" if ignoradas else ""
+        if cuenta is None:  # sin cambios nuevos desde la ultima vez: nada que contar
+            continue
+        aviso = "".join(f"; {cuenta[q]} {q}" for q in ("nuevas", "actualizadas", "choques", "ignoradas") if cuenta[q])
         state.log(f"conocimiento: la base vieja de {pid} paso a la del lienzo{aviso}")
     return importadas
 
 
-def _importar_una(con: sqlite3.Connection, pid: str, vieja: str, local: str) -> int:
+def _importar_una(con: sqlite3.Connection, pid: str, vieja: str, local: str) -> dict | None:
+    """Trae una base vieja en la transaccion del llamador. La primera vez copia todo: lo que ya estaba no se
+    pisa y lo de alla queda como la revision conocida de esa fila. Despues pasa por `_reimportar_fila` solo
+    los nodos y vinculos que nombra el historial nuevo (el server viejo anota cada edicion en `cambio`; si
+    la base no tiene esa tabla, todos), y las capturas, que no dejan historial, entran en bloque. El
+    historial de una edicion que no se aplico aca (choque o fila invalida) se guarda con la marca
+    `legado:<ruta>` en vez de esta PC: queda a la vista pero no viaja a los pares como propio. Devuelve
+    cuantas filas fueron nuevas, iguales, actualizadas, choques o ignoradas, o None si no habia nada nuevo
+    (no escribe nada)."""
     ro = sqlite3.connect("file:" + vieja.replace("\\", "/") + "?mode=ro", uri=True, timeout=30)
-    ignoradas = 0
+    cuenta = dict.fromkeys(("nuevas", "iguales", "actualizadas", "choques", "repetidos", "ignoradas"), 0)
     try:
         ro.execute("BEGIN")  # esquema, filas e historial pertenecen a la misma foto del origen
         tablas = {r[0] for r in ro.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         previo = con.execute("SELECT ultimo_seq FROM importada WHERE ruta = ?", (vieja,)).fetchone()
         desde = previo[0] if previo else 0
+        revision = (ro.execute("SELECT MAX(seq) FROM cambio").fetchone()[0] or 0) if "cambio" in tablas else 0
+        tocadas = _tocadas(ro, desde) if previo and "cambio" in tablas else None
+        no_aplicadas: set[tuple] = set()  # (tabla, clave) de lo que alla quedo distinto de aca
+        reindexar: set[str] = set()  # nodos que entraron o cambiaron al reimportar: su prosa se rehace
         for tabla, cols in _COLUMNAS.items():
-            if tabla in tablas:
-                filas = ro.execute(f"SELECT {', '.join(cols)} FROM {tabla} ORDER BY rowid").fetchall()
-                # rowcount de executemany: las filas que entraron, sin las que los triggers suman al FTS
-                cur = con.executemany(
-                    f"INSERT OR IGNORE INTO {tabla} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", filas
+            if tabla not in tablas:
+                continue
+            if previo and tabla in _HUELLA:
+                for fila in _filas_viejas(ro, tabla, cols, None if tocadas is None else tocadas[tabla]):
+                    d = dict(zip(cols, fila))
+                    que = _reimportar_fila(con, pid, vieja, tabla, d, revision)
+                    cuenta[que] += 1
+                    if que in ("choques", "repetidos", "ignoradas"):
+                        no_aplicadas.add((tabla, _clave_fila(tabla, d)))
+                    elif que in ("nuevas", "actualizadas") and tabla == "nodo":
+                        reindexar.add(d["id"])
+                continue
+            filas = ro.execute(f"SELECT {', '.join(cols)} FROM {tabla} ORDER BY rowid").fetchall()
+            # rowcount de executemany: las filas que entraron, sin las que los triggers suman al FTS
+            cur = con.executemany(
+                f"INSERT OR IGNORE INTO {tabla} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", filas
+            )
+            entraron = max(cur.rowcount, 0)
+            cuenta["nuevas"] += entraron
+            if not previo:
+                faltan = (
+                    _completar_primera(con, pid, vieja, tabla, cols, filas, revision, cuenta, no_aplicadas)
+                    if tabla in _HUELLA
+                    else 0
                 )
-                if not previo:
-                    ignoradas += len(filas) - max(cur.rowcount, 0)
+                cuenta["ignoradas"] += len(filas) - entraron - faltan
         ultimo = desde
         if "cambio" in tablas:
             tiene = {r[1] for r in ro.execute("PRAGMA table_info(cambio)")}
@@ -886,22 +941,34 @@ def _importar_una(con: sqlite3.Connection, pid: str, vieja: str, local: str) -> 
             ).fetchall():
                 pc = fila[-2] or local
                 seq_origen = fila[-1] if pc != local else None  # lo de otra PC conserva su par de origen
+                c = dict(zip(_CAMBIO, fila[1:-2]))
+                if ("nodo", c["nodo_id"]) in no_aplicadas or ("vinculo", _clave_fila("vinculo", c)) in no_aplicadas:
+                    # aca no se aplico: ni se publica como de esta PC, ni el par de origen de otra PC queda como
+                    # ya recibido (cuando llegue por la replica, se aplica o choca alli)
+                    pc, seq_origen = f"legado:{vieja}", fila[0]
                 cur = con.execute(
                     f"INSERT OR IGNORE INTO cambio ({', '.join(_CAMBIO)}, pc, seq_origen)"
                     f" VALUES ({', '.join('?' * (len(_CAMBIO) + 2))})",
                     (*fila[1:-2], pc, seq_origen),
                 )
-                ignoradas += 1 - cur.rowcount
+                cuenta["ignoradas"] += 1 - cur.rowcount
                 ultimo = fila[0]
             con.execute("UPDATE cambio SET seq_origen = seq WHERE seq_origen IS NULL AND pc = ?", (local,))
-        if not previo:
-            if "prosa_fts" in tablas:
-                con.executemany(
-                    "INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)",
-                    ro.execute("SELECT nodo, texto FROM prosa_fts").fetchall(),
-                )
-            else:
-                _rellenar_prosa(con, pid)
+        hubo = any(cuenta[q] for q in ("nuevas", "actualizadas", "choques", "ignoradas"))
+        if previo and ultimo == desde and not hubo:
+            return None  # nada nuevo alla: un arranque sin novedades no escribe nada
+        # la prosa de los encargos e informes sin indice aca: copiada del suyo alla, o de sus cuerpos. Toda la
+        # primera vez; despues, la de los nodos que entraron o cambiaron (la que tenian se borra antes)
+        if reindexar:
+            con.executemany("DELETE FROM prosa_fts WHERE nodo = ?", [(nid,) for nid in sorted(reindexar)])
+        if "prosa_fts" in tablas and (reindexar or not previo):
+            faltan = _sin_prosa(con, pid)
+            con.executemany(
+                "INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)",
+                [r for r in ro.execute("SELECT nodo, texto FROM prosa_fts") if r[0] in faltan],
+            )
+        elif reindexar or not previo:
+            _rellenar_prosa(con, pid)
         con.execute(
             "INSERT INTO importada (ruta, proyecto, ultimo_seq, fecha) VALUES (?,?,?,?)"
             " ON CONFLICT (ruta) DO UPDATE SET ultimo_seq = excluded.ultimo_seq, fecha = excluded.fecha",
@@ -909,7 +976,192 @@ def _importar_una(con: sqlite3.Connection, pid: str, vieja: str, local: str) -> 
         )
     finally:
         ro.close()
-    return ignoradas
+    return cuenta
+
+
+# lo que una base vieja puede cambiar de una fila ya importada, y como se la identifica
+_HUELLA = {
+    "nodo": ("texto", "datos", "estado", "estado_fecha", "estado_por", "ronda"),
+    "vinculo": ("activo", "fecha", "autor", "origen", "motivo"),
+}
+_CLAVE = {"nodo": ("id",), "vinculo": ("de", "relacion", "a")}
+
+
+def _huella(tabla: str, fila: dict) -> str:
+    """El sha256 de lo mutable de una fila, con el JSON normalizado: la revision que compara el CAS."""
+    vals = []
+    for c in _HUELLA[tabla]:
+        x = fila[c]
+        if c in ("datos", "origen") and isinstance(x, str):
+            try:
+                x = json.loads(x)
+            except ValueError:
+                pass
+        vals.append(x)
+    return hashlib.sha256(json.dumps(vals, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _clave_fila(tabla: str, fila: dict) -> str:
+    return fila["id"] if tabla == "nodo" else json.dumps([fila[c] for c in _CLAVE[tabla]], ensure_ascii=False)
+
+
+def _tocadas(ro: sqlite3.Connection, desde: int) -> dict[str, set[tuple]]:
+    """Los nodos y vinculos que nombra el historial de una base vieja despues de `desde`."""
+    tocadas: dict[str, set[tuple]] = {"nodo": set(), "vinculo": set()}
+    for nodo_id, de, relacion, a in ro.execute("SELECT nodo_id, de, relacion, a FROM cambio WHERE seq > ?", (desde,)):
+        if nodo_id is not None:
+            tocadas["nodo"].add((nodo_id,))
+        if None not in (de, relacion, a):
+            tocadas["vinculo"].add((de, relacion, a))
+    return tocadas
+
+
+def _filas_viejas(ro: sqlite3.Connection, tabla: str, cols: tuple, claves: set[tuple] | None) -> list:
+    """Las filas de una tabla de la base vieja: todas, o solo las de esas claves (en orden, para que la
+    reimportacion sea la misma en cada PC)."""
+    if claves is None:
+        return ro.execute(f"SELECT {', '.join(cols)} FROM {tabla} ORDER BY rowid").fetchall()
+    donde = " AND ".join(f"{c} = ?" for c in _CLAVE[tabla])
+    sql = f"SELECT {', '.join(cols)} FROM {tabla} WHERE {donde}"
+    return [r for clave in sorted(claves) for r in ro.execute(sql, clave)]
+
+
+def _fila_central(con: sqlite3.Connection, tabla: str, fila: dict) -> dict | None:
+    """Lo mutable de la fila central con esa clave y su proyecto (el de un vinculo, el de su nodo `de`)."""
+    proyecto = "proyecto" if tabla == "nodo" else "(SELECT n.proyecto FROM nodo n WHERE n.id = vinculo.de)"
+    donde = " AND ".join(f"{c} = ?" for c in _CLAVE[tabla])
+    r = con.execute(
+        f"SELECT {proyecto}, {', '.join(_HUELLA[tabla])} FROM {tabla} WHERE {donde}", [fila[c] for c in _CLAVE[tabla]]
+    ).fetchone()
+    return dict(zip(("proyecto", *_HUELLA[tabla]), r)) if r is not None else None
+
+
+def _procedencia(con: sqlite3.Connection, ruta: str, tabla: str, fila: dict, revision: int) -> None:
+    con.execute(
+        "INSERT INTO importada_fila (ruta, tabla, clave, huella, revision, fecha) VALUES (?,?,?,?,?,?)"
+        " ON CONFLICT (ruta, tabla, clave) DO UPDATE SET huella = excluded.huella, revision = excluded.revision,"
+        " fecha = excluded.fecha",
+        (ruta, tabla, _clave_fila(tabla, fila), _huella(tabla, fila), revision, ahora()),
+    )
+
+
+def clave_libre(con: sqlite3.Connection, pid: str, nid: str, clave: str | None) -> str | None:
+    """La `clave_ingesta` con que entra un nodo nuevo que llega de otra base (un par o una base vieja): si
+    aca ya la tiene otro id, lo mismo se registro dos veces; se sugiere en `replica_duplicado`, no se
+    fusiona, y el nodo entra sin clave (devuelve None)."""
+    if not clave:
+        return clave
+    otro = con.execute("SELECT id FROM nodo WHERE proyecto = ? AND clave_ingesta = ?", (pid, clave)).fetchone()
+    if otro is None:
+        return clave
+    con.execute(
+        "INSERT OR IGNORE INTO replica_duplicado (proyecto, nodo_local, nodo_remoto, clave, fecha) VALUES (?,?,?,?,?)",
+        (pid, otro[0], nid, clave, ahora()),
+    )
+    return None
+
+
+def _completar_primera(
+    con: sqlite3.Connection,
+    pid: str,
+    ruta: str,
+    tabla: str,
+    cols: tuple,
+    filas: list,
+    revision: int,
+    cuenta: dict,
+    no_aplicadas: set[tuple],
+) -> int:
+    """Despues del INSERT OR IGNORE en bloque de la primera importacion: lo que no entro se intenta como al
+    reimportar (con una `clave_ingesta` que aca tiene otro id entra sin clave; si viola una restriccion
+    queda afuera), y lo de alla queda como la revision conocida de cada fila que esta, entrara recien o ya
+    estuviera distinta: asi una diferencia que ya estaba no vuelve como choque. Lo que quedo distinto de
+    alla se suma a `no_aplicadas`. Devuelve cuantas faltaban."""
+    faltan = 0
+    for fila in filas:
+        d = dict(zip(cols, fila))
+        actual = _fila_central(con, tabla, d)
+        if actual is None:
+            faltan += 1
+            entro = _escribir_fila(con, ruta, tabla, d, revision, nueva=True)
+            cuenta["nuevas" if entro else "ignoradas"] += 1
+        else:  # igual que alla y del mismo proyecto: es lo de alla; si no, aca no se aplico
+            entro = actual["proyecto"] in (None, pid) and _huella(tabla, actual) == _huella(tabla, d)
+            _procedencia(con, ruta, tabla, d, revision)
+        if not entro:
+            no_aplicadas.add((tabla, _clave_fila(tabla, d)))
+    return faltan
+
+
+def _reimportar_fila(con: sqlite3.Connection, pid: str, ruta: str, tabla: str, fila: dict, revision: int) -> str:
+    """Un nodo o vinculo de una base vieja ya importada: `nuevas`, `iguales`, `actualizadas`, `choques` o
+    `ignoradas`. Decide la huella, no las fechas ni los autores declarados alla. Lo que cambio alla se
+    actualiza si aca sigue con la huella conocida; si cambio aca tambien, no tiene procedencia o el id es
+    de otro proyecto, no se pisa: queda un choque en `replica_conflicto`, una sola vez."""
+    actual = _fila_central(con, tabla, fila)
+    if actual is None:
+        return "nuevas" if _escribir_fila(con, ruta, tabla, fila, revision, nueva=True) else "ignoradas"
+    clave = _clave_fila(tabla, fila)
+    huella = _huella(tabla, fila)
+    r = con.execute(
+        "SELECT huella FROM importada_fila WHERE ruta = ? AND tabla = ? AND clave = ?", (ruta, tabla, clave)
+    ).fetchone()
+    conocida = r[0] if r else None
+    if huella == conocida:
+        return "iguales"  # alla no cambio; si cambio aca, lo de aca queda
+    if actual["proyecto"] not in (None, pid):
+        motivo = f"{tabla} {clave} de la base vieja ({ruta}) es del proyecto {actual['proyecto']} aca; no se piso"
+    else:
+        previa = _huella(tabla, actual)
+        if previa == huella:
+            _procedencia(con, ruta, tabla, fila, revision)  # ya iguales: se adopta como la revision conocida
+            return "iguales"
+        if previa == conocida:  # solo cambio alla; la lectura y el UPDATE van en la misma transaccion
+            return "actualizadas" if _escribir_fila(con, ruta, tabla, fila, revision, nueva=False) else "ignoradas"
+        # aca no esta como se importo: o se edito despues, o ya diferia en la primera importacion
+        por_que = "no esta como se importo" if conocida is not None else "difiere y no tiene procedencia"
+        motivo = (
+            f"{tabla} {clave} cambio en la base vieja (revision {revision} de {ruta}) y aca {por_que};"
+            " no se piso, las dos versiones quedan en el historial"
+        )
+    marca = f"legado:{ruta}#{tabla}:{clave}:{huella[:16]}"
+    if con.execute("SELECT 1 FROM replica_conflicto WHERE pc = ?", (marca,)).fetchone() is not None:
+        return "repetidos"  # el mismo choque ya esta a la vista: no se cuenta ni se escribe otra vez
+    con.execute(
+        "INSERT INTO replica_conflicto (proyecto, nodo, pc, seq_origen, motivo, fecha) VALUES (?,?,?,?,?,?)",
+        (pid, fila["id"] if tabla == "nodo" else fila["de"], marca, revision, motivo, ahora()),
+    )
+    return "choques"
+
+
+def _escribir_fila(con: sqlite3.Connection, ruta: str, tabla: str, fila: dict, revision: int, nueva: bool) -> bool:
+    """El INSERT de una fila nueva o el UPDATE de lo mutable de una conocida, con su procedencia, en un
+    SAVEPOINT propio: si viola una restriccion de la central (un CHECK o NOT NULL que la base vieja no
+    tenia) se deshace entera, se loguea y devuelve False sin frenar al resto, como el INSERT OR IGNORE de
+    la primera importacion."""
+    con.execute("SAVEPOINT fila")
+    try:
+        if nueva:
+            if tabla == "nodo":
+                fila = {**fila, "clave_ingesta": clave_libre(con, fila["proyecto"], fila["id"], fila["clave_ingesta"])}
+            con.execute(
+                f"INSERT INTO {tabla} ({', '.join(fila)}) VALUES ({', '.join('?' * len(fila))})", list(fila.values())
+            )
+        else:
+            cols = _HUELLA[tabla]
+            con.execute(
+                f"UPDATE {tabla} SET {', '.join(f'{c} = ?' for c in cols)}"
+                f" WHERE {' AND '.join(f'{c} = ?' for c in _CLAVE[tabla])}",
+                [*(fila[c] for c in cols), *(fila[c] for c in _CLAVE[tabla])],
+            )
+        _procedencia(con, ruta, tabla, fila, revision)
+    except sqlite3.IntegrityError as e:
+        con.execute("ROLLBACK TO fila")
+        con.execute("RELEASE fila")
+        state.log(f"conocimiento: {tabla} {_clave_fila(tabla, fila)} de {ruta} no entra ({e}); se omite")
+        return False
+    con.execute("RELEASE fila")
+    return True
 
 
 def _leer_archivo(full: str) -> str | None:
@@ -920,20 +1172,30 @@ def _leer_archivo(full: str) -> str | None:
         return None
 
 
+def _sin_prosa(con: sqlite3.Connection, pid: str) -> dict[str, str]:
+    """Los encargos e informes del proyecto que todavia no estan en el indice de prosa: id -> datos."""
+    return dict(
+        con.execute(
+            "SELECT id, datos FROM nodo WHERE proyecto = ? AND tipo IN ('encargo','informe')"
+            " AND id NOT IN (SELECT nodo FROM prosa_fts)",
+            (pid,),
+        ).fetchall()
+    )
+
+
 def _rellenar_prosa(con: sqlite3.Connection, pid: str) -> int:
-    """Indexa los cuerpos de encargos e informes de un proyecto importado que no tenia indice de prosa
-    (esquema 1). Un cuerpo que falta en disco no frena la importacion: queda fuera del indice."""
+    """Indexa los cuerpos de los encargos e informes de un proyecto importado que todavia no estan en el
+    indice de prosa (su base vieja no lo tenia: esquema 1). Un cuerpo que falta en disco no frena la
+    importacion: queda fuera del indice."""
     n = 0
     carpeta = _carpeta(pid)
-    for r in con.execute(
-        "SELECT id, datos FROM nodo WHERE proyecto = ? AND tipo IN ('encargo','informe')", (pid,)
-    ).fetchall():
-        ruta = json.loads(r[1]).get("ruta")
+    for nid, datos in _sin_prosa(con, pid).items():
+        ruta = json.loads(datos).get("ruta")
         if not isinstance(ruta, str):
             continue
         texto = _leer_archivo(os.path.join(carpeta, *ruta.split("/")))
         if texto:
-            con.execute("INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)", (r[0], texto))
+            con.execute("INSERT INTO prosa_fts (nodo, texto) VALUES (?, ?)", (nid, texto))
             n += 1
     return n
 
