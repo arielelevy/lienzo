@@ -39,6 +39,7 @@ import auth
 import autoaprobar
 import backend
 import beacon
+import bitacora
 import browser_api
 import browser_stream
 import captura
@@ -1635,7 +1636,31 @@ class JsonHandler(BaseHTTPRequestHandler):
         return self._json(500, {"error": f"error interno del lienzo ({eid})", "error_id": eid})
 
     def _json(self, code: int, obj, extra_headers: dict | None = None) -> None:
+        motivo = obj.get("error") if isinstance(obj, dict) else None
+        if bitacora.es_rechazo(code, motivo):
+            try:
+                self._anotar_rechazo(code, motivo)
+            except Exception:  # el registro nunca se lleva puesta la respuesta
+                log(f"rechazo sin registrar:\n{traceback.format_exc()}")
         return self._send_json(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), extra_headers)
+
+    def _anotar_rechazo(self, code: int, motivo) -> None:
+        """Decisión 2 (2026-10-22): todo 401/403 de los dos listeners queda en rechazos.jsonl. Sin
+        query (puede traer un token) ni cuerpo; el peer es el que el pedido dice ser. La IP del
+        túnel sólo se cree en el tablero (`_client_ip`): el listener de peers no tiene túnel."""
+        tunel = isinstance(self, Handler) and self._via_tunnel()
+        bitacora.rechazo(
+            listener="peer" if self.LOG_PREFIJO else "tablero",
+            metodo=getattr(self, "command", ""),
+            ruta=getattr(self, "path", "").split("?", 1)[0],
+            ip=self._client_ip() if tunel else self.client_address[0],
+            codigo=code,
+            motivo=motivo,
+            tunel=tunel,
+            peer=self.headers.get("X-Lienzo-Peer") or "",
+            origin=self.headers.get("Origin") or "",
+            agente=self.headers.get("User-Agent") or "",
+        )
 
     def _send_json(self, code: int, body: bytes, extra_headers: dict | None = None) -> None:
         """Cuerpo JSON ya serializado. Lo que se arma con el lock tomado se escribe con esto sin el:
@@ -1904,6 +1929,15 @@ class Handler(JsonHandler):
                 return self._enroll()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
+            if parts in (["rechazos"], ["run", "log"]):
+                # registros de bitacora.py (decisiones 2 y 10): llevan IPs y rutas, solo desde la LAN
+                if not self._is_local():
+                    return self._json(403, {"error": "los registros se leen desde una PC de la LAN"})
+                n = (self.query.get("n") or ["200"])[0]
+                n = min(int(n), 2000) if n.isascii() and n.isdigit() else 200
+                if parts == ["rechazos"]:
+                    return self._json(200, {"rechazos": bitacora.ultimas(bitacora.RECHAZOS, n)})
+                return self._json(200, {"run": bitacora.ultimas(bitacora.RUN, n)})
             if parts == ["recientes"]:
                 # carpetas abiertas estos dias en cualquier PC (recientes.py): «Lanzar CLI» las
                 # ofrece grisadas debajo de las carpetas de launch_roots; ?pc= filtra por una PC

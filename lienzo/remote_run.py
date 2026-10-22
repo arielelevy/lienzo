@@ -1,9 +1,15 @@
-"""Consultas Git para peers emparejados y comandos locales nombrados; sin shell."""
+"""Consultas Git para peers emparejados y comandos locales nombrados; sin shell.
+
+Cada pedido, ejecutado o no, deja una línea en remote_run.jsonl (decisión 10 de Ariel, 2026-10-22):
+quién, qué nombre, en qué carpeta, código, duración y tamaño de la salida. No el argv (sale de
+config.json y puede llevar una URL con credencial) ni la salida misma."""
 
 import os
 import threading
+import time
 from pathlib import Path
 
+import bitacora
 import state
 import subproc
 
@@ -13,7 +19,30 @@ READ_ONLY_COMMANDS = {
     "status": ["git", "--no-optional-locks", "status", "--short", "--branch"],
     "log": ["git", "--no-pager", "log", "-1", "--format=%H %s"],
 }
+# opciones largas de git que fuerzan, corren otro programa o escriben un archivo. Git acepta cualquier
+# abreviatura sin ambigüedad (--forc, --upload-pac), así que se niega todo prefijo de estas
+_OPCIONES_NEGADAS = (
+    "force",
+    "force-with-lease",
+    "force-if-includes",
+    "upload-pack",
+    "receive-pack",
+    "exec",
+    "output",
+    "strategy",
+)
 _busy = threading.Semaphore(2)
+
+
+def _negada(arg: str) -> bool:
+    """El refspec +rama, un prefijo de _OPCIONES_NEGADAS o un grupo de opciones cortas con f (-f, -fu).
+    Lo corto es estricto a propósito: `-mfix` también cae; el mensaje va aparte (`-m`, `fix`)."""
+    if arg.startswith("+"):
+        return True
+    if arg.startswith("--"):
+        nombre = arg[2:].split("=", 1)[0]
+        return bool(nombre) and any(o.startswith(nombre) for o in _OPCIONES_NEGADAS)
+    return arg.startswith("-") and "f" in arg[1:]
 
 
 def permitted(argv) -> bool:
@@ -28,11 +57,39 @@ def permitted(argv) -> bool:
         tool == "git"
         and len(argv) >= 2
         and argv[1] in ("status", "fetch", "log", "cherry-pick", "tag", "push")
-        and not any(x == "-f" or x.startswith(("--force", "+")) for x in argv[2:])
+        and not any(_negada(x) for x in argv[2:])
     )
 
 
 def run(request: dict, peer: str) -> tuple[int, dict]:
+    inicio = time.monotonic()
+    code, res = 500, {"error": "error interno"}  # si _run explota, la línea igual queda
+    try:
+        code, res = _run(request, peer)
+    finally:
+        _anotar(request, peer, code, res, inicio)
+    return code, res
+
+
+def _anotar(request: dict, peer: str, code: int, res: dict, inicio: float) -> None:
+    name, cwd = request.get("command"), request.get("cwd")
+    bitacora.anexar(
+        bitacora.RUN,
+        {
+            "peer": bitacora.corto(peer, 64),
+            "comando": bitacora.corto(name, 64) if isinstance(name, str) else None,
+            "cwd": bitacora.corto(cwd, 300) if isinstance(cwd, str) else None,
+            "codigo": code,
+            "exit_code": res.get("exit_code"),
+            "duracion_s": round(time.monotonic() - inicio, 3),
+            "stdout_caracteres": len(res.get("stdout") or ""),
+            "stderr_caracteres": len(res.get("stderr") or ""),
+            "motivo": bitacora.corto(res.get("error")),
+        },
+    )
+
+
+def _run(request: dict, peer: str) -> tuple[int, dict]:
     if not peer:
         return 403, {"error": "solo una PC emparejada puede ejecutar comandos"}
     name, cwd = request.get("command"), request.get("cwd")

@@ -1,0 +1,24 @@
+{
+  "nombre": "rechazos-y-run-frente-H",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/rechazos-run-H",
+  "reglas": [
+    ".temp/coordinacion/2026-10-22/decisiones-ariel.md, decisión 2: cada pedido rechazado (401/403/CSRF/origen/firma/fuera de raíz, Host no válido) deja hora, origen, ruta, método y motivo, sin cuerpos, query ni secretos, en un log rotado que se lee con GET /rechazos (sólo LAN).",
+    "Decisión 10: POST /peer/run firmado, sólo comandos nombrados en run_allowlist (o status/log incorporados), cwd dentro de launch_roots, salida y código devueltos, tope de 50 s, una línea por comando en remote_run.jsonl (GET /run/log), sin argv ni salida en el log.",
+    "permitted(): ningún --force, +refspec, opción corta con f (-f, -fu) ni --upload-pack/--receive-pack/--exec."
+  ],
+  "casos": [
+    {
+      "id": "rechazos-run-contratos",
+      "comando": ["py", "-m", "pytest", "tests/test_rechazos_run.py", "tests/test_mejoras.py", "tests/test_peer_server.py", "tests/test_pentest_fixes.py", "tests/test_ola1_seguridad.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 300000,
+      "cubre": ["lienzo/bitacora.py", "lienzo/remote_run.py", "lienzo/server.py"]
+    },
+    {
+      "id": "rechazos-run-e2e",
+      "comando": ["py", "pruebas-agenticas/rechazos_e2e.py"],
+      "timeoutMs": 120000,
+      "cubre": ["lienzo/bitacora.py", "lienzo/remote_run.py", "lienzo/server.py"]
+    }
+  ]
+}
