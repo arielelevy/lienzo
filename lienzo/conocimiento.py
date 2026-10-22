@@ -85,6 +85,12 @@ TRANSICIONES: dict[str, dict[tuple[str, str], set[str]]] = {
         ("enviado", "sin_entrega"): {C, P},
         ("sin_entrega", "pendiente"): {C, P},
         ("sin_entrega", "entregado"): {C, P},
+        # etapas (decision 15 de Ariel, 2026-10-22): entregado es la revision; pasar a verificacion,
+        # aprobar o devolver a implementacion (enviado, con motivo) no lo hacen ni el server ni el frente
+        ("entregado", "verificando"): {C, P},
+        ("entregado", "enviado"): {C, P},
+        ("verificando", "enviado"): {C, P},
+        ("verificando", "aprobado"): {C, P},
     },
     "sesion": {("viva", "cerrada"): {S}, ("cerrada", "viva"): {S}},
     "informe": {("recibido", "revisado"): {C, P}},
@@ -146,6 +152,10 @@ RELACIONES: dict[str, tuple[set[str], set[str]]] = {
     "apoya": (set(TIPOS), {"evidencia"}),
 }
 CON_MOTIVO = {"elige", "descarta"}  # el motivo es obligatorio
+# la etapa de un encargo (Prime Agent, decision 15) es una lectura de su estado: el ciclo sigue siendo uno
+ETAPAS_ENCARGO = ("pendiente", "implementacion", "revision", "verificacion", "aprobado")
+_ETAPA_DE = {"enviado": "implementacion", "entregado": "revision", "verificando": "verificacion"}
+DEVOLVER_ENCARGO = {("entregado", "enviado"), ("verificando", "enviado")}  # exigen motivo
 # el bloque `conocimiento` del informe (v5 §5.2): lo que un frente puede declarar
 DECLARABLES = set(TIPOS[4:])  # de hallazgo a evidencia; ronda, encargo, sesion e informe los crea el server
 RELACIONES_DEL_FRENTE = {"motivada_por", "elige", "descarta", "derivada_de", "aplica_a", "sobre", "apoya"}
@@ -1435,12 +1445,21 @@ def cambiar_estado(
         raise Rechazo(f"transicion no permitida para {n['tipo']}: {actual} -> {nuevo}", 409)
     if rol_de(por) not in permitidos:
         raise Rechazo(f"{rol_de(por) or '?'} no puede pasar {n['tipo']} de {actual} a {nuevo}", 403)
+    devolver = n["tipo"] == "encargo" and (actual, nuevo) in DEVOLVER_ENCARGO
+    if devolver and not (motivo or "").strip():
+        raise Rechazo("devolver un encargo a implementacion exige motivo")
     if not diferir_respaldo and (falta := falta_respaldo(con, nid, n["tipo"], nuevo, origen)):
         raise Rechazo(falta, 409)
     fecha = ahora()
     con.execute("UPDATE nodo SET estado = ?, estado_fecha = ?, estado_por = ? WHERE id = ?", (nuevo, fecha, por, nid))
     if n["tipo"] == "regla" and nuevo == "vigente":
         con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (_json({**n["datos"], "vigente_desde": fecha}), nid))
+    if devolver:
+        # solo un informe posterior lo vuelve a revision: reenviar o recapturar el viejo no (entregar). Se lee
+        # despues del UPDATE, dentro de la transaccion de escritura: una entrega concurrente espera. La
+        # devolucion cubre todo lo recibido hasta ahora, tambien una revision que llego durante la revision
+        datos = {**n["datos"], "devuelto_revision": _ultima_revision(con, pid, nid)}
+        con.execute("UPDATE nodo SET datos = ? WHERE id = ?", (_json(datos), nid))
     n2 = _nodo(con, pid, nid)
     _cambio(con, pid, "estado", por, motivo, origen, n2, anterior=n, nodo_id=nid)
     return n2
@@ -1457,7 +1476,49 @@ RESPALDO = {
     ("medicion", "superada"): "reemplaza",
     # entregado sin informe que responda era posible por sin_entrega -> entregado (frente C, 2026-10-20)
     ("encargo", "entregado"): "responde_a",
+    # cada etapa trae la suya: la evidencia de la revision no aprueba la verificacion
+    ("encargo", "verificando"): "evidencia_de_etapa",
+    ("encargo", "aprobado"): "evidencia_de_etapa",
 }
+
+
+def etapa_encargo(estado: str | None) -> str:
+    """La etapa de un encargo por su estado; `sin_entrega` queda como tal, fuera del recorrido."""
+    return _ETAPA_DE.get(estado or "", estado or "pendiente")
+
+
+def _falta_evidencia_de_etapa(con: sqlite3.Connection, nid: str, tipo: str, nuevo: str, citada) -> str | None:
+    """Evidencia de la etapa que el encargo deja: una evidencia del proyecto recibida desde que entro en
+    ella (la citada en el veredicto) o un `apoya` hecho desde entonces. Un veredicto mira esto despues de
+    aplicar el estado: el comienzo de la etapa que deja es el `anterior` de ese ultimo cambio."""
+    n = con.execute("SELECT proyecto, estado, estado_fecha FROM nodo WHERE id = ?", (nid,)).fetchone()
+    desde = n["estado_fecha"]
+    if n["estado"] == nuevo:
+        r = con.execute(
+            "SELECT json_extract(anterior, '$.estado_fecha') FROM cambio WHERE nodo_id = ? AND accion = 'estado'"
+            " ORDER BY seq DESC LIMIT 1",
+            (nid,),
+        ).fetchone()
+        desde = r[0] if r else desde
+    desde = desde or ""
+    # un veredicto la cita como lista de ids (veredictos._origen_veredicto); una ruta, como un id
+    citadas = [str(c) for c in (citada if isinstance(citada, list) else [citada] if citada else [])]
+    for c in citadas:
+        x = con.execute(
+            "SELECT fecha FROM nodo WHERE id = ? AND tipo = 'evidencia' AND proyecto = ?", (c, n["proyecto"])
+        ).fetchone()
+        if x is None:
+            return f"{tipo} {nuevo}: {c} no es una evidencia del proyecto"
+        if x["fecha"] >= desde:
+            return None
+    if citadas:
+        return f"{tipo} {nuevo}: la evidencia citada es de antes de esta etapa"
+    ok = con.execute(
+        "SELECT 1 FROM vinculo v JOIN nodo x ON x.id = v.a WHERE v.de = ? AND v.relacion = 'apoya' AND v.activo = 1"
+        " AND x.tipo = 'evidencia' AND v.fecha >= ?",
+        (nid, desde),
+    ).fetchone()
+    return None if ok else f"{tipo} {nuevo} exige evidencia de esta etapa: apoya a una evidencia, o en el veredicto"
 
 
 def falta_respaldo(con: sqlite3.Connection, nid: str, tipo: str, nuevo: str, origen: dict | None) -> str | None:
@@ -1465,6 +1526,8 @@ def falta_respaldo(con: sqlite3.Connection, nid: str, tipo: str, nuevo: str, ori
     rel = RESPALDO.get((tipo, nuevo))
     if rel is None:
         return None
+    if rel == "evidencia_de_etapa":
+        return _falta_evidencia_de_etapa(con, nid, tipo, nuevo, (origen or {}).get("evidencia"))
     if rel == "corregido_en":
         if (origen or {}).get("evidencia"):
             return None
@@ -1860,11 +1923,12 @@ def entregar(
             "SELECT 1 FROM vinculo WHERE de = ? AND relacion = 'responde_a' AND a = ? AND activo = 1",
             (n["id"], encargo),
         ).fetchone()
-        if e["estado"] == "enviado" and responde is not None:
+        nuevo = n["datos"].get("revision", revision) > e["datos"].get("devuelto_revision", 0)
+        if e["estado"] == "enviado" and responde is not None and nuevo:
             # tambien el reenvio idempotente: asi se completa un encargo que una entrega anterior dejo
             # enviado (la transicion iba en otra transaccion y podia fallar sola)
             cambiar_estado(pid, encargo, "entregado", por="server", motivo=f"informe r{revision}", con=con)
-        elif e["estado"] == "sin_entrega" and responde is not None and rol_de(autor) in (C, P):
+        elif e["estado"] == "sin_entrega" and responde is not None and nuevo and rol_de(autor) in (C, P):
             # entrega tardia explicita (v5 §3.4): sin_entrega -> entregado, por quien entrega. Tambien
             # cuando la coordinadora o una persona reenvia un informe que ya responde a este encargo
             cambiar_estado(pid, encargo, "entregado", por=autor, motivo=f"entrega tardia r{revision}", con=con)

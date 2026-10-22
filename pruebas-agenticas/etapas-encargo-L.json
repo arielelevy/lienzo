@@ -1,0 +1,27 @@
+{
+  "nombre": "etapas-por-encargo-L",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/etapas-encargo-L",
+  "reglas": [
+    "Decisión 15 (Ariel, 2026-10-22): etapas explícitas por encargo, pendiente → implementación → revisión → verificación (→ aprobado), visibles en el tablero.",
+    "Un turno cerrado o una respuesta del agente no aprueban nada: el server sólo lleva un encargo de implementación a revisión al llegar un informe nuevo; pasar a verificación, aprobar o devolver es de la coordinadora o de una persona (el frente y el server reciben 403).",
+    "Cada avance trae evidencia de su etapa: un vínculo apoya a una evidencia hecho desde que el encargo entró en la etapa que deja, o la evidencia citada en el veredicto. La evidencia de la revisión no aprueba la verificación.",
+    "Un fallo de revisión o de verificación devuelve el encargo a implementación con motivo obligatorio; reenviar o recapturar el informe viejo no lo saca de implementación, sólo un informe posterior.",
+    "Aprobado es final: no vuelve atrás ni se salta etapas."
+  ],
+  "precondiciones": [],
+  "casos": [
+    {
+      "id": "etapas-backend",
+      "comando": ["py", "-m", "pytest", "tests/test_etapas_encargo.py", "tests/test_conocimiento.py", "tests/test_veredictos.py", "tests/test_captura.py", "tests/test_replica.py", "tests/test_memoria_frente_c.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 300000,
+      "cubre": ["lienzo/conocimiento.py"]
+    },
+    {
+      "id": "etapas-e2e",
+      "comando": ["pwsh", "-NoProfile", "-File", "pruebas-agenticas/etapas_e2e.ps1"],
+      "timeoutMs": 300000,
+      "cubre": ["lienzo/conocimiento.py", "web/src/components/Etapas.tsx", "web/src/etapas.css"]
+    }
+  ]
+}

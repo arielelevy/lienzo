@@ -4,17 +4,19 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, failMsg } from "../api";
 import "../knowledge.css";
+import { Etapas } from "./Etapas";
 import { Learning } from "./Learning";
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type RecordData = { [key: string]: Json };
 interface Project { id: string; nombre?: string }
 interface Topic { id: string; texto: string }
-type View = "briefing" | "preguntar" | "vista" | "pendientes" | "capturas" | "aprendizaje";
+type View = "briefing" | "preguntar" | "vista" | "pendientes" | "capturas" | "aprendizaje" | "etapas";
 const VIEWS: { id: View; label: string }[] = [
   { id: "briefing", label: "Briefing" }, { id: "preguntar", label: "Buscar" },
   { id: "vista", label: "Vista por tema" }, { id: "pendientes", label: "Pendientes y avisos" },
   { id: "capturas", label: "Capturado" }, { id: "aprendizaje", label: "Aprendizaje" },
+  { id: "etapas", label: "Etapas" },
 ];
 const CLASES = [["", "Todo"], ["pedido", "Pedidos"], ["respuesta", "Respuestas"], ["envio", "Envíos"], ["regla", "Reglas"]];
 const LABELS: Record<string, string> = {
@@ -198,7 +200,7 @@ function ProjectPanel({ id }: { id: string }) {
   };
   return <div className="knowledge-body">
     <nav className="knowledge-nav" aria-label="Consultas de memoria">{VIEWS.map(v => <button key={v.id} type="button" aria-pressed={view === v.id} onClick={() => selectView(v.id)}>{v.label}</button>)}</nav>
-    {view === "aprendizaje" ? <Learning base={base} /> : <div className="knowledge-workspace">
+    {view === "aprendizaje" ? <Learning base={base} /> : view === "etapas" ? <Etapas base={base} /> : <div className="knowledge-workspace">
       <form className="knowledge-query" onSubmit={e => { e.preventDefault(); void query(); }}>
         <h2>{VIEWS.find(v => v.id === view)!.label}</h2>
         {(view === "briefing" || view === "preguntar") && <>
