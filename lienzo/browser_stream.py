@@ -41,6 +41,8 @@ MAX_SESSIONS = 4  # vistas abiertas a la vez en esta PC (cada una es un worker c
 MAX_COMMAND = 65536
 RECORD = struct.Struct(">IB")  # largo (tipo + carga) y tipo: J json, F cuadro
 TAB_FRAME = struct.Struct(">IIHH")  # generacion, secuencia, ancho, alto; sigue JPEG completo
+# El host espera el próximo cuadro del screencast (hasta 0,5 s): el tope sólo frena una página muy animada.
+TAB_MIN_INTERVAL = 1 / 30
 _tab_owners = {}
 _tab_lock = threading.Lock()
 _sessions = 0
@@ -584,7 +586,7 @@ class TabWorker:
             with self.cv:
                 self.cv.wait_for(
                     lambda generation=generation: self.closed or generation != self.generation,
-                    timeout=max(0, 0.1 - (time.monotonic() - started)),
+                    timeout=max(0, TAB_MIN_INTERVAL - (time.monotonic() - started)),
                 )
 
     def _metadata(self):
@@ -611,7 +613,7 @@ class TabWorker:
                         if self.last_state_error != (generation, message):
                             self.last_state_error = (generation, message)
                             self.json({"t": "error", "generation": generation, "message": message})
-                # Un cambio en metadata no es un motivo para capturar mas de diez veces por segundo.
+                # El estado (historial, diálogo, pestaña oculta) se consulta cada 2 s, aparte de los cuadros.
                 with self.cv:
                     self.cv.wait_for(
                         lambda generation=generation: self.closed or generation != self.generation, timeout=2

@@ -549,6 +549,21 @@ test('tabs stream diálogo A no oculta frame B antes del state B', async ({page}
   await expect(page.getByText('Prompt A', {exact: true})).toHaveCount(0);
 });
 
+test('tabs stream avisa la pestaña oculta y lo quita cuando vuelve a pintar', async ({page}) => {
+  const f = await streamFixture(page);
+  const gen = f.channels[0].commands.find(d => d.t === 'open')!.generation;
+  const hiddenMessage = 'Chrome no está pintando esa pestaña (ventana minimizada, o tapada sin las banderas anti-oclusión)';
+  f.channels[0].send(JSON.stringify({t: 'state', generation: gen, back: false, forward: false, dialog: null, hidden: true, hiddenMessage}));
+  const warning = page.getByRole('alert').filter({hasText: 'la rueda no se envía'});
+  await expect(warning).toContainText(hiddenMessage);
+  // la vista no se congela: la imagen y la entrada siguen habilitadas
+  await expect(page.getByRole('application', {name: 'Página remota: mouse y teclado'})).not.toHaveAttribute('aria-disabled', 'true');
+  f.channels[0].send(JSON.stringify({t: 'state', generation: gen, back: false, forward: false, dialog: null, hidden: false}));
+  await expect(warning).toHaveCount(0);
+  f.channels[0].send(JSON.stringify({t: 'state', generation: gen, hidden: 'sí'}));
+  await expect(page.getByRole('alert').filter({hasText: 'Estado de pestaña inválido'})).toBeVisible();
+});
+
 test('tabs stream release lento no absorbe otro blur después de un down nuevo', async ({page}) => {
   const f = await streamFixture(page);
   const screen = page.getByRole('application', {name: 'Página remota: mouse y teclado'});

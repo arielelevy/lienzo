@@ -44,6 +44,7 @@ class CDP {
       const target = msg.sessionId ? this.sessions.get(msg.sessionId) : this;
       if (target && msg.method === 'Page.javascriptDialogOpening') target.dialog = msg.params;
       if (target && msg.method === 'Page.javascriptDialogClosed') target.dialog = null;
+      if (target && msg.method === 'Page.screencastFrame') target.onFrame?.(msg.params);
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
@@ -100,7 +101,7 @@ async function start() {
   ], {windowsHide: true, stdio: ['ignore', 'ignore', 'pipe']});
   chrome = child;
   child.once('exit', () => {
-    if (chrome === child) { chrome = null; endpoint = ''; browser?.socket.close(); browser = null; pages.clear(); }
+    if (chrome === child) { chrome = null; endpoint = ''; browser?.socket.close(); browser = null; dropPages(); }
   });
   endpoint = await new Promise((resolve, reject) => {
     let tail = '';
@@ -123,7 +124,7 @@ async function tabs() {
   const {targetInfos} = await browser.send('Target.getTargets');
   const list = targetInfos.filter(t => t.type === 'page').map(t => ({id: t.targetId, title: t.title, url: t.url}));
   for (const [id, cdp] of pages) {
-    if (!list.some(t => t.id === id)) { browser.sessions.delete(cdp.sessionId); pages.delete(id); }
+    if (!list.some(t => t.id === id)) { stopCast(cdp, false); browser.sessions.delete(cdp.sessionId); pages.delete(id); }
   }
   return list;
 }
@@ -162,24 +163,160 @@ async function attachPage(id) {
 }
 
 // Chrome habitual (existing): nunca se emula el tamaño; se lee el real y se captura sin tocar layout ni scroll.
-async function realViewport(cdp) {
-  const {cssVisualViewport: v, visualViewport: device} = await cdp.send('Page.getLayoutMetrics');
-  const width = Math.round(v?.clientWidth), height = Math.round(v?.clientHeight);
-  if (!Number.isFinite(v?.pageX) || !Number.isFinite(v?.pageY) || !(width >= 1 && width <= 3840 && height >= 1 && height <= 2160))
-    fail('Chrome informó un tamaño de pestaña inválido', 502);
-  cdp.css = {width, height};
-  // medido (headless, 2026-10-20): con DPR 2 la captura sale al doble de px que el clip CSS
-  const dpr = device?.clientWidth > 0 ? Math.min(4, Math.max(1, device.clientWidth / v.clientWidth)) : 1;
-  return {x: v.pageX, y: v.pageY, width, height, dpr};
+// innerWidth/innerHeight y no cssVisualViewport: el cuadro (screencast o captura sin clip) incluye la barra de
+// scroll (medido 2026-10-21: 1479 px a DPR 1,5 = 986 CSS, con clientWidth 970,7). Se leen en un mundo aislado:
+// un script de la página no puede falsear innerWidth ni visibilityState ahí.
+const VIEW = '[innerWidth, innerHeight, document.visibilityState]';
+
+async function isolated(cdp) {
+  if (!cdp.world) {
+    cdp.world = (async () => {
+      const {frameTree} = await cdp.send('Page.getFrameTree');
+      const {executionContextId} = await cdp.send('Page.createIsolatedWorld', {frameId: frameTree.frame.id, worldName: 'lienzo-vista'});
+      return executionContextId;
+    })();
+    cdp.world.catch(() => { cdp.world = null; });
+  }
+  return cdp.world;
 }
 
-async function realShot(cdp, viewerWidth, viewerHeight) {
+async function evaluate(cdp, expression) {
+  for (let attempt = 0; ; attempt++) {
+    const contextId = await isolated(cdp);
+    try {
+      return await cdp.send('Runtime.evaluate', {expression, returnByValue: true, contextId});
+    } catch (e) {
+      // una navegación destruye el mundo aislado: se crea otro y se repite la lectura (no tiene efectos)
+      if (attempt > 0 || e.status === 504) throw e;
+      cdp.world = null;
+    }
+  }
+}
+
+async function realViewport(cdp) {
+  const {result, exceptionDetails} = await evaluate(cdp, VIEW);
+  const [width, height, visibility] = Array.isArray(result?.value) ? result.value : [];
+  if (exceptionDetails || !Number.isInteger(width) || !Number.isInteger(height)
+      || !(width >= 1 && width <= 3840 && height >= 1 && height <= 2160)) fail('Chrome informó un tamaño de pestaña inválido', 502);
+  cdp.css = {width, height};
+  return {width, height, hidden: visibility === 'hidden'};
+}
+
+// Cuadros empujados (Page.startScreencast) a la resolución real del dispositivo. El acuse a Chrome se manda
+// cuando el visor se lleva el cuadro: Chrome no codifica otro hasta entonces, así no gasta CPU sin nadie mirando.
+// Con la pestaña oculta (ventana minimizada, o tapada sin las banderas anti-oclusión) Chrome deja de empujar:
+// ahí se captura a pedido, que sí pinta (medido 2026-10-21: 51 ms minimizada, screencast 0,3 c/s).
+// Tope 2560×1600 px: una pestaña 4K a DPR 2 pasaría los 4 MiB por cuadro del stream.
+const CAST_WAIT = 500, CAST_IDLE = 4000, HIDDEN_MIN = 100, HIDDEN_MAX = 1000, MAX_PX = [2560, 1600];
+const HIDDEN = 'Chrome no está pintando esa pestaña (ventana minimizada, o tapada sin las banderas anti-oclusión)';
+
+function startCast(cdp) {
+  const cast = {frame: null, last: null, waiters: new Set(), idle: null, failed: false, hiddenAt: 0, hiddenEvery: HIDDEN_MIN};
+  cdp.cast = cast;
+  cdp.onFrame = params => {
+    if (cdp.cast !== cast) return;
+    cast.frame = params;
+    for (const wake of cast.waiters) wake();
+  };
+  cdp.send('Page.startScreencast', {format: 'jpeg', quality: 90, maxWidth: MAX_PX[0], maxHeight: MAX_PX[1], everyNthFrame: 1})
+    .catch(e => { cast.failed = true; process.stderr.write(`Chrome screencast: ${e.message}\n`); });
+  return cast;
+}
+
+// remote: false cuando el socket ya no sirve (stop, Chrome cerrado): sólo se sueltan timers y esperas
+function stopCast(cdp, remote = true) {
+  const cast = cdp.cast;
+  if (!cast) return;
+  clearTimeout(cast.idle);
+  cdp.cast = null;
+  for (const wake of cast.waiters) wake();
+  if (remote) void cdp.send('Page.stopScreencast').catch(e => process.stderr.write(`Chrome al parar el screencast: ${e.message}\n`));
+}
+
+function dropPages() {
+  for (const cdp of pages.values()) stopCast(cdp, false);
+  pages.clear();
+}
+
+// el cuadro tiene que medir lo que se va a informar: uno de antes de un resize no se muestra con el tamaño nuevo
+const sameSize = (size, width, height) => Math.abs(size.width - width) <= 1 && Math.abs(size.height - height) <= 1;
+
+function takeFrame(cdp, cast, width, height) {
+  const frame = cast.frame;
+  cast.frame = null;
+  void cdp.send('Page.screencastFrameAck', {sessionId: frame.sessionId}).catch(e => process.stderr.write(`Chrome acuse de cuadro: ${e.message}\n`));
+  const size = {width: Math.round(frame.metadata?.deviceWidth), height: Math.round(frame.metadata?.deviceHeight)};
+  if (!sameSize(size, width, height)) return null;
+  cast.last = {data: frame.data, width, height};
+  return frame.data;
+}
+
+async function capture(cdp, cast, width, height) {
+  let {data} = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 90, captureBeyondViewport: false});
+  // la captura a pedido no tiene tope de px: una pestaña enorme baja la calidad antes que pasar los 4 MiB
+  if (data.length > 4 * 1024 * 1024) ({data} = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 50, captureBeyondViewport: false}));
+  if (cdp.cast === cast) cast.last = {data, width, height};
+  return data;
+}
+
+// Devuelve el JPEG en base64 de una pestaña de width×height CSS. hidden: no pinta sola y se captura a pedido.
+async function castShot(cdp, hidden, width, height) {
+  const cast = cdp.cast ?? startCast(cdp);
+  clearTimeout(cast.idle);
+  cast.idle = setTimeout(() => { if (cdp.cast === cast) stopCast(cdp); }, CAST_IDLE);
+  if (!hidden && !cast.failed && !cast.frame) {
+    let wake, timer;
+    await new Promise(resolve => { wake = resolve; cast.waiters.add(wake); timer = setTimeout(resolve, CAST_WAIT); });
+    clearTimeout(timer);
+    cast.waiters.delete(wake);
+  }
+  if (cdp.cast === cast && cast.frame) {
+    const data = takeFrame(cdp, cast, width, height);
+    if (data) return data;
+  }
+  if (!hidden && !cast.failed) {
+    // página quieta y visible: se repite el último del mismo tamaño (el stream no reenvía bytes iguales)
+    if (cast.last && sameSize(cast.last, width, height)) return cast.last.data;
+    return capture(cdp, cast, width, height);
+  }
+  // oculta: captura a pedido; si la imagen no cambia, cada vez más espaciada (hasta 1 s) para no gastar CPU de esa PC
+  const pause = cast.hiddenEvery - (Date.now() - cast.hiddenAt);
+  if (pause > 0) await new Promise(resolve => setTimeout(resolve, pause));
+  const previous = cast.last?.data;
+  const data = await capture(cdp, cast, width, height);
+  cast.hiddenAt = Date.now();
+  cast.hiddenEvery = data === previous ? Math.min(HIDDEN_MAX, cast.hiddenEvery * 2) : HIDDEN_MIN;
+  return data;
+}
+
+async function realShot(cdp) {
   const view = await realViewport(cdp);
-  // el clip va en coordenadas del documento: arranca en el scroll actual (pageX/pageY) y escala la imagen, no la página
-  const scale = Math.min(1, viewerWidth / view.width, viewerHeight / view.height) / view.dpr;
-  const {data} = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false,
-    clip: {x: view.x, y: view.y, width: view.width, height: view.height, scale}});
-  return {image: data, width: view.width, height: view.height};
+  return {image: await castShot(cdp, view.hidden, view.width, view.height), width: view.width, height: view.height, hidden: view.hidden};
+}
+
+// mouseMoved no se espera: con la pestaña oculta Chrome lo confirma recién a los 5 s (medido 2026-10-21, 12 de 12)
+// y una ráfaga de hover llegaba al límite de 8 s. Uno solo en vuelo; mientras tanto gana el último, sin cola.
+function moveLatest(cdp, params) {
+  if (cdp.moving) { cdp.nextMove = params; return; }
+  cdp.moving = true;
+  const go = p => cdp.send('Input.dispatchMouseEvent', p)
+    .catch(e => process.stderr.write(`Chrome move: ${e.message}\n`))
+    .finally(() => {
+      const next = cdp.nextMove;
+      cdp.nextMove = null;
+      if (next) go(next); else cdp.moving = false;
+    });
+  go(params);
+}
+
+// Antes de otra entrada sale el último move guardado, sin esperarlo: el clic o el fin de un arrastre llegan
+// después de la última posición y no hace falta esperar su confirmación. La entrada vuelve a captura rápida.
+function flushMove(cdp) {
+  if (cdp.cast) cdp.cast.hiddenEvery = HIDDEN_MIN;
+  const next = cdp.nextMove;
+  if (!next) return;
+  cdp.nextMove = null;
+  void cdp.send('Input.dispatchMouseEvent', next).catch(e => process.stderr.write(`Chrome move: ${e.message}\n`));
 }
 
 function url(value) {
@@ -230,7 +367,10 @@ async function input(cdp, events, releaseOnly = false) {
     } else fail('Entrada desconocida');
   }
   // Validar TODO el lote antes del primer efecto; un 400 nunca significa ejecucion parcial.
-  for (const [method, params] of commands) await cdp.send(method, params);
+  for (const [method, params] of commands) {
+    if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved') moveLatest(cdp, params);
+    else { flushMove(cdp); await cdp.send(method, params); }
+  }
 }
 
 async function stop() {
@@ -243,7 +383,7 @@ async function stop() {
   consentProcess = null;
   pendingSocket?.close();
   pendingSocket = null;
-  pages.clear();
+  dropPages();
   const child = chrome;
   if (browser) {
     // Browser.close puede cerrar el socket antes de contestar: la salida del proceso es la prueba.
@@ -263,7 +403,10 @@ async function stop() {
 
 async function prepareProfile(id, setup = true) {
   if (!profiles().some(p => p.id === id)) fail('Elegí un perfil existente de esa PC');
-  const child = spawn(executable(), [`--profile-directory=${id}`, '--new-window', setup ? 'chrome://inspect/#remote-debugging' : 'about:blank'],
+  // Sin el cálculo de oclusión, Chrome sigue pintando la ventana tapada o con la PC bloqueada y la vista por
+  // pestañas recibe cuadros (medido 2026-10-21: tapada 92 c/s en vez de 0,3). Sólo vale si este arranque abre
+  // el proceso de Chrome; con Chrome ya abierto, Chrome la ignora y sólo abre la ventana.
+  const child = spawn(executable(), [`--profile-directory=${id}`, '--disable-features=CalculateNativeWinOcclusion', '--new-window', setup ? 'chrome://inspect/#remote-debugging' : 'about:blank'],
     {detached: true, windowsHide: false, stdio: 'ignore'});
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
   child.unref();
@@ -312,7 +455,7 @@ function connectExisting(autoApprove = false) {
     cdp.socket.addEventListener('close', () => {
       if (browser !== cdp) return;
       browser = null;
-      pages.clear();
+      dropPages();
       connectionError = 'Chrome cerró la conexión. Volvé a conectar y aceptá su aviso.';
     });
   }).catch(e => {
@@ -383,9 +526,8 @@ async function handle(d) {
     // Snapshot nunca modifica el viewport: open/viewport es la unica operacion que lo establece.
     if (d.action === 'snapshot') {
       if (cdp.dialog) return {dialog: cdp.dialog};
-      if (!chrome) return await realShot(cdp, width, height).catch(timedOut);
-      const shot = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false}).catch(timedOut);
-      return {image: shot.data, width, height};
+      if (!chrome) return await realShot(cdp).catch(timedOut);
+      return {image: await castShot(cdp, false, width, height).catch(timedOut), width, height};
     }
     if (chrome && cdp.size !== `${width}x${height}`) {
       await cdp.send('Emulation.setDeviceMetricsOverride', {width, height, deviceScaleFactor: 1, mobile: false});
@@ -394,16 +536,18 @@ async function handle(d) {
     }
     if (cdp.dialog) return {running: true, tabs: await tabs(), dialog: cdp.dialog};
     const shot = chrome
-      ? {image: (await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 80, captureBeyondViewport: false})).data, width, height}
-      : await realShot(cdp, width, height);
+      ? {image: await castShot(cdp, false, width, height), width, height}
+      : await realShot(cdp);
     const history = await cdp.send('Page.getNavigationHistory');
     return {running: true, tabs: await tabs(), ...shot,
       back: history.currentIndex > 0, forward: history.currentIndex < history.entries.length - 1, dialog: null};
   }
   if (d.action === 'tab-state') {
     const history = await cdp.send('Page.getNavigationHistory');
+    // hidden: el visor lo avisa; los cuadros siguen por captura a pedido y la rueda no se manda
+    const hidden = !chrome && !cdp.dialog && (await evaluate(cdp, 'document.visibilityState')).result?.value === 'hidden';
     return {running: true, tabs: await tabs(), back: history.currentIndex > 0,
-      forward: history.currentIndex < history.entries.length - 1, dialog: cdp.dialog};
+      forward: history.currentIndex < history.entries.length - 1, dialog: cdp.dialog, hidden, ...(hidden ? {hiddenMessage: HIDDEN} : {})};
   }
   if (d.action === 'navigate') {
     const result = await cdp.send('Page.navigate', {url: url(d.url)});
@@ -417,13 +561,17 @@ async function handle(d) {
     if (entry) await cdp.send('Page.navigateToHistoryEntry', {entryId: entry.id});
   } else if (d.action === 'input') {
     // la entrada se mapeó sobre el tamaño de un cuadro: si la pestaña cambió desde entonces, no se manda
+    let current = null;
     if (d.basis !== undefined) {
       // existing: el último cuadro no prueba que la ventana conserve su tamaño. Comparar con
       // esta lectura, no con la caché compartida que otro snapshot puede modificar mientras esperamos.
-      const current = chrome ? cdp.css : await realViewport(cdp);
+      current = chrome ? cdp.css : await realViewport(cdp);
       if (!d.basis || integer(d.basis.width, 1, 3840) !== current?.width || integer(d.basis.height, 1, 2160) !== current?.height)
         fail('La pestaña cambió de tamaño; la entrada no se envió', 409);
     }
+    // con la pestaña oculta Chrome no confirma la rueda (medido: más de 9 s); mejor no mandarla que dejarla incierta
+    if (!chrome && Array.isArray(d.events) && d.events.some(e => e?.kind === 'mouse' && e.type === 'mouseWheel')
+        && (current ?? await realViewport(cdp)).hidden) fail(HIDDEN + '; la rueda no se envió', 409);
     await input(cdp, d.events);
   }
   else if (d.action === 'release-input') await input(cdp, d.events, true);

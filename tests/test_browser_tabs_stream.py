@@ -267,7 +267,7 @@ def test_relay_tab_mode_is_in_signed_path_and_old_peer_rejected(monkeypatch):
     assert b"Actualiz" in sent[-1]
 
 
-def test_immediate_acks_do_not_exceed_ten_fps(tab_worker):
+def test_immediate_acks_do_not_exceed_thirty_fps(tab_worker):
     worker, gate, _, _, frame_done, calls, output = tab_worker
     started = []
     original = browser_remote.HOST.request
@@ -285,7 +285,7 @@ def test_immediate_acks_do_not_exceed_ten_fps(tab_worker):
         frame_done.clear()
         send(worker, t="ack", generation=1, n=n)
     assert len(started) >= 4
-    assert all(right - left >= 0.095 for left, right in pairwise(started))
+    assert all(right - left >= module.TAB_MIN_INTERVAL - 0.003 for left, right in pairwise(started))
 
 
 def test_owner_stays_reserved_until_inflight_capture_finishes(tab_worker):

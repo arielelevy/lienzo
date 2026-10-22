@@ -28,8 +28,8 @@ test('snapshot caliente no consulta targets/historia ni cambia viewport', {timeo
   await request({action:'viewport', tab:'fixture-tab', width:800, height:600, requestId:201});
   const start = trace().length;
   await request({action:'snapshot', tab:'fixture-tab', width:900, height:700, requestId:202});
-  // existing: lee el tamaño real (solo lectura) y captura; nunca emula
-  assert.deepEqual(trace().slice(start).map(x=>x.method), ['Page.getLayoutMetrics', 'Page.captureScreenshot']);
+  // existing: lee el tamaño real (solo lectura) y toma el cuadro empujado; nunca emula ni captura a pedido
+  assert.deepEqual(trace().slice(start).map(x=>x.method), ['Runtime.evaluate', 'Page.startScreencast', 'Page.screencastFrameAck']);
 });
 
 test('lote inválido se rechaza antes de enviar el primer evento', {timeout:15000}, async t => {
@@ -101,7 +101,7 @@ test('Page.enable vencido suelta la sesión y el próximo pedido adjunta de cero
   assert.equal(trace().filter(x=>x.method === 'Emulation.clearDeviceMetricsOverride').length, 1); // la sesión nueva limpia una vez
 });
 
-async function worker(t, scenario, view = '1280x800') {
+async function worker(t, scenario, view = '1280x800', visibility = 'visible') {
   const folder = mkdtempSync(join(tmpdir(), 'lienzo-host-fixture-'));
   const data = process.platform === 'win32' ? join(folder, 'Google/Chrome/User Data')
     : process.platform === 'darwin' ? join(folder, 'Library/Application Support/Google/Chrome')
@@ -110,7 +110,7 @@ async function worker(t, scenario, view = '1280x800') {
   writeFileSync(join(data, 'DevToolsActivePort'), '9222\n/devtools/browser/fixture\n');
   const traceFile = join(folder, 'cdp.jsonl');
   const child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, host, join(folder, 'profile')], {
-    env: {...process.env, LOCALAPPDATA:folder, HOME:folder, USERPROFILE:folder, TEST_BROWSER_HOST_SCENARIO:scenario, TEST_BROWSER_HOST_TRACE:traceFile, TEST_BROWSER_HOST_VIEW:view},
+    env: {...process.env, LOCALAPPDATA:folder, HOME:folder, USERPROFILE:folder, TEST_BROWSER_HOST_SCENARIO:scenario, TEST_BROWSER_HOST_TRACE:traceFile, TEST_BROWSER_HOST_VIEW:view, TEST_BROWSER_HOST_VISIBILITY:visibility},
     windowsHide:true, stdio:['pipe', 'pipe', 'pipe'],
   });
   const queued = [], waiting = [], methods = [];
@@ -165,7 +165,7 @@ async function worker(t, scenario, view = '1280x800') {
   return {request, methods, child, trace};
 }
 
-for (const method of ['Target.getTargets', 'Target.attachToTarget', 'Page.enable', 'Emulation.clearDeviceMetricsOverride', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Page.getNavigationHistory']) {
+for (const method of ['Target.getTargets', 'Target.attachToTarget', 'Page.enable', 'Emulation.clearDeviceMetricsOverride', 'Runtime.evaluate', 'Page.captureScreenshot', 'Page.getNavigationHistory']) {
   test(`frame: vence ${method}; state y el siguiente frame siguen usables`, {timeout:15000}, async t => {
     const {request, methods} = await worker(t, method);
     const frame = {action:'frame', tab:'fixture-tab', width:800, height:600};
@@ -205,17 +205,18 @@ test('timeout de entrada informa sólo el método, sin texto privado ni URL de n
   assert.ok(!JSON.stringify(result).includes(secret));
 });
 
-test('frame frío usa ocho comandos CDP; frame caliente usa cinco sin tocar foco Win32', {timeout:15000}, async t => {
+test('frame frío arranca el screencast; frame caliente no captura a pedido ni toca foco Win32', {timeout:15000}, async t => {
   const {request, trace} = await worker(t, 'healthy');
   const frame = {action:'frame', tab:'fixture-tab', width:800, height:600};
   const before = trace().length;
   assert.equal((await request(frame)).image, 'fixture-image');
   const cold = trace().slice(before);
-  assert.deepEqual(cold.map(item => item.method), ['Target.getTargets', 'Target.attachToTarget', 'Page.enable', 'Emulation.clearDeviceMetricsOverride', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Page.getNavigationHistory', 'Target.getTargets']);
+  assert.deepEqual(cold.map(item => item.method), ['Target.getTargets', 'Target.attachToTarget', 'Page.enable', 'Emulation.clearDeviceMetricsOverride', 'Page.getFrameTree', 'Page.createIsolatedWorld', 'Runtime.evaluate', 'Page.startScreencast', 'Page.screencastFrameAck', 'Page.getNavigationHistory', 'Target.getTargets']);
   const next = trace().length;
   assert.equal((await request(frame)).image, 'fixture-image');
   const warm = trace().slice(next);
-  assert.deepEqual(warm.map(item => item.method), ['Target.getTargets', 'Page.getLayoutMetrics', 'Page.captureScreenshot', 'Page.getNavigationHistory', 'Target.getTargets']);
+  // página quieta: sin cuadro nuevo se repite el último (el stream no reenvía bytes iguales)
+  assert.deepEqual(warm.map(item => item.method), ['Target.getTargets', 'Runtime.evaluate', 'Page.getNavigationHistory', 'Target.getTargets']);
   t.diagnostic(JSON.stringify({cold:cold.map(item => item.method), warm:warm.map(item => item.method), timing:'fixture; no es medición de Chrome remoto'}));
 });
 
@@ -234,16 +235,92 @@ test('existing: dos visores con tamaños distintos y frame HTTP no alternan el t
   assert.equal(overrides, 0);
 });
 
-test('existing: la captura arranca en el scroll actual y escala la imagen, no la página', {timeout:15000}, async t => {
-  const {request, trace} = await worker(t, 'none');
-  const shot = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600, requestId:901});
-  assert.deepEqual([shot.width, shot.height], [1280, 800]); // tamaño CSS real, no el del visor
-  const clip = trace().filter(x => x.method === 'Page.captureScreenshot').at(-1).params.clip;
-  assert.deepEqual({x:clip.x, y:clip.y, width:clip.width, height:clip.height}, {x:0, y:1600, width:1280, height:800});
-  assert.equal(clip.scale, Math.min(900 / 1280, 600 / 800));
-  assert.equal(trace().filter(x => ['Emulation.setDeviceMetricsOverride', 'Runtime.evaluate'].includes(x.method)).length, 0);
+test('existing: cuadros empujados a resolución real, sin clip, sin emular y con acuse al llevarlos', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'cast-stream');
+  const first = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600, requestId:901});
+  assert.deepEqual([first.width, first.height, first.image], [1280, 800, 'frame-1']); // tamaño CSS real, no el del visor
+  const second = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600, requestId:902});
+  assert.equal(second.image, 'frame-3'); // el siguiente cuadro llega después del acuse del anterior
+  const methods = trace().map(x => x.method);
+  assert.equal(methods.filter(m => m === 'Page.startScreencast').length, 1);
+  assert.equal(methods.filter(m => m === 'Page.screencastFrameAck').length, 2);
+  assert.equal(methods.filter(m => ['Page.captureScreenshot', 'Emulation.setDeviceMetricsOverride', 'Page.getLayoutMetrics'].includes(m)).length, 0);
 });
 
+test('existing: un cuadro de antes de un resize no sale con el tamaño nuevo: se captura a pedido', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'cast-stale-size');
+  const shot = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  assert.deepEqual([shot.width, shot.height, shot.image], [1280, 800, 'fixture-image']);
+  const methods = trace().map(x => x.method);
+  assert.ok(methods.indexOf('Page.screencastFrameAck') < methods.indexOf('Page.captureScreenshot'), methods.join(','));
+});
+
+test('existing: sin nadie mirando se para el screencast', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none');
+  await request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  await new Promise(resolve => setTimeout(resolve, 4300));
+  assert.equal(trace().filter(x => x.method === 'Page.stopScreencast').length, 1);
+  assert.equal((await request({action:'snapshot', tab:'fixture-tab', width:900, height:600})).image, 'fixture-image');
+  assert.equal(trace().filter(x => x.method === 'Page.startScreencast').length, 2);
+});
+
+test('existing: pestaña oculta se captura a pedido sin clip, la rueda no se manda y tab-state lo avisa', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none', '1280x800', 'hidden');
+  const t0 = Date.now();
+  const shot = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  assert.ok(Date.now() - t0 < 400, 'oculta no espera un cuadro que Chrome no va a empujar');
+  assert.deepEqual([shot.width, shot.height, shot.image, shot.hidden], [1280, 800, 'fixture-image', true]);
+  const capture = trace().filter(x => x.method === 'Page.captureScreenshot').at(-1).params;
+  assert.deepEqual(capture, {format:'jpeg', quality:90, captureBeyondViewport:false});
+  const before = trace().length;
+  const wheel = {kind:'mouse', type:'mouseWheel', button:'none', buttons:0, x:10, y:10, modifiers:0, clickCount:0, deltaX:0, deltaY:100};
+  const rejected = await request({action:'input', tab:'fixture-tab', basis:{width:1280, height:800}, events:[wheel]});
+  assert.equal(rejected.status, 409);
+  assert.match(rejected.error, /no está pintando.*la rueda no se envió/);
+  assert.equal(trace().slice(before).some(x => x.method.startsWith('Input.')), false);
+  const click = {kind:'mouse', type:'mousePressed', button:'left', buttons:1, x:10, y:10, modifiers:0, clickCount:1};
+  assert.equal((await request({action:'input', tab:'fixture-tab', basis:{width:1280, height:800}, events:[click]})).ok, true);
+  const state = await request({action:'tab-state', tab:'fixture-tab'});
+  assert.equal(state.hidden, true);
+  assert.match(state.hiddenMessage, /minimizada/);
+});
+
+test('existing: oculta y sin cambios, la captura a pedido se espacia hasta 1 s; una entrada la vuelve a acelerar', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'none', '1280x800', 'hidden');
+  const shot = () => request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  await shot();
+  const t0 = Date.now();
+  for (let i = 0; i < 4; i++) await shot(); // misma imagen: esperas de 100, 200, 400 y 800 ms
+  assert.ok(Date.now() - t0 >= 1450, String(Date.now() - t0));
+  const click = {kind:'mouse', type:'mousePressed', button:'left', buttons:1, x:10, y:10, modifiers:0, clickCount:1};
+  await request({action:'input', tab:'fixture-tab', events:[click]});
+  const t1 = Date.now();
+  await shot();
+  assert.ok(Date.now() - t1 < 400, String(Date.now() - t1));
+  assert.equal(trace().filter(x => x.method === 'Page.captureScreenshot').length, 6);
+});
+
+test('mouseMoved no espera confirmación: el clic sale enseguida, detrás del último move guardado', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'Input.dispatchMouseEvent');
+  const move = x => ({kind:'mouse', type:'mouseMoved', button:'none', buttons:0, x, y:10, modifiers:0, clickCount:0});
+  const click = {kind:'mouse', type:'mousePressed', button:'left', buttons:1, x:50, y:10, modifiers:0, clickCount:1};
+  // el primer move nunca se confirma (pestaña oculta): el lote igual termina y el clic no queda detrás
+  const result = await request({action:'input', tab:'fixture-tab', events:[move(1), move(2), move(3), click]});
+  assert.equal(result.ok, true);
+  await new Promise(resolve => setTimeout(resolve, 120)); // vence el move colgado
+  const sent = trace().filter(x => x.method === 'Input.dispatchMouseEvent').map(x => `${x.params.type}@${x.params.x}`);
+  // el 2 se reemplazó por el 3, que sale antes del clic sin esperar al 1 colgado
+  assert.deepEqual(sent, ['mouseMoved@1', 'mouseMoved@3', 'mousePressed@50']);
+});
+
+test('mouseMoved: con uno en vuelo gana el último, sin cola', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'Input.dispatchMouseEvent');
+  const move = x => ({kind:'mouse', type:'mouseMoved', button:'none', buttons:0, x, y:10, modifiers:0, clickCount:0});
+  for (const x of [1, 2, 3, 4]) assert.equal((await request({action:'input', tab:'fixture-tab', events:[move(x)]})).ok, true);
+  await new Promise(resolve => setTimeout(resolve, 120));
+  const sent = trace().filter(x => x.method === 'Input.dispatchMouseEvent').map(x => x.params.x);
+  assert.deepEqual(sent, [1, 4]);
+});
 test('existing: una pestaña 4K se informa a su tamaño y acepta coordenadas hasta 3840x2160', {timeout:15000}, async t => {
   const {request, trace} = await worker(t, 'none', '3840x2160');
   assert.deepEqual(await request({action:'viewport', tab:'fixture-tab', width:1280, height:800, requestId:911}), {width:3840, height:2160, requestId:911});
@@ -260,7 +337,7 @@ test('existing: entrada mapeada sobre un tamaño viejo se rechaza sin enviar nad
   const stale = await request({action:'input', tab:'fixture-tab', basis:{width:1000, height:800}, events:[move], requestId:922});
   assert.equal(stale.status, 409);
   assert.match(stale.error, /cambió de tamaño/);
-  assert.deepEqual(trace().slice(before).map(x => x.method), ['Page.getLayoutMetrics']);
+  assert.deepEqual(trace().slice(before).map(x => x.method), ['Runtime.evaluate']);
   assert.equal((await request({action:'input', tab:'fixture-tab', basis:{width:1280, height:800}, events:[move], requestId:923})).ok, true);
 });
 
@@ -273,7 +350,7 @@ test('B08: métricas cambian después del cuadro y la base cacheada no autoriza 
   const result = await request({action:'input', tab:'fixture-tab', basis:{width:1280, height:800}, events:[move]});
   assert.equal(result.status, 409);
   assert.match(result.error, /cambió de tamaño/);
-  assert.deepEqual(trace().slice(before).map(x => x.method), ['Page.getLayoutMetrics']);
+  assert.deepEqual(trace().slice(before).map(x => x.method), ['Runtime.evaluate']);
 });
 
 test('B08: acepta base actual sin otro cuadro y libera teclas y botones aun con base vieja', {timeout:15000}, async t => {
@@ -283,7 +360,7 @@ test('B08: acepta base actual sin otro cuadro y libera teclas y botones aun con 
   const mouse = {kind:'mouse', type:'mousePressed', button:'left', buttons:1, x:10, y:10, modifiers:0, clickCount:1};
   const before = trace().length;
   assert.equal((await request({action:'input', tab:'fixture-tab', basis:{width:900, height:600}, events:[key, mouse]})).ok, true);
-  assert.deepEqual(trace().slice(before).map(x => x.method), ['Page.getLayoutMetrics', 'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent']);
+  assert.deepEqual(trace().slice(before).map(x => x.method), ['Runtime.evaluate', 'Input.dispatchKeyEvent', 'Input.dispatchMouseEvent']);
   const releaseStart = trace().length;
   assert.equal((await request({action:'release-input', tab:'fixture-tab', basis:{width:1280, height:800},
     events:[{...key, type:'keyUp'}, {...mouse, type:'mouseReleased', buttons:0, clickCount:0}]})).ok, true);

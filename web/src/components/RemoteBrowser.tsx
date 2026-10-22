@@ -439,6 +439,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [inputError, setInputError] = useState('');
+  const [hidden, setHidden] = useState('');
   const [blocked, setBlocked] = useState(false);
   const selected = useRef(tab);
   const generationCounter = useRef(0);
@@ -447,8 +448,10 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
   const send = useRef<((events: Command[]) => Promise<unknown>) | null>(null);
   const release = useRef<(() => Promise<unknown>) | null>(null);
   const canInput = useRef(false);
+  const hiddenNow = useRef(false);
   const ready = enabled && connected && generation === opened && frame?.generation === generation && !blocked;
   useEffect(() => { canInput.current = ready; }, [ready]);
+  useEffect(() => { hiddenNow.current = !!hidden; }, [hidden]);
   useEffect(() => { stateHandler.current = onState; }, [onState]);
   useEffect(() => { selected.current = tab; open.current?.(); }, [tab]);
   useEffect(() => {
@@ -507,7 +510,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
       if (generationCounter.current === 0xffffffff) { setError('Se agotaron las generaciones del canal. Volvé a abrir la vista.'); return; }
       releaseInput(); // generación vieja antes del open; su ACK sigue correlacionado aunque cambie current
       current = ++generationCounter.current; signature = next; lastSeq = 0; latest = null; basis = null; canInput.current = false;
-      setGeneration(current); setOpened(0); setError(''); setNotice('Cargando pestaña…');
+      setGeneration(current); setOpened(0); setError(''); setHidden(''); setNotice('Cargando pestaña…');
       ws.send(JSON.stringify({t: 'open', tab: selected.current, generation: current, width, height}));
     };
     const draw = async () => {
@@ -585,7 +588,10 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
               || ['running', 'connecting', 'autoApproving', 'prepared'].some(k => m[k] !== undefined && typeof m[k] !== 'boolean')
               || (m.connectionError !== undefined && typeof m.connectionError !== 'string')
               || (m.mode !== undefined && !['existing', 'lienzo'].includes(m.mode))
+              || (m.hidden !== undefined && typeof m.hidden !== 'boolean') || (m.hiddenMessage !== undefined && typeof m.hiddenMessage !== 'string')
               || (m.dialog != null && (typeof m.dialog.type !== 'string' || typeof m.dialog.message !== 'string' || (m.dialog.defaultPrompt !== undefined && typeof m.dialog.defaultPrompt !== 'string')))) throw new Error('Estado de pestaña inválido');
+            // sólo el estado periódico (tab-state) trae hidden; el de un diálogo no lo cambia
+            if (m.hidden !== undefined) setHidden(m.hidden ? (m.hiddenMessage || 'Chrome no está pintando esa pestaña') : '');
             stateHandler.current(m, selected.current);
           } else if (m.t === 'error') {
             if (typeof m.message !== 'string') throw new Error('Error de captura inválido');
@@ -596,14 +602,18 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
       channel.onclose = () => {
         if (disposed || ws !== channel) return;
         // la generación era de este canal: el worker del canal nuevo no la conoce y rechazaría su release
-        ws = null; signature = ''; latest = null; current = 0; basis = null; canInput.current = false; setConnected(false); setOpened(0); uncertain();
+        ws = null; signature = ''; latest = null; current = 0; basis = null; canInput.current = false; setConnected(false); setOpened(0); setHidden(''); uncertain();
         if (++attempts > 5) { setNotice('Reconexión detenida. Revisá la conexión y volvé a intentar.'); return; }
         setNotice(`Reconectando lectura (${attempts}/5)… La última imagen puede estar desactualizada.`);
         retry = setTimeout(connect, Math.min(4000, 500 * 2 ** (attempts - 1)));
       };
     };
     open.current = () => { clearTimeout(retry); if (ws?.readyState === WebSocket.OPEN) select(true); else if (!ws || ws.readyState === WebSocket.CLOSED) { attempts = 0; connect(); } };
-    send.current = events => request('input', events);
+    // pestaña oculta: Chrome no confirma la rueda y el host la rechaza; no se manda, el aviso ya lo dice
+    send.current = events => {
+      const sent = hiddenNow.current ? events.filter(e => !(e.kind === 'mouse' && e.type === 'mouseWheel')) : events;
+      return sent.length ? request('input', sent) : Promise.resolve();
+    };
     release.current = () => request('release-input');
     const visibility = () => { if (ws?.readyState === WebSocket.OPEN) { if (document.hidden) releaseInput(); ws.send(JSON.stringify({t: document.hidden ? 'pause' : 'resume'})); } };
     const observer = new ResizeObserver(() => { clearTimeout(resize); resize = setTimeout(() => select(), 150); });
@@ -620,7 +630,7 @@ function useTabStream(peer: Peer, tab: string, enabled: boolean, viewport: React
       if (ws) { ws.onclose = null; if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({t: 'release'})); ws.close(); }
     };
   }, [enabled, peer.pc_id, viewport, canvas]);
-  return {canvas, frame, ready, notice, error, inputError,
+  return {canvas, frame, ready, notice, error, inputError, hidden,
     retry: () => open.current?.(),
     allowInput: () => { setInputError(''); setBlocked(false); },
     send: (events: Command[]) => send.current?.(events) ?? Promise.reject(new Error('El canal de pestañas está cerrado; no se envió el pedido.')),
@@ -848,7 +858,8 @@ function BrowserDesktop({peer}: {peer: Peer}) {
         : !tab ? <div className="remote-empty"><h1>No hay pestañas abiertas</h1><button disabled={busy} onClick={() => void action({action: "new", url: "about:blank"})}>Nueva pestaña</button></div>
         : (streamEnabled ? stream.frame?.tab !== tab : frame.tab !== tab || !frame.image) ? <div className="remote-empty">Cargando página…</div> : null}
       {ready && frame.tab === tab && frame.dialog && <BrowserDialog dialog={frame.dialog} onAnswer={(accept, text) => void action({action: "dialog", tab, accept, text})} />}
-      {streamEnabled && (stream.notice || stream.error || stream.inputError) && <div className="remote-capture-notice">
+      {streamEnabled && (stream.notice || stream.error || stream.inputError || stream.hidden) && <div className="remote-capture-notice">
+        {stream.hidden && <div role="alert">{stream.hidden}. La imagen sigue por capturas, más lenta, y la rueda no se envía. Restaurá esa ventana en la PC o arrancá Chrome con las banderas anti-oclusión.</div>}
         {(stream.notice || stream.error) && <div role={stream.error ? 'alert' : 'status'}>{stream.error}{stream.notice && <span> {stream.notice}</span>}<button onClick={stream.retry}>Actualizar captura</button></div>}
         {stream.inputError && <div role="alert">{stream.inputError}<button onClick={stream.allowInput}>Habilitar entrada sin reenviar</button></div>}
       </div>}

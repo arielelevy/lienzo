@@ -10,6 +10,17 @@ let dropped = false;
 let attached = 0;
 let targetRequests = 0;
 let layoutRequests = 0;
+let frames = 0;
+let worlds = 0;
+// el cuadro mide lo que la pestaña (en CSS); cast-stale-size simula uno de antes de un resize
+const frameSize = () => {
+  const [deviceWidth, deviceHeight] = (scenario === 'cast-stale-size' ? '900x600' : process.env.TEST_BROWSER_HOST_VIEW || '1280x800').split('x').map(Number);
+  return {deviceWidth, deviceHeight, pageScaleFactor:1};
+};
+// cuadros del screencast: uno al arrancar; con cast-stream, otro tras cada acuse. Sin cuadros cuando el
+// escenario prueba la captura a pedido (o la pestaña está oculta: Chrome no empuja)
+const visibility = process.env.TEST_BROWSER_HOST_VISIBILITY || 'visible';
+const pushes = !['Page.captureScreenshot', 'late-screenshot'].includes(scenario) && visibility === 'visible';
 class FixtureSocket extends EventTarget {
   static OPEN = 1;
   static CLOSED = 3;
@@ -22,9 +33,11 @@ class FixtureSocket extends EventTarget {
   send(line) {
     const command = JSON.parse(line);
     appendFileSync(process.env.TEST_BROWSER_HOST_TRACE, JSON.stringify({method:command.method,
-      ...(['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Page.captureScreenshot'].includes(command.method) ? {params:command.params} : {}), ns:process.hrtime.bigint().toString()}) + '\n');
+      ...(['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Page.captureScreenshot', 'Runtime.evaluate'].includes(command.method) ? {params:command.params} : {}), ns:process.hrtime.bigint().toString()}) + '\n');
     process.stderr.write('CDP ' + command.method + '\n');
     const reply = result => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({id:command.id, result})}));
+    const frame = () => realTimeout(() => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({sessionId:command.sessionId,
+      method:'Page.screencastFrame', params:{data:scenario === 'cast-stream' ? 'frame-' + ++frames : 'fixture-image', sessionId:++frames + 1000, metadata:frameSize()}})})), 5);
     const late = scenario === 'late-screenshot' && command.method === 'Page.captureScreenshot';
     if (command.method === 'Target.getTargets') targetRequests++;
     const eligible = command.method !== 'Target.getTargets' || targetRequests > 1;
@@ -38,13 +51,17 @@ class FixtureSocket extends EventTarget {
     if (command.method === 'Target.attachToTarget') result = {sessionId:'session-' + ++attached};
     if (command.method === 'Page.captureScreenshot') result = {data:'fixture-image'};
     if (command.method === 'Page.getNavigationHistory') result = {currentIndex:0, entries:[{id:1}]};
-    // pestaña real de 1280x800 scrolleada a 1600: el clip tiene que arrancar ahí (TEST_BROWSER_HOST_VIEW la cambia)
-    if (command.method === 'Page.getLayoutMetrics') {
+    if (command.method === 'Page.getFrameTree') result = {frameTree:{frame:{id:'fixture-frame'}}};
+    if (command.method === 'Page.createIsolatedWorld') result = {executionContextId:++worlds};
+    // pestaña real de 1280x800 (TEST_BROWSER_HOST_VIEW la cambia): innerWidth/innerHeight y visibilidad
+    if (command.method === 'Runtime.evaluate' && command.params.expression.includes('innerWidth')) {
       layoutRequests++;
       const view = scenario === 'resize-before-input' && layoutRequests > 1 ? '900x600' : process.env.TEST_BROWSER_HOST_VIEW || '1280x800';
-      const [w, h] = view.split('x').map(Number);
-      result = {cssVisualViewport:{pageX:0, pageY:1600, clientWidth:w, clientHeight:h, scale:1}, visualViewport:{clientWidth:w, clientHeight:h}};
+      result = {result:{type:'object', value:[...view.split('x').map(Number), visibility]}};
+    } else if (command.method === 'Runtime.evaluate' && command.params.expression === 'document.visibilityState') {
+      result = {result:{type:'string', value:visibility}};
     }
+    if (pushes && (command.method === 'Page.startScreencast' || (scenario === 'cast-stream' && command.method === 'Page.screencastFrameAck'))) frame();
     queueMicrotask(() => reply(result));
   }
 }
