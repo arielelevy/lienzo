@@ -396,3 +396,22 @@ def test_forward_registra_la_latencia_y_loguea_las_acciones_que_salen_bien():
     assert not any("GET /sessions/a/screen" in x for x in logs)
     m._peers["p1"].last_seen = time.time()
     assert isinstance(m.peers_status()[0]["latencia_ms"], int)
+
+
+def test_latencia_en_vivo_es_la_ida_y_vuelta_del_ultimo_pedido_de_salud(monkeypatch):
+    """La tira de PCs muestra la latencia en vivo (encargo C, 2026-10-21): la del pedido de salud que
+    el espejo hace cada HEALTH_EVERY_S, no la mediana de reenvios que pueden tener horas o no existir."""
+    t = FakeTransport()
+    m = _mirror(t)
+    _connect(m, t, pc_id="p1")
+    relojes = [10.0, 10.012, 1000.0, 20.0, 20.140, 1000.0]
+    monkeypatch.setattr(mi.time, "monotonic", lambda: relojes.pop(0) if relojes else 1000.0)
+    m._poll_health("p1")
+    assert m.peers_status()[0]["latencia_ms"] == 12
+    m._poll_health("p1")
+    assert m.peers_status()[0]["latencia_ms"] == 140
+    m._peers["p1"].latencias_ms.extend([900.0, 950.0])  # reenvios viejos
+    t.raise_on_health = True
+    m._peers["p1"].last_seen = 0
+    m._poll_health("p1")
+    assert m.peers_status()[0]["latencia_ms"] is None  # caida: no se muestra un numero viejo

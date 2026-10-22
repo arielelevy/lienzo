@@ -51,6 +51,7 @@ class _PeerMirror:
         self.health_error: str | None = None  # el ultimo fallo avisado al pedir su salud
         self.diagnostico: str | None = None  # por que no llega, para el tablero (red.diagnosticar)
         self.latencias_ms: deque[float] = deque(maxlen=LATENCIAS_N)  # de los reenvios que llegaron
+        self.rtt_ms: float | None = None  # ida y vuelta del ultimo pedido de salud que contesto
         self.last_seen: float = 0.0
         self.client: federation.SSEClient | None = None
         self.synced = False  # ya llego su snapshot completo en esta conexion
@@ -280,7 +281,9 @@ class Mirror:
             # `request` y no `get`: hace falta el codigo. Con `get`, un 401 (clave distinta, reloj
             # corrido) devolvia su cuerpo de error como si fuera la salud, y la PC se veia VIVA
             # aunque no aceptara ni un pedido (segunda revision 2026-10-04)
+            t0 = time.monotonic()
             code, h = self.transport.request(pm.conn, "GET", "/peer/health")
+            rtt_ms = (time.monotonic() - t0) * 1000
             if code != 200:
                 raise federation.PeerError(f"{code} {(h or {}).get('error') if isinstance(h, dict) else h}")
             if not isinstance(h, dict):
@@ -292,6 +295,7 @@ class Mirror:
             with self._lock:
                 cambio = diagnostico != pm.diagnostico
                 pm.diagnostico = diagnostico
+                pm.rtt_ms = None
             if error != pm.health_error:
                 pm.health_error = error
                 self.log(f"→ {nombre} GET /health: {error}" + (f" ({diagnostico})" if diagnostico else ""))
@@ -308,6 +312,7 @@ class Mirror:
         pm.diagnostico = None
         with self._lock:
             pm.health = h
+            pm.rtt_ms = rtt_ms
             pm.last_seen = time.time()
         if cambio:
             self.on_change()
@@ -383,8 +388,15 @@ class Mirror:
                         "local": False,
                         "health": pm.health if vivo else None,
                         "diagnostico": None if vivo else pm.diagnostico,
-                        # mediana de los ultimos reenvios: una PC que se vuelve lenta se ve aca
-                        "latencia_ms": round(statistics.median(pm.latencias_ms)) if pm.latencias_ms else None,
+                        # en vivo: la ida y vuelta del ultimo pedido de salud (cada HEALTH_EVERY_S); sin
+                        # ese dato, la mediana de los ultimos reenvios. Caida, ninguna: seria un numero viejo
+                        "latencia_ms": None
+                        if not vivo
+                        else round(pm.rtt_ms)
+                        if pm.rtt_ms is not None
+                        else round(statistics.median(pm.latencias_ms))
+                        if pm.latencias_ms
+                        else None,
                     }
                 )
         return out
