@@ -31,6 +31,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
+import emergencia
 import protocol
 
 try:
@@ -107,17 +108,36 @@ def _filetime_to_int(ft: wt.FILETIME) -> int:
 # Muestra anterior de GetSystemTimes (ocioso, kernel, usuario), para el delta entre dos llamadas.
 # Vive a nivel de modulo: es la unica forma de medir CPU sin una libreria como psutil.
 _ultima_muestra: tuple[int, int, int] | None = None
+_PROC_STAT = "/proc/stat"
+
+
+def _muestra_unix() -> tuple[int, int, int] | None:
+    """La linea `cpu` de /proc/stat (Linux, WSL) con la forma de GetSystemTimes: (ocioso, total, 0),
+    ocioso con iowait. En Mac no existe: None (encargo K, 2026-10-22)."""
+    try:
+        with open(_PROC_STAT, encoding="ascii") as f:
+            campos = f.readline().split()
+        if len(campos) < 6 or campos[0] != "cpu":  # hasta iowait: cpu user nice system idle iowait
+            return None
+        nums = [int(x) for x in campos[1:9]]
+    except OSError, ValueError:
+        return None
+    return (nums[3] + nums[4], sum(nums), 0)
 
 
 def _cpu_pct() -> float | None:
     """% de CPU usado desde la ultima llamada. La primera no tiene con que comparar: None."""
     global _ultima_muestra
-    if not WINDOWS:
-        return None
-    idle, kernel, user = wt.FILETIME(), wt.FILETIME(), wt.FILETIME()
-    if not _k32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
-        return None
-    ahora = (_filetime_to_int(idle), _filetime_to_int(kernel), _filetime_to_int(user))
+    if WINDOWS:
+        idle, kernel, user = wt.FILETIME(), wt.FILETIME(), wt.FILETIME()
+        if not _k32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        ahora = (_filetime_to_int(idle), _filetime_to_int(kernel), _filetime_to_int(user))
+    else:
+        muestra = _muestra_unix()
+        if muestra is None:
+            return None
+        ahora = muestra
     anterior = _ultima_muestra
     _ultima_muestra = ahora
     if anterior is None:
@@ -723,6 +743,15 @@ def _xfer_seguro() -> dict | None:
         return None
 
 
+def _emergencia_segura() -> dict | None:
+    """Los canales de emergencia de esta PC (Tailscale, Tailchrome) para que el par los conozca si
+    después esta se cae (decision 24, 2026-10-22). La salud nunca levanta: None si falla."""
+    try:
+        return emergencia.propia()
+    except Exception:
+        return None
+
+
 def snapshot() -> dict:
     """Memoria, CPU y temperatura de esta PC, ahora mismo. Nunca levanta una excepcion."""
     try:
@@ -748,5 +777,6 @@ def snapshot() -> dict:
         "coda_cuota": _coda_cuota_en_uso(),
         "cuotas": cuotas(),
         "xfer": _xfer_seguro(),
+        "emergencia": _emergencia_segura(),
         "ts": _now(),
     }

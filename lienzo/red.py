@@ -30,9 +30,12 @@ CGNAT = ipaddress.ip_network("100.64.0.0/10")  # el rango de las IP de Tailscale
 TAILNET_TTL_S = 60.0
 TAILSCALE_TIMEOUT_S = 5.0
 ARP_TIMEOUT_S = 3.0
+SONDEO_TIMEOUT_S = 2.0
+SONDEO_FALLIDO_TTL_S = 60.0
 
 _lock = threading.Lock()
 _cache: tuple[float, list[str]] = (0.0, [])
+_sondeos_fallidos: dict[tuple[str, int], float] = {}
 
 
 def es_tailscale(ip: str) -> bool:
@@ -93,6 +96,32 @@ def tailnet_ips(ahora: float | None = None) -> list[str]:
     with _lock:
         _cache = (t, ips)
     return list(ips)
+
+
+def puerto_abierto(host: str, port: int, timeout: float = SONDEO_TIMEOUT_S) -> bool:
+    """True si `host:port` acepta una conexion TCP. Antes de mover el espejo a la IP de donde llego
+    un beacon: por un NAT (WSL) el beacon llega desde la puerta, donde no escucha nadie (2026-10-22)."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def sondear(host: str, port: int, ahora: float | None = None) -> bool:
+    """`puerto_abierto`, pero el que no abrio se recuerda `SONDEO_FALLIDO_TTL_S`: un NAT que tira los
+    SYN costaba el timeout entero en cada pasada del beacon (code review K, 2026-10-22). Los que
+    abren no se cachean."""
+    t = time.time() if ahora is None else ahora
+    with _lock:
+        fallo = _sondeos_fallidos.get((host, port))
+        if fallo is not None and t - fallo < SONDEO_FALLIDO_TTL_S:
+            return False
+    if puerto_abierto(host, port):
+        return True
+    with _lock:
+        _sondeos_fallidos[(host, port)] = t
+    return False
 
 
 def tailscale_propia() -> str | None:

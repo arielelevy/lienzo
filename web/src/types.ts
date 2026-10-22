@@ -192,6 +192,9 @@ export interface Peer {
   latencia_ms?: number | null;
   /** por que no llega (sin ARP, puerto cerrado, otra red, Tailscale), solo si no esta viva */
   diagnostico?: string | null;
+  /** el canal de emergencia que queda si no esta viva (emergencia.canal, decision 24): Tailscale o
+   *  Tailchrome; `url` solo si la accion es en esta PC */
+  emergencia?: { canal: "tailscale" | "tailchrome" | null; url: string | null; texto: string } | null;
 }
 
 export interface Pending {

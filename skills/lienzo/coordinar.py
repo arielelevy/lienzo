@@ -16,7 +16,9 @@ apenas se mueve un encargo de una tarjeta a otra.
 import hashlib
 import json
 import os
+import posixpath
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -813,6 +815,181 @@ def salud():
     """
     p = pedir("GET", "/peers")[1]
     return p if isinstance(p, list) else []
+
+
+# --- reparto entre PCs (decisión 23 de Ariel, 2026-10-22) ------------------------------------
+#
+# Dos PCs en el mismo repo se pisaban al subir. El reparto es una sugerencia que Ariel aprueba:
+# módulos disjuntos por PC, una sola sesión commitea en cada PC, todas suben a `ronda-<fecha>` con
+# `pull --rebase` y nunca `--force`. Ante conflicto o archivos fuera de lo repartido, se frena y se
+# avisa: no se resuelve nada solo.
+
+
+def _ruta_reparto(ruta):
+    r = posixpath.normpath(str(ruta).replace("\\", "/"))
+    if r in (".", "") or r.startswith(("/", "../")) or r == ".." or re.match(r"^[A-Za-z]:", r):
+        raise ValueError(f"ruta fuera del repo o vacía: {ruta!r} (van relativas a la raíz)")
+    return r
+
+
+def _dentro(ruta, base):
+    return ruta == base or ruta.startswith(base + "/")
+
+
+def repartir(proyecto, modulos, pcs, fecha=None):
+    """Sugiere qué módulo va a qué PC; no lanza ni toca nada. `modulos` es {nombre: [rutas]}
+    (archivos o carpetas, relativas a la raíz del repo) y `pcs`, los nombres de las PCs. Rechaza
+    módulos que se pisan (la misma ruta, o una carpeta y algo adentro, en dos módulos): sólo se
+    reparte lo disjunto. Carga pareja por cantidad de rutas, el más grande primero.
+
+    Devuelve el plan con `aprobado: False`: se le muestra a Ariel y, con su OK, `aprobar_reparto`.
+    Cada PC trae sus `archivos`, su `commiter` (una sola sesión commitea en esa PC) y los `pasos` de
+    git que corre `sincronizar_ronda`.
+    """
+    pcs = list(pcs)
+    if not pcs:
+        raise ValueError("hace falta al menos una PC")
+    if len(set(pcs)) != len(pcs):
+        raise ValueError(f"PC repetida en {pcs}")
+    fecha = fecha or time.strftime("%Y-%m-%d")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(fecha)):
+        raise ValueError(f"fecha inválida: {fecha!r} (AAAA-MM-DD)")
+    rama = f"ronda-{fecha}"
+    norm = {nombre: sorted({_ruta_reparto(r) for r in rutas}) for nombre, rutas in modulos.items()}
+    nombres = sorted(norm)
+    for i, a in enumerate(nombres):
+        for b in nombres[i + 1 :]:
+            for ra in norm[a]:
+                for rb in norm[b]:
+                    if _dentro(ra, rb) or _dentro(rb, ra):
+                        raise ValueError(f"los módulos {a!r} y {b!r} se pisan: {ra} y {rb}")
+    plan = {pc: {"modulos": [], "archivos": [], "commiter": pc, "pasos": []} for pc in pcs}
+    for nombre in sorted(norm, key=lambda n: (-len(norm[n]), n)):
+        pc = min(pcs, key=lambda p: len(plan[p]["archivos"]))
+        plan[pc]["modulos"].append(nombre)
+        plan[pc]["archivos"].extend(norm[nombre])
+    for d in plan.values():
+        d["archivos"].sort()
+        d["pasos"] = [
+            ["git", "fetch", "origin"],
+            ["git", "switch", "-c", rama],
+            ["git", "pull", "--rebase", "origin", rama],
+            ["git", "push", "origin", f"HEAD:refs/heads/{rama}"],
+        ]
+    return {"proyecto": proyecto, "rama": rama, "aprobado": False, "pcs": plan}
+
+
+def aprobar_reparto(plan):
+    """El plan con el OK de Ariel. Llamarla sólo cuando él lo dio: sin esto no se sincroniza."""
+    return {**json.loads(json.dumps(plan)), "aprobado": True}
+
+
+def fuera_de_reparto(plan, pc, archivos):
+    """Los `archivos` que no son de lo repartido a `pc`, en el orden en que llegaron."""
+    propios = plan["pcs"][pc]["archivos"]
+    return [a for a in archivos if not any(_dentro(_ruta_reparto(a), p) for p in propios)]
+
+
+def _git_ronda(cwd, *args):
+    """git sin terminal ni stdin (WinError 6 en Windows): (código, salida, error)."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_EDITOR": "true"}
+    try:
+        r = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            env=env,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 1, "", f"{type(e).__name__}: {e}"
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+def _frena(aviso, **extra):
+    return {"ok": False, "aviso": aviso, **extra}
+
+
+def sincronizar_ronda(cwd, plan, pc, remoto="origin"):
+    """En la PC `pc`, sube lo commiteado a la rama de la ronda: `pull --rebase` y `push`, nunca
+    `--force`. La corre el commiter de esa PC, con el plan aprobado. Frena y avisa, sin subir nada,
+    si: hay cambios sin commitear, se está en otra rama de la ronda, lo commiteado toca archivos de
+    otra PC, o el rebase da conflicto (lo aborta y deja el commit local como estaba).
+
+    Devuelve `{"ok": True, "rama", "commits"}` o `{"ok": False, "aviso", ...}` con `fuera` o
+    `conflicto` cuando corresponde.
+    """
+    if not plan.get("aprobado"):
+        raise PermissionError("el reparto es una sugerencia: falta el OK de Ariel (aprobar_reparto)")
+    if pc not in plan["pcs"]:
+        raise ValueError(f"{pc!r} no está en el reparto: {sorted(plan['pcs'])}")
+    rama = plan["rama"]
+    rc, sucio, err = _git_ronda(cwd, "status", "--porcelain", "--untracked-files=no")
+    if rc:
+        return _frena(f"git status falló: {err}")
+    if sucio:
+        return _frena("hay cambios sin commitear: commitealos (sólo el commiter de esta PC) antes de sincronizar")
+    rc, _, err = _git_ronda(cwd, "fetch", remoto)
+    if rc:
+        return _frena(f"git fetch falló: {err}")
+    _, actual, _ = _git_ronda(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    if actual != rama:
+        rc, _, _ = _git_ronda(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{rama}")
+        if rc == 0:
+            return _frena(f"estás en {actual} y {rama} ya existe acá: pasá a {rama} y commiteá ahí")
+        rc, _, err = _git_ronda(cwd, "switch", "-c", rama)
+        if rc:
+            return _frena(f"no se pudo crear {rama}: {err}")
+    # sin renombres: un `git mv` desde lo ajeno lista también el origen borrado; -z y quotePath
+    # apagado: si no, git cita y escapa las rutas con acentos y parecen ajenas
+    rc, nombres, err = _git_ronda(
+        cwd,
+        "-c",
+        "core.quotePath=false",
+        "log",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        "--format=",
+        "HEAD",
+        "--not",
+        f"--remotes={remoto}",
+    )
+    if rc:
+        return _frena(f"git log falló: {err}")
+    tocados = list(dict.fromkeys(n.strip() for n in nombres.split("\0") if n.strip()))
+    fuera = fuera_de_reparto(plan, pc, tocados)
+    if fuera:
+        return _frena(f"lo commiteado en {pc} toca archivos de otra PC: {', '.join(fuera)}. Frená y avisá", fuera=fuera)
+    _, cuenta, _ = _git_ronda(cwd, "rev-list", "--count", "HEAD", "--not", f"--remotes={remoto}")
+    commits = int(cuenta) if cuenta.isdigit() else 0
+    existe = _git_ronda(cwd, "rev-parse", "--verify", "--quiet", f"refs/remotes/{remoto}/{rama}")[0] == 0
+    for _intento in range(2):
+        if existe:
+            rc, _, err = _git_ronda(cwd, "pull", "--rebase", "--no-autostash", remoto, rama)
+            if rc:
+                _, conflicto, _ = _git_ronda(cwd, "diff", "--name-only", "--diff-filter=U")
+                _git_ronda(cwd, "rebase", "--abort")
+                archivos = [a for a in conflicto.splitlines() if a.strip()]
+                return _frena(
+                    f"conflicto al traer {rama}"
+                    + (f" en {', '.join(archivos)}" if archivos else f": {err}")
+                    + ": frená, no se subió nada; el commit local quedó como estaba",
+                    conflicto=archivos,
+                )
+        rc, _, err = _git_ronda(cwd, "push", remoto, f"HEAD:refs/heads/{rama}")
+        if rc == 0:
+            return {"ok": True, "rama": rama, "commits": commits}
+        # otra PC subió entre el pull y el push: se trae una vez más, nunca se fuerza
+        if _git_ronda(cwd, "fetch", remoto)[0]:
+            break
+        existe = True
+    return _frena(f"el push a {rama} fue rechazado dos veces: frená y avisá ({err})")
 
 
 # --- conocimiento por proyecto (docs/propuesta-memoria-2026-10-08/v5.md, etapa 1) -------------

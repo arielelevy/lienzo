@@ -301,6 +301,7 @@ def test_poll_health_sin_novedad_no_le_reenvia_el_estado_al_tablero():
 def test_peers_status_recien_conectado_sin_salud_previa_no_esta_vivo():
     t = FakeTransport()
     m = _mirror(t)
+    m.emergencia = lambda remoto, nombre: {"canal": None, "url": None, "texto": "fijo"}
     _connect(m, t, pc_id="p1", name="oficina", color="#111111")
     estado = m.peers_status()
     assert estado == [
@@ -313,6 +314,7 @@ def test_peers_status_recien_conectado_sin_salud_previa_no_esta_vivo():
             "local": False,
             "health": None,
             "diagnostico": None,
+            "emergencia": None,  # recien conectado: no se cayo, todavia no contesto
             "latencia_ms": None,
         }
     ]
@@ -338,6 +340,38 @@ def test_peers_status_caido_por_falta_de_actividad_no_muestra_salud_vieja():
     estado = m.peers_status()[0]
     assert estado["alive"] is False
     assert estado["health"] is None, "salud vieja de un peer caido no se muestra: son datos viejos"
+
+
+def test_peers_status_ofrece_el_canal_de_emergencia_solo_al_caido_con_su_ultima_salud():
+    """Decision 24 (2026-10-22): el par caido trae el canal de emergencia, calculado con lo que
+    anuncio en su ultima salud (Tailscale o Tailchrome). Vivo, ninguno."""
+    t = FakeTransport(health={"mem_free_gb": 3.0, "emergencia": {"tailscale": None, "tailchrome": True}})
+    m = _mirror(t)
+    vistos = []
+    m.emergencia = lambda remoto, nombre: (
+        vistos.append((remoto, nombre)) or {"canal": "tailchrome", "url": None, "texto": "x"}
+    )
+    _connect(m, t, pc_id="p1", name="ar-it33940")
+    m._poll_health("p1")
+    assert m.peers_status()[0]["emergencia"] is None
+    assert vistos == []
+    m._peers["p1"].last_seen = time.time() - (mi.PEER_TIMEOUT_S + 1)
+    assert m.peers_status()[0]["emergencia"] == {"canal": "tailchrome", "url": None, "texto": "x"}
+    assert vistos == [({"tailscale": None, "tailchrome": True}, "ar-it33940")]
+
+
+def test_peers_status_si_el_canal_de_emergencia_revienta_igual_responde():
+    t = FakeTransport(health={"mem_free_gb": 3.0})
+    m = _mirror(t)
+
+    def revienta(remoto, nombre):
+        raise TypeError("manifiesto raro")
+
+    m.emergencia = revienta
+    _connect(m, t, pc_id="p1")
+    m._poll_health("p1")
+    m._peers["p1"].last_seen = time.time() - (mi.PEER_TIMEOUT_S + 1)
+    assert m.peers_status()[0]["emergencia"] is None
 
 
 # --- forward (enrutado de comandos) -----------------------------------------------------------

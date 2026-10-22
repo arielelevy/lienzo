@@ -146,6 +146,37 @@ def test_un_peer_desconocido_no_se_anota(tmp_path):
     assert fed.note_peer_address(path, "nadie", "10.0.0.1") is False
 
 
+def test_puerto_abierto_distingue_listener_de_nada():
+    """Antes de mover el espejo a la IP de un beacon (encargo K, 2026-10-22: por el NAT de WSL el
+    beacon llega desde la puerta, donde no escucha nadie)."""
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        puerto = s.getsockname()[1]
+        assert red.puerto_abierto("127.0.0.1", puerto, timeout=1.0) is True
+    assert red.puerto_abierto("127.0.0.1", puerto, timeout=1.0) is False
+    assert red.puerto_abierto("no-existe.invalid", 7322, timeout=0.5) is False
+
+
+def test_sondear_recuerda_los_fallidos_un_rato(monkeypatch):
+    """Un NAT que tira los SYN cuesta el timeout entero en cada pasada del beacon: el fallido se
+    recuerda SONDEO_FALLIDO_TTL_S y no se vuelve a probar (code review K, 2026-10-22)."""
+    llamadas = []
+    monkeypatch.setattr(red, "puerto_abierto", lambda h, p: llamadas.append((h, p)) or False)
+    monkeypatch.setattr(red, "_sondeos_fallidos", {})
+    assert red.sondear("172.17.240.1", 7322, ahora=100.0) is False
+    assert red.sondear("172.17.240.1", 7322, ahora=150.0) is False
+    assert llamadas == [("172.17.240.1", 7322)]
+    assert red.sondear("172.17.240.1", 7322, ahora=100.0 + red.SONDEO_FALLIDO_TTL_S + 1) is False
+    assert len(llamadas) == 2
+    monkeypatch.setattr(red, "puerto_abierto", lambda h, p: llamadas.append((h, p)) or True)
+    assert red.sondear("10.0.0.9", 7322, ahora=100.0) is True
+    assert red.sondear("10.0.0.9", 7322, ahora=101.0) is True
+    assert len(llamadas) == 4, "los que abren no se cachean: se vuelve a probar"
+
+
 # --- con cual direccion conecta el espejo -------------------------------------------------------
 
 

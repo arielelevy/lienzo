@@ -78,7 +78,19 @@ def _peers_path() -> str:
     return os.path.join(state.LIENZO, "peers.json")
 
 
+_puerto_fijado: int | None = None
+
+
+def fijar_puerto(puerto: int | None) -> None:
+    """El puerto del listener de peers que eligio `server.py --peer-port`: es el que se anuncia al
+    emparejar. Sin esto se anunciaba 7322 aunque se escuchara en otro (2026-10-22, encargo K)."""
+    global _puerto_fijado
+    _puerto_fijado = puerto
+
+
 def _my_port() -> int:
+    if _puerto_fijado is not None:
+        return _puerto_fijado
     raw = os.environ.get("LIENZO_PEER_PORT")
     try:
         return int(raw) if raw else PEER_PORT

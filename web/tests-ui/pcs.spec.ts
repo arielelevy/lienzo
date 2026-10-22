@@ -200,6 +200,45 @@ test.describe("tira de PCs (§3.9 del plan)", () => {
     await expect(coordinadora.locator("button").first()).toBeVisible();
   });
 
+  test("un peer caido dice por que y ofrece el canal de emergencia (decision 24)", async ({ page }) => {
+    const conPuente: Peer = {
+      ...PEER_NOTEBOOK_CAIDA,
+      diagnostico: "sin ARP: la PC no aparece en la red",
+      emergencia: { canal: "tailchrome", url: "/tailchrome", texto: "Tailchrome: abrí el puente en esta PC hacia notebook" },
+    };
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, conPuente]);
+    const wrap = page.locator(".pcstrip .pcwrap", { has: page.locator(".pcchip", { hasText: "notebook" }) });
+    await expect(wrap.locator(".pcchip")).toContainText("sin ARP");
+    const enlace = wrap.locator("a.pcemerg");
+    await expect(enlace).toHaveText(/Tailchrome: abrí el puente en esta PC hacia notebook/);
+    await expect(enlace).toHaveAttribute("href", "/tailchrome");
+    await expect(enlace).toHaveAttribute("target", "_blank");
+    await expect(wrap.locator(".pcchip")).toHaveAttribute("title", /emergencia: Tailchrome/);
+  });
+
+  test("con el canal en la otra PC, la emergencia es texto sin enlace; viva, nada", async ({ page }) => {
+    const remota: Peer = {
+      ...PEER_NOTEBOOK_CAIDA,
+      emergencia: { canal: "tailchrome", url: null, texto: "Tailchrome: en notebook abrí /tailchrome en su tablero" },
+    };
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, remota]);
+    const wrap = page.locator(".pcstrip .pcwrap", { has: page.locator(".pcchip", { hasText: "notebook" }) });
+    await expect(wrap.locator(".pcemerg")).toHaveText(/en notebook abrí \/tailchrome en su tablero/);
+    await expect(wrap.locator("a.pcemerg")).toHaveCount(0);
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, { ...remota, alive: true, last_seen: iso(0) }]);
+    await expect(page.locator(".pcstrip .pcemerg")).toHaveCount(0);
+  });
+
+  test("con el canal de emergencia tampoco se sale a 390 px", async ({ page }) => {
+    const largo: Peer = {
+      ...PEER_NOTEBOOK_CAIDA,
+      diagnostico: "sin ARP: la PC no aparece en la red (apagada, dormida u otra red); si las dos están prendidas en la misma, el Wi-Fi aísla a los equipos",
+      emergencia: { canal: "tailchrome", url: null, texto: "Tailchrome: en notebook abrí /tailchrome en su tablero y conectá el puente a 100.81.147.100" },
+    };
+    await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, largo]);
+    await angosta(page);
+  });
+
   test("cada tarjeta lleva el color de su PC", async ({ page }) => {
     await abrirTablero(page, sinLibres(sesionesConDosPc()), [PEER_LOCAL, PEER_NOTEBOOK_VIVA]);
     const oficina = page.locator(`.card[data-sid="${SID.coordinadora}"]`);

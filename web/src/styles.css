@@ -230,6 +230,9 @@ details.fold > summary,
 /* el violeta es su propio boton (click: le pasa la credencial de git de esta PC), pegado al chip */
 .pcstrip button.pcgit { color: var(--git); border-color: var(--git); }
 .pcstrip .pcgitmsg { color: var(--git); font-size: 9px; }
+/* acceso de emergencia de un par caido (decision 24): texto, o enlace si la accion es en esta PC */
+.pcstrip .pcemerg { color: var(--dim); font-size: 9px; }
+.pcstrip a.pcemerg { color: var(--acc); }
 @media (max-width: 390px) { .pcstrip button { padding: 4px 7px; font-size: 11px; } }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 7px; margin-bottom: 6px; cursor: pointer; position: relative; }

@@ -16,6 +16,7 @@ import traceback
 from collections import deque
 from collections.abc import Callable
 
+import emergencia
 import federation
 import recientes
 import red
@@ -77,6 +78,10 @@ class Mirror:
         self.on_snapshot: Callable[[str, set[str]], None] = lambda pc, ids: None
         self.log: Callable[[str], None] = lambda msg: None  # server.py lo cambia por su log
         self.diagnosticar: Callable[[str, BaseException], str | None] = red.diagnosticar  # inyectable
+        # el canal de emergencia hacia un par caido, con lo que anuncio en su ultima salud (inyectable)
+        self.emergencia: Callable[[dict | None, str], dict | None] = lambda remoto, nombre: emergencia.canal(
+            emergencia.propia(), remoto, nombre
+        )
         self._lock = threading.RLock()
         self._peers: dict[str, _PeerMirror] = {}
         self._health_thread: threading.Thread | None = None
@@ -375,9 +380,13 @@ class Mirror:
         SSE esta abierto en este instante."""
         ahora = time.time()
         out = []
+        caidos: list[tuple[dict, dict | None, str]] = []
         with self._lock:
             for pc_id, pm in self._peers.items():
                 vivo = bool(pm.last_seen) and (ahora - pm.last_seen) < PEER_TIMEOUT_S
+                if pm.last_seen and not vivo:
+                    # solo el que se cayo: uno recien conectado que todavia no contesto no tiene emergencia
+                    caidos.append((len(out), (pm.health or {}).get("emergencia"), pm.info.get("name") or pc_id))
                 out.append(
                     {
                         "pc_id": pc_id,
@@ -388,6 +397,7 @@ class Mirror:
                         "local": False,
                         "health": pm.health if vivo else None,
                         "diagnostico": None if vivo else pm.diagnostico,
+                        "emergencia": None,  # se completa afuera del lock (abajo)
                         # en vivo: la ida y vuelta del ultimo pedido de salud (cada HEALTH_EVERY_S); sin
                         # ese dato, la mediana de los ultimos reenvios. Caida, ninguna: seria un numero viejo
                         "latencia_ms": None
@@ -399,6 +409,13 @@ class Mirror:
                         else None,
                     }
                 )
+        # el canal de emergencia (decision 24) afuera del lock: puede tardar (getaddrinfo, registro)
+        # la primera vez, y si revienta no se lleva puesto /peers
+        for i, remoto, nombre in caidos:
+            try:
+                out[i]["emergencia"] = self.emergencia(remoto, nombre)
+            except Exception as e:
+                self.log(f"emergencia de {nombre}: {type(e).__name__}: {e}")
         return out
 
     def forward(

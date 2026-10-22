@@ -106,7 +106,7 @@ interface Props {
 /** Tira de PCs arriba del tablero: la propia PC queda visible aunque sea la única para conservar
  *  su menú derecho. Con varias hay "Todas N" y un chip por PC con conteo, memoria y
  *  temperatura; un peer caido se ve en ○ y su chip ya no dice memoria ni temperatura, que son datos
- *  viejos. Click filtra el tablero a esa PC y nada mas; Ctrl/Cmd + click suma o saca PCs (varias a la vez);
+ *  viejos: dice por que no llega y, al lado, el canal de emergencia que haya. Click filtra el tablero a esa PC y nada mas; Ctrl/Cmd + click suma o saca PCs (varias a la vez);
  *  se vuelve con Todas. */
 export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: Props) {
   // el aviso del ultimo click en el violeta, atado al problema que lo genero: cuando el violeta se va
@@ -181,7 +181,7 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
             style={{ "--pc-color": p.color } as React.CSSProperties}
             title={
               down
-                ? `${p.name}: sin conexión hace ${ago(p.last_seen)}${p.diagnostico ? ` — ${p.diagnostico}` : ""}`
+                ? `${p.name}: sin conexión hace ${ago(p.last_seen)}${p.diagnostico ? ` — ${p.diagnostico}` : ""}${p.emergencia ? ` — emergencia: ${p.emergencia.texto}` : ""}`
                 : `${p.name}${alerta ? ` — ${alerta}` : ""}${git ? ` — git: ${git}` : ""}${peers.length > 1 ? " (Ctrl + click suma o saca PCs)" : ""}`
             }
             aria-pressed={peers.length === 1 || filter.has(p.pc_id)}
@@ -213,6 +213,11 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
             </button>
           )}
           {git && aviso && aviso.git === git && <span className="pcgitmsg">{aviso.msg}</span>}
+          {/* acceso de emergencia (decision 24): Tailscale o Tailchrome, el que haya; con enlace solo
+              si la accion es en esta PC (la pagina /tailchrome atiende solo localhost) */}
+          {down && p.emergencia && (p.emergencia.url && TABLERO_LOCAL
+            ? <a className="pcemerg" href={p.emergencia.url} target="_blank" rel="noopener noreferrer">⛑ {p.emergencia.texto}</a>
+            : <span className="pcemerg">⛑ {p.emergencia.texto}{p.emergencia.url && !TABLERO_LOCAL ? " (desde el tablero de esta PC)" : ""}</span>)}
           </span>
         );
       })}
@@ -231,6 +236,9 @@ export function PcStrip({ peers, sessions, filter, onSelect, onToggle, onAll }: 
     </div>
   );
 }
+
+/** /tailchrome atiende solo localhost: desde el celular o por --remote el enlace no abriria nada. */
+const TABLERO_LOCAL = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
 
 /** TEMP_ALERTA_C: desde aca una PC se esta cocinando. Sin memoria para un agente mas (la regla del
  *  server, agentes_libres) tambien es alerta: lanzar ahi pagina y arrastra a todas sus sesiones. */

@@ -1,0 +1,36 @@
+{
+  "nombre": "emergencia-reparto-linux-frente-K",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/emergencia-reparto-linux-K",
+  "reglas": [
+    ".temp/coordinacion/2026-10-22/decisiones-ariel.md, decisión 24: un par caído trae `emergencia` (Tailscale si las dos PCs lo tienen, Tailchrome con el cliente de un lado y la extensión del otro; enlace /tailchrome sólo si la acción es en esta PC). Cada PC anuncia sus canales en la salud. La tira lo muestra al lado del chip caído.",
+    "Decisión 23: coordinar.repartir es sugerencia (aprobado false), módulos disjuntos o ValueError, una PC commiter por PC, rama ronda-<fecha>. sincronizar_ronda exige aprobar_reparto, usa pull --rebase y push sin --force; frena con árbol sucio, archivos fuera de lo repartido o conflicto (rebase abortado, nada subido).",
+    "Decisión 13: el puerto anunciado al emparejar es el de --peer-port (pairing.fijar_puerto); red.puerto_abierto sondea antes de mover el espejo; en Linux el CPU sale de /proc/stat."
+  ],
+  "casos": [
+    {
+      "id": "k-contratos",
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_emergencia.py",
+        "tests/test_mirror.py",
+        "tests/test_health.py",
+        "tests/test_red.py",
+        "tests/test_pairing.py",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
+      "timeoutMs": 300000,
+      "cubre": ["lienzo/emergencia.py", "lienzo/mirror.py", "lienzo/health.py", "lienzo/red.py", "lienzo/pairing.py"]
+    },
+    {
+      "id": "k-reparto-git-real",
+      "comando": ["py", "-m", "pytest", "tests/test_reparto_pcs.py", "tests/test_coordinar.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 300000,
+      "cubre": ["skills/lienzo/coordinar.py"]
+    }
+  ]
+}

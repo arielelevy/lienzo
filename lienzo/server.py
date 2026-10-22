@@ -3289,6 +3289,9 @@ def _beacon_sync_loop(stop_event: threading.Event, beacon) -> None:
             log(f"beacon: fallo al sincronizar las IP:\n{traceback.format_exc()}")
 
 
+_puerto_abierto = red.sondear  # inyectable: _beacon_sync_once sondea antes de saltar
+
+
 def elegir_direccion(info: dict, conectada: str | None, ahora: float, ttl_s: float) -> str | None:
     """Con cual de las direcciones vivas de un peer (las que mandaron un beacon firmado hace menos de
     `ttl_s`) conectar el espejo: la que ya usa mientras siga viva, para no saltar entre la LAN y
@@ -3319,11 +3322,21 @@ def _beacon_sync_once(beacon) -> None:
                 continue  # la ruta efímera del puente no se guarda en peers.json
         with _ip_conectada_lock:
             conectada = _ip_conectada.get(pc_id)
-        ip = elegir_direccion(info, conectada, ahora, BEACON_TTL_S)
-        if not ip:
-            continue
         peer = federation.get_peer(PEERS_FILE, pc_id)
         if peer is None:
+            continue
+        # el beacon pudo llegar por un NAT (WSL: desde la puerta 172.x), donde no escucha nadie: solo
+        # se salta a una direccion que abre el puerto, y si la mejor no abre se prueba la siguiente
+        # (encargo K, 2026-10-22)
+        ips = info.get("ips") or ({info["ip"]: info.get("last_seen", ahora)} if info.get("ip") else {})
+        ip = None
+        while ips:
+            ip = elegir_direccion({"ips": ips}, conectada, ahora, BEACON_TTL_S)
+            if not ip or _puerto_abierto(ip, peer.get("port") or pairing.PEER_PORT):
+                break
+            ips = {k: v for k, v in ips.items() if k != ip}
+            ip = None
+        if not ip:
             continue
         try:
             federation.update_peer_ip(PEERS_FILE, pc_id, ip)
@@ -3375,6 +3388,7 @@ def main() -> int:
     ap.add_argument("--peer-host", default=None, help="IP de LAN del listener de peers; por defecto se autodetecta")
     ap.add_argument("--peers", action="store_true", help="arranca el listener de peers aunque peers.json este vacio")
     a = ap.parse_args()
+    pairing.fijar_puerto(a.peer_port)  # el que se anuncia al emparejar (encargo K, 2026-10-22)
     for d in (EVENTS, PENDING, ANSWERS, ADJUNTOS, SESSIONS):
         os.makedirs(d, exist_ok=True)
     # el puerto antes que los hilos: un segundo server no llega a consumir eventos

@@ -190,6 +190,18 @@ def test_mi_port_respeta_la_variable_de_entorno(hogar, monkeypatch):
     assert pairing._my_port() == pairing.PEER_PORT
 
 
+def test_el_puerto_de_peer_port_es_el_que_se_anuncia(hogar, monkeypatch):
+    """`server.py --peer-port N` escuchaba en N pero el emparejado anunciaba 7322 (o
+    LIENZO_PEER_PORT): el otro lado guardaba un puerto que no era y su espejo le pegaba al listener
+    de otra instancia (medido el 2026-10-22 emparejando el Linux de WSL, encargo K)."""
+    monkeypatch.setenv("LIENZO_PEER_PORT", "9999")
+    monkeypatch.setattr(pairing, "_puerto_fijado", None)
+    pairing.fijar_puerto(27356)
+    assert pairing._my_port() == 27356, "el del argumento manda sobre la variable"
+    pairing.fijar_puerto(None)
+    assert pairing._my_port() == 9999
+
+
 # --- punta a punta real: join() contra un server HTTP minimo que envuelve accept() --------------
 
 

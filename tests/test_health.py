@@ -37,6 +37,7 @@ def test_snapshot_trae_las_cinco_claves():
         "coda_cuota",
         "cuotas",
         "xfer",
+        "emergencia",
         "ts",
     }
 
@@ -71,6 +72,7 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
     monkeypatch.setattr(health.protocol, "carpetas_de_proyecto", lambda roots: [])
     monkeypatch.setattr(health.protocol.chrome_claude, "perfiles_cacheados", list)
     monkeypatch.setattr(health.protocol.chrome_claude, "conexiones_cacheadas", list)
+    monkeypatch.setattr(health.emergencia, "propia", revienta)
     s = health.snapshot()
     assert s == {
         "protocol_version": 1,
@@ -103,6 +105,7 @@ def test_snapshot_nunca_levanta_aunque_falle_todo(monkeypatch):
         "coda_cuota": s["coda_cuota"],
         "cuotas": s["cuotas"],
         "xfer": None,
+        "emergencia": None,
         "ts": s["ts"],
     }
 
@@ -544,3 +547,28 @@ def test_health_sin_wsl_trae_lista_vacia(monkeypatch):
     monkeypatch.setattr(server.tmux, "_VIA_WSL", False)
     monkeypatch.setattr(server.tmux, "_distros_cache", None)
     assert server.salud_publica(True)["distros_wsl"] == []
+
+
+def test_cpu_en_linux_sale_de_proc_stat(monkeypatch, tmp_path):
+    """Fuera de Windows el CPU daba siempre None: el server nativo de Linux en WSL lo mostro vacio
+    (encargo K, 2026-10-22). Se lee /proc/stat: la primera muestra no tiene con que comparar."""
+    stat = tmp_path / "stat"
+    monkeypatch.setattr(health, "WINDOWS", False)
+    monkeypatch.setattr(health, "_PROC_STAT", str(stat))
+    monkeypatch.setattr(health, "_ultima_muestra", None)
+    # user nice system idle iowait irq softirq steal
+    stat.write_text("cpu  100 0 100 800 0 0 0 0 0 0\ncpu0 1 2 3 4\n", encoding="ascii")
+    assert health._cpu_pct() is None
+    stat.write_text("cpu  250 0 150 900 0 0 0 0 0 0\n", encoding="ascii")
+    assert health._cpu_pct() == 66.7  # 200 ocupados de 300
+    stat.write_text("basura\n", encoding="ascii")
+    assert health._cpu_pct() is None
+
+
+def test_proc_stat_con_pocos_contadores_da_none(monkeypatch, tmp_path):
+    stat = tmp_path / "stat"
+    monkeypatch.setattr(health, "WINDOWS", False)
+    monkeypatch.setattr(health, "_PROC_STAT", str(stat))
+    monkeypatch.setattr(health, "_ultima_muestra", None)
+    stat.write_text("cpu  1 2 3 4\n", encoding="ascii")
+    assert health._cpu_pct() is None

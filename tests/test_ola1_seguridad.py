@@ -565,6 +565,8 @@ def test_beacon_reconecta_aunque_peers_json_ya_tenga_la_ip_nueva(aislado, monkey
     monkeypatch.setattr(server, "PEERS_FILE", str(peers))
     monkeypatch.setattr(server.identity, "pc_id", lambda: "pcA")
     monkeypatch.setattr(server, "_ip_conectada", {})
+    # la IP nueva abre el puerto (sin red: 10.0.0.2 no existe); el sondeo es del encargo K (test_beacon_nat)
+    monkeypatch.setattr(server, "_puerto_abierto", lambda ip, port: True, raising=False)
     conexiones = []
     aislado["espejo"].connect = lambda pc, info, host, port, key, yo: conexiones.append((pc, host))
     aislado["espejo"].disconnect = lambda pc: None
