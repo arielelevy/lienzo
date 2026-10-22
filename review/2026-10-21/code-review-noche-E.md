@@ -32,3 +32,41 @@ Alcance: `lienzo/browser_host.mjs`, `lienzo/browser_stream.py` (sólo el tope de
 - Prueba con la PC bloqueada (espera el OK de Ariel).
 - Hilo principal ocupado demora la lectura de tamaño (8 s → 504) igual que antes con `getLayoutMetrics`.
 - Tope 4K sin medir en pantalla real.
+
+---
+
+## Segunda ronda (23:50–00:20): pestañas restauradas, visor duplicado y calidad por scroll
+
+### Revisión 1 (detach, visor duplicado, traza), 8 hallazgos
+| Hallazgo | Qué se hizo |
+|---|---|
+| `_wait_owner` dormía con `selection_lock` tomado | Se espera en `_inputs` antes de tomar el lock; `_tab_lock` pasa a `Condition` con `notify_all` al liberar |
+| 3 s < 8 s del CDP del visor viejo | Plazo de 10 s para un dueño ya cerrado |
+| `cdp.gone` sin uso | `send` de una sesión soltada rechaza con 409 sin mandar nada; `evaluate` no reintenta |
+| Mensaje «reemplazó» también para pestañas cerradas | Mensaje neutro: «Chrome soltó la pestaña (se cerró, se recargó o estaba sin cargar)» |
+| `detachFromTarget` a una sesión ya soltada | Sólo si no está `gone` (prueba: 0 detach) |
+| La traza no llega al stream | Comentario corregido: está en la respuesta del host |
+| `cdp.source` compartido | Sólo se arma con TIMING; carrera entre pedidos concurrentes **aceptada** (sólo perfilado) |
+| Sondeo cada 50 ms | `Condition.wait` |
+
+### Revisión 2 (calidad por scroll), 10 hallazgos
+| Hallazgo | Qué se hizo |
+|---|---|
+| `recast` fallido dejaba la vista congelada | El cast se descarta y el próximo pedido lo arranca de cero (prueba con fallo inyectado) |
+| Visor lento: «quieta» en cada cuadro, cambio de modo en cada cuadro | Quieta sólo sin cuadro pendiente; medido con acuse a 350 ms: 194 KB por cuadro sostenido |
+| Modo scroll sin tope de px | `Math.min(css, MAX_PX)` |
+| Dueño vivo aún no cerrado en reconexión | Se le da 1 s antes de rechazar |
+| Entrada del visor nuevo detrás del `open` | **Aceptado**: la UI no manda entrada antes del primer cuadro |
+| `tabs()` podaba sin cortar lo pendiente | La poda usa `detached()` (409 inmediato, cast suelto) |
+| Cuadro 1× atrasado tomado como refinado | Se lee el ancho del JPEG (encabezado SOF) y se descarta uno más angosto que el nítido |
+| TIMING compartido | Ídem arriba, aceptado |
+| Chequeo de nitidez duplicado | Queda uno |
+| `detached()` sólo paraba el cast si seguía en `pages` | Siempre `stopCast(cdp, false)` |
+
+### Verificación
+- Node: 36/36 (`.temp/resultados/noche-E/node-host-7.log`). Rojo previo: pestaña reemplazada daba 504
+  (`replaced-tab`); reconexión rápida daba «ya tiene un visor abierto» (pytest).
+- pytest pestañas + remoto: 42/42 (`pytest-5.log`). Playwright `chrome.spec.ts` en vite dev propio: 37/38
+  (`playwright-2.log`); la falla es la previa de vite dev.
+- ruff, eslint y tsc limpios.
+- Medido con Chrome real aislado (`perf-antes-local.json` → `perf-despues-local-3.json`, `perf-despues-rtt350.json`).

@@ -552,7 +552,7 @@ test('tabs stream diálogo A no oculta frame B antes del state B', async ({page}
 test('tabs stream avisa la pestaña oculta y lo quita cuando vuelve a pintar', async ({page}) => {
   const f = await streamFixture(page);
   const gen = f.channels[0].commands.find(d => d.t === 'open')!.generation;
-  const hiddenMessage = 'Chrome no está pintando esa pestaña (ventana minimizada, o tapada sin las banderas anti-oclusión)';
+  const hiddenMessage = 'Chrome no está pintando esa pestaña (está de fondo en su ventana, la ventana está minimizada, o tapada sin la bandera anti-oclusión)';
   f.channels[0].send(JSON.stringify({t: 'state', generation: gen, back: false, forward: false, dialog: null, hidden: true, hiddenMessage}));
   const warning = page.getByRole('alert').filter({hasText: 'la rueda no se envía'});
   await expect(warning).toContainText(hiddenMessage);

@@ -313,6 +313,28 @@ def test_switch_discards_old_capture_and_rejects_stale_input(tab_worker):
     assert frames and all(frame[0] == 2 for frame in frames)
 
 
+def test_reconexion_rapida_espera_al_visor_que_se_esta_cerrando(tab_worker):
+    # la UI reconecta enseguida: el visor viejo ya cerró pero termina su captura en vuelo; el nuevo no tiene que fallar
+    worker, gate, capturing, *_ = tab_worker
+    send(worker, t="open", tab="a", generation=1, width=800, height=600)
+    assert capturing.wait(1)
+    worker.close()
+    output = []
+    other = module.TabWorker(lambda *args: output.append(args), lambda: None)
+    try:
+        send(other, t="open", tab="a", generation=1, width=800, height=600)
+        time.sleep(0.3)
+        assert not any(kind == ws.TEXT and json.loads(p)["t"] == "error" for kind, p in list(output))
+        gate.set()
+        opened = wait_message(output, lambda m: m["t"] in ("opened", "error"))
+        assert opened["t"] == "opened", opened
+        assert module._tab_owners["a"] is other
+    finally:
+        other.close()
+        for thread in other.threads:
+            thread.join(3)
+
+
 def test_duplicate_target_rejected_without_new_host(tab_worker):
     worker, _, capturing, *_ = tab_worker
     send(worker, t="open", tab="a", generation=1, width=800, height=600)

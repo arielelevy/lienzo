@@ -12,10 +12,14 @@ let targetRequests = 0;
 let layoutRequests = 0;
 let frames = 0;
 let worlds = 0;
+let replaced = false;
+let casts = 0;
 // el cuadro mide lo que la pestaña (en CSS); cast-stale-size simula uno de antes de un resize
 const frameSize = () => {
   const [deviceWidth, deviceHeight] = (scenario === 'cast-stale-size' ? '900x600' : process.env.TEST_BROWSER_HOST_VIEW || '1280x800').split('x').map(Number);
-  return {deviceWidth, deviceHeight, pageScaleFactor:1};
+  // cast-scroll: los primeros 4 cuadros con el scroll en movimiento; después la página queda quieta
+  const scrollOffsetY = scenario === 'cast-scroll' ? Math.min(frames, 4) * 10 : 0;
+  return {deviceWidth, deviceHeight, pageScaleFactor:1, scrollOffsetX:0, scrollOffsetY};
 };
 // cuadros del screencast: uno al arrancar; con cast-stream, otro tras cada acuse. Sin cuadros cuando el
 // escenario prueba la captura a pedido (o la pestaña está oculta: Chrome no empuja)
@@ -33,9 +37,14 @@ class FixtureSocket extends EventTarget {
   send(line) {
     const command = JSON.parse(line);
     appendFileSync(process.env.TEST_BROWSER_HOST_TRACE, JSON.stringify({method:command.method,
-      ...(['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Page.captureScreenshot', 'Runtime.evaluate'].includes(command.method) ? {params:command.params} : {}), ns:process.hrtime.bigint().toString()}) + '\n');
+      ...(['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Page.captureScreenshot', 'Runtime.evaluate', 'Page.startScreencast'].includes(command.method) ? {params:command.params} : {}), ns:process.hrtime.bigint().toString()}) + '\n');
     process.stderr.write('CDP ' + command.method + '\n');
     const reply = result => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({id:command.id, result})}));
+    // TEST_BROWSER_HOST_FAIL_RECAST: el segundo Page.startScreencast (el del cambio de modo) falla
+    if (command.method === 'Page.startScreencast' && ++casts === 2 && process.env.TEST_BROWSER_HOST_FAIL_RECAST) {
+      appendFileSync(process.env.TEST_BROWSER_HOST_TRACE, JSON.stringify({method:'fallo-recast'}) + '\n');
+      return queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({id:command.id, error:{message:'fixture: no arrancó'}})})));
+    }
     const frame = () => realTimeout(() => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({sessionId:command.sessionId,
       method:'Page.screencastFrame', params:{data:scenario === 'cast-stream' ? 'frame-' + ++frames : 'fixture-image', sessionId:++frames + 1000, metadata:frameSize()}})})), 5);
     const late = scenario === 'late-screenshot' && command.method === 'Page.captureScreenshot';
@@ -47,7 +56,14 @@ class FixtureSocket extends EventTarget {
       return;
     }
     let result = {};
-    if (command.method === 'Target.getTargets') result = {targetInfos:[{type:'page', targetId:'fixture-tab', title:'fixture', url:'about:blank'}]};
+    // replaced-tab: Chrome reemplaza la pestaña al engancharse (restaurada sin cargar): suelta la sesión sin contestar
+    // Page.enable y la lista pasa a tener otro id con la misma dirección
+    if (scenario === 'replaced-tab' && command.method === 'Page.enable' && !replaced) {
+      replaced = true;
+      realTimeout(() => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({method:'Target.detachedFromTarget', params:{sessionId:command.sessionId, targetId:'fixture-tab'}})})), 5);
+      return;
+    }
+    if (command.method === 'Target.getTargets') result = {targetInfos:[{type:'page', targetId:replaced ? 'fixture-tab-2' : 'fixture-tab', title:'fixture', url:'about:blank'}]};
     if (command.method === 'Target.attachToTarget') result = {sessionId:'session-' + ++attached};
     if (command.method === 'Page.captureScreenshot') result = {data:'fixture-image'};
     if (command.method === 'Page.getNavigationHistory') result = {currentIndex:0, entries:[{id:1}]};
@@ -61,7 +77,8 @@ class FixtureSocket extends EventTarget {
     } else if (command.method === 'Runtime.evaluate' && command.params.expression === 'document.visibilityState') {
       result = {result:{type:'string', value:visibility}};
     }
-    if (pushes && (command.method === 'Page.startScreencast' || (scenario === 'cast-stream' && command.method === 'Page.screencastFrameAck'))) frame();
+    if (pushes && (command.method === 'Page.startScreencast' || (scenario === 'cast-stream' && command.method === 'Page.screencastFrameAck')
+      || (scenario === 'cast-scroll' && command.method === 'Page.screencastFrameAck' && frames < 8))) frame();
     queueMicrotask(() => reply(result));
   }
 }

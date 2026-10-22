@@ -44,7 +44,7 @@ TAB_FRAME = struct.Struct(">IIHH")  # generacion, secuencia, ancho, alto; sigue 
 # El host espera el próximo cuadro del screencast (hasta 0,5 s): el tope sólo frena una página muy animada.
 TAB_MIN_INTERVAL = 1 / 30
 _tab_owners = {}
-_tab_lock = threading.Lock()
+_tab_lock = threading.Condition()  # avisa cuando una pestaña queda libre (reconexión rápida)
 _sessions = 0
 _sessions_lock = threading.Lock()
 
@@ -236,6 +236,7 @@ class TabWorker:
             with _tab_lock:
                 for key in [key for key, owner in _tab_owners.items() if owner is self]:
                     del _tab_owners[key]
+                _tab_lock.notify_all()
 
     @staticmethod
     def bounded(value, low, high):
@@ -318,6 +319,7 @@ class TabWorker:
                 for key in [key for key, owner in _tab_owners.items() if owner is self]:
                     del _tab_owners[key]
                 _tab_owners[target] = self
+                _tab_lock.notify_all()
             code, result = browser_remote.HOST.request(
                 {"action": "viewport", "tab": target, "width": width, "height": height}
             )
@@ -372,6 +374,23 @@ class TabWorker:
         else:
             raise ValueError("Pedido de pestaña desconocido")
 
+    def _wait_owner(self, target, timeout=10.0):
+        """Un visor vivo sigue siendo exclusivo; uno ya cerrado que termina su captura o su liberación en vuelo se
+        espera: la UI reconecta enseguida y antes recibía «ya tiene un visor abierto». El plazo cubre los 8 s de una
+        espera CDP del visor viejo. Se llama sin selection_lock: un close() del visor nuevo no queda esperando."""
+        deadline = time.monotonic() + timeout
+        live_deadline = time.monotonic() + 1.0
+        with _tab_lock:
+            while not self.closed:
+                owner = _tab_owners.get(target)
+                if owner is None or owner is self:
+                    return
+                # un visor vivo puede ser el viejo de esta misma UI cuyo cierre todavía no llegó: se le da 1 s
+                left = deadline - time.monotonic() if owner.closed else live_deadline - time.monotonic()
+                if left <= 0:
+                    return  # _send rechaza: la pestaña tiene otro visor
+                _tab_lock.wait(min(left, 0.5))
+
     def _css(self, result, width, height):
         css_width, css_height = result.get("width", width), result.get("height", height)
         self.bounded(css_width, 1, 3840)
@@ -412,6 +431,8 @@ class TabWorker:
                 data = self.commands.get(timeout=0.2)
             except queue.Empty:
                 continue
+            if data["t"] == "open" and isinstance(data.get("tab"), str):
+                self._wait_owner(data["tab"])
             with self.selection_lock:
                 if self.closed:
                     return

@@ -859,7 +859,7 @@ function BrowserDesktop({peer}: {peer: Peer}) {
         : (streamEnabled ? stream.frame?.tab !== tab : frame.tab !== tab || !frame.image) ? <div className="remote-empty">Cargando página…</div> : null}
       {ready && frame.tab === tab && frame.dialog && <BrowserDialog dialog={frame.dialog} onAnswer={(accept, text) => void action({action: "dialog", tab, accept, text})} />}
       {streamEnabled && (stream.notice || stream.error || stream.inputError || stream.hidden) && <div className="remote-capture-notice">
-        {stream.hidden && <div role="alert">{stream.hidden}. La imagen sigue por capturas, más lenta, y la rueda no se envía. Restaurá esa ventana en la PC o arrancá Chrome con las banderas anti-oclusión.</div>}
+        {stream.hidden && <div role="alert">{stream.hidden}. La imagen sigue por capturas, más lenta, y la rueda no se envía. Elegila en la lista para traerla al frente, restaurá esa ventana o arrancá Chrome con la bandera anti-oclusión.</div>}
         {(stream.notice || stream.error) && <div role={stream.error ? 'alert' : 'status'}>{stream.error}{stream.notice && <span> {stream.notice}</span>}<button onClick={stream.retry}>Actualizar captura</button></div>}
         {stream.inputError && <div role="alert">{stream.inputError}<button onClick={stream.allowInput}>Habilitar entrada sin reenviar</button></div>}
       </div>}

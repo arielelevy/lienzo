@@ -20,6 +20,7 @@ let consentError = '';
 const pages = new Map();
 const attaching = new Map();
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
+const REPLACED = 'Chrome soltó la pestaña (se cerró, se recargó o estaba sin cargar). Elegila de nuevo en la lista';
 
 function executable() {
   const paths = process.platform === 'win32'
@@ -45,6 +46,7 @@ class CDP {
       if (target && msg.method === 'Page.javascriptDialogOpening') target.dialog = msg.params;
       if (target && msg.method === 'Page.javascriptDialogClosed') target.dialog = null;
       if (target && msg.method === 'Page.screencastFrame') target.onFrame?.(msg.params);
+      if (msg.method === 'Target.detachedFromTarget') this.detached(msg.params?.sessionId);
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
@@ -54,6 +56,23 @@ class CDP {
     });
     socket.addEventListener('close', () => this.rejectPending('Se cortó la conexión con Chrome'));
     socket.addEventListener('error', () => this.rejectPending('Falló la conexión con Chrome'));
+  }
+
+  // Chrome soltó una sesión de pestaña sin contestar (medido 2026-10-21 en el Chrome de Ariel: pestañas restauradas
+  // sin cargar cambian de id al engancharse). Lo pendiente de esa sesión se corta ya, sin esperar los 8 s.
+  detached(sessionId) {
+    const cdp = this.sessions.get(sessionId);
+    if (!cdp) return;
+    this.sessions.delete(sessionId);
+    cdp.gone = true;
+    stopCast(cdp, false);
+    if (pages.get(cdp.targetId) === cdp) pages.delete(cdp.targetId);
+    for (const [id, p] of this.pending) {
+      if (p.sessionId !== sessionId) continue;
+      clearTimeout(p.timer);
+      this.pending.delete(id);
+      p.reject(Object.assign(new Error(REPLACED), {status: 409}));
+    }
   }
 
   rejectPending(message) {
@@ -85,7 +104,7 @@ class CDP {
         this.pending.delete(id);
         reject(Object.assign(new Error(`Chrome tardó demasiado en responder (${method})`), {status: 504}));
       }, 8000);
-      this.pending.set(id, {resolve, reject, timer});
+      this.pending.set(id, {resolve, reject, timer, sessionId});
       this.socket.send(JSON.stringify({id, method, params, sessionId}));
     });
   }
@@ -124,7 +143,7 @@ async function tabs() {
   const {targetInfos} = await browser.send('Target.getTargets');
   const list = targetInfos.filter(t => t.type === 'page').map(t => ({id: t.targetId, title: t.title, url: t.url}));
   for (const [id, cdp] of pages) {
-    if (!list.some(t => t.id === id)) { stopCast(cdp, false); browser.sessions.delete(cdp.sessionId); pages.delete(id); }
+    if (!list.some(t => t.id === id)) browser.detached(cdp.sessionId); // corta lo pendiente con 409 y suelta el cast
   }
   return list;
 }
@@ -143,7 +162,9 @@ async function attachPage(id) {
     // Una sola conexión autorizada por Chrome; las páginas usan sesiones CDP.
     const root = browser;
     const {sessionId} = await root.send('Target.attachToTarget', {targetId: id, flatten: true});
-    const cdp = {sessionId, dialog: null, send: (method, params) => root.send(method, params, sessionId)};
+    // una sesión que Chrome ya soltó no recibe más comandos: se contesta lo mismo que a lo que estaba pendiente
+    const cdp = {sessionId, targetId: id, dialog: null, gone: false,
+      send: (method, params) => cdp.gone ? Promise.reject(Object.assign(new Error(REPLACED), {status: 409})) : root.send(method, params, sessionId)};
     root.sessions.set(sessionId, cdp);
     try {
       await cdp.send('Page.enable');
@@ -153,7 +174,7 @@ async function attachPage(id) {
     catch (e) {
       // sin pages.set: el próximo pedido adjunta de cero; la sesión fallida no queda colgada en Chrome
       root.sessions.delete(sessionId);
-      void root.send('Target.detachFromTarget', {sessionId}).catch(d => process.stderr.write(`Chrome al soltar la pestaña: ${d.message}\n`));
+      if (!cdp.gone) void root.send('Target.detachFromTarget', {sessionId}).catch(d => process.stderr.write(`Chrome al soltar la pestaña: ${d.message}\n`));
       if (e.status === 504) e.message += '. Si la pestaña no está al frente en esa PC, elegila en la lista para traerla';
       throw e;
     }
@@ -161,6 +182,9 @@ async function attachPage(id) {
   }
   return pages.get(id);
 }
+
+const TIMING = process.env.LIENZO_BROWSER_TIMING === '1';
+const traced = (cdp, source) => { if (TIMING) cdp.source = source; };
 
 // Chrome habitual (existing): nunca se emula el tamaño; se lee el real y se captura sin tocar layout ni scroll.
 // innerWidth/innerHeight y no cssVisualViewport: el cuadro (screencast o captura sin clip) incluye la barra de
@@ -187,7 +211,7 @@ async function evaluate(cdp, expression) {
       return await cdp.send('Runtime.evaluate', {expression, returnByValue: true, contextId});
     } catch (e) {
       // una navegación destruye el mundo aislado: se crea otro y se repite la lectura (no tiene efectos)
-      if (attempt > 0 || e.status === 504) throw e;
+      if (attempt > 0 || e.status === 504 || cdp.gone) throw e;
       cdp.world = null;
     }
   }
@@ -208,19 +232,76 @@ async function realViewport(cdp) {
 // ahí se captura a pedido, que sí pinta (medido 2026-10-21: 51 ms minimizada, screencast 0,3 c/s).
 // Tope 2560×1600 px: una pestaña 4K a DPR 2 pasaría los 4 MiB por cuadro del stream.
 const CAST_WAIT = 500, CAST_IDLE = 4000, HIDDEN_MIN = 100, HIDDEN_MAX = 1000, MAX_PX = [2560, 1600];
-const HIDDEN = 'Chrome no está pintando esa pestaña (ventana minimizada, o tapada sin las banderas anti-oclusión)';
+// Scroll: mientras la posición cambia entre cuadros, los cuadros van a 1× CSS y calidad 80; a los SETTLE ms quieta
+// vuelve a calidad 90 a DPR real y ese cuadro refina la imagen. Una animación sin scroll sigue siempre nítida.
+// Medido 2026-10-21 (texto denso a DPR 1,5): 539 KB por cuadro a q90 DPR contra 193 KB a q80 1×; parar y volver a
+// arrancar el screencast da el primer cuadro con los parámetros nuevos en ~25 ms (sin parar, Chrome los ignora).
+const SETTLE = 300;
+const castParams = (cdp, mode) => mode === 'scroll'
+  ? {format: 'jpeg', quality: 80, maxWidth: Math.min(cdp.css?.width || MAX_PX[0], MAX_PX[0]),
+    maxHeight: Math.min(cdp.css?.height || MAX_PX[1], MAX_PX[1]), everyNthFrame: 1}
+  : {format: 'jpeg', quality: 90, maxWidth: MAX_PX[0], maxHeight: MAX_PX[1], everyNthFrame: 1};
+// medido 2026-10-21 en el Chrome de Ariel: las pestañas de fondo también quedan hidden, con o sin la bandera
+const HIDDEN = 'Chrome no está pintando esa pestaña (está de fondo en su ventana, la ventana está minimizada, o tapada sin la bandera anti-oclusión)';
 
 function startCast(cdp) {
-  const cast = {frame: null, last: null, waiters: new Set(), idle: null, failed: false, hiddenAt: 0, hiddenEvery: HIDDEN_MIN};
+  const cast = {frame: null, last: null, waiters: new Set(), idle: null, failed: false, hiddenAt: 0, hiddenEvery: HIDDEN_MIN,
+    mode: 'sharp', scroll: null, moves: 0, scrolledAt: 0};
   cdp.cast = cast;
   cdp.onFrame = params => {
     if (cdp.cast !== cast) return;
+    // un cuadro 1× del screencast anterior que llega después de volver a nítido no se muestra como refinado
+    const width = jpegWidth(params.data);
+    if (cast.mode === 'sharp' && cast.sharpWidth && width && width < cast.sharpWidth) {
+      void cdp.send('Page.screencastFrameAck', {sessionId: params.sessionId}).catch(() => {});
+      return;
+    }
+    if (cast.mode === 'sharp' && width) cast.sharpWidth = Math.max(cast.sharpWidth || 0, width);
     cast.frame = params;
+    const at = [params.metadata?.scrollOffsetX, params.metadata?.scrollOffsetY];
+    const moved = cast.scroll && (at[0] !== cast.scroll[0] || at[1] !== cast.scroll[1]);
+    cast.scroll = at;
+    cast.moves = moved ? cast.moves + 1 : 0;
+    if (moved) cast.scrolledAt = Date.now();
+    // dos cuadros seguidos con el scroll en movimiento: no es un salto suelto (un clic en un ancla)
+    if (cast.moves >= 2) recast(cdp, cast, 'scroll');
     for (const wake of cast.waiters) wake();
   };
-  cdp.send('Page.startScreencast', {format: 'jpeg', quality: 90, maxWidth: MAX_PX[0], maxHeight: MAX_PX[1], everyNthFrame: 1})
+  cdp.send('Page.startScreencast', castParams(cdp, cast.mode))
     .catch(e => { cast.failed = true; process.stderr.write(`Chrome screencast: ${e.message}\n`); });
   return cast;
+}
+
+function recast(cdp, cast, mode) {
+  if (cast.mode === mode || cdp.cast !== cast) return;
+  cast.mode = mode;
+  cast.moves = 0;
+  void cdp.send('Page.stopScreencast')
+    .then(() => cdp.cast === cast && cast.mode === mode && cdp.send('Page.startScreencast', castParams(cdp, mode)))
+    .catch(e => {
+      // sin screencast no hay cuadros: se descarta y el próximo pedido lo arranca de cero (no queda congelado)
+      process.stderr.write(`Chrome screencast (${mode}): ${e.message}\n`);
+      if (cdp.cast === cast) stopCast(cdp, false);
+    });
+}
+
+// ancho del JPEG en base64 leyendo sólo el encabezado (SOF), sin decodificar la imagen
+function jpegWidth(b64) {
+  const head = Buffer.from(b64.slice(0, 4096), 'base64');
+  for (let i = 2; i + 9 < head.length;) {
+    if (head[i] !== 0xff) return 0;
+    const marker = head[i + 1], length = head.readUInt16BE(i + 2);
+    if (marker >= 0xc0 && marker <= 0xc3) return head.readUInt16BE(i + 7);
+    i += 2 + length;
+  }
+  return 0;
+}
+
+async function waitFrame(cast, ms) {
+  let wake, timer;
+  await new Promise(resolve => { wake = resolve; cast.waiters.add(wake); timer = setTimeout(resolve, ms); });
+  clearTimeout(timer);
+  cast.waiters.delete(wake);
 }
 
 // remote: false cuando el socket ya no sirve (stop, Chrome cerrado): sólo se sueltan timers y esperas
@@ -248,6 +329,7 @@ function takeFrame(cdp, cast, width, height) {
   const size = {width: Math.round(frame.metadata?.deviceWidth), height: Math.round(frame.metadata?.deviceHeight)};
   if (!sameSize(size, width, height)) return null;
   cast.last = {data: frame.data, width, height};
+  traced(cdp, {from: 'cast', ts: frame.metadata?.timestamp, mode: cast.mode});
   return frame.data;
 }
 
@@ -256,6 +338,7 @@ async function capture(cdp, cast, width, height) {
   // la captura a pedido no tiene tope de px: una pestaña enorme baja la calidad antes que pasar los 4 MiB
   if (data.length > 4 * 1024 * 1024) ({data} = await cdp.send('Page.captureScreenshot', {format: 'jpeg', quality: 50, captureBeyondViewport: false}));
   if (cdp.cast === cast) cast.last = {data, width, height};
+  traced(cdp, {from: 'capture', ts: Date.now() / 1000});
   return data;
 }
 
@@ -264,11 +347,15 @@ async function castShot(cdp, hidden, width, height) {
   const cast = cdp.cast ?? startCast(cdp);
   clearTimeout(cast.idle);
   cast.idle = setTimeout(() => { if (cdp.cast === cast) stopCast(cdp); }, CAST_IDLE);
-  if (!hidden && !cast.failed && !cast.frame) {
-    let wake, timer;
-    await new Promise(resolve => { wake = resolve; cast.waiters.add(wake); timer = setTimeout(resolve, CAST_WAIT); });
-    clearTimeout(timer);
-    cast.waiters.delete(wake);
+  if (!hidden && !cast.failed) {
+    const quiet = () => Date.now() - cast.scrolledAt;
+    // con scroll se espera sólo hasta que la página se queda quieta: ahí sale el cuadro nítido. Quieta = sin cuadro
+    // pendiente y SETTLE ms desde el último movimiento (un cuadro pendiente con movimiento es scroll en curso)
+    if (!cast.frame) await waitFrame(cast, cast.mode === 'scroll' ? Math.max(30, SETTLE - quiet()) : CAST_WAIT);
+    if (!cast.frame && cdp.cast === cast && cast.mode === 'scroll' && quiet() >= SETTLE) {
+      recast(cdp, cast, 'sharp');
+      await waitFrame(cast, CAST_WAIT);
+    }
   }
   if (cdp.cast === cast && cast.frame) {
     const data = takeFrame(cdp, cast, width, height);
@@ -276,7 +363,7 @@ async function castShot(cdp, hidden, width, height) {
   }
   if (!hidden && !cast.failed) {
     // página quieta y visible: se repite el último del mismo tamaño (el stream no reenvía bytes iguales)
-    if (cast.last && sameSize(cast.last, width, height)) return cast.last.data;
+    if (cast.last && sameSize(cast.last, width, height)) { traced(cdp, {from: 'repeat'}); return cast.last.data; }
     return capture(cdp, cast, width, height);
   }
   // oculta: captura a pedido; si la imagen no cambia, cada vez más espaciada (hasta 1 s) para no gastar CPU de esa PC
@@ -289,9 +376,16 @@ async function castShot(cdp, hidden, width, height) {
   return data;
 }
 
+// LIENZO_BROWSER_TIMING=1: la respuesta de snapshot/frame del host dice de dónde salió el cuadro y cuánto tardó cada
+// paso (sólo para perfilar desde quien llama al host; el stream de pestañas no la reenvía).
+
 async function realShot(cdp) {
+  const t0 = performance.now();
   const view = await realViewport(cdp);
-  return {image: await castShot(cdp, view.hidden, view.width, view.height), width: view.width, height: view.height, hidden: view.hidden};
+  const t1 = performance.now();
+  const image = await castShot(cdp, view.hidden, view.width, view.height);
+  const timing = TIMING ? {timing: {viewMs: +(t1 - t0).toFixed(2), shotMs: +(performance.now() - t1).toFixed(2), ...cdp.source, sentAt: Date.now() / 1000}} : {};
+  return {image, width: view.width, height: view.height, hidden: view.hidden, ...timing};
 }
 
 // mouseMoved no se espera: con la pestaña oculta Chrome lo confirma recién a los 5 s (medido 2026-10-21, 12 de 12)

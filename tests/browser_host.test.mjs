@@ -101,7 +101,30 @@ test('Page.enable vencido suelta la sesión y el próximo pedido adjunta de cero
   assert.equal(trace().filter(x=>x.method === 'Emulation.clearDeviceMetricsOverride').length, 1); // la sesión nueva limpia una vez
 });
 
-async function worker(t, scenario, view = '1280x800', visibility = 'visible') {
+test('pestaña reemplazada por Chrome al engancharse: corta enseguida con 409 y la nueva se engancha de cero', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'replaced-tab');
+  const failed = await request({action:'viewport', tab:'fixture-tab', width:800, height:600});
+  assert.equal(failed.status, 409);
+  assert.match(failed.error, /soltó la pestaña/);
+  assert.equal(trace().filter(x => x.method === 'Target.detachFromTarget').length, 0); // Chrome ya la soltó
+  // el timeout de 8 s del fixture vale 50 ms: el corte tiene que venir del detach, no de la espera
+  assert.equal((await request({action:'viewport', tab:'fixture-tab', width:800, height:600})).status, 404);
+  const ok = await request({action:'viewport', tab:'fixture-tab-2', width:800, height:600});
+  assert.deepEqual([ok.width, ok.height], [1280, 800]);
+  assert.equal(trace().filter(x => x.method === 'Target.attachToTarget').length, 2);
+});
+
+test('existing: si Chrome no vuelve a arrancar el screencast al cambiar de modo, se rearranca en vez de congelar la vista', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'cast-scroll', '1280x800', 'visible', {TEST_BROWSER_HOST_FAIL_RECAST:'1'});
+  for (let i = 0; i < 4; i++) await request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.ok(trace().some(x => x.method === 'fallo-recast'));
+  const shot = await request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  assert.equal(shot.image, 'fixture-image');
+  assert.equal(trace().filter(x => x.method === 'Page.startScreencast').length, 3); // el que falló y uno nuevo
+});
+
+async function worker(t, scenario, view = '1280x800', visibility = 'visible', env = {}) {
   const folder = mkdtempSync(join(tmpdir(), 'lienzo-host-fixture-'));
   const data = process.platform === 'win32' ? join(folder, 'Google/Chrome/User Data')
     : process.platform === 'darwin' ? join(folder, 'Library/Application Support/Google/Chrome')
@@ -110,7 +133,7 @@ async function worker(t, scenario, view = '1280x800', visibility = 'visible') {
   writeFileSync(join(data, 'DevToolsActivePort'), '9222\n/devtools/browser/fixture\n');
   const traceFile = join(folder, 'cdp.jsonl');
   const child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, host, join(folder, 'profile')], {
-    env: {...process.env, LOCALAPPDATA:folder, HOME:folder, USERPROFILE:folder, TEST_BROWSER_HOST_SCENARIO:scenario, TEST_BROWSER_HOST_TRACE:traceFile, TEST_BROWSER_HOST_VIEW:view, TEST_BROWSER_HOST_VISIBILITY:visibility},
+    env: {...process.env, LOCALAPPDATA:folder, HOME:folder, USERPROFILE:folder, TEST_BROWSER_HOST_SCENARIO:scenario, TEST_BROWSER_HOST_TRACE:traceFile, TEST_BROWSER_HOST_VIEW:view, TEST_BROWSER_HOST_VISIBILITY:visibility, ...env},
     windowsHide:true, stdio:['pipe', 'pipe', 'pipe'],
   });
   const queued = [], waiting = [], methods = [];
@@ -253,6 +276,20 @@ test('existing: un cuadro de antes de un resize no sale con el tamaño nuevo: se
   assert.deepEqual([shot.width, shot.height, shot.image], [1280, 800, 'fixture-image']);
   const methods = trace().map(x => x.method);
   assert.ok(methods.indexOf('Page.screencastFrameAck') < methods.indexOf('Page.captureScreenshot'), methods.join(','));
+});
+
+test('existing: con scroll los cuadros bajan a 1× CSS y calidad 80; quieta, vuelven a calidad 90 a DPR', {timeout:15000}, async t => {
+  const {request, trace} = await worker(t, 'cast-scroll');
+  const shot = () => request({action:'snapshot', tab:'fixture-tab', width:900, height:600});
+  for (let i = 0; i < 6; i++) assert.ok((await shot()).image);
+  const casts = () => trace().filter(x => x.method === 'Page.startScreencast').map(x => [x.params.quality, x.params.maxWidth, x.params.maxHeight]);
+  assert.deepEqual(casts().slice(0, 2), [[90, 2560, 1600], [80, 1280, 800]]);
+  assert.ok(trace().some(x => x.method === 'Page.stopScreencast'));
+  // el scroll paró: en menos de un segundo vuelve el screencast nítido y su cuadro refina la imagen
+  const t0 = Date.now();
+  while (casts().length < 3 && Date.now() - t0 < 2000) await shot();
+  assert.deepEqual(casts()[2], [90, 2560, 1600]);
+  assert.ok(Date.now() - t0 < 1200, String(Date.now() - t0));
 });
 
 test('existing: sin nadie mirando se para el screencast', {timeout:15000}, async t => {
