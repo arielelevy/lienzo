@@ -67,7 +67,7 @@ class FixtureSocket extends EventTarget {
       realTimeout(() => this.dispatchEvent(new MessageEvent('message', {data:JSON.stringify({method:'Target.detachedFromTarget', params:{sessionId:command.sessionId, targetId:'fixture-tab'}})})), 5);
       return;
     }
-    if (command.method === 'Target.getTargets') result = {targetInfos:[{type:'page', targetId:replaced ? 'fixture-tab-2' : 'fixture-tab', title:'fixture', url:'about:blank'}]};
+    if (command.method === 'Target.getTargets') result = {targetInfos:[{type:'page', targetId:replaced ? 'fixture-tab-2' : 'fixture-tab', title:'fixture', url:'about:blank', browserContextId:'fixture-context'}]};
     if (command.method === 'Target.attachToTarget') result = {sessionId:'session-' + ++attached};
     if (command.method === 'Page.captureScreenshot') result = {data:'fixture-image'};
     if (command.method === 'Page.getNavigationHistory') result = {currentIndex:0, entries:[{id:1}]};

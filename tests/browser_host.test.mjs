@@ -220,6 +220,14 @@ test('una respuesta tardía del screenshot vencido no contamina state ni el sigu
   assert.equal((await request(frame)).image, 'fixture-image');
 });
 
+test('cada pestaña dice de qué perfil de Chrome es (su browserContextId)', {timeout:15000}, async t => {
+  // con varios perfiles abiertos (Ariel y globant.com) cada uno es un contexto distinto en el mismo Chrome;
+  // el visor une el contexto con el perfil que Windows asigna a cada ventana
+  const {request} = await worker(t, 'none');
+  const state = await request({action:'state'});
+  assert.deepEqual(state.tabs, [{id:'fixture-tab', title:'fixture', url:'about:blank', context:'fixture-context'}]);
+});
+
 test('timeout de entrada informa sólo el método, sin texto privado ni URL de navegación', {timeout:15000}, async t => {
   const {request} = await worker(t, 'Input.insertText');
   const secret = 'texto-privado-que-no-debe-aparecer https://private.invalid/secret';

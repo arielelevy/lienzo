@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>P-VENTANA-REAL</title>
+<style>
+body{font:16px/1.5 Georgia,serif;margin:0;background:#fff;color:#222}
+nav{position:fixed;left:0;top:0;bottom:0;width:180px;background:#f3f4f6;padding:12px;font:13px sans-serif}
+main{margin-left:220px;max-width:760px;padding:20px}
+h2{font-family:sans-serif;color:#1f4e79}
+.box{height:120px;margin:12px 0;border-radius:8px}
+#clock{position:fixed;right:16px;top:8px;font:14px monospace;background:#ffe;padding:4px 8px}
+</style></head><body>
+<nav id="nav"></nav><div id="clock"></div><main id="main"></main>
+<script>
+const words = 'lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua enim ad minim veniam quis nostrud exercitation ullamco laboris nisi aliquip ex ea commodo consequat'.split(' ');
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const para = n => Array.from({length: n}, () => words[Math.floor(rnd() * words.length)]).join(' ');
+const main = document.getElementById('main'), nav = document.getElementById('nav');
+for (let i = 0; i < 60; i++) {
+  nav.insertAdjacentHTML('beforeend', `<div>Sección ${i + 1}</div>`);
+  main.insertAdjacentHTML('beforeend', `<h2>Sección ${i + 1}: ${para(4)}</h2><p>${para(90)}</p><p>${para(70)}</p>` +
+    (i % 3 === 0 ? `<div class="box" style="background:linear-gradient(90deg,hsl(${i * 37},70%,60%),hsl(${i * 37 + 90},70%,80%))"></div>` : ''));
+}
+const mode = location.hash.slice(1) || 'scroll';
+document.title = 'P-VENTANA-REAL';
+const clock = document.getElementById('clock');
+function tick() {
+  if (mode === 'scroll') { window.scrollBy(0, 6); if (window.scrollY + innerHeight >= document.body.scrollHeight - 2) window.scrollTo(0, 0); }
+  if (mode === 'clock' || mode === 'scroll') clock.textContent = new Date().toISOString().slice(11, 23);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script></body></html>

@@ -11,17 +11,20 @@ import concurrent.futures
 import ctypes as c
 import json
 import os
+import re
 import secrets
 import struct
 import sys
 import threading
 import time
+import uuid
 import zlib
 from ctypes import wintypes as w
 from pathlib import Path
 
 FRAME_HEADER = struct.Struct(">IHHHHHHB")  # seq, x, y, ancho, alto, ancho total, alto total, flags
 FRAME_FULL = 1  # flags: el cuadro es completo (reemplaza todo), no un parche
+PIXEL = 4  # bytes por pixel de la captura: BGRA, tal como la deja Windows
 SYSTEM_CURSORS = {
     32512: "default",
     32513: "text",
@@ -47,6 +50,9 @@ PREFETCH_MAX_AGE_S = 0.15  # una captura adelantada mas vieja (se espero un acus
 PASTE_MAX_CHARS = 16000  # lo pegado viaja en un pedido del visor, acotado a 64 KiB por browser_stream
 CLIPBOARD_MAX_BYTES = 2_000_000  # lo copiado alla que se trae a esta PC
 CLIPBOARD_FRESH_S = 1.0  # una copia se atribuye a Chrome solo si la mirada anterior es asi de reciente
+LOCK_CHECK_S = 0.5  # cada cuanto se mira si la PC esta bloqueada
+LOCK_ON_READS = 2  # lecturas seguidas de bloqueo para avisarlo (~1 s)
+LOCK_OFF_S = 3.0  # segundos seguidos sin bloqueo para avisar que se desbloqueo: el visor no oscila
 
 
 def ctrl(key):
@@ -59,6 +65,102 @@ def ctrl(key):
 
 
 CTRL_C, CTRL_V = ctrl(67), ctrl(86)
+
+
+class LockWatch:
+    """Bloqueo de la PC con histeresis: entra con LOCK_ON_READS lecturas seguidas y sale despues de
+    LOCK_OFF_S sin ninguna. `update` devuelve el estado nuevo cuando cambia, si no None."""
+
+    def __init__(self):
+        self.locked = False
+        self.reads = 0
+        self.clear_since = None
+
+    def update(self, now, raw):
+        if not self.locked:
+            self.reads = self.reads + 1 if raw else 0
+            return self.force() if self.reads >= LOCK_ON_READS else None
+        if raw:
+            self.clear_since = None
+        elif self.clear_since is None:
+            self.clear_since = now
+        elif now - self.clear_since >= LOCK_OFF_S:
+            self.locked, self.reads, self.clear_since = False, 0, None
+            return False
+        return None
+
+    def force(self):
+        """Bloqueada ya, sin esperar otra lectura (la captura fallo y Windows lo confirma)."""
+        changed = not self.locked
+        self.locked, self.clear_since = True, None
+        return True if changed else None
+
+
+# --- perfil de cada ventana --------------------------------------------------------------------
+# Windows sabe de que perfil es cada ventana de Chrome: Chrome le pone un AppUserModelID por perfil
+# («Chrome.UserData.Profile3») y el comando para relanzarla (--profile-directory="Profile 3"), que
+# es como la barra de tareas las agrupa. CDP no lo dice: solo da un browserContextId por perfil.
+PROFILE_ID = re.compile(r"^(Default|Profile \d+)$")
+
+
+class GUID(c.Structure):
+    _fields_ = [("data", c.c_byte * 16)]
+
+
+class PropertyKey(c.Structure):
+    _fields_ = [("fmtid", GUID), ("pid", w.DWORD)]
+
+
+class PropVariant(c.Structure):
+    _fields_ = [
+        ("vt", w.USHORT),
+        ("r1", w.USHORT),
+        ("r2", w.USHORT),
+        ("r3", w.USHORT),
+        ("value", c.c_void_p),
+        ("pad", c.c_void_p),
+    ]
+
+
+def guid(text):
+    value = GUID()
+    c.memmove(c.byref(value), uuid.UUID(text).bytes_le, 16)
+    return value
+
+
+COM = threading.local()  # COM iniciado en el hilo que pide la lista de ventanas
+IID_PROPERTY_STORE = "886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"
+APP_USER_MODEL = "9f4c2855-9f79-4b39-a8d0-e1d42de1d5f3"  # PKEY_AppUserModel_*: 5 el id, 2 el relanzado
+
+
+def profile_names(text):
+    """{carpeta: nombre} de los perfiles que lista el Local State de Chrome (como browser_profiles.mjs)."""
+    try:
+        info = json.loads(text)["profile"]["info_cache"]
+    except ValueError, KeyError, TypeError:
+        return {}
+    if not isinstance(info, dict):
+        return {}
+    return {
+        key: value["name"]
+        for key, value in info.items()
+        if PROFILE_ID.match(key) and isinstance(value, dict) and isinstance(value.get("name"), str)
+    }
+
+
+def profile_label(app_id, relaunch, names):
+    """El nombre del perfil de una ventana («Ariel», «globant.com») o None. Solo el de la carpeta de
+    datos de siempre (UserData): la de un Chrome aislado tiene otros perfiles y otro Local State."""
+    parts = (app_id or "").split(".")
+    # el perfil Default de la carpeta de siempre tiene el id «Chrome» a secas; los demas, «Chrome.UserData.X»
+    if parts != ["Chrome"] and (len(parts) != 3 or parts[0] != "Chrome" or parts[1] != "UserData"):
+        return None
+    match = re.search(r'--profile-directory="([^"]+)"', relaunch or "")
+    if match and "--user-data-dir" not in relaunch:
+        return names.get(match.group(1))
+    if len(parts) != 3:
+        return None
+    return next((name for key, name in names.items() if key.replace(" ", "") == parts[2]), None)
 
 
 class MonitorInfo(c.Structure):
@@ -76,10 +178,10 @@ def bounded(value, low, high):
 
 
 def dirty_box(old, new, width, height, step=64):
-    """(left, top, right, bottom) de lo que cambio entre dos cuadros RGB del mismo tamano, o None.
+    """(left, top, right, bottom) de lo que cambio entre dos cuadros BGRA del mismo tamano, o None.
     Las filas se comparan enteras (memcmp); las columnas de a `step` pixeles y solo en las filas
     que cambiaron; si cambio mas de la mitad de las filas (scroll) va el ancho entero sin mirar."""
-    stride = width * 3
+    stride = width * PIXEL
     o, n = bytes(old), bytes(new)  # comparar bytes es 8 veces mas rapido que memoryview
     changed = [y for y in range(height) if n[y * stride : (y + 1) * stride] != o[y * stride : (y + 1) * stride]]
     if not changed:
@@ -94,7 +196,7 @@ def dirty_box(old, new, width, height, step=64):
             end = min(width, x + step)
             if left <= x and end <= right:
                 continue  # ya adentro de la caja
-            if n[offset + x * 3 : offset + end * 3] != o[offset + x * 3 : offset + end * 3]:
+            if n[offset + x * PIXEL : offset + end * PIXEL] != o[offset + x * PIXEL : offset + end * PIXEL]:
                 left, right = min(left, x), max(right, end)
     return left, top, right, bottom
 
@@ -112,9 +214,9 @@ ROW_GAP = 8  # filas iguales que todavia unen dos tramos cambiados en un mismo p
 
 
 def changed_rows(old, new, width, rows, block=8):
-    """Las filas de `rows` (un range) que difieren entre dos cuadros RGB. Compara de a `block` filas
+    """Las filas de `rows` (un range) que difieren entre dos cuadros BGRA. Compara de a `block` filas
     y baja a fila solo en los bloques distintos: casi siempre son pocos."""
-    stride = width * 3
+    stride = width * PIXEL
     o, n = bytes(old), bytes(new)  # comparar bytes es 8 veces mas rapido que memoryview
     out = []
     for start in range(rows.start, rows.stop, block):
@@ -137,22 +239,22 @@ def row_spans(rows, gap=ROW_GAP):
     return [tuple(s) for s in spans]
 
 
-def span_box(old, new, width, top, bottom, step=32):
-    """(left, top, right, bottom) de lo que cambio dentro de las filas [top, bottom), o None."""
-    stride = width * 3
-    o, n = bytes(old), bytes(new)  # comparar bytes es 8 veces mas rapido que memoryview
-    left, right = width, 0
+def span_box(old, new, width, top, bottom):
+    """(left, top, right, bottom) de lo que cambio dentro de las filas [top, bottom), o None. Exacta
+    al pixel: el XOR de cada fila como entero junta lo distinto de todas y sus bits extremos dan los
+    bordes. Medido el 2026-10-22: la mitad que mirar de a 32 pixeles, que mandaba mas ancho."""
+    stride = width * PIXEL
+    o, n = bytes(old), bytes(new)
+    diff = 0
     for y in range(top, bottom):
-        offset = y * stride
-        if n[offset : offset + stride] == o[offset : offset + stride]:
-            continue
-        for x in range(0, width, step):
-            end = min(width, x + step)
-            if left <= x and end <= right:
-                continue
-            if n[offset + x * 3 : offset + end * 3] != o[offset + x * 3 : offset + end * 3]:
-                left, right = min(left, x), max(right, end)
-    return (left, top, right, bottom) if right > left else None
+        row_new, row_old = n[y * stride : (y + 1) * stride], o[y * stride : (y + 1) * stride]
+        if row_new != row_old:
+            diff |= int.from_bytes(row_new) ^ int.from_bytes(row_old)
+    if not diff:
+        return None
+    first = stride - 1 - (diff.bit_length() - 1) // 8  # el byte mas a la izquierda que cambio
+    last = stride - 1 - ((diff & -diff).bit_length() - 1) // 8
+    return first // PIXEL, top, last // PIXEL + 1, bottom
 
 
 def dirty_rects(old, new, width, height, changed=None):
@@ -160,8 +262,32 @@ def dirty_rects(old, new, width, height, changed=None):
     si ya se sabe). Con mas de MAX_PATCHES se unen en uno solo (la caja de todos)."""
     changed = changed_rows(old, new, width, range(height)) if changed is None else changed
     boxes = [b for t, bt in row_spans(changed) if (b := span_box(old, new, width, t, bt))]
-    if len(boxes) > MAX_PATCHES:
-        boxes = [(min(b[0] for b in boxes), boxes[0][1], max(b[2] for b in boxes), boxes[-1][3])]
+    return merge_boxes(boxes) if len(boxes) > MAX_PATCHES else boxes
+
+
+def merge_boxes(boxes, limit=MAX_PATCHES, near=32):
+    """Junta parches hasta quedar en `limit`, siempre el par que menos area agrega. Primero solo
+    vecinos de arriba a abajo hasta `near` (muchos tramos: costo lineal), despues cualquier par: dos
+    columnas de cambios lejanas quedan como dos parches angostos. Antes se mandaba la caja de todos,
+    que con cambios en dos esquinas era el cuadro entero. Los parches pueden pisarse: todos salen del
+    mismo cuadro nuevo."""
+
+    def union(a, b):
+        return min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])
+
+    def area(b):
+        return (b[2] - b[0]) * (b[3] - b[1])
+
+    def cost(a, b):
+        return area(union(a, b)) - area(a) - area(b)
+
+    boxes = list(boxes)
+    while len(boxes) > max(limit, near):
+        i = min(range(len(boxes) - 1), key=lambda i: cost(boxes[i], boxes[i + 1]))
+        boxes[i : i + 2] = [union(boxes[i], boxes[i + 1])]
+    while len(boxes) > limit:
+        _, i, j = min((cost(a, b), i, j) for i, a in enumerate(boxes) for j, b in enumerate(boxes) if i < j)
+        boxes[i] = union(boxes[i], boxes.pop(j))
     return boxes
 
 
@@ -172,11 +298,11 @@ def find_scroll(old, new, width, height, changed, min_rows=24):
     corrido mas largo y hasta donde llega a los costados (barras laterales fijas quedan afuera)."""
     if len(changed) < min_rows:
         return None
-    stride = width * 3
+    stride = width * PIXEL
     o, n = bytes(old), bytes(new)  # comparar bytes es 8 veces mas rapido que memoryview
     # la mitad central del ancho: una banda angosta cae en el blanco entre columnas y no vota.
     # Las claves son bytes (hashear un memoryview lo copia igual y cuesta el triple)
-    c0, c1 = width // 4 * 3, width * 3 // 4 * 3
+    c0, c1 = width // 4 * PIXEL, width * 3 // 4 * PIXEL
     seen = {}
     for y in range(height):
         key = old[y * stride + c0 : y * stride + c1]
@@ -206,43 +332,70 @@ def find_scroll(old, new, width, height, changed, min_rows=24):
     top, bottom = best
     if bottom - top < min_rows:
         return None
-    sample = range(top, bottom, max(1, (bottom - top) // 24))
-    x0, x1 = c0 // 3, c1 // 3
-    while x0 >= 16 and all(same(y, (x0 - 16) * 3, x0 * 3) for y in sample):
+
+    # hacia los costados se mira columna por columna (el verde de cada pixel) en todas las filas del
+    # tramo, con un corte de bytes por columna. Con 24 filas de muestra un menu fijo de fondo parejo y
+    # un renglon cada tanto pasaba por corrido: medido el 2026-10-22, 15 parches de mas por cuadro.
+    # Una columna corrida salvo en una franja corta (un boton o un reloj fijo encima, la barra de
+    # scroll) entra igual: esa franja la corrigen los parches. Si no, el resto de la fila a ese lado
+    # viajaba como un parche por renglon. Lo fijo da distinto donde esta y donde estaba: alto + |dy|
+    tolerance = (bottom - top) // 8 + abs(dy)
+
+    def columns(a, b):
+        for x in range(a, b):
+            col_new = n[top * stride + x * PIXEL + 1 : bottom * stride : stride]
+            col_old = o[(top - dy) * stride + x * PIXEL + 1 : (bottom - dy) * stride : stride]
+            if col_new != col_old and mismatch_band(col_new, col_old) > tolerance:
+                return False
+        return True
+
+    x0, x1 = c0 // PIXEL, c1 // PIXEL
+    while x0 >= 16 and columns(x0 - 16, x0):
         x0 -= 16
-    x0 = 0 if x0 < 16 and all(same(y, 0, x0 * 3) for y in sample) else x0
-    while x1 + 16 <= width and all(same(y, x1 * 3, (x1 + 16) * 3) for y in sample):
+    x0 = 0 if x0 < 16 and columns(0, x0) else x0
+    while x1 + 16 <= width and columns(x1, x1 + 16):
         x1 += 16
-    x1 = width if width - x1 < 16 and all(same(y, x1 * 3, width * 3) for y in sample) else x1
+    x1 = width if width - x1 < 16 and columns(x1, width) else x1
     return dy, x0, x1, top, bottom
+
+
+def mismatch_band(a, b):
+    """Cuantas posiciones hay entre la primera y la ultima distinta de dos bytes del mismo largo.
+    Con el XOR como entero: la primera es el bit mas alto, la ultima el mas bajo, todo en C."""
+    diff = int.from_bytes(a) ^ int.from_bytes(b)
+    if not diff:
+        return 0
+    return (diff.bit_length() - 1) // 8 - ((diff & -diff).bit_length() - 1) // 8 + 1
 
 
 def shifted(old, width, scroll):
     """El cuadro anterior con la copia de `scroll` ya aplicada: lo que el visor tiene despues de
     correr su imagen. Contra esto se buscan los parches."""
     dy, x0, x1, top, bottom = scroll
-    stride = width * 3
+    stride = width * PIXEL
     out = bytearray(old)
     for y in range(top, bottom):
-        out[y * stride + x0 * 3 : y * stride + x1 * 3] = old[(y - dy) * stride + x0 * 3 : (y - dy) * stride + x1 * 3]
+        out[y * stride + x0 * PIXEL : y * stride + x1 * PIXEL] = old[
+            (y - dy) * stride + x0 * PIXEL : (y - dy) * stride + x1 * PIXEL
+        ]
     return bytes(out)
 
 
-def frame_v2(seq, rgb, width, height, last):
-    """El cuadro v2 contra `last` (RGB del cuadro anterior del mismo tamano, o None): bytes, o None si
+def frame_v2(seq, pixels, width, height, last):
+    """El cuadro v2 contra `last` (BGRA del cuadro anterior del mismo tamano, o None): bytes, o None si
     no cambio nada. Completo si no hay anterior o si los parches cubren mas del 70 %."""
     full = last is None
     scroll = None
     boxes = []
     if not full:
-        if rgb == last:  # un memcmp: el caso de siempre cuando nadie toca nada
+        if pixels == last:  # un memcmp: el caso de siempre cuando nadie toca nada
             return None
-        changed = changed_rows(last, rgb, width, range(height))
+        changed = changed_rows(last, pixels, width, range(height))
         if not changed:
             return None
-        scroll = find_scroll(last, rgb, width, height, changed)
+        scroll = find_scroll(last, pixels, width, height, changed)
         base = shifted(last, width, scroll) if scroll else last
-        boxes = dirty_rects(base, rgb, width, height, None if scroll else changed) if base != rgb else []
+        boxes = dirty_rects(base, pixels, width, height, None if scroll else changed) if base != pixels else []
         if not boxes and not scroll:
             return None
         full = sum((b[2] - b[0]) * (b[3] - b[1]) for b in boxes) > width * height * 0.7
@@ -253,15 +406,22 @@ def frame_v2(seq, rgb, width, height, last):
         SCROLL.pack(*(scroll or (0, 0, 0, 0, 0)), len(boxes)),
     ]
     for box in boxes:
-        data = png(rgb, width, box)
+        data = png(pixels, width, box)
         out += [PATCH.pack(box[0], box[1], box[2] - box[0], box[3] - box[1], len(data)), data]
     return b"".join(out)
 
 
-def png(rgb, width, box):
-    """PNG RGB de 8 bits de la caja (left, top, right, bottom) de un cuadro de `width` pixeles."""
+def png(bgra, width, box):
+    """PNG RGB de 8 bits de la caja (left, top, right, bottom) de un cuadro BGRA de `width` pixeles.
+    Solo se convierte lo que viaja: cada fila con su byte de filtro (0) adelante."""
     left, top, right, bottom = box
-    rows = b"".join(b"\0" + rgb[(y * width + left) * 3 : (y * width + right) * 3] for y in range(top, bottom))
+    w = right - left
+    line = w * 3 + 1
+    rows = bytearray(line * (bottom - top))
+    for i, y in enumerate(range(top, bottom)):
+        src = bgra[(y * width + left) * PIXEL : (y * width + right) * PIXEL]
+        at, end = i * line + 1, (i + 1) * line
+        rows[at:end:3], rows[at + 1 : end : 3], rows[at + 2 : end : 3] = src[2::4], src[1::4], src[0::4]
 
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
@@ -297,6 +457,7 @@ class Windows:
             self.user.LoadCursorW(None, c.c_void_p(number)): shape for number, shape in SYSTEM_CURSORS.items()
         }
         self.user.MonitorFromWindow.restype = w.HANDLE
+        self.user.OpenInputDesktop.restype = w.HANDLE
         self.gdi.CreateCompatibleDC.restype = w.HDC
         self.gdi.CreateCompatibleBitmap.restype = w.HBITMAP
         self.gdi.CreateDIBSection.restype = w.HBITMAP
@@ -348,6 +509,9 @@ class Windows:
             (self.user, "MonitorFromWindow", [w.HWND, w.DWORD]),
             (self.user, "GetMonitorInfoW", [w.HANDLE, c.POINTER(MonitorInfo)]),
             (self.user, "GetWindowThreadProcessId", [w.HWND, c.POINTER(w.DWORD)]),
+            (self.user, "OpenInputDesktop", [w.DWORD, w.BOOL, w.DWORD]),
+            (self.user, "CloseDesktop", [w.HANDLE]),
+            (self.user, "GetUserObjectInformationW", [w.HANDLE, c.c_int, c.c_void_p, w.DWORD, c.POINTER(w.DWORD)]),
             (self.gdi, "CreateCompatibleDC", [w.HDC]),
             (self.gdi, "CreateCompatibleBitmap", [w.HDC, c.c_int, c.c_int]),
             (self.gdi, "CreateDIBSection", [w.HDC, c.c_void_p, w.UINT, c.POINTER(c.c_void_p), w.HANDLE, w.DWORD]),
@@ -398,8 +562,57 @@ class Windows:
             return True
 
         self.user.EnumWindows(callback_type(collect), 0)
+        names = self.profile_names()
+        for item in result:
+            profile = self.profile(int(item["id"]), names)
+            if profile:
+                item["profile"] = profile
         foreground = str(self.user.GetForegroundWindow())
         return sorted(result, key=lambda item: item["id"] != foreground)
+
+    def app_user_model(self, hwnd):
+        """(AppUserModelID, comando de relanzado) de la ventana, o None donde no hay."""
+        shell, ole = c.WinDLL("shell32"), c.WinDLL("ole32")
+        if not getattr(COM, "ready", False):
+            ole.CoInitializeEx(None, 2)  # una vez por hilo; si ya estaba en otro modo, sigue igual
+            COM.ready = True
+        store = c.c_void_p()
+        shell.SHGetPropertyStoreForWindow.argtypes = [w.HWND, c.c_void_p, c.POINTER(c.c_void_p)]
+        if shell.SHGetPropertyStoreForWindow(hwnd, c.byref(guid(IID_PROPERTY_STORE)), c.byref(store)) or not store:
+            return None, None
+        table = c.cast(c.cast(store, c.POINTER(c.c_void_p))[0], c.POINTER(c.c_void_p))
+        get_value = c.WINFUNCTYPE(c.HRESULT, c.c_void_p, c.POINTER(PropertyKey), c.POINTER(PropVariant))(table[5])
+        values = []
+        try:
+            for pid in (5, 2):
+                value = PropVariant()
+                try:
+                    get_value(store, c.byref(PropertyKey(guid(APP_USER_MODEL), pid)), c.byref(value))
+                except OSError:
+                    values.append(None)
+                    continue
+                values.append(c.wstring_at(value.value) if value.vt == 31 and value.value else None)  # VT_LPWSTR
+                ole.PropVariantClear(c.byref(value))
+        finally:
+            c.WINFUNCTYPE(c.c_ulong, c.c_void_p)(table[2])(store)  # Release
+        return tuple(values)
+
+    def profile_names(self):
+        """{carpeta: nombre} de los perfiles de la carpeta de datos de siempre, o {} si no se puede leer."""
+        root = os.environ.get("LOCALAPPDATA")
+        state = Path(root, "Google/Chrome/User Data/Local State") if root else None
+        try:
+            return profile_names(state.read_text(encoding="utf-8")) if state and state.is_file() else {}
+        except OSError, UnicodeError:
+            return {}
+
+    def profile(self, hwnd, names):
+        """El nombre del perfil de Chrome de esa ventana, o None si Windows o Chrome no lo dicen."""
+        try:
+            app_id, relaunch = self.app_user_model(hwnd)
+        except OSError:
+            return None
+        return profile_label(app_id, relaunch, names)
 
     def target(self, value):
         if not isinstance(value, str) or not value.isdecimal() or len(value) > 20:
@@ -490,7 +703,7 @@ class Windows:
             self.gdi.DeleteDC(memory)
 
     def capture(self, hwnd, width=None, height=None):
-        """(rgb, ancho, alto) de la ventana; si se pide tamano, primero la ajusta."""
+        """(bgra, ancho, alto) de la ventana; si se pide tamano, primero la ajusta."""
         if width is not None or height is not None:
             self.fit(hwnd, width, height)
         if self.user.IsIconic(hwnd):
@@ -531,10 +744,9 @@ class Windows:
             self.gdi.GdiFlush()
             if not bits.value:
                 fail("Windows no pudo leer la imagen de Chrome")
-            rgb = bytearray(width * height * 3)
-            bgra = c.string_at(bits.value, width * height * 4)
-            rgb[0::3], rgb[1::3], rgb[2::3] = bgra[2::4], bgra[1::4], bgra[0::4]
-            return bytes(rgb), width, height
+            # BGRA tal cual: pasarlo entero a RGB costaba 8-12 ms por captura con el GIL tomado
+            # (medido el 2026-10-22); png() convierte solo lo que viaja
+            return c.string_at(bits.value, width * height * PIXEL), width, height
         finally:
             self.gdi.SelectObject(memory, old_bitmap)
             self.gdi.DeleteObject(bitmap)
@@ -586,12 +798,12 @@ class Windows:
         if width is not None or height is not None:
             bounded(width, 320, 3840)
             bounded(height, 200, 2160)
-        rgb, width, height = self.capture(hwnd, width, height)
+        pixels, width, height = self.capture(hwnd, width, height)
         box = (0, 0, width, height)
         previous = self.previous_frame
         patch_base = None
         if delta and previous and previous[:3] == (hwnd, width, height) and base == previous[3]:
-            box = dirty_box(previous[4], rgb, width, height)
+            box = dirty_box(previous[4], pixels, width, height)
             if box is None:
                 return {"unchanged": True, "frameId": base, "width": width, "height": height}
             if (box[2] - box[0]) * (box[3] - box[1]) < width * height * 0.7:
@@ -599,9 +811,9 @@ class Windows:
             else:
                 box = (0, 0, width, height)
         frame_id = secrets.token_hex(16)
-        self.previous_frame = (hwnd, width, height, frame_id, rgb)
+        self.previous_frame = (hwnd, width, height, frame_id, pixels)
         result = {
-            "image": base64.b64encode(png(rgb, width, box)).decode(),
+            "image": base64.b64encode(png(pixels, width, box)).decode(),
             "format": "png",
             "width": width,
             "height": height,
@@ -644,6 +856,36 @@ class Windows:
             return f"{name.value or '?'} · {title.value[:80] or 'sin título'} · {image}"
         except Exception:  # un fake sin esas funciones, o una ventana que ya no esta
             return "?"
+
+    def input_desktop(self):
+        """El nombre del escritorio que recibe la entrada («Default» con la sesion abierta,
+        «Winlogon» pidiendo la contrasena o con el aviso seguro de UAC), o None si Windows no deja
+        abrirlo: con la PC bloqueada es el de otra sesion."""
+        desktop = self.user.OpenInputDesktop(0, False, 0)
+        if not desktop:
+            return None
+        try:
+            name = c.create_unicode_buffer(256)
+            size = w.DWORD()
+            if not self.user.GetUserObjectInformationW(desktop, 2, name, c.sizeof(name), c.byref(size)):  # UOI_NAME
+                return None
+            return name.value
+        finally:
+            self.user.CloseDesktop(desktop)
+
+    def locked(self):
+        """La PC esta bloqueada: el escritorio de entrada no es el de la sesion, o al frente esta la
+        pantalla de bloqueo (LockApp.exe; la detecto E el 2026-10-08 desde la otra PC). Un instante
+        sin ventana al frente, como en un Alt+Tab, no cuenta."""
+        desktop = self.input_desktop()
+        front = self.user.GetForegroundWindow()
+        if desktop is None:
+            # sin permiso para mirar el escritorio pero con una ventana normal al frente no es bloqueo:
+            # un contexto asi dejaba la vista quieta para siempre (revision del 2026-10-22)
+            return not front or self.describe(front).endswith("LockApp.exe")
+        if desktop != "Default":
+            return True
+        return bool(front) and self.describe(front).endswith("LockApp.exe")
 
     def focus(self, hwnd):
         """Trae la ventana de Chrome al frente para mandarle la entrada. Windows solo le deja cambiar
@@ -973,9 +1215,11 @@ class Windows:
 
 class Streamer:
     """Captura continua de una ventana con acuse por cuadro; la entrada llega por stdin y sale por
-    el mismo stdout binario. `capture(hwnd, width, height)` se inyecta en las pruebas."""
+    el mismo stdout binario. `capture(hwnd, width, height)` y `locked()` se inyectan en las pruebas.
+    Con la PC bloqueada no se captura: se avisa {"t": "desktop", "locked": true} y el visor pasa a la
+    vista por pestanas hasta el aviso contrario."""
 
-    def __init__(self, windows, out, capture=None, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, windows, out, capture=None, clock=time.monotonic, sleep=time.sleep, locked=None):
         self.windows = windows
         self.out = out
         self.capture = capture or windows.capture
@@ -991,13 +1235,16 @@ class Streamer:
         self.in_flight = 0
         self.seq = 0
         self.idle = 0  # lecturas seguidas sin cambios
-        self.last = None  # (hwnd, ancho, alto, rgb) del ultimo cuadro enviado
+        self.last = None  # (hwnd, ancho, alto, bgra) del ultimo cuadro enviado
         self.v2 = False
         self.clipboard_ready = None  # numero del portapapeles anunciado al visor, hasta que lo pida
         self._prefetch = None  # (hwnd, futuro de la captura, cuando arranco)
         self._executor = None
         self.stats = {"capture": [], "encode": [], "frames": 0, "bytes": 0, "since": clock()}
         self.closed = False
+        self.lock = LockWatch()
+        self.lock_mutex = threading.Lock()  # el bloqueo lo tocan el hilo de stdin, el de captura y el suyo
+        self.locked_now = locked or getattr(windows, "locked", lambda: False)
 
     def emit(self, kind, payload):
         with self.out_lock:
@@ -1022,6 +1269,16 @@ class Streamer:
                 self.cv.notify_all()
             self.clipboard_ready = None
             self.json({"t": "opened", "window": str(hwnd)})
+            with self.lock_mutex:
+                if data.get("desktop") is True and not self.lock.locked:
+                    # el visor que lo pide sabe el estado ya, sin esperar las lecturas de la histeresis
+                    try:
+                        if self.locked_now():
+                            self.lock.force()
+                    except OSError, ValueError:
+                        pass
+                if data.get("desktop") is True or self.lock.locked:
+                    self.json({"t": "desktop", "locked": self.lock.locked})
         elif kind == "size":
             size = (bounded(data.get("width"), 320, 3840), bounded(data.get("height"), 200, 2160))
             with self.cv:
@@ -1077,11 +1334,43 @@ class Streamer:
         with self.cv:
             self.cv.wait(seconds)
 
+    def must_wait(self):
+        return self.hwnd is None or self.paused or self.in_flight >= MAX_IN_FLIGHT or self.lock.locked
+
+    def check_lock(self, now):
+        """Una lectura del bloqueo; si cambia (con histeresis), se avisa al visor y se despierta la
+        captura. Si Windows no deja leerlo, esta vuelta no cuenta."""
+        try:
+            raw = self.locked_now()
+        except OSError, ValueError:
+            return
+        with self.lock_mutex:
+            self._lock_changed(self.lock.update(now, raw))
+
+    def _lock_changed(self, locked):
+        """Se llama con lock_mutex tomado: el aviso sale en el mismo orden que los cambios."""
+        if locked is None:
+            return
+        with self.cv:
+            self.cv.notify_all()
+        self.json({"t": "desktop", "locked": locked})
+
+    def run_lock(self):
+        """Mira el bloqueo mientras hay una ventana abierta (tambien en pausa: el visor en espera se
+        entera asi del desbloqueo). Termina con el worker o con stdout cerrado."""
+        try:
+            while not self.closed:
+                if self.hwnd is not None:
+                    self.check_lock(self.clock())
+                self.sleep(LOCK_CHECK_S)
+        except OSError, ValueError:
+            pass  # stdout cerrado (ValueError si ya se cerro del todo): run() ya termina
+
     def step(self):
         """Una vuelta de captura: devuelve el cuadro emitido (cabecera, PNG) o None. Espera si hay
-        demasiados cuadros sin acusar o no hay ventana."""
+        demasiados cuadros sin acusar, no hay ventana o la PC esta bloqueada."""
         with self.cv:
-            while not self.closed and (self.hwnd is None or self.paused or self.in_flight >= MAX_IN_FLIGHT):
+            while not self.closed and self.must_wait():
                 self.cv.wait(1)
             if self.closed:
                 return None
@@ -1094,11 +1383,15 @@ class Streamer:
             if refit and size:
                 # solo al abrir o cambiar de tamano: cuadro a cuadro pelearia con quien maximiza alla
                 self.windows.fit(hwnd, *size)
-            rgb, width, height = self._grab(hwnd, refit)
+            pixels, width, height = self._grab(hwnd, refit)
             if self.v2 and self.idle == 0:
                 # con movimiento, la proxima captura arranca ya, mientras este cuadro se arma y viaja
                 self._prefetch = (hwnd, self._pool().submit(self.capture, hwnd), self.clock())
-            cursor = self.windows.cursor()
+            try:
+                cursor = self.windows.cursor()
+            except ValueError:
+                # GetCursorInfo falla a ratos (medido el 2026-10-22) y antes cerraba la vista entera
+                cursor = self.last_cursor
             if cursor != self.last_cursor:
                 self.json({"t": "cursor", "cursor": cursor})
                 self.last_cursor = cursor
@@ -1107,6 +1400,16 @@ class Streamer:
                 self.clipboard_ready = copied
                 self.json({"t": "clipboard-ready"})
         except ValueError as exc:
+            try:
+                locked = self.locked_now()
+            except OSError, ValueError:
+                locked = False
+            if locked:
+                # con la sesion bloqueada BitBlt y PrintWindow fallan: no es un error de la vista, se
+                # avisa el bloqueo ya (sin esperar la segunda lectura) y se retoma al desbloquear
+                with self.lock_mutex:
+                    self._lock_changed(self.lock.force())
+                return None
             self.json({"t": "error", "message": str(exc)})
             with self.cv:
                 if self.hwnd == hwnd:
@@ -1116,7 +1419,7 @@ class Streamer:
         if self.v2:
             captured = self.clock()
             payload = frame_v2(
-                self.seq + 1, rgb, width, height, last[3] if last and last[:3] == (hwnd, width, height) else None
+                self.seq + 1, pixels, width, height, last[3] if last and last[:3] == (hwnd, width, height) else None
             )
             self._measure(captured - started, self.clock() - captured, len(payload) if payload else 0)
             if payload is None:
@@ -1124,11 +1427,11 @@ class Streamer:
                 pause = IDLE_INTERVAL_S if self.idle < IDLE_FAST_STEPS else IDLE_SLOW_S
                 self.rest(max(0, pause - (self.clock() - started)))
                 return None
-            return self._send_frame(hwnd, width, height, rgb, payload, started)
+            return self._send_frame(hwnd, width, height, pixels, payload, started)
         box = (0, 0, width, height)
         full = True
         if last and last[:3] == (hwnd, width, height):
-            box = dirty_box(last[3], rgb, width, height)
+            box = dirty_box(last[3], pixels, width, height)
             if box is None:
                 self.idle += 1
                 pause = IDLE_INTERVAL_S if self.idle < IDLE_FAST_STEPS else IDLE_SLOW_S
@@ -1141,7 +1444,7 @@ class Streamer:
         header = FRAME_HEADER.pack(
             self.seq + 1, box[0], box[1], box[2] - box[0], box[3] - box[1], width, height, FRAME_FULL if full else 0
         )
-        return self._send_frame(hwnd, width, height, rgb, header + png(rgb, width, box), started)
+        return self._send_frame(hwnd, width, height, pixels, header + png(pixels, width, box), started)
 
     def _pool(self):
         if self._executor is None:
@@ -1182,13 +1485,13 @@ class Streamer:
         )
         self.stats = {"capture": [], "encode": [], "frames": 0, "bytes": 0, "since": self.clock()}
 
-    def _send_frame(self, hwnd, width, height, rgb, payload, started):
+    def _send_frame(self, hwnd, width, height, pixels, payload, started):
         self.idle = 0
         self.seq += 1
         with self.cv:
             if self.hwnd != hwnd:
                 return None  # cambio la ventana mientras se capturaba: el cuadro ya no vale
-            self.last = (hwnd, width, height, rgb)
+            self.last = (hwnd, width, height, pixels)
             self.in_flight += 1
         self.emit("F", payload)
         self.sleep(max(0, MIN_INTERVAL_S - (self.clock() - started)))
@@ -1211,6 +1514,7 @@ class Streamer:
     def run(self, lines):
         thread = threading.Thread(target=self.run_capture, daemon=True)
         thread.start()
+        threading.Thread(target=self.run_lock, daemon=True).start()
         try:
             for line in lines:
                 if self.closed:

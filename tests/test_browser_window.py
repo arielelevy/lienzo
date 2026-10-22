@@ -240,6 +240,87 @@ def test_focus_says_when_the_pc_is_locked():
         windows.focus(123)
 
 
+NAMES = {"Default": "Persona", "Profile 1": "Ariel", "Profile 3": "globant.com"}
+
+
+@pytest.mark.parametrize(
+    "app_id,relaunch,expected",
+    [
+        # medido el 2026-10-22 en esta PC, con los dos perfiles de Ariel abiertos
+        ("Chrome.UserData.Profile3", '"C:/x/chrome.exe" --profile-directory="Profile 3"', "globant.com"),
+        ("Chrome.UserData.Profile1", None, "Ariel"),  # sin comando de relanzado: el id sin espacios
+        ("Chrome.UserData.Profile9", None, None),  # un perfil que Local State no nombra
+        ("Chrome.Pchrome33680.Default", None, None),  # otra carpeta de datos (un Chrome aislado)
+        ("Chrome", None, None),
+        # el perfil Default de la carpeta de siempre tiene el id «Chrome» a secas (revisión 2026-10-22)
+        ("Chrome", '"C:/x/chrome.exe" --profile-directory="Default"', "Persona"),
+        ("Chrome", '"C:/x/chrome.exe" --user-data-dir="D:/otra" --profile-directory="Default"', None),
+        (None, None, None),
+    ],
+)
+def test_profile_label_from_the_window_app_id(app_id, relaunch, expected):
+    assert module.profile_label(app_id, relaunch, NAMES) == expected
+
+
+def test_profile_names_reads_local_state_and_ignores_the_rest():
+    text = json.dumps({"profile": {"info_cache": {"Profile 1": {"name": "Ariel"}, "System Profile": {"name": "x"}}}})
+    assert module.profile_names(text) == {"Profile 1": "Ariel"}
+    assert module.profile_names("no es json") == {}
+
+
+def test_windows_list_says_the_profile_of_each_chrome_window():
+    windows = module.Windows.__new__(module.Windows)
+    windows.chrome = lambda hwnd: True
+    titles = {11: "YouTube - Google Chrome", 12: "Nueva pestaña - Google Chrome"}
+
+    def enum(callback, _):
+        for hwnd in titles:
+            callback(hwnd, 0)
+
+    def text(hwnd, buffer, size):
+        buffer.value = titles[hwnd]
+
+    windows.user = SimpleNamespace(EnumWindows=enum, GetWindowTextW=text, GetForegroundWindow=lambda: 12)
+    reads = []
+    windows.profile_names = lambda: reads.append(1) or NAMES
+    windows.profile = lambda hwnd, names: {11: "Ariel", 12: None}[hwnd] if names is NAMES else "?"
+    assert windows.windows() == [
+        {"id": "12", "title": "Nueva pestaña - Google Chrome"},
+        {"id": "11", "title": "YouTube - Google Chrome", "profile": "Ariel"},
+    ]
+    assert reads == [1]  # Local State se lee una vez por lista, no una por ventana
+
+
+@pytest.mark.parametrize(
+    "desktop,front,locked",
+    [
+        ("Default", "Chrome_WidgetWin_1 · x · chrome.exe", False),
+        ("Default", "Windows.UI.Core.CoreWindow · Pantalla de bloqueo predeterminada de Windows · LockApp.exe", True),
+        ("Winlogon", "?", True),  # pedir la contraseña o el escritorio seguro de UAC
+        (None, None, True),  # sin acceso al escritorio de entrada ni ventana al frente: bloqueada
+        # sin acceso pero con una ventana normal al frente no es bloqueo (revisión: un contexto sin
+        # permiso de escritorio dejaba la vista quieta para siempre)
+        (None, "Chrome_WidgetWin_1 · x · chrome.exe", False),
+        ("Default", None, False),  # un instante sin ventana al frente (Alt+Tab) no es bloqueo
+    ],
+)
+def test_locked_reads_the_input_desktop_and_the_lock_screen(desktop, front, locked):
+    windows = module.Windows.__new__(module.Windows)
+    windows.input_desktop = lambda: desktop
+    windows.user = SimpleNamespace(GetForegroundWindow=lambda: 0 if front is None else 5)
+    windows.describe = lambda hwnd: front
+    assert windows.locked() is locked
+
+
+def test_lock_watch_enters_after_two_reads_and_leaves_after_three_quiet_seconds():
+    watch = module.LockWatch()
+    assert [watch.update(t, raw) for t, raw in [(0, False), (0.5, True), (1.0, True)]] == [None, None, True]
+    # desbloqueo con un rebote: el plazo de salida vuelve a empezar
+    steps = [(1.5, False), (2.0, True), (2.5, False), (5.4, False), (5.6, False), (6.0, False)]
+    assert [watch.update(t, raw) for t, raw in steps] == [None, None, None, None, False, None]
+    assert watch.update(6.5, True) is None and watch.locked is False
+
+
 @pytest.mark.parametrize("key,modifiers", [(91, 0), (9, 1), (27, 10), (115, 1)])
 def test_system_shortcuts_rejected_before_injection(key, modifiers):
     windows = module.Windows.__new__(module.Windows)
@@ -374,15 +455,26 @@ def test_popups_are_owned_by_selected_chrome_only_in_paint_order(monkeypatch):
 # --- captura continua (Streamer) y caja de cambios, sin Win32 ---------------------------------
 
 
+def px(color):
+    """Un pixel como lo deja la captura de Windows: BGRA (el color se escribe en RGB)."""
+    return bytes((color[2], color[1], color[0], 255))
+
+
 def rgb(width, height, color=(255, 255, 255)):
-    return bytes(color) * (width * height)
+    return px(color) * (width * height)
 
 
 def paint(frame, width, x, y, w, h, color):
     data = bytearray(frame)
     for row in range(y, y + h):
-        data[(row * width + x) * 3 : (row * width + x + w) * 3] = bytes(color) * w
+        data[(row * width + x) * 4 : (row * width + x + w) * 4] = px(color) * w
     return bytes(data)
+
+
+def to_bgra(line):
+    out = bytearray(b"\xff" * (len(line) // 3 * 4))
+    out[0::4], out[1::4], out[2::4] = line[2::3], line[1::3], line[0::3]
+    return bytes(out)
 
 
 def test_dirty_box_none_when_equal_and_tight_when_small_change():
@@ -406,6 +498,16 @@ def test_png_of_patch_decodes_to_the_region():
     assert zlib.decompress(idat) == (b"\x00" + bytes((9, 8, 7)) * 3) * 2
 
 
+def test_png_takes_the_bgra_capture_and_writes_rgb():
+    # la captura queda en BGRA: convertirla entera costaba 8-12 ms por cuadro (2026-10-22); solo se
+    # convierte lo que viaja
+    frame = bytes((1, 2, 3, 255)) * 8 + bytes((4, 5, 6, 255)) * 8
+    data = module.png(frame, 4, (1, 2, 3, 4))
+    assert struct.unpack(">II", data[16:24]) == (2, 2)
+    idat = data[data.index(b"IDAT") + 4 : data.index(b"IEND") - 4]
+    assert zlib.decompress(idat) == (b"\x00" + bytes((6, 5, 4)) * 2) * 2
+
+
 def page(width, height, offset, header=20, sidebar=40):
     """Una pagina con encabezado y barra lateral fijos y un contenido de filas distintas, corrido
     `offset` filas hacia arriba (scroll)."""
@@ -413,12 +515,12 @@ def page(width, height, offset, header=20, sidebar=40):
     for y in range(height):
         for x in range(width):
             if y < header:
-                data += bytes((10, 10, 10))
+                data += px((10, 10, 10))
             elif x < sidebar:
-                data += bytes((200, y % 251, 0))  # fija, pero distinta en cada fila (texto)
+                data += px((200, y % 251, 0))  # fija, pero distinta en cada fila (texto)
             else:
                 r = y + offset
-                data += bytes(((r * 7) % 251, (r * 13 + x // 50) % 251, (r * 31) % 251))
+                data += px(((r * 7) % 251, (r * 13 + x // 50) % 251, (r * 31) % 251))
     return bytes(data)
 
 
@@ -439,8 +541,8 @@ def apply_v2(canvas, width, payload):
         pos += n
         rows = zlib.decompress(data[data.index(b"IDAT") + 4 : data.index(b"IEND") - 4])
         for r in range(h):
-            line = rows[r * (w * 3 + 1) + 1 : (r + 1) * (w * 3 + 1)]
-            out[((y + r) * width + x) * 3 : ((y + r) * width + x + w) * 3] = line
+            line = rows[r * (w * 3 + 1) + 1 : (r + 1) * (w * 3 + 1)]  # el PNG viaja en RGB
+            out[((y + r) * width + x) * 4 : ((y + r) * width + x + w) * 4] = to_bgra(line)
     assert pos == len(payload)
     return bytes(out), (dy, x0, x1, top, bottom), count
 
@@ -454,6 +556,70 @@ def test_frame_v2_scroll_copies_the_content_and_sends_only_the_new_strip():
     dy, x0, x1, top, bottom = scroll
     assert dy == -37 and x0 == 40 and x1 == w  # la barra lateral fija no se corre
     assert count == 1 and len(payload) < len(module.png(new, w, (0, 0, w, h))) / 2
+
+
+def menu_page(width, height, offset, sidebar=48):
+    """Como la barra de navegacion de una pagina real: fija, gris parejo y con un renglon de texto
+    cada 32 filas. Un muestreo de pocas filas cae en el gris y la cree parte del contenido corrido."""
+    data = bytearray()
+    for y in range(height):
+        for x in range(width):
+            if x < sidebar:
+                data += px((0, 0, 0)) if y % 32 == 11 and 6 <= x < 40 else px((240, 240, 240))
+            else:
+                r = y + offset
+                data += px(((r * 7) % 251, (r * 13 + x // 50) % 251, (r * 31) % 251))
+    return bytes(data)
+
+
+def test_frame_v2_scroll_leaves_a_fixed_sparse_text_menu_out_of_the_copy():
+    # medido el 2026-10-22 con la página de prueba: la copia tomaba la barra lateral y dejaba 15 parches por cuadro
+    w, h = 240, 240
+    old, new = menu_page(w, h, 0), menu_page(w, h, 41)
+    payload = module.frame_v2(5, new, w, h, old)
+    canvas, scroll, count = apply_v2(old, w, payload)
+    assert canvas == new
+    # el texto del menu llega a x=40; el gris liso de 40 a 48 da igual corrido o no
+    assert scroll[0] == -41 and 40 <= scroll[1] <= 48 and scroll[2] == w
+    assert count == 1  # sólo la franja nueva de abajo
+
+
+def test_frame_v2_scroll_reaches_past_a_small_floating_box():
+    # un reloj o boton fijo arriba a la derecha cortaba la copia y el texto de ese lado viajaba
+    # como un parche por renglon (14 por cuadro con la pagina de prueba)
+    w, h = 240, 240
+    old, new = (paint(page(w, h, offset, header=0, sidebar=0), w, 200, 30, 30, 12, (255, 255, 0)) for offset in (0, 23))
+    payload = module.frame_v2(5, new, w, h, old)
+    canvas, scroll, count = apply_v2(old, w, payload)
+    assert canvas == new
+    assert scroll[0] == -23 and scroll[1] == 0 and scroll[2] == w
+    assert count == 3  # la franja nueva y el recuadro fijo donde estaba y donde esta
+
+
+def test_span_box_is_exact_to_the_pixel():
+    base = rgb(200, 10)
+    changed = paint(base, 200, 70, 2, 5, 3, (0, 0, 0))
+    assert module.span_box(base, changed, 200, 0, 10) == (70, 0, 75, 10)
+    assert module.span_box(base, base, 200, 0, 10) is None
+    edge = paint(base, 200, 199, 9, 1, 1, (254, 255, 255))  # un solo byte, del ultimo pixel
+    assert module.span_box(base, edge, 200, 0, 10) == (199, 0, 200, 10)
+
+
+def test_dirty_rects_over_the_limit_merges_neighbours_not_everything():
+    # 20 cambios chicos en dos columnas lejanas: la caja de todos cubría el cuadro entero
+    w, h = 400, 400
+    base = rgb(w, h)
+    changed = base
+    for i in range(20):
+        changed = paint(changed, w, 4 if i % 2 else 380, i * 20, 8, 3, (0, 0, 0))
+    boxes = module.dirty_rects(base, changed, w, h)
+    assert len(boxes) <= module.MAX_PATCHES
+    assert sum((b[2] - b[0]) * (b[3] - b[1]) for b in boxes) < w * h * 0.15
+    canvas = bytearray(base)
+    for left, top, right, bottom in boxes:
+        for y in range(top, bottom):
+            canvas[(y * w + left) * 4 : (y * w + right) * 4] = changed[(y * w + left) * 4 : (y * w + right) * 4]
+    assert bytes(canvas) == changed
 
 
 def test_frame_v2_separate_patches_and_none_when_equal():
@@ -630,6 +796,86 @@ def test_streamer_reports_a_closed_window_and_pauses_when_hidden():
     assert streamer.step() is None and streamer.hwnd is None
     assert json.loads(records(out)[-1][1])["message"] == "Esa ventana de Chrome ya no está disponible"
     assert captures == []
+
+
+def test_streamer_tells_the_viewer_when_the_pc_locks_and_does_not_capture_meanwhile():
+    base = rgb(8, 4)
+    changed = paint(base, 8, 1, 1, 1, 1, (0, 0, 0))
+    streamer, out, windows, captures = make_streamer([base, changed])
+    lock = [False]
+    streamer.locked_now = lambda: lock[0]
+    streamer.handle({"t": "open", "window": "7"})
+    assert streamer.step()
+    lock[0] = True
+    streamer.check_lock(10.0)
+    streamer.check_lock(10.5)
+    assert json.loads(records(out)[-1][1]) == {"t": "desktop", "locked": True}
+    assert streamer.must_wait() and len(captures) == 1  # bloqueada: el hilo de captura espera
+    streamer.handle({"t": "open", "window": "7"})  # un visor que reconecta se entera enseguida
+    assert [json.loads(p) for k, p in records(out)[-2:]] == [
+        {"t": "opened", "window": "7"},
+        {"t": "desktop", "locked": True},
+    ]
+    lock[0] = False
+    streamer.check_lock(11.0)
+    streamer.check_lock(14.1)
+    assert json.loads(records(out)[-1][1]) == {"t": "desktop", "locked": False}
+    assert not streamer.must_wait()
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_open_with_desktop_reports_the_state_right_away(locked):
+    # un visor que reconecta en la vista por pestanas puesta por el bloqueo tiene que saber ya si
+    # sigue bloqueada: sin esto el worker nuevo arranca «desbloqueado» y el visor oscilaba
+    streamer, out, windows, _ = make_streamer([])
+    streamer.locked_now = lambda: locked
+    streamer.handle({"t": "open", "window": "7", "desktop": True})
+    assert json.loads(records(out)[-1][1]) == {"t": "desktop", "locked": locked}
+    assert streamer.lock.locked is locked
+
+
+def test_a_capture_failure_with_the_pc_locked_keeps_the_view_open():
+    # con la sesion bloqueada BitBlt y PrintWindow fallan: antes la vista se cerraba con un error
+    streamer, out, windows, _ = make_streamer([])
+    streamer.capture = lambda hwnd, width=None, height=None: module.fail("Windows no pudo capturar Chrome")
+    streamer.locked_now = lambda: True
+    streamer.handle({"t": "open", "window": "7"})
+    assert streamer.step() is None and streamer.hwnd == 7
+    texts = [json.loads(payload) for kind, payload in records(out) if kind == "J"]
+    assert texts[-1] == {"t": "desktop", "locked": True}
+    assert not any(t["t"] == "error" for t in texts)
+
+
+def test_lock_thread_ends_quietly_when_the_output_is_closed():
+    # revisión 2026-10-22: escribir en un stdout cerrado da ValueError y el hilo moría con traza
+    streamer, out, windows, _ = make_streamer([])
+    streamer.handle({"t": "open", "window": "7"})
+    streamer.locked_now = lambda: True
+    out.close()
+    streamer.run_lock()  # no levanta
+
+
+def test_lock_thread_does_not_look_without_a_window():
+    streamer, out, windows, _ = make_streamer([])
+    looked = []
+    streamer.locked_now = lambda: looked.append(1) or False
+
+    def sleep(seconds):
+        streamer.closed = True
+
+    streamer.sleep = sleep
+    streamer.run_lock()
+    assert looked == []
+
+
+def test_a_cursor_read_failure_does_not_end_the_view():
+    # medido el 2026-10-22: GetCursorInfo falla a ratos y la vista entera se cerraba con ese error
+    base = rgb(8, 4)
+    streamer, out, windows, _ = make_streamer([base])
+    windows.cursor = lambda: module.fail("Windows no pudo leer el cursor de Chrome")
+    streamer.handle({"t": "open", "window": "7"})
+    assert streamer.step() is not None and streamer.hwnd == 7
+    assert not any(json.loads(p)["t"] == "error" for k, p in records(out) if k == "J")
 
 
 def test_capture_thread_crash_is_reported_and_ends_the_worker():

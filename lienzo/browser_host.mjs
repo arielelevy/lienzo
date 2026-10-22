@@ -141,7 +141,10 @@ async function start() {
 async function tabs() {
   if (!browser) return [];
   const {targetInfos} = await browser.send('Target.getTargets');
-  const list = targetInfos.filter(t => t.type === 'page').map(t => ({id: t.targetId, title: t.title, url: t.url}));
+  // context: cada perfil abierto es un contexto propio del mismo Chrome. CDP no dice cuál; el visor lo
+  // une con el perfil que Windows marca en cada ventana (browser_window.Windows.windows)
+  const list = targetInfos.filter(t => t.type === 'page').map(t => ({id: t.targetId, title: t.title, url: t.url,
+    ...(typeof t.browserContextId === 'string' ? {context: t.browserContextId} : {})}));
   for (const [id, cdp] of pages) {
     if (!list.some(t => t.id === id)) browser.detached(cdp.sessionId); // corta lo pendiente con 409 y suelta el cast
   }
