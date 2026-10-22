@@ -19,9 +19,11 @@ import subproc
 
 
 def _footer(pid):
+    # Sin lienzo-server.cmd, screen.py imprime en cp1252 y el «⚠» del pie lo rompe (2026-10-22).
     code, output, _ = subproc.correr(
         [sys.executable, str(Path(__file__).with_name("screen.py")), "--pid", str(pid), "--json"],
         timeout=5,
+        env={"PYTHONIOENCODING": "utf-8"},
     )
     if code != 0:
         return None
