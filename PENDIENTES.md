@@ -32,6 +32,17 @@ Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
 - [ ] El acceso de emergencia (3dbe685) no aparece para ar-it33940 caída: `/peers` trae `emergencia: null`
   aunque el diagnóstico dice «cambió de red» y su nodo Tailchrome `ar-it33940-lienzo` existe (offline). Medido el
   2026-10-22 ~16:00. Además, el ayudante de Tailchrome de ar-it33940 no se reconectó solo tras cambiar de red.
+- [ ] El nombre nativo del CLI no sigue al título de la tarjeta: una tarjeta que nace de copiar y pegar (copycat) o a
+  la que se le cambia el título con `PUT /sessions/<sid>/title` queda con `native_name: None` y la consola con el
+  nombre viejo. Esperado: al heredar o cambiar el título, hacer `/rename` + `/remote-control` (lo de `/native`) apenas
+  la sesión quede quieta. Visto por Ariel en la coordinadora de OpenSyync (sid 56cfac40), 2026-10-22.
+- [ ] Cerrar una sesión con la acción «cerrar» del tablero (`POST /sessions/<sid>/kill` con confirmación) dispara
+  el aviso «murió sin terminar su encargo… restaurala». Un cierre pedido por una persona o la coordinadora no tiene que
+  avisar como muerte inesperada. Visto con U y X, 2026-10-22.
+- [ ] Benchmark de CLIs (claude, codex, coda, pi, kiro) por costo y por tipo de tarea, para elegir el agente de
+  cada encargo (decisión vigente en la memoria de `lienzo`, nodo 89ab95ed). Primero, medir o estimar el tamaño de
+  cada tarea (archivos y líneas tocadas, tipo de trabajo, criterio de aceptación); sin eso comparar costos no dice nada.
+  Pedido de Ariel vía la coordinadora de OpenSyync, 2026-10-22; no urgente.
 - [ ] Una coordinadora reabierta a mano sin el mismo título no recupera sus reglas (efecto buscado de 19747a2):
   evaluar un «adoptar reglas de…» explícito en la tarjeta.
 
