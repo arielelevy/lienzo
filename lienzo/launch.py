@@ -18,12 +18,14 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 
 import agent_improvements
 import claude_pipe_runtime
 import harness_updates
 import state
+import titulo_lanzado
 import tmux
 from agentes import AGENTES
 from work_titles import project_title
@@ -60,6 +62,35 @@ _CLAUDE_ENV = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSIO
 # en un .cmd, & < > ^ % reinterpretan la linea y " cierra la comilla del titulo.
 # El separador | se conserva y _launch_cmd lo escapa como ^|; tmux recibe argumentos literales.
 _UNSAFE_TITLE_RE = re.compile(r'[&<>^%"\r\n]')
+
+# lo que escribe _launch_cmd en <LIENZO_HOME>/launch/: `<token_hex(6)>.cmd` y su `.json` (titulo_lanzado)
+_LANZAMIENTO_RE = re.compile(r"([0-9a-f]{12})\.(?:cmd|json)")
+VIEJO_S = 7 * 86400  # medido el 2026-10-22: 288 .cmd acumulados, ninguno se borraba
+
+
+def _limpiar_viejos(launch_dir: str, actual: str, ahora: float | None = None) -> int:
+    """Borra los .cmd/.json de lanzamientos con más de VIEJO_S, sólo los de nombre propio y nunca
+    los de `actual` (el token en curso). Un proceso de hace más de 7 días sigue vivo sin su .cmd
+    (cmd.exe ya leyó la línea del agente); sin su .json, una readopción no recupera el título
+    pedido, pero la tarjeta restaurada conserva el suyo. Un fallo se saltea: no frena el lanzamiento."""
+    ahora = time.time() if ahora is None else ahora
+    borrados = 0
+    try:
+        nombres = os.listdir(launch_dir)
+    except OSError:
+        return 0
+    for nombre in nombres:
+        m = _LANZAMIENTO_RE.fullmatch(nombre)
+        if not m or m.group(1) == actual:
+            continue
+        ruta = os.path.join(launch_dir, nombre)
+        try:
+            if os.path.isfile(ruta) and ahora - os.path.getmtime(ruta) > VIEJO_S:
+                os.remove(ruta)
+                borrados += 1
+        except OSError:
+            continue
+    return borrados
 
 
 def _resume_args(agent: str, resume: str | None) -> list[str]:
@@ -321,7 +352,11 @@ def launch(
         res = _launch_tmux(cwd_linux, title, exe_path, extra, distro=distro)
     else:
         try:
-            res = _launch_cmd(cwd, title, exe_path, extra) if WINDOWS else _launch_tmux(cwd, title, exe_path, extra)
+            res = (
+                _launch_cmd(cwd, title, exe_path, extra, agent=agent)
+                if WINDOWS
+                else _launch_tmux(cwd, title, exe_path, extra)
+            )
         except Exception:
             if pipe_sid:
                 claude_pipe_runtime.close(pipe_sid)
@@ -412,11 +447,16 @@ def _cmd_arg(value: str) -> str:
     return f'"{value}"' if any(c.isspace() for c in value) else value
 
 
-def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str]) -> dict:
-    """Windows: un .cmd en `<LIENZO_HOME>/launch/` que explorer.exe abre en una consola nueva."""
+def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str], agent: str | None = None) -> dict:
+    """Windows: un .cmd en `<LIENZO_HOME>/launch/` que explorer.exe abre en una consola nueva. Con
+    `agent`, el titulo pedido queda al lado para la tarjeta (titulo_lanzado)."""
     launch_dir = os.path.join(state.LIENZO, "launch")
     os.makedirs(launch_dir, exist_ok=True)
-    cmd_path = os.path.join(launch_dir, f"{secrets.token_hex(6)}.cmd")
+    token = secrets.token_hex(6)
+    cmd_path = os.path.join(launch_dir, f"{token}.cmd")
+    _limpiar_viejos(launch_dir, token)
+    if agent:
+        titulo_lanzado.guardar(cmd_path, title, agent)  # antes de abrirlo: el agente puede nacer enseguida
     title = _sanitize_title(project_title({"repo": state.repo_of(cwd), "title": title})).replace("|", "^|")
     cuerpo = (
         "@echo off\r\n"
