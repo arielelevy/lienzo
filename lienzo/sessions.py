@@ -3149,6 +3149,12 @@ def _mismo_dialogo(antes: dict | None, ahora: dict) -> bool:
 AUTO_DIALOGO_S = 15  # un permiso que el auto-aprobar no cerro en este tiempo pasa a «te necesita»
 
 
+def autoaprobar_opcion(d: dict, agent: str | None) -> int | None:
+    import autoaprobar  # importa este modulo: aca ya esta cargado
+
+    return autoaprobar.opcion_de_permiso(d, agent)
+
+
 def lo_contesta_el_auto_aprobar(s: dict, d: dict) -> bool:
     """Si el auto-aprobar va a contestar este dialogo: entonces la tarjeta no pasa a «te necesita».
     Medido el 2026-10-15: cada permiso de un codex la llevaba 5 s a esa columna, que se abria y se
@@ -3237,6 +3243,12 @@ def screen_once() -> None:
             needs = s.get("needs") or {}
             if d and needs.get("kind") == "idle" and perfil(s["agent"]).pregunta_al_terminar:
                 # la pregunta del fin de turno (Kiro) quedo atras: hay un dialogo en pantalla
+                set_state(s, "corriendo")
+                needs = {}
+            if d and needs.get("kind") == "sin_enviar" and autoaprobar_opcion(d, s.get("agent")) is not None:
+                # un permiso en pantalla prueba que el agente tomo el encargo: el aviso quedo viejo.
+                # Medido el 2026-10-23: un codex sin hooks ni transcripcion lo arrastro 76 min y
+                # tapo su permiso, que el auto-aprobar no contesto
                 set_state(s, "corriendo")
                 needs = {}
             if d and not needs and s["state"] in ("termino", "corriendo") and not lo_contesta_el_auto_aprobar(s, d):

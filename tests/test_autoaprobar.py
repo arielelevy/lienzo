@@ -382,6 +382,29 @@ def test_el_permiso_que_contesta_el_auto_aprobar_no_pasa_por_te_necesita(monkeyp
     assert hechos == [1]
 
 
+def test_un_permiso_en_pantalla_retira_el_aviso_viejo_de_sin_enviar(monkeypatch):
+    """Medido el 2026-10-23: un codex sin hooks ni transcripcion quedo con «sin_enviar» de las 11:29;
+    su permiso de las 12:45 no lo contesto el auto-aprobar y lo tuvo que aprobar Ariel."""
+    viejo = {"kind": "sin_enviar", "detail": "encargo", "where": "terminal"}
+    s = _barrer(monkeypatch, CODEX, prendido=True, state="te_necesita", needs=dict(viejo))
+    assert s["state"] == "corriendo" and not s["needs"] and s["dialog"] == CODEX
+    hechos = []
+    monkeypatch.setattr(au, "_intentados", {})
+    monkeypatch.setattr(st, "pending", {})
+    monkeypatch.setattr(ses, "answer_dialog", lambda s, n: (hechos.append(n), (200, {"ok": True}))[1])
+    au.ronda(ahora=100)
+    assert hechos == [1]
+    # un dialogo que no es permiso (el cambio de modelo) no prueba que tomo el encargo
+    s = _barrer(
+        monkeypatch,
+        _dialogo("Switch model?", ["Default", "Opus"]),
+        prendido=True,
+        state="te_necesita",
+        needs=dict(viejo),
+    )
+    assert s["needs"]["kind"] == "sin_enviar"
+
+
 def test_sin_auto_aprobar_o_si_no_lo_cierra_a_tiempo_el_permiso_va_a_te_necesita(monkeypatch):
     assert _barrer(monkeypatch, CODEX, prendido=False)["state"] == "te_necesita"
     viejo = "2026-01-01T00:00:00.000-03:00"
