@@ -1191,6 +1191,17 @@ def validar_claude_pipe(d: dict) -> tuple[int, dict] | None:
     return None
 
 
+# te_necesita que no corta un turno: lo que pide se pide con el turno ya cerrado o sin empezar
+NECESIDADES_FUERA_DE_TURNO = ("idle", "sin_enviar")
+
+
+def en_turno(s: dict) -> bool:
+    """¿El agente esta dentro de un turno (trabajando, o en un permiso o pregunta de ese turno)?"""
+    if s.get("state") == "corriendo":
+        return True
+    return s.get("state") == "te_necesita" and (s.get("needs") or {}).get("kind") not in NECESIDADES_FUERA_DE_TURNO
+
+
 def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     """POST /sessions/<id>/send: inyecta el texto en la consola. La flecha y copycat son del
     tablero (envio_del_tablero): la PC duena solo teclea."""
@@ -1202,6 +1213,13 @@ def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     pedido = d.get("sin_aviso")
     quien = d.get("from") if pedido is True else pedido if isinstance(pedido, str) else None
     previo, silenciar = s.get("sin_aviso"), bool(quien)
+    if silenciar and en_turno(s):
+        # con un turno en curso el acuse no calla nada: el envio pisa last_prompt y el agente lo toma
+        # dentro de ese turno (queued_command de Claude, sin UserPromptSubmit), asi que el Stop de la
+        # entrega coincidia con el acuse y se callaba (OpenSyync, 2026-10-22: K2 y Kiro). Un aviso
+        # de mas por un acuse es preferible a perder un informe
+        silenciar = False
+        state.log(f"send {s['session_id'][:8]}: sin_aviso ignorado, el acuse llego con un turno en curso")
     if silenciar:
         with lock:
             s["sin_aviso"] = {"a": quien, "desde": time.time(), "texto": rl.normal_acuse(d.get("text", ""))}

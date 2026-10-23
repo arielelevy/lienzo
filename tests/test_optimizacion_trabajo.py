@@ -244,7 +244,49 @@ def test_un_acuse_en_medio_de_la_entrega_no_la_calla(reglas):
     reglas.clear()
     frente.update(last_reply="B listo. ESTADO: entregado")  # el turno que cierra es el de B
     rl.fire_on_stop(ORIGEN)
-    assert reglas == ["B listo. ESTADO: entregado"] and frente["sin_aviso"] is not None
+    assert reglas == ["B listo. ESTADO: entregado"] and frente["sin_aviso"] is None
+
+
+@pytest.fixture
+def envio_real(reglas, monkeypatch):
+    """Como send_to_session de verdad: el texto enviado pasa a last_prompt, en medio de un turno o no."""
+    _regla_informe()
+    st.rules.items[0]["repeat"] = True  # como la que cablea lanzar_y_titular
+    monkeypatch.setattr(ses, "en_hilo", lambda *a, **k: None)
+    real = lambda dst, text, att: (dst.update(last_prompt=text), (200, {"ok": True}))[1]
+    monkeypatch.setattr(server, "send_to_session", real)
+    return reglas
+
+
+@pytest.mark.parametrize("necesidad", [None, {"kind": "permission"}])
+def test_un_acuse_tecleado_en_medio_de_la_entrega_no_la_calla(envio_real, necesidad):
+    # OpenSyync, 2026-10-22 (K2): el envío real pisa last_prompt con el acuse aunque el agente lo tome
+    # dentro del turno en curso (queued_command, sin UserPromptSubmit); el Stop de la entrega se callaba
+    frente = st.sessions[ORIGEN]
+    ses.set_state(frente, "corriendo")
+    if necesidad:
+        ses.set_needs(frente, necesidad)  # un permiso del mismo turno: sigue en curso
+    frente.update(last_prompt="implementá B")
+    server.accion_send(frente, {"text": "recibido, seguí", "sin_aviso": DESTINO})
+    assert frente["sin_aviso"] is None
+    frente.update(last_reply="B listo. ESTADO: entregado")
+    ses.set_state(frente, "termino")
+    rl.fire_on_stop(ORIGEN)
+    assert envio_real == ["B listo. ESTADO: entregado"]
+
+
+def test_un_acuse_a_una_tarjeta_que_espera_respuesta_calla_su_turno(envio_real):
+    # te_necesita por idle_prompt: el turno anterior ya cerró, el acuse empieza el suyo y ése se calla
+    frente = st.sessions[ORIGEN]
+    ses.set_state(frente, "corriendo")
+    ses.set_needs(frente, {"kind": "idle"})
+    server.accion_send(frente, {"text": "recibido", "sin_aviso": DESTINO})
+    assert frente["sin_aviso"]["a"] == DESTINO
+    ses.set_state(frente, "corriendo")
+    frente.update(last_reply="ok")
+    ses.set_state(frente, "termino")
+    rl.fire_on_stop(ORIGEN)
+    assert envio_real == [] and "sin_aviso" in st.rules.items[0]["last_result"]
 
 
 def test_un_acuse_que_termina_en_pregunta_no_calla_el_turno_siguiente(reglas):
