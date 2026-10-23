@@ -1,8 +1,178 @@
+import hashlib
 import json
+import subprocess
+from pathlib import Path
 
 import conocimiento as k
 import creencias
 import pytest
+
+TOKEN = "sk-proj-" + "V" * 30
+
+
+@pytest.fixture(autouse=True)
+def no_external_processes(monkeypatch):
+    """Focal de revisión: sin IA real, navegador ni SWI/WSL; AA se verifica en sus propios casos."""
+    try:
+        import prolog_programa
+    except ModuleNotFoundError:  # sin AA integrado no hay notificación que aislar
+        prolog_programa = None
+    if prolog_programa is not None:
+        monkeypatch.setattr(prolog_programa, "notificar", lambda *a, **kw: None)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: pytest.fail("proceso externo fuera del focal IA"))
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_ai_redacts_prompt_and_response(monkeypatch, agent):
+    import creencias_revision_ia as r
+
+    monkeypatch.setattr(r.shutil, "which", lambda value: value)
+    nodes = [{"texto": f"Authorization: Bearer {'V' * 30}", "datos": {"api_key": TOKEN}}]
+    sources = {"n": [{"texto": "https://usuario:claveprivada@ejemplo.test/a"}]}
+    candidates = [{"texto": "password=secreto_sintetico", "datos": {"api_key": "clave_sin_formato"}}]
+    original = json.dumps([nodes, sources, candidates])
+
+    def runner(argv, **kwargs):
+        prompt = kwargs["stdin_text"]
+        for secret in (TOKEN, "V" * 30, "claveprivada", "secreto_sintetico", "clave_sin_formato"):
+            assert secret not in prompt
+        raw = json.dumps({"items": [{"motivo": TOKEN}]})
+        if agent == "codex":
+            Path(argv[argv.index("-o") + 1]).write_text(raw, encoding="utf-8")
+        return {"code": 0, "stdout": raw}
+
+    result = r.consultar(nodes, sources, agent, runner=runner, candidatos=candidates)
+    assert TOKEN not in json.dumps(result)
+    assert "[redactado:" in result["items"][0]["motivo"]
+    assert json.dumps([nodes, sources, candidates]) == original
+
+
+def test_ai_redacts_before_persisting_verdict():
+    import creencias_revision_ia as r
+
+    node = seed()
+
+    def decide(nodes, agent):
+        result = reply(nodes)
+        result["items"][0]["motivo"] = f"Confirmado con {TOKEN}"
+        return result
+
+    batch = r.revisar("ab", "claude", decidir=decide)
+    assert TOKEN not in json.dumps(batch)
+    assert TOKEN not in json.dumps(k.cambios("ab"))
+    assert TOKEN not in json.dumps(creencias.listar("ab")[0]["datos"])
+    assert creencias.listar("ab")[0]["id"] == node["id"]
+
+
+def attachment_belief(body=b"Medicion: 7 fallas de 10 ejecuciones."):
+    node = seed()
+    source = k.recibir_evidencia("ab", "medicion.md", body, clase="medicion", autor="server")
+    k.actualizar_datos("ab", node["id"], {"fuentes": [source["id"]]}, por="server")
+    path = Path(k._carpeta("ab")) / source["datos"]["referencia"]
+    return node, source, path
+
+
+def test_ai_reads_redacted_attachment_and_records_hash(monkeypatch):
+    import creencias_revision_ia as r
+
+    body = f"Medicion: 7 fallas de 10 ejecuciones. Authorization: Bearer {TOKEN}".encode()
+    node, source, path = attachment_belief(body)
+
+    def consult(nodes, sources, agent, **kwargs):
+        attached = sources[node["id"]][0]["adjunto"]
+        assert "7 fallas de 10" in attached["contenido"]
+        assert TOKEN not in attached["contenido"]
+        assert attached["hash"] == hashlib.sha256(body).hexdigest()
+        assert attached["truncado"] is False and attached["estado"] == "leido"
+        return reply(nodes)
+
+    monkeypatch.setattr(r, "consultar", consult)
+    batch = r.revisar("ab", "claude")
+    assert batch["lecturas"][0]["nodo"] == source["id"]
+    assert batch["lecturas"][0]["hash"] == hashlib.sha256(body).hexdigest()
+    assert "contenido" not in batch["lecturas"][0]
+    assert r.listar("ab")[0]["lecturas"] == batch["lecturas"]
+    assert path.read_bytes() == body
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["ausente", "hash", "ruta", "sin_referencia", "sin_hash", "absoluta", "binario", "truncado", "demasiado_grande"],
+)
+def test_ai_missing_or_incomplete_attachment_is_not_evaluable(monkeypatch, fault):
+    import creencias_revision_ia as r
+
+    node, source, path = attachment_belief()
+    if fault == "ausente":
+        path.unlink()
+    elif fault == "hash":
+        path.write_bytes(b"Medicion cambiada sin actualizar el nodo")
+    elif fault == "ruta":
+        k.actualizar_datos("ab", source["id"], {"referencia": "../../fuera.md"}, por="server")
+    elif fault == "sin_referencia":
+        k.actualizar_datos("ab", source["id"], {"referencia": ""}, por="server")
+    elif fault == "sin_hash":
+        k.actualizar_datos("ab", source["id"], {"hash": None}, por="server")
+    elif fault == "absoluta":
+        k.actualizar_datos("ab", source["id"], {"referencia": str(path.resolve())}, por="server")
+    else:
+        body = b"\x00binario" if fault == "binario" else b"x" * (1_000_001 if fault == "demasiado_grande" else 20_000)
+        path.write_bytes(body)
+        k.actualizar_datos("ab", source["id"], {"hash": hashlib.sha256(body).hexdigest()}, por="server")
+    before = k.cambios("ab")
+    monkeypatch.setattr(r, "consultar", lambda *a, **kw: pytest.fail("no llamar IA sin evidencia completa"))
+    with pytest.raises(k.Rechazo, match="no evaluable") as error:
+        r.revisar("ab", "claude")
+    assert error.value.codigo == 422
+    with k._abrir("ab") as con:
+        audit = k._fila(
+            con.execute("SELECT * FROM nodo WHERE json_extract(datos,'$.clase')='revision_ia_no_evaluable'").fetchone()
+        )
+    assert audit["datos"]["lecturas"][0]["estado"] != "leido"
+    assert creencias.listar("ab")[0]["estado"] == "propuesta"
+    assert k.cambios("ab")[: len(before)] == before
+    assert all(c["nodo_id"] == audit["id"] for c in k.cambios("ab")[len(before) :])
+    assert r.listar("ab") == []
+
+
+@pytest.mark.parametrize("length,evaluable", [(5_999, True), (6_000, True), (6_001, False)])
+def test_ai_attachment_text_boundary(length, evaluable):
+    import creencias_revision_ia as r
+
+    node, source, path = attachment_belief(b"a" * length)
+    attached = r._adjunto(source, 1_000_000, 40_000)
+    assert (attached["estado"] == "leido") is evaluable
+    assert attached["truncado"] is not evaluable
+    assert attached["hash"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_ai_not_evaluable_is_visible_as_api_error(monkeypatch):
+    import conocimiento_api as api
+    import creencias_revision_ia as r
+
+    node, source, path = attachment_belief()
+    path.unlink()
+    monkeypatch.setattr(r, "consultar", lambda *a, **kw: pytest.fail("no llamar IA"))
+    code, result = api.dispatch("POST", ["ab", "revision-ia"], {"agente": "claude"}, {})
+    assert code == 422 and "no evaluable" in result["error"]
+    assert creencias.listar("ab")[0]["estado"] == "propuesta"
+
+
+def test_ai_attachment_changed_during_call_refuses_verdict(monkeypatch):
+    import creencias_revision_ia as r
+
+    node, source, path = attachment_belief()
+
+    def consult(nodes, sources, agent, **kwargs):
+        path.write_bytes(b"Otro resultado sin cambiar metadatos")
+        return reply(nodes)
+
+    monkeypatch.setattr(r, "consultar", consult)
+    before = k.cambios("ab")
+    with pytest.raises(k.Rechazo, match="adjunto"):
+        r.revisar("ab", "claude")
+    assert k.cambios("ab") == before
+    assert creencias.listar("ab")[0]["estado"] == "propuesta"
 
 
 def seed(pid="ab"):

@@ -127,11 +127,11 @@ def _depurar_capturas(corte: dt.datetime) -> dict:
     marcas_json = json.dumps(marcas)
     viejas = (
         "SELECT rowid, bytes FROM captura WHERE fecha < ? AND rowid < (SELECT MAX(rowid) FROM captura) "
-        "AND (proyecto NOT IN (SELECT key FROM json_each(?)) "
-        "OR fecha <= (SELECT value FROM json_each(?) WHERE key = captura.proyecto)) "
+        # Sin cursor no sabemos si se leyó: conservar hasta que el investigador avance.
+        "AND fecha <= (SELECT value FROM json_each(?) WHERE key = captura.proyecto) "
         "ORDER BY rowid LIMIT ?"
     )
-    parametros = (limite, marcas_json, marcas_json, LOTE_CAPTURAS)
+    parametros = (limite, marcas_json, LOTE_CAPTURAS)
     with k._Conexion(path) as con:
         while True:
             con.execute("BEGIN IMMEDIATE")

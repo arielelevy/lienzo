@@ -8,6 +8,7 @@ import sqlite3
 import conocimiento as k
 import pytest
 import registro_niveles as registro
+import research_creencias
 
 AHORA = dt.datetime(2026, 10, 22, 12, 0, tzinfo=dt.UTC)
 # el log se corta por día local: el día del corte depende de la zona horaria de la PC
@@ -41,6 +42,8 @@ def _filas():
 
 
 def test_capturas_viejas_se_borran_y_las_recientes_quedan(home, monkeypatch):
+    # T4: la edad sola no habilita borrar. Este caso prueba capturas ya leídas.
+    monkeypatch.setattr(research_creencias, "resguardo_capturas", lambda: {"app": AHORA.isoformat()})
     _captura(monkeypatch, "vieja uno", "2026-09-01T10:00:00.000Z")
     _captura(monkeypatch, "vieja dos", "2026-09-22T11:59:59.999Z")
     _captura(monkeypatch, "limite", "2026-09-22T12:00:00.000Z")
@@ -60,6 +63,7 @@ def test_capturas_viejas_se_borran_y_las_recientes_quedan(home, monkeypatch):
 def test_la_ultima_captura_nunca_se_borra_para_no_reusar_su_rowid(home, monkeypatch):
     """Sin AUTOINCREMENT, borrar el rowid más alto lo reusaría y el cursor de réplica de otra PC
     saltearía las capturas nuevas."""
+    monkeypatch.setattr(research_creencias, "resguardo_capturas", lambda: {"app": AHORA.isoformat()})
     _captura(monkeypatch, "vieja uno", "2026-08-01T10:00:00.000Z")
     _captura(monkeypatch, "vieja dos", "2026-08-02T10:00:00.000Z")
     with sqlite3.connect(k.db_path()) as con:

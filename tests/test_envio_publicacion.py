@@ -311,6 +311,77 @@ def test_unconfirmed_reservation_survives_history_pruning(queue_card, monkeypatc
     assert cq.enviar(queue_card, "same", esperar=0)["estado"] == "sin_confirmacion"
 
 
+@pytest.mark.parametrize("broken", ["{roto", "[]", '{"reserva": null}', "sin_permiso"])
+def test_unreadable_queue_journal_rejects_without_send_or_overwrite(queue_card, monkeypatch, broken):
+    path = cq.store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = broken if broken != "sin_permiso" else '{"reserva": "incierta"}'
+    path.write_text(original, encoding="utf-8")
+    if broken == "sin_permiso":
+        read = Path.read_text
+
+        def denied(self, *args, **kwargs):
+            if self == path:
+                raise PermissionError("diario ilegible sintetico")
+            return read(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", denied)
+    monkeypatch.setattr(cq.subproc, "correr", lambda *a, **k: pytest.fail("no enviar con diario ilegible"))
+    monkeypatch.setattr(cq, "_save", lambda *a: pytest.fail("no sobrescribir diario ilegible"))
+    result = cq.enviar(queue_card, "same", esperar=0)
+    assert result["estado"] == "rechazado"
+    assert "diario" in result["motivo"]
+    assert path.read_bytes() == original.encode()
+
+
+def test_read_failure_preserves_real_uncertain_reservation(queue_card, monkeypatch):
+    monkeypatch.setattr(cq.subproc, "correr", lambda *a, **kw: (124, "", "timeout"))
+    first = cq.enviar(queue_card, "same", esperar=0)
+    assert first["estado"] == "sin_confirmacion"
+    path, read = cq.store_path(), Path.read_text
+    original = path.read_bytes()
+
+    def denied(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("diario ilegible sintetico")
+        return read(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_text", denied)
+        patch.setattr(cq.subproc, "correr", lambda *a, **kw: pytest.fail("no repetir envío incierto"))
+        assert cq.enviar(queue_card, "same", esperar=0)["estado"] == "rechazado"
+        assert cq.confirmar(first["envio_id"])["estado"] == "sin_confirmacion"
+        assert path.read_bytes() == original
+    monkeypatch.setattr(cq.subproc, "correr", lambda *a, **kw: pytest.fail("reserva conservada tras recuperar lectura"))
+    assert cq.enviar(queue_card, "same", esperar=0)["envio_id"] == first["envio_id"]
+
+
+def test_journal_corruption_after_queue_does_not_overwrite_or_retry(queue_card, monkeypatch):
+    path = cq.store_path()
+
+    def queued(*args, **kwargs):
+        path.write_text("corrupto mientras se enviaba", encoding="utf-8")
+        return 0, f"Queued message {SID} for thread {SID}", ""
+
+    monkeypatch.setattr(cq.subproc, "correr", queued)
+    result = cq.enviar(queue_card, "same", esperar=0)
+    assert result["estado"] == "sin_confirmacion" and "pudo ejecutarse" in result["motivo"]
+    assert path.read_text(encoding="utf-8") == "corrupto mientras se enviaba"
+
+
+def test_journal_with_impossible_timestamp_is_rejected(queue_card, monkeypatch):
+    monkeypatch.setattr(cq.subproc, "correr", lambda *a, **kw: (124, "", "timeout"))
+    first = cq.enviar(queue_card, "same", esperar=0)
+    data = cq._load()
+    data[first["envio_id"]]["at"] = 10**1_000
+    path = cq.store_path()
+    path.write_text(json.dumps(data), encoding="utf-8")
+    original = path.read_bytes()
+    monkeypatch.setattr(cq.subproc, "correr", lambda *a, **kw: pytest.fail("diario corrupto no habilita envíos"))
+    assert cq.enviar(queue_card, "same", esperar=0)["estado"] == "rechazado"
+    assert path.read_bytes() == original
+
+
 def test_late_http_send_result_cannot_replace_newer_send(card, monkeypatch):
     def send(*a):
         card["envio_codex"] = {"envio_id": "newer", "estado": "entregado", "at": 20}

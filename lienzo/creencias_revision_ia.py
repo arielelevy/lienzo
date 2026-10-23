@@ -7,8 +7,10 @@ Cada ítem conserva antes/después y la secuencia de cambios; deshacer nunca pis
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import shutil
+import stat
 import tempfile
 import threading
 from pathlib import Path
@@ -18,13 +20,29 @@ import contexto_ia
 import creencias
 import metadatos_creencias
 import optimization_research_runner
-from optimization_research import CLAUDE_BILLING_ENV
+from optimization_research import CLAUDE_BILLING_ENV, SECRET_KEY, redact_deep
 
 TOPE = 20
 PLAZO_S = 90
 SALIDA_MAX = 200_000
+ADJUNTO_BYTES = 1_000_000
+ADJUNTO_CHARS = 6_000
+TANDA_BYTES = 8_000_000
+TANDA_CHARS = 40_000
 _LOCK = threading.Lock()  # también cubre proceso_lienzo, compartido entre proyectos
 ACCIONES = {"aceptar", "rechazar", "corregir", "fusionar"}
+
+
+def _redactar_ia(value):
+    # Reutilizar formatos y nombres sensibles del investigador. object_hook cubre claves a toda
+    # profundidad, incluso secretos sin formato conocido; redact_deep limpia los textos libres.
+    hidden = json.loads(
+        json.dumps(value, ensure_ascii=False),
+        object_hook=lambda obj: {
+            key: "[redactado:campo]" if SECRET_KEY.search(key) else val for key, val in obj.items()
+        },
+    )
+    return redact_deep(hidden, {})
 
 
 def parsear(stdout):
@@ -53,6 +71,100 @@ def _pendientes(con, pid):
 def _fuentes(con, node):
     nodes = [k._nodo(con, node["proyecto"], nid) for nid in node["datos"].get("fuentes", [])[:30]]
     return metadatos_creencias.relacionadas(con, node["proyecto"], nodes)
+
+
+def _adjunto(node, presupuesto_bytes, presupuesto_chars):
+    """Sólo artefactos locales del proyecto. Nunca interpretar rutas de texto libre como archivos."""
+    data = node["datos"]
+    ref = data.get("referencia") or data.get("ruta")
+    if not ref and not data.get("recibida") and "referencia" not in data and "ruta" not in data:
+        return None
+    out = {
+        "proyecto": node["proyecto"],
+        "nodo": node["id"],
+        "ruta": ref,
+        "hash_esperado": data.get("hash"),
+        "hash": None,
+        "bytes_leidos": 0,
+        "truncado": False,
+        "estado": "no_evaluable",
+    }
+    try:
+        if not isinstance(ref, str) or not ref:
+            raise ValueError("Falta la referencia del adjunto")
+        if data.get("recibida") and not data.get("hash"):
+            raise ValueError("La evidencia recibida no tiene hash verificable")
+        relative = Path(ref)
+        if relative.is_absolute() or relative.drive or ".." in relative.parts:
+            raise ValueError("Ruta de adjunto fuera del proyecto")
+        root = Path(k._carpeta(node["proyecto"])).resolve(strict=True)
+        path = (root / relative).resolve(strict=True)
+        if not path.is_relative_to(root) or not stat.S_ISREG(path.stat().st_mode):
+            raise ValueError("El adjunto no es un archivo del proyecto")
+        limit = min(ADJUNTO_BYTES, presupuesto_bytes)
+        if limit <= 0:
+            raise ValueError("Se agotó el presupuesto de lectura de la tanda")
+        with path.open("rb") as stream:
+            raw = stream.read(limit + 1)
+        out["bytes_leidos"] = len(raw)
+        if len(raw) > limit:
+            out["truncado"] = True
+            raise ValueError("El adjunto supera el límite de bytes de lectura")
+        out["hash"] = hashlib.sha256(raw).hexdigest()
+        if data.get("hash") and data["hash"] != out["hash"]:
+            raise ValueError("El hash del adjunto no coincide con la evidencia")
+        text = raw.decode("utf-8-sig")
+        if not text.strip() or any(ord(c) < 32 and c not in "\r\n\t" for c in text):
+            raise ValueError("Adjunto vacío o sin contenido textual evaluable")
+        chars = min(ADJUNTO_CHARS, presupuesto_chars)
+        out["contenido"] = redact_deep(text[:chars], {})
+        if len(text) > chars:
+            out["truncado"] = True
+            raise ValueError("El contenido del adjunto quedó truncado; no se puede aceptar")
+        out["estado"] = "leido"
+    except OSError, ValueError:
+        # No exponer mensajes de SO con rutas privadas ni contenido del archivo.
+        out["motivo"] = "Adjunto ausente, inválido, alterado o incompleto; no evaluable"
+    return out
+
+
+def _preparar_fuentes(sources):
+    cache, prepared = {}, {}
+    remaining_bytes, remaining_chars = TANDA_BYTES, TANDA_CHARS
+    for nid, group in sources.items():
+        prepared[nid] = []
+        for node in group:
+            key = (node["proyecto"], node["id"])
+            if key not in cache:
+                attached = _adjunto(node, remaining_bytes, remaining_chars)
+                cache[key] = attached
+                if attached:
+                    remaining_bytes -= attached["bytes_leidos"]
+                    remaining_chars -= len(attached.get("contenido", ""))
+            attached = cache[key]
+            prepared[nid].append({**node, "adjunto": attached} if attached else node)
+    readings = [
+        {key: value for key, value in attached.items() if key != "contenido"} for attached in cache.values() if attached
+    ]
+    return prepared, redact_deep(readings, {})
+
+
+def _no_evaluable(pid, nodes, agent, readings):
+    # La UI reserva id=None para «sin propuestas». Un 422 muestra el motivo real; la auditoría
+    # conserva el manifiesto sin crear un veredicto ni una tanda que se pueda deshacer.
+    audit = k.crear_nodo(
+        pid,
+        "evidencia",
+        "Revisión IA no evaluable: evidencia incompleta",
+        {
+            "clase": "revision_ia_no_evaluable",
+            "agente": agent,
+            "lecturas": readings,
+            "propuestas": [{"id": n["id"], "proyecto": n["proyecto"]} for n in nodes],
+        },
+        autor=f"persona:Ariel (delegado a IA: {agent})",
+    )
+    raise k.Rechazo(f"Tanda no evaluable: evidencia incompleta; ninguna creencia cambió. Auditoría {audit['id']}", 422)
 
 
 def _foto(con, node):
@@ -253,7 +365,11 @@ def revisar(pid, agent, *, decidir=None):
                 )
             ]
             candidate_photos = {n["id"]: _foto(con, n) for n in candidates}
-        raw = decidir(nodes, agent) if decidir else consultar(nodes, sources, agent, candidatos=candidates)
+        prepared_sources, readings = _preparar_fuentes(sources)
+        if any(reading["estado"] != "leido" for reading in readings):
+            return _no_evaluable(pid, nodes, agent, readings)
+        raw = decidir(nodes, agent) if decidir else consultar(nodes, prepared_sources, agent, candidatos=candidates)
+        raw = _redactar_ia(raw)  # también cubre adaptadores de decisión; antes de cualquier escritura
         items = _validar(raw, nodes)
         with k._abrir(pid) as con:
             con.execute("BEGIN IMMEDIATE")
@@ -267,6 +383,8 @@ def revisar(pid, agent, *, decidir=None):
             # No aceptar si cambió una fuente durante la llamada.
             if not all(_igual(con, s) for s in source_photos):
                 raise k.Rechazo("Cambió la evidencia durante la revisión; nada cambió", 409)
+            if _preparar_fuentes(sources)[1] != readings:
+                raise k.Rechazo("Cambió un adjunto durante la revisión; nada cambió", 409)
             by_id = {n["id"]: n for n in nodes}
             ordered = sorted(items, key=lambda i: i["accion"] == "fusionar")
             applied = [_aplicar(con, k._nodo(con, by_id[i["id"]]["proyecto"], i["id"]), i, agent) for i in ordered]
@@ -279,6 +397,7 @@ def revisar(pid, agent, *, decidir=None):
                     "agente": agent,
                     "items": applied,
                     "hay_mas": bool(remaining),
+                    "lecturas": readings,
                 },
                 autor=f"persona:Ariel (delegado a IA: {agent})",
                 con=con,
@@ -294,6 +413,7 @@ def _publica(batch):
         "fecha": batch["fecha"],
         "agente": batch["datos"]["agente"],
         "hay_mas": batch["datos"].get("hay_mas", False),
+        "lecturas": batch["datos"].get("lecturas", []),
         "items": [
             {key: value for key, value in item.items() if key not in ("antes", "despues", "creadas")}
             for item in batch["datos"]["items"]
@@ -395,11 +515,7 @@ def consultar(nodes, sources, agent, *, runner=None, candidatos=None):
         "Completá metadatos tecnologia,area,fase,tipo_trabajo,agente,modelo sólo desde evidencia; "
         "si no consta usá 'no consta en evidencia'. Nunca inventes.\n"
         + json.dumps(
-            {
-                "propuestas": nodes,
-                "evidencia": sources,
-                "candidatos": candidatos or [],
-            },
+            _redactar_ia({"propuestas": nodes, "evidencia": sources, "candidatos": candidatos or []}),
             ensure_ascii=False,
         )
     )
@@ -461,5 +577,5 @@ def consultar(nodes, sources, agent, *, runner=None, candidatos=None):
         if agent == "codex":
             if not output.exists() or output.stat().st_size > SALIDA_MAX:
                 raise k.Rechazo("La salida de Codex falta o supera el tope; nada cambió", 502)
-            return parsear(output.read_text(encoding="utf-8"))
-        return parsear(result.get("stdout", ""))
+            return _redactar_ia(parsear(output.read_text(encoding="utf-8")))
+        return _redactar_ia(parsear(result.get("stdout", "")))

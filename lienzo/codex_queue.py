@@ -140,10 +140,32 @@ def _digest(thread: str, message: str) -> str:
 
 def _load() -> dict:
     try:
-        data = json.loads(store_path().read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except OSError, ValueError:
+        text = store_path().read_text(encoding="utf-8")
+    except FileNotFoundError:
         return {}
+    data = json.loads(text)
+    if not isinstance(data, dict) or any(
+        not isinstance(v, dict)
+        or v.get("envio_id") != key
+        or v.get("estado") not in ("pendiente", "encolado", "sin_confirmacion", "entregado", "rechazado")
+        or type(v.get("at")) not in (int, float)
+        or not 0 <= v["at"] <= 253_402_300_799  # timestamp UTC hasta 9999-12-31; también rechaza NaN/inf
+        or any(not isinstance(v.get(field), str) for field in ("thread", "rollout", "sha256", "desde"))
+        for key, v in data.items()
+    ):
+        raise ValueError("estructura del diario inválida")
+    return data
+
+
+def _diario_fallido(envio_id: str, *, enviado: bool = False) -> dict:
+    return {
+        "estado": "sin_confirmacion" if enviado else "rechazado",
+        "motivo": "No se pudo leer o guardar el diario de envíos; se conserva sin sobrescribir. "
+        + ("El envío pudo ejecutarse; no se reintenta." if enviado else "No se envió nada."),
+        "envio_id": envio_id,
+        "referencia": None,
+        "transporte": "codex_queue" if enviado else None,
+    }
 
 
 def _save(data: dict) -> None:
@@ -230,7 +252,10 @@ def enviar(s: dict, mensaje: str, contexto: dict | None = None, *, esperar: floa
     thread, rollout = s["session_id"], s["transcript_path"]
     envio_id = (contexto or {}).get("envio_id") or _digest(thread, message)
     with _lock:
-        data = _load()
+        try:
+            data = _load()
+        except OSError, ValueError:
+            return _diario_fallido(envio_id)
         previous = data.get(envio_id)
         if previous and (
             previous["estado"] in ("pendiente", "encolado", "sin_confirmacion")
@@ -253,7 +278,10 @@ def enviar(s: dict, mensaje: str, contexto: dict | None = None, *, esperar: floa
             "transporte": "codex_queue",
         }
         data[envio_id] = record
-        _save(data)
+        try:
+            _save(data)
+        except OSError, ValueError:
+            return _diario_fallido(envio_id)
     code, out, err = subproc.correr(
         [codex_exe(), "queue", "--thread", thread, "--message", message], timeout=QUEUE_TIMEOUT
     )
@@ -278,9 +306,12 @@ def enviar(s: dict, mensaje: str, contexto: dict | None = None, *, esperar: floa
                 break
             time.sleep(0.25)
     with _lock:
-        data = _load()
-        data[envio_id] = record
-        _save(data)
+        try:
+            data = _load()
+            data[envio_id] = record
+            _save(data)
+        except OSError, ValueError:
+            return _diario_fallido(envio_id, enviado=True)
     state.log(
         f"codex queue {thread[:8]}: {record['estado']} ({record['largo']} caracteres, sha {record['sha256']})"
         + (f": {record['motivo']}" if record.get("motivo") else "")
@@ -291,7 +322,10 @@ def enviar(s: dict, mensaje: str, contexto: dict | None = None, *, esperar: floa
 def confirmar(envio_id: str) -> dict:
     """Revisa un envío encolado: `entregado` si ya está en el rollout; pasado CONFIRM_LIMIT_S, `sin_confirmacion`."""
     with _lock:
-        data = _load()
+        try:
+            data = _load()
+        except OSError, ValueError:
+            return _diario_fallido(envio_id, enviado=True)
         record = data.get(envio_id)
         if record is None:
             return {
@@ -308,5 +342,8 @@ def confirmar(envio_id: str) -> dict:
                 record["estado"] = "sin_confirmacion"
                 record["motivo"] = f"no apareció en el rollout del hilo en {CONFIRM_LIMIT_S // 60} min; no se reintenta"
             data[envio_id] = record
-            _save(data)
+            try:
+                _save(data)
+            except OSError, ValueError:
+                return _diario_fallido(envio_id, enviado=True)
         return _public(record)

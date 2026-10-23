@@ -38,8 +38,16 @@ def test_retencion_respeta_cursor_por_proyecto(tmp_path, monkeypatch):
     )
     result = registro_niveles._depurar_capturas(dt.datetime(2026, 9, 22, tzinfo=dt.UTC))
     with k._Conexion(k.db_path()) as con:
-        assert [r[0] for r in con.execute("SELECT bytes FROM captura ORDER BY rowid")] == [30, 50]
-    assert result["filas"] == 3 and result["bytes"] == 70 and result["quedan"] == 2
+        assert [r[0] for r in con.execute("SELECT bytes FROM captura ORDER BY rowid")] == [30, 40, 50]
+    assert result["filas"] == 2 and result["bytes"] == 30 and result["quedan"] == 3
+
+
+def test_sin_ningun_cursor_no_borra_crudo(tmp_path, monkeypatch):
+    monkeypatch.setattr(k, "db_path", lambda: str(tmp_path / "crudo.db"))
+    monkeypatch.setattr(k.state, "LIENZO", str(tmp_path))
+    _crudo(monkeypatch, [("sin_cursor", "2026-08-01T00:00:00.000Z", 10)] * 2)
+    result = registro_niveles._depurar_capturas(dt.datetime(2026, 9, 22, tzinfo=dt.UTC))
+    assert result["filas"] == 0 and result["quedan"] == 2
 
 
 @pytest.mark.parametrize("hasta", ["fecha rota", "2026-09-10T12:00:00"])
