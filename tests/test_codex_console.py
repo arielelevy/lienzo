@@ -69,28 +69,27 @@ def test_process_incarnation_is_passed_to_injector_and_recycled_pid_rejects(cli,
     assert len(calls) == 1
 
 
-def test_receipt_requires_new_matching_user_turn(cli, monkeypatch):
+def test_receipt_requires_a_user_turn_after_the_send(cli, monkeypatch):
+    # Codex junta los mensajes que recibe durante un turno: el texto puede llegar mezclado con
+    # otros, así que confirma cualquier pedido que entró después del envío (contrato Z2)
     monkeypatch.setattr(ses, "run_send", lambda *a: (200, {"ok": True}))
     ses.send_to_session(cli, "hola", [])
     receipt = cli["envio_codex"]
-    for offset, message, expected in [(-10, "hola", "encolado"), (1, "otro", "encolado"), (1, "hola", "entregado")]:
+    for offset, message, expected in [(-10, "hola", "encolado"), (1, "otro\nhola\nintercalado", "entregado")]:
         started = dt.datetime.fromtimestamp(receipt["at"] + offset, dt.UTC).isoformat()
         ses.apply_turn_unhooked(cli, {"id": "new-turn", "prompt": message, "ts_start": started, "ended": False})
         assert receipt["estado"] == expected
     assert cli["sent_mark"] is None and cli["envio_pendiente"] is None
 
 
-def test_same_120_character_prefix_is_not_delivery(cli, monkeypatch):
+def test_same_text_before_the_send_is_not_delivery(cli, monkeypatch):
     monkeypatch.setattr(ses, "run_send", lambda *a: (200, {"ok": True}))
     requested = "x" * 125 + " original"
     ses.send_to_session(cli, requested, [])
     receipt = cli["envio_codex"]
-    started = dt.datetime.fromtimestamp(receipt["at"] + 1, dt.UTC).isoformat()
-    turn = {"id": "new", "prompt": "x" * 125 + " diferente", "ts_start": started, "ended": False}
-    ses.apply_turn_unhooked(cli, turn)
+    before = dt.datetime.fromtimestamp(receipt["at"] - 5, dt.UTC).isoformat()
+    ses.apply_turn_unhooked(cli, {"id": "old", "prompt": requested, "ts_start": before, "ended": False})
     assert receipt["estado"] == "encolado"
-    ses.apply_turn_unhooked(cli, {**turn, "prompt": requested})
-    assert receipt["estado"] == "entregado"
 
 
 def test_uncertain_write_is_not_replayed(cli, monkeypatch):

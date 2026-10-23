@@ -19,6 +19,7 @@ def iso(seconds):
 
 @pytest.fixture
 def card(monkeypatch):
+    monkeypatch.setattr(hooks_eventos.time, "time", lambda: 120)
     row = ses.new_session("stale-send-fixture", "codex", "sweep")
     row.update(
         state="te_necesita",
@@ -151,7 +152,7 @@ def test_exact_new_user_turn_clears_old_notice_and_uses_real_turn_phase(card, en
     assert card["sent_mark"] is None and card["envio_pendiente"] is None
 
 
-def test_same_prefix_different_full_hash_never_confirms_or_clears(card):
+def test_later_turn_confirms_by_timestamp_without_using_truncated_prefix(card):
     requested, received = "x" * 125 + " original", "x" * 125 + " diferente"
     card["envio_codex"].update(
         estado="encolado", confirmacion_final=False, prompt_sha256=hashlib.sha256(requested.encode()).hexdigest()
@@ -159,13 +160,14 @@ def test_same_prefix_different_full_hash_never_confirms_or_clears(card):
     card["sent_mark"] = ses.prompt_mark(requested)
     card["needs"]["since"] = iso(112)  # este fallo es posterior al turno leído
     ses.apply_turn_unhooked(card, {"id": "new", "prompt": received, "ts_start": iso(111), "ended": False})
-    assert card["envio_codex"]["estado"] == "encolado"
-    assert card["needs"]["kind"] == "sin_enviar"
+    assert card["envio_codex"]["estado"] == "entregado"
+    assert card["envio_codex"]["prompt_sha256"] == hashlib.sha256(requested.encode()).hexdigest()
+    assert card["needs"] is None
 
 
 @pytest.mark.parametrize("hooked", [False, True])
 @pytest.mark.parametrize("ended,phase", [(False, "corriendo"), (True, "termino")])
-def test_later_user_input_clears_old_notice_without_confirming_unmatched_send(card, hooked, ended, phase):
+def test_later_user_input_confirms_consumption_and_restores_phase(card, hooked, ended, phase):
     card["envio_codex"].update(estado="encolado", confirmacion_final=False)
     receipt = copy.deepcopy(card["envio_codex"])
     card["sent_mark"] = ses.prompt_mark("texto que no coincide")
@@ -178,8 +180,9 @@ def test_later_user_input_clears_old_notice_without_confirming_unmatched_send(ca
     }
     (ses.apply_turn_hooked if hooked else ses.apply_turn_unhooked)(card, turn)
     assert card["needs"] is None and card["state"] == phase
-    assert card["envio_codex"] == receipt
-    assert card["sent_mark"] == ses.prompt_mark("texto que no coincide")
+    assert card["envio_codex"]["estado"] == "entregado"
+    assert card["envio_codex"]["prompt_sha256"] == receipt["prompt_sha256"]
+    assert card["sent_mark"] is None
 
 
 @pytest.mark.parametrize("entered", [None, "invalid", iso(99), iso(100)])
@@ -246,7 +249,8 @@ def test_refresh_publishes_notice_only_change_even_when_already_running(card):
     card["needs"] = notice
     assert ses.apply_transcript(card, parsed) is True
     assert card["needs"] is None and card["state"] == "corriendo"
-    assert card["envio_codex"] == receipt
+    assert card["envio_codex"]["estado"] == "entregado"
+    assert card["envio_codex"]["prompt_sha256"] == receipt["prompt_sha256"]
     assert ses.apply_transcript(card, parsed) is False
 
 
@@ -262,8 +266,8 @@ def test_unconfirmed_send_after_later_input_never_recreates_enter_warning(card):
     card["envio_codex"].update(estado="encolado", confirmacion_final=False)
     assert hooks_eventos.envio_sin_confirmar(card, 200) is True
     assert card["needs"] is None and card["state"] == "termino"
-    assert card["envio_codex"]["estado"] == "sin_confirmacion"
-    assert card["envio_codex"]["confirmacion_final"] is False
+    assert card["envio_codex"]["estado"] == "entregado"
+    assert card["envio_codex"]["confirmacion_final"] is True
     assert card["envio_pendiente"] is None
 
 
@@ -312,7 +316,7 @@ def test_liveness_reads_later_input_before_expiring_old_send(card, tmp_path, mon
     ses.check_liveness(card["session_id"])
     assert card["needs"] is None and card["state"] == "corriendo"
     assert ses.parse_ts(card["prompt_ts"]) == ses.parse_ts(iso(120))
-    assert card["envio_codex"]["confirmacion_final"] is False
+    assert card["envio_codex"]["confirmacion_final"] is True
 
 
 @pytest.mark.parametrize("ended,phase", [(False, "corriendo"), (True, "termino")])

@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 import time
 import traceback
@@ -99,6 +100,34 @@ def claim_pid(s: dict, ev: dict) -> None:
 
 
 ENVIO_SIN_CONFIRMAR_S = 25  # con el agente libre, lo que tarda en llegar el UserPromptSubmit de un envio
+AVISO_SIN_ENVIAR_S = 180
+
+
+def confirmar_codex_desde_turno(s: dict, turn: dict) -> bool:
+    """Codex incorpora mensajes al turno activo: prompt_ts, no ts_start, fecha su recepción.
+
+    Un pedido posterior prueba consumo según el contrato Z2, aunque el parser haya unido
+    varios mensajes. No confirma ejecución terminada ni reenvía el texto.
+    """
+    receipt = s.get("envio_codex") or {}
+    if (
+        s.get("agent") != "codex"
+        or receipt.get("transporte") != "tecleo"
+        or receipt.get("estado") not in ("pendiente", "encolado", "sin_confirmacion")
+        or not receipt.get("envio_id")
+        or type(receipt.get("at")) not in (int, float)
+        or not math.isfinite(receipt["at"])
+    ):
+        return False
+    prompt = ses.turn_prompt(turn)
+    entered = ses.parse_ts(turn.get("prompt_ts") if "prompt_ts" in turn else turn.get("ts_start"))
+    if not prompt or ses.transcripts.is_system_prompt(prompt) or entered is None:
+        return False
+    if not entered.timestamp() >= receipt["at"]:
+        return False
+    receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
+    s["sent_mark"] = s["envio_pendiente"] = None
+    return True
 
 
 def stale_send_notice(s: dict, turn: dict | None = None) -> bool:
@@ -121,11 +150,23 @@ def stale_send_notice(s: dict, turn: dict | None = None) -> bool:
     since = ses.parse_ts(notice.get("since"))
     if since is None:
         return False
+    if time.time() - since.timestamp() >= AVISO_SIN_ENVIAR_S:
+        return True  # el estado lo reconstruye el caller con la transcripción, no el reloj
     if turn is not None:
         prompt = ses.turn_prompt(turn)
         entered = ses.parse_ts(turn.get("prompt_ts") if "prompt_ts" in turn else turn.get("ts_start"))
         if prompt and not ses.transcripts.is_system_prompt(prompt) and entered and entered > since:
             return True  # Retirar el aviso no confirma el recibo del envío.
+        ended_at = ses.parse_ts(turn.get("ts_end"))
+        if turn.get("ended") and ended_at and ended_at > since:
+            return True
+        if (
+            receipt.get("confirmacion_final") is True
+            and entered
+            and type(receipt.get("at")) in (int, float)
+            and entered.timestamp() >= receipt["at"]
+        ):
+            return True
     if (
         receipt.get("estado") != "entregado"
         or receipt.get("confirmacion_final") is not True
@@ -177,13 +218,25 @@ def envio_sin_confirmar(s: dict, ahora: float) -> bool:
     desde = max(p["at"], (ses.parse_ts(s.get("state_since")) or dt.datetime.min.replace(tzinfo=dt.UTC)).timestamp())
     if ahora - desde < ENVIO_SIN_CONFIRMAR_S:
         return False
+    entered = ses.parse_ts(s.get("prompt_ts"))
+    if s.get("agent") == "codex" and entered and entered.timestamp() >= p["at"]:
+        receipt = s.get("envio_codex") or {}
+        if (
+            receipt.get("transporte") == "tecleo"
+            and receipt.get("estado") in ("pendiente", "encolado", "sin_confirmacion")
+            and receipt.get("envio_id")
+            and type(receipt.get("at")) in (int, float)
+            and math.isfinite(receipt["at"])
+            and entered.timestamp() >= receipt["at"]
+        ):
+            receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
+            s["sent_mark"] = None
+        s["envio_pendiente"] = None
+        return True
     s["envio_pendiente"] = None
     receipt = s.get("envio_codex") or {}
     if receipt.get("transporte") == "tecleo" and receipt.get("estado") in ("pendiente", "encolado"):
         receipt.update(estado="sin_confirmacion", motivo="Codex no confirmó el mensaje; no se reintenta")
-    entered = ses.parse_ts(s.get("prompt_ts"))
-    if s.get("agent") == "codex" and entered and entered.timestamp() >= p["at"]:
-        return True  # hubo otro pedido real: conservar la incertidumbre, sin pedir Enter otra vez
     detalle = ses.short(s.get("last_prompt") or "", 200)
     ses.set_needs(s, {"kind": "sin_enviar", "detail": detalle, "where": "terminal"})
     ses.state.log(

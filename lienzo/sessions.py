@@ -1088,6 +1088,9 @@ def transcript_state(s: dict, t: dict) -> str | None:
 
 REFRESH_KEYS = (
     "needs",
+    "envio_codex",
+    "envio_pendiente",
+    "sent_mark",
     "prompt_ts",
     "last_denied",
     "title",
@@ -1152,6 +1155,7 @@ def apply_turn_hooked(s: dict, t: dict) -> None:
     la transcripcion se toma lo que el agente viene diciendo mientras corre, y el estado solo
     cuando los hooks lo dejaron al reves (Stop tardio de un pedido encolado, evento perdido, o un
     permiso contestado en la terminal, que no deja hook de cierre)."""
+    hooks_eventos.confirmar_codex_desde_turno(s, t)
     if hooks_eventos.clear_stale_send_notice(s, t):
         set_state(s, "termino" if t.get("ended") else "corriendo")
     if s.get("agent") != "pi" and needs_answered(s, t):
@@ -1200,17 +1204,7 @@ def apply_turn_unhooked(s: dict, t: dict) -> None:
             # sin hooks, el pedido sale de la transcripcion; el que tecleo el lienzo ya quedo como envio
             via = "lienzo" if s.get("sent_mark") and prompt_mark(p) == s["sent_mark"] else None
             captura.pedido(s, p, via, turno=t.get("id"))
-            receipt = s.get("envio_codex") or {}
-            started = parse_ts(t.get("ts_start"))
-            if (
-                via == "lienzo"
-                and receipt.get("transporte") == "tecleo"
-                and started
-                and started.timestamp() >= receipt["at"]
-                and hashlib.sha256(p.encode()).hexdigest() == receipt.get("prompt_sha256")
-            ):
-                receipt.update(estado="entregado", motivo=None, confirmacion_final=True)
-                s["sent_mark"] = s["envio_pendiente"] = None
+    hooks_eventos.confirmar_codex_desde_turno(s, t)
     hooks_eventos.clear_stale_send_notice(s, t)
     if t.get("final") or not t.get("ended"):
         s["last_reply"] = turn_say(t) or s["last_reply"]
