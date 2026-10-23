@@ -2178,7 +2178,7 @@ def check_liveness(sid: str) -> None:
         if edad > DEAD_GRACE_S:
             if s.get("estacionada"):
                 if edad > DEAD_KEEP_S:
-                    drop_session(sid, f"muerta hace mas de {DEAD_KEEP_S // 3600} h", muerta=True)
+                    drop_session(sid, f"muerta hace mas de {DEAD_KEEP_S} s", muerta=True)
                     return
             elif edad <= DEAD_KEEP_S and conservar_muerta(s):  # una vez: despues decide `estacionada`
                 s["estacionada"] = True
@@ -2186,7 +2186,9 @@ def check_liveness(sid: str) -> None:
                 en_hilo(estacionar, dict(s))  # escribe reglas y registro: fuera del lock
             else:
                 drop_session(
-                    sid, "muerta hace mas de 60 s" if edad <= DEAD_KEEP_S else "muerta hace mas de 24 h", muerta=True
+                    sid,
+                    "muerta hace mas de 60 s" if edad <= DEAD_KEEP_S else f"muerta hace mas de {DEAD_KEEP_S} s",
+                    muerta=True,
                 )
                 return
         # transcripcion: el stat es barato (14 us) y va aca; leerla, no

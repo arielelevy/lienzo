@@ -129,7 +129,7 @@ por seguridad).
 ### Tablero
 
 Tres columnas: Trabajo (corriendo y terminó), Te necesita (pide permiso, pregunta o está
-libre) y Muerta. Una muerta que se puede revivir (no cerrada a propósito) queda 24 h: «↻ Revivir»
+libre) y Muerta. Una muerta que se puede revivir (no cerrada a propósito) queda 2 minutos: «↻ Revivir»
 en su menú la relanza con su conversación, título y reglas, y el click derecho en la columna Muerta
 ofrece «Revivir todas», con la memoria de cada PC como tope. Las demás se borran al minuto.
 `/` busca; los chips filtran por agente, PC y proyecto (Ctrl+click suma varios).

@@ -33,9 +33,21 @@ Otros abiertos de esta ronda:
 Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
 
 - [ ] ar-it33940 siempre disponible (decisión 11): Lienzo arranca al iniciar sesión y la PC no se suspende
-  enchufada; sin inicio de sesión automático.
+  enchufada; sin inicio de sesión automático. Ver la medición del 2026-10-23 más abajo.
 - [ ] Cierres del plan multi-PC con ar-it33940 real (decisión 21): aprobar un permiso de allá desde acá,
   lanzar un frente con la ★ y que el informe vuelva solo, regla real de firewall de `install.py --peer`.
+  Medido el 2026-10-23 (`.temp/coordinacion/2026-10-23/encargo-A-multipc.md`):
+  - Lanzar en ar-it33940 desde acá y que el informe vuelva solo por la regla `on_stop`: anda.
+  - Firewall: en ar-it33940 no existe ninguna de las 4 reglas de `install.py --peer`. El peer anda por 4
+    reglas genéricas de `python.exe` (entrada, públicas y privadas, cualquier puerto): falta correr
+    `install.py --peer` como administrador allá y después revisar si sobran las genéricas.
+  - Aprobar un permiso de allá desde acá: sin probar (la sesión corría en auto mode y no pidió ninguno).
+  - Bug: el nombre nativo de una sesión de ar-it33940 llegó como `11/rename lienzo-A-ar-it33940`. Quedaron
+    dos «1» tecleados en el prompt (¿el auto-aprobar o un diálogo contestado dos veces?) y el `/rename` se
+    tomó como texto. Hace falta que `/native` limpie la caja de entrada antes de teclear.
+- [ ] ar-it33940: el lienzo no arranca solo (ni carpeta Inicio, ni tarea, ni Run); el server de hoy se lanzó
+  a mano. No se suspende enchufada (STANDBYIDLE 0 en CA). Decisión 11 pendiente de aplicar. Además el server
+  escucha en la IP del Wi-Fi (192.168.1.63): si DHCP la cambia hay que reiniciarlo.
 - [x] Chrome de Globant en ar-it33940 (decisión 25): misma receta que el Chrome de Ariel (bandera de oclusión
   en accesos directos y «Allow remote debugging») y verificar la vista por pestañas.
   Hecho según Ariel (2026-10-22): ese Chrome ya tiene la bandera y la vista anda.

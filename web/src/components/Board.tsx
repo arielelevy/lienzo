@@ -348,7 +348,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // esta caido (ronda 2; peers viene vacio hasta que exista GET /peers)
   const peersById = useMemo(() => new Map(peers.map((p) => [p.pc_id, p])), [peers]);
   const localPcId = useMemo(() => peers.find((p) => p.local)?.pc_id ?? null, [peers]);
-  // las muertas que se pueden revivir (el server las conserva 24 h: `estacionada`), de una PC que contesta
+  // las muertas que se pueden revivir (el server las conserva DEAD_KEEP_S: `estacionada`), de una PC que contesta
   const revivibles = useMemo(
     () => Object.values(sessions).filter(
       (s) => s.alive === false && s.estacionada && peersById.get(pcOf(s, localPcId) ?? "")?.alive !== false,

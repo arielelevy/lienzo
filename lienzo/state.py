@@ -53,7 +53,7 @@ NEEDS_NOTIFICATIONS = {
     "elicitation_url_dialog",
 }
 DEAD_GRACE_S = 60
-DEAD_KEEP_S = 24 * 3600  # una muerta que se puede revivir (sessions.conservar_muerta)
+DEAD_KEEP_S = 120  # una muerta que se puede revivir (sessions.conservar_muerta); Ariel, 2026-10-23: 2 min
 STALE_SESSION_H = 24  # al arrancar: tarjetas sin proceso y sin eventos hace mas de esto se purgan
 ATTACH_MAX_DAYS = 30
 LONG_TEXT = 500

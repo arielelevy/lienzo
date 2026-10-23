@@ -125,7 +125,7 @@ export interface Session {
   /** la llave stopped: session_id de la copia que se llevo su trabajo, o "user" si la detuvieron desde
    *  el tablero. Prendida no recibe mensajes ni reglas; se apaga desde la etiqueta o con su proximo pedido */
   stopped_by?: string | null;
-  /** muerta que se puede revivir: el tablero la conserva 24 h con sus reglas en espera (sessions.estacionar) */
+  /** muerta que se puede revivir: el tablero la conserva hasta los 2 min con sus reglas en espera (sessions.estacionar) */
   estacionada?: boolean;
   /** un envío con sin_aviso: el próximo cierre de turno no le avisa a esa sesión (lienzo/rules.py) */
   sin_aviso?: { a: string; desde: number } | null;
