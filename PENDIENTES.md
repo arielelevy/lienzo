@@ -15,6 +15,11 @@ En la 0.6.14 quedaron corregidos T1, T2, T4, T5, T6, T8, T9 y T10, más el falso
 - **T11.** La prueba de directivas Prolog sólo busca cadenas en el código. Lo tiene AA.
 - **T7.** El consumidor de hooks borra el evento aunque `apply_event` falle por un error transitorio. Hace falta
   cuarentena y reintento idempotente.
+- **La regla `on_stop` de una sesión Kiro no avisa** (reportado por OpenSyync, 2026-10-22). La sesión
+  `sess_0f7b8931` (encargo J) tiene la regla `57e6f928c13d`, con `fired` en 0 aunque terminó dos veces con
+  informe. El log dice «salteado: el turno respondía un envío sin_aviso» a las 22:33 y a las 22:34. En Kiro, la
+  marca de que un envío no pide aviso parece quedar pegada a los turnos siguientes; en Codex y coda vale sólo para
+  ese turno. Hace falta una prueba con dos turnos Kiro seguidos.
 
 ### Decisiones de Ariel del 2026-10-22 que agregan trabajo
 
