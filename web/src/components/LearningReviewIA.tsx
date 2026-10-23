@@ -33,15 +33,38 @@ export default function LearningReviewIA({ base, changed }: { base: string; chan
     } catch (e) { setError(e instanceof Error ? e.message : "La revisión IA falló; consultá la tanda antes de reintentar"); }
     finally { setBusy(false); }
   };
+  // «todo»: sigue tanda tras tanda mientras el server diga que quedan; un error o una tanda vacía la cortan
+  const reviewAll = async () => {
+    reading.current?.abort();
+    setBusy(true); setError(""); setNote("");
+    let done = 0;
+    try {
+      for (let round = 0; round < 10; round++) {
+        setNote(round ? `Tanda ${round + 1}…` : "");
+        const result = await api.post<Batch>(base + "/revision-ia", { agente: agent });
+        if (!result.id) break;
+        done += result.items.length;
+        setBatches(rows => [result, ...rows.filter(row => row.id !== result.id)].slice(0, 10));
+        if (!result.hay_mas || !result.items.length) break;
+      }
+      setNote(done ? `Revisadas ${done} propuestas.` : "No hay propuestas pendientes.");
+    } catch (e) {
+      setNote(done ? `Revisadas ${done} propuestas antes del error.` : "");
+      setError(e instanceof Error ? e.message : "La revisión IA falló; consultá la tanda antes de reintentar");
+    } finally {
+      await changed();
+      setBusy(false);
+    }
+  };
   return <section aria-label="Revisión delegada a IA" aria-busy={busy}>
     <label htmlFor={label}>IA que revisa</label>
     <select id={label} value={agent} disabled={busy} onChange={e => setAgent(e.target.value)}>
       <option value="claude">Claude</option><option value="codex">Codex</option>
     </select>
-    <button type="button" disabled={busy} onClick={() => void act(base + "/revision-ia", { agente: agent })}>
-      {busy ? "Procesando tanda…" : "Revisar todo con IA"}
+    <button type="button" disabled={busy} onClick={() => void reviewAll()}>
+      {busy ? "Procesando tandas…" : "Revisar todo con IA"}
     </button>
-    <p className="knowledge-note">Revisa hasta 20 propuestas de este proyecto y de proceso de Lienzo en 90 s. Aplica los veredictos con la firma delegada de Ariel. Podés deshacerlos.</p>
+    <p className="knowledge-note">Revisa todas las propuestas de este proyecto y de proceso de Lienzo, de a tandas de hasta 20 (90 s cada una). Aplica los veredictos con la firma delegada de Ariel. Podés deshacerlos.</p>
     {error && <p role="alert" className="knowledge-error">{error}</p>}
     {note && <p role="status">{note}</p>}
     {batches.map(batch => <div key={batch.id} role="group" aria-label={"Tanda " + batch.id}>
