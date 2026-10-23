@@ -170,6 +170,7 @@ _COLORS = {
 _SID_RE = re.compile(r"(?<![0-9a-f/])([0-9a-f]{8})(?![0-9a-f])")
 _last_day = [""]
 _tty = [None]
+log_lock = threading.Lock()  # sólo el archivo: compartido con la depuración, nunca protege consola
 
 
 def _tag(msg: str) -> str:
@@ -202,7 +203,7 @@ def log(msg: str) -> None:
     is_tb = msg.lstrip().startswith("Traceback") or "\nTraceback" in msg
     # archivo: fecha completa, mensaje entero (con el traceback si lo hay)
     try:
-        with open(LOG, "a", encoding="utf-8") as f:
+        with log_lock, open(LOG, "a", encoding="utf-8") as f:
             f.write(f"{t.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}  {tag:<8} {msg}\n")
     except OSError:
         pass

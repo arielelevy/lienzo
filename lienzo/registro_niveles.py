@@ -149,12 +149,14 @@ def _depurar_capturas(corte: dt.datetime) -> dict:
 
 
 def _depurar_log(corte: dt.datetime) -> dict:
-    """lienzo.log es de sólo agregado y cronológico: se corta en la primera línea fechada desde el día del
-    corte (fecha local, como la escribe `state.log`); las líneas sin fecha (tracebacks) van con la
-    anterior. La cola se copia a un temporal, se vuelve a copiar lo que llegó mientras tanto y se
-    reemplaza; si el archivo está en uso (Windows) queda entero hasta la próxima vuelta. Una línea que
-    llegue entre la última comprobación y el reemplazo se pierde: la ventana es de microsegundos una vez
-    por día y `state.log` no tiene lock que compartir."""
+    """Exclusión con state.log desde la lectura hasta replace; un append nunca queda en el archivo viejo.
+    Lock propio del archivo, sin tomar el lock de sesiones ni escribir a consola desde esta sección."""
+    with state.log_lock:
+        return _depurar_log_exclusivo(corte)
+
+
+def _depurar_log_exclusivo(corte: dt.datetime) -> dict:
+    """Con log_lock tomado. Las continuaciones de traceback acompañan su línea fechada anterior."""
     path = state.LOG
     try:
         antes = os.path.getsize(path)

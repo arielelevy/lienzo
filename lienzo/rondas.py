@@ -15,11 +15,14 @@ el bucle de las reglas (cada 5 s): confirma por respuesta, vence avisos y turnos
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 import os
 import re
 import secrets
+from contextlib import contextmanager
+from functools import wraps
 
 import health
 import identity
@@ -54,7 +57,7 @@ def cargar() -> None:
 
 
 def _guardar() -> None:
-    """Con el lock tomado. Poda los avisos cerrados viejos. Nunca levanta."""
+    """Con el lock tomado. Propaga fallos: quien muta debe usar _cambio para revertir memoria."""
     avisos = _datos["avisos"]
     cerrados = sorted((a.get("creado") or "", k) for k, a in avisos.items() if a.get("estado") != "abierto")
     for _, k in cerrados[: max(0, len(avisos) - AVISOS_GUARDADOS)]:
@@ -63,6 +66,30 @@ def _guardar() -> None:
         state.atomic_write(_path(), json.dumps(_datos, ensure_ascii=False, indent=1))
     except OSError as e:
         state.log(f"no se pudo guardar rondas.json: {e}")
+        raise
+
+
+@contextmanager
+def _cambio():
+    with lock:
+        before = copy.deepcopy(_datos)
+        try:
+            yield
+        except OSError:
+            _datos.clear()
+            _datos.update(before)
+            raise
+
+
+def _api_persistente(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except OSError:
+            return 503, {"error": "No se pudo guardar rondas.json; el cambio no se confirmó"}
+
+    return wrapped
 
 
 def vista() -> dict:
@@ -142,6 +169,7 @@ def _texto_aviso(a: dict) -> str:
     )
 
 
+@_api_persistente
 def crear_aviso(d: dict) -> tuple[int, dict]:
     """POST /avisos {texto, a: [session_id...], de?, vence_min?}. 200 con el aviso; los envios salen
     en hilos (cada uno puede tardar hasta 60 s) y su resultado queda en `destinos`."""
@@ -176,7 +204,7 @@ def crear_aviso(d: dict) -> tuple[int, dict]:
         "estado": "abierto",
         "destinos": {sid: {"estado": "enviando", "ts": now(), "nota": None} for sid, _ in vigentes},
     }
-    with lock:
+    with _cambio():
         _datos["avisos"][aid] = aviso
         _guardar()
     state.log(f"aviso {aid} a {len(vigentes)} frentes: {short(texto, 60)!r}")
@@ -199,7 +227,7 @@ def _entregar(aid: str, sid: str) -> None:
     if texto is None:
         return
     code, res = _mandar(sid, texto)
-    with lock:
+    with _cambio():
         dest = (_datos["avisos"].get(aid) or {}).get("destinos", {}).get(sid)
         if dest is not None and dest["estado"] == "enviando":
             dest["estado"] = "enviado" if code == 200 else "fallo"
@@ -214,13 +242,14 @@ def _entregar(aid: str, sid: str) -> None:
     _publicar()
 
 
+@_api_persistente
 def ack(aid: str, sid: str, nota: str | None = None, por: str = "api") -> tuple[int, dict]:
     """POST /avisos/<id>/ack {session_id, nota?}. Una sesion restaurada confirma por la vieja."""
     if not isinstance(sid, str) or not sid:
         return 400, {"error": "falta session_id"}
     if nota is not None and not isinstance(nota, str):
         return 400, {"error": "nota debe ser un texto"}
-    with lock:
+    with _cambio():
         a = _datos["avisos"].get(aid)
         if a is None:
             return 404, {"error": "aviso desconocido"}
@@ -240,7 +269,7 @@ def ack(aid: str, sid: str, nota: str | None = None, por: str = "api") -> tuple[
 
 
 def _cerrar_si_completo(aid: str) -> None:
-    with lock:
+    with _cambio():
         a = _datos["avisos"].get(aid)
         if not a or a["estado"] != "abierto" or any(x["estado"] != "confirmado" for x in a["destinos"].values()):
             return
@@ -277,7 +306,7 @@ def _revisar_avisos() -> None:
             nota = _ack_en_respuesta(aid, s) if s else None
             if nota is not None:
                 ack(aid, sid, nota or None, por="respuesta")
-        with lock:
+        with _cambio():
             a = _datos["avisos"].get(aid)
             if not a or a["estado"] != "abierto" or not _vencio(a["vence"]):
                 continue
@@ -301,6 +330,7 @@ def politica(recurso: str) -> dict:
     return {"ttl_max_min": TURNO_TTL_MAX_MIN, "mem_min_gb": 0.0, **p}
 
 
+@_api_persistente
 def fijar_politica(recurso: str, d: dict) -> tuple[int, dict]:
     """PUT /turnos/<recurso>/politica {ttl_max_min?, mem_min_gb?}: lo decide la coordinadora."""
     if not RECURSO.fullmatch(recurso or ""):
@@ -312,7 +342,7 @@ def fijar_politica(recurso: str, d: dict) -> tuple[int, dict]:
         return 400, {"error": "ttl_max_min debe ser un entero entre 1 y 1440"}
     if isinstance(mem, bool) or not isinstance(mem, (int, float)) or not 0 <= mem <= 256:
         return 400, {"error": "mem_min_gb debe ser un numero entre 0 y 256"}
-    with lock:
+    with _cambio():
         _datos["politicas"][recurso] = {"ttl_max_min": ttl, "mem_min_gb": float(mem), "por": d.get("por"), "ts": now()}
         _guardar()
     _publicar()
@@ -340,6 +370,7 @@ def _turno(recurso: str) -> dict:
     return _datos["turnos"].setdefault(recurso, {"dueno": None, "cola": []})
 
 
+@_api_persistente
 def pedir_turno(recurso: str, d: dict) -> tuple[int, dict]:
     """POST /turnos/<recurso> {session_id, ttl_min?, motivo?}: 200 `otorgado` (o renovado si ya era
     suyo), 202 en cola con su posicion. Quien espera recibe un mensaje cuando le toca."""
@@ -358,7 +389,7 @@ def pedir_turno(recurso: str, d: dict) -> tuple[int, dict]:
     if isinstance(ttl, bool) or not isinstance(ttl, int) or not 1 <= ttl <= tope:
         return 400, {"error": f"ttl_min debe ser un entero entre 1 y {tope}"}
     pedido = {"session_id": sid, "ttl_min": ttl, "motivo": short(motivo, 200) if motivo else None, "pedido": now()}
-    with lock:
+    with _cambio():
         t = _turno(recurso)
         dueno = t["dueno"]
         if dueno and _vigente(dueno["session_id"]) == sid:
@@ -403,12 +434,13 @@ def _otorgar(pedido: dict) -> dict:
     }
 
 
+@_api_persistente
 def liberar_turno(recurso: str, sid: str, por: str = "api") -> tuple[int, dict]:
     """DELETE /turnos/<recurso> {session_id}: suelta el turno (o sale de la cola) y pasa al siguiente."""
     if not isinstance(sid, str) or not sid:
         return 400, {"error": "falta session_id"}
     sid = _vigente(sid)
-    with lock:
+    with _cambio():
         t = _datos["turnos"].get(recurso)
         if t and t["dueno"] and _vigente(t["dueno"]["session_id"]) == sid:
             t["dueno"] = None
@@ -416,21 +448,26 @@ def liberar_turno(recurso: str, sid: str, por: str = "api") -> tuple[int, dict]:
             t["cola"] = [x for x in t["cola"] if _vigente(x["session_id"]) != sid]
         else:
             return 404, {"error": "esa sesion no tiene ni espera ese turno"}
-        _guardar()
+        siguiente = _siguiente(recurso)
+        _guardar()  # liberar y pasar son un único cambio durable
+        result = copy.deepcopy({"recurso": recurso, **t})
     state.log(f"turno {recurso}: {sid[:8]} lo suelta ({por})")
-    _pasar_turno(recurso)
+    if siguiente:
+        _avisar_turno(recurso, siguiente)
     _publicar()
-    return 200, {"recurso": recurso, **(_datos["turnos"].get(recurso) or {})}
+    return 200, result
 
 
-def _pasar_turno(recurso: str) -> None:
-    with lock:
-        t = _datos["turnos"].get(recurso)
-        if not t or t["dueno"] or not t["cola"] or not _memoria_ok(recurso)[0]:
-            return
-        t["dueno"] = _otorgar(t["cola"].pop(0))
-        _guardar()
-        dueno = dict(t["dueno"])
+def _siguiente(recurso: str) -> dict | None:
+    """Muta bajo _cambio, sin guardar ni avisar: el llamador confirma todo junto."""
+    t = _datos["turnos"].get(recurso)
+    if not t or t["dueno"] or not t["cola"] or not _memoria_ok(recurso)[0]:
+        return None
+    t["dueno"] = _otorgar(t["cola"].pop(0))
+    return dict(t["dueno"])
+
+
+def _avisar_turno(recurso: str, dueno: dict) -> None:
     hora = dt.datetime.fromisoformat(dueno["vence"]).strftime("%H:%M")
     state.log(f"turno {recurso}: pasa a {dueno['session_id'][:8]}")
     _avisar(
@@ -450,7 +487,8 @@ def _revisar_turnos() -> None:
         recursos = list(_datos["turnos"])
     for recurso in recursos:
         avisar = None
-        with lock:
+        liberado = None
+        with _cambio():
             t = _datos["turnos"][recurso]
             cola = [x for x in t["cola"] if _viva(x["session_id"])]
             cambio = len(cola) != len(t["cola"])
@@ -462,19 +500,22 @@ def _revisar_turnos() -> None:
             d = t["dueno"]
             if d and (not _viva(d["session_id"]) or _vencio(d["vence"])):
                 motivo = "vencio" if _viva(d["session_id"]) else "la sesion duena ya no esta"
+                liberado = (motivo, d["session_id"])
                 t["dueno"], cambio = None, True
-                state.log(f"turno {recurso}: liberado ({motivo}, {d['session_id'][:8]})")
                 if motivo == "vencio":
                     avisar = d["session_id"]
+            siguiente = _siguiente(recurso)
+            cambio = cambio or siguiente is not None
             if cambio:
                 _guardar()
+        if liberado:
+            state.log(f"turno {recurso}: liberado ({liberado[0]}, {liberado[1][:8]})")
         if avisar:
             _avisar(avisar, f"[lienzo] tu turno de «{recurso}» vencio y paso al siguiente; si seguis, pedilo de nuevo.")
         if cambio:
-            _pasar_turno(recurso)
+            if siguiente:
+                _avisar_turno(recurso, siguiente)
             _publicar()
-        elif t["cola"] and not t["dueno"]:
-            _pasar_turno(recurso)  # esperaba memoria: puede que ya alcance
 
 
 # --- presion de memoria ------------------------------------------------------------------------

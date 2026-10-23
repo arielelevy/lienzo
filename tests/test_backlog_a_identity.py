@@ -61,6 +61,7 @@ def test_two_clis_and_newer_exec_rollout_in_same_repo_do_not_select_a_thread(cli
 
 def test_uncertain_old_send_is_preserved_without_replay(cli):
     record = {
+        "envio_id": "old",
         "estado": "sin_confirmacion",
         "at": 1,
         "thread": cli["session_id"],

@@ -4,11 +4,13 @@
 import datetime as dt
 import os
 import sqlite3
+import threading
 
 import conocimiento as k
 import pytest
 import registro_niveles as registro
 import research_creencias
+from state import log as escribir_log
 
 AHORA = dt.datetime(2026, 10, 22, 12, 0, tzinfo=dt.UTC)
 # el log se corta por día local: el día del corte depende de la zona horaria de la PC
@@ -132,6 +134,54 @@ def test_log_trabado_no_rompe_ni_pierde(home, monkeypatch):
     assert res["log"]["error"] == "PermissionError"
     assert "viejo" in log.read_text(encoding="utf-8")
     assert [p.name for p in home.iterdir() if p.name.startswith("lienzo.log.")] == []
+
+
+def test_rotacion_no_pierde_aviso_concurrente(home, monkeypatch):
+    log = home / "lienzo.log"
+    log.write_text(
+        "2026-09-01 00:00:00.000  info     viejo\n2026-10-21 00:00:00.000  info     conservado\n", encoding="utf-8"
+    )
+    reemplazando, permitir, intento, terminado = (threading.Event() for _ in range(4))
+    replace = registro.os.replace
+    errors = []
+    monkeypatch.setattr(registro.state, "_a_consola", lambda text: None)
+
+    def blocked_replace(src, dst):
+        if os.fspath(dst) != os.fspath(log):
+            return replace(src, dst)
+        reemplazando.set()
+        assert permitir.wait(3)
+        replace(src, dst)
+
+    def rotate():
+        try:
+            registro._depurar_log(AHORA - dt.timedelta(days=30))
+        except BaseException as exc:
+            errors.append(exc)
+
+    def append():
+        intento.set()
+        escribir_log("V3-aviso-concurrente")
+        terminado.set()
+
+    monkeypatch.setattr(registro.os, "replace", blocked_replace)
+    rotator = threading.Thread(target=rotate)
+    writer = threading.Thread(target=append)
+    rotator.start()
+    try:
+        assert reemplazando.wait(3)
+        writer.start()
+        assert intento.wait(3)
+        assert not terminado.wait(0.15), "el append no debe entrar entre EOF y replace"
+    finally:
+        permitir.set()
+        rotator.join(3)
+        if writer.ident is not None:
+            writer.join(3)
+    assert not errors and not rotator.is_alive() and not writer.is_alive()
+    text = log.read_text(encoding="utf-8")
+    assert text.count("V3-aviso-concurrente") == 1
+    assert "conservado" in text and "viejo" not in text
 
 
 def test_una_base_trabada_no_frena_el_log_ni_los_eventos(home, monkeypatch):

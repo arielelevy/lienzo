@@ -122,6 +122,7 @@ def _write(items: list[dict]) -> None:
         state.atomic_write(path(), json.dumps(items, ensure_ascii=False, indent=1))
     except OSError as e:
         state.log(f"no se pudo guardar restaurar.json: {e}")
+        raise
 
 
 def _entry(card: dict, ended: bool) -> dict:
@@ -209,13 +210,17 @@ def remember_live(cards) -> int:
         # descarta no tiene que costar un isdir cada 2 s
         if ahora - _last_live.get(sid, -1e9) < LIVE_DEBOUNCE_S:
             continue
-        _last_live[sid] = ahora
         if not eligible(c) or ended_on_purpose(c):
+            _last_live[sid] = ahora
             continue
         listas.append(c)
     for sid in [k for k, t in _last_live.items() if ahora - t > 3600]:
         del _last_live[sid]
-    return _store(listas, False) if listas else 0
+    changed = _store(listas, False) if listas else 0
+    # El debounce sólo avanza después de guardar: un fallo permite reintentar sin esperar 30 s.
+    for card in listas:
+        _last_live[card["session_id"]] = ahora
+    return changed
 
 
 def restorables(live=()) -> list[dict]:
@@ -228,11 +233,12 @@ def restorables(live=()) -> list[dict]:
 
 
 def forget(session_id: str) -> bool:
-    _last_live.pop(session_id, None)
     with _lock:
         items = _read()
         rest = [e for e in items if e["session_id"] != session_id]
         if len(rest) == len(items):
+            _last_live.pop(session_id, None)
             return False
         _write(_prune(rest))
+        _last_live.pop(session_id, None)
         return True
