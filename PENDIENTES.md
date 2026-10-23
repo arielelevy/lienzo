@@ -10,11 +10,9 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 
 ### Revisión total de V (2026-10-22, `review/2026-10-22/code-review-total.md`)
 
-En la 0.6.14 quedaron corregidos T1, T2, T4, T5, T6, T8, T9 y T10, más el falso «sin enviar». Siguen abiertos:
-- **T3.** El plazo de `prolog_servicio` empieza después de la escritura a stdin. Lo tiene AA.
-- **T11.** La prueba de directivas Prolog sólo busca cadenas en el código. Lo tiene AA.
-- **T7.** El consumidor de hooks borra el evento aunque `apply_event` falle por un error transitorio. Hace falta
-  cuarentena y reintento idempotente.
+Corregidos: T1, T2, T4, T5, T6, T8, T9 y T10 (0.6.14), T3 y T11 (0.6.15) y T7 (eventos que fallan al aplicarse van a `events/cuarentena` en vez de borrarse).
+
+Otros abiertos de esta ronda:
 - **La regla `on_stop` de una sesión Kiro no avisa** (reportado por OpenSyync, 2026-10-22). La sesión
   `sess_0f7b8931` (encargo J) tiene la regla `57e6f928c13d`, con `fired` en 0 aunque terminó dos veces con
   informe. El log dice «salteado: el turno respondía un envío sin_aviso» a las 22:33 y a las 22:34. En Kiro, la

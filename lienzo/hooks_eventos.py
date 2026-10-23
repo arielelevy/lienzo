@@ -742,6 +742,31 @@ def _borrar_evento(n: str, p: str) -> None:
         _aplicados.pop(n, None)
 
 
+# T7 (revisión total, 2026-10-22): un evento que falla al aplicarse (disco lleno, bloqueo al guardar) se
+# borraba y se perdía. Va a events/cuarentena para recuperarlo a mano; no se reintenta solo, porque pudo
+# haber aplicado una parte y reaplicarlo la duplicaría. Si ni la cuarentena se puede escribir, el archivo
+# queda donde está y sólo se reintenta moverlo, nunca aplicarlo de nuevo.
+_sin_cuarentena: dict[str, None] = {}
+
+
+def _a_cuarentena(n: str, p: str) -> None:
+    try:
+        destino = os.path.join(EVENTS, "cuarentena")
+        os.makedirs(destino, exist_ok=True)
+        os.replace(p, os.path.join(destino, n))
+    except FileNotFoundError:
+        _sin_cuarentena.pop(n, None)
+    except OSError as e:
+        if n not in _sin_cuarentena:
+            ses.state.log(f"evento {n}: falló y tampoco se pudo mover a cuarentena ({e}); queda y no se reaplica")
+            _sin_cuarentena[n] = None
+            while len(_sin_cuarentena) > APLICADOS_MAX:
+                _sin_cuarentena.pop(next(iter(_sin_cuarentena)))
+    else:
+        if _sin_cuarentena.pop(n, None) is None:
+            ses.state.log(f"evento {n}: falló al aplicarse; quedó en {EVENTS}/cuarentena para recuperarlo")
+
+
 def consume_events() -> None:
     while True:
         consume_once()
@@ -764,6 +789,9 @@ def consume_once() -> None:
         if n in _aplicados:
             _borrar_evento(n, p)  # ya aplicado: solo falta que Windows lo suelte
             continue
+        if n in _sin_cuarentena:
+            _a_cuarentena(n, p)  # ya falló una vez: sólo falta moverlo
+            continue
         if not n.endswith(".json"):
             try:
                 # bad-*.txt: lo que un hook no pudo parsear. El getmtime iba fuera del try y un
@@ -776,7 +804,14 @@ def consume_once() -> None:
         try:
             with open(p, encoding="utf-8") as f:
                 ev = json.load(f)
+        except OSError, ValueError:
+            ses.state.log(f"evento {n} ilegible:\n{traceback.format_exc()}")
+            _borrar_evento(n, p)  # inválido para siempre: reintentar no lo arregla
+            continue
+        try:
             apply_event(ev)
         except Exception:
             ses.state.log(f"evento {n} fallo:\n{traceback.format_exc()}")
-        _borrar_evento(n, p)  # aplicado o fallido, no se vuelve a intentar (como antes)
+            _a_cuarentena(n, p)
+            continue
+        _borrar_evento(n, p)

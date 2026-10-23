@@ -319,6 +319,53 @@ def test_un_evento_que_no_se_puede_borrar_se_aplica_una_sola_vez(aislado, tmp_pa
     assert not (eventos / "0001-ev.json").exists() and hooks_eventos._aplicados == {}
 
 
+def test_un_evento_que_falla_al_aplicarse_queda_en_cuarentena_y_no_se_reaplica(aislado, tmp_path, monkeypatch):
+    """T7 de la revisión total: si guardar falla (disco lleno, bloqueo) el evento se borraba y se
+    perdía. Ahora pasa a events/cuarentena para recuperarlo a mano; no se reintenta solo, porque
+    pudo haber aplicado una parte y reaplicarlo la duplicaría."""
+    eventos = tmp_path / "events"
+    eventos.mkdir()
+    (eventos / "0001-ev.json").write_text('{"hook_event_name": "Stop", "session_id": "x"}', encoding="utf-8")
+    (eventos / "0002-ev.json").write_text('{"hook_event_name": "Stop", "session_id": "y"}', encoding="utf-8")
+    monkeypatch.setattr(hooks_eventos, "EVENTS", str(eventos))
+    monkeypatch.setattr(hooks_eventos, "_aplicados", {})
+    llamadas = []
+
+    def apply(ev):
+        llamadas.append(ev["session_id"])
+        if ev["session_id"] == "x":
+            raise OSError(28, "disco lleno sintetico")
+
+    monkeypatch.setattr(hooks_eventos, "apply_event", apply)
+    for _ in range(3):
+        hooks_eventos.consume_once()
+    assert llamadas == ["x", "y"]
+    assert (eventos / "cuarentena" / "0001-ev.json").exists()
+    assert not (eventos / "0001-ev.json").exists() and not (eventos / "0002-ev.json").exists()
+    assert any("cuarentena" in m and "0001-ev.json" in m for m in aislado)
+
+
+def test_si_la_cuarentena_tampoco_se_puede_escribir_el_evento_queda_y_no_se_reaplica(aislado, tmp_path, monkeypatch):
+    eventos = tmp_path / "events"
+    eventos.mkdir()
+    (eventos / "0001-ev.json").write_text('{"hook_event_name": "Stop", "session_id": "x"}', encoding="utf-8")
+    monkeypatch.setattr(hooks_eventos, "EVENTS", str(eventos))
+    monkeypatch.setattr(hooks_eventos, "_aplicados", {})
+    monkeypatch.setattr(hooks_eventos, "_sin_cuarentena", {})
+    llamadas = []
+
+    def apply(ev):
+        llamadas.append(1)
+        raise OSError(28, "disco lleno sintetico")
+
+    monkeypatch.setattr(hooks_eventos, "apply_event", apply)
+    monkeypatch.setattr(hooks_eventos.os, "replace", lambda *a: (_ for _ in ()).throw(OSError(28, "lleno")))
+    for _ in range(3):
+        hooks_eventos.consume_once()
+    assert llamadas == [1]
+    assert (eventos / "0001-ev.json").exists()
+
+
 # 1.7 transiciones: cierre de turno y muerte -----------------------------------------------------
 
 
