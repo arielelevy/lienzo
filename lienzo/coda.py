@@ -110,6 +110,12 @@ def activity(pid: int) -> dict | None:
         elif msg == "prompt complete" and cli and act:
             act["running"] = False
             asks.clear()
+        elif msg == "session error event" and cli and act is not None and isinstance(d.get("error"), str):
+            # el turno se aborto por un error del servicio; con la red caida coda muestra «Could not
+            # connect to the AI service because its address could not be resolved» y el log dice
+            # «getaddrinfo ENOTFOUND <host>» (medido el 2026-10-23). Reintentable: transcripts.RETRY_PATTERNS
+            act["error"] = f"coda: error de red o del servicio ({d['error'][:160]})"
+            act["error_at"] = d.get("time")
         elif "Quota exceeded" in line and act is not None:
             # la cuota del modelo se acabo: el turno se aborta y la tarjeta tiene que decirlo
             act["error"] = "coda sin cuota: Quota exceeded (code 154)"

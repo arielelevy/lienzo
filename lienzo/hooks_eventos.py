@@ -460,6 +460,30 @@ def _pedido_de_fondo(act: dict) -> bool:
     return not act["running"] and bool((act.get("asking") or {}).get("sub"))
 
 
+CODA_REINTENTOS_DE_RED = 3  # seguidos; con la red caida mucho rato no se manda «Continuar» para siempre
+
+
+def coda_reintento_de_red(s: dict, act: dict) -> None:
+    """El turno de coda se corto por la red o el servicio (pedido de Ariel, 2026-10-23: «un retry como
+    a los demas»): la tarjeta ofrece «Reintentar» y, con auto_retry, se manda «Continuar» una vez por
+    error, como con Claude y Codex (rules.retry_after_api_error). Con el lock tomado."""
+    error = act.get("error") or ""
+    if act["running"] or not error.startswith("coda: error de red"):
+        if not act["running"] and not error:
+            s["coda_reintentos_red"] = 0  # un turno que cerro bien corta la racha
+        return
+    s["retryable"] = ses.transcripts.retryable_error(error)
+    if not s["retryable"]:
+        return
+    sig = f"coda:{act.get('error_at')}:{error}"
+    if s.get("retry_done_for") == sig:
+        return
+    if (s.get("coda_reintentos_red") or 0) >= CODA_REINTENTOS_DE_RED:
+        return  # la red sigue caida: queda el boton «Reintentar» para el humano
+    s["coda_reintentos_red"] = (s.get("coda_reintentos_red") or 0) + 1
+    ses.on_api_error(s, sig)
+
+
 def coda_log_activity(s: dict) -> bool:
     """Lo que dice el log de CODA (coda.activity), con el lock tomado; devuelve si cambio algo.
 
@@ -478,10 +502,11 @@ def coda_log_activity(s: dict) -> bool:
             ses.set_state(s, "corriendo")
     if act.get("error") and s.get("last_error") != act["error"]:
         s["last_error"] = act["error"]  # «coda sin cuota»: la tarjeta lo dice en rojo en vez de «termino»
-    elif not act.get("error") and (s.get("last_error") or "").startswith("coda sin cuota"):
+    elif not act.get("error") and (s.get("last_error") or "").startswith(("coda sin cuota", "coda: error de red")):
         # el log ya no dice que falte cuota (un turno nuevo, o siguio trabajando): antes el aviso
         # quedaba para siempre aunque coda trabajara (medido el 2026-10-09 en ar-it33940)
         s["last_error"] = None
+    coda_reintento_de_red(s, act)
     den = act.get("denied")
     pedido, cuando = ses.parse_ts(s.get("prompt_ts")), ses.parse_ts((den or {}).get("at"))
     if den and pedido and cuando and cuando < pedido:

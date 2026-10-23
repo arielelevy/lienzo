@@ -152,7 +152,20 @@ def looks_like_error(text: str) -> bool:
 # el turno se corto solo y volver a pedirlo alcanza: no hay hora de vuelta que esperar (eso es
 # limit_reset) ni nada que pagar. Medido en la transcripcion: el aviso es un mensaje del asistente
 # con isApiErrorMessage, texto "API Error: The response stopped arriving. ..." (2026-09-09).
-RETRY_PATTERNS = ("api error", "overloaded", "request timed out", "stopped arriving", "connection error")
+RETRY_PATTERNS = (
+    "api error",
+    "overloaded",
+    "request timed out",
+    "stopped arriving",
+    "connection error",
+    # red caida o DNS (coda, 2026-10-23: «getaddrinfo ENOTFOUND api.clients.globant.com»)
+    "enotfound",
+    "eai_again",
+    "econnreset",
+    "econnrefused",
+    "etimedout",
+    "could not connect",
+)
 # aunque digan "API Error", estos no se arreglan reintentando: hay que esperar o pagar
 NO_RETRY_PATTERNS = ("credit balance", "usage limit", "session limit", "rate limit", "hit your")
 

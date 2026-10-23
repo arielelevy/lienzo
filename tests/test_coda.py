@@ -711,3 +711,44 @@ def test_el_dialogo_de_correr_un_workflow_cuenta_como_permiso_abierto():
     assert ses.coda_ask_open(pantalla)
     # si la marca está en otra opción, un Enter haría otra cosa: no se toca
     assert not ses.coda_ask_open(pantalla.replace("> 1. Yes", "  1. Yes").replace("    2. View", "  > 2. View"))
+
+
+def test_error_de_red_reintenta_como_los_demas_con_tope(tmp_path, monkeypatch):
+    """Pedido de Ariel (2026-10-23): con la red caida coda muestra «Could not connect to the AI service
+    because its address could not be resolved» y el turno se corta. Ahora es reintentable como en
+    Claude y Codex, una vez por error y a lo sumo CODA_REINTENTOS_DE_RED seguidos."""
+    from lienzo import server  # noqa: F401, I001
+    import sessions as ses
+
+    (tmp_path / "logs").mkdir()
+    log = tmp_path / "logs" / "coda.log"
+    error = "getaddrinfo ENOTFOUND api.clients.globant.com"
+
+    def turno_con_error(n):
+        return [
+            {"pid": 4242, "clientName": "cli", "msg": "prompt started"},
+            {"pid": 4242, "clientName": "cli", "msg": "session error event", "error": error, "time": f"t{n}"},
+            {"pid": 4242, "clientName": "cli", "msg": "prompt complete"},
+        ]
+
+    monkeypatch.setenv("CODA_HOME", str(tmp_path))
+    reintentos = []
+    monkeypatch.setattr(ses, "on_api_error", lambda s, sig: reintentos.append(sig))
+    s = ses.new_session(SID, "coda", "hook")
+    s.update(pid=4242, state="termino")
+    lineas = []
+    for n in range(1, 6):
+        lineas += turno_con_error(n)
+        log.write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")
+        hooks_eventos.coda_log_activity(s)
+        hooks_eventos.coda_log_activity(s)  # el mismo error, leido otra vez, no reintenta de nuevo
+    assert s["last_error"].startswith("coda: error de red") and s["retryable"]
+    assert len(reintentos) == hooks_eventos.CODA_REINTENTOS_DE_RED
+    # un turno que cierra bien corta la racha y saca el aviso
+    lineas += [
+        {"pid": 4242, "clientName": "cli", "msg": "prompt started"},
+        {"pid": 4242, "clientName": "cli", "msg": "prompt complete"},
+    ]
+    log.write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")
+    hooks_eventos.coda_log_activity(s)
+    assert s["last_error"] is None and s["coda_reintentos_red"] == 0
