@@ -4,5 +4,5 @@
   justify-content: flex-end;
 }
 .cuotas .cuota { max-width: 100%; overflow-wrap: anywhere; }
-.cuotas .cuota.kiro { border-left-color: var(--kiro); background: color-mix(in srgb, var(--kiro) 12%, var(--panel)); }
+.cuotas .cuota.kiro { border-left-color: var(--kiro); }
 .cuotas .cuota.kiro .cuota-nombre { color: var(--kiro); }

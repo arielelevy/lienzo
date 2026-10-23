@@ -122,6 +122,12 @@ export function RemoteBrowser() {
   const mode = useRef({native: true, auto: false, locked: false});
   const [auto, setAuto] = useState(false);
   const [lockNotice, setLockNotice] = useState<LockNotice>('');
+  // el aviso de bloqueo/desbloqueo se va solo a los 5 s (pedido de Ariel, 2026-10-22); la × lo cierra antes
+  useEffect(() => {
+    if (!lockNotice) return;
+    const t = window.setTimeout(() => setLockNotice(''), 5_000);
+    return () => window.clearTimeout(t);
+  }, [lockNotice]);
   const [activeTarget, setActiveTarget] = useState<ActiveTarget | null>(null);
   const chooseMode = (value: boolean) => {
     mode.current = {...mode.current, native: value, auto: false};

@@ -101,3 +101,11 @@ test('si la persona vuelve a la ventana durante el bloqueo, no se la vuelve a sa
   await page.waitForTimeout(300);
   await expect(windowButton).toHaveAttribute('aria-pressed', 'true');
 });
+
+test('el aviso de bloqueo se va solo a los 5 s', async ({page}) => {
+  const {desktop} = await lockFlow(page);
+  desktop(true);
+  const aviso = page.getByRole('status').filter({hasText:'Fixture está bloqueada'});
+  await expect(aviso).toBeVisible();
+  await expect(aviso).toBeHidden({timeout: 7_000});
+});

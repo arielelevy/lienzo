@@ -178,7 +178,10 @@ test("Kiro muestra créditos mensuales, mensajes desconocidos y renovación; ref
   await abrirTablero(page);
   const boton = page.getByRole("button", { name: /^Kiro/ });
   await expect(boton).toContainText("130.37 usados · 869.63 disponibles de 1000");
-  await expect(boton).toContainText("Mensajes por mes: no informado");
+  // sin rótulos en la tarjeta: «Créditos por mes» sólo en el aria-label y sin línea de mensajes no informados
+  await expect(boton).not.toContainText("Créditos por mes");
+  await expect(boton).not.toContainText("Mensajes por mes");
+  await expect(boton).toHaveAttribute("aria-label", /Créditos por mes: 130\.37 usados/);
   await expect(boton).toContainText("Renueva 2026-11-01");
   await expect(boton).not.toHaveAttribute("title", /5 h:|Semana:/);
   await boton.click();

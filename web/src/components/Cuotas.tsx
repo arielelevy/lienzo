@@ -7,7 +7,10 @@ type AgenteVisible = AgenteCuota | "kiro";
 const AGENTES: AgenteVisible[] = ["claude", "codex", "kiro"];
 const SIN_KIRO: CuotaAgente = { ok: false, plan: null, weekly: null, five_hour: null, read_at: null, error: "el servidor no informó el uso de Kiro" };
 const mensual = (nombre: string, r: RecursoMensual | null | undefined) => !r ? `${nombre}: no informado` :
-  `${nombre}: ${r.used} usados · ${r.available === null ? "disponibles no informados" : `${r.available} disponibles`}${r.limit === null ? "" : ` de ${r.limit}`}`;
+  `${nombre}: ${cantidades(r)}`;
+// en la tarjeta de Kiro, sólo los números: el rótulo «Créditos por mes» queda en el aria-label (pedido de Ariel)
+const cantidades = (r: RecursoMensual) =>
+  `${r.used} usados · ${r.available === null ? "disponibles no informados" : `${r.available} disponibles`}${r.limit === null ? "" : ` de ${r.limit}`}`;
 
 const etiquetaAgente = (a: string) => (AGENTS as Record<string, { label: string } | undefined>)[a]?.label ?? a;
 
@@ -65,14 +68,14 @@ export function Cuotas() {
       const sugerido = data.sugerido === a;
       const alta = !!c.ok && ((c.weekly?.used_pct ?? 0) >= 90 || (c.five_hour?.used_pct ?? 0) >= 90);
       const medido = fecha(c.read_at);
-      const uso = !c.ok ? "sin lectura" : a === "kiro" ? mensual("Créditos por mes", c.credits) : c.weekly ? `${pct(c.weekly.used_pct)} usado semanal${c.five_hour ? ` · ${pct(c.five_hour.used_pct)} usado 5 h` : ""}` : "sin dato semanal";
+      const uso = !c.ok ? "sin lectura" : a === "kiro" ? (c.credits ? cantidades(c.credits) : "créditos no informados") : c.weekly ? `${pct(c.weekly.used_pct)} usado semanal${c.five_hour ? ` · ${pct(c.five_hour.used_pct)} usado 5 h` : ""}` : "sin dato semanal";
       return <button key={a} type="button" className={`cuota ${a}${sugerido ? " sugerido" : ""}${c.ok ? "" : " fallida"}${alta ? " alta" : ""}`}
         disabled={midiendo} title={detalle(a, c, data) + (fallo ? `\nÚltimo intento falló: ${fallo}` : "")}
-        aria-label={`${etiquetaAgente(a)}: ${uso}${c.ok && !c.five_hour && a !== "kiro" ? `, ${SIN_5H}` : ""}${a === "kiro" ? `; ${mensual("Mensajes por mes", c.messages)}; renueva ${c.resets_at ?? "no informado"}` : ""}${sugerido ? ", conviene ahora" : ""}. ${medido ? `Medido ${medido}` : "Sin medición"}. Medir de nuevo`}
+        aria-label={`${etiquetaAgente(a)}: ${a === "kiro" ? mensual("Créditos por mes", c.credits) : uso}${c.ok && !c.five_hour && a !== "kiro" ? `, ${SIN_5H}` : ""}${a === "kiro" ? `; ${mensual("Mensajes por mes", c.messages)}; renueva ${c.resets_at ?? "no informado"}` : ""}${sugerido ? ", conviene ahora" : ""}. ${medido ? `Medido ${medido}` : "Sin medición"}. Medir de nuevo`}
         onClick={medir}>
         <span className="cuota-fila"><span className="cuota-nombre">{etiquetaAgente(a)}</span>{sugerido && <span className="cuota-sugerido">conviene</span>}</span>
         <span className="cuota-uso">{uso}</span>
-        {a === "kiro" && <><span className="cuota-uso">{mensual("Mensajes por mes", c.messages)}</span><span className="cuota-medido">Renueva {c.resets_at ?? "no informado"}</span></>}
+        {a === "kiro" && <>{c.messages && <span className="cuota-uso">{mensual("Mensajes por mes", c.messages)}</span>}<span className="cuota-medido">Renueva {c.resets_at ?? "no informado"}</span></>}
         <span className="cuota-medido">{midiendo ? "midiendo…" : fallo ? "no se pudo medir" : medido ?? "sin medición"}</span>
       </button>;
     })}
