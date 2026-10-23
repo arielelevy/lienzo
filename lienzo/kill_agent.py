@@ -34,7 +34,15 @@ def close(card: dict, confirm: str) -> tuple[int, dict]:
             return 409, {"error": "el PID cambio desde que se registro la tarjeta; no se cierra"}
         if procinfo.process_agent(pid) != card.get("agent"):
             return 409, {"error": "el proceso ya no corresponde a esta CLI"}
-        rc, _, err = subproc.correr(["taskkill", "/PID", str(pid), "/T", "/F"], timeout=10)
+        with state.lock:  # el barrido que la ve morir no la avisa como muerte inesperada
+            card["cerrada_a_mano"] = True
+        rc, err = 1, ""
+        try:
+            rc, _, err = subproc.correr(["taskkill", "/PID", str(pid), "/T", "/F"], timeout=10)
+        finally:
+            if rc != 0:
+                with state.lock:
+                    card["cerrada_a_mano"] = False
         state.log(f"cierre forzado de {card['session_id'][:8]}: exit={rc}")
         return (200, {"ok": True}) if rc == 0 else (409, {"error": err or "no se pudo cerrar el proceso"})
     finally:

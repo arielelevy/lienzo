@@ -261,3 +261,47 @@ def test_rule_reconciliation_only_affects_its_peer(monkeypatch):
     assert entries[0]["parked_to"] == "gone-a"
     assert entries[1]["enabled"]
     assert "parked_to" not in entries[1]
+
+
+def test_cerrar_desde_el_tablero_no_avisa_como_muerte(monkeypatch):
+    """Visto con U y X el 2026-10-22: cerrar con la accion «cerrar» del tablero mandaba el aviso
+    «murio sin terminar su encargo… restaurala» a la coordinadora."""
+    import kill_agent
+    import sessions as ses
+
+    card = {
+        "session_id": "target",
+        "pid": 123,
+        "agent": "codex",
+        "started": "2026-10-07T00:00:00+00:00",
+        "backend": "win32",
+        "state": "corriendo",
+        "alive": True,
+    }
+    monkeypatch.setattr(kill_agent.procinfo, "open_process", lambda pid: "handle")
+    monkeypatch.setattr(kill_agent.procinfo, "close_handle", lambda h: None)
+    monkeypatch.setattr(kill_agent.procinfo, "process_agent", lambda pid: "codex")
+    monkeypatch.setattr(kill_agent, "created_at", lambda h: state.parse_ts(card["started"]).timestamp() - 1)
+    monkeypatch.setattr(kill_agent.subproc, "correr", lambda *a, **k: (0, "", ""))
+    avisos = []
+    monkeypatch.setattr(ses, "en_hilo", lambda f, *a: avisos.append(a) if f is ses.on_died_working else None)
+    assert kill_agent.close(card, "target") == (200, {"ok": True})
+    ses.marcar_muerta(card, avisar=True)
+    assert card["state"] == "muerta" and avisos == []
+    # sin el cierre del tablero, la misma muerte si se avisa
+    card.update(state="corriendo", alive=True, cerrada_a_mano=False)
+    ses.marcar_muerta(card, avisar=True)
+    assert avisos == [("target", "corriendo")]
+
+
+def test_un_cierre_que_falla_no_deja_la_marca(monkeypatch):
+    import kill_agent
+
+    card = {"session_id": "t", "pid": 1, "agent": "codex", "started": "2026-10-07T00:00:00+00:00", "backend": "win32"}
+    monkeypatch.setattr(kill_agent.procinfo, "open_process", lambda pid: "handle")
+    monkeypatch.setattr(kill_agent.procinfo, "close_handle", lambda h: None)
+    monkeypatch.setattr(kill_agent.procinfo, "process_agent", lambda pid: "codex")
+    monkeypatch.setattr(kill_agent, "created_at", lambda h: state.parse_ts(card["started"]).timestamp() - 1)
+    monkeypatch.setattr(kill_agent.subproc, "correr", lambda *a, **k: (1, "", "acceso denegado"))
+    assert kill_agent.close(card, "t")[0] == 409
+    assert card["cerrada_a_mano"] is False
