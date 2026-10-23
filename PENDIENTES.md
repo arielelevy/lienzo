@@ -20,6 +20,9 @@ Otros abiertos de esta ronda:
   arma `sin_aviso` (`review/2026-10-22/code-review-on-stop-sin-aviso.md`). Falta confirmar que Kiro tenía la
   misma causa: los envíos de las 22:31:32 y las 22:34:17 pudieron empezar su propio turno. Hace falta una
   prueba con dos turnos Kiro seguidos.
+  Verificado el 2026-10-23 (encargo B): con dos turnos Kiro y un acuse intermedio avisan los dos; la guarda
+  de `accion_send` (no arma `sin_aviso` con turno en curso) cubre también a Kiro, y sin ella falla igual que
+  en Claude. Prueba en `tests/test_optimizacion_trabajo.py`. Queda sólo si se repite con una Kiro real.
 - **`pedir_turno` de una sesión coda contesta 404 «sesion desconocida»** (reportado por OpenSyync, 2026-10-22).
   `c.pedir_turno("motores", "31108cdc-b4ec-43b3-bf6c-468df377c2d2")`, desde el encargo H de OpenSyync, dio 404.
   Antes, con el mismo patrón, la misma sesión había obtenido el turno (200). Hipótesis: después de un reinicio del
@@ -44,7 +47,9 @@ Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
   - Aprobar un permiso de allá desde acá: sin probar (la sesión corría en auto mode y no pidió ninguno).
   - Bug: el nombre nativo de una sesión de ar-it33940 llegó como `11/rename lienzo-A-ar-it33940`. Quedaron
     dos «1» tecleados en el prompt (¿el auto-aprobar o un diálogo contestado dos veces?) y el `/rename` se
-    tomó como texto. Hace falta que `/native` limpie la caja de entrada antes de teclear.
+    tomó como texto. Hecho el 2026-10-23: `answer_dialog` relee la pantalla también con el número (antes
+    podía teclear «1» con el permiso ya cerrado), `/native` difiere si la caja no está vacía, y la caja de
+    una sesión renombrada (la raya de arriba lleva su nombre) ahora se reconoce (`screen.es_regla`).
 - [ ] ar-it33940: el lienzo no arranca solo (ni carpeta Inicio, ni tarea, ni Run); el server de hoy se lanzó
   a mano. No se suspende enchufada (STANDBYIDLE 0 en CA). Decisión 11 pendiente de aplicar. Además el server
   escucha en la IP del Wi-Fi (192.168.1.63): si DHCP la cambia hay que reiniciarlo.
@@ -57,13 +62,18 @@ Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
   portapapeles de la ventana completa, clics con la PC bloqueada, `marcas` entre las dos PCs.
 - [ ] Revisar las 3 propuestas del investigador (G) y los 60 candidatos del contraste lógico.
 - [ ] Confirmar si `ledsage` y `gmi-global` son proyectos propios (Azure sólo para propios).
-- [ ] Limpiar las marcas «headless» que quedaron en tarjetas vivas antes de 19747a2 (la de J siguió dando 409
+- [x] Limpiar las marcas «headless» que quedaron en tarjetas vivas antes de 19747a2 (la de J siguió dando 409
   a `/send`; el arreglo evita marcas nuevas, no borra las viejas).
+  Hecho en 2936cde (2026-10-22): el barrido le saca la marca a una TUI viva con consola.
 - [ ] El espejo toma como dirección de un par la IP de origen del beacon, no las IPs que el par anuncia firmadas
   (hallazgo 5 del code review de K, cambio de diseño en la federación).
-- [ ] El acceso de emergencia (3dbe685) no aparece para ar-it33940 caída: `/peers` trae `emergencia: null`
+  Diseño entregado el 2026-10-23, sin código: `review/2026-10-23/diseno-B-beacon-firmado.md` (beacon
+  extensible compatible con el viejo, migración por etapas). Falta medir el modo mixto y DHCP en las dos PCs.
+- [x] El acceso de emergencia (3dbe685) no aparece para ar-it33940 caída: `/peers` trae `emergencia: null`
   aunque el diagnóstico dice «cambió de red» y su nodo Tailchrome `ar-it33940-lienzo` existe (offline). Medido el
   2026-10-22 ~16:00. Además, el ayudante de Tailchrome de ar-it33940 no se reconectó solo tras cambiar de red.
+  Hecho en 2936cde (2026-10-22): el par caído recibe su canal con lo último que se supo de él. Sigue abierto
+  aparte que el ayudante de Tailchrome de ar-it33940 no se reconecta solo tras cambiar de red.
 - [x] El nombre nativo del CLI no sigue al título de la tarjeta: una tarjeta que nace de copiar y pegar (copycat) o a
   la que se le cambia el título con `PUT /sessions/<sid>/title` queda con `native_name: None` y la consola con el
   nombre viejo. Esperado: al heredar o cambiar el título, hacer `/rename` + `/remote-control` (lo de `/native`) apenas
