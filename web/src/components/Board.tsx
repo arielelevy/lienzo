@@ -5,6 +5,7 @@ import { Launch } from "./Launch";
 import { AgentImprovements } from "./AgentImprovements";
 import { Card, freeGroups, PICK_MS } from "./Card";
 import { ChromeCard, chromeConexiones } from "./ChromeCard";
+import { ApiError, restoreApi, type RestoreResult } from "../api";
 import { pcOf } from "./PcStrip";
 import { passesProjects, repoGroups } from "./ProjectStrip";
 import type { Link, Peer, Pending, Rule, Session, State } from "../types";
@@ -306,7 +307,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     try { localStorage.setItem("lienzo.boardLayout", mode); }
     catch { toast?.("El navegador no pudo guardar el modo de orden", true); }
   };
-  const [context, setContext] = useState<{ x: number; y: number } | null>(null);
+  // `muertas`: el click derecho cayo en la columna Muertas, que suma «Revivir todas»
+  const [context, setContext] = useState<{ x: number; y: number; muertas?: boolean } | null>(null);
   const contextRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     if (!context || !contextRef.current) return;
@@ -346,6 +348,45 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
   // esta caido (ronda 2; peers viene vacio hasta que exista GET /peers)
   const peersById = useMemo(() => new Map(peers.map((p) => [p.pc_id, p])), [peers]);
   const localPcId = useMemo(() => peers.find((p) => p.local)?.pc_id ?? null, [peers]);
+  // las muertas que se pueden revivir (el server las conserva 24 h: `estacionada`), de una PC que contesta
+  const revivibles = useMemo(
+    () => Object.values(sessions).filter(
+      (s) => s.alive === false && s.estacionada && peersById.get(pcOf(s, localPcId) ?? "")?.alive !== false,
+    ),
+    [sessions, peersById, localPcId],
+  );
+  /** Revive las muertas con un pedido por PC: el server las relanza de a una, con su pausa, y solo
+   *  las que entran en la memoria de esa PC (limit_by_memory); las que no entran se cuentan */
+  const reviveAll = async () => {
+    const lista = [...revivibles];
+    if (!lista.length || !confirm(`¿Revivir ${lista.length} sesiones muertas? Cada una se relanza con su conversación en su PC.`)) return;
+    const porPc = new Map<string, Session[]>();
+    for (const s of lista) {
+      const pc = pcOf(s, localPcId) ?? "";
+      porPc.set(pc, [...(porPc.get(pc) ?? []), s]);
+    }
+    let ok = 0;
+    let sinMemoria = 0;
+    const fallas: string[] = [];
+    for (const [pc, grupo] of porPc) {
+      const nombre = new Map(grupo.map((s) => [s.session_id, shortName(s)]));
+      try {
+        const r = await restoreApi.some(grupo.map((s) => s.session_id), pc || null);
+        ok += r.restored.length;
+        sinMemoria += r.skipped?.length ?? 0;
+        fallas.push(...r.failed.map((f) => `${nombre.get(f.session_id) ?? f.session_id.slice(0, 8)}: ${f.error}`));
+      } catch (e) {
+        const body = e instanceof ApiError ? e.body : {};
+        const failed = (body.failed as RestoreResult["failed"] | undefined) ?? [];
+        if (failed.length) fallas.push(...failed.map((f) => `${nombre.get(f.session_id) ?? f.session_id.slice(0, 8)}: ${f.error}`));
+        else fallas.push(`${peersById.get(pc)?.name ?? "esta PC"}: ${(body.error as string | undefined) ?? (e as Error).message}`);
+      }
+    }
+    const partes = [`${ok} revividas`];
+    if (sinMemoria) partes.push(`${sinMemoria} sin memoria para relanzarlas`);
+    if (fallas.length) partes.push(`fallaron: ${fallas.join("; ")}`);
+    toast?.(partes.join(" · "), fallas.length > 0 || sinMemoria > 0);
+  };
   const peerDownOf = (s: Session) => peerDownIn(s, peersById, localPcId);
   // el color de su PC, solo con mas de una emparejada: con una sola (o ninguna) pintar de "su color"
   // no dice nada que la tarjeta no dijera ya
@@ -629,8 +670,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
 
   const isCollapsed = (k: ColKey, n: number) => {
     if (filtering && n > 0) return false;
-    // "Muerta" arranca colapsada aunque tenga tarjetas: una sesion muerta no se puede hacer nada
-    // con ella, es historial. Se abre con un click en la tira y esa eleccion se recuerda.
+    // "Muerta" arranca colapsada aunque tenga tarjetas: una sesion muerta solo se revive (menu de la
+    // tarjeta, o click derecho en la columna). Se abre con un click en la tira y esa eleccion se recuerda.
     // Va ANTES del caso de la columna vacia: al reves, una Muerta sin tarjetas se decidia por
     // `openEmpty`, que el click en su tira no toca (llama a `setDead`), y no se abria nunca.
     // Medido: la tira quedaba en 20 px por mas clicks que recibiera.
@@ -908,6 +949,12 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (current + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
           items[next]?.focus();
         }}>
+        {context.muertas && revivibles.length > 0 && (
+          <button role="menuitem" onClick={() => { setContext(null); void reviveAll(); }}
+            title="relanza cada una con el retomar de su agente, en su PC, mientras alcance la memoria">
+            ↻ Revivir todas ({revivibles.length})
+          </button>
+        )}
         <button role="menuitem" onClick={() => { setContext(null); setLaunchOpen(true); }}>Lanzar CLI…</button>
         <button role="menuitem" onClick={() => { setContext(null); setEditorOpen(true); }}>Abrir en VS Code…</button>
         <button role="menuitem" onClick={() => { setContext(null); onRescan(); }} title="Busca sesiones y actualiza nombres de consolas y etiquetas">Buscar sesiones ahora</button>
@@ -949,7 +996,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           if (escBlocked || selected || (e.target as HTMLElement).closest("[data-sid], button, input, textarea, select, a, dialog")) return;
           e.preventDefault();
           const anchor = (e.target as HTMLElement).getBoundingClientRect();
-          setContext({ x: Number.isFinite(e.clientX) ? e.clientX : anchor.left, y: Number.isFinite(e.clientY) ? e.clientY : anchor.top });
+          setContext({
+            x: Number.isFinite(e.clientX) ? e.clientX : anchor.left,
+            y: Number.isFinite(e.clientY) ? e.clientY : anchor.top,
+            muertas: !!(e.target as HTMLElement).closest(".col.muerta"),
+          });
         }}
         // una tarjeta corrida para abajo sale del alto natural del tablero (absoluta, no lo empuja):
         // el tablero se estira hasta taparla, asi no queda media tarjeta cortada

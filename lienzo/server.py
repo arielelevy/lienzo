@@ -921,18 +921,31 @@ def preparar_sucesion(e: dict) -> None:
 
 
 def restore_local(d: dict) -> tuple[int, dict]:
-    """Relanza en ESTA PC una sesion (`session_id`) o todas (`all: true`), una por una con
-    RESTORE_GAP_S entre cada una. Las relanzadas se olvidan del registro. `all` respeta la memoria:
+    """Relanza en ESTA PC una sesion (`session_id`), varias (`session_ids`: las muertas del tablero) o
+    todas (`all: true`), una por una con
+    RESTORE_GAP_S entre cada una. Las relanzadas se olvidan del registro. `all` y `session_ids` respetan la memoria:
     si no entran todas se rechaza diciendo cuantas si, o, con `limit_by_memory: true`, se relanzan
     solo esas."""
-    sid, todas = d.get("session_id"), d.get("all") is True
-    if todas == (sid is not None) or (sid is not None and (not isinstance(sid, str) or not sid)):
-        return 400, {"error": "hace falta session_id, o all: true"}
+    sid, todas, ids = d.get("session_id"), d.get("all") is True, d.get("session_ids")
+    if ids is not None and (
+        not isinstance(ids, list) or not ids or not all(isinstance(x, str) and x for x in ids) or sid is not None
+    ):
+        return 400, {"error": "session_ids es una lista de ids, sin session_id"}
+    if ids is not None:
+        todas = True  # varias: la misma pausa y el mismo control de memoria que todas
+    elif todas == (sid is not None) or (sid is not None and (not isinstance(sid, str) or not sid)):
+        return 400, {"error": "hace falta session_id, session_ids o all: true"}
     if not _restore_busy.acquire(blocking=False):
         return 409, {"error": "ya hay una restauracion en curso en esta PC"}
     try:
         items = restorables_local()
         extra = {}
+        if ids is not None:
+            # las muertas del tablero (Revivir todas): solo esas, en el orden del registro
+            pedidas = set(ids)
+            items = [e for e in items if e["session_id"] in pedidas]
+            if not items:
+                return 404, {"error": "ninguna de esas sesiones es restaurable"}
         if todas:
             n = len(items)
             fit, snap = restore_capacity(n)
@@ -1618,7 +1631,7 @@ def accion_restaurar(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     if pc is not None and not isinstance(pc, str):
         return 400, {"error": "pc debe ser un pc_id"}
     if desde_tablero and pc and pc != identity.pc_id():
-        cuerpo = {k: d[k] for k in ("session_id", "all", "limit_by_memory") if k in d}
+        cuerpo = {k: d[k] for k in ("session_id", "session_ids", "all", "limit_by_memory") if k in d}
         return mirror.MIRROR.forward(pc, "POST", "/restaurar", cuerpo)
     return restore_local(d)
 

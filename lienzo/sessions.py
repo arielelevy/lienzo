@@ -57,6 +57,7 @@ from state import (
     ANSWERS,
     ATTACH_MAX_DAYS,
     DEAD_GRACE_S,
+    DEAD_KEEP_S,
     HERE,
     LONG_TEXT,
     PENDING,
@@ -748,7 +749,56 @@ def adopt_dead_target(s: dict, solo_titulo: bool = False) -> str | None:
             if code != 200:
                 state.log(f"heredar reglas de {old[:8]} en {pc}: {code} {(res or {}).get('error')}")
     state.log(f"sesion {new[:8]} sucede a {old[:8]} ({muerta.get('title') or muerta.get('cwd')})")
+    if old != new:
+        with lock:
+            vieja = sessions.get(old)
+            sigue = vieja is not None and not vieja.get("alive")
+        if sigue:  # la muerta conservada en el tablero (conservar_muerta) ya tiene quien la reemplace
+            drop_session(old, f"sucedida por {new[:8]}")
     return old
+
+
+def estacionar(card: dict) -> None:
+    """Lo que deja una muerta para su sucesora: las reglas que le AVISABAN y las SUYAS quedan
+    estacionadas y las hereda su sucesora real (un resume, un frente restaurado tras reiniciar la PC,
+    o la coordinadora reabierta que el lienzo titula igual; ver _prioridad_sucesora), y queda en el
+    registro de restaurables. Antes las suyas se borraban: al restaurar, ningun frente avisaba. Corre
+    al borrar la tarjeta, o antes si la muerta se conserva en el tablero (conservar_muerta)."""
+    sid = card["session_id"]
+    n = park_rules_to(sid) + park_rules_from(sid)
+    if n:
+        with lock:
+            DEAD_TARGETS[sid] = {
+                "cwd": card.get("cwd"),
+                "agent": card.get("agent"),
+                "title": card.get("title") if card.get("title_source") == "user" else None,
+                "since": time.time(),
+            }
+            guardar_sucesion()
+        state.log(f"{n} reglas de y hacia {sid[:8]} quedan en espera de una sucesora")
+    restore_on_drop(card, True)
+
+
+def revivir_estacionada(s: dict) -> None:
+    """La muerta volvio (un resume con el mismo id, o el barrido la vio viva): la marca de cerrada desde
+    el tablero era de la vida anterior, y si se habia conservado recupera las reglas que estaciono
+    (adopt_dead_target con el mismo id). Con el lock."""
+    s["cerrada_a_mano"] = False
+    if s.get("estacionada"):
+        s["estacionada"] = False
+        en_hilo(adopt_dead_target, dict(s))
+
+
+def conservar_muerta(s: dict) -> bool:
+    """Una muerta que se puede revivir (restaurar) queda en el tablero DEAD_KEEP_S, no DEAD_GRACE_S:
+    tras un reinicio de la PC se ve que habia y se revive desde la tarjeta o la columna (pedido de
+    Ariel, 2026-10-23). Las que terminaron a proposito (/exit, /clear, cerrada desde el tablero) no."""
+    return (
+        not s.get("external")
+        and not s.get("cerrada_a_mano")
+        and not restore.ended_on_purpose(s)
+        and restore.eligible(s)
+    )
 
 
 def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
@@ -760,21 +810,12 @@ def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
             return False
     links.remove(lambda l: sid in (l["from"], l["to"]))
     if muerta and card:
-        # las que le AVISABAN y las SUYAS quedan estacionadas: las hereda su sucesora real (un resume,
-        # un frente restaurado tras reiniciar la PC, o la coordinadora reabierta que el lienzo titula
-        # igual; ver _prioridad_sucesora). Antes las suyas se borraban: al restaurar, ningun frente avisaba
-        n = park_rules_to(sid) + park_rules_from(sid)
-        if n:
-            with lock:
-                DEAD_TARGETS[sid] = {
-                    "cwd": card.get("cwd"),
-                    "agent": card.get("agent"),
-                    "title": card.get("title") if card.get("title_source") == "user" else None,
-                    "since": time.time(),
-                }
-                guardar_sucesion()
-            state.log(f"{n} reglas de y hacia {sid[:8]} quedan en espera de una sucesora")
+        if not card.get("estacionada"):
+            estacionar(card)
     else:
+        with lock:  # borrada a mano despues de estacionarse: no deja nada para una sucesora
+            if DEAD_TARGETS.pop(sid, None) is not None:
+                guardar_sucesion()
         with lock:
             for rule in rules.items:
                 if sid in (rule.get("from"), rule.get("to")) and any(
@@ -789,7 +830,8 @@ def drop_session(sid: str, reason: str, muerta: bool = False) -> bool:
             )
         )
     state.log(f"tarjeta {sid[:8]} borrada ({reason})")
-    restore_on_drop(card, muerta)
+    if not (muerta and card and card.get("estacionada")):  # estacionar ya la recordo
+        restore_on_drop(card, muerta)
     state.broadcast({"type": "removed", "session_id": sid})
     return True
 
@@ -939,6 +981,8 @@ def new_session(sid: str, agent: str, source: str) -> dict:
         "last_event_ts": None,
         "alive": True,
         "dead_since": None,
+        "cerrada_a_mano": False,  # la cerro el tablero (kill_agent): su muerte no se avisa
+        "estacionada": False,  # muerta conservada, con sus reglas en espera de una sucesora (estacionar)
         "end_reason": None,  # razon del SessionEnd (exit, logout, clear, other...); la usa restore.py
         "source": source,
         "hooked": source == "hook",
@@ -1019,7 +1063,8 @@ def marcar_muerta(s: dict, avisar: bool) -> None:
     # un /exit o /quit es el pedido de cerrarse: el proceso que termina despues no murio a medias
     # (medido el 2026-10-04: cerrar cuatro codas con /exit mando cuatro avisos falsos de «murio»)
     salida = (s.get("last_prompt") or "").strip().lower() in SALIDAS_A_PROPOSITO
-    if avisar and prev in ("corriendo", "te_necesita") and not salida:
+    # lo mismo un cierre pedido desde el tablero (POST /sessions/<sid>/kill, visto con U y X el 2026-10-22)
+    if avisar and prev in ("corriendo", "te_necesita") and not salida and not s.get("cerrada_a_mano"):
         en_hilo(on_died_working, s["session_id"], prev)
 
 
@@ -1778,6 +1823,7 @@ def adopt_process(p: dict) -> None:
                 )
                 if s["state"] == "muerta":
                     set_state(s, "termino")
+                revivir_estacionada(s)
                 touch(s)
             if s.get("pid") == p["pid"] and bool(s.get("chrome")) != bool(p.get("chrome")):
                 # la línea de comando es del proceso: también la tarjeta que ya existía antes del barrido
@@ -1971,6 +2017,7 @@ def refresh_alive(s: dict) -> bool:
             return False
         s["alive"] = True
         s["dead_since"] = None
+        revivir_estacionada(s)
         en_hilo(conocimiento.sesion_viva, s["session_id"])  # el nodo sesion vuelve a viva
         return True
     if not s["alive"]:
@@ -2127,9 +2174,21 @@ def check_liveness(sid: str) -> None:
         mirar_pantalla = coda_mirar_pantalla(s)
         fondo = coda_mirar_fondo(s)
         dead_since = parse_ts(s["dead_since"]) if s["state"] == "muerta" else None
-        if dead_since and (dt.datetime.now().astimezone() - dead_since).total_seconds() > DEAD_GRACE_S:
-            drop_session(sid, "muerta hace mas de 60 s", muerta=True)
-            return
+        edad = (dt.datetime.now().astimezone() - dead_since).total_seconds() if dead_since else 0
+        if edad > DEAD_GRACE_S:
+            if s.get("estacionada"):
+                if edad > DEAD_KEEP_S:
+                    drop_session(sid, f"muerta hace mas de {DEAD_KEEP_S // 3600} h", muerta=True)
+                    return
+            elif edad <= DEAD_KEEP_S and conservar_muerta(s):  # una vez: despues decide `estacionada`
+                s["estacionada"] = True
+                touch(s)
+                en_hilo(estacionar, dict(s))  # escribe reglas y registro: fuera del lock
+            else:
+                drop_session(
+                    sid, "muerta hace mas de 60 s" if edad <= DEAD_KEEP_S else "muerta hace mas de 24 h", muerta=True
+                )
+                return
         # transcripcion: el stat es barato (14 us) y va aca; leerla, no
         tp = s.get("transcript_path")
         try:

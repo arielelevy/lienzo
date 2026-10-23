@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { failMsg, rulesApi, sendNotice, sessionsApi, type Decision } from "../api";
+import { ApiError, failMsg, restoreApi, rulesApi, sendNotice, sessionsApi, type Decision, type RestoreResult } from "../api";
 import { hhmm } from "../nl";
 import { shortName } from "../names";
 import type { Session } from "../types";
@@ -101,8 +101,22 @@ export function useCardActions(s: Session, toast: ToastFn) {
     }, failMsg("cerrar el proceso"));
   };
 
+  /** la muerta se relanza con el retomar de su agente (claude --resume, codex resume…): nace una
+   *  tarjeta nueva que hereda título y reglas, y esta se va del tablero */
+  const revive = () =>
+    act(async () => {
+      const r = await restoreApi.one(s.session_id, s.pc).catch((e: unknown) => {
+        // un relanzamiento fallido contesta 400 con {restored, failed}: el motivo esta en failed
+        const fallo = e instanceof ApiError ? (e.body.failed as RestoreResult["failed"] | undefined)?.[0] : undefined;
+        throw fallo ? new Error(fallo.error) : e;
+      });
+      if (r.failed.length) throw new Error(r.failed[0].error);
+      return `${shortName(s)}: relanzada, ya aparece su tarjeta nueva`;
+    }, failMsg("revivir"));
+
   return {
     busy,
+    revive,
     act,
     scheduleContinue,
     pickDialog,

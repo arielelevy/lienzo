@@ -743,6 +743,13 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               {s.coordinator ? "★ Quitarle el rol de coordinadora" : "☆ Coordinadora del repo"}
             </button>
           )}
+          {s.alive === false && s.estacionada && (
+            <button type="button" role="menuitem" disabled={busy}
+              title="la relanza con el retomar de su agente, con su conversación, título y reglas"
+              onClick={() => { closeMenu(); void actions.revive(); }}>
+              ↻ Revivir
+            </button>
+          )}
           {s.alive && s.pid && s.backend !== "tmux" && !s.external && (
             <button type="button" role="menuitem" disabled={busy}
               onClick={() => { closeMenu(); void actions.kill(); }}>

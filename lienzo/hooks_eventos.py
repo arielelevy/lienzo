@@ -703,8 +703,14 @@ def apply_event(ev: dict) -> None:
         s["alive"] = True
         s["dead_since"] = None
         apply_hook(s, ev, name, created)
-        if created or name == "SessionStart":
+        if ev_pid_dead and s.get("estacionada"):
+            pass  # un evento viejo (de antes de morir) no le devuelve las reglas a una muerta conservada
+        elif created or name == "SessionStart":
+            s["estacionada"] = False  # adopt_dead_target recupera lo que haya estacionado
+            s["cerrada_a_mano"] = False
             ses.en_hilo(ses.adopt_dead_target, dict(s))
+        elif name != "SessionEnd" and s.get("pid") and ses.backend.agent_alive(s):
+            ses.revivir_estacionada(s)  # solo con el proceso vivo: un evento sin pid no prueba nada
         if ev_pid_dead and not (s.get("pid") and ses.backend.agent_alive(s)):
             ses.marcar_muerta(s, avisar=False)  # un evento viejo no dice que muriera trabajando ahora
         if created or name in ("SessionStart", "PiTree", "PiMetadata") or (s["agent"] == "pi" and name == "Stop"):

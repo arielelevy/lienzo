@@ -129,7 +129,10 @@ por seguridad).
 ### Tablero
 
 Tres columnas: Trabajo (corriendo y terminó), Te necesita (pide permiso, pregunta o está
-libre) y Muerta. `/` busca; los chips filtran por agente, PC y proyecto (Ctrl+click suma varios).
+libre) y Muerta. Una muerta que se puede revivir (no cerrada a propósito) queda 24 h: «↻ Revivir»
+en su menú la relanza con su conversación, título y reglas, y el click derecho en la columna Muerta
+ofrece «Revivir todas», con la memoria de cada PC como tope. Las demás se borran al minuto.
+`/` busca; los chips filtran por agente, PC y proyecto (Ctrl+click suma varios).
 Click en una tarjeta la elige y resalta sus conexiones; doble click abre el panel (pestañas *Chat*,
 *Pantalla* y *Conexiones*); Esc cierra de a una capa. Las tarjetas se pueden arrastrar desde su
 título a otro lugar (⤢ Ordenar las devuelve); con Alt, el arrastre conecta con otra tarjeta. Las
@@ -877,7 +880,7 @@ Por qué no llega una PC: el chip de la tira dice el motivo cuando una PC está 
 - Cablear: una regla «cuando termine» puede unir PCs; vive en la PC del origen y sobrevive a los
   reinicios. `coordinar.cablear()` cablea cada frente vivo hacia la coordinadora.
 - Restaurar: cada PC guarda en `~/.lienzo/restaurar.json` cómo relanzar sus agentes tras un
-  reinicio (no lo que se cerró a propósito). `POST /restaurar {session_id | all: true, pc?}` los
+  reinicio (no lo que se cerró a propósito). `POST /restaurar {session_id | session_ids | all: true, pc?}` los
   relanza retomando la conversación, de a uno, mirando la memoria libre. La restaurada hereda reglas
   y título aunque cambie de `session_id`. Con varios frentes del mismo agente en la carpeta gana el
   mismo id, después la restaurada desde el lienzo (en orden), después el mismo título; ninguna otra

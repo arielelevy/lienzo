@@ -121,6 +121,20 @@ export interface ScreenResponse {
 
 const ses = (sid: string, rest: string) => `/sessions/${sid}/${rest}`;
 
+/** POST /restaurar: la relanza con el retomar de su agente, en la PC dueña (`pc`; sin ella, esta) */
+export interface RestoreResult {
+  restored: { session_id: string; agent: string; cwd: string }[];
+  failed: { session_id: string; error: string }[];
+  /** con limit_by_memory: las que no entraron en la memoria de esa PC */
+  skipped?: string[];
+}
+export const restoreApi = {
+  one: (sid: string, pc?: string | null) => api.post<RestoreResult>("/restaurar", pc ? { session_id: sid, pc } : { session_id: sid }),
+  /** varias de una PC, de a una con pausa y mientras entren en su memoria (server.restore_local) */
+  some: (sids: string[], pc?: string | null) =>
+    api.post<RestoreResult>("/restaurar", { session_ids: sids, limit_by_memory: true, ...(pc ? { pc } : {}) }),
+};
+
 export const sessionsApi = {
   claudePipe: (sid: string, reconnect = false) => api.post<{ command: string; session_id: string; expires_at: number; connected: boolean }>(ses(sid, "claude-pipe"), { reconnect }),
   send: (sid: string, body: SendBody) => api.post<SendResult>(ses(sid, "send"), body),

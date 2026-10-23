@@ -56,9 +56,10 @@ Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
   la que se le cambia el título con `PUT /sessions/<sid>/title` queda con `native_name: None` y la consola con el
   nombre viejo. Esperado: al heredar o cambiar el título, hacer `/rename` + `/remote-control` (lo de `/native`) apenas
   la sesión quede quieta. Visto por Ariel en la coordinadora de OpenSyync (sid 56cfac40), 2026-10-22.
-- [ ] Cerrar una sesión con la acción «cerrar» del tablero (`POST /sessions/<sid>/kill` con confirmación) dispara
+- [x] Cerrar una sesión con la acción «cerrar» del tablero (`POST /sessions/<sid>/kill` con confirmación) dispara
   el aviso «murió sin terminar su encargo… restaurala». Un cierre pedido por una persona o la coordinadora no tiene que
   avisar como muerte inesperada. Visto con U y X, 2026-10-22.
+  Hecho el 2026-10-23: la tarjeta queda `cerrada_a_mano` y su muerte no se avisa.
 - [ ] Benchmark de CLIs (claude, codex, coda, pi, kiro) por costo y por tipo de tarea, para elegir el agente de
   cada encargo (decisión vigente en la memoria de `lienzo`, nodo 89ab95ed). Primero, medir o estimar el tamaño de
   cada tarea (archivos y líneas tocadas, tipo de trabajo, criterio de aceptación); sin eso comparar costos no dice nada.

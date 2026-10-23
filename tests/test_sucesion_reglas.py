@@ -145,3 +145,95 @@ def test_borrada_a_mano_sus_reglas_se_van_como_antes(entorno):
     reglas_de_un_frente()
     ses.drop_session(VIEJA, "borrada desde la UI")
     assert st.rules.items == [] and ses.DEAD_TARGETS == {}
+
+
+def _muerta_hace(monkeypatch, s, segundos):
+    """La tarjeta `s` murio hace `segundos`; check_liveness sin proceso ni pantalla."""
+    import datetime as dt
+
+    s.update(alive=False, state="muerta", pid=1, agent="claude")
+    s["dead_since"] = (dt.datetime.now().astimezone() - dt.timedelta(seconds=segundos)).isoformat()
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: False)
+    monkeypatch.setattr(ses.restore, "eligible", lambda s: True)
+    monkeypatch.setattr(ses, "en_hilo", lambda f, *a: f(*a))
+    ses.check_liveness(s["session_id"])
+
+
+def test_la_muerta_restaurable_queda_en_el_tablero_con_las_reglas_en_espera(entorno, monkeypatch):
+    """Pedido de Ariel (2026-10-23): tras reiniciar la PC las muertas se borraban a los 60 s y no se
+    veia que habia para revivir. Ahora quedan DEAD_KEEP_S, y la sucesora igual hereda sus reglas."""
+    tarjeta(COORD)
+    s = tarjeta(VIEJA, "opensyync - encargo A - motor")
+    reglas_de_un_frente()
+    _muerta_hace(monkeypatch, s, 30)
+    assert VIEJA in st.sessions and not s.get("estacionada")
+    _muerta_hace(monkeypatch, s, st.DEAD_GRACE_S + 5)
+    assert VIEJA in st.sessions and s["estacionada"]
+    assert next(r for r in st.rules.items if r["id"] == "informe")["parked_from"] == VIEJA
+    # la sucesora por titulo hereda y la muerta se va del tablero
+    nueva = tarjeta(NUEVA, "opensyync - encargo A - motor")
+    assert ses.adopt_dead_target(dict(nueva)) == VIEJA
+    assert VIEJA not in st.sessions
+    assert next(r for r in st.rules.items if r["id"] == "informe")["from"] == NUEVA
+
+
+def test_la_muerta_conservada_se_borra_a_las_24_h(entorno, monkeypatch):
+    s = tarjeta(VIEJA)
+    _muerta_hace(monkeypatch, s, st.DEAD_KEEP_S + 5)
+    assert VIEJA not in st.sessions
+
+
+def test_estacionada_y_borrada_a_mano_no_deja_sucesion(entorno, monkeypatch):
+    tarjeta(COORD)
+    s = tarjeta(VIEJA, "opensyync - encargo A - motor")
+    reglas_de_un_frente()
+    _muerta_hace(monkeypatch, s, st.DEAD_GRACE_S + 5)
+    assert VIEJA in ses.DEAD_TARGETS
+    ses.drop_session(VIEJA, "borrada desde la UI")
+    assert ses.DEAD_TARGETS == {}
+
+
+@pytest.mark.parametrize(
+    "ev",
+    [
+        {"hook_event_name": "SessionStart", "pid": 41},  # el pid ya murio: evento de la vida anterior
+        {"hook_event_name": "SessionEnd", "reason": "other"},
+        {"hook_event_name": "Stop"},  # sin pid, con el proceso muerto
+    ],
+)
+def test_un_evento_viejo_o_sin_proceso_no_le_devuelve_las_reglas(entorno, monkeypatch, ev):
+    """Code review 2026-10-23: un evento encolado de antes de morir re-prendia las reglas estacionadas
+    de una muerta conservada, y la coordinadora le mandaba avisos a nadie."""
+    import hooks_eventos as he
+
+    tarjeta(COORD)
+    s = tarjeta(VIEJA)
+    reglas_de_un_frente()
+    _muerta_hace(monkeypatch, s, st.DEAD_GRACE_S + 5)
+    adopciones = []
+    monkeypatch.setattr(ses, "adopt_dead_target", lambda c, *a: adopciones.append(c["session_id"]))
+    monkeypatch.setattr(ses, "read_transcript", lambda value: None)
+    he.apply_event({**ev, "session_id": VIEJA, "agent": "claude"})
+    assert s["estacionada"] and adopciones == []
+    assert all(not r["enabled"] for r in st.rules.items)
+
+
+@pytest.mark.parametrize("marca", [{"cerrada_a_mano": True}, {"last_event": "SessionEnd", "end_reason": "exit"}])
+def test_la_que_termino_a_proposito_se_borra_al_minuto(entorno, monkeypatch, marca):
+    s = tarjeta(VIEJA)
+    s.update(marca)
+    _muerta_hace(monkeypatch, s, st.DEAD_GRACE_S + 5)
+    assert VIEJA not in st.sessions
+
+
+def test_la_muerta_conservada_que_revive_recupera_sus_reglas(entorno, monkeypatch):
+    tarjeta(COORD)
+    s = tarjeta(VIEJA)
+    reglas_de_un_frente()
+    _muerta_hace(monkeypatch, s, st.DEAD_GRACE_S + 5)
+    assert all(not r["enabled"] for r in st.rules.items)
+    monkeypatch.setattr(ses, "en_hilo", lambda f, *a: f(*a))
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    monkeypatch.setattr(ses.conocimiento, "sesion_viva", lambda sid: None)
+    assert ses.refresh_alive(s)
+    assert not s["estacionada"] and all(r["enabled"] for r in st.rules.items)

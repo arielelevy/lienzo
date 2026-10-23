@@ -578,3 +578,16 @@ def test_peer_handler_expone_las_rutas_espejo(reg, lanzador):
 def test_ended_on_purpose_es_lista_blanca(razon, voluntaria):
     """Una razon de SessionEnd que no conocemos cuenta como muerte a restaurar, no como salida."""
     assert restore.ended_on_purpose({"last_event": "SessionEnd", "end_reason": razon}) is voluntaria
+
+
+def test_restaurar_varias_por_id_con_pausa_y_memoria(reg, lanzador, monkeypatch):
+    """«Revivir todas» del tablero (2026-10-23): solo las muertas que se ven, no todo el registro, con la
+    misma pausa y el mismo control de memoria que `all`."""
+    ids = guardar(reg, 3)
+    code, res = server.restore_local({"session_ids": [ids[0], ids[2]]})
+    assert code == 200 and sorted(r["session_id"] for r in res["restored"]) == sorted([ids[0], ids[2]])
+    assert lanzador.pausas == [server.RESTORE_GAP_S]
+    assert [e["session_id"] for e in restore.restorables()] == [ids[1]]
+    assert server.restore_local({"session_ids": [UUID]})[0] == 404
+    assert server.restore_local({"session_ids": []})[0] == 400
+    assert server.restore_local({"session_ids": [ids[1]], "session_id": ids[1]})[0] == 400
