@@ -350,3 +350,16 @@ test('el filtro trae las de proceso de Lienzo marcadas y su uso se registra en l
   await expect(page.getByText('Uso registrado: Sirvió.', { exact: true })).toBeVisible();
   expect(requests.find(r => r.method === 'POST')!.path).toBe('/conocimiento/lienzo/creencias/p1/uso');
 });
+
+test('cada bloque filtra por estado con su cantidad y vuelve a todas', async ({ page }) => {
+  await prepare(page);
+  const filtros = own(page).getByRole('group', { name: 'Filtrar De este proyecto por estado' });
+  await expect(filtros.getByRole('button')).toHaveText(['Todas 3', 'Espera tu veredicto 1', 'Vigente 1', 'Refutada 1']);
+  await filtros.getByRole('button', { name: 'Vigente 1' }).click();
+  await expect(own(page).locator('.learning-cards > li')).toHaveCount(1);
+  await expect(own(page).locator('.learning-cards')).toContainText('Creencia b1');
+  await filtros.getByRole('button', { name: 'Todas 3' }).click();
+  await expect(own(page).locator('.learning-cards > li')).toHaveCount(3);
+  // con un solo estado no hay nada que filtrar
+  await expect(proc(page).getByRole('group', { name: /por estado/ })).toHaveCount(0);
+});

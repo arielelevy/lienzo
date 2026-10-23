@@ -20,6 +20,10 @@ En la 0.6.14 quedaron corregidos T1, T2, T4, T5, T6, T8, T9 y T10, más el falso
   informe. El log dice «salteado: el turno respondía un envío sin_aviso» a las 22:33 y a las 22:34. En Kiro, la
   marca de que un envío no pide aviso parece quedar pegada a los turnos siguientes; en Codex y coda vale sólo para
   ese turno. Hace falta una prueba con dos turnos Kiro seguidos.
+- **`pedir_turno` de una sesión coda contesta 404 «sesion desconocida»** (reportado por OpenSyync, 2026-10-22).
+  `c.pedir_turno("motores", "31108cdc-b4ec-43b3-bf6c-468df377c2d2")`, desde el encargo H de OpenSyync, dio 404.
+  Antes, con el mismo patrón, la misma sesión había obtenido el turno (200). Hipótesis: después de un reinicio del
+  server o un cambio de id, el registro de turnos no la encuentra por el id que tiene ahora.
 
 ### Decisiones de Ariel del 2026-10-22 que agregan trabajo
 

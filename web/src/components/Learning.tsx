@@ -301,9 +301,18 @@ function BeliefCard({ item, busy, lienzo, onReview, onScope, evidence: options }
 
 function Block({ title, label, block, empty, children }: { title: string; label: string; block: ProjectBlock; empty: string; children: (x: Item) => JSX.Element }) {
   const waiting = block.items.filter(x => x.estado === "sin_veredicto").length;
+  // filtro por estado (Ariel, 2026-10-22): sólo los estados presentes, con su cantidad; vacío = todas
+  const [only, setOnly] = useState("");
+  const counts = new Map<string, number>();
+  for (const x of block.items) counts.set(x.estado, (counts.get(x.estado) ?? 0) + 1);
+  const shown = only && counts.has(only) ? block.items.filter(x => x.estado === only) : block.items;
   return <section className="knowledge-section" aria-label={label}><h3>{title}</h3>
     <p className="knowledge-note">{block.total} {block.total === 1 ? "creencia" : "creencias"}{waiting ? ` · ${waiting} ${waiting === 1 ? "espera" : "esperan"} tu veredicto` : ""}.</p>
-    {block.items.length === 0 ? <p className="knowledge-empty">{empty}</p> : <ul className="learning-cards">{block.items.map(children)}</ul>}
+    {counts.size > 1 && <div className="learning-filter" role="group" aria-label={`Filtrar ${title} por estado`}>
+      <button type="button" aria-pressed={!only || !counts.has(only)} onClick={() => setOnly("")}>Todas {block.items.length}</button>
+      {[...counts].map(([state, n]) => <button key={state} type="button" aria-pressed={only === state} onClick={() => setOnly(state)}>{STATES[state] ?? state} {n}</button>)}
+    </div>}
+    {block.items.length === 0 ? <p className="knowledge-empty">{empty}</p> : <ul className="learning-cards">{shown.map(children)}</ul>}
   </section>;
 }
 

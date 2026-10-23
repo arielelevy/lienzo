@@ -88,6 +88,9 @@
 .knowledge-query > input { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 6px 7px; font: inherit; }
 .knowledge-query > input:focus-visible, .learning-verdict input:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }
 .learning-cards { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 7px; }
+.learning-filter { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0; }
+.learning-filter button { font-size: 0.85em; padding: 2px 8px; border-radius: 10px; }
+.learning-filter button[aria-pressed="true"] { border-color: var(--accent, currentColor); font-weight: 600; }
 .learning-card { border: 1px solid var(--line); border-radius: 6px; padding: 9px 12px; background: var(--card); min-width: 0; }
 .learning-action { margin: 4px 0 3px; font-weight: 600; overflow-wrap: anywhere; }
 .learning-lead { margin: 2px 0 4px; font-size: 1.05em; font-weight: 600; }
