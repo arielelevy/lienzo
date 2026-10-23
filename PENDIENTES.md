@@ -8,6 +8,16 @@ Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
 Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las specs.
 
+### Revisión total de V (2026-10-22, `review/2026-10-22/code-review-total.md`)
+
+En curso: V arregla T1, T2, T9 y T4 (proyectos sin cursor quedan protegidos). AA arregla T3 y T11, y Z arregla T10 y T6.
+
+Para después de la 0.6.14:
+- **T5.** La depuración del log copia hasta el final y reemplaza el archivo, así que un aviso escrito en el medio se pierde. Hace falta que la rotación y el escritor compartan un lock.
+- **T7.** El consumidor de hooks borra el evento aunque `apply_event` falle por un error transitorio, como disco lleno. El evento tiene que quedar en cuarentena y reintentarse.
+- **T8.** Turnos (`rondas.py`) y restauración (`restore.py`) contestan éxito aunque no hayan podido guardar. Tienen que propagar el error o marcar el cambio como pendiente de guardar.
+- **«Quedó sin enviar» falso y «te necesita» que no se va** en tarjetas Codex: lo está viendo Z.
+
 ### Decisiones de Ariel del 2026-10-22 que agregan trabajo
 
 Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
