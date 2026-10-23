@@ -189,3 +189,25 @@ def test_merge_pi_dry_run_no_escribe_nada(tmp_path, capsys):
     install.merge_pi(str(destino), uninstall=False, dry_run=True)
     assert not destino.exists()
     assert "[dry-run]" in capsys.readouterr().out
+
+
+def test_peer_only_toca_solo_el_firewall(tmp_path):
+    """preparar-pc.cmd la corre elevada (2026-10-23): con otra cuenta de administrador, los hooks irian
+    a su perfil. `--peer-only` no imprime ni toca nada de hooks."""
+    import subprocess as sp
+
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    entorno = {**os.environ, "USERPROFILE": str(tmp_path), "HOME": str(tmp_path)}
+    # Popen y no run: la red de seguridad del archivo parcha subprocess.run (ningun netsh de verdad)
+    with sp.Popen(
+        [sys.executable, os.path.join(raiz, "install.py"), "--peer-only", "--dry-run"],
+        stdin=sp.DEVNULL,
+        stdout=sp.PIPE,
+        stderr=sp.PIPE,
+        text=True,
+        env=entorno,
+    ) as proc:
+        salida, error = proc.communicate(timeout=60)
+    assert proc.returncode == 0, error
+    assert salida.count("netsh advfirewall firewall add rule") == len(install.FIREWALL_RULES)
+    assert "hook" not in salida and os.listdir(tmp_path) == []

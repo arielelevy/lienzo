@@ -261,6 +261,11 @@ if __name__ == "__main__":
         help="regla de firewall (7322 TCP, 7323 UDP, perfil Privado, y entre IP de Tailscale) para emparejar PCs",
     )
     parser.add_argument(
+        "--peer-only",
+        action="store_true",
+        help="solo la regla de firewall de --peer, sin tocar hooks (preparar-pc.cmd la corre elevada)",
+    )
+    parser.add_argument(
         "--dry-run", action="store_true", help="imprime lo que haria (hooks y firewall), sin escribir nada"
     )
     only = parser.add_mutually_exclusive_group()
@@ -269,6 +274,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     un = args.uninstall
     dry = args.dry_run
+    if args.peer_only:
+        # elevado puede correr con otra cuenta: los hooks irian a su perfil, no al del usuario
+        peer_firewall(un, dry_run=dry)
+        raise SystemExit(0)
     print("python para el hook:", PY)
     ensure_state(dry_run=dry)
     if args.only in (None, "claude"):

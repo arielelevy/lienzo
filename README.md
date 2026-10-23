@@ -761,6 +761,9 @@ Un listener aparte (7322) atiende sólo `/peer/*`, en la IP de LAN (nunca `0.0.0
 pedido va firmado con HMAC de la clave del par, ventana de ±30 s y nonce.
 `py -3.14 install.py --peer` abre 7322 TCP y 7323 UDP sólo en el perfil Privado del firewall, y en
 cualquier perfil sólo entre IP de Tailscale (100.64.0.0/10 de los dos lados).
+Para dejar una PC siempre disponible, `preparar-pc.cmd` (doble click, con tu usuario) pone el lienzo
+en la carpeta Inicio y crea esas reglas con `install.py --peer-only`, lo único que pide administrador
+y lo único que hace elevado: sin hooks, que irían al perfil de otra cuenta. Al final dice qué quedó.
 `--peer-port` es también el puerto que se anuncia al emparejar (antes se anunciaba 7322 aunque se
 escuchara en otro).
 
