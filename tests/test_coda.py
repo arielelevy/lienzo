@@ -751,4 +751,4 @@ def test_error_de_red_reintenta_como_los_demas_con_tope(tmp_path, monkeypatch):
     ]
     log.write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")
     hooks_eventos.coda_log_activity(s)
-    assert s["last_error"] is None and s["coda_reintentos_red"] == 0
+    assert s["last_error"] is None and s["coda_reintentos_red"] == 0 and not s["retryable"]

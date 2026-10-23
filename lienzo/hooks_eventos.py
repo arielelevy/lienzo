@@ -471,6 +471,8 @@ def coda_reintento_de_red(s: dict, act: dict) -> None:
     if act["running"] or not error.startswith("coda: error de red"):
         if not act["running"] and not error:
             s["coda_reintentos_red"] = 0  # un turno que cerro bien corta la racha
+        if not s.get("last_error"):
+            s["retryable"] = False  # sin error en la tarjeta no queda «Reintentar» (code review 2026-10-23)
         return
     s["retryable"] = ses.transcripts.retryable_error(error)
     if not s["retryable"]:
