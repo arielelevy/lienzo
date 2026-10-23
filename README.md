@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.14**: «Aceptar con IA» en Aprendizaje con deshacer, agrupado por proyecto dentro de las columnas, avisos viejos que se van solos y arreglos de la revisión total de código.
+Versión **0.6.15**: el motor lógico reevalúa las creencias en el tiempo, deriva reglas y las reusa entre proyectos parecidos; «Revisar todo con IA» completo y filtros por estado en Aprendizaje.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.14.md).
+[Novedades, validación y límites](docs/releases/0.6.15.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
