@@ -29,6 +29,7 @@ ADJUNTO_BYTES = 1_000_000
 ADJUNTO_CHARS = 20_000  # un registro de ronda ronda los 10 KB
 TANDA_BYTES = 8_000_000
 TANDA_CHARS = 120_000
+PROMPT_MAX = 200_000  # adjuntos de la tanda más propuestas y candidatos
 _LOCK = threading.Lock()  # también cubre proceso_lienzo, compartido entre proyectos
 ACCIONES = {"aceptar", "rechazar", "corregir", "fusionar"}
 
@@ -375,7 +376,21 @@ def revisar(pid, agent, *, decidir=None):
             skip = {n["id"] for n in excluded}
             nodes = [n for n in nodes if n["id"] not in skip]
             prepared_sources = {nid: group for nid, group in prepared_sources.items() if nid not in skip}
-        raw = decidir(nodes, agent) if decidir else consultar(nodes, prepared_sources, agent, candidatos=candidates)
+        while True:
+            try:
+                raw = (
+                    decidir(nodes, agent)
+                    if decidir
+                    else consultar(nodes, prepared_sources, agent, candidatos=candidates)
+                )
+                break
+            except k.Rechazo as exc:
+                # Demasiada evidencia para una llamada: la mitad de las propuestas ahora, el resto en otra tanda.
+                if exc.codigo != 413 or len(nodes) == 1:
+                    raise
+                remaining += len(nodes) - len(nodes) // 2
+                nodes = nodes[: len(nodes) // 2]
+                prepared_sources = {n["id"]: prepared_sources[n["id"]] for n in nodes}
         raw = _redactar_ia(raw)  # también cubre adaptadores de decisión; antes de cualquier escritura
         items = _validar(raw, nodes)
         with k._abrir(pid) as con:
@@ -530,7 +545,7 @@ def consultar(nodes, sources, agent, *, runner=None, candidatos=None):
             ensure_ascii=False,
         )
     )
-    if len(prompt) > 100_000:
+    if len(prompt) > PROMPT_MAX:
         raise k.Rechazo("La evidencia supera el tope de la revisión IA; nada cambió", 413)
     run = runner or optimization_research_runner.run
     with tempfile.TemporaryDirectory(prefix="lienzo-AB-") as work:

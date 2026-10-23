@@ -179,6 +179,36 @@ def test_unreadable_attachment_skips_only_the_proposals_that_rely_on_it(monkeypa
     assert estados[node["id"]] == "propuesta" and estados[other["id"]] != "propuesta"
 
 
+def test_too_much_evidence_halves_the_batch_instead_of_failing(monkeypatch):
+    import creencias_revision_ia as r
+
+    first = seed()
+    hallazgo = k.crear_nodo("ab", "hallazgo", "otro hallazgo", {}, autor="server")
+    second = creencias.proponer(
+        "ab",
+        {
+            "texto": "Medir antes de lanzar",
+            "accion": "Mirar /memoria",
+            "dimension": "pruebas",
+            "fuentes": [hallazgo["id"]],
+        },
+        autor="server",
+    )
+    calls = []
+
+    def consult(nodes, sources, agent, **kwargs):
+        calls.append(len(nodes))
+        if len(nodes) > 1:
+            raise k.Rechazo("La evidencia supera el tope de la revisión IA; nada cambió", 413)
+        return reply(nodes)
+
+    monkeypatch.setattr(r, "consultar", consult)
+    batch = r.revisar("ab", "claude")
+    assert calls == [2, 1]
+    assert len(batch["items"]) == 1 and batch["hay_mas"] is True
+    assert {first["id"], second["id"]} - {batch["items"][0]["id"]}
+
+
 def test_ai_not_evaluable_is_visible_as_api_error(monkeypatch):
     import conocimiento_api as api
     import creencias_revision_ia as r
