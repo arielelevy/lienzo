@@ -376,13 +376,15 @@ details.fold > summary,
 .board-order > .ordenar { position: static; }
 .board-order button { font-size: 9.5px; border-radius: 14px; padding: 3px 9px; }
 .board-order button[aria-pressed="true"] { border-color: var(--acc); color: var(--fg); }
-.project-cluster { grid-column: 1 / -1; position: relative; z-index: 4; min-width: 0; margin: 0; padding: 8px 5px; border-top: 1px solid var(--line); font-size: 10px; overflow-wrap: anywhere; }
+.project-cluster { grid-column: var(--gc, 1 / -1); grid-row: var(--gr, auto); position: relative; z-index: 4; min-width: 0; margin: 0; padding: 8px 5px; border-top: 1px solid var(--line); font-size: 10px; overflow-wrap: anywhere; }
 .project-cluster .n { color: var(--dim); font-weight: normal; }
-.cluster-card { min-width: 0; }
+.cluster-card { min-width: 0; grid-column: var(--gc, auto); grid-row: var(--gr, auto); }
 .cluster-card .card { margin-bottom: 0; }
-.cards > .cluster-coordinator { grid-column: 1 / -1; width: min(100%, 213px); justify-self: center; margin-top: 26px; }
+.cards > .cluster-coordinator { grid-column: var(--gc, 1 / -1); width: min(100%, 213px); justify-self: center; margin-top: 26px; }
+/* en movil una sola subcolumna: las cajas de proyecto (project-pack.ts) vuelven a ir una debajo de otra */
 @media (max-width: 900px) {
   .cards > .cluster-coordinator { width: 100%; }
+  .project-cluster, .cluster-card, .cards > .cluster-coordinator { grid-column: 1 / -1; grid-row: auto; }
 }
 
 /* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y

@@ -32,6 +32,13 @@ for (const width of [1440, 390]) {
       if (width >= 900) expect(group.at(-1)!.y - group[0].bottom).toBeGreaterThanOrEqual(26);
     }
     if (width >= 900) {
+      // proyectos chicos lado a lado (project-pack.ts, 2026-10-23): con lugar en la grilla, los títulos
+      // de los dos proyectos de Trabajo quedan en la misma fila en vez de uno debajo del otro
+      const { pistas, tops } = await page.locator(".trabajo .cards").evaluate(el => ({
+        pistas: getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean).length,
+        tops: [...el.querySelectorAll<HTMLElement>(".project-cluster")].map(h => Math.round(h.getBoundingClientRect().top)),
+      }));
+      if (pistas >= 2) expect(new Set(tops).size).toBe(1);
       const arrows = await crucesDeFlechas(page);
       expect(arrows.flechas).toBeGreaterThan(0);
       expect(arrows.cruces).toEqual([]);

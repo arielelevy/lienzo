@@ -7,6 +7,7 @@ import { Card, freeGroups, PICK_MS } from "./Card";
 import { ChromeCard, chromeConexiones } from "./ChromeCard";
 import { ApiError, restoreApi, type RestoreResult } from "../api";
 import { pcOf } from "./PcStrip";
+import { cardCell, packProjects } from "../project-pack";
 import { passesProjects, repoGroups } from "./ProjectStrip";
 import type { Link, Peer, Pending, Rule, Session, State } from "../types";
 import { hasConsole, searchText, shortName, stalledReason } from "../names";
@@ -489,8 +490,8 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     // idea. Con Alt la tarjeta conecta con otra (el agarre tambien, que es la forma que funciona
     // con el dedo); sin Alt se mueve por el tablero.
     const alt = e.altKey && conecta;
-    // En grupos el lugar lo decide el proyecto. Alt sigue conectando tarjetas.
-    if (layout === "projects" && !alt) return;
+    // En grupos tambien se mueven a mano (pedido de Ariel, 2026-10-23): la suelta sale de la caja de
+    // su proyecto y la caja se reacomoda sin ella; ▦ las devuelve.
     pressRef.current = { sid, x: e.clientX, y: e.clientY, alt };
   };
 
@@ -866,9 +867,9 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const renderSession = (s: Session, grupos: ReturnType<typeof freeGroups>, project?: string) => {
+  const renderSession = (s: Session, grupos: ReturnType<typeof freeGroups>, project?: string, celda?: React.CSSProperties) => {
     // la que se esta moviendo manda sobre la posicion guardada: es la de ahora
-    const pos = layout === "projects" ? undefined : moving?.sid === s.session_id ? moving : libres[s.session_id];
+    const pos = moving?.sid === s.session_id ? moving : libres[s.session_id];
     const caja = (
     <div
       key={s.session_id}
@@ -877,7 +878,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       // el tope de la derecha lo pone el CSS y no un numero fijo: al angostar la
       // ventana la tarjeta se recuesta contra el borde en vez de salirse del
       // tablero y estrenar un scroll horizontal
-      style={pos ? { left: `min(${pos.x}px, calc(100% - ${pos.w}px))`, top: pos.y, width: pos.w } : undefined}
+      style={pos ? { left: `min(${pos.x}px, calc(100% - ${pos.w}px))`, top: pos.y, width: pos.w } : celda}
     >
       <Card
         session={s}
@@ -1100,17 +1101,37 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   {/* columna ancha: subcolumnas por CSS (grilla de var(--lanes) en .col.wide .cards),
                       no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
                       y perderia su estado (pedido expandido, input de renombrar, toast) */}
-                  {layout === "projects" ? repoGroups(list).flatMap(group => {
-                    const members = new Set(group.members);
-                    const cards = list.filter(s => members.has(s.repo_key || s.repo))
-                      .sort((a, b) => Number(!!a.coordinator) - Number(!!b.coordinator));
+                  {layout === "projects" ? (() => {
+                    const cajas = repoGroups(list).map(group => {
+                      const members = new Set(group.members);
+                      const cards = list.filter(s => members.has(s.repo_key || s.repo))
+                        .sort((a, b) => Number(!!a.coordinator) - Number(!!b.coordinator));
+                      return { group, cards };
+                    });
+                    // cajas de proyecto en estantes, a lo ancho de las subcolumnas (project-pack.ts)
+                    // las movidas a mano van sueltas por el tablero: no ocupan lugar en la caja
+                    const suelta = (s: Session) => !!libres[s.session_id] || moving?.sid === s.session_id;
+                    const enCaja = cajas.map(c => {
+                      const cards = c.cards.filter(s => !suelta(s));
+                      return { ...c, enCaja: cards, coordEnCaja: cards.length > 0 && !!cards[cards.length - 1].coordinator };
+                    });
+                    const lugar = packProjects(enCaja.map(c => ({ key: c.group.key, n: c.enCaja.length, coordinator: c.coordEnCaja })), lanes[k]);
                     // Las tarjetas siguen como hijas directas de .cards, con su session_id:
                     // cambiar el grupo o el modo no remonta sus formularios.
-                    return [
-                      <h3 key={`project-heading:${group.key}`} className="project-cluster" aria-label={group.label}>{group.label} <span className="n">{cards.length}</span></h3>,
-                      ...cards.map(s => renderSession(s, new Map(), group.key)),
-                    ];
-                  }) : list.map(s => renderSession(s, grupos))}
+                    return enCaja.flatMap(({ group, cards, enCaja: fijas, coordEnCaja }) => {
+                      const p = lugar.get(group.key)!;
+                      const celda = (col: string, row: number) => ({ "--gc": col, "--gr": String(row) }) as React.CSSProperties;
+                      return [
+                        <h3 key={`project-heading:${group.key}`} className="project-cluster" aria-label={group.label} style={celda(`${p.col} / span ${p.k}`, p.row)}>{group.label} <span className="n">{cards.length}</span></h3>,
+                        ...cards.map(s => {
+                          const i = fijas.indexOf(s);
+                          if (i < 0) return renderSession(s, new Map(), group.key);
+                          const c = cardCell(p, i, fijas.length, coordEnCaja);
+                          return renderSession(s, new Map(), group.key, celda(c.col, c.row));
+                        }),
+                      ];
+                    });
+                  })() : list.map(s => renderSession(s, grupos))}
                   </div>
                 </>
               )}
@@ -1142,11 +1163,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           esta explicando otra cosa y esto seria ruido */}
       {!sinTarjetas && (
         <p className="ayuda">
-          <span>{layout === "projects" ? "Cada proyecto reúne sus frentes y su ★ coordinadora abajo" : "Arrastrá una tarjeta desde su título para moverla"}</span>
+          <span>{layout === "projects" ? "Cada proyecto reúne sus frentes y su ★ coordinadora abajo; arrastrá una desde su título para moverla" : "Arrastrá una tarjeta desde su título para moverla"}</span>
           <span>
             <b>Alt</b> + arrastrar la conecta con otra
           </span>
-          <span>{layout === "projects" ? "⤢ Ordenar vuelve al orden habitual" : "⤢ Ordenar las devuelve a su lugar"}</span>
+          <span>{layout === "projects" ? "▦ devuelve las movidas a su proyecto · ⤢ vuelve al orden habitual" : "⤢ Ordenar las devuelve a su lugar"}</span>
         </p>
       )}
     </>

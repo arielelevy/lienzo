@@ -179,3 +179,23 @@ test("Esc en el segundo arrastre la devuelve a donde la dejó el primero, no al 
   expect(Math.abs(despues.x - primera.x)).toBeLessThan(2);
   expect(Math.abs(despues.y - primera.y)).toBeLessThan(2);
 });
+
+test("en la vista por proyecto también se mueve a mano, y ▦ la devuelve a su caja", async ({ page }) => {
+  // pedido de Ariel (2026-10-23): antes la vista por proyecto no dejaba correr tarjetas
+  await abrirTablero(page);
+  await page.getByRole("button", { name: "Por proyecto", exact: true }).click();
+  await esperarQuietud(page);
+  const antes = await caja(page, SID.mapas);
+  await arrastrar(page, SID.mapas, 180, 120);
+  await esperarQuietud(page);
+  const despues = await caja(page, SID.mapas);
+  expect(Math.abs(despues.x - (antes.x + 180))).toBeLessThan(2);
+  expect(Math.abs(despues.y - (antes.y + 120))).toBeLessThan(2);
+  await expect(page.locator(`.capa-libre > div .card[data-sid="${SID.mapas}"]`)).toBeVisible();
+  await page.getByRole("button", { name: "Por proyecto", exact: true }).click();
+  await esperarQuietud(page);
+  await expect(page.locator(`.capa-libre > div .card[data-sid="${SID.mapas}"]`)).toHaveCount(0);
+  const vuelta = await caja(page, SID.mapas);
+  expect(Math.abs(vuelta.x - antes.x)).toBeLessThan(2);
+  expect(Math.abs(vuelta.y - antes.y)).toBeLessThan(2);
+});
