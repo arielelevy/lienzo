@@ -56,6 +56,7 @@ import aprendizaje_api
 import conocimiento as k
 import contexto_ia
 import creencias
+import creencias_revision_ia
 import identity
 import patrones_desarrollo
 import patrones_evidencia
@@ -225,6 +226,13 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             return 200, creencias.listar(pid)
         if metodo == "POST":
             return 200, creencias.proponer(pid, d, autor=autor)
+    if resto == ["revision-ia"]:
+        if metodo == "GET":
+            return 200, creencias_revision_ia.listar(pid)
+        if metodo == "POST":
+            return 200, creencias_revision_ia.revisar(pid, d.get("agente"))
+    if len(resto) == 3 and resto[0] == "revision-ia" and resto[2] == "deshacer" and metodo == "POST":
+        return 200, creencias_revision_ia.deshacer(pid, resto[1], d.get("creencia"))
     if len(resto) == 3 and resto[0] == "creencias" and resto[2] == "veredicto" and metodo == "POST":
         return 200, creencias.resolver(pid, resto[1], d)
     if len(resto) == 3 and resto[0] == "creencias" and resto[2] == "uso" and metodo == "POST":

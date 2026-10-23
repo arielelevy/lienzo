@@ -94,6 +94,11 @@ def proponer(pid, data, *, autor, con=None):
     if _alcance(pid, data.get("alcance", "proyecto")) != "proyecto":
         payload["alcance"] = data["alcance"]
     digest = hashlib.sha256(json.dumps([text, payload], sort_keys=True).encode()).hexdigest()
+    import metadatos_creencias
+
+    payload["metadatos"] = metadatos_creencias.completar(
+        pid, context, metadatos_creencias.relacionadas(con, pid, nodes)
+    )
     belief = k.crear_nodo(pid, "decision", text, payload, autor=autor, clave_ingesta="creencia:" + digest, con=con)
     # sólo al nacer: repetir la propuesta no reactiva un vínculo que alguien retiró
     for node in nodes if belief.get("creado") else []:
@@ -136,6 +141,10 @@ def _veredicto(con, pid, nid, por, result, evidence_id, motive, until):
         "veredicto_por": por,
         "veredicto_fecha": k.ahora(),
     }
+    if evidence["datos"].get("clase") == "ia_delegada":
+        fields.update(ia_delegada=True, confianza="veredicto IA delegada")
+    elif "ia_delegada" in node["datos"]:
+        fields["ia_delegada"] = False  # un veredicto humano posterior sustituye la delegación (AB/AA)
     if result == "validada":
         fields["vigente_hasta"] = _vencimiento(until)
     k.actualizar_datos(pid, nid, fields, por=por, motivo=motive, con=con)

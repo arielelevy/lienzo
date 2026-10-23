@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { api, failMsg } from "../api";
+import LearningReviewIA from "./LearningReviewIA";
 
 /** Aprendizaje del proyecto en una vista: todas sus creencias con su estado y el veredicto en un clic, las de
  *  cómo se trabaja con Lienzo aparte, un filtro opcional por lo que vas a hacer y los patrones. Leer no
@@ -512,6 +513,7 @@ export function Learning({ base, session }: { base: string; session?: string }) 
         <div className="knowledge-query-actions"><button className="primary" type="submit" disabled={loading}>{loading ? "Consultando…" : "Ver qué aplica"}</button>{loading && <button type="button" onClick={cancel}>Cancelar consulta</button>}<button type="button" disabled={reasonBusy || loading} onClick={() => void infer()}>{reasonBusy ? "Razonando…" : "Contrastar con Prolog"}</button></div>
       </details>
       <div className="knowledge-query-actions"><button type="button" disabled={contrastBusy} onClick={() => void contrastCandidates()}>{contrastBusy ? "Contrastando…" : "Contrastar candidatos"}</button></div>
+      <LearningReviewIA key={base} base={base} changed={async () => { await loadProject(); if (consulted.current) await load(); }} />
     </form>
     <div className="knowledge-results" aria-busy={loading || projectLoading}>
       {projectLoading && !project && <p role="status">Leyendo el aprendizaje del proyecto…</p>}
