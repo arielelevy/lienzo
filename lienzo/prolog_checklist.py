@@ -168,7 +168,8 @@ def hechos(context, beliefs, apoyos, graph, deriva, ahora) -> list:
         facts.append(L("creencia", bid))
         if isinstance(data.get("resultado"), str):
             facts.append(L("veredicto", bid, data["resultado"]))
-        if str(data.get("veredicto_por", "")).startswith("persona:"):
+
+        if str(data.get("veredicto_por", "")).startswith("persona:") and creencias._veredicto_evaluable(b):
             facts.append(L("por_persona", bid))
         if isinstance(data.get("evidencia_veredicto"), str):
             facts.append(L("evidencia_veredicto", bid, data["evidencia_veredicto"]))
@@ -409,5 +410,20 @@ def checklist(pid, context, *, limite=8, esperar_wsl=True):
         items += [{**x, "proyecto": creencias.PROYECTO_LIENZO} for x in own if x["alcance"] == "proceso_lienzo"]
     cuestionadas = [x for x in items if x["estado"] == "cuestionada"]
     out = creencias.armar(pid, context, [x for x in items if x["estado"] != "cuestionada"], limite=limite)
+    import prolog_ciclo
+
+    try:
+        if not esperar_wsl and prolog_learning.dormido():
+            externas, reuso = [], {"estado": "sin_motor", "motivo": "WSL dormido"}
+        else:
+            externas, reuso = prolog_ciclo.reusar(pid, context), {"estado": "evaluado"}
+    except (prolog_ciclo.servicio.ErrorServicio, ValueError, k.Rechazo) as exc:
+        externas, reuso = [], {"estado": "sin_contraste", "motivo": str(exc)}
+    # Las propias y las de proceso conservan prioridad. No duplicar referencias ya presentes.
+    refs = {(x.get("proyecto", pid), x["creencia"]) for x in items}
+    externas = [x for x in externas if (x["proyecto"], x["creencia"]) not in refs]
+    out["items"] = [*out["items"], *externas][:limite]
+    out["total"] += len(externas)
+    out["reuso"] = reuso
     # tres listas disjuntas: aplicables sostenidas, cuestionadas y las que no aplican con su motivo
     return {**out, "motor": motor, **extra, "cuestionadas_total": len(cuestionadas), "cuestionadas": cuestionadas[:50]}

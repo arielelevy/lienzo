@@ -5,7 +5,6 @@ import json
 import random
 import shutil
 import sqlite3
-import subprocess
 from pathlib import Path
 
 import conocimiento as k
@@ -289,6 +288,7 @@ def test_con_diferencias_no_declara_listo(monkeypatch):
 
 
 def test_motor_ausente_o_caido_no_es_vacio(monkeypatch, tmp_path):
+    monkeypatch.setattr(motor, "despertar", lambda: None)
     pid, _, _ = _grafo()
     monkeypatch.setattr(motor, "ENGINE", tmp_path / "motor-logico/main.pl")
     code, out = pc.contrastar(pid)
@@ -296,18 +296,25 @@ def test_motor_ausente_o_caido_no_es_vacio(monkeypatch, tmp_path):
 
     monkeypatch.setattr(motor, "ENGINE", Path(__file__))  # existe: se prueba el proceso, no la ruta
 
-    def timeout(*a, **kw):
-        raise subprocess.TimeoutExpired("swipl", 20)
+    import prolog_servicio
 
-    monkeypatch.setattr(pc.subprocess, "run", timeout)
+    def timeout(*a, **kw):
+        raise prolog_servicio.ErrorServicio("plazo del motor excedido")
+
+    monkeypatch.setattr(prolog_servicio, "consultar", timeout)
     assert pc.contrastar(pid)[0] == 503
 
 
 def test_rechazo_del_motor_informa_su_codigo(monkeypatch):
+    monkeypatch.setattr(motor, "despertar", lambda: None)
     pid, _, _ = _grafo()
     monkeypatch.setattr(motor, "ENGINE", Path(__file__))
-    err = json.dumps({"error": "x", "code": "unsafe_rule"})
-    monkeypatch.setattr(pc.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 2, "", err + "\n"))
+    import prolog_servicio
+
+    def reject(*args, **kwargs):
+        raise prolog_servicio.ErrorServicio("unsafe_rule: x")
+
+    monkeypatch.setattr(prolog_servicio, "consultar", reject)
     code, out = pc.contrastar(pid)
     assert code == 503 and "unsafe_rule" in out["error"]
 

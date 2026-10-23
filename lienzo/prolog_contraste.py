@@ -14,7 +14,6 @@ import hashlib
 import json
 import os
 import sqlite3
-import subprocess
 import threading
 
 import conocimiento as k
@@ -271,35 +270,15 @@ def run(payload: dict, despertar: bool = True) -> dict:
     if not _ocupado.acquire(blocking=False):
         raise k.Rechazo("El contraste lógico está ocupado; volvé a consultar", 409)
     try:
-        result = subprocess.run(
-            prolog_learning.command(),
-            input=text + "\n",
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=20,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        prolog_learning.respondio()
-        if result.returncode:
-            code = _codigo(result.stderr)
-            raise prolog_learning.MotorError(f"El motor rechazó el contraste ({code})")
-        if len(result.stdout.encode("utf-8")) > 8 * 1024 * 1024:
-            raise prolog_learning.MotorError("La respuesta del motor excede 8 MiB")
-        return json.loads(result.stdout)
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        import prolog_servicio
+
+        return prolog_servicio.consultar(payload, despertar=False)
+    except (OSError, ValueError, prolog_servicio.ErrorServicio) as exc:
         raise prolog_learning.MotorError(
-            f"Motor Prolog no disponible o respuesta inválida ({type(exc).__name__})"
+            f"Motor Prolog no disponible o respuesta inválida ({type(exc).__name__}: {exc})"
         ) from None
     finally:
         _ocupado.release()
-
-
-def _codigo(stderr: str) -> str:
-    try:
-        return str(json.loads(stderr.strip().splitlines()[-1])["code"])[:40]
-    except ValueError, KeyError, IndexError, TypeError:
-        return "sin código"
 
 
 def _literal(value, what: str) -> dict:

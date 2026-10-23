@@ -5,6 +5,12 @@ description: Coordinar terminales de Claude Code, Codex, Pi y coda en paralelo c
 
 # lienzo · coordinar terminales en paralelo
 
+Antes de planear lanzamientos, pruebas o commits, leer `<LIENZO_HOME>/reglas-proceso.md`
+(`~/.lienzo/reglas-proceso.md` si no se configuró LIENZO_HOME), si existe. Es la proyección
+de principios de proceso aceptados: cada entrada enlaza a su creencia y revisión. Consultar
+su estado actual antes de aplicarla; una objeción posterior la excluye de la proyección.
+Si el archivo falta o el motor informa error, no inventar principios ni dar propuestas por aceptadas.
+
 El lienzo es el tablero de las sesiones de Claude Code y Codex que corren en terminales de
 Windows. Server local en `127.0.0.1:7321`, se levanta con `lienzo-server.cmd`. Una tarjeta por
 sesión, con su conversación, una caja para contestarle, y aprobación de permisos sin ir a la

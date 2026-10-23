@@ -233,9 +233,19 @@ def test_wsl_en_frio_se_despierta_aparte_del_tiempo_de_la_consulta(monkeypatch):
     assert calls[0][2] is subprocess.DEVNULL and calls[1][1] == 12
     motor._ultimo_ok = __import__("time").monotonic()  # recién usado: no se paga el arranque otra vez
     calls.clear()
+    import prolog_servicio
+
+    persistent_calls = []
+
+    def persistent(payload, **kwargs):
+        persistent_calls.append(kwargs)
+        return {"conclusions": []}  # respuesta inválida deliberada: se conserva el oráculo
+
+    monkeypatch.setattr(prolog_servicio, "consultar", persistent)
     with pytest.raises(ValueError):
         pc.resultados(pc.run(pc.consulta([])), [])
-    assert [c[0][-1] for c in calls] == ["halt"] and calls[0][1] == 20
+    assert calls == []  # WSL está caliente y el transporte nuevo reutiliza el proceso
+    assert len(persistent_calls) == 1 and persistent_calls[0]["despertar"] is False
 
 
 def test_wsl_que_no_arranca_se_informa_sin_consultar(monkeypatch):

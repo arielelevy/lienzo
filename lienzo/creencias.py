@@ -16,7 +16,18 @@ import aprendizaje
 import conocimiento as k
 
 DIMENSIONES = {"herramientas", "contexto", "memoria", "olas", "pruebas", "coordinacion", "capacidades"}
-CONTEXTO = {"agente", "modelo", "fase", "tipo_trabajo", "tecnologia", "area", "version_agente", "version_modelo"}
+CONTEXTO = {
+    "agente",
+    "modelo",
+    "fase",
+    "tipo_trabajo",
+    "tecnologia",
+    "area",
+    "version_agente",
+    "version_modelo",
+    "tipo_archivo",
+    "ruta",
+}
 USOS = {"sirvio", "no_aplico", "ya_sabido"}
 # dos alcances (pedido de Ariel, 2026-10-22): lo propio de cada proyecto y cómo se trabaja con Lienzo
 # (coordinación, frentes, verificación, releases), que vive en el proyecto `lienzo` y vale para todos
@@ -70,6 +81,8 @@ def proponer(pid, data, *, autor, con=None):
     if con is None:
         with k._abrir(pid) as connection:
             return proponer(pid, data, autor=autor, con=connection)
+    if not con.in_transaction:
+        con.execute("BEGIN IMMEDIATE")  # buscar equivalente y anexar evidencia forman una operación
     dimension = data.get("dimension")
     if not isinstance(dimension, str) or dimension not in DIMENSIONES:
         raise k.Rechazo("dimensión inválida")
@@ -93,13 +106,57 @@ def proponer(pid, data, *, autor, con=None):
     # sin alcance vale «proyecto»: así la clave de una propuesta repetida no cambia respecto de las anteriores
     if _alcance(pid, data.get("alcance", "proyecto")) != "proyecto":
         payload["alcance"] = data["alcance"]
+    if "regla_logica" in data:
+        import prolog_programa
+
+        try:
+            prolog_programa.validar(data["regla_logica"])
+        except ValueError as exc:
+            raise k.Rechazo(f"regla_logica inválida: {exc}") from None
+        payload["regla_logica"] = data["regla_logica"]
     digest = hashlib.sha256(json.dumps([text, payload], sort_keys=True).encode()).hexdigest()
     import metadatos_creencias
 
     payload["metadatos"] = metadatos_creencias.completar(
         pid, context, metadatos_creencias.relacionadas(con, pid, nodes)
     )
-    belief = k.crear_nodo(pid, "decision", text, payload, autor=autor, clave_ingesta="creencia:" + digest, con=con)
+    import prolog_programa
+
+    belief = prolog_programa.equivalente(con, pid, payload)
+    if belief is None:
+        belief = k.crear_nodo(pid, "decision", text, payload, autor=autor, clave_ingesta="creencia:" + digest, con=con)
+    if not belief.get("creado") and payload.get("regla_logica"):
+        previous = belief["datos"].get("fuentes", [])
+        union = sorted(set(previous) | set(sources))
+        if len(union) > 30:
+            raise k.Rechazo("La propuesta equivalente supera las 30 fuentes; no se descarta evidencia", 409)
+        observations = belief["datos"].get("observaciones", [])
+        observation = {"texto": text, "fuentes": sorted(set(sources))}
+        changed = union != previous or (text != belief["texto"] and observation not in observations)
+        if text != belief["texto"] and observation not in observations:
+            observations = [*observations, observation]
+        if changed:
+            metadata = metadatos_creencias.completar(
+                pid,
+                context,
+                metadatos_creencias.relacionadas(con, pid, [k._nodo(con, pid, source) for source in union]),
+            )
+            belief = {
+                **k.actualizar_datos(
+                    pid,
+                    belief["id"],
+                    {"fuentes": union, "observaciones": observations, "metadatos": metadata},
+                    por=autor,
+                    motivo="evidencia adicional de propuesta equivalente",
+                    con=con,
+                ),
+                "creado": False,
+            }
+            for node in nodes:
+                if node["id"] not in previous and node["tipo"] in _FUENTES_QUE_MOTIVAN:
+                    k.vincular(
+                        pid, belief["id"], "motivada_por", node["id"], autor=autor, motivo="nueva evidencia", con=con
+                    )
     # sólo al nacer: repetir la propuesta no reactiva un vínculo que alguien retiró
     for node in nodes if belief.get("creado") else []:
         if node["tipo"] in _FUENTES_QUE_MOTIVAN:
@@ -141,6 +198,9 @@ def _veredicto(con, pid, nid, por, result, evidence_id, motive, until):
         "veredicto_por": por,
         "veredicto_fecha": k.ahora(),
     }
+    import prolog_programa
+
+    fields["revision_veredicto"] = prolog_programa.revision(node)
     if evidence["datos"].get("clase") == "ia_delegada":
         fields.update(ia_delegada=True, confianza="veredicto IA delegada")
     elif "ia_delegada" in node["datos"]:
@@ -387,18 +447,36 @@ def _evaluar(node, context, apoyos, cadenas, ahora=None):
     """El primer motivo por el que no aplica, en orden de gravedad, o `aplicable`, con las cadenas
     hasta un respaldo caído. `cadenas(id)` se llama sólo para las validadas con respaldo activo."""
     data = node["datos"]
+
     if node["estado"] in ("revertida", "reemplazada") or data.get("resultado") == "refutada":
         return "refutada", []
     if (
         node["estado"] != "vigente"
         or data.get("resultado") != "validada"
         or not str(data.get("veredicto_por", "")).startswith("persona:")
+        or not _veredicto_evaluable(node)
     ):
         return "sin_veredicto", []
     if (node["id"], data.get("evidencia_veredicto")) not in apoyos:
         return "respaldo_retirado", []
     chains = cadenas(node["id"])
     return _vigencia(data, context, chains, ahora), chains
+
+
+def _contexto_guardado_valido(data):
+    required = data.get("contexto")
+    return (
+        isinstance(required, dict)
+        and not (set(required) - CONTEXTO)
+        and all(isinstance(v, str) for v in required.values())
+    )
+
+
+def _veredicto_evaluable(node):
+    import prolog_programa
+
+    # Un contexto roto conserva su diagnóstico, después de respaldo y vigencia.
+    return prolog_programa.veredicto_actual(node) or not _contexto_guardado_valido(node["datos"])
 
 
 def _vigencia(data, context, chains, ahora=None):
@@ -408,11 +486,7 @@ def _vigencia(data, context, chains, ahora=None):
     if not _vigente(data, ahora):
         return "vencida"
     required = data.get("contexto")
-    if (
-        not isinstance(required, dict)
-        or set(required) - CONTEXTO
-        or not all(isinstance(v, str) for v in required.values())
-    ):
+    if not _contexto_guardado_valido(data):
         return "contexto_invalido"  # metadata rota no se lee como «cualquier contexto»
     if context is None:
         return "vigente"
@@ -450,6 +524,15 @@ def _item(node, state, chains):
     }
     if chains:
         item["cadenas"] = chains
+    import prolog_ciclo
+
+    temporal = prolog_ciclo.estado_actual(node)
+    if temporal:
+        item.update(
+            estado="cuestionada", motivo="La reevaluación del motor requiere un nuevo veredicto", reevaluacion=temporal
+        )
+    elif node["estado"] in ("propuesta", "vigente") and data.get("ia_delegada") and not data.get("regla_logica"):
+        item.update(estado="datos_insuficientes", motivo="Falta formalizar la cláusula de la creencia revisada por IA")
     found = data.get("contraste")
     if isinstance(found, dict) and isinstance(found.get("resultado"), str):
         # lo que el motor dijo de la propuesta al guardarla (S): una observación con fecha, no el estado actual
@@ -626,6 +709,10 @@ def texto_aprendizajes(items):
 
 def registrar_uso(pid, nid, data):
     """Si un aprendizaje mostrado sirvió: queda en su historial y sólo marca `revisar`."""
+    if data.get("destino") is not None:
+        import prolog_ciclo
+
+        return prolog_ciclo.registrar_uso_destino(pid, nid, data["destino"], data)
     por = k._texto(data.get("por"), "por", 200)
     if k.rol_de(por) not in (k.C, k.P) or not por.split(":", 1)[1].strip():
         raise k.Rechazo("el uso lo declara persona:<nombre> o coordinadora:<sesión>", 403)

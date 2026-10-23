@@ -690,16 +690,41 @@ class _Conexion:
         self.con = sqlite3.connect(self.path, timeout=10, isolation_level="DEFERRED")
         self.con.row_factory = sqlite3.Row
         self.con.execute("PRAGMA foreign_keys = ON")
+        # Temporal por conexión: captura también los cambios recibidos por réplica.
+        self.con.execute("CREATE TEMP TABLE proyectos_prolog (proyecto TEXT PRIMARY KEY) WITHOUT ROWID")
+        self.con.execute(
+            "CREATE TEMP TRIGGER proyectos_prolog_cambio AFTER INSERT ON main.cambio "
+            "BEGIN INSERT OR IGNORE INTO proyectos_prolog VALUES (NEW.proyecto); END"
+        )
         return self.con
 
+    def _proyectos_tocados(self) -> list:
+        """Después del commit: qué proyectos cambió esta conexión. Si no se puede leer, lo guardado queda igual."""
+        try:
+            if getattr(self.con, "total_changes", 0) <= 0:
+                return []
+            return [r[0] for r in self.con.execute("SELECT proyecto FROM proyectos_prolog ORDER BY proyecto")]
+        except sqlite3.Error as exc:
+            state.log(f"Prolog: no se pudo leer qué proyectos cambiaron: {exc}")
+            return []
+
     def __exit__(self, et, ev, tb):
+        proyectos = []
         try:
             if et is None:
                 self.con.commit()
+                proyectos = self._proyectos_tocados()
             else:
                 self.con.rollback()
         finally:
             self.con.close()
+        if proyectos:
+            try:
+                import prolog_programa
+
+                prolog_programa.notificar(proyectos, base=self.path)
+            except Exception as exc:  # el commit ya ocurrió: no informarlo falsamente como rechazado
+                state.log(f"Prolog: no se pudo encolar la proyección de {proyectos}: {exc}")
         return False
 
 
