@@ -18,7 +18,14 @@ for (const width of [1440, 390]) {
       expect(await col.locator(".card").evaluateAll(cards => cards.map(c => (c as HTMLElement).dataset.sid).sort())).toEqual([...ids].sort());
       await expect(col.locator(".project-cluster")).toHaveCount(2);
     }
-    const groups = await page.locator(".trabajo .project-cluster").evaluateAll(nodes => nodes.map(node => [...node.querySelectorAll<HTMLElement>(".card")].map(c => ({ sid: c.dataset.sid, y: c.getBoundingClientRect().y, bottom: c.getBoundingClientRect().bottom }))));
+    const groups = await page.locator(".trabajo .project-cluster").evaluateAll(nodes => nodes.map(node => {
+      const cards: { sid: string | undefined; y: number; bottom: number }[] = [];
+      for (let sibling = node.nextElementSibling; sibling && !sibling.matches(".project-cluster"); sibling = sibling.nextElementSibling) {
+        const c = sibling.querySelector<HTMLElement>(".card");
+        if (c) cards.push({ sid: c.dataset.sid, y: c.getBoundingClientRect().y, bottom: c.getBoundingClientRect().bottom });
+      }
+      return cards;
+    }));
     for (const coord of ["t3", "t1"]) {
       const group = groups.find(g => g.some(c => c.sid === coord))!;
       expect(group.at(-1)?.sid).toBe(coord);

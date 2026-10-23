@@ -41,12 +41,24 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
     let disposed = false;
     let loading = false;
     let revision = 0;
+    let consultasRevision = 0;
+    let rondasRevision = 0;
     // las consultas, aparte y sin la guarda de `revision`: con el tablero activo casi siempre llega un
     // evento SSE durante la carga y `load` descarta todo lo suyo; el snapshot del stream no las trae.
     // Un server sin la ruta (otra PC sin actualizar) no traba nada
-    const loadConsultas = () => api.get<ConsultaResumen[]>("/consultas").then((cs) => !disposed && setConsultas(cs), () => null);
+    const loadConsultas = () => {
+      const startedAt = ++consultasRevision;
+      return api.get<ConsultaResumen[]>("/consultas").then((cs) => {
+        if (!disposed && startedAt === consultasRevision) setConsultas(cs);
+      }, () => null);
+    };
     // los avisos y turnos de rondas largas, igual que las consultas: aparte y tolerando un server viejo
-    const loadRondas = () => api.get<RondasEstado>("/avisos").then((r) => !disposed && setRondas(r), () => null);
+    const loadRondas = () => {
+      const startedAt = ++rondasRevision;
+      return api.get<RondasEstado>("/avisos").then((r) => {
+        if (!disposed && startedAt === rondasRevision) setRondas(r);
+      }, () => null);
+    };
     const load = async () => {
       loadConsultas();
       loadRondas();
@@ -141,9 +153,11 @@ export function useLienzoData({ refreshAuth, selectedRef, onRemoved }: Options) 
           setLinks(boardLinks(m.links));
           break;
         case "consulta":
+          consultasRevision++;
           upsertConsulta(m.consulta);
           break;
         case "rondas":
+          rondasRevision++;
           setRondas(m);
           break;
         case "rules":

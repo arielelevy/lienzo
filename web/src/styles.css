@@ -376,16 +376,13 @@ details.fold > summary,
 .board-order > .ordenar { position: static; }
 .board-order button { font-size: 9.5px; border-radius: 14px; padding: 3px 9px; }
 .board-order button[aria-pressed="true"] { border-color: var(--acc); color: var(--fg); }
-.project-cluster { grid-column: 1 / -1; min-width: 0; padding: 8px 0 16px; border-top: 1px solid var(--line); }
-.project-cluster > h3 { position: relative; z-index: 4; width: fit-content; max-width: 100%; margin: 0 0 16px; padding: 2px 5px; background: var(--panel); font-size: 10px; overflow-wrap: anywhere; }
-.project-cluster > h3 .n { color: var(--dim); font-weight: normal; }
-.cluster-cards { display: grid; grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); gap: 26px; min-width: 0; }
-.cluster-cards > div { min-width: 0; }
-.cluster-cards .card { margin-bottom: 0; }
-.cluster-cards > .cluster-coordinator { grid-column: 1 / -1; width: min(100%, 213px); justify-self: center; margin-top: 26px; }
+.project-cluster { grid-column: 1 / -1; position: relative; z-index: 4; min-width: 0; margin: 0; padding: 8px 5px; border-top: 1px solid var(--line); font-size: 10px; overflow-wrap: anywhere; }
+.project-cluster .n { color: var(--dim); font-weight: normal; }
+.cluster-card { min-width: 0; }
+.cluster-card .card { margin-bottom: 0; }
+.cards > .cluster-coordinator { grid-column: 1 / -1; width: min(100%, 213px); justify-self: center; margin-top: 26px; }
 @media (max-width: 900px) {
-  .cluster-cards { grid-template-columns: minmax(0, 1fr); }
-  .cluster-cards > .cluster-coordinator { width: 100%; }
+  .cards > .cluster-coordinator { width: 100%; }
 }
 
 /* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y

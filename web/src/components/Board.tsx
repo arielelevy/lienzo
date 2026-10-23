@@ -825,13 +825,14 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const renderSession = (s: Session, grupos: ReturnType<typeof freeGroups>) => {
+  const renderSession = (s: Session, grupos: ReturnType<typeof freeGroups>, project?: string) => {
     // la que se esta moviendo manda sobre la posicion guardada: es la de ahora
     const pos = layout === "projects" ? undefined : moving?.sid === s.session_id ? moving : libres[s.session_id];
     const caja = (
     <div
       key={s.session_id}
-      className={`${layout === "projects" && s.coordinator ? "cluster-coordinator" : ""} ${drag?.over === s.session_id ? "droptarget" : ""} ${pos ? "libre" : ""} ${moving?.sid === s.session_id ? "moviendo" : ""}`}
+      data-project={project}
+      className={`${project ? "cluster-card" : ""} ${layout === "projects" && s.coordinator ? "cluster-coordinator" : ""} ${drag?.over === s.session_id ? "droptarget" : ""} ${pos ? "libre" : ""} ${moving?.sid === s.session_id ? "moviendo" : ""}`}
       // el tope de la derecha lo pone el CSS y no un numero fijo: al angostar la
       // ventana la tarjeta se recuesta contra el borde en vez de salirse del
       // tablero y estrenar un scroll horizontal
@@ -1048,14 +1049,16 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   {/* columna ancha: subcolumnas por CSS (grilla de var(--lanes) en .col.wide .cards),
                       no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
                       y perderia su estado (pedido expandido, input de renombrar, toast) */}
-                  {layout === "projects" ? repoGroups(list).map(group => {
+                  {layout === "projects" ? repoGroups(list).flatMap(group => {
                     const members = new Set(group.members);
                     const cards = list.filter(s => members.has(s.repo_key || s.repo))
                       .sort((a, b) => Number(!!a.coordinator) - Number(!!b.coordinator));
-                    return <section key={group.key} className="project-cluster" aria-label={group.label}>
-                      <h3>{group.label} <span className="n">{cards.length}</span></h3>
-                      <div className="cluster-cards">{cards.map(s => renderSession(s, new Map()))}</div>
-                    </section>;
+                    // Las tarjetas siguen como hijas directas de .cards, con su session_id:
+                    // cambiar el grupo o el modo no remonta sus formularios.
+                    return [
+                      <h3 key={`project-heading:${group.key}`} className="project-cluster" aria-label={group.label}>{group.label} <span className="n">{cards.length}</span></h3>,
+                      ...cards.map(s => renderSession(s, new Map(), group.key)),
+                    ];
                   }) : list.map(s => renderSession(s, grupos))}
                   </div>
                 </>
