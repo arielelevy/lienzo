@@ -51,6 +51,12 @@ Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
   cada encargo (decisión vigente en la memoria de `lienzo`, nodo 89ab95ed). Primero, medir o estimar el tamaño de
   cada tarea (archivos y líneas tocadas, tipo de trabajo, criterio de aceptación); sin eso comparar costos no dice nada.
   Pedido de Ariel vía la coordinadora de OpenSyync, 2026-10-22; no urgente.
+  - Dato de OpenSyync (2026-10-22). Coda (GLM-5.3-Flash vía DGX):
+    - **Rindió bien** en 9 encargos cortos de código o artefactos con criterio explícito: bump de versión,
+      oráculos, tope de suite, redacción 17, 5 arreglos de G y la UI de la tabla. Todos verificados contra el árbol.
+    - **Falló en investigación abierta en internet.** Tres turnos seguidos cerró diciendo «voy a buscar» sin buscar
+      ni escribir nada, aunque se le partió la tarea; la investigación pasó a un subagente.
+    - **Commiteó una vez** en un árbol compartido, contra lo que decía el encargo.
 - [ ] Una coordinadora reabierta a mano sin el mismo título no recupera sus reglas (efecto buscado de 19747a2):
   evaluar un «adoptar reglas de…» explícito en la tarjeta.
 
