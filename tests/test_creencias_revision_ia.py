@@ -116,7 +116,11 @@ def test_ai_missing_or_incomplete_attachment_is_not_evaluable(monkeypatch, fault
     elif fault == "absoluta":
         k.actualizar_datos("ab", source["id"], {"referencia": str(path.resolve())}, por="server")
     else:
-        body = b"\x00binario" if fault == "binario" else b"x" * (1_000_001 if fault == "demasiado_grande" else 20_000)
+        body = (
+            b"\x00binario"
+            if fault == "binario"
+            else b"x" * (1_000_001 if fault == "demasiado_grande" else r.ADJUNTO_CHARS + 1)
+        )
         path.write_bytes(body)
         k.actualizar_datos("ab", source["id"], {"hash": hashlib.sha256(body).hexdigest()}, por="server")
     before = k.cambios("ab")
@@ -135,15 +139,44 @@ def test_ai_missing_or_incomplete_attachment_is_not_evaluable(monkeypatch, fault
     assert r.listar("ab") == []
 
 
-@pytest.mark.parametrize("length,evaluable", [(5_999, True), (6_000, True), (6_001, False)])
-def test_ai_attachment_text_boundary(length, evaluable):
+@pytest.mark.parametrize("offset,evaluable", [(-1, True), (0, True), (1, False)])
+def test_ai_attachment_text_boundary(offset, evaluable):
     import creencias_revision_ia as r
 
-    node, source, path = attachment_belief(b"a" * length)
-    attached = r._adjunto(source, 1_000_000, 40_000)
+    node, source, path = attachment_belief(b"a" * (r.ADJUNTO_CHARS + offset))
+    attached = r._adjunto(source, r.TANDA_BYTES, r.TANDA_CHARS)
     assert (attached["estado"] == "leido") is evaluable
     assert attached["truncado"] is not evaluable
     assert attached["hash"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_unreadable_attachment_skips_only_the_proposals_that_rely_on_it(monkeypatch):
+    import creencias_revision_ia as r
+
+    node, source, path = attachment_belief()
+    path.unlink()
+    hallazgo = k.crear_nodo("ab", "hallazgo", "lanzar con poca memoria trabó Chrome", {}, autor="server")
+    other = creencias.proponer(
+        "ab",
+        {
+            "texto": "Medir memoria antes de lanzar",
+            "accion": "Mirar /memoria",
+            "dimension": "pruebas",
+            "fuentes": [hallazgo["id"]],
+        },
+        autor="server",
+    )
+
+    def consult(nodes, sources, agent, **kwargs):
+        assert [n["id"] for n in nodes] == [other["id"]]
+        return reply(nodes)
+
+    monkeypatch.setattr(r, "consultar", consult)
+    batch = r.revisar("ab", "claude")
+    assert [i["id"] for i in batch["items"]] == [other["id"]]
+    assert [x["id"] for x in batch["no_evaluables"]] == [node["id"]]
+    estados = {c["id"]: c["estado"] for c in creencias.listar("ab")}
+    assert estados[node["id"]] == "propuesta" and estados[other["id"]] != "propuesta"
 
 
 def test_ai_not_evaluable_is_visible_as_api_error(monkeypatch):

@@ -26,9 +26,9 @@ TOPE = 20
 PLAZO_S = 90
 SALIDA_MAX = 200_000
 ADJUNTO_BYTES = 1_000_000
-ADJUNTO_CHARS = 6_000
+ADJUNTO_CHARS = 20_000  # un registro de ronda ronda los 10 KB
 TANDA_BYTES = 8_000_000
-TANDA_CHARS = 40_000
+TANDA_CHARS = 120_000
 _LOCK = threading.Lock()  # también cubre proceso_lienzo, compartido entre proyectos
 ACCIONES = {"aceptar", "rechazar", "corregir", "fusionar"}
 
@@ -366,8 +366,15 @@ def revisar(pid, agent, *, decidir=None):
             ]
             candidate_photos = {n["id"]: _foto(con, n) for n in candidates}
         prepared_sources, readings = _preparar_fuentes(sources)
-        if any(reading["estado"] != "leido" for reading in readings):
+        # Un adjunto ilegible deja afuera sólo las propuestas que se apoyan en él, no la tanda entera.
+        bad = {(r["proyecto"], r["nodo"]) for r in readings if r["estado"] != "leido"}
+        excluded = [n for n in nodes if any((f["proyecto"], f["id"]) in bad for f in sources[n["id"]])]
+        if len(excluded) == len(nodes):
             return _no_evaluable(pid, nodes, agent, readings)
+        if excluded:
+            skip = {n["id"] for n in excluded}
+            nodes = [n for n in nodes if n["id"] not in skip]
+            prepared_sources = {nid: group for nid, group in prepared_sources.items() if nid not in skip}
         raw = decidir(nodes, agent) if decidir else consultar(nodes, prepared_sources, agent, candidatos=candidates)
         raw = _redactar_ia(raw)  # también cubre adaptadores de decisión; antes de cualquier escritura
         items = _validar(raw, nodes)
@@ -398,6 +405,9 @@ def revisar(pid, agent, *, decidir=None):
                     "items": applied,
                     "hay_mas": bool(remaining),
                     "lecturas": readings,
+                    "no_evaluables": [
+                        {"id": n["id"], "proyecto": n["proyecto"], "texto": n["texto"][:200]} for n in excluded
+                    ],
                 },
                 autor=f"persona:Ariel (delegado a IA: {agent})",
                 con=con,
@@ -414,6 +424,7 @@ def _publica(batch):
         "agente": batch["datos"]["agente"],
         "hay_mas": batch["datos"].get("hay_mas", False),
         "lecturas": batch["datos"].get("lecturas", []),
+        "no_evaluables": batch["datos"].get("no_evaluables", []),
         "items": [
             {key: value for key, value in item.items() if key not in ("antes", "despues", "creadas")}
             for item in batch["datos"]["items"]

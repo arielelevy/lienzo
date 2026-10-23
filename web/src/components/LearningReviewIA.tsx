@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { api } from "../api";
 
 type Item = { id: string; proyecto: string; accion: string; motivo: string; deshecho: boolean };
-type Batch = { id: string | null; fecha?: string; agente?: string; hay_mas?: boolean; items: Item[] };
+type Batch = { id: string | null; fecha?: string; agente?: string; hay_mas?: boolean; items: Item[]; no_evaluables?: { id: string; texto: string }[] };
 
 /** AB: sólo el botón y el resumen; la vista de Aprendizaje conserva su organización. */
 export default function LearningReviewIA({ base, changed }: { base: string; changed: () => Promise<void> }) {
@@ -47,6 +47,7 @@ export default function LearningReviewIA({ base, changed }: { base: string; chan
     {batches.map(batch => <div key={batch.id} role="group" aria-label={"Tanda " + batch.id}>
       <p>Revisión con {batch.agente} · {batch.items.length} propuestas{batch.fecha ? " · " + new Date(batch.fecha).toLocaleString() : ""}.</p>
       {batch.hay_mas && <p role="status">Quedan propuestas: revisá otra tanda.</p>}
+      {!!batch.no_evaluables?.length && <p role="status">{batch.no_evaluables.length} quedaron sin revisar: su evidencia adjunta no se pudo leer entera.</p>}
       <button type="button" disabled={busy || batch.items.every(i => i.deshecho)} onClick={() => void act(`${base}/revision-ia/${batch.id}/deshacer`, {})}>Deshacer toda la tanda</button>
       <ul>{batch.items.map(item => <li key={item.id}>
         <span>{item.proyecto} · {item.accion}: {item.motivo}{item.deshecho ? " · Deshecho" : ""}</span>{" "}
