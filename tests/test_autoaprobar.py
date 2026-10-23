@@ -425,6 +425,7 @@ def test_otro_dialogo_sin_pasar_por_ninguno_renueva_dialog_at(monkeypatch):
 
 
 def test_contestar_el_dialogo_saca_ya_la_tarjeta_de_te_necesita(monkeypatch):
+    monkeypatch.setattr(ses, "_dialogo_en_pantalla", lambda s, d: (d, None))
     monkeypatch.setattr(st, "log", lambda m: None)
     monkeypatch.setattr(ses, "touch", lambda s: True)
     monkeypatch.setattr(ses, "send_blocked", lambda s: None)

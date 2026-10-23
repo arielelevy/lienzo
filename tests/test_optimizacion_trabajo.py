@@ -275,6 +275,50 @@ def test_un_acuse_tecleado_en_medio_de_la_entrega_no_la_calla(envio_real, necesi
     assert envio_real == ["B listo. ESTADO: entregado"]
 
 
+def test_kiro_dos_turnos_con_envio_y_acuse_intermedio_avisan_ambos(envio_real, monkeypatch):
+    reloj = [dt.datetime.now().astimezone()]
+
+    class Reloj(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return reloj[0].astimezone(tz)
+
+    monkeypatch.setattr(rl.dt, "datetime", Reloj)
+    monkeypatch.setattr(rl, "now", lambda: reloj[0].isoformat())
+    frente = st.sessions[ORIGEN]
+    frente.update(agent="kiro", hooked=False)
+    for numero in (1, 2):
+        reloj[0] += dt.timedelta(seconds=60)
+        prompt = f"implementá parte {numero}"
+        assert server.accion_send(frente, {"text": prompt, "from": DESTINO})[0] == 200
+        ses.apply_turn_unhooked(
+            frente,
+            {
+                "id": f"kiro-{numero}",
+                "prompt": prompt,
+                "final": "",
+                "ended": False,
+                "blocks": [],
+            },
+        )
+        assert frente["state"] == "corriendo"
+        assert server.accion_send(frente, {"text": "recibido, seguí", "sin_aviso": DESTINO})[0] == 200
+        assert frente["sin_aviso"] is None
+        ses.apply_turn_unhooked(
+            frente,
+            {
+                "id": f"kiro-{numero}",
+                "prompt": prompt,
+                "final": f"Parte {numero} lista.",
+                "ended": True,
+                "blocks": [],
+            },
+        )
+        assert frente["state"] == "termino"
+        rl.fire_on_stop(ORIGEN)
+    assert envio_real == ["Parte 1 lista.", "Parte 2 lista."]
+
+
 def test_un_acuse_a_una_tarjeta_que_espera_respuesta_calla_su_turno(envio_real):
     # te_necesita por idle_prompt: el turno anterior ya cerró, el acuse empieza el suyo y ése se calla
     frente = st.sessions[ORIGEN]

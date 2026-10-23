@@ -113,6 +113,16 @@ PROMPT_CHARS = ("❯", ">", "›")
 # la raya que abre y cierra la caja de entrada. Claude Code 2.1.267 la dibuja con medio bloque
 # (▔) y las versiones anteriores con guion de caja (─): valen las dos
 RULE_CHARS = ("─", "━", "═", "▔", "▁", "▄", "▀")
+_RAYA = "[" + "".join(RULE_CHARS) + "]"
+_REGLA_CON_NOMBRE = re.compile(_RAYA + "{3,} \\S.{0,80}? " + _RAYA + "+")
+
+
+def es_regla(linea: str) -> bool:
+    """Una linea del borde de la caja de entrada. Claude Code renombrado (`/rename`) dibuja el nombre
+    adentro de la de arriba («───── lienzo ─»): sin aceptarla, la caja no se encontraba y se la daba
+    por vacia aunque tuviera texto (2026-10-23: `11/rename …` en ar-it33940)."""
+    s = linea.strip()
+    return bool(s) and (set(s) <= set(RULE_CHARS) or bool(_REGLA_CON_NOMBRE.fullmatch(s)))
 
 
 def sin_cursor(line: str) -> str:
@@ -140,7 +150,7 @@ def input_area(lines: list[str]) -> dict:
             "queued": [],
             "status": text if text.startswith("Kiro is working") else "",
         }
-    rules = [i for i, l in enumerate(lines) if l.strip() and set(l.strip()) <= set(RULE_CHARS)]
+    rules = [i for i, l in enumerate(lines) if es_regla(l)]
     box, queued = [], []
     if len(rules) >= 2:
         top, bottom = rules[-2], rules[-1]

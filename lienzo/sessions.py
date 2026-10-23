@@ -2550,6 +2550,9 @@ def answer_dialog(s: dict, choice: int) -> tuple[int, dict]:
     if d.get("teclas") == "flechas":
         code, out = _elegir_con_flechas(s, d, choice)
     else:
+        actual, motivo = _dialogo_en_pantalla(s, d)
+        if not actual:
+            return 409, {"ok": False, "error": motivo}
         code, out = run_send(s, str(choice), enter=False)
     if code != 200:
         return code, out
@@ -2786,6 +2789,16 @@ def _nombrar_nativo(s: dict, nombre: str, esperar_dialogo: float) -> tuple[int, 
                 "ok": False,
                 "code": "native_deferred",
                 "error": "empezó otro turno: se detuvo el cambio de nombre nativo",
+            }
+        lectura = read_screen(s)
+        lineas = lectura.get("lines") or []
+        area = screen.input_area(lineas) if lectura.get("ok") else None
+        reglas = sum(screen.es_regla(l) for l in lineas)
+        if area is None or reglas < 2 or not area.get("placeholder") or area.get("queued") or screen.dialog(lineas):
+            return 409, {
+                "ok": False,
+                "code": "native_deferred",
+                "error": "no pude confirmar una caja vacía: se difiere el nombre nativo",
             }
         code, out = run_send(s, texto)
         if code != 200:
