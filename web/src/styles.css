@@ -372,21 +372,18 @@ details.fold > summary,
 .board .ordenar:hover { color: var(--fg); border-color: var(--acc); }
 
 /* Dos maneras de ordenar; las medidas de las tarjetas conservan la escala del tablero. */
-.board-layout { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 14px; }
-.board-layout button { display: inline-flex; align-items: center; gap: 5px; font-size: 9.5px; }
-.board-layout button[aria-pressed="true"] { border-color: var(--acc); color: var(--fg); }
-.filters[hidden] { display: none; }
-.board.project-layout { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 28px; align-items: start; }
-.board.project-layout > .project-cluster { display: block; min-width: 0; width: auto; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
-.project-cluster > h2 { position: relative; z-index: 4; width: fit-content; max-width: 100%; margin: 0 0 16px; padding: 2px 5px; background: var(--panel); font-size: 11px; overflow-wrap: anywhere; cursor: default; }
-.project-cluster > h2 .n { color: var(--dim); font-weight: normal; }
-.cluster-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 213px), 213px)); justify-content: center; gap: 26px; min-width: 0; }
+.board .board-order { position: absolute; right: 14px; top: -2px; z-index: 7; display: flex; gap: 5px; }
+.board-order > .ordenar { position: static; }
+.board-order button { font-size: 9.5px; border-radius: 14px; padding: 3px 9px; }
+.board-order button[aria-pressed="true"] { border-color: var(--acc); color: var(--fg); }
+.project-cluster { grid-column: 1 / -1; min-width: 0; padding: 8px 0 16px; border-top: 1px solid var(--line); }
+.project-cluster > h3 { position: relative; z-index: 4; width: fit-content; max-width: 100%; margin: 0 0 16px; padding: 2px 5px; background: var(--panel); font-size: 10px; overflow-wrap: anywhere; }
+.project-cluster > h3 .n { color: var(--dim); font-weight: normal; }
+.cluster-cards { display: grid; grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); gap: 26px; min-width: 0; }
 .cluster-cards > div { min-width: 0; }
 .cluster-cards .card { margin-bottom: 0; }
 .cluster-cards > .cluster-coordinator { grid-column: 1 / -1; width: min(100%, 213px); justify-self: center; margin-top: 26px; }
-.cluster-chromes { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 26px; }
-.cluster-chromes > * { max-width: 213px; min-width: 0; }
-@media (max-width: 480px) {
+@media (max-width: 900px) {
   .cluster-cards { grid-template-columns: minmax(0, 1fr); }
   .cluster-cards > .cluster-coordinator { width: 100%; }
 }

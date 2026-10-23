@@ -924,11 +924,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
       {/* selector de columna, solo abajo de 900 px (una columna por vez). Un permiso pendiente en
           otra columna se marca con un punto: ahi no se ven las tarjetas, y sin la marca el pedido
           pasaba desapercibido hasta que vencia */}
-      <div className="board-layout" role="group" aria-label="Orden del tablero">
-        <button type="button" aria-label="Orden habitual" aria-pressed={layout === "usual"} onClick={() => chooseLayout("usual")}><span aria-hidden="true">⤢</span> Orden habitual</button>
-        <button type="button" aria-label="Por proyecto" aria-pressed={layout === "projects"} onClick={() => chooseLayout("projects")}><span aria-hidden="true">▦</span> Por proyecto</button>
-      </div>
-      <div className="filters" hidden={layout === "projects"}>
+      <div className="filters">
         {COLS.map(([k, label]) => {
           const pide = byState[k].some((x) => x.pending_id && pending[x.pending_id]);
           const aca = colOfState(filter) === k;
@@ -987,22 +983,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
             </div>
           </>
         )}
-        {layout === "projects" ? (() => {
-          const list = [...byState.trabajo, ...byState.te_necesita, ...byState.muerta];
-          return <>
-            {chromes.length > 0 && <div className="cluster-chromes">{chromes.map(c => <ChromeCard key={`${c.peer.pc_id}-${c.agent}-${c.host}`} c={c} pcColor={peers.length > 1 ? c.peer.color : undefined} />)}</div>}
-            {repoGroups(list).map(group => {
-              const members = new Set(group.members);
-              const cards = list.filter(s => members.has(s.repo_key || s.repo));
-              // La coordinadora cierra el grupo centrada, con sus frentes arriba.
-              cards.sort((a, b) => Number(!!a.coordinator) - Number(!!b.coordinator));
-              return <section key={group.key} className="col project-cluster" aria-label={group.label}>
-                <h2>{group.label} <span className="n">{cards.length}</span></h2>
-                <div className="cluster-cards">{cards.map(s => renderSession(s, new Map()))}</div>
-              </section>;
-            })}
-          </>;
-        })() : domCols.map(({ k, label, visual }) => {
+        {domCols.map(({ k, label, visual }) => {
           const list = byState[k];
           // las libres de un mismo repo y agente se leen como un dato solo ("4 sesiones libres
           // en lienzo"), no como cuatro tarjetas que dicen exactamente lo mismo. La elegida y la
@@ -1067,7 +1048,15 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                   {/* columna ancha: subcolumnas por CSS (grilla de var(--lanes) en .col.wide .cards),
                       no por padres distintos: si una tarjeta cambiara de subcolumna React la remontaria
                       y perderia su estado (pedido expandido, input de renombrar, toast) */}
-                  {list.map(s => renderSession(s, grupos))}
+                  {layout === "projects" ? repoGroups(list).map(group => {
+                    const members = new Set(group.members);
+                    const cards = list.filter(s => members.has(s.repo_key || s.repo))
+                      .sort((a, b) => Number(!!a.coordinator) - Number(!!b.coordinator));
+                    return <section key={group.key} className="project-cluster" aria-label={group.label}>
+                      <h3>{group.label} <span className="n">{cards.length}</span></h3>
+                      <div className="cluster-cards">{cards.map(s => renderSession(s, new Map()))}</div>
+                    </section>;
+                  }) : list.map(s => renderSession(s, grupos))}
                   </div>
                 </>
               )}
@@ -1076,17 +1065,11 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         })}
         {/* la capa va despues de las columnas: sin z-index de por medio, lo corrido queda encima */}
         <div className="capa-libre" ref={setCapa} />
-        {/* Solo aparece cuando hay algo que ordenar: si nunca corriste una tarjeta, el botón no
-            existe y el tablero queda como estaba */}
-        {Object.keys(libres).length > 0 && (
-          <button
-            className="ordenar"
-            title="Devolver las tarjetas corridas a su lugar"
-            onClick={ordenar}
-          >
-            ⤢ Ordenar
-          </button>
-        )}
+        {/* Los modos viven junto al control original, sin agregar una fila al tablero. */}
+        <div className="board-order" role="group" aria-label="Orden del tablero">
+          <button type="button" className={Object.keys(libres).length > 0 ? "ordenar" : undefined} aria-label="Orden habitual" aria-pressed={layout === "usual"} title="Orden habitual: devolver las tarjetas a su lugar" onClick={() => chooseLayout("usual")}>⤢{Object.keys(libres).length > 0 ? " Ordenar" : ""}</button>
+          <button type="button" aria-label="Por proyecto" aria-pressed={layout === "projects"} title="Agrupar por proyecto dentro de cada columna" onClick={() => chooseLayout("projects")}>▦</button>
+        </div>
         {/* Tablero sin una sola tarjeta (recién instalado, o el server arrancado antes que los
             agentes): las tres columnas colapsan a sus tiras y la pantalla queda en negro sin decir
             nada. Las columnas siguen colapsadas —esa regla no cambia—, el cartel va al lado. */}
@@ -1109,7 +1092,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
           <span>
             <b>Alt</b> + arrastrar la conecta con otra
           </span>
-          <span>{layout === "projects" ? "⤢ Orden habitual vuelve a las columnas" : "⤢ Ordenar las devuelve a su lugar"}</span>
+          <span>{layout === "projects" ? "⤢ Ordenar vuelve al orden habitual" : "⤢ Ordenar las devuelve a su lugar"}</span>
         </p>
       )}
     </>

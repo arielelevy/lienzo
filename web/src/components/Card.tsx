@@ -7,6 +7,8 @@ import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
 import { canWrite, displayRepo, displayTitle, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { CardNeeds } from "./CardNeeds";
+import { NOTICE_MS, showTurnPrompt } from "../card-notices";
+import { useRondas } from "../rondas";
 import { ChromeLogo } from "./ChromeCard";
 import { useWorkClipboard } from "./WorkClipboard";
 import type { Link, Pending, Rule, Session } from "../types";
@@ -322,6 +324,8 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
     return () => window.clearInterval(timer);
   }, []);
   const actions = useCardActions(s, toast);
+  const { turnos } = useRondas();
+  const visiblePrompt = showTurnPrompt(s, turnos, now);
   // pantalla quieta: corre y su pantalla no cambió en `quietaMin` minutos (0 = aviso apagado)
   const [quietaMin, setQuietaMin] = useMinutosQuieta();
   const quietaDesde = usePantallaQuieta(s, quietaMin === 0 || !!peerDown); // PC caída: no hay pantalla que leer
@@ -600,7 +604,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
               pantalla quieta · {quieta} min
             </span>
           )}
-          {s.envio_pendiente && s.alive !== false && (
+          {s.envio_pendiente && s.alive !== false && now - s.envio_pendiente.at * 1000 < NOTICE_MS && (
             <span className="st sending" title="mandado; espera que el agente lo tome">
               enviando…
             </span>
@@ -789,7 +793,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       )}
       {/* el pedido no se repite si el titulo ya es su primera linea; si hay mas texto queda el "…más" */}
-      {s.title && s.last_prompt && (!dupPrompt || cut) && (
+      {visiblePrompt && s.title && s.last_prompt && (!dupPrompt || cut) && (
         <div className={`prompt ${promptOpen ? "open" : ""}`}>
           {(!dupPrompt || promptOpen) && <span className="ptext">› {promptOpen ? promptText : head}</span>}
           {cut && (
@@ -813,7 +817,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         </div>
       )}
       {/* lo que pide la sesion va antes que la respuesta: Permitir/Denegar es lo primero visible */}
-      <CardNeeds session={s} pending={p} quick={quick} writable={writable} actions={actions} onDecide={onDecide} onAnswer={onAnswer} />
+      <CardNeeds session={s} now={now} pending={p} quick={quick} writable={writable} actions={actions} onDecide={onDecide} onAnswer={onAnswer} />
       {s.last_error ? (
         <div className={`error ${errorOpen ? "open" : ""}`}>
           <span className="etext">⚠ {errorOpen ? s.last_error : err.head}</span>

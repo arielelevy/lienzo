@@ -82,10 +82,13 @@ const DIALOGO = {
 };
 
 test("la tarjeta muestra lo que el auto-aprobar le contestó, con la hora", async ({ page }) => {
-  const lista = [kiro({ auto_aprobado: { que: "Build core.api solution requires approval shell → dotnet build", at: "2026-10-22T15:11:47-03:00", via: "dialogo" } }), ...sesiones().slice(1)];
+  // reciente: el aviso caduca a los 3 min (card-notices.ts)
+  const at = new Date(Date.now() - 60_000);
+  const hora = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  const lista = [kiro({ auto_aprobado: { que: "Build core.api solution requires approval shell → dotnet build", at: at.toISOString(), via: "dialogo" } }), ...sesiones().slice(1)];
   await abrirTablero(page, lista);
   const linea = page.locator(`.card[data-sid="${KIRO}"] .auto-aprobado`);
-  await expect(linea).toHaveText("auto-aprobado 15:11: Build core.api solution requires approval shell → dotnet build");
+  await expect(linea).toHaveText(`auto-aprobado ${hora}: Build core.api solution requires approval shell → dotnet build`);
 });
 
 test("el diálogo que Kiro espera en su terminal avisa en el navegador una sola vez", async ({ page }) => {

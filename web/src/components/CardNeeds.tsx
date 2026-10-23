@@ -3,12 +3,14 @@ import { detail } from "../api";
 import type { CardActions } from "../hooks/useCardActions";
 import { hhmm } from "../nl";
 import { needsLabel } from "../names";
+import { showApproval, showSendNotice } from "../card-notices";
 import type { Pending, Session } from "../types";
 import { Ask, askQuestions } from "./Ask";
 import { PermissionButtons, PermissionPrompt } from "./PermissionPrompt";
 
 interface Props {
   session: Session;
+  now: number;
   pending?: Pending;
   /** la tarjeta muestra los botones rapidos: una ociosa no repite aca el aviso, va en esa fila */
   quick: boolean;
@@ -21,7 +23,7 @@ interface Props {
 /** Lo que la sesion pide, en la tarjeta: el permiso del hook (o la pregunta con opciones), el que
  *  se contesta en la terminal (CODA), lo que una regla le denego y el dialogo de la TUI. Va antes
  *  que la respuesta: Permitir/Denegar es lo primero visible. */
-export function CardNeeds({ session: s, pending: p, quick, writable, actions, onDecide, onAnswer }: Props) {
+export function CardNeeds({ session: s, now, pending: p, quick, writable, actions, onDecide, onAnswer }: Props) {
   const { busy, codaDecide, pickDialog, autorizarDenegado } = actions;
   // autorizar una denegacion que borra o pisa algo pide un segundo click, atado a ESA denegacion
   // (`visto`): si llega otra, el primer click no vale para la nueva
@@ -36,7 +38,7 @@ export function CardNeeds({ session: s, pending: p, quick, writable, actions, on
         <Ask pending={p} questions={preguntas} onAnswer={onAnswer} onDecide={onDecide} />
       ) : p ? (
         <PermissionPrompt tool={p.tool_name} detail={detail(p.tool_input)} note={`vence ${hhmm(new Date(p.expires_at))}`} onDecide={(d) => onDecide(p.request_id, d)} />
-      ) : s.state === "te_necesita" && s.needs && !(quick && s.needs.kind === "idle") ? (
+      ) : s.state === "te_necesita" && s.needs && showSendNotice(s, now) && !(quick && s.needs.kind === "idle") ? (
         /* ociosa con botones rapidos: el aviso va en una linea con los botones, mas abajo */
         <div className="needs terminal">
           <b>{needsLabel(s.needs)}</b>
@@ -99,7 +101,7 @@ export function CardNeeds({ session: s, pending: p, quick, writable, actions, on
       {/* el auto-aprobar contestó por esta sesión: sin esto quedaba sólo en el log (Kiro no tiene
           hooks y su tarjeta seguía en «corriendo» sin rastro del permiso; pedido de Ariel, 2026-10-22) */}
       {/* sólo del turno en curso: una vez terminado, lo aprobado antes del cierre ya es historia */}
-      {s.auto_aprobado && !p && !s.dialog && (s.state !== "termino" || Date.parse(s.auto_aprobado.at) >= Date.parse(s.state_since)) && (
+      {s.auto_aprobado && !p && !s.dialog && showApproval(s, now) && (
         <div className="dim small auto-aprobado" title={`el auto-aprobar lo contestó solo (${s.auto_aprobado.via})`}>
           auto-aprobado {hhmm(new Date(s.auto_aprobado.at))}: <code>{s.auto_aprobado.que}</code>
         </div>

@@ -40,6 +40,8 @@ export interface Session {
   state_since: string;
   needs: Needs | null;
   last_prompt: string;
+  /** Hora del último pedido real; permite retirar avisos del turno anterior. */
+  prompt_ts?: string | null;
   last_reply: string;
   last_error?: string | null;
   /** el ultimo permiso que una regla, una politica o un clasificador DENEGO (no el humano) */
