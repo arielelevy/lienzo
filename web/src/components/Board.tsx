@@ -1120,14 +1120,20 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
                     // cambiar el grupo o el modo no remonta sus formularios.
                     return enCaja.flatMap(({ group, cards, enCaja: fijas, coordEnCaja }) => {
                       const p = lugar.get(group.key)!;
-                      const celda = (col: string, row: number) => ({ "--gc": col, "--gr": String(row) }) as React.CSSProperties;
+                      // aire entre grupos (pedido de Ariel, 2026-10-23): la primera subcolumna de una caja que no
+                      // arranca contra el borde se corre a la derecha, y el título de un estante que no es el primero baja
+                      const celda = (col: string, row: number, izq = false) =>
+                        ({ "--gc": col, "--gr": String(row), "--sep-izq": izq && p.col > 1 ? 1 : 0 }) as React.CSSProperties;
+                      const titulo = { ...celda(`${p.col} / span ${p.k}`, p.row, true), "--sep-arr": p.row > 1 ? 1 : 0 } as React.CSSProperties;
                       return [
-                        <h3 key={`project-heading:${group.key}`} className="project-cluster" aria-label={group.label} style={celda(`${p.col} / span ${p.k}`, p.row)}>{group.label} <span className="n">{cards.length}</span></h3>,
+                        <h3 key={`project-heading:${group.key}`} className="project-cluster" aria-label={group.label} style={titulo}>{group.label} <span className="n">{cards.length}</span></h3>,
                         ...cards.map(s => {
                           const i = fijas.indexOf(s);
                           if (i < 0) return renderSession(s, new Map(), group.key);
                           const c = cardCell(p, i, fijas.length, coordEnCaja);
-                          return renderSession(s, new Map(), group.key, celda(c.col, c.row));
+                          // la coordinadora va a lo ancho de la caja: también lleva el aire de la izquierda
+                          const izq = c.col === String(p.col) || c.col.startsWith(`${p.col} /`);
+                          return renderSession(s, new Map(), group.key, celda(c.col, c.row, izq));
                         }),
                       ];
                     });

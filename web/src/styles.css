@@ -376,7 +376,10 @@ details.fold > summary,
 .board-order > .ordenar { position: static; }
 .board-order button { font-size: 9.5px; border-radius: 14px; padding: 3px 9px; }
 .board-order button[aria-pressed="true"] { border-color: var(--acc); color: var(--fg); }
-.project-cluster { grid-column: var(--gc, 1 / -1); grid-row: var(--gr, auto); position: relative; z-index: 4; min-width: 0; margin: 0; padding: 8px 5px; border-top: 1px solid var(--line); font-size: 10px; overflow-wrap: anywhere; }
+/* aire entre grupos: --sep-izq y --sep-arr los pone Board.tsx en la primera subcolumna de una caja que no
+   arranca contra el borde y en el título de un estante que no es el primero */
+.cluster-card { margin-left: calc(var(--sep-izq, 0) * var(--grupo-gap, 22px)); }
+.project-cluster { grid-column: var(--gc, 1 / -1); grid-row: var(--gr, auto); position: relative; z-index: 4; min-width: 0; margin: calc(var(--sep-arr, 0) * var(--grupo-gap, 22px)) 0 0 calc(var(--sep-izq, 0) * var(--grupo-gap, 22px)); padding: 8px 5px; border-top: 1px solid var(--line); font-size: 10px; overflow-wrap: anywhere; }
 .project-cluster .n { color: var(--dim); font-weight: normal; }
 .cluster-card { min-width: 0; grid-column: var(--gc, auto); grid-row: var(--gr, auto); }
 .cluster-card .card { margin-bottom: 0; }
@@ -384,7 +387,7 @@ details.fold > summary,
 /* en movil una sola subcolumna: las cajas de proyecto (project-pack.ts) vuelven a ir una debajo de otra */
 @media (max-width: 900px) {
   .cards > .cluster-coordinator { width: 100%; }
-  .project-cluster, .cluster-card, .cards > .cluster-coordinator { grid-column: 1 / -1; grid-row: auto; }
+  .project-cluster, .cluster-card, .cards > .cluster-coordinator { grid-column: 1 / -1; grid-row: auto; --sep-izq: 0; }
 }
 
 /* panel de sesion: el tablero de atras sigue usable, click en otra tarjeta cambia el panel y
