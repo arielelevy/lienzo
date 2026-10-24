@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.15**: el motor lógico reevalúa las creencias en el tiempo, deriva reglas y las reusa entre proyectos parecidos; «Revisar todo con IA» completo y filtros por estado en Aprendizaje.
+Versión **0.6.16**: las tarjetas muertas se reviven desde el tablero, la vista por proyecto usa el ancho, coda reintenta tras un corte de red y avisa sus preguntas, y un frente sin avance en 30 min le avisa a la coordinadora.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.15.md).
+[Novedades, validación y límites](docs/releases/0.6.16.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada

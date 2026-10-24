@@ -31,6 +31,21 @@ Otros abiertos de esta ronda:
   murió y su tarjeta se borró a las 23:15:40 («muerta hace mas de 60 s»). Su pid 32212 hoy es otro proceso.
   Con la sesión muerta, el 404 es correcto. Queda abierto sólo si se repite con una coda viva.
 
+### Ola del 2026-10-23 (sólo codas)
+
+- [ ] `tests/test_aprendizaje_proyecto.py::test_sin_sesion_elegida_toma_la_viva_mas_reciente_del_proyecto` falla a
+  veces en la suite completa con **404** (no encuentra el proyecto `q-sugerido`), no por el orden de sesiones; pasa
+  20/20 sola (coda D). Falta ver qué prueba anterior deja el registro de proyectos o la base en otro estado.
+- [ ] `tests/test_downloads.py::test_lista_recientes_no_incluye_incompletos_y_rechaza_token_alterado`: intermitente,
+  20/20 sola; sin causa encontrada.
+- [x] `POST /rules/<id>/informes/<inf>/acuse` sólo busca reglas locales: para una regla de otra PC (un frente
+  lanzado allá y cableado hacia acá) contesta 404 «conexion desconocida» y no se reenvía, así que la regla no se
+  puede borrar (409 «informes pendientes»). Visto con `d7cfef6a7b18` y `f47a87fc9ef4` el 2026-10-23.
+  Hecho el 2026-10-23: el tablero lo reenvía a la PC dueña (`/peer/rules/<id>/informes/<inf>/acuse`); hace
+  falta que esa PC corra la 0.6.16.
+- [ ] La suite completa en ar-it33940 dio 3551 passed y 65 failed (`test_research_creencias`, `test_veredictos`,
+  `test_xfer`, entre otras) con el mismo `HEAD` que acá pasa: falta el log completo para ver si es el entorno.
+
 ### Decisiones de Ariel del 2026-10-22 que agregan trabajo
 
 Fuente: `.temp/coordinacion/2026-10-22/decisiones-ariel.md`.
