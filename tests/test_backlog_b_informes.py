@@ -47,6 +47,15 @@ def entorno(monkeypatch):
         return 200, {"estado": "entregado", "envio_id": str(len(sends))}
 
     monkeypatch.setattr(rl, "send_to_session", send)
+    # Los recordatorios usan el router de producción; sólo se sustituye el teclado.
+    import preguntas
+    import server
+
+    monkeypatch.setattr(server, "send_to_session", lambda *a: rl.send_to_session(*a))
+    monkeypatch.setattr(server, "_route_session", lambda sid: (state.sessions.get(sid), None))
+    monkeypatch.setattr(
+        preguntas, "enviar", lambda sid, body: server.atender_accion("POST", sid, "send", body, desde_tablero=True)
+    )
     yield r, sends
     state.sessions.pop("backlog-b-src", None)
     state.sessions.pop("backlog-b-dst", None)
