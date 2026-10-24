@@ -494,11 +494,13 @@ def _carpeta_fija(path: str, *, crear: bool = True):
 
 
 @contextlib.contextmanager
-def _abrir_seguro(path: str, mode: str, *, encoding=None, ausente_ok=False):
-    """Nunca trunca antes de validar el handle; rechaza también hardlinks de auxiliares."""
+def _abrir_seguro(path: str, mode: str, *, encoding=None, ausente_ok=False, enlaces_ok=False):
+    """Nunca trunca antes de validar el handle; rechaza también hardlinks de auxiliares. `enlaces_ok`
+    admite un hardlink: es para el origen que manda el emisor, que sólo se lee y es del usuario."""
     write = mode != "rb" and mode != "r"
     create = mode.startswith(("w", "a"))
-    with _carpeta_fija(path) as parent:
+    # leer no crea carpetas: si falta una del camino, el archivo no está (code review 2026-10-23)
+    with _carpeta_fija(path, crear=write or create) as parent:
         if sys.platform == "win32":
             fd = _win_abrir(path, carpeta=False, crear=create, escribir=write, parent=parent, ausente_ok=ausente_ok)
         else:
@@ -516,7 +518,7 @@ def _abrir_seguro(path: str, mode: str, *, encoding=None, ausente_ok=False):
             return
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            if not stat.S_ISREG(info.st_mode) or (info.st_nlink != 1 and not enlaces_ok):
                 raise Rechazo(403, "archivo de transferencia enlazado o de tipo inválido")
             f = os.fdopen(fd, mode, encoding=encoding)
         except BaseException:
@@ -1320,9 +1322,13 @@ class Trabajo:
         return code, res
 
     def _leer(self, path: str, off: int, n: int) -> bytes:
+        """Lee del origen por la misma apertura confinada que el destino (_abrir_seguro): carpetas de
+        arriba fijadas sin enlaces y el handle dentro de copy_roots. Antes se abría por nombre, y cambiar
+        una carpeta por un junction entre la validación y la lectura mandaba un archivo de afuera
+        (PENDIENTES, «handles fijados en copias», 2026-10-23). Un hardlink del origen se admite."""
         self._esperar_memoria()
         self._disco.tomar(n, self._esperar)
-        with open(path, "rb") as f:
+        with _abrir_seguro(path, "rb", enlaces_ok=True) as f:
             f.seek(off)
             return f.read(n)
 

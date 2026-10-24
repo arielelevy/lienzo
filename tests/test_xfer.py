@@ -1464,3 +1464,55 @@ def test_wsl_auxiliar_symlink_no_altera_victima(canal, monkeypatch, extension, a
             creationflags=subprocess.CREATE_NO_WINDOW,
             stdin=subprocess.DEVNULL,
         )
+
+
+class _SinFreno:
+    """Lo mínimo de Trabajo que usa _leer: sin freno de memoria ni de disco."""
+
+    def _esperar_memoria(self):
+        pass
+
+    class _disco:
+        @staticmethod
+        def tomar(n, esperar):
+            pass
+
+    def _esperar(self, s):
+        pass
+
+
+def test_el_origen_se_lee_confinado_y_admite_hardlinks(canal):
+    """PENDIENTES («handles fijados en copias», 2026-10-23): el emisor leía el origen por nombre. Ahora
+    pasa por _abrir_seguro, como el destino; un hardlink del origen es un archivo del usuario y se lee."""
+    a = canal["origen"] / "a.txt"
+    a.write_bytes(b"hola mundo")
+    b = canal["origen"] / "b.txt"
+    os.link(a, b)
+    assert xfer.Trabajo._leer(_SinFreno(), str(b), 5, 5) == b"mundo"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junction nativa de Windows")
+def test_el_origen_cambiado_por_un_junction_no_se_manda(canal, tmp_path):
+    sub = canal["origen"] / "sub"
+    sub.mkdir()
+    (sub / "a.txt").write_bytes(b"del usuario")
+    afuera = tmp_path / "afuera"
+    afuera.mkdir()
+    (afuera / "a.txt").write_bytes(b"secreto de afuera")
+    sub.rename(canal["origen"] / "sub-original")
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(sub), str(afuera)],
+        check=True,
+        capture_output=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+        stdin=subprocess.DEVNULL,
+    )
+    with pytest.raises(xfer.Rechazo):
+        xfer.Trabajo._leer(_SinFreno(), str(sub / "a.txt"), 0, 100)
+
+
+def test_leer_un_origen_que_falta_no_crea_su_carpeta(canal):
+    falta = canal["origen"] / "no-existe" / "a.txt"
+    with pytest.raises(FileNotFoundError):
+        xfer.Trabajo._leer(_SinFreno(), str(falta), 0, 10)
+    assert not falta.parent.exists()
