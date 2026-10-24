@@ -31,6 +31,17 @@ Otros abiertos de esta ronda:
   murió y su tarjeta se borró a las 23:15:40 («muerta hace mas de 60 s»). Su pid 32212 hoy es otro proceso.
   Con la sesión muerta, el 404 es correcto. Queda abierto sólo si se repite con una coda viva.
 
+### Consultas a la coordinadora del repo (2026-10-24, encargo F)
+
+- [x] Una pregunta de trabajo de un frente (`ask_user` de coda, `AskUserQuestion` de Claude, diálogo de opciones
+  que no es permiso, confianza ni cambio de modelo) va a la ★ viva de su repo, una vez por pregunta, con la flecha
+  desde la tarjeta; la ★ contesta con `POST /sessions/<sid>/responder {opcion|texto}` (`c.responder`), que relee
+  la pantalla antes de teclear y también se reenvía a la PC dueña. `responder` llamado a propósito contesta
+  cualquier diálogo abierto, y el 409 `dialog_open` nombra la ruta. Medido con codas reales. Dos revisiones de
+  código (20 hallazgos) corregidas. Pedido de Ariel: «sólo la coordinadora de ese repo puede saber».
+- [ ] Avisar en la salud si hay un `codex.exe` en `~/.local/bin` más viejo que el del instalador
+  (`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin`): esa copia arranca un Codex sin `codex-code-mode-host.exe` (cart, 2026-10-24).
+
 ### Ola del 2026-10-23 (sólo codas)
 
 - [ ] `tests/test_aprendizaje_proyecto.py::test_sin_sesion_elegida_toma_la_viva_mas_reciente_del_proyecto` falla a
@@ -501,7 +512,7 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   `/new` y `/clear`, y `/status` siguió llegando a la consola actual sin invocar al modelo. La
   identidad autoritativa del hilo para `queue` sigue sin acreditarse. Esta casilla permanece pendiente.
 
-- [ ] **Garantizar que la entrega de un frente reanude la coordinación hasta integrar y verificar,
+- [x] **Garantizar que la entrega de un frente reanude la coordinación hasta integrar y verificar,
   sin esperar a que Ariel pregunte por el avance.** Pedido explícito de Ariel tras esta ronda.
   Evidencia en vivo: B entregó y su regla `c887b7b25512` registró `fired: 1`,
   `last_result: ok`, `last_fired: 2026-10-16T23:49:50.814-03:00`; el aviso llegó a esta
@@ -524,6 +535,7 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   Pruebas: tests/test_rules.py y test_transcripts.py, más la transcripción real de A cortada en
   02:55:20 (abierto) y 02:56:14 (cerrado con ESTADO:). Falta reinicio del backend, aceptación,
   la vista entregado/recibido/integrado y la continuidad de la coordinadora (síntoma de B, aparte).
+  **Cerrado el 2026-10-24 (encargo E, Codex):** pruebas del criterio (coordinadora ocupada y quieta, dos frentes a la vez, intermedia y final, reinicio sin perder ni duplicar) en `tests/test_encargo_E_informes.py`; síntoma B: un informe «entregado» sin acuse 20 min (`INFORME_SIN_ACUSE_S`) con la coordinadora quieta recibe un recordatorio, uno por informe, persistido, con `sin_aviso` y en su propio hilo; los tres estados se ven en el panel (`web/tests-ui/backlog-informes.spec.ts`).
 
 ### P0 — Evaluador e investigación en segundo plano
 
