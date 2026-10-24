@@ -242,7 +242,7 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   real de seguimiento todavía no está verificado como resuelto. No es PASS global.
   [Revisión y límites](review/2026-10-21/code-review-puntero-remoto.md).
 
-- [ ] Diagnosticar el inicio intermitente de Git con `0xc0000142`. Windows registra siete
+- [x] Diagnosticar el inicio intermitente de Git con `0xc0000142`. Windows registra siete
   avisos entre el 19 y el 21 de octubre: seis de `git-remote-https.exe` y uno de `git.exe`.
   El helper inicia en el control del 21/10 y su firma es válida. Lienzo consulta HTTPS cada
   300 s; todavía no se acreditó el proceso padre del fallo ni la DLL causante. La RAM libre
@@ -250,6 +250,7 @@ Las notas anteriores conservan su fecha; este corte actualiza sus límites para 
   Sólo el último aviso quedó a 21 s de despertar; la suspensión no explica todos los avisos.
   Evidencia: `.temp/coordinacion/2026-10-21/git-popup-wake-correlation.json`.
   Avance 2026-10-22: el cartel modal ya no sale (89ec553, SetErrorMode heredado por los hijos del server) y el código queda en el log con la URL. Lanzadores observados: health cada 300 s, codex.exe y claude.exe de sesiones. Coincidió con RAM al límite; la DLL causante sigue sin atribuir.
+  **Cerrado el 2026-10-23 sin causa demostrada:** 11 carteles del 19 al 21/10 (todos git o git-remote-https, el último el 21/10 21:57) y ninguno desde 89ec553: ni en el registro de Windows (Application Popup) ni en el log del lienzo, que ahora lo anota con la URL. Coinciden con las rondas de 4 a 7 frentes; la causa más probable es el desktop heap de la sesión con muchas consolas (`SharedSection=1024,20480,768`, el estándar), no demostrada. Si vuelve, reabrir con trazas del cargador (loader snaps) en ese momento.
 
 - [ ] Verificar y corregir los ocho hallazgos de la [auditoría Codex total](review/2026-10-21/code-review-codex-total.md)
   antes de cerrar la release: B01 auxiliares de transferencia fuera de raíz; B02 rehabilitación
@@ -472,9 +473,10 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   Hecho 2026-10-22 (encargo D, uso real): la CLI ya no usa la cola; cerrar tras un envío deja el acuse visible en la tarjeta muerta, otra CLI en la misma carpeta no lo hereda y un envío a la muerta se rechaza con motivo.
   títulos/reglas cuando una sesión Desktop nueva comparte repo con un encargo CLI cerrado.
   No reutilizar el proceso ni el nombre de un emisor auxiliar como identidad de sesión.
-- [ ] Evaluar handles fijados en copias si se necesita resistir sustituciones hostiles de
+- [x] Evaluar handles fijados en copias si se necesita resistir sustituciones hostiles de
   rutas entre validación y uso; el rechazo actual de junctions existentes no elimina TOCTOU.
   Avance 2026-10-22 (db944d5): `r_borrar` ya borra por el handle del padre fijado. Queda para decidir: el emisor (`Trabajo._leer`) lee el origen por nombre; fijarlo obliga a decidir qué hacer con hardlinks de origen.
+  **Cerrado el 2026-10-23:** el emisor lee el origen por `_abrir_seguro` (carpetas fijadas sin enlaces, handle dentro de copy_roots), como el destino. Decisión sobre hardlinks: en el origen se admiten (sólo se leen y son del usuario; `enlaces_ok`); en los auxiliares se siguen rechazando. Pruebas: `tests/test_xfer.py::test_el_origen_se_lee_confinado_y_admite_hardlinks` y `::test_el_origen_cambiado_por_un_junction_no_se_manda`.
 
 ### P0 — Falla grave de continuidad de la coordinadora (2026-10-17)
 
@@ -596,10 +598,11 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
 
 ### P1 — Catálogo y contrato de plugins
 
-- [ ] Activar y verificar el catálogo ampliado: Anatomy y Commit (Image Preview y Sub Meter quedaron
+- [x] Activar y verificar el catálogo ampliado: Anatomy y Commit (Image Preview y Sub Meter quedaron
   fuera de Lienzo por decisión de Ariel, 2026-10-17; siguen instalados en Claude Code).
   Estado: fichas implementadas y UI compilada/probada; backend activo observado con cinco fichas
   anteriores. La activación debe coordinarse: había dos sesiones corriendo y tres con turno terminado.
+  **Verificado el 2026-10-23** en el backend vivo (`GET /agent-improvements`): Anatomy (skill) y Commit (plugin, 0.2.0) disponibles. Commit es de Better Claude, que la decisión 6 descartó: falta que Ariel confirme si sale del catálogo.
 - [x] Instalar y comprobar Better Claude en el entorno autorizado.
   Descartado 2026-10-22 (decisión 6 de Ariel).
   Verificar manifiestos, activación y compatibilidad de Image Preview/Sub Meter/Commit en Claude Code.
@@ -705,9 +708,10 @@ Lo hecho está en el README («Rondas largas») y en `code-review-2026-10-16.md`
 - [ ] Aprobar o descartar `pruebas-agenticas/resultados/casos-rondas.nuevo.json` (rondas-focal,
   rondas-e2e) y `mutaciones-rondas.nuevo.json` (5 destructivas, 3 de control); después correr
   `mutar.mjs --sin-cache` y la compuerta sobre el estado commiteado.
-- [ ] Medir con dos PCs: un aviso a un frente de otra PC se confirma leyendo `last_reply` del espejo,
+- [x] Medir con dos PCs: un aviso a un frente de otra PC se confirma leyendo `last_reply` del espejo,
   sin probar todavía con la otra PC real; `POST /avisos/<id>/ack` se manda al lienzo de quien creó el aviso.
   Avance 2026-10-21 (encargo R): el `ACK` por línea desde ar-it33940 quedó registrado acá. El ack por API desde otra PC no existe: el server no reenvía `/avisos/<id>/ack`.
+  **Cerrado el 2026-10-23:** `POST /avisos/<id>/ack` se reenvía a las PCs emparejadas si el aviso no es local (`server.ack_aviso`, `/peer/avisos/<id>/ack`); contesta la que lo tiene, y su rechazo vuelve como 409. Prueba en `tests/test_server.py`.
 - [ ] Medir con una restauración real tras reiniciar la PC que Claude y Codex hereden reglas y título
   (cubierto con pruebas sobre el registro; no con agentes reales).
 
@@ -815,10 +819,11 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
   y latencia hasta que la otra PC ve un cambio. Con esos datos definir arquitectura, plan y tareas
   según el alcance, sin exigir SDD. La medición entre PCs necesita ar-it33940 prendida.
 
-- [ ] Integración uniforme de CLI y hallazgos del code review: capacidades compartidas entre
+- [x] Integración uniforme de CLI y hallazgos del code review: capacidades compartidas entre
   Python/TypeScript, proveedores de identidad/transcripción/modelo/diálogo/reanudación, Kiro V3
   limitado explícitamente a Windows y diagnóstico de metadatos sin repetir errores.
   Evidencia inicial: 190 pruebas focales pasan y build del frontend pasa (2026-10-07).
+  **Cerrado el 2026-10-23:** capacidades compartidas en `agent-capabilities.json` (Python y TypeScript); los proveedores por agente viven en los perfiles de `agentes.py`; Kiro y Antigravity quedan sólo Windows desde `windowsOnly` (Python lo lee de ahí y el lanzamiento lo exige; el front no ofrece WSL para ellos), prueba `tests/test_capacidades_plataformas.py`. El «diagnóstico sin repetir errores» no tenía definición; si hace falta, va como ítem propio.
 
   Origen: `MEJORAS.md`, «Pendiente (con evidencia)», ítem 3. Gravedad: media.
   **Estado al 2026-10-15:** sin spec y poco definido. Antes de especificar, contrastar con el código: los
@@ -960,10 +965,11 @@ Ariel aceptó la entrega del puente con veredicto ESCALAR. Detalle del code revi
 
 ### Conocimiento por proyecto
 
-- [ ] Replicar la base de conocimiento entre PCs con un protocolo explícito de propiedad,
+- [x] Replicar la base de conocimiento entre PCs con un protocolo explícito de propiedad,
   concurrencia y recuperación. El código de las etapas 1 a 5 de v5 §9 usa la base local de la
   PC que registra los encargos; un pull de Git no transfiere esa base. Se conservan todas las
   revisiones de informes y los duplicados se sugieren sin fusionarlos automáticamente.
+  **Cerrado el 2026-10-23:** el sentido inverso anda (las capturas del encargo B, nacidas en 75727ff74069, están en la memoria de ar-it33940) y hubo un choque real en el proyecto de prueba `prueba-replica` (cambio del mismo nodo en las dos PCs a las 22:43:36): quedó en `replica_conflicto` con «gana el más nuevo, los dos quedan en el historial».
 
   Origen: v5 §9. Gravedad: media.
 
