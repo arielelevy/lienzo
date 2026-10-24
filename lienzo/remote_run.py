@@ -121,7 +121,9 @@ def _run(request: dict, peer: str) -> tuple[int, dict]:
         state.log(f"run rechazado: ruta invalida ({type(exc).__name__})")
         return 400, {"error": "ruta invalida"}
     if not allowed or not folder.is_dir():
-        return 403, {"error": "cwd fuera de launch_roots"}
+        import launch  # aca y no arriba: el modulo no necesita launch salvo para este mensaje
+
+        return 403, {k: launch.FUERA_DE_RAICES[k] for k in ("error", "pista")}
     if not _busy.acquire(blocking=False):
         return 409, {"error": "esta PC ya ejecuta dos comandos remotos"}
     try:

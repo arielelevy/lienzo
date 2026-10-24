@@ -370,7 +370,7 @@ def test_resume_de_pi_ignora_el_id_y_no_lo_escribe(aislado_launch, monkeypatch):
 def test_resume_respeta_launch_roots(aislado_launch, monkeypatch):
     con_roots(monkeypatch, aislado_launch / "repos")
     res = launch.launch(str(aislado_launch / "otra"), "t", "claude", resume=UUID)
-    assert res == {"ok": False, "error": "cwd fuera de launch_roots"} and FakePopen.calls == []
+    assert res["error"] == "cwd fuera de launch_roots" and "config.json" in res["pista"] and FakePopen.calls == []
 
 
 def test_resume_en_tmux_va_como_argumentos_separados(aislado_launch, monkeypatch):

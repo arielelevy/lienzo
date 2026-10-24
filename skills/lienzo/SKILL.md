@@ -77,15 +77,23 @@ No se lanzan directo desde una sesión de Claude Code. La sesión exporta `CLAUD
 anidada y se apaga sola sin decir nada. Verificado, y `claude --version` anda igual, así que el
 síntoma engaña.
 
-La salida es `explorer.exe`, que desacopla el entorno:
+**Lo normal es lanzar por el lienzo**: `coordinar.lanzar_y_titular(pc, cwd, titulo, agent)` (o
+`POST /sessions/launch`). El server escribe el `.cmd`, elige el ejecutable correcto de cada agente
+(`launch.py::_exe_path`) y cablea la regla de vuelta. La carpeta tiene que estar en `launch_roots` del
+`~/.lienzo/config.json` **de la PC donde se lanza** (se relee en cada lanzamiento, sin reiniciar). Si no
+está, el lanzamiento contesta 400 `cwd fuera de launch_roots`: agregala ahí, o lanzá a mano como sigue.
+
+A mano, la salida es `explorer.exe`, que desacopla el entorno:
 
 ```powershell
 Start-Process explorer.exe -ArgumentList "C:\ruta\lanzar-1.cmd"
 ```
 
-con un `.cmd` que hace `cd /d <repo>`, pone el título con `title`, y llama a `claude.exe` **por ruta
-absoluta** (`%USERPROFILE%\.local\bin\claude.exe`; el PATH tampoco se hereda entero). El `.cmd` se
-escribe en cp1252 y con CRLF, o los acentos salen rotos en la consola.
+con un `.cmd` que hace `cd /d <repo>`, pone el título con `title`, y llama al agente **por ruta
+absoluta** (el PATH tampoco se hereda entero): Claude en `%USERPROFILE%\.local\bin\claude.exe`; **Codex en
+`%LOCALAPPDATA%\Programs\OpenAI\Codex\bin\codex.exe`**, no en `.local\bin` (medido el 2026-10-24: la copia de
+`.local\bin` era vieja y sin `codex-code-mode-host.exe`, y todas las herramientas del Codex fallaban). El
+`.cmd` se escribe en cp1252 y con CRLF, o los acentos salen rotos en la consola.
 
 **El título de la tarjeta de un encargo es `<proyecto> - encargo <letra> - <descripción>`**, por
 ejemplo `miapp - encargo A - describir la mitad 1 de las medidas del modelo`. El proyecto

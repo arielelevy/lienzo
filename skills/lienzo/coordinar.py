@@ -61,6 +61,14 @@ def pedir(metodo, ruta, cuerpo=None, timeout=20):
         return 0, f"{type(e).__name__}: {e}"
 
 
+def responder(sid, opcion=None, texto=None):
+    """Contesta una consulta de trabajo en la PC dueña de la tarjeta."""
+    cuerpo = {k: v for k, v in {"opcion": opcion, "texto": texto}.items() if v is not None}
+    if YO:
+        cuerpo["from"] = YO
+    return pedir("POST", f"/sessions/{sid}/responder", cuerpo)
+
+
 def sesiones():
     s = pedir("GET", "/sessions")[1]
     return s if isinstance(s, list) else (s or {}).get("sessions", [])
@@ -125,7 +133,10 @@ def enviar(s, texto, enlazar=True, sin_aviso=False):
     (un acuse, «entrega recibida»), el turno que eso le cuesta al frente no vuelve como aviso a `YO`.
 
     Un id viejo (la sesión se restauró o se reabrió con otro) contesta 404 con `sucesora`: se manda
-    una vez a esa, y `s["session_id"]` queda actualizado para los envíos siguientes."""
+    una vez a esa, y `s["session_id"]` queda actualizado para los envíos siguientes.
+
+    Devuelve sólo el código HTTP (un int), no `(code, res)` como `pedir`. Para saber si el agente lo
+    tomó, o por qué no, usá `enviar_seguro`."""
     code, res = pedir(
         "POST", f"/sessions/{s['session_id']}/send", _cuerpo_envio(s["session_id"], texto, enlazar, sin_aviso)
     )

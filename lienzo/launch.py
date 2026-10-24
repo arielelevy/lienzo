@@ -232,10 +232,20 @@ def harness_executable(agent: str) -> str | None:
     return _exe_path(name if WINDOWS else name.removesuffix(".exe"))
 
 
+# lo que contesta un lanzamiento con la carpeta fuera de launch_roots: el error de siempre (clientes y
+# pruebas lo comparan) y la pista de cómo seguir (reporte de la coordinadora de cart, 2026-10-24)
+FUERA_DE_RAICES = {
+    "ok": False,
+    "error": "cwd fuera de launch_roots",
+    "pista": "agregá la carpeta a launch_roots en ~/.lienzo/config.json de la PC donde se lanza (se relee en "
+    "cada lanzamiento, sin reiniciar); el mismo error sale si la carpeta no existe",
+}
+
+
 def open_vscode(cwd: str) -> dict:
     """Abre una carpeta permitida sin interpretar su ruta como un comando."""
     if not _cwd_allowed(cwd, _allowed_roots()):
-        return {"ok": False, "error": "cwd fuera de launch_roots"}
+        return dict(FUERA_DE_RAICES)
     candidates = [shutil.which("Code.exe" if WINDOWS else "code")]
     if WINDOWS:
         local = os.environ.get("LOCALAPPDATA")
@@ -293,7 +303,7 @@ def launch(
             "error": "coda no tiene cuota en esta PC («Quota exceeded»): lanzá en otra PC u otro agente",
         }
     if not _cwd_allowed(cwd, _allowed_roots()):
-        return {"ok": False, "error": "cwd fuera de launch_roots"}
+        return dict(FUERA_DE_RAICES)
     if not WINDOWS or distro:
         exe_name = exe_name.removesuffix(".exe")
     if distro and WINDOWS:
