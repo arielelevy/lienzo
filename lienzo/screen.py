@@ -263,6 +263,16 @@ def _dialog_kiro_confianza(lines: list[str]) -> dict | None:
     }
 
 
+KIRO_OPCIONES_V233 = ("Allow", "Always allow", "Deny", "Always deny")
+# kiro-cli 2.34.0 (medido el 2026-10-23 en opensyync: el auto-aprobar dejo de contestar al actualizarse)
+KIRO_OPCIONES_V234 = (
+    "Allow once",
+    "Deny once",
+    "Create allow rule to approve future similar actions",
+    "Create deny rule to block future similar actions",
+)
+
+
 def _dialog_kiro(lines: list[str]) -> dict | None:
     """Permiso observado en Kiro V3: opciones sin numero y pie con flechas."""
     if not any("esc to close" in l and "to navigate" in l and "to select" in l for l in lines):
@@ -273,9 +283,9 @@ def _dialog_kiro(lines: list[str]) -> dict | None:
         raw = lines[i].strip()
         selected = raw.startswith(("❯", "›", ">"))
         label = sin_cursor(raw)
-        if label in ("Allow", "Always allow", "Deny", "Always deny"):
+        if label in KIRO_OPCIONES_V233 or label in KIRO_OPCIONES_V234:
             best.append((i, {"n": len(best) + 1, "text": label, "cursor": selected}))
-    if [o["text"] for _, o in best] != ["Allow", "Always allow", "Deny", "Always deny"]:
+    if [o["text"] for _, o in best] not in (list(KIRO_OPCIONES_V233), list(KIRO_OPCIONES_V234)):
         return None
     if sum(o["cursor"] for _, o in best) != 1:
         return None

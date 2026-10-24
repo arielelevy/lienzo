@@ -4,5 +4,5 @@
   "codex": {"label": "Codex", "resume": "codex resume", "coordinable": true, "nativeChannel": false, "screen": true},
   "pi": {"label": "Pi", "resume": "pi --resume", "coordinable": true, "nativeChannel": false, "screen": false},
   "coda": {"label": "CODA", "resume": "coda --lastsession", "coordinable": true, "nativeChannel": false, "screen": false},
-  "kiro": {"label": "Kiro", "resume": "kiro-cli --v3 --resume-id", "coordinable": true, "nativeChannel": false, "screen": true}
+  "kiro": {"label": "Kiro", "resume": "kiro-cli --v3 --resume-id", "coordinable": true, "nativeChannel": false, "screen": true, "windowsOnly": true}
 }

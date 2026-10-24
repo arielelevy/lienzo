@@ -53,11 +53,16 @@ class Perfil:
     # sin hook idle_prompt: el turno que la transcripcion cierra con una pregunta lleva la tarjeta a
     # «te necesita», como hace el Notification de Claude (hooks_eventos.hook_notification)
     pregunta_al_terminar: ClassVar[bool] = False
-    supported_platforms: ClassVar[tuple[str, ...]] = ("win32", "linux", "darwin")
 
     @property
     def capabilities(self) -> dict:
         return CAPACIDADES[self.parser.removeprefix("parse_")]
+
+    @property
+    def supported_platforms(self) -> tuple[str, ...]:
+        """Donde se puede lanzar. Sale de `windowsOnly` en agent-capabilities.json, el mismo dato que usa
+        el front (no ofrece WSL para esos agentes): una sola fuente para Python y TypeScript."""
+        return ("win32",) if self.capabilities.get("windowsOnly") else ("win32", "linux", "darwin")
 
     def valid_id(self, sid, *, strict: bool = True) -> bool:
         if not isinstance(sid, str) or not sid:
@@ -232,7 +237,6 @@ class Kiro(Perfil):
     after_dialog = "corriendo"
     live_dialog_with_hooks = True
     pregunta_al_terminar = True
-    supported_platforms = ("win32",)  # identidad verificada con el motor de V3 en Windows
     preguntas_de_permiso = ()
 
     def permission_option(self, dialog: dict | None) -> int | None:
@@ -258,7 +262,8 @@ class Kiro(Perfil):
         allow_deny = any(t.startswith("allow") for _, t in ops) and any(t.startswith("deny") for _, t in ops)
         if not ("requires approval" in q or "requiere permiso" in q or allow_deny):
             return None
-        return next((n for n, t in ops if t == "allow"), None)
+        # «Allow» (2.33) o «Allow once» (2.34); nunca «Always allow» ni «Create allow rule…», que dejan una regla
+        return next((n for n, t in ops if t in ("allow", "allow once")), None)
 
     def permission_reason(self, dialog: dict | None) -> str:
         q, ops = _dialogo_plano(dialog)
@@ -308,7 +313,6 @@ class Antigravity(Perfil):
     """Historial parcial y permisos de comando observados en la terminal."""
 
     preguntas_de_permiso = ()
-    supported_platforms = ("win32",)
 
     def valid_id(self, sid, *, strict: bool = True) -> bool:
         # agy 1.4.3 persiste UUID en cache/last_conversations.json; nunca un pid ni un prefijo.

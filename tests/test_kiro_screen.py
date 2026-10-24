@@ -99,3 +99,29 @@ def test_codex_approval_uses_arrows_and_enter():
     assert result["selected"] == 1
     assert result["teclas"] == "flechas"
     assert "$ node --test test.mjs" in result["detail"]
+
+
+def test_kiro_2_34_cambio_las_opciones_y_se_sigue_eligiendo_solo_allow_once():
+    """kiro-cli 2.34.0 (2026-10-23, opensyync): «Allow once / Deny once / Create allow rule… / Create deny
+    rule…». Con las opciones de la 2.33 no se reconocia el dialogo y el auto-aprobar no lo contestaba."""
+    from lienzo.agentes import perfil
+
+    lines = [
+        "  ,history_store.py,report_export.py,web_api.py | Select-Object Name,Length",
+        "─" * 120,
+        " Measure sizes of integration-owned files requires approval",
+        " shell → Get-ChildItem",
+        " opensyync.py,coverage_contract.py,engine_contract.py",
+        "",
+        " ❯ Allow once",
+        "   Deny once",
+        "   Create allow rule to approve future similar actions",
+        "   Create deny rule to block future similar actions",
+        "─" * 120,
+        " esc to close · ↑↓ to navigate · ↵ to select · Tab to edit",
+    ]
+    d = screen.dialog(lines)
+    assert d is not None and d["teclas"] == "flechas"
+    assert d["question"] == "Measure sizes of integration-owned files requires approval"
+    assert [o["text"] for o in d["options"]][:2] == ["Allow once", "Deny once"]
+    assert perfil("kiro").permission_option(d) == 1  # «Allow once», nunca la regla permanente
