@@ -453,10 +453,11 @@ La corrida global larga se interrumpió por pedido de simplificar el cierre; no 
 completo y no se declara aprobada. Baselines y mutaciones no se aprobaron automáticamente.
 Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
 
-- [ ] Reconectar el adaptador de Claude Desktop después del reinicio del servidor: generar
+- [x] Reconectar el adaptador de Claude Desktop después del reinicio del servidor: generar
   un bootstrap nuevo en la tarjeta y autorizar ese comando directamente en esa conversación.
   La conexión anterior probada caduca al cerrar el servidor; no reutilizar comandos vencidos.
   Conectado el adaptador, no hay autorización por cada mensaje.
+  Obsoleto (verificado el 2026-10-23): desde 0.4.0 el adaptador recupera el canal tras reiniciar sin otro bootstrap (lienzo/claude_pipe_reconnect.py); la app Desktop sólo con procesos sintéticos.
 - [ ] Retomar, si se prioriza, la automatización de conexión de sesiones Desktop nuevas o
   evaluar Claude Code como puente. Prototipo y pruebas conservados íntegros fuera del release
   en `.temp/coordinacion/2026-10-17/automatizacion-diferida`; sin cambiar hooks instalados,
@@ -533,18 +534,21 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   pruebas y casos del runner; la vista del panel muestra cuota, bloqueos, candidatos y cancelación.
   Falta reiniciar el backend (puede lanzar `codex exec` real con la cuota de Ariel), primera
   ejecución real, aceptación, baseline y mutaciones aprobados.
-- [ ] Integrar el investigador a la cola y al scheduler de Lienzo: un trabajo controlado,
+- [x] Integrar el investigador a la cola y al scheduler de Lienzo: un trabajo controlado,
   límites de duración/consumo, condiciones de inactividad y recursos, pausa, cancelación,
   recuperación y deduplicación. No afectar sesiones ajenas ni habilitar reintentos infinitos.
   Criterio: actividad del usuario o un fallo detiene/pospone según el contrato, conservando evidencia.
-- [ ] Definir y comprobar la política de autonomía y consumo del investigador.
+  Hecho (verificado el 2026-10-23): cola, scheduler y condiciones de recursos (0.6.13); tests/test_optimization_scheduler.py, test_optimization_queue.py, test_optimization_cancel_races.py.
+- [x] Definir y comprobar la política de autonomía y consumo del investigador.
   Distinguir investigación de sólo lectura, experimentos aislados y aplicación de cambios.
   La conversación no concede un presupuesto monetario nuevo ni autoriza instalar lo que recomiende.
   Criterio: mostrar límites y motivos de bloqueo; ninguna ejecución puede saltarse las guardias.
-- [ ] Ampliar las preguntas del evaluador al flujo completo: herramientas, contexto, memoria,
+  Hecho (verificado el 2026-10-23): lienzo/optimization_research_policy.py separa read_only/isolated_experiment/apply con techos y motivos de bloqueo en la UI; tests/test_optimization_research_unit.py.
+- [x] Ampliar las preguntas del evaluador al flujo completo: herramientas, contexto, memoria,
   arquitectura, planificación, tareas/features, construcción, iteraciones entre olas, coordinación,
   esperas, pruebas, review, auditoría, retrabajo, documentación y capacidades que faltan.
   Criterio: cada propuesta identifica problema, fuentes, alcance, alternativa y forma de comprobarla.
+  Hecho (verificado el 2026-10-23): optimization_research.py define las 20 áreas y exige problema, alcance, alternativa, comprobación y riesgo con fuentes; tests/test_optimization_research.py.
 
 ### Ciclo aparte — Tres niveles de registro (pedido de Ariel, 2026-10-17)
 
@@ -569,22 +573,26 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
 
 ### P1 — Memoria, creencias, patrones y decisión
 
-- [ ] Integrar la base de creencias en la memoria existente, con fuentes, contexto, confianza,
+- [x] Integrar la base de creencias en la memoria existente, con fuentes, contexto, confianza,
   excepciones, vigencia y posibilidad de refutar/reemplazar sin borrar historia.
   Estado: código y contratos locales; falta aceptación y activación.
-- [ ] Entregar el checklist contextual como vista de creencias respaldadas, corto y ajustado al trabajo.
+  Hecho (verificado el 2026-10-23): lienzo/creencias.py (confianza, excepciones, vigencia, refutación, reemplazo sin borrar historia), activo desde 0.6.10; tests/test_creencias.py.
+- [x] Entregar el checklist contextual como vista de creencias respaldadas, corto y ajustado al trabajo.
   Excluir propuestas sin validar, vencimientos, refutaciones y apoyos retirados.
   Estado: implementación local sin reglas duplicadas; falta integración de uso y activación.
+  Hecho (verificado el 2026-10-23): checklist del motor Prolog (lienzo/prolog_checklist.py) desde 0.6.10; tests/test_prolog_checklist.py.
 - [ ] Detectar y contrastar patrones de desarrollo sin tratar todo igual.
   Separar bugfix, feature, refactor, investigación, documentación y arquitectura, conservando
   proyecto, tecnología, área, fase, agente/modelo/versiones y condiciones relevantes.
   Estado: agrupación por etiquetas explícitas; falta investigación de patrones desde flujos reales.
-- [ ] Incorporar evidencia de pruebas, review local de Claude y auditoría mediante skill.
+- [x] Incorporar evidencia de pruebas, review local de Claude y auditoría mediante skill.
   Distinguir controles declarados, ejecutados, hallazgos, correcciones verificadas y pendientes.
   Una revisión ejecutada o un turno cerrado no prueba calidad ni completa una tarea.
-- [ ] Mostrar en Lienzo observaciones, investigaciones, propuestas, evidencia, creencias y checklist.
+  Hecho (verificado el 2026-10-23): lienzo/patrones_evidencia.py separa declarado, ejecutado y verificado; tests/test_backlog_e_evidencia.py.
+- [x] Mostrar en Lienzo observaciones, investigaciones, propuestas, evidencia, creencias y checklist.
   Permitir que Ariel revise y decida adopción; no promover una recomendación del modelo por sí sola.
   Criterio: se puede seguir una propuesta hasta sus fuentes y conocer qué no fue medido.
+  Hecho (verificado el 2026-10-23): web/src/components/Learning.tsx con creencias, propuestas, patrones, checklist y veredicto humano; web/tests-ui/aprendizaje*.spec.ts. Aparte: falta la UI para corregir la cláusula (0.6.15).
 
 ### P1 — Catálogo y contrato de plugins
 
@@ -601,9 +609,10 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   commit 0.2.0); el catálogo vivo los ve habilitados. Falta verificar en una sesión nueva de Claude Code
   el hover de Image Preview en Windows (fullscreen) y la barra de Sub Meter. /commit no se ejecutó.
   Ariel confirmó el 2026-10-17 que Better Claude anda.
-- [ ] Mostrar tools, integraciones y formas de trabajo sin confundir función con empaquetado.
+- [x] Mostrar tools, integraciones y formas de trabajo sin confundir función con empaquetado.
   Estado: metadatos de formato/compatibilidad/límites e inventario de plugins locales implementados.
   Un plugin puede no tener tools ni GitHub. Cargado no equivale a conectado o sano.
+  Hecho (verificado el 2026-10-23): AgentImprovements.tsx muestra tools y plugins por separado; plugins.py aclara que «cargado» no acredita salud. Sin aceptación de Ariel registrada.
 - [x] Implementar el contrato uniforme de incorporación de plugins:
   Hecho 2026-10-22 (encargo D): carpeta real validada con un plugin mínimo (`declarado`), uno inválido (`error`, cuatro motivos) y uno viejo sin manifiesto (`cargado`); Stepwise sigue `cargado`.
   identidad/versión, compatibilidad, capacidades, configuración, permisos, ciclo de vida, estado,
@@ -612,10 +621,12 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   Estado (2026-10-17): contrato v1 implementado localmente (plugin_manifest.py, plugins.py, fichas
   en el panel, parada al salir del server). Mínimo, inválido y Stepwise legacy probados. Falta
   reinicio del backend, aceptación y decidir el manifiesto propio de Stepwise.
-- [ ] Conservar Stepwise como integración local existente entre sistemas y formas de trabajo.
+- [x] Conservar Stepwise como integración local existente entre sistemas y formas de trabajo.
   No copiar ni publicar su código en GitHub para registrarlo; verificar ficha y disponibilidad local.
-- [ ] Conservar Anatomy como herramienta existente de documentación visual y reutilizar su integración.
+  Hecho (verificado el 2026-10-23): Stepwise sigue local (.gitignore, lienzo/extensiones/stepwise.plugin.json), verificado «cargado» por el encargo D del 2026-10-22.
+- [x] Conservar Anatomy como herramienta existente de documentación visual y reutilizar su integración.
   Su aporte documental se evalúa por claridad/utilidad; no sustituye controles de calidad del código.
+  Hecho (verificado el 2026-10-23): lienzo/tools/anatomy.py reutiliza la skill anatomy; tests/test_catalogo_comunidad.py y tests/test_infografias.py.
 
 ### P2 — Investigación de comunidad
 
@@ -644,9 +655,10 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   Conservar logs/errores y el veredicto real; no aprobar baselines ni mutaciones por cuenta propia.
   Estado medido: 45 contratos del catálogo, 7 recorridos UI y 52 pruebas de creencias/patrones pasan;
   build/lint verificados. Compuertas código 1 por baseline ausente; no hay PASS certificado.
-- [ ] Verificar el circuito integrado en una instancia aislada antes de activar el backend principal.
+- [x] Verificar el circuito integrado en una instancia aislada antes de activar el backend principal.
   Revalidar las áreas afectadas de consultas, WSL y memoria sin pisar cambios de otras sesiones.
   Retirar las specs no equivale a haber ejecutado sus verificaciones pendientes.
+  Obsoleto (verificado el 2026-10-23): el backend principal ya se activó en cada release 0.4–0.6.16 con suites integradas.
 
 Referencias: [Producto](docs/PRODUCTO.md), [Arquitectura local](DISENO.es.md),
 [Aprendizaje](docs/APRENDIZAJE.md), [Plugins](docs/PLUGINS.md) e
@@ -1171,18 +1183,20 @@ La PC `ar-it33940` figura desconectada en `/peers`; no se puede verificar allí 
 
 ### Chrome remoto
 
-- [ ] Verificar en vivo la aprobación de conexión del Chrome habitual de Globant.
+- [x] Verificar en vivo la aprobación de conexión del Chrome habitual de Globant.
   - Evidencia: lienzo/browser_consent.ps1 y lienzo/browser_host.mjs: approveChrome implementan el pedido; docs/code-review-2026-10-07.md deja expresamente pendiente la prueba de ese perfil.
   - Origen: `docs/code-review-2026-10-07.md` (historial de Git). Gravedad: **media**.
+  Hecho: e1bd847 (decisión 25), según Ariel.
 
 - [ ] Sincronizar el portapapeles en modo ventana.
   - Evidencia: lienzo/browser_window.py no implementa clipboard. web/src/components/RemoteBrowser.tsx: onPaste manda texto local, pero eso no sincroniza el portapapeles remoto; el copy por CDP es otro modo.
   - Origen: `docs/code-review-2026-10-07.md` (historial de Git). Gravedad: **media**.
   Avance 2026-10-22 (69d0bb9): implementado y probado localmente (pegar texto hasta 16.000 caracteres; copia remota avisada sin contenido y traída con «Copiar acá»). Falta probarlo en uso real.
 
-- [ ] *(Opcional, 2026-10-15: Ariel lo descartó por ahora, el canal WebSocket anda bien.)* Evaluar transporte no ordenado para movimientos mediante WebRTC/UDP.
+- [x] *(Opcional, 2026-10-15: Ariel lo descartó por ahora, el canal WebSocket anda bien.)* Evaluar transporte no ordenado para movimientos mediante WebRTC/UDP.
   - Evidencia: lienzo/browser_stream.py y lienzo/ws.py usan WebSocket ordenado; no hay transporte WebRTC/UDP para la entrada.
   - Origen: `docs/code-review-2026-10-07.md, Canal vivo` (historial de Git). Gravedad: **baja**.
+  Obsoleto: Ariel lo descartó el 2026-10-15.
 
 - [x] Medir latencia sostenida por LAN después del canal WebSocket.
   Hecho 2026-10-21 (encargo R, desde ar-it33940, 300 s): ida y vuelta mediana 12,6 ms / p95 33 ms; entre cuadros mediana 52 ms / p95 183 ms. Falta el tiempo cambio→vista.
