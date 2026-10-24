@@ -4,12 +4,12 @@ const HEADERS ={ "X-Lienzo": "1", "Content-Type": "application/json" };
 
 /** Error HTTP con el body JSON del server: un 409 de programadas trae rule_id, at, text y replace. */
 export class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-    public body: Record<string, unknown>,
-  ) {
+  status: number;
+  body: Record<string, unknown>;
+  constructor(message: string, status: number, body: Record<string, unknown>) {
     super(message);
+    this.status = status;
+    this.body = body;
   }
 }
 
