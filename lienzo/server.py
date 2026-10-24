@@ -1624,6 +1624,25 @@ def accion_retarget(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     return 200, {"ok": True, "n": n, "unreachable": sorted(fallaron)}
 
 
+def ack_aviso(aid: str, d: dict) -> tuple[int, dict]:
+    """POST /avisos/<id>/ack: el aviso vive en el lienzo de la coordinadora que lo creo. Un frente de otra
+    PC confirma contra su propio lienzo, que no lo conoce: entonces se reenvia a las PCs emparejadas y
+    contesta la que lo tiene (PENDIENTES: «el server no reenvia /avisos/<id>/ack», 2026-10-21)."""
+    sid, nota = d.get("session_id"), d.get("nota")
+    code, res = rondas.ack(aid, sid, nota)
+    if code != 404 or res.get("error") != "aviso desconocido":
+        return code, res
+    ok, fallaron = fan_out("POST", f"/avisos/{aid}/ack", {"session_id": sid, "nota": nota})
+    if ok:
+        pc, cuerpo = next(iter(ok.items()))
+        return 200, {**cuerpo, "pc": pc}
+    # la PC que lo tiene puede rechazarlo (ya cerrado, esa sesion no lo recibio): ese motivo es la respuesta
+    rechazo = next(((pc, m) for pc, m in fallaron.items() if m != "aviso desconocido"), None)
+    if rechazo:
+        return 409, {"error": rechazo[1], "pc": rechazo[0]}
+    return 404, {"error": "aviso desconocido"}
+
+
 def acuse_de_par(rule_id: str, informe_id: str, estado) -> tuple[int, dict]:
     """POST /peer/rules/<id>/informes/<inf>/acuse: el acuse que una PC emparejada reenvia desde su
     tablero porque la regla vive aca. El actor es el destino de la regla, como en el acuse local."""
@@ -2235,8 +2254,7 @@ class Handler(JsonHandler):
             if parts == ["avisos"]:
                 return self._json(*rondas.crear_aviso(self._json_body()))
             if len(parts) == 3 and parts[0] == "avisos" and parts[2] == "ack":
-                d = self._json_body()
-                return self._json(*rondas.ack(parts[1], d.get("session_id"), d.get("nota")))
+                return self._json(*ack_aviso(parts[1], self._json_body()))
             if len(parts) == 2 and parts[0] == "turnos":
                 return self._json(*rondas.pedir_turno(parts[1], self._json_body()))
             if parts == ["consultas"]:
@@ -2849,6 +2867,10 @@ class PeerHandler(JsonHandler):
             return self._accion_sesion(method, rest[1], rest[2], raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "PUT":
             return self._accion_sesion(method, rest[1], rest[2], raw)
+        if len(rest) == 3 and rest[0] == "avisos" and rest[2] == "ack" and method == "POST":
+            # el ack que reenvia el lienzo de un frente de otra PC (ack_aviso): se resuelve aca, sin reenviar
+            d = self._body_json(raw)
+            return self._json(*rondas.ack(rest[1], d.get("session_id"), d.get("nota"), por=f"peer:{pc_id}"))
         if len(rest) == 5 and rest[0] == "rules" and rest[2] == "informes" and rest[4] == "acuse" and method == "POST":
             return self._json(*acuse_de_par(rest[1], rest[3], self._body_json(raw).get("estado")))
         if len(rest) == 2 and rest[0] == "rules" and method == "DELETE":

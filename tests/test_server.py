@@ -2110,3 +2110,30 @@ def test_la_coordinadora_que_se_reabre_en_la_misma_carpeta_hereda_sus_avisos(ais
     st.sessions[nueva["session_id"]] = nueva
     ses.drop_session(nueva["session_id"], "borrada desde la UI")
     assert rl.rules.items == []
+
+
+def test_el_ack_de_un_aviso_de_otra_pc_se_reenvia_y_contesta_la_que_lo_tiene(monkeypatch):
+    """PENDIENTES (2026-10-21): un frente de otra PC confirmaba contra su lienzo, que no conoce el aviso."""
+    import server as srv
+
+    monkeypatch.setattr(srv.rondas, "ack", lambda aid, sid, nota, por="api": (404, {"error": "aviso desconocido"}))
+    pedidos = []
+
+    def fan_out(method, path, body=None, *, pcs=None):
+        pedidos.append((method, path, body))
+        return {"pcB": {"ok": True}}, {"pcC": "aviso desconocido"}
+
+    monkeypatch.setattr(srv, "fan_out", fan_out)
+    assert srv.ack_aviso("a1", {"session_id": "s1", "nota": "listo"}) == (200, {"ok": True, "pc": "pcB"})
+    assert pedidos == [("POST", "/avisos/a1/ack", {"session_id": "s1", "nota": "listo"})]
+    # la que lo tiene lo rechaza (ya cerrado): ese motivo vuelve, no un «desconocido»
+    monkeypatch.setattr(
+        srv, "fan_out", lambda *a, **k: ({}, {"pcB": "el aviso ya esta vencido", "pcC": "aviso desconocido"})
+    )
+    assert srv.ack_aviso("a1", {"session_id": "s1"}) == (409, {"error": "el aviso ya esta vencido", "pc": "pcB"})
+    monkeypatch.setattr(srv, "fan_out", lambda *a, **k: ({}, {"pcC": "aviso desconocido"}))
+    assert srv.ack_aviso("a1", {"session_id": "s1"})[0] == 404
+    # un aviso local no sale de esta PC
+    monkeypatch.setattr(srv.rondas, "ack", lambda aid, sid, nota, por="api": (200, {"estado": "confirmado"}))
+    monkeypatch.setattr(srv, "fan_out", lambda *a, **k: pytest.fail("no debia reenviar"))
+    assert srv.ack_aviso("a1", {"session_id": "s1"}) == (200, {"estado": "confirmado"})
