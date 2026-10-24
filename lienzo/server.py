@@ -1624,6 +1624,17 @@ def accion_retarget(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     return 200, {"ok": True, "n": n, "unreachable": sorted(fallaron)}
 
 
+def acuse_de_par(rule_id: str, informe_id: str, estado) -> tuple[int, dict]:
+    """POST /peer/rules/<id>/informes/<inf>/acuse: el acuse que una PC emparejada reenvia desde su
+    tablero porque la regla vive aca. El actor es el destino de la regla, como en el acuse local."""
+    with lock:
+        rule = next((r for r in rules.items if r["id"] == rule_id), None)
+        target = rule.get("to") if rule else None
+    if target is None:
+        return 404, {"error": "conexion desconocida"}
+    return acuse_informe(rule_id, informe_id, {"estado": estado, "session_id": target})
+
+
 def accion_restaurar(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     """POST /restaurar {session_id | all: true, pc?, limit_by_memory?}: local con restore_local, o
     desde el tablero reenviada a la PC `pc` por /peer/restaurar."""
@@ -2257,6 +2268,14 @@ class Handler(JsonHandler):
                 with lock:
                     rule = next((r for r in rules.items if r["id"] == parts[1]), None)
                     target = rule.get("to") if rule else None
+                if rule is None and (dueña := mirror.MIRROR.rule_owner(parts[1])):
+                    # la regla vive en otra PC (un frente lanzado alla y cableado hacia aca): el acuse va
+                    # a esa PC por el canal firmado, como el borrado (2026-10-23: sin esto daba 404 y la
+                    # regla no se podia borrar por «informes pendientes»)
+                    code, res = mirror.MIRROR.forward(
+                        dueña, "POST", f"/rules/{parts[1]}/informes/{parts[3]}/acuse", {"estado": body.get("estado")}
+                    )
+                    return self._json(code, res)
                 if target is None:
                     return self._json(404, {"error": "conexion desconocida"})
                 return self._json(
@@ -2830,6 +2849,8 @@ class PeerHandler(JsonHandler):
             return self._accion_sesion(method, rest[1], rest[2], raw)
         if len(rest) == 3 and rest[0] == "sessions" and method == "PUT":
             return self._accion_sesion(method, rest[1], rest[2], raw)
+        if len(rest) == 5 and rest[0] == "rules" and rest[2] == "informes" and rest[4] == "acuse" and method == "POST":
+            return self._json(*acuse_de_par(rest[1], rest[3], self._body_json(raw).get("estado")))
         if len(rest) == 2 and rest[0] == "rules" and method == "DELETE":
             if rl.retirar_regla(rest[1]):
                 return self._json(

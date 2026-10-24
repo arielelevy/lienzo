@@ -2002,6 +2002,51 @@ def test_borrar_una_regla_de_otra_pc_se_reenvia_a_su_dueña(monkeypatch):
         httpd.shutdown()
 
 
+def test_el_acuse_de_un_informe_de_otra_pc_se_reenvia_a_su_dueña(monkeypatch):
+    """2026-10-23: un frente lanzado en ar-it33940 y cableado hacia aca deja la regla alla; el acuse
+    daba 404 «conexion desconocida» y la regla no se podia borrar por «informes pendientes»."""
+    import http.client
+    import threading
+
+    import mirror
+    import server as srv
+
+    llamadas = []
+    monkeypatch.setattr(mirror.MIRROR, "rule_owner", lambda rid: "pcB" if rid == "remota1" else None)
+    monkeypatch.setattr(
+        mirror.MIRROR,
+        "forward",
+        lambda pc, m, path, body=None: llamadas.append((pc, m, path, body)) or (200, {"estado": "recibido"}),
+    )
+    httpd = srv.QuietServer(("127.0.0.1", 0), srv.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=5)
+        c.request(
+            "POST",
+            "/rules/remota1/informes/inf1/acuse",
+            body=b'{"estado": "recibido"}',
+            headers={"X-Lienzo": "1", "Content-Type": "application/json"},
+        )
+        r = c.getresponse()
+        r.read()
+        assert r.status == 200
+        assert llamadas == [("pcB", "POST", "/rules/remota1/informes/inf1/acuse", {"estado": "recibido"})]
+    finally:
+        httpd.shutdown()
+
+
+def test_el_par_dueño_registra_el_acuse_como_el_destino_de_la_regla(monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv.rules, "items", [{"id": "r1", "to": "coord", "informes": []}])
+    vistos = []
+    monkeypatch.setattr(srv, "acuse_informe", lambda rid, inf, d: vistos.append((rid, inf, d)) or (200, {}))
+    assert srv.acuse_de_par("r1", "inf1", "integrado") == (200, {})
+    assert vistos == [("r1", "inf1", {"estado": "integrado", "session_id": "coord"})]
+    assert srv.acuse_de_par("nada", "inf1", "integrado")[0] == 404
+
+
 def test_repoint_refs_pasa_reglas_y_links_de_la_provisoria_a_la_real(tmp_path, monkeypatch):
     import sessions as ses_mod
 
