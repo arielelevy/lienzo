@@ -1093,6 +1093,95 @@ def recuperar_informes() -> list[dict]:
     return listas
 
 
+def _reservar_recordatorio(r: dict, informe: dict, t: dt.datetime):
+    """Reserva durable antes del transporte; un fallo incierto nunca se reintenta solo."""
+    with lock:
+        entrega = local_dt(informe.get("entregado_at"))
+        dst = find_session(r.get("to"))
+        if (
+            informe.get("estado") != "entregado"
+            or informe.get("recordatorio_at")
+            or entrega is None
+            or (t - entrega).total_seconds() < state.INFORME_SIN_ACUSE_S
+            or not dst
+            or dst.get("state") != "termino"
+            or dst.get("stopped_by")
+        ):
+            return None
+        silencio = dst.get("sin_aviso") or {}
+        if silencio and time.time() - float(silencio.get("desde") or 0) <= SIN_AVISO_MAX_S:
+            return None  # no pisar el silencio de otro aviso todavía sin consumir
+        for regla in rules.items:
+            for previo in regla.get("informes", []):
+                reservado = local_dt(previo.get("recordatorio_at"))
+                destino = previo.get("recordatorio_destino")
+                if destino == r["to"] and reservado is not None and (t - reservado).total_seconds() <= SIN_AVISO_MAX_S:
+                    return None
+        texto = (
+            f"[informe sin acuse] {session_name(r.get('from'))} ({r.get('from')}) entregó {informe['id']}. "
+            "Integralo y verificá, o comunicá el bloqueo concreto. "
+            f"Acusá con POST /rules/{r['id']}/informes/{informe['id']}/acuse "
+            f'{{"session_id":"{r["to"]}","estado":"recibido"}}; después estado="integrado" al verificar.'
+        )
+        informe["recordatorio_at"] = t.isoformat()
+        informe["recordatorio_destino"] = r["to"]
+        try:
+            if rules.save(strict=True) is False:
+                raise OSError("no se pudo conservar el recordatorio antes del envio")
+        except Exception:
+            informe.pop("recordatorio_at", None)
+            informe.pop("recordatorio_destino", None)
+            raise
+        return dst, texto
+
+
+def recordar_informes(t: dt.datetime) -> None:
+    """Un intento por informe, incluso en reglas agotadas; nunca acusa ni integra por el agente."""
+    with lock:
+        pendientes = [(r, i) for r in rules.items for i in r.get("informes", [])]
+    destinos = set()
+    for r, informe in pendientes:
+        if r.get("to") in destinos:
+            continue
+        try:
+            reservado = _reservar_recordatorio(r, informe, t)
+        except Exception:
+            state.log(f"reserva de recordatorio {informe['id']}:\n{traceback.format_exc()}")
+            rules.publish()
+            continue
+        if reservado is None:
+            continue
+        dst, texto = reservado
+        destinos.add(r["to"])
+        state.log(f"recordatorio informe {informe['id']}, regla {r['id']} -> {r['to']}: reservado sin_aviso")
+        try:
+            import preguntas
+
+            if preguntas.enviar is None:
+                raise RuntimeError("el enrutador de consultas no está instalado")
+            code, res = preguntas.enviar(
+                dst["session_id"], {"text": texto, "from": r["from"], "sin_aviso": True}
+            )
+            with lock:
+                informe["recordatorio_resultado"] = {"codigo": code, **res}
+                rules.save(strict=True)
+            state.log(f"recordatorio informe {informe['id']}: {code} {res}")
+        except Exception:
+            state.log(f"recordatorio informe {informe['id']}:\n{traceback.format_exc()}")
+        rules.publish()
+
+
+def recordatorios_loop(stop=None) -> None:
+    """El transporte de recordatorios nunca ocupa el planificador de reglas."""
+    stop = stop if stop is not None else threading.Event()
+    while not stop.is_set():
+        try:
+            recordar_informes(dt.datetime.now().astimezone())
+        except Exception:
+            state.log(traceback.format_exc())
+        stop.wait(5)
+
+
 def rules_loop() -> None:
     while True:
         try:

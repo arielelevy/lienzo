@@ -54,6 +54,7 @@ NEEDS_NOTIFICATIONS = {
 }
 DEAD_GRACE_S = 60
 SIN_AVANCE_S = 30 * 60  # «corriendo» sin ningun avance: se le avisa a la coordinadora (sessions.sin_avance)
+INFORME_SIN_ACUSE_S = 20 * 60  # recordatorio único por informe entregado sin recepción explícita
 DEAD_KEEP_S = 120  # una muerta que se puede revivir (sessions.conservar_muerta); Ariel, 2026-10-23: 2 min
 STALE_SESSION_H = 24  # al arrancar: tarjetas sin proceso y sin eventos hace mas de esto se purgan
 ATTACH_MAX_DAYS = 30

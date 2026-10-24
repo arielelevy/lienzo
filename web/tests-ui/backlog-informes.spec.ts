@@ -19,6 +19,7 @@ test("informe inactivo conserva evidencia y requiere dos acuses explícitos", as
   await expect(page.getByRole("button", { name: "Confirmar integración verificada" })).toHaveCount(0);
   expect(acknowledgements).toEqual([]);
   await page.getByRole("button", { name: "Confirmar recepción" }).click();
+  await expect(page.getByText("Informe informe- · recibido", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Confirmar integración verificada" }).click();
   await expect(page.getByText("Informe informe- · integrado", { exact: true })).toBeVisible();
   expect(acknowledgements).toEqual(["recibido", "integrado"]);
