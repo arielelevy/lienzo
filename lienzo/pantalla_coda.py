@@ -30,6 +30,26 @@ def comando_visible(lineas):
     return "".join(cuerpo)
 
 
+PIE_PREGUNTA = "Esc to dismiss"  # «↑↓ move · Enter confirm · y/n · Esc to dismiss»
+MARCA = chr(0x2503)  # ┃: coda marca así el título de un diálogo
+
+
+def pregunta_visible(lineas):
+    """La pregunta de un diálogo de coda que no es un permiso («Set up permission rules?» con
+    «> Yes / No»), o None. Medido el 2026-10-23 en ar-it33940: una coda esperó casi 3 horas ahí con la
+    tarjeta en «corriendo», porque el barrido de coda sólo miraba el cartel «Approval Required». Se pide
+    el pie del diálogo abajo y, más arriba, el título marcado con ┃."""
+    izq = [ln.split(SEP)[0].rstrip() for ln in lineas]
+    pie = max((k for k, ln in enumerate(izq) if PIE_PREGUNTA in ln and "Enter confirm" in ln), default=None)
+    if pie is None:
+        return None
+    for ln in reversed(izq[:pie]):
+        s = ln.strip()
+        if s.startswith(MARCA) and s[1:].strip():
+            return s[1:].strip()
+    return "coda espera una respuesta en su terminal"
+
+
 def compacto(cmd):
     """El comando sin ningún espacio: así no depende de dónde cortó la línea la pantalla."""
     return re.sub(r"\s+", "", cmd)

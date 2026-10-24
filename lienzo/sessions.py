@@ -62,6 +62,7 @@ from state import (
     LONG_TEXT,
     PENDING,
     PYTHON,
+    SIN_AVANCE_S,
     STALE_SESSION_H,
     STATES,
     atomic_write,
@@ -304,6 +305,7 @@ def _gancho_sin_cablear(nombre: str):
 # rules.py cargado no pasa nada (salvo el aviso en el log, una vez por gancho).
 on_turn_end = _gancho_sin_cablear("on_turn_end")
 on_limit_notice = _gancho_sin_cablear("on_limit_notice")
+on_sin_avance = _gancho_sin_cablear("on_sin_avance")  # rules.py: corre sin avanzar hace SIN_AVANCE_S
 on_died_working = _gancho_sin_cablear("on_died_working")  # rules.py: avisar que murio con un encargo a medias
 on_api_error = _gancho_sin_cablear("on_api_error")
 
@@ -2036,7 +2038,11 @@ _pantalla_mirada: dict[str, float] = {}
 def coda_mirar_pantalla(s: dict) -> bool:
     """(Con el lock.) ¿Toca mirar la pantalla de esta coda en busca de un cartel de permiso? Sí si
     figura corriendo, sin nada pedido, quieta hace CODA_PANTALLA_QUIETA_S y no se miro hace poco."""
-    if s.get("agent") != "coda" or s.get("state") != "corriendo" or s.get("needs") or not s.get("pid"):
+    n = s.get("needs") or {}
+    pregunta = n.get("via") == "screen" and n.get("kind") == "question"  # se mira si sigue abierta
+    if s.get("agent") != "coda" or not s.get("pid"):
+        return False
+    if not pregunta and (s.get("state") != "corriendo" or n):
         return False
     quieta = parse_ts(s.get("last_event_ts") or s.get("state_since"))
     ahora = time.time()
@@ -2085,11 +2091,12 @@ def coda_dialogo_en_pantalla(s: dict) -> bool:
     te_necesita con el comando, para que se vea y el auto-aprobar lo tome. Es la red de abajo de las
     otras dos señales (el `ask` del log y propose_policy): medido el 2026-10-04, dos codas de la otra
     PC esperaron una hora un npm run build sin que el log mostrara el pedido. Devuelve si lo marco."""
-    lineas = (read_screen(s).get("lines") or []) if s.get("pid") else []
+    lectura = read_screen(s) if s.get("pid") else {}
+    lineas = lectura.get("lines") or []
     pantalla = "\n".join(lineas)
     if not coda_ask_open(pantalla):
         coda_compactacion_abortada(s, lineas)
-        return False
+        return coda_pregunta_en_pantalla(s, lineas, bool(lectura.get("ok")))
     try:
         import pantalla_coda
 
@@ -2115,6 +2122,30 @@ def coda_dialogo_en_pantalla(s: dict) -> bool:
     state.log(
         f"{s['session_id'][:8]}: coda espera una aprobación en su terminal ({short(cmd, 80) or 'sin comando visible'})"
     )
+    return True
+
+
+def coda_pregunta_en_pantalla(s: dict, lineas: list[str], leida: bool) -> bool:
+    """(Sin el lock.) Un diálogo de coda que no es un permiso (pantalla_coda.pregunta_visible): la
+    tarjeta pasa a te_necesita con la pregunta, que decide el humano (el auto-aprobar no la toca). Cuando
+    la pantalla ya no la muestra, la tarjeta vuelve a «corriendo». Devuelve si marcó."""
+    import pantalla_coda
+
+    pregunta = pantalla_coda.pregunta_visible(lineas) if leida else None
+    with lock:
+        if sessions.get(s["session_id"]) is not s:
+            return False
+        n = s.get("needs") or {}
+        if n.get("via") == "screen" and n.get("kind") == "question":
+            if leida and pregunta is None:
+                set_state(s, "corriendo")  # se contestó en la terminal
+                touch(s)
+            return False
+        if pregunta is None or s.get("state") != "corriendo" or n:
+            return False
+        set_needs(s, {"kind": "question", "detail": short(pregunta, 300), "where": "terminal", "via": "screen"})
+        touch(s)
+    state.log(f"{s['session_id'][:8]}: coda espera una respuesta en su terminal: {short(pregunta, 80)}")
     return True
 
 
@@ -2149,6 +2180,24 @@ def coda_compactacion_abortada(s: dict, lineas: list[str]) -> bool:
         touch(s)
     state.log(f"{s['session_id'][:8]}: coda abortó la compactación (pocos mensajes); la tarjeta vuelve a termino")
     return True
+
+
+def sin_avance(s: dict) -> None:
+    """(Con el lock.) Una tarjeta «corriendo» que hace SIN_AVANCE_S no tiene ningun avance (evento de
+    hook, transcripcion que crece, herramienta en el log de coda): se le avisa a quien la tiene
+    cableada, una vez por racha. Pedido de Ariel (2026-10-23): una coda espero casi 3 horas en un
+    dialogo y nadie se entero; «si no hay respuesta por 30 min tenes que preguntar»."""
+    if s.get("state") != "corriendo" or not s.get("alive"):
+        return
+    marcas = [parse_ts(s.get(k)) for k in ("last_event_ts", "state_since", "avance_at")]
+    ultimo = max((m for m in marcas if m), default=None)
+    if ultimo is None or (dt.datetime.now().astimezone() - ultimo).total_seconds() < SIN_AVANCE_S:
+        return
+    clave = ultimo.isoformat()
+    if s.get("sin_avance_avisado") == clave:
+        return
+    s["sin_avance_avisado"] = clave
+    en_hilo(on_sin_avance, s["session_id"], clave)
 
 
 def check_liveness(sid: str) -> None:
@@ -2207,6 +2256,9 @@ def check_liveness(sid: str) -> None:
             except OSError:
                 pass  # sin -wal (CODA cerrado y base checkpointeada): alcanza con la base
         crecio = sig is not None and transcript_stat.get(sid) != sig
+        if crecio or changed:
+            s["avance_at"] = now()  # la transcripcion crecio, o el log de coda trajo algo nuevo
+        sin_avance(s)
         if crecio:
             transcript_stat[sid] = sig
         else:

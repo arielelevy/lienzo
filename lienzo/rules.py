@@ -992,6 +992,37 @@ def aviso_muerta(sid: str, prev: str) -> None:
         state.log(f"aviso de muerte de {sid[:8]} -> {to[:8]}: {'ok' if code == 200 else res.get('error')}")
 
 
+def aviso_sin_avance(sid: str, desde: str) -> None:
+    """La sesion `sid` sigue «corriendo» pero no avanza desde `desde` (sessions.sin_avance): se avisa a
+    cada destino de sus reglas «cuando termine», como aviso_muerta, para que alguien mire su pantalla."""
+    with lock:
+        s = dict(sessions.get(sid) or {})
+        destinos = {
+            r["to"] for r in rules.items if r.get("enabled") and r.get("kind") == "on_stop" and r.get("from") == sid
+        }
+    titulo = s.get("title") or s.get("repo") or sid[:8]
+    minutos = state.SIN_AVANCE_S // 60
+    state.log(f"{sid[:8]} «{titulo}»: corriendo sin avance desde {desde} (mas de {minutos} min)")
+    if not s or not destinos:
+        return
+    texto = (
+        f"[aviso automático] «{titulo}» ({sid[:8]}) lleva más de {minutos} min «corriendo» sin ningún avance "
+        "(ni eventos, ni herramientas, ni transcripción). Puede estar trabada en un diálogo: mirá su pantalla "
+        f"(GET /sessions/{sid}/screen, pc='{s.get('pc') or ''}') y preguntale o destrabala."
+    )
+    for to in destinos:
+        try:
+            dst = find_session(to)
+            if dst is None:
+                continue
+            with captura.origen(de=sid, kind="aviso_sin_avance"):
+                code, res = send_to_session(dst, texto, [])
+        except Exception:
+            state.log(f"aviso sin avance de {sid[:8]} -> {to[:8]}:\n{traceback.format_exc()}")
+            continue
+        state.log(f"aviso sin avance de {sid[:8]} -> {to[:8]}: {'ok' if code == 200 else res.get('error')}")
+
+
 def entregas_diferidas(ahora: dt.datetime) -> list[tuple[dict, int]]:
     """Las on_stop con avisos en espera que ya pueden salir: [(regla, cuantos)]. Las reserva en
     _on_stop_en_vuelo bajo el lock (como fire_on_stop) y les consume la espera al reservarlas. Si
@@ -1245,4 +1276,5 @@ def reactivar_agotadas_por_tope_viejo() -> int:
 ses.on_turn_end = fire_on_stop
 ses.on_limit_notice = ensure_continue_rule
 ses.on_died_working = aviso_muerta
+ses.on_sin_avance = aviso_sin_avance
 ses.on_api_error = retry_after_api_error
