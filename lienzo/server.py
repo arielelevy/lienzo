@@ -62,6 +62,7 @@ import optimization_scheduler
 import pairing
 import pantalla_coda
 import plugins
+import preguntas
 import recientes
 import red
 import registro_niveles
@@ -1408,6 +1409,7 @@ class AccionSesion:
 
 
 ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
+    ("POST", "responder"): AccionSesion(preguntas.validar, preguntas.responder),
     ("POST", "claude-pipe"): AccionSesion(validar_claude_pipe, accion_claude_pipe),
     ("PUT", "copycat"): AccionSesion(validar_copycat, accion_copycat),
     ("POST", "kill"): AccionSesion(sin_validar, accion_kill),
@@ -1487,6 +1489,8 @@ def atender_accion(metodo: str, sid: str, nombre: str, d: dict, *, desde_tablero
         a.despues_tablero(sid, s, d, res)
     return code, res
 
+
+preguntas.enviar = lambda sid, d: atender_accion("POST", sid, "send", d, desde_tablero=True)
 
 # Las acciones que no son de una tarjeta pero tambien estaban en los dos listeners: un pedido de
 # permiso, lanzar, reapuntar reglas y restaurar. Mismo orden (validar -> ubicar la PC -> ejecutar o
@@ -3494,9 +3498,11 @@ def main() -> int:
         sweep_once()
     threading.Thread(target=consume_events, daemon=True).start()
     threading.Thread(target=scan_pending, daemon=True).start()
+    threading.Thread(target=preguntas.bucle, name="preguntas", daemon=True).start()
     threading.Thread(target=liveness_loop, args=(0 if a.no_sweep else a.sweep_every,), daemon=True).start()
     threading.Thread(target=screen_loop, daemon=True).start()
     threading.Thread(target=rules_loop, daemon=True).start()
+    threading.Thread(target=rl.recordatorios_loop, name="recordatorios", daemon=True).start()
     autoaprobar.arrancar()
     if a.remote:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()

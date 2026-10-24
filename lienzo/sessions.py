@@ -2626,8 +2626,20 @@ def _dialogo_en_pantalla(s: dict, visto: dict) -> tuple[dict | None, str | None]
     r = read_screen(s)
     if not r.get("ok"):
         return None, f"no pude leer la pantalla: {r.get('error')}"
-    d = screen.dialog(r.get("lines") or [])
-    if not d or [o["text"] for o in d["options"]] != [o.get("text") for o in visto.get("options") or []]:
+    if s.get("agent") == "coda" and visto.get("lector") == "pregunta_coda":
+        import preguntas
+
+        d = preguntas.dialogo_coda(r.get("lines") or [])
+    else:
+        d = screen.dialog(r.get("lines") or [])
+    if (
+        not d
+        or (
+            visto.get("lector") == "pregunta_coda"
+            and " ".join((d.get("question") or "").split()) != " ".join((visto.get("question") or "").split())
+        )
+        or [o["text"] for o in d["options"]] != [o.get("text") for o in visto.get("options") or []]
+    ):
         return None, "el dialogo ya no esta en la pantalla (¿se contesto en la terminal?)"
     if not perfil(s["agent"]).same_dialog(d, visto, lambda: read_transcript(s)):
         return None, "el permiso ya cambio o se resolvio; relee la tarjeta antes de elegir"
@@ -2768,7 +2780,8 @@ def dialogo_abierto(s: dict) -> tuple[int, dict] | None:
     return 409, {
         "ok": False,
         "code": "dialog_open",
-        "error": f"{motivo} («{short(q, 80)}»): elegí una opción en la tarjeta antes de mandarle nada",
+        "error": f"{motivo} («{short(q, 80)}»): elegí una opción en la tarjeta antes de mandarle nada; "
+        f"POST /sessions/{s['session_id']}/responder {{opcion: n}}",
     }
 
 

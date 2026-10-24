@@ -33,6 +33,12 @@ export function CardNeeds({ session: s, now, pending: p, quick, writable, action
   const preguntas = askQuestions(p);
   return (
     <>
+      {s.consulta_coordinadora && (
+        <div className="dim small" role="status">consultada a la coordinadora «{s.consulta_coordinadora.titulo}»</div>
+      )}
+      {s.respuesta_coordinadora && (
+        <div className="dim small" role="status">{s.respuesta_coordinadora.por} eligió: {s.respuesta_coordinadora.texto}</div>
+      )}
       {/* Si lo que espera es una pregunta con opciones, van las opciones: no hay nada que permitir */}
       {p && preguntas.length > 0 ? (
         <Ask pending={p} questions={preguntas} onAnswer={onAnswer} onDecide={onDecide} />
