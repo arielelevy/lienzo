@@ -184,7 +184,12 @@ def test_el_encargo_dice_si_lo_mostrado_no_tuvo_contraste(monkeypatch, tmp_path)
     assert out["datos"]["aprendizajes_mostrados"][0]["sostenida"] is False
 
 
-def _grafo_aleatorio(pid, rng):
+def _grafo_aleatorio(pid, rng, nuevos=True):
+    # lo agregado el 2026-10-25 (pendiente, reemplaza) sale de otro generador: la secuencia de `rng` queda igual
+    # y los muestreos que dependen de ella (sostenidas y cuestionadas del motor real) no cambian
+    extra = random.Random(f"extra-{pid}")
+    if not nuevos:  # el muestreo de antes, tal cual: sin pendientes ni sucesoras
+        extra = None
     future = (dt.datetime.now(dt.UTC) + dt.timedelta(days=1)).isoformat()
     past = (dt.datetime.now(dt.UTC) - dt.timedelta(days=1)).isoformat()
     k.registrar_proyecto(pid)
@@ -215,7 +220,9 @@ def _grafo_aleatorio(pid, rng):
                 "evidencia_veredicto": rng.choice([evidence] * 5 + ["otra"]),
                 "vigente_hasta": rng.choice([future, future, past, "2026-10-19T00:00:00", None]),
                 # pendiente de validar o de evidencia, sin veredicto (2026-10-25); sólo cuenta en una propuesta
-                "pendiente": rng.choice([None] * 4 + [{"falta": "eficacia"}, {"falta": "evidencia"}]),
+                "pendiente": extra.choice([None] * 4 + [{"falta": "eficacia"}, {"falta": "evidencia"}])
+                if extra
+                else None,
                 "contexto": rng.choice(
                     [
                         CTX,
@@ -238,8 +245,10 @@ def _grafo_aleatorio(pid, rng):
             for target in rng.sample(beliefs + decisions + [s["id"] for s in sources], rng.choice([0, 1, 2])):
                 if target != b:
                     con.execute(ins, (b, "motivada_por", target, 1, "x", "server", "{}"))
-            if rng.random() < 0.1:  # una sucesora que la reemplaza: se lee reemplazada aunque esté revertida
-                con.execute(ins, (rng.choice(beliefs), "reemplaza", b, 1, "x", "persona:Ariel", "{}"))
+            if (
+                extra and extra.random() < 0.1
+            ):  # una sucesora que la reemplaza: se lee reemplazada aunque esté revertida
+                con.execute(ins, (extra.choice(beliefs), "reemplaza", b, 1, "x", "persona:Ariel", "{}"))
         for d in decisions:
             for target in rng.sample(decisions + [s["id"] for s in sources], rng.choice([0, 1, 2])):
                 if target != d:
@@ -270,7 +279,7 @@ def test_motor_real_igual_a_python_en_grafos_aleatorios():
     sostenidas = cuestionadas = 0
     for n in range(12):
         pid = f"chk-real-{n}"
-        _grafo_aleatorio(pid, rng)
+        _grafo_aleatorio(pid, rng, nuevos=False)
         out = _checklist(pid)
         assert out["motor"].get("diferencias") == [], (n, out["motor"])
         assert out["motor"]["estado"] == "sostenido"
@@ -278,6 +287,12 @@ def test_motor_real_igual_a_python_en_grafos_aleatorios():
         assert all(x["cuestionada_por"] for x in out["cuestionadas"])
         sostenidas, cuestionadas = sostenidas + out["total"], cuestionadas + out["cuestionadas_total"]
     assert sostenidas and cuestionadas  # el muestreo pasó por las dos salidas
+    # los estados de 2026-10-25 (reemplazada, pendientes): el motor real tiene que coincidir con Python
+    for n in range(6):
+        pid = f"chk-real-nuevos-{n}"
+        _grafo_aleatorio(pid, rng)
+        out = _checklist(pid)
+        assert out["motor"].get("diferencias") == [], (n, out["motor"])
 
 
 def test_una_prueba_con_comparacion_falsa_se_rechaza():
