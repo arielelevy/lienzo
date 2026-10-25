@@ -41,7 +41,6 @@ MOTIVOS = {
     "reemplazada": "La reemplazó una versión corregida o fusionada; su evidencia sigue en la sucesora",
     "pendiente_validacion": "Lo observado está respaldado; falta medir si la acción sirve",
     "pendiente_evidencia": "Falta evidencia para decidir; no hay evidencia en contra",
-    "pendiente_formalizacion": "Aceptada, pero falta formalizar su cláusula para el motor lógico",
     "sin_veredicto": "Es una propuesta: falta el veredicto de una persona con evidencia",
     "respaldo_retirado": "El vínculo con la evidencia del veredicto ya no está activo",
     "respaldo_caido": "Una fuente de la que depende fue rechazada o revertida",
@@ -52,6 +51,7 @@ MOTIVOS = {
 }
 # sólo en la vista del proyecto, sin contexto: no es un estado del checklist ni del motor lógico
 MOTIVO_VIGENTE = "Validada por una persona, vigente y con respaldo activo"
+MOTIVO_FORMALIZACION = "Aceptada, pero falta formalizar su cláusula para el motor lógico"
 # una fuente motiva la creencia por el grafo: así un rechazo posterior se ve como respaldo caído.
 # La evidencia no tiene estado que caiga y `apoya` queda reservado al veredicto humano.
 _FUENTES_QUE_MOTIVAN = {"hallazgo", "medicion", "incidente", "decision"}
@@ -617,7 +617,7 @@ def _item(node, state, chains):
     ):
         # aceptada por IA sin cláusula: falta formalizarla, no hay evidencia en contra (2026-10-25). Sigue fuera
         # del checklist hasta que el motor la pueda sostener, como antes
-        item.update(estado="pendiente_formalizacion", motivo=MOTIVOS["pendiente_formalizacion"])
+        item.update(estado="pendiente_formalizacion", motivo=MOTIVO_FORMALIZACION)
     if isinstance(data.get("pendiente"), dict) and item["estado"] in ("pendiente_validacion", "pendiente_evidencia"):
         item["pendiente"] = {
             key: data["pendiente"][key] for key in ("falta", "motivo", "fecha") if key in data["pendiente"]

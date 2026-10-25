@@ -1,7 +1,6 @@
 """Motor real AA: protocolo 4, archivos como datos y contratos anteriores."""
 
 import hashlib
-import shutil
 import subprocess
 import time
 
@@ -24,7 +23,7 @@ def comprobar_terminado(pid):
     pytest.fail(f"SWI {pid} sigue vivo después del cierre")
 
 
-@pytest.mark.skipif(not shutil.which("wsl.exe") and not shutil.which("swipl"), reason="Sin SWI-Prolog")
+@pytest.mark.skipif(not learning.motor_disponible(), reason="Sin SWI-Prolog que responda")
 def test_motor_real_carga_pl_y_reusa_proceso(tmp_path):
     command = learning.command()
     command[command.index("-s") + 1] = command[command.index("-s") + 1].replace("main.pl", "servicio.pl")
@@ -79,6 +78,7 @@ def test_motor_real_carga_pl_y_reusa_proceso(tmp_path):
     comprobar_terminado(one["pid"])
 
 
+@pytest.mark.skipif(not learning.motor_disponible(), reason="Sin SWI-Prolog que responda")
 def test_servidor_no_acepta_directivas_en_archivo(tmp_path):
     command = learning.command()
     command[command.index("-s") + 1] = command[command.index("-s") + 1].replace("main.pl", "servicio.pl")

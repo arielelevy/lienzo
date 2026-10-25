@@ -5,7 +5,6 @@ sigue como contraste y sin motor el checklist se lee igual, sin decir que algo e
 import datetime as dt
 import json
 import random
-import shutil
 from pathlib import Path
 
 import conocimiento as k
@@ -17,7 +16,7 @@ import prolog_learning as motor
 import pytest
 
 REAL = pytest.mark.skipif(
-    not (shutil.which("wsl.exe") or shutil.which("swipl")) or not motor.ENGINE.is_file(),
+    not motor.motor_disponible(),
     reason="Falta WSL/SWI-Prolog o el repo motor-logico",
 )
 CTX = {"tipo_trabajo": "bugfix", "agente": "codex"}
@@ -215,6 +214,8 @@ def _grafo_aleatorio(pid, rng):
                 "veredicto_por": rng.choice(["persona:Ariel"] * 6 + ["frente:x", None]),
                 "evidencia_veredicto": rng.choice([evidence] * 5 + ["otra"]),
                 "vigente_hasta": rng.choice([future, future, past, "2026-10-19T00:00:00", None]),
+                # pendiente de validar o de evidencia, sin veredicto (2026-10-25); sólo cuenta en una propuesta
+                "pendiente": rng.choice([None] * 4 + [{"falta": "eficacia"}, {"falta": "evidencia"}]),
                 "contexto": rng.choice(
                     [
                         CTX,
@@ -237,6 +238,8 @@ def _grafo_aleatorio(pid, rng):
             for target in rng.sample(beliefs + decisions + [s["id"] for s in sources], rng.choice([0, 1, 2])):
                 if target != b:
                     con.execute(ins, (b, "motivada_por", target, 1, "x", "server", "{}"))
+            if rng.random() < 0.1:  # una sucesora que la reemplaza: se lee reemplazada aunque esté revertida
+                con.execute(ins, (rng.choice(beliefs), "reemplaza", b, 1, "x", "persona:Ariel", "{}"))
         for d in decisions:
             for target in rng.sample(decisions + [s["id"] for s in sources], rng.choice([0, 1, 2])):
                 if target != d:
@@ -248,7 +251,7 @@ def test_modelo_python_desde_hechos_igual_a_creencias_en_grafos_aleatorios():
     """Sin motor: la lectura desde los hechos coincide con creencias._evaluar en cada estado."""
     rng = random.Random(20261022)
     seen = set()
-    for n in range(30):
+    for n in range(60):  # 60 grafos: con los estados de pendiente hacen falta más para verlos todos
         pid = f"chk-modelo-{n}"
         _grafo_aleatorio(pid, rng)
         evaluated, facts = pk._foto(pid, CTX)

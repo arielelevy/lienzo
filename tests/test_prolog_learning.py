@@ -1,6 +1,5 @@
 import datetime as dt
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -11,7 +10,7 @@ import prolog_learning as motor
 import pytest
 
 REAL = pytest.mark.skipif(
-    not (shutil.which("wsl.exe") or shutil.which("swipl")) or not motor.ENGINE.is_file(),
+    not motor.motor_disponible(),
     reason="Falta WSL/SWI-Prolog o el repo motor-logico",
 )
 

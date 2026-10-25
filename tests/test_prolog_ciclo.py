@@ -5,7 +5,13 @@ import os
 
 import conocimiento as k
 import creencias as c
+import prolog_learning as _motor
 import pytest
+
+# lo que necesita el motor real se saltea en una PC que no tiene SWI-Prolog (ar-it33940, 2026-10-25)
+MOTOR_REAL = pytest.mark.skipif(
+    not _motor.motor_disponible(), reason="Falta SWI-Prolog que responda o el repo motor-logico"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +60,7 @@ def belief(pid="aa-ciclo", *, delegada=False, clausula=None):
     return n["id"], ev["id"]
 
 
+@MOTOR_REAL
 def test_primera_contradiccion_de_delegada_cuestiona_y_excluye_del_checklist():
     bid, _ = belief(delegada=True)
     incident = k.crear_nodo(
@@ -70,12 +77,14 @@ def test_primera_contradiccion_de_delegada_cuestiona_y_excluye_del_checklist():
     assert c.checklist("aa-ciclo", {})["items"] == []
 
 
+@MOTOR_REAL
 def test_apoyo_retirado_y_usos_no_aplico_se_revaluan():
     bid, ev = belief()
     k.retirar_vinculo("aa-ciclo", bid, "apoya", ev, por="persona:Ariel", motivo="evidencia retirada")
     assert ciclo().vuelta("aa-ciclo")["cuestionadas"] == [bid]
 
 
+@MOTOR_REAL
 def test_fuente_rechazada_cuestiona_la_creencia_que_motiva():
     bid, _ = belief()
     source = k.crear_nodo("aa-ciclo", "hallazgo", "medición que motivó la regla", {}, autor="persona:Ariel")
@@ -85,6 +94,7 @@ def test_fuente_rechazada_cuestiona_la_creencia_que_motiva():
     assert bid in out["cuestionadas"]
 
 
+@MOTOR_REAL
 def test_dos_usos_no_aplico_cuestionan_y_uno_no():
     bid, _ = belief()
     c.registrar_uso("aa-ciclo", bid, {"resultado": "no_aplico", "por": "persona:Ariel"})
@@ -101,6 +111,7 @@ def test_cancelacion_no_escribe_reevaluacion():
     assert c.listar("aa-ciclo") == before
 
 
+@MOTOR_REAL
 def test_nuevo_veredicto_invalida_objecion_anterior():
     bid, ev = belief(delegada=True)
     k.crear_nodo("aa-ciclo", "incidente", "falló", {"contradice_creencias": [bid]}, autor="persona:Ariel")
@@ -147,6 +158,7 @@ def test_cambiar_la_regla_exige_veredicto_de_la_revision_nueva():
     assert c.checklist("aa-ciclo", {})["no_aplican"][0]["estado"] == "sin_veredicto"
 
 
+@MOTOR_REAL
 def test_deriva_con_reglas_y_hechos_reales_y_guarda_cadena_sin_promover():
     b1, _ = belief(clausula="escenario_ram(C, chrome, 4, 1.1) :- chrome_en_uso(C), frentes_activos(C, 4).")
     b2, _ = belief(clausula="recurso_necesita_gb(investigador, 3) :- proyecto(C, lienzo).")
@@ -181,6 +193,7 @@ def test_deriva_con_reglas_y_hechos_reales_y_guarda_cadena_sin_promover():
     assert node["datos"]["reevaluacion"]["estado"] == "cuestionada"
 
 
+@MOTOR_REAL
 def test_reuso_por_metadata_y_no_aplico_por_destino():
     bid, _ = belief("aa-origen", clausula="recomendar(C, pruebas, focal) :- tecnologia(C, python).")
     k.registrar_proyecto("aa-destino")
@@ -212,6 +225,7 @@ def test_reuso_por_metadata_y_no_aplico_por_destino():
     assert len(ciclo().reusar("aa-otro", {"tecnologia": "python"})) == 1
 
 
+@MOTOR_REAL
 def test_derivacion_reusa_premisa_externa_por_referencia_y_sigue_su_caida():
     external, _ = belief("aa-origen", clausula="recurso_necesita_gb(investigador, 3) :- tecnologia(C, python).")
     k.actualizar_datos("aa-origen", external, {"metadatos": {"tecnologia": ["python"]}}, por="persona:Ariel")
@@ -290,6 +304,7 @@ def test_graduacion_solo_proceso_aceptado_y_retiro_de_objecion(tmp_path):
     assert bid not in output.read_text(encoding="utf-8")
 
 
+@MOTOR_REAL
 def test_generalizacion_inductiva_conserva_casos_y_prueba_sin_aprobar():
     b1, _ = belief(clausula="recomendar(C, memoria, medir) :- chrome_en_uso(C).")
     b2, _ = belief(clausula="recomendar(C, memoria, medir) :- frentes_activos(C, 4).")

@@ -34,6 +34,44 @@ class MotorError(Exception):
     pass
 
 
+def distro():
+    """La distribución WSL donde corre SWI-Prolog: `LIENZO_WSL_DISTRO`, o `prolog_wsl_distro` en config.json, o
+    `Ubuntu`. No es igual en todas las PCs: en ar-it33940 es `Ubuntu-24.04` (2026-10-25)."""
+    if os.environ.get("LIENZO_WSL_DISTRO"):
+        return os.environ["LIENZO_WSL_DISTRO"]
+    try:
+        import state
+
+        nombre = state.load_config().get("prolog_wsl_distro")
+    except Exception:  # sin config legible vale el default
+        nombre = None
+    return nombre if isinstance(nombre, str) and nombre.strip() else "Ubuntu"
+
+
+_disponible = None
+
+
+def motor_disponible():
+    """Si hay un SWI-Prolog que responda (en la distro WSL configurada, o local fuera de Windows) y el repo
+    motor-logico. Se mide una vez por proceso. Sirve para saltear lo que necesita el motor real en una PC que
+    no lo tiene, en vez de fallar con el error del lanzador."""
+    global _disponible
+    if _disponible is None:
+        cmd = ["wsl.exe", "-d", distro(), "--exec", "swipl", "--version"] if WSL else ["swipl", "--version"]
+        try:
+            r = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=DESPERTAR_PLAZO_S,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            _disponible = r.returncode == 0 and ENGINE.is_file()
+        except OSError, subprocess.TimeoutExpired:
+            _disponible = False
+    return _disponible
+
+
 def _epoch(value):
     try:
         date = dt.datetime.fromisoformat(value)
@@ -101,7 +139,7 @@ def despertar():
         return
     try:
         subprocess.run(
-            ["wsl.exe", "-d", "Ubuntu", "--exec", "true"],
+            ["wsl.exe", "-d", distro(), "--exec", "true"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=DESPERTAR_PLAZO_S,
@@ -127,7 +165,7 @@ def command():
         return [
             "wsl.exe",
             "-d",
-            "Ubuntu",
+            distro(),
             "--",
             "swipl",
             "-q",

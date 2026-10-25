@@ -32,9 +32,41 @@ MOTIVO_DISCREPA = "El motor lógico y Python no coinciden en que aplique: queda 
 
 RULES = [
     # el orden de gravedad de creencias._evaluar: cada estado excluye a los anteriores por negación
-    regla("refutada_revertida", L("refutada", B), L("creencia", B), L("nodo", B, "decision", "revertida")),
-    regla("refutada_reemplazada", L("refutada", B), L("creencia", B), L("nodo", B, "decision", "reemplazada")),
-    regla("refutada_veredicto", L("refutada", B), L("creencia", B), L("veredicto", B, "refutada")),
+    # reemplazada (corregida o fusionada, 2026-10-25) va antes que refutada: no es una refutación
+    regla("reemplazada_estado", L("reemplazada", B), L("creencia", B), L("nodo", B, "decision", "reemplazada")),
+    regla("reemplazada_sucesora", L("reemplazada", B), L("creencia", B), L("sucedida", B)),
+    regla(
+        "refutada_revertida",
+        L("refutada", B),
+        L("creencia", B),
+        L("nodo", B, "decision", "revertida"),
+        L("reemplazada", B, **NO),
+    ),
+    regla(
+        "refutada_veredicto",
+        L("refutada", B),
+        L("creencia", B),
+        L("veredicto", B, "refutada"),
+        L("reemplazada", B, **NO),
+    ),
+    regla("cerrada_reemplazada", L("cerrada", B), L("reemplazada", B)),
+    regla("cerrada_refutada", L("cerrada", B), L("refutada", B)),
+    regla(
+        "pendiente_validacion",
+        L("pendiente_validacion", B),
+        L("nodo", B, "decision", "propuesta"),
+        L("pendiente", B, "eficacia"),
+        L("cerrada", B, **NO),
+    ),
+    regla(
+        "pendiente_evidencia",
+        L("pendiente_evidencia", B),
+        L("nodo", B, "decision", "propuesta"),
+        L("pendiente", B, "evidencia"),
+        L("cerrada", B, **NO),
+    ),
+    regla("en_pausa_validacion", L("en_pausa", B), L("pendiente_validacion", B)),
+    regla("en_pausa_evidencia", L("en_pausa", B), L("pendiente_evidencia", B)),
     regla(
         "con_veredicto",
         L("con_veredicto", B),
@@ -43,17 +75,22 @@ RULES = [
         L("por_persona", B),
     ),
     regla(
-        "sin_veredicto", L("sin_veredicto", B), L("creencia", B), L("refutada", B, **NO), L("con_veredicto", B, **NO)
+        "sin_veredicto",
+        L("sin_veredicto", B),
+        L("creencia", B),
+        L("cerrada", B, **NO),
+        L("en_pausa", B, **NO),
+        L("con_veredicto", B, **NO),
     ),
     regla("respaldada", L("respaldada", B), L("evidencia_veredicto", B, E), L("apoyo", B, E)),
     regla(
         "respaldo_retirado",
         L("respaldo_retirado", B),
         L("con_veredicto", B),
-        L("refutada", B, **NO),
+        L("cerrada", B, **NO),
         L("respaldada", B, **NO),
     ),
-    regla("activa", L("activa", B), L("con_veredicto", B), L("refutada", B, **NO), L("respaldada", B)),
+    regla("activa", L("activa", B), L("con_veredicto", B), L("cerrada", B, **NO), L("respaldada", B)),
     # la cadena de respaldos sigue sólo por decisiones que no cayeron, como aprendizaje._Respaldos
     regla("alcanza_directo", L("alcanza", B, F), L("activa", B), L("motiva", B, F)),
     regla(
@@ -134,6 +171,8 @@ BASE = {
     "requiere",
     "valor_no_texto",
     "contexto_no_objeto",
+    "sucedida",
+    "pendiente",
 }
 ESTADOS = tuple(creencias.MOTIVOS)  # un predicado por estado de creencias._evaluar
 QUERIES = {
@@ -166,6 +205,11 @@ def hechos(context, beliefs, apoyos, graph, deriva, ahora) -> list:
     for b in beliefs:
         data, bid = b["datos"], b["id"]
         facts.append(L("creencia", bid))
+        if b.get("_reemplazada") or data.get("fusionada_en"):
+            facts.append(L("sucedida", bid))
+        if isinstance(data.get("pendiente"), dict):
+            falta = "evidencia" if data["pendiente"].get("falta") == "evidencia" else "eficacia"
+            facts.append(L("pendiente", bid, falta))
         if isinstance(data.get("resultado"), str):
             facts.append(L("veredicto", bid, data["resultado"]))
 
@@ -212,12 +256,20 @@ def _modelo(facts: list) -> dict:
         motiva.setdefault(de, set()).add(a)
     caida = {n for n, ts in nodo.items() if ts in CAIDAS}
 
-    refutada = {b for b in creencia if nodo[b][1] in ("revertida", "reemplazada") or veredicto.get(b) == "refutada"}
+    sucedida = {b for (b,) in get("sucedida")}
+    reemplazada = {b for b in creencia if nodo[b][1] == "reemplazada" or b in sucedida}
+    refutada = {b for b in creencia if nodo[b][1] == "revertida" or veredicto.get(b) == "refutada"} - reemplazada
+    cerrada = reemplazada | refutada
+    pendiente = {b: f for b, f in get("pendiente")}
+    propuestas = {b for b in creencia if nodo[b][1] == "propuesta"} - cerrada
+    p_validacion = {b for b in propuestas if pendiente.get(b) == "eficacia"}
+    p_evidencia = {b for b in propuestas if pendiente.get(b) == "evidencia"}
+    en_pausa = p_validacion | p_evidencia
     con_veredicto = {
         b for b, (t, s) in nodo.items() if t == "decision" and s == "vigente" and veredicto.get(b) == "validada"
     } & persona
     respaldada = {b for b, e in evid.items() if (b, e) in get("apoyo")}
-    activa = (con_veredicto - refutada) & respaldada
+    activa = (con_veredicto - cerrada) & respaldada
 
     def alcanza(b):
         out, pend, vistos = set(), list(motiva.get(b, ())), set()
@@ -255,9 +307,12 @@ def _modelo(facts: list) -> dict:
     con_cuestion = {b for b, _ in cuestionada}
     uno = lambda xs: {(x,) for x in xs}
     return {
+        "reemplazada": uno(reemplazada),
         "refutada": uno(refutada),
-        "sin_veredicto": uno(creencia - refutada - con_veredicto),
-        "respaldo_retirado": uno(con_veredicto - refutada - respaldada),
+        "pendiente_validacion": uno(p_validacion),
+        "pendiente_evidencia": uno(p_evidencia),
+        "sin_veredicto": uno(creencia - cerrada - en_pausa - con_veredicto),
+        "respaldo_retirado": uno(con_veredicto - cerrada - respaldada),
         "respaldo_caido": caidos,
         "vencida": uno(activa - con_caida - en_fecha),
         "contexto_invalido": uno(en_fecha & invalido),
@@ -267,6 +322,8 @@ def _modelo(facts: list) -> dict:
         "cuestionada": cuestionada,
         "sostenida": uno(aplicable - con_cuestion),
         # los negados en RULES
+        "cerrada": uno(cerrada),
+        "en_pausa": uno(en_pausa),
         "con_veredicto": uno(con_veredicto),
         "respaldada": uno(respaldada),
         "caida": uno(caida),

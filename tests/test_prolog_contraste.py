@@ -3,7 +3,6 @@ observación, snapshot en solo lectura y fallos visibles. Ninguna prueba promuev
 
 import json
 import random
-import shutil
 import sqlite3
 from pathlib import Path
 
@@ -13,7 +12,7 @@ import prolog_learning as motor
 import pytest
 
 REAL = pytest.mark.skipif(
-    not (shutil.which("wsl.exe") or shutil.which("swipl")) or not motor.ENGINE.is_file(),
+    not motor.motor_disponible(),
     reason="Falta WSL/SWI-Prolog o el repo motor-logico",
 )
 

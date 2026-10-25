@@ -51,7 +51,13 @@ class Servicio:
                     return
                 if not Servicio._ofrecer(output, line):
                     return
-        except (OSError, UnicodeError, ValueError) as exc:
+        except UnicodeError:
+            # lo que no es UTF-8 no lo escribió el motor: es el lanzador (wsl.exe sin la distro, o sin swipl)
+            # contestando en la codificación de Windows (2026-10-25, ar-it33940)
+            Servicio._ofrecer(
+                output, ErrorServicio("el motor no está disponible: el lanzador respondió en vez de SWI-Prolog")
+            )
+        except (OSError, ValueError) as exc:
             Servicio._ofrecer(output, ErrorServicio(f"lectura del motor: {exc}"))
 
     def _iniciar(self):

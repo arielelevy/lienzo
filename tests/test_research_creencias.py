@@ -15,8 +15,15 @@ import optimization_research as research
 import optimization_research_runner as runner
 import optimization_scheduler as s
 import prolog_contraste
+import prolog_learning as _motor
 import pytest
 import research_creencias as rc
+
+# lo que necesita el motor real se saltea en una PC que no tiene SWI-Prolog (ar-it33940, 2026-10-25)
+MOTOR_REAL = pytest.mark.skipif(
+    not _motor.motor_disponible(), reason="Falta SWI-Prolog que responda o el repo motor-logico"
+)
+
 
 PROJECT = "creencias-test"
 CHILD = r"""
@@ -271,6 +278,7 @@ def record_with(case, data, lectura, beliefs):
     return rc.record(PROJECT, case, result, {"adapter": "claude"}, lectura)
 
 
+@MOTOR_REAL
 def test_record_proposes_contrasted_beliefs_and_moves_the_cursor():
     incident()
     case, data = pack()
@@ -305,6 +313,7 @@ def test_record_proposes_contrasted_beliefs_and_moves_the_cursor():
         ([], 503, "sin_motor"),
     ],
 )
+@MOTOR_REAL
 def test_contrast_result_is_kept_in_the_proposal(monkeypatch, observations, code, expected):
     monkeypatch.setattr(prolog_contraste, "contrastar", fixed_contrast({"all": observations}, code))
     incident()
@@ -317,6 +326,7 @@ def test_contrast_result_is_kept_in_the_proposal(monkeypatch, observations, code
     assert node["estado"] == "propuesta"
 
 
+@MOTOR_REAL
 def test_process_scope_from_another_project_cites_a_mirror_evidence_in_lienzo():
     incident()
     case, data = pack()
@@ -339,6 +349,7 @@ def test_fondo_admits_busy_agents_only_with_spare_resources():
     assert activity.fondo_reason({**busy(), "cpu_pct": None}) == "señal desconocida: cpu_pct"
 
 
+@MOTOR_REAL
 def test_runs_with_busy_agents_when_resources_spare_and_leaves_contrasted_proposal(monkeypatch):
     monkeypatch.setattr(s.activity, "cancellation_reason", lambda _: "agentes trabajando o permisos pendientes")
     incident()
@@ -369,6 +380,7 @@ def test_runs_with_busy_agents_when_resources_spare_and_leaves_contrasted_propos
         ("humana", True, "sostenida"),
     ],
 )
+@MOTOR_REAL
 def test_support_requires_independent_human_evidence(monkeypatch, independent, ready, expected):
     monkeypatch.setattr(prolog_contraste, "contrastar", fixed_contrast(independent=independent, ready=ready))
     incident()
@@ -377,6 +389,7 @@ def test_support_requires_independent_human_evidence(monkeypatch, independent, r
     assert set(saved["contraste"].values()) == {expected}
 
 
+@MOTOR_REAL
 def test_disagreement_between_engines_never_supports_even_with_human_evidence(monkeypatch):
     monkeypatch.setattr(
         prolog_contraste,

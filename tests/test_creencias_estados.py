@@ -188,7 +188,7 @@ def test_aceptada_por_ia_sin_clausula_es_pendiente_de_formalizar_y_no_entra_al_c
     r.revisar("ab", "claude", decidir=lambda nodes, agent: reply(nodes))
     item = _estados()[node["id"]]
     assert item["estado"] == "pendiente_formalizacion"
-    assert item["motivo"] == creencias.MOTIVOS["pendiente_formalizacion"]
+    assert item["motivo"] == creencias.MOTIVO_FORMALIZACION
     assert all(x["creencia"] != node["id"] for x in creencias.checklist("ab", {})["items"])
 
 
