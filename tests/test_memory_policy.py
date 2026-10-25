@@ -17,6 +17,7 @@ def entorno(tmp_path, monkeypatch):
     monkeypatch.setenv("TEMP", str(roots[0]))
     monkeypatch.setenv("TMP", str(roots[1]))
     monkeypatch.setattr(policy.tempfile, "gettempdir", lambda: str(roots[2]))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     config = {"launch_roots": []}
     monkeypatch.setattr(policy.state, "load_config", lambda: config)
     monkeypatch.setattr(k, "_sesion_proyecto", {})
@@ -197,3 +198,20 @@ def test_contexto_por_remote_no_habilita_escritura_desde_temp(entorno, monkeypat
     assert k.nodos("existente")["total"] == 0
     assert k.capturas("existente")["total"] == 0
     assert k.proyecto("existente")["carpetas"] == []
+
+
+def test_carpetas_de_trabajo_de_claude_escritorio_se_excluyen(entorno, tmp_path):
+    # los 4 scratch-* sin remote del 2026-10-17 venían de acá, fuera de TEMP
+    scratch = tmp_path / "appdata" / "Claude" / "scratch-workspaces" / "a584" / "scratch-2026-10-17-1ac60b"
+    assert policy.excluida(str(scratch))
+    assert not policy.excluida(str(tmp_path / "appdata" / "Claude" / "otra-cosa"))
+
+
+def test_memoria_excluir_suma_raices_y_launch_roots_sigue_ganando(entorno, tmp_path):
+    _, config = entorno
+    config["memoria_excluir"] = [str(tmp_path / "var" / "tmp")]
+    assert policy.excluida(str(tmp_path / "var" / "tmp" / "lienzo-k-proj"))
+    config["launch_roots"] = [str(tmp_path / "var" / "tmp" / "lienzo-k-proj")]
+    assert not policy.excluida(str(tmp_path / "var" / "tmp" / "lienzo-k-proj"))
+    config["memoria_excluir"] = "no es una lista"
+    assert not policy.excluida(str(tmp_path / "var" / "tmp" / "otro"))
