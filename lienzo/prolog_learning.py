@@ -20,7 +20,11 @@ ENGINE = (
     if "LIENZO_PROLOG_ENGINE" in os.environ
     else (Path(__file__).resolve().parents[2] / "motor-logico/main.pl")
 )
-STATES = set(creencias.MOTIVOS)
+# el motor separado (motor-logico, contrato 1) razona con el vocabulario de antes del 2026-10-25: una
+# reemplazada la lee refutada y una pendiente sin veredicto. Se compara en su vocabulario; la lectura de
+# Python que se informa es la de ahora
+LEGADO = {"reemplazada": "refutada", "pendiente_validacion": "sin_veredicto", "pendiente_evidencia": "sin_veredicto"}
+STATES = set(creencias.MOTIVOS) - set(LEGADO)
 _busy = threading.BoundedSemaphore(1)
 WSL = os.name == "nt"
 # WSL apaga la VM tras un rato sin procesos; arrancarla tardó 8,9 s en reposo y más de 20 s con la
@@ -34,18 +38,27 @@ class MotorError(Exception):
     pass
 
 
+_distro = None
+
+
 def distro():
     """La distribución WSL donde corre SWI-Prolog: `LIENZO_WSL_DISTRO`, o `prolog_wsl_distro` en config.json, o
-    `Ubuntu`. No es igual en todas las PCs: en ar-it33940 es `Ubuntu-24.04` (2026-10-25)."""
-    if os.environ.get("LIENZO_WSL_DISTRO"):
-        return os.environ["LIENZO_WSL_DISTRO"]
-    try:
-        import state
+    `Ubuntu`. No es igual en todas las PCs: en ar-it33940 es `Ubuntu-24.04` (2026-10-25). Se resuelve una vez
+    por proceso, como el ejecutable: cambiarla pide reiniciar el server, y una lectura posterior de otra config
+    (las pruebas aíslan la suya) no cambia de motor a mitad de camino."""
+    global _distro
+    if _distro is None:
+        if os.environ.get("LIENZO_WSL_DISTRO"):
+            _distro = os.environ["LIENZO_WSL_DISTRO"]
+        else:
+            try:
+                import state
 
-        nombre = state.load_config().get("prolog_wsl_distro")
-    except Exception:  # sin config legible vale el default
-        nombre = None
-    return nombre if isinstance(nombre, str) and nombre.strip() else "Ubuntu"
+                nombre = state.load_config().get("prolog_wsl_distro")
+            except Exception:  # sin config legible vale el default
+                nombre = None
+            _distro = nombre if isinstance(nombre, str) and nombre.strip() else "Ubuntu"
+    return _distro
 
 
 _disponible = None
@@ -254,7 +267,7 @@ def inferir(pid, context):
     differences = [
         {"id": c["id"], "python": python[c["id"]], "prolog": c["status"]}
         for c in output["conclusions"]
-        if c["status"] != python[c["id"]]
+        if c["status"] != LEGADO.get(python[c["id"]], python[c["id"]])
     ]
     return 200, {
         "motor": "SWI-Prolog · WSL" if os.name == "nt" else "SWI-Prolog",

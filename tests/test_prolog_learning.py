@@ -183,7 +183,7 @@ def test_real_engine_matches_python_on_random_graphs():
         code, result = api.dispatch("POST", [pid, "razonamiento"], {"contexto": {"tipo_trabajo": "bugfix"}}, {})
         assert code == 200 and result["diferencias"] == [], result["diferencias"]
         seen |= {c["status"] for c in result["conclusiones"]}
-    assert seen == set(creencias.MOTIVOS)  # el muestreo recorrió los nueve estados
+    assert seen == motor.STATES  # el muestreo recorrió los estados que conoce el motor separado
 
 
 def test_unavailable_timeout_and_invalid_result_are_visible(monkeypatch):
@@ -228,7 +228,7 @@ def test_wsl_en_frio_se_despierta_aparte_del_tiempo_de_la_consulta(monkeypatch):
     with pytest.raises(motor.MotorError):  # la salida falsa no es válida: importa el orden de llamadas
         motor.run(payload())
     assert [c[0][-1] for c in calls] == ["true", "halt"]
-    assert calls[0][0][:4] == ["wsl.exe", "-d", "Ubuntu", "--exec"] and calls[0][1] >= 60
+    assert calls[0][0][:4] == ["wsl.exe", "-d", motor.distro(), "--exec"] and calls[0][1] >= 60
     assert calls[0][2] is subprocess.DEVNULL and calls[1][1] == 12
     motor._ultimo_ok = __import__("time").monotonic()  # recién usado: no se paga el arranque otra vez
     calls.clear()
