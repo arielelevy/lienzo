@@ -165,7 +165,7 @@ def test_ronda_local_audita_solo_esta_pc_y_no_escribe_a_una_coordinadora_trabada
         ses("B", desde=-20, repo="k", pc="yo"),
     ]
     links = [link("x", "B", "K", -10, "rule")]  # a K le llegó una entrega y no se movió: trabada
-    rutas = {"/sessions": sesiones, "/peers": [{"pc_id": "yo", "local": True}], "/links": links}
+    rutas = {"/sessions": sesiones, "/peers": [{"pc_id": "yo", "local": True}], "/links": links, "/rules": []}
     monkeypatch.setattr(au, "_get", lambda base, ruta: rutas[ruta])
     enviados = []
     monkeypatch.setattr(au, "_post", lambda base, ruta, cuerpo: enviados.append((ruta, cuerpo)))

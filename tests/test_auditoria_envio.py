@@ -40,7 +40,7 @@ def _caso_opensyync():
 
 
 def _servidor(monkeypatch, pc, sesiones, links, fallar=None):
-    rutas = {"/sessions": sesiones, "/peers": [{"pc_id": pc, "local": True}], "/links": links}
+    rutas = {"/sessions": sesiones, "/peers": [{"pc_id": pc, "local": True}], "/links": links, "/rules": []}
     monkeypatch.setattr(au, "_get", lambda base, ruta: rutas[ruta])
     enviados = []
 

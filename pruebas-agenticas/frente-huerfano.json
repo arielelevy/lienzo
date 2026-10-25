@@ -1,0 +1,18 @@
+{
+  "nombre": "frente-huerfano",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/frente-huerfano",
+  "reglas": [
+    "PENDIENTES.md Frente huérfano: cuando desaparece quien lanzó o coordinaba al frente, tomar control si no hay otra coordinadora viva; marcar rol, título y recablear on_stop.",
+    "docs/specs/frente-huerfano/design.md: elección determinista por repo; revalidar al aplicar; excluir tarjetas detenidas, provisionales y externas; PC caída invalida tarjeta stale; snapshot desconocido impide promoción.",
+    "Conservar reglas de otros repos y reglas apagadas, evitar autoenvío y reintentar recableado/aviso pendientes; usar fixtures aisladas para muerte y caída de PC."
+  ],
+  "casos": [
+    {
+      "id": "eleccion-traspaso-http-y-sucesion",
+      "comando": ["py", "-m", "pytest", "tests/test_huerfanos.py", "tests/test_auditoria.py", "tests/test_auditoria_envio.py", "tests/test_sucesion_reglas.py", "tests/test_codex_desktop_coordinator_R.py", "tests/test_ejecuciones_externas.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 120000,
+      "cubre": ["lienzo/huerfanos.py", "lienzo/auditoria.py", "lienzo/server.py", "lienzo/sessions.py"]
+    }
+  ]
+}

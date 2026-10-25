@@ -39,6 +39,11 @@ import sys
 import time
 import urllib.request
 
+if __package__:
+    from . import huerfanos
+else:
+    import huerfanos
+
 CFG = {
     "idle_min": 8,
     "envio_min": 2,
@@ -292,7 +297,10 @@ def ronda_local(base: str, ruta_estado: str, enviar: bool) -> dict:
     servers no avisan dos veces lo mismo) y, con `enviar`, manda un aviso por coordinadora. No le manda
     a una coordinadora que tiene ella misma un envío sin tomar: más texto no la destraba."""
     sesiones = _get(base, "/sessions")
-    pc = next((p.get("pc_id") for p in _get(base, "/peers") or [] if p.get("local")), None)
+    pares = _get(base, "/peers") or []
+    pc = next((p.get("pc_id") for p in pares if p.get("local")), None)
+    if enviar and recuperar_huerfanos(base, sesiones, pares, pc):
+        sesiones = _get(base, "/sessions")
     locales = {s["session_id"] for s in sesiones if not s.get("pc") or s.get("pc") == pc}
     ahora = dt.datetime.now().astimezone()
     t0 = time.perf_counter()
@@ -336,6 +344,22 @@ def ronda_local(base: str, ruta_estado: str, enviar: bool) -> dict:
     with open(ruta_estado, "w", encoding="utf-8") as f:
         json.dump(estado, f, ensure_ascii=False, indent=1)
     return r
+
+
+def recuperar_huerfanos(base: str, sesiones: list, pares: list, pc: str | None) -> bool:
+    """La elección es global; sólo la PC de la elegida pide el traspaso al servidor."""
+    caidas = {p["pc_id"] for p in pares if p.get("alive") is False}
+    planes = huerfanos.planes(sesiones, _get(base, "/links"), _get(base, "/rules"), caidas)
+    locales = {s["session_id"] for s in sesiones if s.get("pc") == pc}
+    cambios = False
+    for plan in planes:
+        if plan["session_id"] in locales:
+            try:
+                _post(base, f"/sessions/{plan['session_id']}/orphan", {})
+                cambios = True
+            except OSError as e:
+                print(f"auditoria: no se pudo recuperar {plan['session_id']}: {type(e).__name__}: {e}", flush=True)
+    return cambios
 
 
 def bucle(base: str, cada_min: float, log, ruta_estado: str | None = None) -> None:

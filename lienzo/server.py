@@ -54,6 +54,7 @@ import downloads
 import federation
 import harness_updates
 import health
+import huerfanos
 import identity
 import kill_agent
 import launch
@@ -1162,6 +1163,81 @@ def validar_send(d: dict) -> tuple[int, dict] | None:
     return None
 
 
+_ORPHAN_LOCK = threading.Lock()
+
+
+def reservar_huerfano(s: dict, caidas: set[str]) -> dict | None:
+    remotas = mirror.MIRROR.sessions()
+    relaciones = links.snapshot() + mirror.MIRROR.links()
+    reglas = rules.snapshot() + mirror.MIRROR.rules()
+    with lock:
+        locales = [dict(x, pc=identity.pc_id()) for x in sessions.values()]
+        plan = next(
+            (
+                p
+                for p in huerfanos.planes(locales + remotas, relaciones, reglas, caidas)
+                if p["session_id"] == s["session_id"]
+            ),
+            None,
+        )
+        if plan is None or sessions.get(s["session_id"]) is not s:
+            return None
+        primera = not s.get("coordinator")
+        s["coordinator"] = True
+        s["orphaned_pending"] = plan["old"]
+        if primera:
+            s["orphaned_from"] = plan["old"]
+            s["orphaned_notice_pending"] = True
+            s["title"] = f"{s.get('repo') or plan['repo']} | coordinadora - continuidad"
+            s["title_source"] = "user"
+        touch(s)
+        return plan
+
+
+def avisar_huerfano(s: dict, pendientes: list) -> None:
+    if not s.get("orphaned_notice_pending"):
+        return
+    code, _ = send_to_session(
+        s,
+        "[continuidad del lienzo] Desapareció quien coordinaba o lanzó tu frente. "
+        "Ahora sos la coordinadora de este repo. Revisá los informes y asigná sólo trabajo ya autorizado. "
+        + (
+            "Queda recableado pendiente en otras PCs; el lienzo lo reintentará."
+            if pendientes
+            else "Las reglas on_stop del repo apuntan a vos."
+        ),
+        [],
+    )
+    if code == 200:
+        with lock:
+            s["orphaned_notice_pending"] = False
+            touch(s)
+
+
+def accion_huerfano(s: dict, d: dict) -> tuple[int, dict]:
+    """Revalida la elección; sólo la PC dueña promueve y conserva el recableado pendiente."""
+    with _ORPHAN_LOCK:
+        pares = mirror.MIRROR.peers_status()
+        if not mirror.MIRROR.all_synced() and any(p.get("alive") or not p.get("diagnostico") for p in pares):
+            return 409, {"error": "faltan snapshots de las otras PCs"}
+        plan = reservar_huerfano(s, {p["pc_id"] for p in pares if p.get("alive") is False})
+        if plan is None:
+            return 409, {"error": "el frente ya no es el sucesor elegido o hay coordinadora viva"}
+        set_coordinator(s, True)
+        pendientes = []
+        for old in plan["old"]:
+            _, resultado = accion_retarget(
+                {"old": old, "new": s["session_id"], "orphan_repo": plan["repo"]}, desde_tablero=True
+            )
+            if resultado.get("unreachable") or not resultado.get("ok"):
+                pendientes.append(old)
+        with lock:
+            s["orphaned_pending"] = pendientes
+            touch(s)
+        avisar_huerfano(s, pendientes)
+        return 200, {"ok": True, "coordinator": True, "pending": pendientes}
+
+
 def validar_decision(d: dict) -> tuple[int, dict] | None:
     """approve y /pending: allow o deny."""
     return None if d.get("decision") in ("allow", "deny") else _rechazo("decision debe ser allow o deny")
@@ -1429,6 +1505,7 @@ ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
     ("PUT", "title"): AccionSesion(validar_title, accion_title, reenvio=lambda d: {"title": d.get("title")}),
     ("PUT", "stopped"): AccionSesion(validar_on, accion_stopped, reenvio=lambda d: {"on": d["on"]}),
     ("PUT", "coordinator"): AccionSesion(validar_coordinator, accion_coordinator),
+    ("POST", "orphan"): AccionSesion(sin_validar, accion_huerfano),
 }
 
 
@@ -1620,7 +1697,19 @@ def accion_retarget(d: dict, *, desde_tablero: bool) -> tuple[int, dict]:
     tablero, aca y en las otras PCs; lo que pide otra PC, solo aca."""
     if not isinstance(d.get("old"), str) or not isinstance(d.get("new"), str):
         return 400, {"error": "hace falta old y new"}
-    if d.get("work") is True:
+    if "orphan_repo" in d:
+        if not isinstance(d["orphan_repo"], str) or not d["orphan_repo"]:
+            return 400, {"error": "orphan_repo debe identificar un repo"}
+        destino = ses.find_session(d["new"])
+        if destino is None or huerfanos.repo(destino) != d["orphan_repo"] or not destino.get("coordinator"):
+            return 409, {"error": "el destino no es coordinadora del repo"}
+        with lock:
+            n = huerfanos.recablear(rules.items, list(sessions.values()), d["old"], d["new"], d["orphan_repo"])
+            if n:
+                rules.save()
+        if n:
+            rules.publish()
+    elif d.get("work") is True:
         try:
             n = transfer_work_rules(d["old"], d["new"])
         except (OSError, ValueError) as e:
