@@ -1116,6 +1116,9 @@ def validar_on(d: dict) -> tuple[int, dict] | None:
 def accion_title(s: dict, d: dict) -> tuple[int, dict]:
     """PUT /sessions/<id>/title: titulo a mano. Vacio vuelve a la logica automatica."""
     set_title(s, d.get("title") or "")  # toma el lock por dentro; leer la transcripcion, no
+    with lock:
+        if (s.get("coordinator_proposal") or {}).get("kind") == "title":
+            s.pop("coordinator_proposal", None)
     if not touch(s):
         # la borraron (o reemplazaron) mientras se leia la transcripcion: touch ya no la guarda
         # ni la publica, y contestar 200 diria que el titulo quedo (revision 2026-10-04, S10)
@@ -1133,7 +1136,16 @@ def accion_stopped(s: dict, d: dict) -> tuple[int, dict]:
 
 def accion_coordinator(s: dict, d: dict) -> tuple[int, dict]:
     """PUT /sessions/<id>/coordinator: una coordinadora del repo en toda la federacion."""
+    with lock:
+        s["coordinator_declined"] = not d["on"]
+        propuesta = s.get("coordinator_proposal")
+        if propuesta and d["on"]:
+            s["coordinator_proposal"] = {**propuesta, "kind": "title"}
+        elif not d["on"]:
+            s.pop("coordinator_proposal", None)
     changed = set_coordinator(s, d["on"])
+    if all(x is not s for x in changed):
+        ses.touch(s)
     log(
         f"coordinadora de {s.get('repo')}: {s['session_id'][:8]} -> {d['on']} "
         f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"
@@ -1166,6 +1178,24 @@ def validar_send(d: dict) -> tuple[int, dict] | None:
 _ORPHAN_LOCK = threading.Lock()
 
 
+def registrar_coordinadora_de_hecho(s: dict, plan: dict) -> None:
+    """Con state.lock tomado: publica evidencia y propone título sin modificar el actual."""
+    s["coordinator_proposal"] = {
+        "kind": "role" if plan.get("propuesta") else "title",
+        "title": f"{s.get('repo') or plan['repo']} | coordinadora",
+        "reason": f"Recibe informes de {plan['informes']} frentes y envió encargos a {plan['frentes']}."
+        + (
+            " Hay varias candidatas; elegí cuál coordina."
+            if plan.get("propuesta")
+            else " Se reconoció su trabajo de coordinación."
+        ),
+    }
+    if not plan.get("propuesta"):
+        s["coordinator"] = True
+        s["coordinator_inferred"] = {"informes": plan["informes"], "frentes": plan["frentes"]}
+    touch(s)
+
+
 def reservar_huerfano(s: dict, caidas: set[str]) -> dict | None:
     remotas = mirror.MIRROR.sessions()
     relaciones = links.snapshot() + mirror.MIRROR.links()
@@ -1180,8 +1210,16 @@ def reservar_huerfano(s: dict, caidas: set[str]) -> dict | None:
             ),
             None,
         )
-        if plan is None or sessions.get(s["session_id"]) is not s:
+        if sessions.get(s["session_id"]) is not s:
             return None
+        if plan is None:
+            if (s.get("coordinator_proposal") or {}).get("kind") == "role":
+                s.pop("coordinator_proposal", None)
+                touch(s)
+            return None
+        if plan.get("de_hecho"):
+            registrar_coordinadora_de_hecho(s, plan)
+            return plan
         primera = not s.get("coordinator")
         s["coordinator"] = True
         s["orphaned_pending"] = plan["old"]
@@ -1217,13 +1255,25 @@ def avisar_huerfano(s: dict, pendientes: list) -> None:
 def accion_huerfano(s: dict, d: dict) -> tuple[int, dict]:
     """Revalida la elección; sólo la PC dueña promueve y conserva el recableado pendiente."""
     with _ORPHAN_LOCK:
+        if d.get("dismiss_proposal") is True:
+            with lock:
+                s.pop("coordinator_proposal", None)
+                s["coordinator_declined"] = True
+                touch(s)
+            return 200, {"ok": True}
         pares = mirror.MIRROR.peers_status()
         if not mirror.MIRROR.all_synced() and any(p.get("alive") or not p.get("diagnostico") for p in pares):
             return 409, {"error": "faltan snapshots de las otras PCs"}
         plan = reservar_huerfano(s, {p["pc_id"] for p in pares if p.get("alive") is False})
         if plan is None:
             return 409, {"error": "el frente ya no es el sucesor elegido o hay coordinadora viva"}
-        set_coordinator(s, True)
+        if plan.get("propuesta"):
+            return 200, {"ok": True, "proposal": True}
+        set_coordinator(s, True, automatic=True)
+        if not s.get("coordinator") or s.get("coordinator_declined"):
+            return 409, {"error": "una decisión manual cambió el rol durante la detección"}
+        if plan.get("de_hecho"):
+            return 200, {"ok": True, "coordinator": True}
         pendientes = []
         for old in plan["old"]:
             _, resultado = accion_retarget(

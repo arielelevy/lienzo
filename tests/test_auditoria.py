@@ -209,3 +209,18 @@ def test_politica_ronda_5_min_cubre_4_quietos_14_min():
                 avisado = (ahora - quietos).total_seconds() / 60
                 assert {h["session_id"] for h in r["avisar"]} == set("ABDE")
         assert avisado is not None and avisado < 14, (fase_s, avisado)
+
+
+def test_tarjeta_stale_de_pc_caida_no_recibe_avisos_de_coordinadora(monkeypatch, tmp_path):
+    sesiones = [ses("C", coord=True, pc="yo"), ses("A", pc="yo"), ses("vieja", coord=True, pc="caida")]
+    rutas = {
+        "/sessions": sesiones,
+        "/peers": [{"pc_id": "yo", "local": True, "alive": True}, {"pc_id": "caida", "alive": False}],
+        "/links": [],
+        "/rules": [],
+    }
+    monkeypatch.setattr(au, "_get", lambda base, ruta: rutas[ruta])
+    enviados = []
+    monkeypatch.setattr(au, "_post", lambda base, ruta, cuerpo: enviados.append(ruta))
+    au.ronda_local("http://fixture", str(tmp_path / "estado.json"), enviar=True)
+    assert enviados == ["/sessions/C/send"]

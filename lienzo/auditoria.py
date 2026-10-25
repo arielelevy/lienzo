@@ -301,6 +301,8 @@ def ronda_local(base: str, ruta_estado: str, enviar: bool) -> dict:
     pc = next((p.get("pc_id") for p in pares if p.get("local")), None)
     if enviar and recuperar_huerfanos(base, sesiones, pares, pc):
         sesiones = _get(base, "/sessions")
+    caidas = {p["pc_id"] for p in pares if p.get("alive") is False}
+    sesiones = [{**s, "alive": False} if s.get("pc") in caidas else s for s in sesiones]
     locales = {s["session_id"] for s in sesiones if not s.get("pc") or s.get("pc") == pc}
     ahora = dt.datetime.now().astimezone()
     t0 = time.perf_counter()
@@ -350,6 +352,12 @@ def recuperar_huerfanos(base: str, sesiones: list, pares: list, pc: str | None) 
     """La elección es global; sólo la PC de la elegida pide el traspaso al servidor."""
     caidas = {p["pc_id"] for p in pares if p.get("alive") is False}
     planes = huerfanos.planes(sesiones, _get(base, "/links"), _get(base, "/rules"), caidas)
+    elegidas = {p["session_id"] for p in planes}
+    planes.extend(
+        {"session_id": s["session_id"]}
+        for s in sesiones
+        if (s.get("coordinator_proposal") or {}).get("kind") == "role" and s["session_id"] not in elegidas
+    )
     locales = {s["session_id"] for s in sesiones if s.get("pc") == pc}
     cambios = False
     for plan in planes:

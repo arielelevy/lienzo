@@ -7,6 +7,7 @@ import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
 import { canWrite, displayRepo, displayTitle, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { CardNeeds } from "./CardNeeds";
+import { CoordinatorProposal } from "./CoordinatorProposal";
 import { NOTICE_MS, showTurnPrompt } from "../card-notices";
 import { useRondas } from "../rondas";
 import { ChromeLogo } from "./ChromeCard";
@@ -907,6 +908,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
       )}
       {/* la sugerencia que la terminal tiene tipeada: un click la manda, que es lo que uno iba a
           hacer igual. Sin consola no es un botón, sólo texto */}
+      {!peerDown && <CoordinatorProposal session={s} />}
       {suggestion &&
         (writable && !s.pending_id ? (
           <button

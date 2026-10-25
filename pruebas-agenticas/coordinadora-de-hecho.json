@@ -1,0 +1,25 @@
+{
+  "nombre": "coordinadora-de-hecho",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/coordinadora-de-hecho",
+  "reglas": [
+    "PENDIENTES.md: destino de 2 o mas reglas on_stop y origen de envios a 2 o mas sesiones del mismo repo, sin otra coordinadora viva.",
+    "Encargo 20261025-143221: marcar coordinadora de hecho o proponer a la persona si hay duda; proponer tambien el titulo.",
+    "docs/specs/coordinadora-de-hecho/design.md: contar frentes distintos vivos, preservar titulo actual, revalidar, respetar decisiones manuales y no promover dos candidatas ambiguas."
+  ],
+  "casos": [
+    {
+      "id": "inferir-rol-y-preservar-sucesion",
+      "comando": ["py", "-m", "pytest", "tests/test_huerfanos.py", "tests/test_auditoria.py", "tests/test_auditoria_envio.py", "tests/test_sucesion_reglas.py", "tests/test_codex_desktop_coordinator_R.py", "tests/test_ejecuciones_externas.py", "tests/test_server.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 120000,
+      "cubre": ["lienzo/huerfanos.py", "lienzo/auditoria.py", "lienzo/server.py"]
+    },
+    {
+      "id": "propuestas-en-navegador",
+      "comando": ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "tests-ui/playwright.config.ts", "tests-ui/coordinadora-de-hecho.spec.ts", "tests-ui/codex-coordinadora.spec.ts", "--workers=1"],
+      "cwd": "web",
+      "timeoutMs": 120000,
+      "cubre": ["web/src/components/CoordinatorProposal.tsx", "web/src/components/Card.tsx", "web/src/types.ts"]
+    }
+  ]
+}

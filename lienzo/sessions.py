@@ -1534,12 +1534,16 @@ def set_title(s: dict, title: str) -> None:
             choose_title(s, None)
 
 
-def set_coordinator(s: dict, on: bool) -> list[dict]:
+def set_coordinator(s: dict, on: bool, *, automatic: bool = False) -> list[dict]:
     """Una coordinadora por repo: al elegirla se desmarcan las demas, incluso en otras PCs.
     Devuelve las tarjetas locales modificadas; cada peer publica sus propios cambios."""
     changed = []
     my_repo = _repo_identity(s)
     with lock:
+        if automatic and (
+            sessions.get(s["session_id"]) is not s or not s.get("coordinator") or s.get("coordinator_declined")
+        ):
+            return []  # una decisión manual posterior a la reserva tiene prioridad
         if on and my_repo is not None:
             for other in sessions.values():
                 if other is s or not other.get("coordinator") or _repo_identity(other) != my_repo:

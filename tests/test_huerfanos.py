@@ -98,7 +98,7 @@ def entorno(monkeypatch):
     monkeypatch.setattr(server.rules, "save", lambda: None)
     monkeypatch.setattr(server.rules, "publish", lambda: None)
     monkeypatch.setattr(server, "touch", lambda s: None)
-    monkeypatch.setattr(server, "set_coordinator", lambda s, on: [])
+    monkeypatch.setattr(server, "set_coordinator", lambda s, on, **kw: [])
     monkeypatch.setattr(server.ses, "find_session", lambda sid: ss.get(sid))
     monkeypatch.setattr(server, "fan_out", lambda *a, **kw: ({}, {}))
     avisos = []
@@ -198,3 +198,94 @@ def test_ruta_http_real_promueve_sin_tocar_consolas(entorno, monkeypatch):
         srv.shutdown()
         srv.server_close()
         thread.join(timeout=2)
+
+
+def comportamiento(entorno):
+    ss, rs, _, _ = entorno
+    ss["C"] = card("C")
+    ss["A"]["title"] = "titulo elegido por Ariel"
+    rs[:] = [rule("B", "A"), rule("C", "A")]
+    server.links.items[:] = [{"kind": "send", "from": "A", "to": x} for x in "BC"]
+    return ss, rs
+
+
+def test_coordinadora_de_hecho_unica_se_marca_sin_pisar_titulo(entorno):
+    ss, _ = comportamiento(entorno)
+    assert server.accion_huerfano(ss["A"], {})[1]["coordinator"] is True
+    assert ss["A"]["coordinator_inferred"] == {"informes": 2, "frentes": 2}
+    assert ss["A"]["title"] == "titulo elegido por Ariel"
+    assert ss["A"]["coordinator_proposal"]["kind"] == "title"
+    assert entorno[3] == []  # reconocer su rol no despierta un modelo
+
+
+@pytest.mark.parametrize("parte", ["reglas", "envios", "repo", "apagada"])
+def test_no_infiere_con_duplicados_o_fuera_del_repo(entorno, parte):
+    ss, rs = comportamiento(entorno)
+    if parte == "reglas":
+        rs[1] = dict(rs[0])
+    elif parte == "envios":
+        server.links.items[1] = dict(server.links.items[0])
+    elif parte == "repo":
+        ss["C"]["repo_key"] = "otro"
+    else:
+        rs[1]["enabled"] = False
+    assert server.accion_huerfano(ss["A"], {})[0] == 409
+    assert not ss["A"].get("coordinator")
+
+
+def test_dos_candidatas_solo_proponen_y_luego_limpian_propuesta(entorno):
+    ss, rs = comportamiento(entorno)
+    ss["D"] = card("D")
+    rs.extend([rule("B", "D"), rule("C", "D")])
+    server.links.items.extend({"kind": "send", "from": "D", "to": x} for x in "BC")
+    assert server.accion_huerfano(ss["A"], {})[1]["proposal"] is True
+    assert server.accion_huerfano(ss["D"], {})[1]["proposal"] is True
+    assert not any(s.get("coordinator") for s in ss.values())
+    ss["D"]["coordinator"] = True  # una persona eligió otra; no debe seguir proponiendo A
+    assert server.accion_huerfano(ss["A"], {})[0] == 409
+    assert "coordinator_proposal" not in ss["A"]
+
+
+def test_descartar_propuesta_se_respeta_en_rondas_siguientes(entorno):
+    ss, rs = comportamiento(entorno)
+    rs.append(rule("A", "old"))  # tampoco usar el camino de huérfanos para imponer el rol rechazado
+    assert server.accion_huerfano(ss["A"], {"dismiss_proposal": True})[0] == 200
+    assert server.accion_huerfano(ss["A"], {})[0] == 409
+    assert ss["A"]["coordinator_declined"] is True
+
+
+def test_coordinadora_viva_impide_inferencia(entorno):
+    ss, _ = comportamiento(entorno)
+    ss["D"] = card("D", coordinator=True, pc="remote")
+    assert server.accion_huerfano(ss["A"], {})[0] == 409
+
+
+def test_quitar_rol_manual_impide_remarcar(entorno):
+    ss, _ = comportamiento(entorno)
+    server.accion_huerfano(ss["A"], {})
+    ss["A"]["coordinator"] = False  # set_coordinator es fixture en este entorno
+    server.accion_coordinator(ss["A"], {"on": False})
+    assert server.accion_huerfano(ss["A"], {})[0] == 409
+
+
+def test_decision_manual_durante_deteccion_tiene_prioridad(entorno, monkeypatch):
+    ss, _ = comportamiento(entorno)
+
+    def quitar(s, on, **kw):
+        s.update(coordinator=False, coordinator_declined=True)
+        return []
+
+    monkeypatch.setattr(server, "set_coordinator", quitar)
+    assert server.accion_huerfano(ss["A"], {})[0] == 409
+    assert not ss["A"]["coordinator"]
+
+
+def test_guardia_atomica_no_pisa_rol_retirado_manualmente(monkeypatch):
+    s = card("A", coordinator=False, coordinator_declined=True)
+    monkeypatch.setattr(server.ses, "sessions", {"A": s})
+    monkeypatch.setattr(server.ses, "touch", lambda s: None)
+    monkeypatch.setattr(server.ses, "_mirror_sessions", list)
+    assert server.ses.set_coordinator(s, True, automatic=True) == []
+    assert s["coordinator"] is False
+    server.ses.set_coordinator(s, True)  # una elección explícita sigue permitida
+    assert s["coordinator"] is True
