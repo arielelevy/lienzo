@@ -27,4 +27,6 @@ La corrida final se conserva en `pruebas-agenticas/resultados/tokens-por-turno/`
 
 Corrida final `2026-10-25T18-01-46.209Z-21204`: 250 pruebas pasan y 3 se omiten por los rollouts históricos Codex ausentes. Caso del runner código 0, runner código 1 por baseline ausente; compuerta código 2. Ruff, formato focal y diff-check código 0. La primera corrida fallida queda preservada y no se cambia su resultado.
 
+El chequeo final detectó una regresión de formato en el caso de reinicio parcial de acumuladores. Se reformateó antes de publicar: ocho archivos conformes y AST del test idéntico al ejecutado. No se altera el resultado anterior ni se presenta como nueva corrida de pruebas.
+
 No se reinicia un servidor durante las pruebas; avisar previamente a la coordinadora antes de activar.

@@ -150,7 +150,16 @@ def test_codex_contadores_reiniciados_no_se_clampean_a_cero(tmp_path):
 
 
 def test_codex_un_contador_que_baja_invalida_los_otros_deltas(tmp_path):
-    path = write(tmp_path, [event("task_started", turn_id="old"), totals(100, 100, 50, 50), event("task_started", turn_id="t"), totals(200, 200, 1, 100), event("task_complete", turn_id="t")])
+    path = write(
+        tmp_path,
+        [
+            event("task_started", turn_id="old"),
+            totals(100, 100, 50, 50),
+            event("task_started", turn_id="t"),
+            totals(200, 200, 1, 100),
+            event("task_complete", turn_id="t"),
+        ],
+    )
     assert u.medir(source("codex", path)) is None
 
 
