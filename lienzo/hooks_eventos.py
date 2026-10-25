@@ -274,6 +274,7 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
     s["prompt_id"] = ev.get("prompt_id")
     s["prompt_ts"] = s["last_event_ts"]
     if not sistema:
+        s["transcript_turn_id"] = None
         ses.set_last_prompt(s, raw, via)
         ses.title_from_prompt(s)
         ses.captura.pedido(s, raw, via, turno=ev.get("prompt_id"))  # la memoria del proyecto (anexo A de v5)

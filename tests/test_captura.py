@@ -755,3 +755,118 @@ def test_tapar_cubre_las_formas_comunes(secreto):
 def test_tapar_no_toca_texto_comun():
     for sano in ("max_tokens: 4096", "prompt_tokens=12", "el secreto es la constancia", "password corta=abc"):
         assert captura.tapar(sano) == (sano, False)
+
+
+def test_usage_viaja_con_respuesta_sin_leer_disco_al_encolar(tmp_path, monkeypatch):
+    path = tmp_path / "turno.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"type": "user", "uuid": "p1", "message": {"content": "pedido"}},
+                {"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 10, "output_tokens": 2}}},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    s = {
+        **_tarjeta("s1", tmp_path / "app"),
+        "transcript_path": str(path),
+        "prompt_id": "p1",
+        "last_reply": "listo",
+        "state": "termino",
+        "state_since": "2026-10-25T12:00:10Z",
+    }
+    eventos = []
+    monkeypatch.setattr(captura, "encolar", eventos.append)
+    with monkeypatch.context() as mp:
+        mp.setattr(
+            captura.turn_usage, "medir", lambda source: pytest.fail("no leer transcripts en el llamador de respuesta")
+        )
+        captura.respuesta(s)
+    assert "usage" not in eventos[0]["origen"]  # todavía no hubo I/O de transcript
+    s.update(prompt_id="p2", transcript_path="no-existe")  # otro turno no cambia la fuente encolada
+    cap = captura.procesar(eventos[0])
+    assert cap["origen"]["usage"] == {
+        "input": 10,
+        "output": 2,
+        "cache_read": None,
+        "cache_write": None,
+        "reasoning": None,
+    }
+    assert cap["origen"]["usage_turno"] == "p1"
+    assert str(path) not in json.dumps(cap["origen"])
+    assert captura.procesar(eventos[0]) is None  # captura idempotente, sin duplicar tokens
+
+
+def test_sin_usage_se_conserva_respuesta_y_error(tmp_path):
+    ev = _ev(
+        "respuesta", _tarjeta("s1", tmp_path / "app", agent="kiro"), "respuesta", "r1", {"error": "fallo del agente"}
+    )
+    cap = captura.procesar(ev)
+    assert cap["origen"]["usage"] is None
+    assert cap["origen"]["error"] == "fallo del agente"
+    assert cap["texto"] == "respuesta"
+
+
+def test_hook_claude_captura_usage_del_prompt_cerrado(enganche, tmp_path):
+    path = tmp_path / "claude.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"type": "user", "uuid": "p1", "message": {"content": "pedido"}},
+                {"type": "assistant", "message": {"id": "m1", "usage": {"input_tokens": 10, "output_tokens": 2}}},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    base = {
+        "session_id": "s-hook-usage",
+        "agent": "claude",
+        "cwd": str(_repo(tmp_path, "demo")),
+        "transcript_path": str(path),
+    }
+    for ev in [
+        {"hook_event_name": "SessionStart"},
+        {"hook_event_name": "UserPromptSubmit", "prompt": "pedido", "prompt_id": "p1"},
+        {"hook_event_name": "Stop", "last_assistant_message": "listo"},
+    ]:
+        hooks_eventos.apply_event({**base, **ev})
+    enganche["rl"].fire_on_stop(base["session_id"])
+    cap = captura.procesar(enganche["eventos"][-1])
+    assert cap["origen"]["usage"]["input"] == 10 and cap["origen"]["usage_turno"] == "p1"
+
+
+def test_cierre_codex_enlaza_id_antes_de_capturar(enganche, tmp_path):
+    import transcripts
+
+    path = tmp_path / "codex.jsonl"
+    rows = [
+        {"type": "event_msg", "payload": p}
+        for p in [
+            {"type": "task_started", "turn_id": "t"},
+            {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": 10,
+                        "cached_input_tokens": 5,
+                        "output_tokens": 2,
+                        "reasoning_output_tokens": 1,
+                    }
+                },
+            },
+            {"type": "task_complete", "turn_id": "t", "last_agent_message": "listo"},
+        ]
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    ses = enganche["ses"]
+    s = ses.new_session("s-codex-usage", "codex", "sweep")
+    s.update(cwd=str(_repo(tmp_path, "demo")), transcript_path=str(path), state="corriendo")
+    enganche["st"].sessions[s["session_id"]] = s
+    ses.apply_turn(s, transcripts.parse_codex(str(path))["turns"][-1], True)
+    enganche["rl"].fire_on_stop(s["session_id"])
+    cap = captura.procesar(enganche["eventos"][-1])
+    assert cap["origen"]["usage_turno"] == "t"
+    assert cap["origen"]["usage"] == {"input": 5, "output": 2, "cache_read": 5, "cache_write": None, "reasoning": 1}

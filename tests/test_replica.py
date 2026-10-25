@@ -20,6 +20,25 @@ REMOTE = "github.com/ariel/teorema"
 C = "coordinadora:c"
 
 
+def test_usage_de_respuesta_se_replica_sin_transcript_remoto(tmp_path, monkeypatch):
+    red = Red(tmp_path, monkeypatch)
+    origen = {
+        "usage": {"input": 90, "output": 50, "cache_read": 60, "cache_write": None, "reasoning": 20},
+        "usage_turno": "turno-exacto",
+    }
+    with red.en("pcA"):
+        k.registrar_proyecto("p", remotes=[REMOTE])
+        cap = k.capturar("p", "respuesta", "listo", {"session_id": "s", "agent": "codex", "pc": "pcA"}, origen=origen)
+    red.sync("pcB", "pcA")
+    with red.en("pcB"):
+        recibida = k.capturas("p", clase="respuesta")["capturas"][0]
+        assert recibida["id"] == cap["id"] and recibida["origen"] == origen
+        assert recibida["pc"] == "pcA"
+    red.sync("pcB", "pcA")
+    with red.en("pcB"):
+        assert k.capturas("p", clase="respuesta")["total"] == 1
+
+
 class Red:
     """Las PCs y el reenvio entre ellas. `cortar` hace fallar el pedido numero N."""
 

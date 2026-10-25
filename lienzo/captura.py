@@ -35,6 +35,7 @@ import traceback
 import conocimiento as k
 import identity
 import state
+import turn_usage
 
 COLA_MAX = 5000
 TAPADO = "[secreto tapado por el lienzo]"
@@ -188,7 +189,7 @@ def vista(s: dict) -> None:
     encolar({"tipo": "vista", "tarjeta": tarjeta_de(s)})
 
 
-def _evento(tipo: str, s: dict, texto: str, clave: str, origen: dict) -> None:
+def _evento(tipo: str, s: dict, texto: str, clave: str, origen: dict, *, usage_source: dict | None = None) -> None:
     if not isinstance(texto, str) or not texto.strip():
         return
     limpio, tapado = tapar(texto)
@@ -200,6 +201,7 @@ def _evento(tipo: str, s: dict, texto: str, clave: str, origen: dict) -> None:
             "redactado": tapado,
             "clave": clave,
             "origen": origen,
+            "usage_source": usage_source,
         }
     )
 
@@ -231,7 +233,20 @@ def respuesta(s: dict) -> None:
     sid = s.get("session_id") or ""
     clave = f"respuesta:{sid}:{s.get('state_since') or ''}:{_h(texto)}"
     origen = {"error": s["last_error"]} if s.get("last_error") else {}
-    _evento("respuesta", s, texto, clave, origen)
+    source = {
+        key: s.get(key)
+        for key in (
+            "session_id",
+            "agent",
+            "transcript_path",
+            "transcript_turn_id",
+            "prompt_id",
+            "pi_leaf_id",
+            "state_since",
+            "state",
+        )
+    }
+    _evento("respuesta", s, texto, clave, origen, usage_source=source)
 
 
 def envio(dst: dict, texto: str, *, de: str | None = None, clase: str = "envio", **meta) -> None:
@@ -277,12 +292,21 @@ def procesar(ev: dict) -> dict | None:
         return None
     if ev["tipo"] == "vista":
         return k.registrar_sesion(pid, tarjeta)
+    origen = dict(ev.get("origen") or {})
+    if ev["tipo"] == "respuesta":
+        source = ev.get("usage_source") or {}
+        origen["usage"] = turn_usage.medir(source)
+        origen["usage_turno"] = (
+            (source.get("prompt_id") or source.get("transcript_turn_id"))
+            if source.get("agent") == "claude"
+            else source.get("transcript_turn_id")
+        )
     cap = k.capturar(
         pid,
         ev["tipo"],
         ev.get("texto") or "",
         tarjeta,
-        origen=ev.get("origen"),
+        origen=origen,
         clave=ev.get("clave"),
         redactado=bool(ev.get("redactado")),
     )

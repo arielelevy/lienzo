@@ -1149,6 +1149,7 @@ def transcript_state(s: dict, t: dict) -> str | None:
 
 
 REFRESH_KEYS = (
+    "transcript_turn_id",
     "needs",
     "envio_codex",
     "envio_pendiente",
@@ -1396,6 +1397,7 @@ def apply_turn(s: dict, t: dict, force_state: bool) -> None:
     # lo que pasa adentro, para la tarjeta: cuanto lleva hecho y sobre que archivos. Un turno abierto
     # de CODA en la base es solo el pedido (el resto se guarda al cerrar): la actividad la llevan
     # coda_tool y coda_log_activity, y releerlo la pondria en cero
+    s["transcript_turn_id"] = t.get("id")
     if not (s.get("agent") == "coda" and not t.get("ended")):
         s.update(turn_activity(t))
     if s.get("hooked") and not force_state:

@@ -1,0 +1,18 @@
+{
+  "nombre": "tokens-por-turno",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/tokens-por-turno",
+  "reglas": [
+    "PENDIENTES.md Tokens por turno y encargo de Ariel: guardar input/output/cache_read/cache_write/reasoning medidos en cada respuesta, replicados, sin estimar y con null si no están.",
+    "Referencia tokens_turno: deduplicar usage Claude por message.id; restar total_token_usage Codex y separar input cacheado; coda usa su tabla usage por sesión y ventana; créditos Kiro no son tokens.",
+    "docs/specs/tokens-por-turno/design.md: identidad capturada, fuera del lock, no mezclar turnos/ramas, no modificar capturas históricas ni publicar rutas locales."
+  ],
+  "casos": [
+    {
+      "id": "tokens-captura-replica-y-cierre",
+      "comando": ["py", "-m", "pytest", "tests/test_turn_usage.py", "tests/test_captura.py", "tests/test_replica.py", "tests/test_transcripts.py", "tests/test_server.py", "tests/test_rules.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 180000,
+      "cubre": ["lienzo/turn_usage.py", "lienzo/captura.py", "lienzo/sessions.py", "lienzo/hooks_eventos.py", "lienzo/replica.py"]
+    }
+  ]
+}

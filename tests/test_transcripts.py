@@ -15,19 +15,29 @@ CLAUDE_DIR = os.path.join(HOME, ".claude", "projects", "D--Apps-lienzo")
 CODEX_DIR = os.path.join(HOME, ".codex", "sessions", "2026", "09", "05")
 
 
-def _newest(pattern):
-    files = glob.glob(pattern)
-    if not files:
-        return None
-    return max(files, key=os.path.getmtime)
+def _claude_con_herramientas(path):
+    """Requisito del dato real: los JSONL de metadatos del bridge no son conversaciones."""
+    lines, _ = tr.tail_lines(path)
+    tools, results = set(), set()
+    for row in tr.iter_json(lines):
+        content = (row.get("message") or {}).get("content")
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if row.get("type") == "assistant" and block.get("type") == "tool_use":
+                tools.add(block.get("id"))
+            if row.get("type") == "user" and block.get("type") == "tool_result":
+                results.add(block.get("tool_use_id"))
+    return bool((tools & results) - {None})
 
 
 @pytest.fixture(scope="module")
 def claude_path():
-    p = _newest(os.path.join(CLAUDE_DIR, "*.jsonl"))
-    if not p:
-        pytest.skip(f"sin transcripciones de Claude en {CLAUDE_DIR}")
-    return p
+    files = sorted(glob.glob(os.path.join(CLAUDE_DIR, "*.jsonl")), key=os.path.getmtime, reverse=True)
+    for path in files:
+        if _claude_con_herramientas(path):
+            return path
+    pytest.skip(f"sin conversaciones de Claude con herramienta/resultado enlazados en {CLAUDE_DIR}")
 
 
 @pytest.fixture(scope="module")
