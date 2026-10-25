@@ -172,7 +172,7 @@ def test_ronda_local_audita_solo_esta_pc_y_no_escribe_a_una_coordinadora_trabada
     r = au.ronda_local("http://x", str(tmp_path / "estado.json"), enviar=True)
     assert "R" not in {h["session_id"] for h in r["hallazgos"]}  # la otra PC audita lo suyo
     assert [ruta for ruta, _ in enviados] == ["/sessions/C/send"]  # a K no: tiene un envío sin tomar
-    assert all(c["sin_aviso"] for _, c in enviados)
+    assert all(set(c) == {"text"} for _, c in enviados)  # sin `sin_aviso`: el server lo exige con from
     # la ronda siguiente no repite
     enviados.clear()
     au.ronda_local("http://x", str(tmp_path / "estado.json"), enviar=True)

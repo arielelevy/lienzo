@@ -226,13 +226,20 @@ def filtrar(hallazgos: list, previo: dict, ahora: dt.datetime, cfg: dict = CFG) 
     return avisar, {"emitidos": emitidos, "ultimo": ultimo, "ronda": ahora.isoformat(timespec="seconds")}
 
 
+def _coordinadoras(sesiones: list) -> dict:
+    return {s.get("repo_key"): s["session_id"] for s in sesiones if s.get("coordinator") and s.get("alive")}
+
+
+def _destino(h: dict, coord: dict) -> str | None:
+    return h.get("coordinadora") or coord.get(h.get("repo"))
+
+
 def agrupar(avisos: list, sesiones: list) -> dict:
     """Un texto por coordinadora (o `None` si el repo no tiene). Una sola línea por hallazgo."""
-    coord = {s.get("repo_key"): s["session_id"] for s in sesiones if s.get("coordinator") and s.get("alive")}
+    coord = _coordinadoras(sesiones)
     por = {}
     for h in avisos:
-        destino = h.get("coordinadora") or coord.get(h.get("repo"))
-        por.setdefault(destino, []).append(
+        por.setdefault(_destino(h, coord), []).append(
             f"- {h['tipo']}: «{h.get('title') or h['session_id'][:8]}» hace {h['minutos']:.0f} min. {h['sugerencia']}."
         )
     return {
@@ -287,20 +294,47 @@ def ronda_local(base: str, ruta_estado: str, enviar: bool) -> dict:
     sesiones = _get(base, "/sessions")
     pc = next((p.get("pc_id") for p in _get(base, "/peers") or [] if p.get("local")), None)
     locales = {s["session_id"] for s in sesiones if not s.get("pc") or s.get("pc") == pc}
-    r = ronda(sesiones, _get(base, "/links"), _leer_estado(ruta_estado))
-    r["hallazgos"] = [h for h in r["hallazgos"] if h["session_id"] in locales]
-    r["avisar"] = [h for h in r["avisar"] if h["session_id"] in locales]
-    r["textos"] = agrupar(r["avisar"], sesiones)
-    trabadas = {h["session_id"] for h in r["hallazgos"] if h["tipo"] == "envio_no_tomado"}
-    r["enviados"] = []
-    if enviar:
-        for destino, texto in r["textos"].items():
-            if destino and destino not in trabadas:
-                # sin_aviso: el turno que dispara este aviso no vuelve como aviso (evita bucles)
-                _post(base, f"/sessions/{destino}/send", {"text": texto, "sin_aviso": True})
-                r["enviados"].append(destino)
-        with open(ruta_estado, "w", encoding="utf-8") as f:
-            json.dump(r["estado"], f, ensure_ascii=False, indent=1)
+    ahora = dt.datetime.now().astimezone()
+    t0 = time.perf_counter()
+    hallazgos = [h for h in clasificar(sesiones, _get(base, "/links"), ahora) if h["session_id"] in locales]
+    previo = _leer_estado(ruta_estado)
+    avisar, estado = filtrar(hallazgos, previo, ahora)
+    r = {
+        "ahora": ahora.isoformat(timespec="seconds"),
+        "sesiones": len(sesiones),
+        "hallazgos": hallazgos,
+        "avisar": avisar,
+        "textos": agrupar(avisar, sesiones),
+        "estado": estado,
+        "costo_ms": round((time.perf_counter() - t0) * 1000, 2),
+        "enviados": [],
+        "fallidos": {},
+    }
+    trabadas = {h["session_id"] for h in hallazgos if h["tipo"] == "envio_no_tomado"}
+    if not enviar:
+        return r
+    for destino, texto in r["textos"].items():
+        if not destino or destino in trabadas:
+            continue
+        try:
+            # sin `sin_aviso`: el server lo acepta sólo con un `from` de sesión y la auditoría no es una
+            # sesión (2026-10-25: con `sin_aviso: true` solo, cada envío daba 400 y ningún aviso salía)
+            _post(base, f"/sessions/{destino}/send", {"text": texto})
+            r["enviados"].append(destino)
+        except Exception as e:
+            r["fallidos"][destino] = f"{type(e).__name__}: {e}"
+    # lo que no se entregó no cuenta como avisado: vuelve a intentarse en la ronda siguiente
+    coord = _coordinadoras(sesiones)
+    for h in avisar:
+        if _destino(h, coord) in r["fallidos"]:
+            par = f"{h['tipo']}|{h['session_id']}"
+            estado["emitidos"].pop(f"{par}|{h.get('evidencia')}", None)
+            if (anterior := (previo.get("ultimo") or {}).get(par)) is not None:
+                estado["ultimo"][par] = anterior
+            else:
+                estado["ultimo"].pop(par, None)
+    with open(ruta_estado, "w", encoding="utf-8") as f:
+        json.dump(estado, f, ensure_ascii=False, indent=1)
     return r
 
 
@@ -317,6 +351,8 @@ def bucle(base: str, cada_min: float, log, ruta_estado: str | None = None) -> No
                     f"auditoria: {len(r['hallazgos'])} hallazgos, {len(r['avisar'])} avisados a "
                     f"{len(r['enviados'])} coordinadoras ({r['costo_ms']} ms)"
                 )
+            for destino, error in r["fallidos"].items():
+                log(f"auditoria: no se pudo avisar a {destino[:8]} ({error}); se reintenta en la ronda siguiente")
         except Exception as e:
             log(f"auditoria: ronda fallida ({type(e).__name__}: {e})")
         time.sleep(cada_min * 60)
