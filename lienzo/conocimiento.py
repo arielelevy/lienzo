@@ -604,10 +604,12 @@ def resolver_proyecto(repo_key: str | None = None, cwd: str | None = None, pc: s
     """El proyecto de una tarjeta, por carpeta en esa PC (el cwd o la raiz del repo que lo contiene:
     anexo A de v5, proyecto = carpeta) o, si ninguna carpeta coincide, por remote (repo_key
     normalizado). None si no esta asignado: las coincidencias por nombre solo sugieren (v5 §8.1)."""
-    if memory_policy.excluida(cwd):
-        return None
     rk = (repo_key or "").strip().lower()
-    candidatas = {x for x in (norm_cwd(cwd), norm_cwd(carpeta_de(cwd))) if x}
+    # Una carpeta temporal no se vincula por ruta, pero su remote sí puede identificar un proyecto
+    # existente en una lectura de contexto. Las entradas de escritura mantienen su propia exclusión.
+    candidatas = set()
+    if not memory_policy.excluida(cwd):
+        candidatas = {x for x in (norm_cwd(cwd), norm_cwd(carpeta_de(cwd))) if x}
     with _lock:
         idx = _leer_indice()
     for pid, v in idx["proyectos"].items():

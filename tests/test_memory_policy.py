@@ -180,3 +180,20 @@ def test_vista_denegada_en_segundo_chequeo_puede_reintentarse(entorno, monkeypat
     captura.vista(tarjeta)
     assert len(eventos) == 2
     assert captura.procesar(eventos[-1])["tipo"] == "sesion"
+
+
+def test_contexto_por_remote_no_habilita_escritura_desde_temp(entorno, monkeypatch):
+    roots, _ = entorno
+    remote = "github.com/ariel/proyecto-existente"
+    k.registrar_proyecto("existente", remotes=[remote])
+    tarjeta = {"session_id": "s-lectura", "agent": "claude", "cwd": str(roots[0] / "bench"), "repo_key": remote}
+    monkeypatch.setitem(policy.state.sessions, tarjeta["session_id"], tarjeta)
+    code, out = api.dispatch("GET", ["existente", "contexto-sugerido"], None, {"session_id": tarjeta["session_id"]})
+    assert code == 200 and out["contexto"] == {"agente": "claude"}
+    assert k.resolver_proyecto(repo_key=remote, cwd=tarjeta["cwd"]) == "existente"
+    assert k.proyecto_de_carpeta(tarjeta["cwd"], "pcA", remote) is None
+    assert k.registrar_sesion("existente", tarjeta) is None
+    assert k.capturar("existente", "respuesta", "no guardar", tarjeta) is None
+    assert k.nodos("existente")["total"] == 0
+    assert k.capturas("existente")["total"] == 0
+    assert k.proyecto("existente")["carpetas"] == []

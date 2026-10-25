@@ -1144,8 +1144,6 @@ def accion_coordinator(s: dict, d: dict) -> tuple[int, dict]:
         elif not d["on"]:
             s.pop("coordinator_proposal", None)
     changed = set_coordinator(s, d["on"])
-    if all(x is not s for x in changed):
-        ses.touch(s)
     log(
         f"coordinadora de {s.get('repo')}: {s['session_id'][:8]} -> {d['on']} "
         f"({', '.join(x['session_id'][:8] for x in changed) or 'sin cambios'})"

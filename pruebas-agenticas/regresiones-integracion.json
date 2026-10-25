@@ -1,0 +1,24 @@
+{
+  "nombre": "regresiones-integracion",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/regresiones-integracion",
+  "reglas": [
+    "Encargo de la coordinadora del 2026-10-25 16:28: corregir las dos regresiones sin debilitar las pruebas originales.",
+    "PUT coordinator debe mantener paridad entre tablero y peer; sessions persiste también preferencias y propuestas cuando el rol no cambia.",
+    "Un remote conocido permite leer contexto del proyecto desde TEMP; no autoriza alta, registro de sesión ni captura desde esa carpeta."
+  ],
+  "casos": [
+    {
+      "id": "regresiones-originales",
+      "comando": ["py", "-m", "pytest", "tests/test_ola2_server.py::test_paridad_con_cuerpos_buenos_mismo_efecto[coordinator]", "tests/test_prolog_checklist.py::test_una_tarjeta_resuelta_por_remote_cuenta_como_del_proyecto", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 60000,
+      "cubre": ["lienzo/server.py", "lienzo/sessions.py", "lienzo/conocimiento.py"]
+    },
+    {
+      "id": "compatibilidad-api-y-memoria",
+      "comando": ["py", "-m", "pytest", "tests/test_ola2_server.py", "tests/test_prolog_checklist.py", "tests/test_regresiones_integracion.py", "tests/test_memory_policy.py", "tests/test_huerfanos.py", "tests/test_codex_desktop_coordinator_R.py", "tests/test_rules_federadas.py", "tests/test_pc_fields.py", "tests/test_server.py", "tests/test_conocimiento.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 180000,
+      "cubre": ["lienzo/server.py", "lienzo/sessions.py", "lienzo/conocimiento.py", "lienzo/conocimiento_api.py", "lienzo/memory_policy.py"]
+    }
+  ]
+}

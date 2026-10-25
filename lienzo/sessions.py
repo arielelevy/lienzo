@@ -1559,6 +1559,10 @@ def set_coordinator(s: dict, on: bool, *, automatic: bool = False) -> list[dict]
             changed.append(s)
         for x in changed:
             touch(x)
+        if all(x is not s for x in changed):
+            # El handler puede cambiar la preferencia manual/propuesta aunque el rol ya fuera el mismo.
+            # Persistir pertenece a sessions, no a los handlers HTTP de tablero o peer.
+            touch(s)
     if on and my_repo is not None:
         for other in _mirror_sessions():
             if other.get("coordinator") and _repo_identity(other) == my_repo:
