@@ -172,6 +172,68 @@ def merge_pi(path: str, uninstall: bool, dry_run=False) -> None:
     print("extension Pi", "quitada de" if uninstall else "registrada en", path)
 
 
+# Donde cada CLI busca skills (una carpeta por skill, con su SKILL.md). Codex, Pi y CODA leen
+# ~/.agents/skills; Claude Code y Kiro solo la suya. Sin el enlace en las dos ultimas, una sesion
+# lanzada por el lienzo no ve el skill y la coordinadora tiene que pasarle la ruta a mano (medido el
+# 2026-10-25 en ar-it33940: Kiro termino una revision diciendo que el skill no estaba cargado).
+SKILL = f"{HERE}/skills/lienzo"
+
+
+def skill_dirs() -> dict:
+    claude = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
+    return {
+        "claude": os.path.join(claude, "skills"),
+        "kiro": os.path.join(HOME, ".kiro", "skills"),
+        "agents": os.path.join(HOME, ".agents", "skills"),
+    }
+
+
+def _mismo(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+def _enlazar(destino: str, origen: str) -> None:
+    if os.name == "nt":
+        # junction: no pide administrador ni modo desarrollador, a diferencia de un symlink
+        # mklink toma "D:/apps" como un modificador: rutas con barra invertida
+        r = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", os.path.normpath(destino), os.path.normpath(origen)],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            raise OSError((r.stderr or r.stdout).strip())
+    else:
+        os.symlink(origen, destino, target_is_directory=True)
+
+
+def link_skills(uninstall: bool, dry_run=False, dirs=None) -> list:
+    """Enlaza el skill del repo en la carpeta de skills de cada CLI. Nunca pisa: si ya hay un
+    `lienzo` que no apunta a este repo (una copia, otro clon) lo deja y lo informa. Desinstalar solo
+    quita enlaces que apuntan aca. Devuelve (cli, ruta, estado) para que se pueda verificar."""
+    out = []
+    for cli, base in (dirs or skill_dirs()).items():
+        destino = os.path.join(base, "lienzo")
+        existe = os.path.lexists(destino)
+        nuestro = existe and _mismo(destino, SKILL)
+        if uninstall:
+            estado = "quitado" if nuestro else "sin cambios"
+            if nuestro and not dry_run:
+                os.rmdir(destino) if os.name == "nt" else os.unlink(destino)
+        elif nuestro:
+            estado = "ya enlazado"
+        elif existe:
+            estado = "otro skill lienzo, no se toca"
+        else:
+            estado = "enlazado"
+            if not dry_run:
+                os.makedirs(base, exist_ok=True)
+                _enlazar(destino, SKILL)
+        out.append((cli, destino, estado))
+        print(("[dry-run] " if dry_run else "") + f"skill lienzo para {cli}: {destino} ({estado})")
+    return out
+
+
 def ensure_state(dry_run=False) -> None:
     root = os.path.join(HOME, ".lienzo")
     if dry_run:
@@ -294,6 +356,8 @@ if __name__ == "__main__":
             merge_hooks(
                 os.path.join(coda_home, "config.json"), "coda", CODA_EVENTS, un, backup=True, prune=True, dry_run=dry
             )
+    if args.only is None:
+        link_skills(un, dry_run=dry)
     if args.peer:
         peer_firewall(un, dry_run=dry)
     print("listo. Pi: abrir una sesion nueva o ejecutar /reload en las abiertas. CODA: /reload-hooks en las abiertas.")
