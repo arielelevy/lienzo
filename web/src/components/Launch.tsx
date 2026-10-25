@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api, leerCuotas, type CuotasResponse } from "../api";
 import { AGENTS, agentIds, can, type Agent } from "../agents";
-import { opcionesProyecto } from "../recientes";
+import { opcionDeRepo, opcionesProyecto } from "../recientes";
 import type { Peer, Reciente, Session } from "../types";
 
-export function Launch({ peers, sessions, onClose, toast, editor = false }: {
+export function Launch({ peers, sessions, onClose, toast, editor = false, inicial = {} }: {
   editor?: boolean; peers: Peer[]; sessions: Session[]; onClose: () => void; toast?: (text: string, error?: boolean) => void;
+  /** lo filtrado en el tablero al abrir (recientes.preseleccion): una PC y/o un proyecto */
+  inicial?: { pc?: string; repo?: string };
 }) {
   const localPc = peers.find(p => p.local)?.pc_id ?? "";
   // null: sin elegir todavía. Se deriva de lo que llegó, así un GET /peers que contesta después de
-  // abrir el diálogo igual deja esta PC y su primera carpeta elegidas
+  // abrir el diálogo igual deja esta PC (o la filtrada en el tablero) y su primera carpeta elegidas
   const [pcElegida, setPc] = useState<string | null>(null);
-  const pc = pcElegida ?? localPc;
+  const pc = pcElegida ?? inicial.pc ?? localPc;
   const [cwd, setCwd] = useState("");
   // lo que recuerda el server (GET /recientes): un server viejo sin la ruta deja la lista vacía
   const [recientes, setRecientes] = useState<Reciente[]>([]);
@@ -22,9 +24,10 @@ export function Launch({ peers, sessions, onClose, toast, editor = false }: {
   }, []);
   const grupos = useMemo(() => opcionesProyecto(pc, peers, sessions, recientes), [pc, peers, sessions, recientes]);
   const opciones = useMemo(() => [...grupos.carpetas, ...grupos.usadas, ...grupos.otras], [grupos]);
-  // null: la primera carpeta de la PC elegida (la abierta ahora, si hay); "" es «Otra carpeta…»
+  // null: el proyecto filtrado en el tablero, si esta PC lo tiene; si no, la primera carpeta de la PC
+  // elegida (la abierta ahora, si hay); "" es «Otra carpeta…»
   const [projectElegido, setProject] = useState<string | null>(null);
-  const project = projectElegido ?? grupos.carpetas[0]?.key ?? "";
+  const project = projectElegido ?? (inicial.repo ? opcionDeRepo(inicial.repo, pc, grupos, peers, sessions) : undefined) ?? grupos.carpetas[0]?.key ?? "";
   // "auto": el server elige el de más margen según GET /cuotas (ronda 2026-10-17)
   const [agent, setAgent] = useState<Agent | "auto">("codex");
   // la misma lectura que el indicador de cuotas (vigente 5 min): para avisar antes de lanzar, sin bloquear

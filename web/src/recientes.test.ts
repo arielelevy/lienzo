@@ -78,3 +78,28 @@ test("opciones: los proyectos en disco de la PC elegida aparecen aunque no tenga
   const b = opcionesProyecto("pcB", peers, [], [], AHORA);
   assert.deepEqual(b.carpetas.map(o => o.label), ["lienzo"]);
 });
+
+test("preseleccion: solo con una PC o un proyecto elegidos, y la PC tiene que existir", async () => {
+  // @ts-ignore TS5097
+  const { preseleccion } = await import("./recientes.ts");
+  const peers = [peer("A", true), peer("B", false)];
+  assert.deepEqual(preseleccion(new Set(["B"]), new Set(["lienzo"]), peers), { pc: "B", repo: "lienzo" });
+  assert.deepEqual(preseleccion(new Set(["A", "B"]), new Set(["x", "y"]), peers), {});
+  assert.deepEqual(preseleccion(new Set(["Z"]), new Set(), peers), {});
+});
+
+test("opcionDeRepo: carpeta de una sesión del repo en esa PC, después por título, después otras PCs", async () => {
+  // @ts-ignore TS5097
+  const { opcionDeRepo } = await import("./recientes.ts");
+  const peers = [peer("A", true, ["D:/apps"]), peer("B", false, ["C:/src"])];
+  const sessions = [
+    sesion({ cwd: "D:/apps/lienzo", repo: "lienzo", repo_key: "gh:lienzo", pc: "A" }),
+    sesion({ cwd: "D:/apps/otro", repo: "otro", pc: "A" }),
+    sesion({ cwd: "C:/src/chess", repo: "chess", pc: "B" }),
+  ];
+  const gA = opcionesProyecto("A", peers, sessions, [], AHORA);
+  assert.equal(opcionDeRepo("gh:lienzo", "A", gA, peers, sessions), `dir:${claveCarpeta("D:/apps/lienzo")}`);
+  assert.equal(opcionDeRepo("otro", "A", gA, peers, sessions), `dir:${claveCarpeta("D:/apps/otro")}`);
+  assert.equal(opcionDeRepo("chess", "A", gA, peers, sessions), "repo:chess"); // solo en B: hay que dar la carpeta
+  assert.equal(opcionDeRepo("nada", "A", gA, peers, sessions), undefined);
+});

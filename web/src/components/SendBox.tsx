@@ -180,6 +180,10 @@ export function SendBox({ session: s, others, toast, autoFocus = false }: Props)
             {q}
           </button>
         ))}
+        <button disabled={busy || !canWrite(s)} title="un Esc en su terminal: cierra un diálogo que se quedó con el teclado (/permissions, /config) o corta el turno"
+          onClick={() => sessionsApi.escape(s.session_id).then(() => toast("Esc enviado"), (e) => toast(`No se pudo mandar Esc: ${(e as Error).message}`, true))}>
+          Esc
+        </button>
         <span className="sp" />
         <label className="small pointer">
           📎 adjuntar

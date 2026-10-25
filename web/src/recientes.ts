@@ -91,3 +91,26 @@ export function opcionesProyecto(pc: string, peers: Peer[], sessions: Session[],
   }
   return { carpetas, usadas, otras };
 }
+
+/** Lo que el tablero tiene filtrado al abrir Lanzar CLI: con una sola PC elegida en la tira de PCs,
+ *  esa PC (si la conocemos); con un solo proyecto elegido en la tira de proyectos, su opción en esa
+ *  PC (la carpeta de una sesión de ese repo, o la de mismo nombre). Sin filtro único, nada: el
+ *  diálogo sigue con esta PC y su primera carpeta, como antes. */
+export function preseleccion(pcFilter: Set<string>, selectedRepos: Set<string>, peers: Peer[]): { pc?: string; repo?: string } {
+  const pc = pcFilter.size === 1 ? [...pcFilter][0] : undefined;
+  const repo = selectedRepos.size === 1 ? [...selectedRepos][0] : undefined;
+  return { ...(pc && peers.some(p => p.pc_id === pc) ? { pc } : {}), ...(repo ? { repo } : {}) };
+}
+
+/** La opción del selector que corresponde al repo filtrado (clave `repo_key || repo`, la misma de la
+ *  tira de proyectos) en la PC `pc`: primero por la carpeta de una sesión de ese repo, después por
+ *  título; si solo lo conoce otra PC, la opción «En otras PCs». */
+export function opcionDeRepo(repo: string, pc: string, grupos: GruposProyecto, peers: Peer[], sessions: Session[]): string | undefined {
+  const localPc = peers.find(p => p.local)?.pc_id ?? "";
+  const pcKey = pc || localPc;
+  const todas = [...grupos.carpetas, ...grupos.usadas];
+  const cwds = new Set(sessions.filter(s => s.cwd && (s.repo_key || s.repo) === repo && (s.pc || localPc) === pcKey).map(s => `dir:${claveCarpeta(s.cwd!)}`));
+  const r = repo.toLowerCase();
+  return (todas.find(o => cwds.has(o.key)) ?? todas.find(o => o.title.toLowerCase() === r)
+    ?? grupos.otras.find(o => o.key === `repo:${repo}` || o.title.toLowerCase() === r))?.key;
+}

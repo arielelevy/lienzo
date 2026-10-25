@@ -382,6 +382,21 @@ def mark_sent(s: dict, final: str) -> None:
     s["sent_mark"] = prompt_mark(final)
 
 
+def link_peer_message(s: dict, raw: str) -> None:
+    """La flecha de un SendMessage directo entre sesiones (sin pasar por el lienzo): llega a `s` como
+    pedido con <cross-session-message from-name=...>, y el origen es la tarjeta con ese nombre en el
+    canal nativo, aca o en otra PC. Antes solo habia flecha si el lienzo mediaba (link_to). Se llama
+    con el lock tomado."""
+    pm = transcripts.peer_message(raw or "")
+    if not pm:
+        return
+    nombre, texto = pm
+    candidatas = [o for o in sessions.values() if o is not s] + (mirror.MIRROR.sessions() if mirror else [])
+    src = next((o["session_id"] for o in candidatas if nombre and o.get("native_name") == nombre), None)
+    if src:
+        add_link(src, s["session_id"], texto, "native")
+
+
 def prompt_origin(s: dict, raw: str) -> str:
     """De donde vino el pedido que llego por UserPromptSubmit, y consume la marca del envio:
     'lienzo' si es el que el tablero acaba de teclear (encargo del coordinador, regla, o la caja
@@ -2750,6 +2765,22 @@ def interrupt_session(s: dict) -> tuple[int, dict]:
     state.log(f"interrumpida {s['session_id'][:8]} (Esc): {short(s.get('last_prompt') or '', 60)}")
     with lock:
         touch(s)  # el estado lo dice la transcripcion (Interrupt) o el barrido, no se adivina aca
+    return 200, out
+
+
+def escape_session(s: dict) -> tuple[int, dict]:
+    """Un Esc en la terminal, en cualquier estado: el boton «Esc» de la caja de envio. Cubre lo que
+    interrupt_session no: cerrar un dialogo de la TUI que se quedo con el teclado (/permissions,
+    /config, /model) y deja la sesion sorda a lo que se le teclea (2026-10-25: un /permissions dejo
+    a lienzo-A sin tomar texto hasta que se le mando un Esc a mano)."""
+    if frenado := send_blocked(s):
+        return frenado
+    code, out = run_send(s, "", enter=False, key="escape")
+    if code != 200:
+        return code, out
+    state.log(f"Esc a {s['session_id'][:8]} desde el lienzo (estado {s.get('state')})")
+    with lock:
+        touch(s)
     return 200, out
 
 

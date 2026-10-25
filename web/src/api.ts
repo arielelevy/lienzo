@@ -139,6 +139,8 @@ export const sessionsApi = {
   claudePipe: (sid: string, reconnect = false) => api.post<{ command: string; session_id: string; expires_at: number; connected: boolean }>(ses(sid, "claude-pipe"), { reconnect }),
   send: (sid: string, body: SendBody) => api.post<SendResult>(ses(sid, "send"), body),
   interrupt: (sid: string) => api.post(ses(sid, "interrupt"), {}),
+  /** un Esc en su terminal en cualquier estado: cierra un diálogo de la TUI (/permissions) */
+  escape: (sid: string) => api.post(ses(sid, "escape"), {}),
   kill: (sid: string) => api.post(ses(sid, "kill"), { confirm: sid }),
   /** el permiso que CODA pide en su terminal; `expect` es el sha256 del comando que se juzgo */
   approve: (sid: string, decision: Decision, expect?: string) =>

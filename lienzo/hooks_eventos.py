@@ -254,6 +254,8 @@ def hook_prompt_submit(s: dict, ev: dict) -> None:
     raw = ev.get("prompt", "")
     sistema = ses.transcripts.is_system_prompt(raw)
     via = None if sistema else ses.prompt_origin(s, raw)
+    if via == "peer":
+        ses.link_peer_message(s, raw)
     receipt = s.get("envio_codex") or {}
     if (
         via == "lienzo"

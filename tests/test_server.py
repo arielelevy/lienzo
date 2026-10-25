@@ -1793,6 +1793,28 @@ def test_interrupt_solo_a_una_sesion_que_corre(aislado, monkeypatch):
     assert code == 200 and typed[-1][-2:] == ["--key", "escape"]
 
 
+def test_escape_va_en_cualquier_estado(aislado, monkeypatch):
+    # un /permissions deja la TUI con un dialogo que se queda con el teclado: el Esc tiene que ir aunque
+    # la sesion no este corriendo (interrupt_session solo va con corriendo)
+    origen, copia, typed = _traspaso(monkeypatch)
+    copia["state"] = "te_necesita"
+    code, out = ses.escape_session(copia)
+    assert code == 200 and typed[-1][-2:] == ["--key", "escape"]
+
+
+def test_mensaje_nativo_directo_dibuja_la_flecha(aislado, monkeypatch):
+    origen, copia, _ = _traspaso(monkeypatch)
+    origen["native_name"] = "lienzo-A"
+    raw = ('Another Claude session sent a message:\n<cross-session-message from="uds:x" from-name="lienzo-A">'
+           "hola</cross-session-message>\n\nThis came from another Claude session")
+    antes = len(st.links.snapshot())
+    ses.link_peer_message(copia, raw)
+    nuevos = st.links.snapshot()[antes:]
+    assert [(l["from"], l["to"], l["kind"], l["text"]) for l in nuevos] == [(OLD, SID, "native", "hola")]
+    ses.link_peer_message(copia, raw.replace("lienzo-A", "nadie"))  # origen desconocido: sin flecha
+    assert len(st.links.snapshot()) == antes + 1
+
+
 def test_recarga_detecta_cambios_y_no_relanza_sobre_codigo_roto(tmp_path):
     import server as srv
 

@@ -8,6 +8,7 @@ import { ChromeCard, chromeConexiones } from "./ChromeCard";
 import { ApiError, restoreApi, type RestoreResult } from "../api";
 import { pcOf } from "./PcStrip";
 import { cardCell, packProjects } from "../project-pack";
+import { preseleccion } from "../recientes";
 import { passesProjects, repoGroups } from "./ProjectStrip";
 import type { Link, Peer, Pending, Rule, Session, State } from "../types";
 import { hasConsole, searchText, shortName, stalledReason } from "../names";
@@ -962,7 +963,7 @@ export function Board({ sessions, pending, selected, filter, onFilter, onSelect,
         <button role="menuitem" onClick={() => { setContext(null); setImprovementsOpen(true); }}>Mejoras de agentes…</button>
       </div>, document.body)}
       {editorOpen && createPortal(<div className="gate"><Launch editor peers={peers} sessions={Object.values(sessions)} toast={toast} onClose={() => setEditorOpen(false)} /></div>, document.body)}
-      {launchOpen && createPortal(<div className="gate"><Launch peers={peers} sessions={Object.values(sessions)} toast={toast} onClose={() => setLaunchOpen(false)} /></div>, document.body)}
+      {launchOpen && createPortal(<div className="gate"><Launch peers={peers} sessions={Object.values(sessions)} toast={toast} inicial={preseleccion(pcFilter, selectedRepos, peers)} onClose={() => setLaunchOpen(false)} /></div>, document.body)}
       {improvementsOpen && createPortal(<dialog ref={el => { improvementsDialog.current = el; if (el && !el.open) el.showModal(); }} className="mejoras-vista" aria-label="Mejoras de agentes" onKeyDown={e => e.stopPropagation()} onCancel={e => { e.preventDefault(); closeImprovements(); }}>
         <div className="mejoras-vista-cabecera">
           <div><h2>Mejoras de agentes</h2><p className="small dim">Qué se prende al lanzar en esta PC y qué aprende el lienzo cuando está libre.</p></div>

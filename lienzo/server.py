@@ -112,6 +112,7 @@ from sessions import (
     deshacer_autorizacion,
     drop_session,
     external_blocked,
+    escape_session,
     hand_over,
     interrupt_session,
     liveness_loop,
@@ -1270,6 +1271,10 @@ def accion_interrupt(s: dict, d: dict) -> tuple[int, dict]:
     return interrupt_session(s)
 
 
+def accion_escape(s: dict, d: dict) -> tuple[int, dict]:
+    return escape_session(s)
+
+
 def accion_kill(s: dict, d: dict) -> tuple[int, dict]:
     return kill_agent.close(s, d.get("confirm"))
 
@@ -1416,6 +1421,7 @@ ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
     ("POST", "send"): AccionSesion(validar_send, accion_send, despues_tablero=envio_del_tablero),
     ("POST", "native"): AccionSesion(validar_native, accion_native),
     ("POST", "interrupt"): AccionSesion(sin_validar, accion_interrupt, reenvio=lambda d: {}, cuerpo="nada"),
+    ("POST", "escape"): AccionSesion(sin_validar, accion_escape, reenvio=lambda d: {}, cuerpo="nada"),
     ("POST", "approve"): AccionSesion(validar_approve, accion_approve),
     ("POST", "dialog"): AccionSesion(validar_dialog, accion_dialog),
     ("POST", "attach"): AccionSesion(validar_attach, accion_attach, reenvio=reenvio_attach, cuerpo="adjunto"),
@@ -1435,6 +1441,7 @@ ACCION_TEXTO = {
     "send": "escribirle",
     "native": "abrirle el canal nativo",
     "interrupt": "interrumpirla",
+    "escape": "mandarle un Esc",
     "approve": "aprobar en su terminal",
     "dialog": "contestar en su terminal",
     "attach": "adjuntarle archivos",
