@@ -235,6 +235,56 @@ def _post(base: str, ruta: str, cuerpo: dict):
         return r.status
 
 
+def _leer_estado(ruta: str) -> dict:
+    try:
+        with open(ruta, encoding="utf-8") as f:
+            return json.load(f)
+    except OSError, ValueError:
+        return {}
+
+
+def ronda_local(base: str, ruta_estado: str, enviar: bool) -> dict:
+    """Una ronda contra el server: audita sólo las sesiones de esta PC (cada PC audita lo suyo, así dos
+    servers no avisan dos veces lo mismo) y, con `enviar`, manda un aviso por coordinadora. No le manda
+    a una coordinadora que tiene ella misma un envío sin tomar: más texto no la destraba."""
+    sesiones = _get(base, "/sessions")
+    pc = next((p.get("pc_id") for p in _get(base, "/peers") or [] if p.get("local")), None)
+    locales = {s["session_id"] for s in sesiones if not s.get("pc") or s.get("pc") == pc}
+    r = ronda(sesiones, _get(base, "/links"), _leer_estado(ruta_estado))
+    r["hallazgos"] = [h for h in r["hallazgos"] if h["session_id"] in locales]
+    r["avisar"] = [h for h in r["avisar"] if h["session_id"] in locales]
+    r["textos"] = agrupar(r["avisar"], sesiones)
+    trabadas = {h["session_id"] for h in r["hallazgos"] if h["tipo"] == "envio_no_tomado"}
+    r["enviados"] = []
+    if enviar:
+        for destino, texto in r["textos"].items():
+            if destino and destino not in trabadas:
+                # sin_aviso: el turno que dispara este aviso no vuelve como aviso (evita bucles)
+                _post(base, f"/sessions/{destino}/send", {"text": texto, "sin_aviso": True})
+                r["enviados"].append(destino)
+        with open(ruta_estado, "w", encoding="utf-8") as f:
+            json.dump(r["estado"], f, ensure_ascii=False, indent=1)
+    return r
+
+
+def bucle(base: str, cada_min: float, log, ruta_estado: str | None = None) -> None:
+    """Hilo del server: una ronda cada `cada_min` (config `auditoria_min`, 5 por defecto; 0 la apaga).
+    Sólo HTTP contra el propio server: no toca el registro de sesiones ni el lock."""
+    ruta_estado = ruta_estado or os.path.join(os.path.expanduser("~"), ".lienzo", "auditoria.json")
+    time.sleep(60)  # que el barrido inicial y el espejo lleguen antes de la primera ronda
+    while True:
+        try:
+            r = ronda_local(base, ruta_estado, enviar=True)
+            if r["avisar"]:
+                log(
+                    f"auditoria: {len(r['hallazgos'])} hallazgos, {len(r['avisar'])} avisados a "
+                    f"{len(r['enviados'])} coordinadoras ({r['costo_ms']} ms)"
+                )
+        except Exception as e:
+            log(f"auditoria: ronda fallida ({type(e).__name__}: {e})")
+        time.sleep(cada_min * 60)
+
+
 def main(argv: list | None = None) -> int:
     import argparse
 
@@ -243,17 +293,9 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--estado", default=os.path.join(os.path.expanduser("~"), ".lienzo", "auditoria.json"))
     ap.add_argument("--enviar", action="store_true", help="manda el aviso agrupado a cada coordinadora")
     a = ap.parse_args(argv)
-    try:
-        with open(a.estado, encoding="utf-8") as f:
-            previo = json.load(f)
-    except OSError, ValueError:
-        previo = {}
-    r = ronda(_get(a.base, "/sessions"), _get(a.base, "/links"), previo)
+    r = ronda_local(a.base, a.estado, a.enviar)
     for destino, texto in r["textos"].items():
         print(f"== para {destino or 'nadie (repo sin coordinadora)'}\n{texto}")
-        if a.enviar and destino:
-            # sin_aviso: el turno que dispara este aviso no vuelve como aviso (evita bucles)
-            _post(a.base, f"/sessions/{destino}/send", {"text": texto, "sin_aviso": True})
     print(
         json.dumps(
             {k: r[k] for k in ("ahora", "sesiones", "costo_ms")}
@@ -265,9 +307,6 @@ def main(argv: list | None = None) -> int:
             indent=1,
         )
     )
-    if a.enviar:
-        with open(a.estado, "w", encoding="utf-8") as f:
-            json.dump(r["estado"], f, ensure_ascii=False, indent=1)
     return 0
 
 

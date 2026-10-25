@@ -154,3 +154,26 @@ def test_sin_enviar_del_server_es_envio_no_tomado_sin_esperar_umbral():
     # hooks_eventos.envio_sin_confirmar marca needs.kind=sin_enviar a los 25 s: se avisa ya
     s = [ses("C", coord=True), ses("A", "te_necesita", desde=-1, needs={"kind": "sin_enviar", "since": iso(-1)})]
     assert tipos(s, [])["A"] == "envio_no_tomado"
+
+
+def test_ronda_local_audita_solo_esta_pc_y_no_escribe_a_una_coordinadora_trabada(monkeypatch, tmp_path):
+    sesiones = [
+        ses("C", coord=True, pc="yo", desde=-30),
+        ses("A", desde=-20, pc="yo"),
+        ses("R", desde=-20, pc="otra"),
+        ses("K", coord=True, repo="k", pc="yo", desde=-30),
+        ses("B", desde=-20, repo="k", pc="yo"),
+    ]
+    links = [link("x", "B", "K", -10, "rule")]  # a K le llegó una entrega y no se movió: trabada
+    rutas = {"/sessions": sesiones, "/peers": [{"pc_id": "yo", "local": True}], "/links": links}
+    monkeypatch.setattr(au, "_get", lambda base, ruta: rutas[ruta])
+    enviados = []
+    monkeypatch.setattr(au, "_post", lambda base, ruta, cuerpo: enviados.append((ruta, cuerpo)))
+    r = au.ronda_local("http://x", str(tmp_path / "estado.json"), enviar=True)
+    assert "R" not in {h["session_id"] for h in r["hallazgos"]}  # la otra PC audita lo suyo
+    assert [ruta for ruta, _ in enviados] == ["/sessions/C/send"]  # a K no: tiene un envío sin tomar
+    assert all(c["sin_aviso"] for _, c in enviados)
+    # la ronda siguiente no repite
+    enviados.clear()
+    au.ronda_local("http://x", str(tmp_path / "estado.json"), enviar=True)
+    assert enviados == []

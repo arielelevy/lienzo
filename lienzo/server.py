@@ -35,6 +35,7 @@ sys.path.insert(0, HERE)
 import agent_improvements
 import agent_suggestions
 import antigravity_store
+import auditoria
 import auth
 import autoaprobar
 import backend
@@ -111,8 +112,8 @@ from sessions import (
     cuotas_de_sesiones,
     deshacer_autorizacion,
     drop_session,
-    external_blocked,
     escape_session,
+    external_blocked,
     hand_over,
     interrupt_session,
     liveness_loop,
@@ -3510,6 +3511,14 @@ def main() -> int:
     threading.Thread(target=screen_loop, daemon=True).start()
     threading.Thread(target=rules_loop, daemon=True).start()
     threading.Thread(target=rl.recordatorios_loop, name="recordatorios", daemon=True).start()
+    # ronda de auditoria de sesiones (2026-10-25): determinista, sin modelos; 0 en config la apaga
+    if cada_auditoria := load_config().get("auditoria_min", 5):
+        threading.Thread(
+            target=auditoria.bucle,
+            args=(f"http://127.0.0.1:{a.port}", float(cada_auditoria), log),
+            name="auditoria",
+            daemon=True,
+        ).start()
     autoaprobar.arrancar()
     if a.remote:
         threading.Thread(target=tunnel_loop, args=(a.port,), daemon=True).start()
