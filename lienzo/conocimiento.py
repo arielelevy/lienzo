@@ -28,6 +28,7 @@ import threading
 import uuid
 
 import identity
+import memory_policy
 import state
 import transcripts
 from atomico import atomic_write
@@ -603,6 +604,8 @@ def resolver_proyecto(repo_key: str | None = None, cwd: str | None = None, pc: s
     """El proyecto de una tarjeta, por carpeta en esa PC (el cwd o la raiz del repo que lo contiene:
     anexo A de v5, proyecto = carpeta) o, si ninguna carpeta coincide, por remote (repo_key
     normalizado). None si no esta asignado: las coincidencias por nombre solo sugieren (v5 §8.1)."""
+    if memory_policy.excluida(cwd):
+        return None
     rk = (repo_key or "").strip().lower()
     candidatas = {x for x in (norm_cwd(cwd), norm_cwd(carpeta_de(cwd))) if x}
     with _lock:
@@ -646,6 +649,8 @@ def proyecto_de_carpeta(cwd: str | None, pc: str, remote: str | None = None) -> 
     y se le suma como alias; (3) proyecto nuevo con el nombre de la carpeta (`-2`, `-3` si ya existe),
     con el remote como alias si nadie lo tiene. Dos carpetas de la misma PC nunca se juntan por el
     remote. None sin cwd."""
+    if memory_policy.excluida(cwd):
+        return None
     carpeta = carpeta_de(cwd)
     if carpeta is None:
         return None
@@ -2370,10 +2375,18 @@ def _incorporar_bloque(
 # --- adaptadores de lo que el server ya ve (mejor esfuerzo, nunca rompen al llamador) --------
 
 
+def _sesion_temporal(sid: str) -> bool:
+    with state.lock:
+        cwd = (state.sessions.get(sid) or {}).get("cwd")
+    return memory_policy.excluida(cwd)
+
+
 def _proyecto_de_sesion(sid: str) -> str | None:
     """El proyecto de una sesion que trabajo un encargo, o None. Las que no estan en ninguna base se
     recuerdan (cache negativa): cada muerte o permiso denegado de una tarjeta comun abria todas las
     bases (code review 2026-10-08). encargo_enviado saca la sesion de esa cache al vincularla."""
+    if _sesion_temporal(sid):
+        return None
     with _lock:
         pid = _sesion_proyecto.get(sid)
         if pid:
@@ -2419,6 +2432,8 @@ def _proyectos_de_sesion(sid: str) -> list[tuple[str, str]]:
     carpetas tiene uno en cada proyecto (anexo D de v5) y su cierre o vuelta vale para todos. Solo
     lectura; respeta la cache negativa. Incidentes, captura y ronda siguen con `_proyecto_de_sesion`, el
     proyecto actual (frente C, 2026-10-20)."""
+    if _sesion_temporal(sid):
+        return []
     with _lock:
         if sid in _sesion_sin_proyecto and sid not in _sesion_proyecto:
             return []
@@ -2732,10 +2747,12 @@ def _recordar_sesion(sid: str, pid: str) -> None:
         _sesion_sin_proyecto.discard(sid)
 
 
-def registrar_sesion(pid: str, tarjeta: dict) -> dict:
+def registrar_sesion(pid: str, tarjeta: dict) -> dict | None:
     """El nodo `sesion` de una tarjeta vista en la carpeta del proyecto (viva), con agente, modelo, pc
     y cwd; idempotente por session_id. Desde aca los adaptadores (cierre, vuelta, permisos, errores)
     la encuentran aunque no trabaje un encargo."""
+    if memory_policy.excluida(tarjeta.get("cwd")):
+        return None
     sid = _texto(tarjeta.get("session_id"), "session_id", 100)
     with _abrir(pid) as con:
         n = _sesion(
@@ -2774,6 +2791,8 @@ def capturar(
     CAPTURA_MAX_BYTES, con el hash y los bytes del texto entero antes de recortarlo.
     Idempotente por `clave` (devuelve None si ya estaba). Nunca crea nodos de conocimiento ni cambios
     de estado: el veredicto de v5 §3.4 no cambia."""
+    if memory_policy.excluida(tarjeta.get("cwd")):
+        return None
     if clase not in CLASES_CAPTURA:
         raise Rechazo(f"clase de captura desconocida: {clase}")
     if not isinstance(texto, str) or not texto.strip():

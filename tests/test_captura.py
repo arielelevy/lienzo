@@ -31,7 +31,7 @@ BLOQUE = """Listo.
 
 
 @pytest.fixture(autouse=True)
-def _limpio(monkeypatch):
+def _limpio(monkeypatch, tmp_path):
     monkeypatch.setattr(k, "_sesion_proyecto", {})
     monkeypatch.setattr(k, "_sesion_sin_proyecto", set())
     monkeypatch.setattr(k, "_incidentes_vistos", set())
@@ -39,6 +39,7 @@ def _limpio(monkeypatch):
     monkeypatch.setattr(captura.state, "log", lambda msg: None)
     # las carpetas de prueba viven bajo la temporal del sistema, que la captura excluye a proposito
     monkeypatch.setattr(captura, "temporal", lambda cwd: False)
+    monkeypatch.setattr(captura.memory_policy, "_launch_roots", lambda: [str(tmp_path)])
     monkeypatch.setattr(captura.identity, "pc_id", lambda: "pcA")
     captura.olvidar()
     yield
@@ -120,10 +121,11 @@ def test_carpeta_temporal_y_sin_cwd_no_registran(tmp_path, monkeypatch):
     assert k.proyectos() == []
 
 
-def test_temporal_reconoce_la_carpeta_temporal(tmp_path):
+def test_temporal_reconoce_la_carpeta_temporal(tmp_path, monkeypatch):
     import importlib
 
     real = importlib.reload(captura)  # sin el monkeypatch del autouse
+    monkeypatch.setattr(real.memory_policy, "_launch_roots", list)
     try:
         assert real.temporal(str(tmp_path))
         assert not real.temporal(None)

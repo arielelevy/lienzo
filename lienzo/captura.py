@@ -27,13 +27,13 @@ import hashlib
 import os
 import queue
 import re
-import tempfile
 import threading
 import time
 import traceback
 
 import conocimiento as k
 import identity
+import memory_policy
 import state
 import turn_usage
 
@@ -79,14 +79,8 @@ def tapar(texto: str) -> tuple[str, bool]:
 
 
 def temporal(cwd: str | None) -> bool:
-    """La carpeta esta bajo la temporal del sistema: pruebas y lanzamientos de prueba, no proyectos."""
-    if not cwd:
-        return False
-    try:
-        tmp = os.path.realpath(tempfile.gettempdir())
-        return os.path.commonpath([os.path.realpath(cwd), tmp]) == tmp
-    except ValueError, OSError:
-        return False
+    """Carpeta temporal excluida de memoria, respetando launch_roots."""
+    return memory_policy.excluida(cwd)
 
 
 def tarjeta_de(s: dict) -> dict:
@@ -278,8 +272,9 @@ def proyecto_de(tarjeta: dict) -> str | None:
     url = identity.origin_url(cwd)
     remote = identity._normalize_remote(url) if url else None
     pid = k.proyecto_de_carpeta(cwd, pc, remote)
-    with _lock:
-        _proyectos[clave] = pid
+    if pid is not None:
+        with _lock:
+            _proyectos[clave] = pid
     return pid
 
 
@@ -289,9 +284,16 @@ def procesar(ev: dict) -> dict | None:
     tarjeta = ev.get("tarjeta") or {}
     pid = proyecto_de(tarjeta)
     if pid is None:
+        if ev["tipo"] == "vista":
+            with _lock:
+                _vistas.discard(tarjeta.get("session_id"))  # una autorización posterior debe poder registrarla
         return None
     if ev["tipo"] == "vista":
-        return k.registrar_sesion(pid, tarjeta)
+        sesion = k.registrar_sesion(pid, tarjeta)
+        if sesion is None:
+            with _lock:
+                _vistas.discard(tarjeta.get("session_id"))
+        return sesion
     origen = dict(ev.get("origen") or {})
     if ev["tipo"] == "respuesta":
         source = ev.get("usage_source") or {}

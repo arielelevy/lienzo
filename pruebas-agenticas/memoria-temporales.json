@@ -1,0 +1,18 @@
+{
+  "nombre": "memoria-temporales",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/memoria-temporales",
+  "reglas": [
+    "Encargo de Ariel: no registrar proyectos ni capturas bajo TEMP, TMP o tempfile.gettempdir salvo launch_roots; sesiones visibles, sin borrar proyectos scratch existentes.",
+    "docs/specs/memoria-temporales/design.md: pertenencia lógica/física, no prefijos de texto; reevaluar config antes de cachés y de resolver repo; preservar memoria histórica y excepciones autorizadas.",
+    "Los datos temporales de las pruebas de captura se autorizan explícitamente como raíz de prueba; los casos de exclusión usan raíces separadas y config controlada."
+  ],
+  "casos": [
+    {
+      "id": "temporales-api-captura-y-memoria",
+      "comando": ["py", "-m", "pytest", "tests/test_memory_policy.py", "tests/test_captura.py", "tests/test_conocimiento.py", "tests/test_memoria_frente_c.py", "tests/test_replica.py", "tests/test_server.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 180000,
+      "cubre": ["lienzo/memory_policy.py", "lienzo/captura.py", "lienzo/conocimiento.py", "lienzo/conocimiento_api.py", "lienzo/replica.py"]
+    }
+  ]
+}
