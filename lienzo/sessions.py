@@ -2934,6 +2934,29 @@ def send_to_session(s: dict, text: str, attachments: list[str]) -> tuple[int, di
     owner = _mirror_owner(sid)
     if owner is not None:
         return _mirror_forward(owner, "POST", f"/sessions/{sid}/send", {"text": text, "attachments": attachments})
+    # de a uno por sesion (2026-10-25): dos envios casi juntos (12:13:37 y 12:13:38 a a480da47) se
+    # tecleaban intercalados en la misma consola y ninguno llego entero. El segundo espera al primero.
+    cola = _cola_envio(sid)
+    if not cola.acquire(timeout=ENVIO_COLA_S):
+        return 409, {"ok": False, "error": f"hay otro envio a esta sesion en curso hace mas de {ENVIO_COLA_S} s"}
+    try:
+        return _send_to_session_local(s, text, attachments)
+    finally:
+        cola.release()
+
+
+ENVIO_COLA_S = 90  # un tecleo largo dura hasta 60 s (run_send): el que espera no corta antes
+_colas_envio: dict[str, threading.Lock] = {}
+_colas_lock = threading.Lock()
+
+
+def _cola_envio(sid: str) -> threading.Lock:
+    with _colas_lock:
+        return _colas_envio.setdefault(sid, threading.Lock())
+
+
+def _send_to_session_local(s: dict, text: str, attachments: list[str]) -> tuple[int, dict]:
+    sid = s["session_id"]
     with lock:
         if s.get("native_sync_busy"):
             return 409, {"ok": False, "error": "se está actualizando el nombre nativo; reintentá cuando termine"}

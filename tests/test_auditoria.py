@@ -66,7 +66,7 @@ def test_quieto_poco_tiempo_no_avisa():
 def test_bloqueo_declarado_es_espera_legitima_y_no_se_avisa():
     s = [ses("C", coord=True), ses("A", last_reply="...\nESTADO: bloqueado — falta el permiso X")]
     h = au.clasificar(s, [], T0)
-    assert [x["tipo"] for x in h if x["session_id"] == "A"] == ["bloqueado_dependencia"]
+    assert [x["tipo"] for x in h if x["session_id"] == "A"] == ["bloqueado_permiso"]
     avisar, _ = au.filtrar(h, {}, T0)
     assert all(x["session_id"] != "A" for x in avisar)
 
@@ -177,3 +177,35 @@ def test_ronda_local_audita_solo_esta_pc_y_no_escribe_a_una_coordinadora_trabada
     enviados.clear()
     au.ronda_local("http://x", str(tmp_path / "estado.json"), enviar=True)
     assert enviados == []
+
+
+def test_bloqueo_declarado_vence_segun_categoria():
+    casos = [
+        ("ESTADO: bloqueado — falta que Ariel apruebe el permiso", "permiso", 30),
+        ("ESTADO: bloqueado: espero el contrato v3 del frente B", "dependencia", 60),
+        ("ESTADO: bloqueada, en pausa hasta mañana", "pausa", 240),
+    ]
+    for texto, cat, vence in casos:
+        antes = [ses("C", coord=True), ses("A", desde=-(vence - 1), last_reply=texto)]
+        despues = [ses("C", coord=True), ses("A", desde=-(vence + 1), last_reply=texto)]
+        assert tipos(antes, [])["A"] == f"bloqueado_{cat}"
+        h = au.clasificar(despues, [], T0)
+        assert [(x["tipo"], x["categoria"]) for x in h if x["session_id"] == "A"] == [("bloqueo_olvidado", cat)]
+        assert [x["session_id"] for x in au.filtrar(h, {}, T0)[0]] == ["A"]
+
+
+def test_politica_ronda_5_min_cubre_4_quietos_14_min():
+    # los 4 frentes quedan quietos en cualquier segundo del ciclo de la ronda: el aviso llega antes de 14 min
+    for fase_s in range(0, 300, 7):
+        quietos = T0 - dt.timedelta(seconds=fase_s)
+        avisado = None
+        estado = {}
+        for i in range(6):
+            ahora = T0 + dt.timedelta(minutes=5 * i)
+            s = [ses("C", coord=True, desde=-60)] + [{**ses(x), "state_since": quietos.isoformat()} for x in "ABDE"]
+            r = au.ronda(s, [], estado, ahora)
+            estado = r["estado"]
+            if r["avisar"] and avisado is None:
+                avisado = (ahora - quietos).total_seconds() / 60
+                assert {h["session_id"] for h in r["avisar"]} == set("ABDE")
+        assert avisado is not None and avisado < 14, (fase_s, avisado)

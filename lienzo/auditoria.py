@@ -15,9 +15,15 @@ Tipos de hallazgo:
 - `bloqueado_humano`: espera un permiso o una respuesta (`te_necesita`) hace >= `bloqueo_min`. Es espera
   necesaria: se avisa para que alguien conteste, no se resuelve sola.
 - `sin_coordinadora`: frentes vivos de un repo sin coordinadora viva.
+- `bloqueo_olvidado`: un frente cerró con `ESTADO: bloqueado` y sigue así pasado el vencimiento de su
+  categoría (permiso 30 min, dependencia 60 min, pausa 4 h).
 
-Espera legítima, que no avisa: `corriendo`, cuota agotada (`limit_until` futuro) y un frente quieto que
-cerró con `ESTADO: bloqueado` (`bloqueado_dependencia` queda en el informe pero no en el aviso).
+Espera legítima, que no avisa: `corriendo`, cuota agotada (`limit_until` futuro) y un bloqueo declarado
+dentro de su vencimiento (`bloqueado_permiso`, `bloqueado_dependencia`, `bloqueado_pausa`: quedan en el
+informe pero no en el aviso).
+
+Cuándo se avisa un frente quieto: a partir de `idle_min` (8 min). Con una ronda cada 5 min, el primer aviso
+llega entre los 8 y los 13 min de quietud; el caso de los 4 CLIs quietos 14 min queda siempre cubierto.
 
     py -m lienzo.auditoria            una ronda: imprime el informe y no manda nada
     py -m lienzo.auditoria --enviar   además manda el aviso agrupado a cada coordinadora
@@ -33,9 +39,35 @@ import sys
 import time
 import urllib.request
 
-CFG = {"idle_min": 10, "envio_min": 2, "bloqueo_min": 5, "enfriamiento_min": 30, "olvido_h": 24}
-AVISAN = ("idle_evitable", "entrega_sin_leer", "envio_no_tomado", "bloqueado_humano", "sin_coordinadora")
-_BLOQUEADO = re.compile(r"ESTADO:\s*bloquead", re.IGNORECASE)
+CFG = {
+    "idle_min": 8,
+    "envio_min": 2,
+    "bloqueo_min": 5,
+    "enfriamiento_min": 30,
+    "olvido_h": 24,
+    "vence_min": {"permiso": 30, "dependencia": 60, "pausa": 240},
+}
+AVISAN = (
+    "idle_evitable",
+    "entrega_sin_leer",
+    "envio_no_tomado",
+    "bloqueado_humano",
+    "sin_coordinadora",
+    "bloqueo_olvidado",
+)
+_BLOQUEADO = re.compile(r"ESTADO:\s*bloquead[oa]?(.*)", re.IGNORECASE | re.DOTALL)
+_CATEGORIA = (
+    ("permiso", re.compile(r"permis|aprobaci|autoriz|aprob[aá]", re.IGNORECASE)),
+    ("pausa", re.compile(r"pausa|en espera de ariel|hasta (ma[nñ]ana|el lunes)|vuelvo", re.IGNORECASE)),
+)
+
+
+def categoria_bloqueo(texto: str) -> str:
+    """De qué es el bloqueo que declaró el frente, por lo que dice después de `ESTADO: bloqueado`."""
+    for nombre, patron in _CATEGORIA:
+        if patron.search(texto):
+            return nombre
+    return "dependencia"
 
 
 def _t(s: str | None) -> dt.datetime | None:
@@ -118,13 +150,18 @@ def clasificar(sesiones: list, links: list, ahora: dt.datetime, cfg: dict = CFG)
             continue
         if s.get("coordinator") or quieta < cfg["idle_min"]:
             continue
-        if _BLOQUEADO.search((s.get("last_reply") or "")[-400:]):
+        if m := _BLOQUEADO.search((s.get("last_reply") or "")[-400:]):
+            cat = categoria_bloqueo(m.group(1))
+            vencido = quieta >= cfg["vence_min"][cat]
             out.append(
                 {
                     **base,
-                    "tipo": "bloqueado_dependencia",
+                    "tipo": "bloqueo_olvidado" if vencido else f"bloqueado_{cat}",
+                    "categoria": cat,
                     "evidencia": s.get("state_since"),
-                    "sugerencia": "espera declarada por el frente; ver su último informe",
+                    "sugerencia": f"bloqueo de {cat} declarado hace {quieta:.0f} min: destrabarlo o reasignar"
+                    if vencido
+                    else "espera declarada por el frente; ver su último informe",
                 }
             )
             continue
