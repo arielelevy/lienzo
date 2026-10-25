@@ -109,6 +109,15 @@ def claude_batch(args: list[str]) -> bool:
     return any(a in ("-p", "--print") for a in options)
 
 
+def claude_internal(args: list[str]) -> bool:
+    """Claude 2.1.310 reutiliza el binario para el daemon y sus hosts de PTY.
+
+    Solo mirar el comando inicial: un prompt o un valor de opcion puede mencionar
+    estos nombres sin convertir la conversacion en un proceso auxiliar.
+    """
+    return bool(args) and args[0] in ("daemon", "--bg-pty-host")
+
+
 # Lanzadores de agentes batch que el lienzo reconoce por el ejecutable de un ancestro: lo que corra
 # debajo es una ejecucion suya, con su propio control (API, aprobaciones), y no una terminal personal.
 # Ejecutable (en minusculas) -> tipo. Vacio en el repo: lo llenan los plugins locales (plugins.py).
@@ -490,6 +499,8 @@ def agent_of(exe: str | None, cmdline: str | None = None) -> str | None:
     for k, v in AGENTS.items():
         # fuera de Windows el binario no lleva .exe (comm `claude`, `codex`)
         if name == k or name.startswith(k + ".") or (not _WIN and name == k.removesuffix(".exe")):
+            if v == "claude" and cmdline and claude_internal(command_args(cmdline)[1:]):
+                return None
             if v == "codex" and cmdline and not codex_interactive(command_args(cmdline)[1:]):
                 return None
             if v == "pi" and cmdline and not pi_interactive(command_args(cmdline)[1:]):
@@ -508,9 +519,14 @@ def process_agent(pid: int) -> str | None:
     exe = image_path(pid)
     name = os.path.basename(exe or "").lower()
     codex = name == "codex.exe" or name.startswith("codex.exe.")
+    claude = name == "claude.exe" or name.startswith("claude.exe.")
     antigravity = name == "agy.exe" or name.startswith("agy.exe.")
     kiro = name == "kiro-cli.exe" or name.startswith("kiro-cli.exe.")
-    cmdline = command_line(pid) if codex or antigravity or kiro or name in ("node.exe", "pi.exe", "coda.exe") else None
+    cmdline = (
+        command_line(pid)
+        if codex or claude or antigravity or kiro or name in ("node.exe", "pi.exe", "coda.exe")
+        else None
+    )
     # Kiro sin comando legible sigue contando: marcar muerta la TUI (y avisar «murio trabajando») es
     # peor que dejar pasar al ayudante en ese caso raro
     if (codex or antigravity) and not cmdline:
