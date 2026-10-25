@@ -305,6 +305,10 @@ c.restaurar(todas=True, pc=None)  # todas las de esa PC, una por una (~2 s entre
 
 ## Rondas largas
 
+**Antes de encargar, revisar, reenviar o repetir una prueba:** leer `references/trabajar-sin-duplicar.md`
+(reutilizar evidencia vigente, probar por impacto, frentes punta a punta, recepción real, esperas clasificadas y
+consumo por entrega útil). Es la fuente única de esas reglas para todos los repos.
+
 Aprendido en OpenSyync (olas 21–22, 2026-10-15/16, 4–7 frentes): cerrar una entrega llevó ~2 h y la
 mitad fue espera y coordinación. Lo que la acorta:
 
