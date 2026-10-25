@@ -1,0 +1,18 @@
+{
+  "nombre": "auditoria-continuidad",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/auditoria-continuidad",
+  "reglas": [
+    "Pedido de Ariel 2026-10-25: organizar la continuidad de frentes quietos y resolver aqui el fallo de auditoria.",
+    "lienzo/server.py validar_send: sin_aviso true requiere from; una auditoria sin sesion emisora no silencia informes.",
+    "La auditoria agrupa avisos por coordinadora, respeta bloqueos y cuota, no repite la misma evidencia y audita solo los frentes locales."
+  ],
+  "casos": [
+    {
+      "id": "auditoria-contrato-envio",
+      "comando": ["py", "-m", "pytest", "tests/test_auditoria.py", "tests/test_auditoria_envio.py", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 90000,
+      "cubre": ["lienzo/auditoria.py", "lienzo/server.py"]
+    }
+  ]
+}

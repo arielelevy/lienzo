@@ -326,7 +326,7 @@ def ronda_local(base: str, ruta_estado: str, enviar: bool) -> dict:
     # lo que no se entregó no cuenta como avisado: vuelve a intentarse en la ronda siguiente
     coord = _coordinadoras(sesiones)
     for h in avisar:
-        if _destino(h, coord) in r["fallidos"]:
+        if _destino(h, coord) not in r["enviados"]:
             par = f"{h['tipo']}|{h['session_id']}"
             estado["emitidos"].pop(f"{par}|{h.get('evidencia')}", None)
             if (anterior := (previo.get("ultimo") or {}).get(par)) is not None:

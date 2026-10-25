@@ -91,3 +91,16 @@ def test_un_envio_fallido_no_cuenta_como_avisado_y_se_reintenta(monkeypatch, tmp
 def test_el_cuerpo_viejo_es_el_que_daba_400():
     assert server.validar_send({"text": "x", "sin_aviso": True}) is not None
     assert server.validar_send({"text": "x"}) is None
+
+
+def test_destino_trabado_no_consume_avisos_que_no_se_enviaron(monkeypatch, tmp_path):
+    pc, sesiones, links = _caso_opensyync()
+    estado = str(tmp_path / "e.json")
+    sesiones[0].update(state="te_necesita", needs={"kind": "sin_enviar", "since": _iso(13, 0)})
+    enviados = _servidor(monkeypatch, pc, sesiones, links)
+    r = au.ronda_local("http://x", estado, enviar=True)
+    assert enviados == [] and r["estado"]["emitidos"] == {}
+    sesiones[0].update(state="termino", needs=None)
+    r = au.ronda_local("http://x", estado, enviar=True)
+    assert [ruta for ruta, _ in enviados] == ["/sessions/ROOT/send"]
+    assert len(r["avisar"]) == 5
