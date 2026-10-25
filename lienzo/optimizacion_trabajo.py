@@ -349,6 +349,8 @@ def registrar(proyecto: str, analisis: dict) -> list[str]:
                         "fuentes": [nodo["id"]],
                         "contexto": {},
                         "excepciones": "Patrón observado; beneficio de la acción todavía no medido",
+                        # una por métrica: la medición de cada noche se suma a la abierta (2026-10-25)
+                        "clave": f"trabajo:{h['metrica']}",
                     },
                     autor="server",
                     con=con,

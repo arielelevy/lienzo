@@ -371,7 +371,7 @@ def test_correction_and_undo_whole_batch():
 
     batch = r.revisar("ab", "claude", decidir=decide)
     nodes = creencias.listar("ab")
-    assert sorted(n["estado"] for n in nodes) == ["revertida", "vigente"]
+    assert sorted(n["estado"] for n in nodes) == ["reemplazada", "vigente"]  # corregir no refuta (2026-10-25)
     successor = next(n for n in nodes if n["estado"] == "vigente")
     assert successor["datos"]["ia_delegada"] is True
     assert "regla_logica" not in successor["datos"]

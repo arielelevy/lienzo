@@ -18,6 +18,10 @@ interface Item {
   proyecto?: string;
   /** null: el motor no respondió y la aplicable no tiene contraste. */
   sostenida?: Justification | null; cuestionada_por?: (Justification & { regla: string })[];
+  /** Pendiente sin refutar: falta medir la eficacia de la acción o falta evidencia para decidir. */
+  pendiente?: { falta: "eficacia" | "evidencia"; motivo?: string; fecha?: string };
+  /** Una medición que se repite suma observaciones a la misma creencia en vez de crear otra. */
+  observaciones?: number; ultima_observacion?: string | null;
 }
 /** El motor lógico sobre el checklist: sostenido, con diferencias, sin respuesta o sin creencias. */
 interface Motor { estado: string; error?: string; motor?: { name: string; version: string }; program_hash?: string; hechos?: number; diferencias?: unknown[] }
@@ -49,6 +53,8 @@ export const CONTEXT = [
 ] as const;
 const STATES: Record<string, string> = {
   aplicable: "Aplica", vigente: "Vigente", sin_veredicto: "Espera tu veredicto", refutada: "Refutada", vencida: "Vencida",
+  reemplazada: "Reemplazada", pendiente_validacion: "Falta medir si sirve", pendiente_evidencia: "Falta evidencia",
+  pendiente_formalizacion: "Falta formalizar",
   respaldo_retirado: "Respaldo retirado", respaldo_caido: "Respaldo caído",
   fuera_de_contexto: "Otro contexto", contexto_insuficiente: "Falta contexto", contexto_invalido: "Contexto inválido",
   cuestionada: "Cuestionada",
@@ -256,8 +262,8 @@ function BeliefCard({ item, busy, lienzo, onReview, onScope, evidence: options }
   const [action, setAction] = useState(item.accion);
   const [text, setText] = useState(item.texto);
   const [scope, setScope] = useState(item.alcance ?? "proyecto");
-  const open = item.estado === "sin_veredicto";
-  const closed = item.estado === "refutada";
+  const open = item.estado === "sin_veredicto" || item.estado === "pendiente_validacion" || item.estado === "pendiente_evidencia";
+  const closed = item.estado === "refutada" || item.estado === "reemplazada";
   const mine = busy.startsWith(item.creencia);
   const note = [ctxText(item.contexto), lienzo ? (item.alcance === "proceso_lienzo" ? "proceso de Lienzo" : "de este proyecto") : ""].filter(Boolean).join(" · ");
   return <li className="learning-card">
@@ -265,6 +271,8 @@ function BeliefCard({ item, busy, lienzo, onReview, onScope, evidence: options }
     <p className="learning-action">{item.accion || item.texto}</p>
     {item.accion && item.texto !== item.accion && <p className="knowledge-note">{item.texto}</p>}
     <p className="knowledge-note">{item.motivo}. Contexto: {note}{item.vigente_hasta && item.estado !== "sin_veredicto" ? ` · vigente hasta ${item.vigente_hasta.slice(0, 10)}` : ""}.</p>
+    {item.pendiente?.motivo && <p className="knowledge-note">Revisión: {item.pendiente.motivo}</p>}
+    {item.observaciones && item.observaciones > 1 && <p className="knowledge-note">Medida {item.observaciones} veces{item.ultima_observacion ? `; la última: ${item.ultima_observacion}` : ""}.</p>}
     {item.contraste && <p className={item.contraste.resultado === "sostenida" ? "knowledge-note" : "knowledge-note learning-flag"}>{contrastText(item.contraste)}.</p>}
     {item.reglas_cuestionadas?.map(r => <p key={r} className="knowledge-note learning-flag">Cuestionada: la regla {r.slice(0, 8)} derivada de ella quedó cuestionada. Consultá el motor en el filtro para ver la prueba.</p>)}
     {!closed && !fixing && <div className="learning-uses" role="group" aria-label={"Veredicto de " + item.creencia}>

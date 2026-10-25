@@ -85,11 +85,13 @@ def test_corregir_crea_la_sucesora_vigente_y_retira_la_original():
     nueva = out["nueva"]
     assert nueva["estado"] == "vigente" and nueva["datos"]["accion"] == "Diagnosticar y medir antes de corregir"
     assert nueva["datos"]["contexto"] == {"tipo_trabajo": "bugfix"}  # hereda contexto y dimensión
-    assert out["creencia"]["estado"] == "revertida"
+    # corregir no es refutar (2026-10-25): la original queda reemplazada y su evidencia sigue en la sucesora
+    assert out["creencia"]["estado"] == "reemplazada"
+    assert out["creencia"]["datos"]["reemplazada_por"] == nueva["id"]
     salen = k.nodo(pid, nueva["id"])["vinculos"]["salen"]
     assert any(v["relacion"] == "reemplaza" and v["a"] == b["id"] for v in salen)
     estados = {x["creencia"]: x["estado"] for x in c.vista_proyecto(pid)["proyecto"]["items"]}
-    assert estados == {nueva["id"]: "vigente", b["id"]: "refutada"}
+    assert estados == {nueva["id"]: "vigente", b["id"]: "reemplazada"}
 
 
 def test_corregir_una_vigente_la_marca_reemplazada():

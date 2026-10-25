@@ -106,6 +106,8 @@ TRANSICIONES: dict[str, dict[tuple[str, str], set[str]]] = {
     "decision": {
         ("propuesta", "vigente"): {C, P},
         ("propuesta", "revertida"): {C, P},
+        # corregir o fusionar una propuesta la reemplaza (con su `reemplaza`): no es una refutación (2026-10-25)
+        ("propuesta", "reemplazada"): {C, P},
         ("vigente", "reemplazada"): {C, P},
         ("vigente", "revertida"): {C, P},
     },

@@ -37,7 +37,11 @@ REVISIONES = {"aceptar", "rechazar", "corregir"}
 REVISION_DIAS = 90  # la vigencia de lo aceptado en un clic; se renueva aceptándola de nuevo
 MOTIVOS = {
     "aplicable": "Validada por una persona, vigente, con respaldo activo y del mismo contexto",
-    "refutada": "Una persona la refutó o fue reemplazada",
+    "refutada": "Una persona la refutó",
+    "reemplazada": "La reemplazó una versión corregida o fusionada; su evidencia sigue en la sucesora",
+    "pendiente_validacion": "Lo observado está respaldado; falta medir si la acción sirve",
+    "pendiente_evidencia": "Falta evidencia para decidir; no hay evidencia en contra",
+    "pendiente_formalizacion": "Aceptada, pero falta formalizar su cláusula para el motor lógico",
     "sin_veredicto": "Es una propuesta: falta el veredicto de una persona con evidencia",
     "respaldo_retirado": "El vínculo con la evidencia del veredicto ya no está activo",
     "respaldo_caido": "Una fuente de la que depende fue rechazada o revertida",
@@ -114,6 +118,13 @@ def proponer(pid, data, *, autor, con=None):
         except ValueError as exc:
             raise k.Rechazo(f"regla_logica inválida: {exc}") from None
         payload["regla_logica"] = data["regla_logica"]
+    if data.get("clave") is not None:
+        # una medición que se repite (esperas, difusiones: una por noche) suma su observación a la creencia
+        # abierta de la misma clave en vez de crear otra (2026-10-25: 10 copias de 2 observaciones)
+        payload["clave"] = k._texto(data["clave"], "clave", 200)
+        abierta = _abierta_por_clave(con, pid, payload["clave"])
+        if abierta is not None:
+            return _sumar_observacion(con, pid, abierta, text, nodes, sources, autor)
     digest = hashlib.sha256(json.dumps([text, payload], sort_keys=True).encode()).hexdigest()
     import metadatos_creencias
 
@@ -166,6 +177,40 @@ def proponer(pid, data, *, autor, con=None):
     return belief
 
 
+def _abierta_por_clave(con, pid, clave):
+    row = con.execute(
+        "SELECT * FROM nodo WHERE proyecto=? AND tipo='decision' AND estado IN ('propuesta','vigente') "
+        "AND json_extract(datos,'$.clase')='creencia_operativa' AND json_extract(datos,'$.clave')=? "
+        "ORDER BY fecha,id LIMIT 1",
+        (pid, clave),
+    ).fetchone()
+    return k._fila(row) if row else None
+
+
+def _sumar_observacion(con, pid, belief, text, nodes, sources, autor):
+    """La observación nueva y sus fuentes van a la creencia abierta de la misma clave. El texto de la creencia
+    no cambia (lo revisado es ese); la última medición queda en `ultima_observacion` y todas en
+    `observaciones`. Se conservan las 30 fuentes más nuevas, el tope de siempre."""
+    previous = belief["datos"].get("fuentes", [])
+    nuevas = [s for s in sources if s not in previous]
+    if not nuevas:
+        return {**belief, "creado": False}
+    union = [*previous, *nuevas][-30:]
+    observations = [*belief["datos"].get("observaciones", []), {"texto": text, "fuentes": sorted(set(sources))}][-30:]
+    k.actualizar_datos(
+        pid,
+        belief["id"],
+        {"fuentes": union, "observaciones": observations, "ultima_observacion": text},
+        por=autor,
+        motivo="la misma medición volvió a pasar su umbral",
+        con=con,
+    )
+    for node in nodes:
+        if node["id"] in nuevas and node["tipo"] in _FUENTES_QUE_MOTIVAN:
+            k.vincular(pid, belief["id"], "motivada_por", node["id"], autor=autor, motivo="nueva medición", con=con)
+    return {**k._nodo(con, pid, belief["id"]), "creado": False}
+
+
 def resolver(pid, nid, data):
     """Validar o refutar conserva el historial y los vínculos, en una transacción."""
     por = k._texto(data.get("por"), "por", 200)
@@ -182,7 +227,8 @@ def resolver(pid, nid, data):
 
 
 def _veredicto(con, pid, nid, por, result, evidence_id, motive, until):
-    """El veredicto dentro de la transacción de `con`; `until` sólo cuenta al validar."""
+    """El veredicto dentro de la transacción de `con`; `until` sólo cuenta al validar. Refutar es por
+    evidencia en contra: lo que no se pudo medir queda pendiente (`dejar_pendiente`), no refutado."""
     node = _creencia(con, pid, nid)
     evidence = k._nodo(con, pid, evidence_id)
     if evidence["tipo"] != "evidencia":
@@ -207,6 +253,7 @@ def _veredicto(con, pid, nid, por, result, evidence_id, motive, until):
         fields["ia_delegada"] = False  # un veredicto humano posterior sustituye la delegación (AB/AA)
     if result == "validada":
         fields["vigente_hasta"] = _vencimiento(until)
+        fields["pendiente"] = None  # un veredicto cierra lo que estaba pendiente
     k.actualizar_datos(pid, nid, fields, por=por, motivo=motive, con=con)
     k.cambiar_estado(pid, nid, "vigente" if result == "validada" else "revertida", por=por, motivo=motive, con=con)
     return k._nodo(con, pid, nid)
@@ -290,13 +337,39 @@ def revisar(pid, nid, data):
         )
         successor = _veredicto(con, pid, successor["id"], por, "validada", evidence["id"], motive, until)
         k.vincular(pid, successor["id"], "reemplaza", nid, autor=por, motivo=motive, con=con)
-        if node["estado"] == "vigente":
-            k.actualizar_datos(pid, nid, {"reemplazada_por": successor["id"]}, por=por, motivo=motive, con=con)
-            k.cambiar_estado(pid, nid, "reemplazada", por=por, motivo=motive, con=con)
-            old = k._nodo(con, pid, nid)
-        else:
-            old = _veredicto(con, pid, nid, por, "refutada", evidence["id"], motive, None)
-        return {"creencia": old, "nueva": successor}
+        return {"creencia": reemplazar(con, pid, nid, successor["id"], por, motive), "nueva": successor}
+
+
+def reemplazar(con, pid, nid, sucesora, por, motivo):
+    """La original de una corrección queda `reemplazada`, no refutada (2026-10-25): su evidencia sigue en la
+    sucesora, que la `reemplaza`. El vínculo se crea antes: el estado lo exige como respaldo."""
+    k.actualizar_datos(pid, nid, {"reemplazada_por": sucesora}, por=por, motivo=motivo, con=con)
+    k.cambiar_estado(pid, nid, "reemplazada", por=por, motivo=motivo, con=con)
+    return k._nodo(con, pid, nid)
+
+
+FALTAS = {"eficacia", "evidencia"}
+
+
+def dejar_pendiente(con, pid, nid, por, falta, motivo, evidencia_id):
+    """Ni aceptar ni refutar: lo observado puede estar respaldado y faltar medir si la acción sirve
+    (`eficacia`), o faltar evidencia para decidir (`evidencia`). Sigue `propuesta`, con la marca y la
+    evidencia de quién lo dijo; una revisión IA no la vuelve a mirar hasta que llegue evidencia nueva."""
+    node = _creencia(con, pid, nid)
+    if node["estado"] != "propuesta":
+        raise k.Rechazo("sólo una propuesta queda pendiente", 409)
+    if falta not in FALTAS:
+        raise k.Rechazo("falta debe ser eficacia o evidencia")
+    marca = {
+        "falta": falta,
+        "motivo": motivo,
+        "evidencia": evidencia_id,
+        "por": por,
+        "fecha": k.ahora(),
+        "fuentes": sorted(node["datos"].get("fuentes", [])),
+    }
+    k.actualizar_datos(pid, nid, {"pendiente": marca}, por=por, motivo=motivo, con=con)
+    return k._nodo(con, pid, nid)
 
 
 def cambiar_alcance(pid, nid, data):
@@ -448,8 +521,13 @@ def _evaluar(node, context, apoyos, cadenas, ahora=None):
     hasta un respaldo caído. `cadenas(id)` se llama sólo para las validadas con respaldo activo."""
     data = node["datos"]
 
-    if node["estado"] in ("revertida", "reemplazada") or data.get("resultado") == "refutada":
+    if node["estado"] == "reemplazada" or node.get("_reemplazada") or data.get("fusionada_en"):
+        return "reemplazada", []
+    if node["estado"] == "revertida" or data.get("resultado") == "refutada":
         return "refutada", []
+    pendiente = data.get("pendiente")
+    if node["estado"] == "propuesta" and isinstance(pendiente, dict):
+        return ("pendiente_evidencia" if pendiente.get("falta") == "evidencia" else "pendiente_validacion"), []
     if (
         node["estado"] != "vigente"
         or data.get("resultado") != "validada"
@@ -531,8 +609,22 @@ def _item(node, state, chains):
         item.update(
             estado="cuestionada", motivo="La reevaluación del motor requiere un nuevo veredicto", reevaluacion=temporal
         )
-    elif node["estado"] in ("propuesta", "vigente") and data.get("ia_delegada") and not data.get("regla_logica"):
-        item.update(estado="datos_insuficientes", motivo="Falta formalizar la cláusula de la creencia revisada por IA")
+    elif (
+        node["estado"] in ("propuesta", "vigente")
+        and data.get("ia_delegada")
+        and not data.get("regla_logica")
+        and state not in ("pendiente_validacion", "pendiente_evidencia")  # la IA no la aceptó: no hay qué formalizar
+    ):
+        # aceptada por IA sin cláusula: falta formalizarla, no hay evidencia en contra (2026-10-25). Sigue fuera
+        # del checklist hasta que el motor la pueda sostener, como antes
+        item.update(estado="pendiente_formalizacion", motivo=MOTIVOS["pendiente_formalizacion"])
+    if isinstance(data.get("pendiente"), dict) and item["estado"] in ("pendiente_validacion", "pendiente_evidencia"):
+        item["pendiente"] = {
+            key: data["pendiente"][key] for key in ("falta", "motivo", "fecha") if key in data["pendiente"]
+        }
+    if data.get("clave") and data.get("observaciones"):
+        item["observaciones"] = len(data["observaciones"]) + 1
+        item["ultima_observacion"] = data.get("ultima_observacion")
     found = data.get("contraste")
     if isinstance(found, dict) and isinstance(found.get("resultado"), str):
         # lo que el motor dijo de la propuesta al guardarla (S): una observación con fecha, no el estado actual
@@ -558,7 +650,21 @@ def _leer(con, pid):
             (pid,),
         )
     }
-    return [k._fila(row) for row in rows], apoyos
+    # una revertida con sucesora (`reemplaza` activo que llega) fue corregida o fusionada, no refutada: así se
+    # leen también las de antes de que una propuesta pudiera pasar a `reemplazada` (2026-10-25)
+    reemplazadas = {
+        row["a"]
+        for row in con.execute(
+            "SELECT v.a FROM vinculo v JOIN nodo n ON n.id=v.a AND n.proyecto=? "
+            "WHERE v.relacion='reemplaza' AND v.activo=1",
+            (pid,),
+        )
+    }
+    nodes = [k._fila(row) for row in rows]
+    for node in nodes:
+        if node["id"] in reemplazadas:
+            node["_reemplazada"] = True
+    return nodes, apoyos
 
 
 def evaluar(pid, context):
@@ -595,7 +701,16 @@ def _evaluadas_con_reglas(pid, context):
     return [_item(node, state, chains) for node, state, chains in evaluated], questioned
 
 
-_ORDEN_VISTA = {"sin_veredicto": 0, "vigente": 1}  # lo que espera veredicto, arriba
+# lo que espera veredicto, arriba; lo cerrado, abajo
+_ORDEN_VISTA = {
+    "sin_veredicto": 0,
+    "pendiente_evidencia": 1,
+    "pendiente_validacion": 1,
+    "pendiente_formalizacion": 1,
+    "vigente": 2,
+    "reemplazada": 4,
+    "refutada": 4,
+}
 
 
 def _vista(pid):
@@ -623,7 +738,7 @@ def vista_proyecto(pid):
             process = []
 
     def block(items):
-        items = sorted(items, key=lambda x: _ORDEN_VISTA.get(x["estado"], 2))
+        items = sorted(items, key=lambda x: _ORDEN_VISTA.get(x["estado"], 3))
         return {"total": len(items), "items": items}
 
     return {"id": pid, "proyecto": block(own), "lienzo": block(process)}
