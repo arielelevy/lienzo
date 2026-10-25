@@ -8,6 +8,22 @@ Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
 Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las specs.
 
+### Ronda 0.6.17 (2026-10-25, coordinadora a480da47 en ar-it33940)
+
+- [ ] **Prolog en ar-it33940**: `test_prolog_checklist` y `test_prolog_ciclo` fallan también sobre las fuentes de
+  0.6.16 (`git archive c02061c`, 9 fallas focales). Causa: `prolog_servicio` lee la salida del motor en WSL como
+  UTF-8 y llega una tilde en otra codificación (`'utf-8' codec can't decode byte 0xf3`). Ver la locale del WSL o
+  leer con el encoding que declara el motor.
+- [ ] **Frente huérfano** (pedido de Ariel): si desaparece la sesión que lanzó o coordinaba a un frente, el frente
+  tiene que tomar el control: marcarse coordinadora, ponerse el título y recablear las reglas de los otros.
+- [ ] **Sugerir la marca de coordinadora**: «opensyync | sesión» mandó 36 encargos a 6 sesiones y recibió 28
+  informes sin estar marcada. Proponer la marca cuando una sesión es destino de 2 o más reglas `on_stop` y origen
+  de envíos a 2 o más sesiones del repo.
+- [ ] **Tokens por turno en la memoria**: la captura de `respuesta` no guarda el `usage`; para comparar consumo
+  entre CLIs hay que leer los transcripts de cada PC (`D:/apps/bench-clis/2026-10-25/analisis_logs.py`).
+- [ ] **Headless y memoria del proyecto**: un `claude -p` de un benchmark dispara los hooks y crea proyectos
+  `sin_remote` por carpeta temporal. Ignorar las carpetas bajo `%TEMP%`.
+
 ### Revisión total de V (2026-10-22, `review/2026-10-22/code-review-total.md`)
 
 Corregidos: T1, T2, T4, T5, T6, T8, T9 y T10 (0.6.14), T3 y T11 (0.6.15) y T7 (eventos que fallan al aplicarse van a `events/cuarentena` en vez de borrarse).
