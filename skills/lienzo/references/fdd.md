@@ -25,10 +25,21 @@ repartir, verificar o retomar el cambio; no se crean documentos por ceremonia.
 que no se rompen. Leerlo antes de abrir una ficha. Si una feature cambia una entidad o un flujo, se
 corrige en el mismo cambio.
 
-## Reglas del proyecto
+## Constitución y arquitectura: valen para todo cambio
 
 La constitución es el conjunto de reglas duraderas vigentes: instrucciones de Ariel,
-AGENTS.md cuando exista, decisiones de producto y contratos técnicos aplicables.
+AGENTS.md cuando exista, decisiones de producto y contratos técnicos aplicables. La arquitectura es
+cómo está hecho Lienzo: DISENO.es.md, `docs/dominio.md`, los módulos y los componentes que ya
+existen (estado en `~/.lienzo`, escritura atómica de `atomico.py`, `subproc.py` para procesos
+externos, la federación firmada para hablar con otra PC, la API de reglas para las reglas).
+
+**Nada se sale de ellas, por chico que sea el cambio** (pedido de Ariel, 2026-10-26). Un cambio
+puntual se salta la ficha, nunca estas reglas. Se sale, aunque sean tres líneas, el cambio que mete
+otro almacenamiento, otro método de autenticación o de firma, una dependencia para algo que ya está
+resuelto (el server es de biblioteca estándar), o que no reusa lo que ya existe y escribe uno
+paralelo. Reusar antes de agregar. Si lo existente no alcanza, se le propone a Ariel y se espera la
+decisión antes de implementar.
+
 FDD trabaja dentro de esas reglas; no exige crear otro archivo de constitución
 ni duplicar instrucciones. Ante una contradicción, resolverla antes del cambio afectado.
 

@@ -14,8 +14,9 @@ Si el archivo falta o el motor informa error, no inventar principios ni dar prop
 **Proceso de cambios: FDD** (Feature-Driven Development para agentes; decisión de Ariel, 2026-10-26,
 reemplaza a FTD y a SDD). Antes de implementar o repartir una feature, leer `references/fdd.md` y el
 mapa `docs/dominio.md`: ficha única con nombre de resultado, hitos y archivos con dueño cuando el
-alcance o la coordinación la necesitan; cambios puntuales con verificación directa. Mantener la
-documentación proporcional y las reglas del proyecto. No cerrar tareas automáticamente: el hito
+alcance o la coordinación la necesitan; cambios puntuales con verificación directa. Nada se sale de
+la constitución ni de la arquitectura, ni un cambio chico: reusar antes de agregar, y salirse sólo con
+decisión de Ariel antes de implementar. Mantener la documentación proporcional. No cerrar tareas automáticamente: el hito
 «integrado» lo marca Ariel.
 
 El lienzo es el tablero de las sesiones de Claude Code y Codex que corren en terminales de
