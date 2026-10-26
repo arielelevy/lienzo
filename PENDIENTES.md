@@ -6,7 +6,35 @@ docs/PRODUCTO.md las decisiones de producto.
 
 Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
+### Propuesta FTD, constitución y OKF (2026-10-26)
+
+- [ ] Evaluar constitución + FTD por feature, memoria con procedencia y versión,
+  herramientas reutilizables e intercambio OKF como mejoras de Lienzo. Relevar primero
+  las capacidades existentes y definir una feature piloto. Investigación y fuentes en
+  [PROPUESTA-FTD-OKF-RSC.md](PROPUESTA-FTD-OKF-RSC.md). Sin implementación ni cierres automáticos.
+
 Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las specs.
+
+### Bug reportado desde opensyync-K (2026-10-25, pedido de Ariel)
+
+- [ ] **Un borrado rechazado apaga la regla en silencio y se pierden los informes siguientes.**
+  `DELETE /rules/<id>` con un informe sin acuse responde 409 `{"error": "No se puede borrar: hay informes
+  pendientes de integrar.", "conservada": true}`. Pero `rules.retirar_regla` deja la regla en `enabled: false`
+  (`disabled_reason: "borrado rechazado: …"`). La coordinadora lee «conservada» como «no cambió nada» y ningún
+  `on_stop` posterior sale. Medido en opensyync: la regla L→K `86e3c2375798` quedó apagada de 22:42 a 23:57,
+  y el informe final de L (`ESTADO: L3 entregado…`) nunca llegó. Ariel lo detectó a mano.
+  Arreglo propuesto: (a) si el borrado se rechaza, no deshabilitar y seguir entregando; o, si se deshabilita,
+  responder 200/202 con `{"desactivada": true, "pendientes": [...]}` y que el texto lo diga. (b) `coordinar.py`
+  debería avisar cuando una regla hacia `YO` queda `enabled: false`. (c) La auditoría de sesiones ociosas
+  («idle_evitable») podría cruzar el último turno con `ESTADO:` contra las reglas apagadas y avisar «informe no
+  entregado».
+  Relacionado: `regla_informe(..., solo_si=…)` sobre un par que ya tiene regla devuelve 409 sin decir cuál es
+  la existente ni ofrecer actualizarla (`PUT /rules/<id>` con `solo_si` sí funciona).
+- [ ] **`/exit` con trabajo en segundo plano no se puede cerrar desde el lienzo.** Claude muestra «Background
+  work is running… 1. Exit and stop tasks / 2. Move to background / 3. Stay». `GET /screen` lo detecta como
+  `dialog` y la tarjeta queda `te_necesita`, pero `POST /sessions/<sid>/responder {opcion:1}` contesta 409 «la
+  pregunta ya no está abierta» y `send` también da 409. Visto en opensyync, sesión N (Sonnet), con un monitor de
+  turno vivo. Arreglo: que `responder` acepte los diálogos de pantalla (Enter u opción) y no sólo los permisos.
 
 ### Ronda 0.6.17 (2026-10-25, coordinadora a480da47 en ar-it33940)
 
