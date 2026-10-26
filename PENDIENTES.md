@@ -8,9 +8,10 @@ Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
 ### Propuesta FTD, constitución y OKF (2026-10-26)
 
-Decisión de Ariel del 2026-10-26: FTD reemplaza a SDD; conservar la exigencia
-proporcional al alcance, sin imponer una ficha a cada cambio puntual. Regla operativa
-en [FTD](skills/lienzo/references/ftd.md). No se cerraron tareas por esta decisión.
+Decisión de Ariel del 2026-10-26: FTD reemplaza a SDD y, el mismo día, FDD (skill `fdd`) reemplaza a
+FTD; conservar la exigencia proporcional al alcance, sin imponer una ficha a cada cambio puntual. Regla
+operativa en [FDD](skills/lienzo/references/fdd.md) y mapa en [docs/dominio.md](docs/dominio.md). No se
+cerraron tareas por esta decisión.
 
 - [ ] Evaluar constitución + FTD por feature, memoria con procedencia y versión,
   herramientas reutilizables e intercambio OKF como mejoras de Lienzo. Relevar primero

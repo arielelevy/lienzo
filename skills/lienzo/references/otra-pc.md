@@ -117,7 +117,7 @@ contempla).
   impida (el cuerpo admite hasta 8 MB). Un archivo en el repo solo para lo que el agente de esa PC
   produce él mismo en su carpeta (p. ej. el `tasks.md` que escribió ahí): los demás lo leen sin pull.
   Un agente lento (coda) puede tardar en leer el adjunto: eso es el modelo, no la entrega.
-- FTD proporcional (decisión del 2026-10-26, reemplaza a SDD): seguir `ftd.md` en esta carpeta;
+- FDD proporcional (decisión del 2026-10-26, reemplaza a FTD y a SDD): seguir `fdd.md` en esta carpeta;
   acordar arquitectura, contratos y tareas según el alcance, en una ficha por feature cuando haga falta.
   Repartir con contratos e insumos disponibles, cada frente en su carpeta cuando corresponda.
   No exigir una ficha para cada cambio puntual, un `tasks.md` ni commits por etapa como condiciones universales; conservar calidad

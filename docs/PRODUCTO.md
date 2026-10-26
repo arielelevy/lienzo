@@ -11,17 +11,20 @@ su propia capacidad de mejorarlos: sus herramientas, memoria, coordinación, arq
 
 ## Proceso flexible, calidad no negociable
 
-FTD (Fast-Track Development) reemplaza a SDD por decisión de Ariel del 2026-10-26.
+FDD (Feature-Driven Development para agentes, la skill `fdd`) es el proceso de Lienzo por decisión de
+Ariel del 2026-10-26; reemplaza a FTD (Fast-Track Development), que había reemplazado a SDD ese mismo
+día, y conserva su ficha proporcional y su exigencia de evidencia.
 Se mantiene la documentación proporcional: una feature o un trabajo con decisiones,
-dependencias o varios frentes necesita una ficha con objetivo, alcance, criterios de
-aceptación, tareas, evidencia y próximo paso. Un cambio puntual, claro y de bajo impacto
+dependencias o varios frentes necesita una ficha con nombre de resultado, objetivo, alcance, criterios
+de aceptación, dominio, archivos con dueño, tareas, evidencia, próximo paso e hito. El mapa del
+dominio vive en [docs/dominio.md](dominio.md). Un cambio puntual, claro y de bajo impacto
 se ejecuta y verifica directamente, dejando evidencia en el registro existente.
 Cada trabajo conserva la arquitectura, los contratos y las tareas que correspondan
 a su alcance y riesgo, dentro de las reglas duraderas del proyecto (su constitución).
-El detalle operativo vive en [el flujo FTD](../skills/lienzo/references/ftd.md).
+El detalle operativo vive en [el flujo FDD](../skills/lienzo/references/fdd.md).
 Un bug pequeño, una funcionalidad nueva, un refactor, una investigación y una integración no siguen
 necesariamente el mismo recorrido. Tampoco se prescribe una secuencia universal de olas.
-Si el trabajo crece, se amplía la misma ficha FTD; SDD deja de ser una alternativa.
+Si el trabajo crece, se amplía la misma ficha FDD; SDD deja de ser una alternativa.
 
 La flexibilidad no elimina la verificación. En código propio se conservan las pruebas agénticas,
 la revisión y la auditoría exigidas por las instrucciones del usuario y del proyecto.

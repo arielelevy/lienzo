@@ -9,8 +9,8 @@ y `web/src/components/Consulta.tsx`. La consolidación documental no declara nue
 Una consulta permite que dos o tres investigadores existentes estudien un problema, contrasten
 respuestas y produzcan una síntesis con acuerdos y desacuerdos. Pueden leer fuentes y código;
 construir cambios se gestiona como un encargo, con arquitectura, plan y tareas según el alcance.
-La consulta de investigación no exige ficha FTD por sí sola; si deriva en una feature,
-se aplica [FTD proporcional](../skills/lienzo/references/ftd.md).
+La consulta de investigación no exige ficha FDD por sí sola; si deriva en una feature,
+se aplica [FDD proporcional](../skills/lienzo/references/fdd.md).
 El lanzamiento de investigadores no forma parte de abrir la consulta.
 
 ## Apertura y límites
