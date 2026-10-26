@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import { fileLink } from "../file-links";
 import { whenLabel } from "../names";
 import type { DigestTurn } from "../types";
 import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
@@ -30,7 +31,7 @@ export function Digest({ turn: t, toast: extToast }: { turn: DigestTurn; toast?:
         <div className="said">
           {t.says.map((x, i) => (
             <div className="md" key={i}>
-              <ReactMarkdown>{x}</ReactMarkdown>
+              <ReactMarkdown urlTransform={(href) => fileLink(href)}>{x}</ReactMarkdown>
             </div>
           ))}
         </div>
@@ -38,7 +39,7 @@ export function Digest({ turn: t, toast: extToast }: { turn: DigestTurn; toast?:
       {t.final && (
         <>
           <div className="f md">
-            <ReactMarkdown>{t.final}</ReactMarkdown>
+            <ReactMarkdown urlTransform={(href) => fileLink(href)}>{t.final}</ReactMarkdown>
           </div>
           <div className="frow">
             <button

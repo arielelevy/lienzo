@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, isMissingRoute, pendingApi, rulesApi, sessionsApi, type AuthInfo } from "./api";
 import { Board, colOf, norm, passesFilters } from "./components/Board";
+import { FileViewer } from "./components/FileViewer";
 import { ConsultasBar } from "./components/Consulta";
 import { RondasBar } from "./components/Rondas";
 import { RemoteBrowser } from "./components/RemoteBrowser";
@@ -108,6 +109,7 @@ export default function App() {
     );
   }
   if (authInfo.configured && !authInfo.authenticated) return <Login onDone={refreshAuth} mode={authInfo.mode} initialPassphrase={prefill} />;
+  if (window.location.pathname === "/archivo" || /^\/[a-z]:\//i.test(window.location.pathname)) return <FileViewer />;
   if (window.location.pathname.replace(/\/+$/, "") === "/chrome") return <RemoteBrowser />;
   return <Dashboard authInfo={authInfo} refreshAuth={refreshAuth} onSetup={() => setShowSetup(true)} />;
 }

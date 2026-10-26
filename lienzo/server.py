@@ -52,6 +52,7 @@ import cuenta_github
 import cuotas
 import downloads
 import federation
+import file_viewer
 import harness_updates
 import health
 import huerfanos
@@ -2097,7 +2098,7 @@ class Handler(JsonHandler):
                 )
                 self.close_connection = True
                 return
-            if not parts or parts in (["docs"], ["chrome"]):
+            if not parts or parts in (["docs"], ["chrome"], ["archivo"]) or (parts and re.fullmatch(r"[A-Za-z]:", parts[0])):
                 # /docs es la misma pagina: el front mira la ruta y muestra la referencia
                 index = os.path.join(DIST, "index.html")
                 if not os.path.exists(index):
@@ -2141,6 +2142,11 @@ class Handler(JsonHandler):
                 return self._enroll()
             if not self._authed():
                 return self._json(401, {"error": "hace falta iniciar sesion"})
+            if parts == ["file-content"]:
+                if not self._is_local():
+                    return self._json(403, {"error": "Los archivos se consultan desde la PC de Lienzo"})
+                roots = [os.path.dirname(HERE), *launch._allowed_roots()]
+                return self._json(*file_viewer.read_file((self.query.get("path") or [""])[0], roots))
             if parts in (["rechazos"], ["run", "log"]):
                 # registros de bitacora.py (decisiones 2 y 10): llevan IPs y rutas, solo desde la LAN
                 if not self._is_local():
