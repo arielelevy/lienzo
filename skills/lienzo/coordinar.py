@@ -484,7 +484,7 @@ def regla_informe(s, texto, max_fires=None, solo_si=None):
         raise ValueError(
             "c.YO esta vacio: fija c.YO = <session_id de la coordinadora> antes de cablear (sin eso el server contesta 404 'sesion destino desconocida')"
         )
-    return pedir(
+    code, res = pedir(
         "POST",
         "/rules",
         {
@@ -496,7 +496,19 @@ def regla_informe(s, texto, max_fires=None, solo_si=None):
             **_limite(max_fires),
             **({"solo_si": solo_si} if solo_si else {}),
         },
-    )[0]
+    )
+    # nunca un rechazo mudo (pedido de opensyync-K, 2026-10-25): decir por qué, y si el par ya tiene
+    # regla, cuál es y cómo cambiarla
+    if code >= 300 or code == 0:
+        motivo = res.get("error") if isinstance(res, dict) else res
+        print(f"regla de {s['session_id'][:8]} hacia vos: {code} {motivo}", file=sys.stderr)
+        if isinstance(res, dict) and res.get("rule_id"):
+            print(
+                f"  es la {res['rule_id']}; para cambiarle solo_si o el tope: "
+                f"pedir('PUT', '/rules/{res['rule_id']}', {{...}})",
+                file=sys.stderr,
+            )
+    return code
 
 
 def cablear(texto=None, pc=None, solo_vivas=True, max_fires=None, filtro=None, solo_si=None):
@@ -626,11 +638,48 @@ def memoria():
     return pedir("GET", "/memoria")[1]
 
 
-def borrar_reglas_hacia_mi():
-    """Apaga las reglas que apuntan a la coordinadora: entre rondas, y durante una pausa larga."""
+def _reglas():
     r = pedir("GET", "/rules")[1]
-    r = r if isinstance(r, list) else (r or {}).get("rules", r) or []
-    return sum(1 for x in r if x.get("to") == YO and pedir("DELETE", f"/rules/{x['id']}")[0] == 200)
+    return r if isinstance(r, list) else (r or {}).get("rules", r) or []
+
+
+def borrar_reglas_hacia_mi():
+    """Borra las reglas que apuntan a la coordinadora: entre rondas, y durante una pausa larga.
+
+    Devuelve cuántas se borraron, como siempre (hay scripts de ronda que usan el número). Una regla
+    con informes sin integrar no se borra: el server la deja apagada y ya no entrega. Antes eso pasaba
+    sin aviso (opensyync, 2026-10-25); ahora cada una se avisa por stderr, con sus informes, y
+    `reglas_apagadas_hacia_mi()` las lista. Acusá esos informes y volvé a borrar."""
+    borradas = 0
+    for x in _reglas():
+        if x.get("to") != YO:
+            continue
+        code, res = pedir("DELETE", f"/rules/{x['id']}")
+        if code == 200:
+            borradas += 1
+        elif code == 409 and isinstance(res, dict) and res.get("conservada"):
+            ids = ", ".join(p.get("id", "?") for p in res.get("pendientes", []))
+            print(f"regla {x['id']} desactivada, no borrada: la retienen los informes {ids}", file=sys.stderr)
+        else:
+            print(f"regla {x['id']} no se borró: {code} {res}", file=sys.stderr)
+    return borradas
+
+
+def reglas_apagadas_hacia_mi():
+    """Las reglas `on_stop` repetidas hacia la coordinadora que no entregan (`enabled: false`), con su
+    motivo. Mirarlo al empezar una ronda y cuando un frente cerró y su informe no llegó: un borrado
+    rechazado o un tope las apaga, y ningún turno siguiente del frente te llega. No cuenta las
+    archivadas (origen muerto), las estacionadas (esperan a la sucesora) ni las de un solo disparo."""
+    return [
+        {"id": x["id"], "from": x.get("from"), "motivo": x.get("disabled_reason")}
+        for x in _reglas()
+        if x.get("to") == YO
+        and x.get("kind") == "on_stop"
+        and x.get("repeat")
+        and not x.get("enabled")
+        and not x.get("archived_at")
+        and not x.get("parked_since")
+    ]
 
 
 def pendientes():

@@ -88,9 +88,35 @@ def test_deleting_rule_preserves_unintegrated_report(report_http):
 
     status, body = report_http("DELETE", "/rules/r")
     assert status == 409 and body["conservada"] is True
+    # quien borra se entera de que la regla quedó apagada y de qué informes la retienen
+    assert body["desactivada"] is True and "desactivada" in body["error"]
+    assert [p["id"] for p in body["pendientes"]] == ["i"]
     assert len(state.rules.items) == 1
     assert state.rules.items[0]["enabled"] is False
     assert state.rules.items[0]["informes"][0]["respuesta"] == "informe"
+
+
+def test_deleting_rule_without_pending_reports_is_a_plain_200(report_http):
+    import state
+
+    state.rules.items[0]["informes"][0]["estado"] = "integrado"
+    assert report_http("DELETE", "/rules/r") == (200, {"ok": True})
+    assert state.rules.items == []
+
+
+def test_retiring_an_already_disabled_rule_keeps_its_real_reason():
+    import rules
+    import state
+
+    capped = {
+        "id": "capped",
+        "enabled": False,
+        "disabled_reason": "tope total alcanzado",
+        "informes": [{"id": "i", "estado": "entregado"}],
+    }
+    state.rules.items.append(capped)
+    assert [p["id"] for p in rules.retirar_regla("capped")] == ["i"]
+    assert capped["disabled_reason"] == "tope total alcanzado"
 
 
 def test_report_retention_survives_capacity_limit():

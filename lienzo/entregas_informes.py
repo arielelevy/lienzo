@@ -4,8 +4,12 @@ El llamador toma state.lock y guarda la regla antes de usar el transporte.
 """
 
 
+def lista_pendientes(rule):
+    return [item for item in rule.get("informes", []) if item.get("estado") != "integrado"]
+
+
 def pendientes(rule):
-    return any(item.get("estado") != "integrado" for item in rule.get("informes", []))
+    return bool(lista_pendientes(rule))
 
 
 def conservar(rule, foto, timestamp):

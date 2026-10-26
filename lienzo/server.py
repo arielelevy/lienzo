@@ -2098,7 +2098,11 @@ class Handler(JsonHandler):
                 )
                 self.close_connection = True
                 return
-            if not parts or parts in (["docs"], ["chrome"], ["archivo"]) or (parts and re.fullmatch(r"[A-Za-z]:", parts[0])):
+            if (
+                not parts
+                or parts in (["docs"], ["chrome"], ["archivo"])
+                or (parts and re.fullmatch(r"[A-Za-z]:", parts[0]))
+            ):
                 # /docs es la misma pagina: el front mira la ruta y muestra la referencia
                 index = os.path.join(DIST, "index.html")
                 if not os.path.exists(index):
@@ -2758,15 +2762,13 @@ class Handler(JsonHandler):
                     log(f"regla {parts[1]} borrada desde la UI, vive en otra PC ({self._client_ip()})")
                     code, res = mirror.MIRROR.forward(dueña, "DELETE", f"/rules/{parts[1]}")
                     return self._json(code, res)
-            if len(parts) == 2 and parts[0] in ("links", "rules"):
-                log(f"{parts[0][:-1]} {parts[1]} borrada desde la UI ({self._client_ip()})")
-                if parts[0] == "rules":
-                    if rl.retirar_regla(parts[1]):
-                        return self._json(
-                            409,
-                            {"error": "No se puede borrar: hay informes pendientes de integrar.", "conservada": True},
-                        )
-                    return self._json(200, {"ok": True})
+            if len(parts) == 2 and parts[0] == "rules":
+                retienen = rl.retirar_regla(parts[1])
+                que = f"desactivada (retienen {len(retienen)} informes)" if retienen else "borrada"
+                log(f"regla {parts[1]} {que} desde la UI ({self._client_ip()})")
+                return self._json(*rl.respuesta_retirada(parts[1], retienen))
+            if len(parts) == 2 and parts[0] == "links":
+                log(f"link {parts[1]} borrada desde la UI ({self._client_ip()})")
                 links.remove(lambda x: x["id"] == parts[1])
                 return self._json(200, {"ok": True})
             return self._json(404, {"error": "ruta desconocida"})
@@ -3029,11 +3031,7 @@ class PeerHandler(JsonHandler):
         if len(rest) == 5 and rest[0] == "rules" and rest[2] == "informes" and rest[4] == "acuse" and method == "POST":
             return self._json(*acuse_de_par(rest[1], rest[3], self._body_json(raw).get("estado")))
         if len(rest) == 2 and rest[0] == "rules" and method == "DELETE":
-            if rl.retirar_regla(rest[1]):
-                return self._json(
-                    409, {"error": "No se puede borrar: hay informes pendientes de integrar.", "conservada": True}
-                )
-            return self._json(200, {"ok": True})
+            return self._json(*rl.respuesta_retirada(rest[1], rl.retirar_regla(rest[1])))
         if len(rest) == 2 and rest[0] == "sessions" and method == "DELETE":
             drop_session(rest[1], "borrada desde otra PC")
             return self._json(200, {"ok": True})

@@ -93,14 +93,17 @@ def connections_of(sid: str) -> dict:
     return {"links": ls, "rules": rs}
 
 
-def retirar_regla(rule_id: str) -> bool:
-    """Desactiva sin borrar informes pendientes; True si quedó conservada."""
+def retirar_regla(rule_id: str) -> list[dict]:
+    """Desactiva sin borrar informes pendientes. Devuelve los informes que la retienen (vacía si se
+    borró), para que quien borra sepa que la regla quedó apagada y deja de entregar."""
     with lock:
         rule = next((r for r in rules.items if r["id"] == rule_id), None)
-        if rule is not None and informes.pendientes(rule):
+        retienen = informes.lista_pendientes(rule) if rule is not None else []
+        if retienen:
             anterior = dict(rule)
-            rule["enabled"] = False
-            rule["disabled_reason"] = "borrado rechazado: hay informes pendientes de integrar"
+            if rule.get("enabled"):  # si ya estaba apagada, su motivo (tope, archivada) es el que vale
+                rule["enabled"] = False
+                rule["disabled_reason"] = "borrado rechazado: hay informes pendientes de integrar"
             try:
                 rules.save(strict=True)
             except Exception:
@@ -108,9 +111,25 @@ def retirar_regla(rule_id: str) -> bool:
                 rule.update(anterior)
                 raise
             rules.publish()
-            return True
+            return [{k: x.get(k) for k in ("id", "estado", "created")} for x in retienen]
         rules.remove(lambda r: r["id"] == rule_id)
-        return False
+        return []
+
+
+def respuesta_retirada(rule_id: str, pendientes: list[dict]) -> tuple[int, dict]:
+    """La respuesta de DELETE /rules/<id>. Con informes sin integrar es 409 y `conservada` como
+    antes, pero dice que la regla quedó apagada: leído como «no cambió nada», la coordinadora dejaba
+    de recibir informes sin saberlo (opensyync, 2026-10-25)."""
+    if not pendientes:
+        return 200, {"ok": True}
+    return 409, {
+        "error": "No se puede borrar: hay informes pendientes de integrar. La regla quedó desactivada y "
+        "no entrega más informes: acusá los pendientes y volvé a borrarla. Si todavía la necesitás y no "
+        f'hay otra regla del mismo par, reactivala con PUT /rules/{rule_id} {{"enabled": true}}.',
+        "conservada": True,
+        "desactivada": True,
+        "pendientes": pendientes,
+    }
 
 
 def reconciliar_cableado() -> None:
@@ -1159,9 +1178,7 @@ def recordar_informes(t: dt.datetime) -> None:
 
             if preguntas.enviar is None:
                 raise RuntimeError("el enrutador de consultas no está instalado")
-            code, res = preguntas.enviar(
-                dst["session_id"], {"text": texto, "from": r["from"], "sin_aviso": True}
-            )
+            code, res = preguntas.enviar(dst["session_id"], {"text": texto, "from": r["from"], "sin_aviso": True})
             with lock:
                 informe["recordatorio_resultado"] = {"codigo": code, **res}
                 rules.save(strict=True)

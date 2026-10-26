@@ -384,6 +384,9 @@ Un 403 de `gh`/`git push`, pasar un token a otra PC o copiar archivos entre PCs:
 
 ## Qué hace la coordinadora cuando llega un informe
 
+Si un frente cerró y su informe no llegó, `c.reglas_apagadas_hacia_mi()`: un borrado rechazado por
+informes sin integrar deja la regla apagada (409 con `desactivada: true`) y no entrega más.
+
 Leé el informe con `c.informe(s)`, no con `s["last_reply"]` a secas: mientras una coda trabaja, el
 lienzo deja ahí «usando bash» o «usando read», que no es una respuesta. `informe` devuelve None en
 ese caso.

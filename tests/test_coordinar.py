@@ -303,3 +303,54 @@ def test_capacidad_de_codas_cuenta_el_cupo_del_modelo(monkeypatch):
     # las de otra PC no ocupan el cupo de esta
     corriendo.append(_tarjeta("c", pc="pcC", alive=True, state="corriendo"))
     assert c.capacidad("pcB", 1, agent="coda")["entran"] == 1
+
+
+def _servidor_de_reglas(monkeypatch, reglas, borrar):
+    """Un `pedir` falso: GET /rules devuelve `reglas`; DELETE contesta lo que diga `borrar[id]`."""
+    monkeypatch.setattr(c, "YO", "coord")
+
+    def pedir(metodo, ruta, cuerpo=None, timeout=20):
+        if metodo == "GET" and ruta == "/rules":
+            return 200, reglas
+        return borrar[ruta.rsplit("/", 1)[1]]
+
+    monkeypatch.setattr(c, "pedir", pedir)
+
+
+def test_borrar_reglas_hacia_mi_avisa_las_que_quedaron_apagadas(monkeypatch, capsys):
+    pendiente = [{"id": "inf1", "estado": "entregado", "created": "x"}]
+    reglas = [{"id": "ok", "to": "coord"}, {"id": "retenida", "to": "coord"}, {"id": "ajena", "to": "otro"}]
+    _servidor_de_reglas(
+        monkeypatch,
+        reglas,
+        {"ok": (200, {"ok": True}), "retenida": (409, {"conservada": True, "pendientes": pendiente})},
+    )
+    assert c.borrar_reglas_hacia_mi() == 1  # sigue devolviendo el número, como antes
+    err = capsys.readouterr().err
+    assert "retenida desactivada" in err and "inf1" in err
+
+
+def test_reglas_apagadas_hacia_mi_lista_sólo_las_que_deberían_entregar(monkeypatch):
+    base = {"to": "coord", "kind": "on_stop", "repeat": True}
+    reglas = [
+        {**base, "id": "viva", "enabled": True},
+        {**base, "id": "muda", "enabled": False, "from": "fA", "disabled_reason": "borrado rechazado"},
+        {**base, "id": "archivada", "enabled": False, "archived_at": "x"},
+        {**base, "id": "estacionada", "enabled": False, "parked_since": "x"},
+        {**base, "id": "un-disparo", "enabled": False, "repeat": False},
+        {**base, "id": "hora", "enabled": False, "kind": "at"},
+        {**base, "id": "ajena", "enabled": False, "to": "otro"},
+    ]
+    _servidor_de_reglas(monkeypatch, reglas, {})
+    assert c.reglas_apagadas_hacia_mi() == [{"id": "muda", "from": "fA", "motivo": "borrado rechazado"}]
+
+
+def test_regla_informe_nunca_rechaza_en_silencio(monkeypatch, capsys):
+    monkeypatch.setattr(c, "YO", "coord")
+    monkeypatch.setattr(c, "pedir", lambda *a, **k: (409, {"error": "ya existe esa conexión", "rule_id": "r9"}))
+    assert c.regla_informe({"session_id": "frente-a"}, "texto", solo_si="ESTADO:") == 409
+    assert "r9" in capsys.readouterr().err
+    bucle = {"error": "crearía un bucle: ya existe la regla r7 en sentido inverso"}
+    monkeypatch.setattr(c, "pedir", lambda *a, **k: (409, bucle))
+    assert c.regla_informe({"session_id": "frente-a"}, "texto") == 409
+    assert "bucle" in capsys.readouterr().err
