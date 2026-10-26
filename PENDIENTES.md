@@ -17,7 +17,9 @@ cerraron tareas por esta decisión.
   herramientas reutilizables e intercambio OKF como mejoras de Lienzo. Relevar primero
   las capacidades existentes y definir una feature piloto. Investigación y fuentes en
   [PROPUESTA-FTD-OKF-RSC.md](PROPUESTA-FTD-OKF-RSC.md). Sin implementación ni cierres automáticos.
-- [ ] **FDD para IA: sumar a FTD piezas de Feature-Driven Development y publicarla como skill propia**
+- [x] **FDD para IA: sumar a FTD piezas de Feature-Driven Development y publicarla como skill propia**
+  Cerrado por Ariel el 2026-10-26: publicada en https://github.com/arielelevy/fdd (v0.1, MIT); Lienzo la
+  sigue desde becc90e; piloto medido (43 % menos tokens de entrada con el mapa, 5/5 en ambas).
   (pedido de Ariel, 2026-10-26). Mapa del dominio vivo, features con nombre de resultado, avance por
   hitos (diseñado, implementado, verificado, integrado; el último lo marca Ariel) y archivos con dueño
   en la ficha. Piloto en una feature real de Lienzo midiendo cuánto contexto necesita una sesión nueva
@@ -28,12 +30,12 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 
 ### Bug reportado desde opensyync-K (2026-10-25, pedido de Ariel)
 
-- [ ] **Un borrado rechazado apaga la regla en silencio y se pierden los informes siguientes.**
-  Implementado el 2026-10-26 (opción A de Ariel, piloto de `fdd`): el 409 sigue con `conservada` y suma
+- [x] **Un borrado rechazado apaga la regla en silencio y se pierden los informes siguientes.**
+  Cerrado por Ariel el 2026-10-26 (b35f0e8, opción A, piloto de `fdd`): el 409 sigue con `conservada` y suma
   `desactivada` y `pendientes`; `coordinar.borrar_reglas_hacia_mi()` avisa las desactivadas,
-  `reglas_apagadas_hacia_mi()` las lista y `regla_informe` dice por qué rechaza y cuál es la regla que ya existe. Queda
-  abierto el punto (c), el aviso desde la auditoría. Ficha:
-  `.temp/coordinacion/2026-10-26/fdd-avisar-regla-apagada.md`. Sin cerrar: lo cierra Ariel.
+  `reglas_apagadas_hacia_mi()` las lista y `regla_informe` dice por qué rechaza y cuál es la regla que ya existe.
+  El punto (c) sigue abierto como pendiente aparte (abajo). Ficha:
+  `.temp/coordinacion/2026-10-26/fdd-avisar-regla-apagada.md`.
   `DELETE /rules/<id>` con un informe sin acuse responde 409 `{"error": "No se puede borrar: hay informes
   pendientes de integrar.", "conservada": true}`. Pero `rules.retirar_regla` deja la regla en `enabled: false`
   (`disabled_reason: "borrado rechazado: …"`). La coordinadora lee «conservada» como «no cambió nada» y ningún
@@ -46,6 +48,9 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
   entregado».
   Relacionado: `regla_informe(..., solo_si=…)` sobre un par que ya tiene regla devuelve 409 sin decir cuál es
   la existente ni ofrecer actualizarla (`PUT /rules/<id>` con `solo_si` sí funciona).
+- [ ] **Avisar desde la auditoría cuando un informe no se entregó** (punto (c) del anterior): en
+  `lienzo/auditoria.py`, cruzar `idle_evitable` y el último turno con `ESTADO:` contra las reglas apagadas
+  hacia la coordinadora (`coordinar.reglas_apagadas_hacia_mi()` ya las lista).
 - [ ] **`/exit` con trabajo en segundo plano no se puede cerrar desde el lienzo.** Claude muestra «Background
   work is running… 1. Exit and stop tasks / 2. Move to background / 3. Stay». `GET /screen` lo detecta como
   `dialog` y la tarjeta queda `te_necesita`, pero `POST /sessions/<sid>/responder {opcion:1}` contesta 409 «la
