@@ -952,8 +952,10 @@ credencial. Un `robocopy /Z /MT` hecho en casa:
   enlaces: una junction puesta entre validar y borrar no lo hace borrar fuera del destino.
 - No mata la máquina. Topes `mbps` y `disco_mbps`, prioridad baja de CPU y disco, y se frena si
   cualquiera de las dos PCs baja de 1,5 GB libres (sigue sola cuando se libera).
-- Rutas permitidas. Origen y destino tienen que caer en `copy_roots` del `config.json` de su PC
-  (vacía es ninguna). Las de WSL, como `\\wsl.localhost\<distro>\...`.
+- Rutas permitidas. Origen y destino tienen que caer en `copy_roots` o en `launch_roots` del
+  `config.json` de su PC (vacías es ninguna). Las de `launch_roots` cuentan porque una PC emparejada
+  ya puede lanzar un agente ahí, así que un repo se copia de raíz a raíz sin tocar la config;
+  `"copy_incluye_launch_roots": false` lo apaga. Las de WSL, como `\\wsl.localhost\<distro>\...`.
 
 Lo medido entre dos PCs el 2026-10-04:
 

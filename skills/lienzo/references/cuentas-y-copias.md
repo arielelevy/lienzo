@@ -69,9 +69,10 @@ c.retomar_copia(xid)
 
 - `destino` es siempre una carpeta: un archivo de origen cae como `destino/<nombre>`; una carpeta
   copia su contenido adentro.
-- Origen y destino tienen que caer en **`copy_roots`** del `config.json` de cada PC (vacía es
-  ninguna). Si da 403, la carpeta no está ahí: agregarla en esa PC y reiniciar no hace falta, se lee en
-  cada pedido.
+- Origen y destino tienen que caer en **`copy_roots`** o **`launch_roots`** del `config.json` de cada
+  PC (vacías es ninguna). Un archivo de un repo va de raíz a raíz, sin pasar por Downloads ni por git.
+  Si da 403, la carpeta no está en ninguna de las dos: agregarla en esa PC; reiniciar no hace falta,
+  se lee en cada pedido.
 - `estado == "terminado"` quiere decir que cada archivo se releyó del otro lado y coincidió bloque a
   bloque. Recién ahí se puede borrar el origen (por ejemplo, la tabla de un volcado hecho de a una).
   `con_errores`: lo que falló está en `errores`; `c.retomar_copia` lo reintenta sin rehacer lo hecho.

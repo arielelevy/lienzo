@@ -22,8 +22,8 @@ PC de Ariel). Hash por bloque al llegar, y del archivo entero al cerrar: el que 
 `.parte` y lo compara bloque a bloque con la lista del que manda. El hash del archivo que se informa
 es el sha256 de la lista de hashes de sus bloques.
 
-Rutas: origen y destino tienen que caer en `copy_roots` de la `config.json` de cada PC (vacia o
-ausente es ninguna, como `launch_roots`). Las de WSL van como `\\\\wsl.localhost\\<distro>\\...`.
+Rutas: origen y destino tienen que caer en `copy_roots` o `launch_roots` de la `config.json` de cada PC
+(vacias o ausentes es ninguna). Las de WSL van como `\\\\wsl.localhost\\<distro>\\...`.
 
 Solo biblioteca estandar.
 """
@@ -115,11 +115,18 @@ def _norm(p: str) -> str:
 
 
 def roots() -> list[str]:
-    """`copy_roots` de config.json, normalizadas. Vacia o ausente: ninguna, no todas."""
-    r = state.load_config().get("copy_roots")
-    if not isinstance(r, list):
-        return []
-    return [_norm(x) for x in r if isinstance(x, str) and x.strip()]
+    """`copy_roots` de config.json, mas `launch_roots`, normalizadas. Vacias o ausentes: ninguna.
+
+    Las de `launch_roots` entran porque una PC emparejada ya puede lanzar ahi un agente que escribe lo
+    que quiera: copiar no le da nada nuevo, y asi un repo va de raiz a raiz entre PCs sin tocar la
+    config (pedido de Ariel, 2026-10-26). `copy_incluye_launch_roots: false` lo apaga."""
+    cfg = state.load_config()
+    r = cfg.get("copy_roots")
+    lista = list(r) if isinstance(r, list) else []
+    lanzar = cfg.get("launch_roots")
+    if cfg.get("copy_incluye_launch_roots", True) is not False and isinstance(lanzar, list):
+        lista += lanzar
+    return list(dict.fromkeys(_norm(x) for x in lista if isinstance(x, str) and x.strip()))
 
 
 def _dentro_sin_enlaces(root: str, path: str) -> bool:
@@ -834,7 +841,7 @@ def _asegurar_parte(path: str, bs: int) -> None:
 def _raiz(d: dict) -> str:
     raiz = permitido(d.get("destino"))
     if raiz is None:
-        raise Rechazo(403, "destino fuera de copy_roots de esta PC")
+        raise Rechazo(403, "destino fuera de copy_roots y launch_roots de esta PC")
     with _carpeta_fija(os.path.join(raiz, ".xfer-validar-raiz")):
         pass
     return raiz
@@ -1357,7 +1364,7 @@ class Trabajo:
         self.guardar()
         origen = permitido(self.origen)
         if origen is None:
-            raise Rechazo(403, "origen fuera de copy_roots de esta PC")
+            raise Rechazo(403, "origen fuera de copy_roots y launch_roots de esta PC")
         if os.path.isfile(origen):
             base = os.path.dirname(origen)
             st = os.stat(origen)
@@ -1602,7 +1609,7 @@ def nuevo(d: dict, pc_propio: str) -> tuple[int, dict]:
         if conn_de(pc) is None:
             raise Rechazo(503, f"sin conexion con {pc}")
         if permitido(d.get("origen")) is None:
-            raise Rechazo(403, "origen fuera de copy_roots de esta PC")
+            raise Rechazo(403, "origen fuera de copy_roots y launch_roots de esta PC")
         if (
             not isinstance(d.get("destino"), str)
             or not os.path.isabs(d["destino"])
@@ -1651,7 +1658,7 @@ def traer(d: dict, pc_propio: str) -> tuple[int, dict]:
         return 400, {"error": "origen tiene que ser una ruta de la otra PC y ultimo, true o false"}
     destino = permitido(d.get("destino"))
     if destino is None:
-        return 403, {"error": "destino fuera de copy_roots de esta PC"}
+        return 403, {"error": "destino fuera de copy_roots y launch_roots de esta PC"}
     code, res = reenviar(
         pc, "POST", "/xfer/traer", {"origen": d["origen"], "destino": destino, "ultimo": d.get("ultimo", False)}
     )
@@ -1666,7 +1673,7 @@ def enviar_a_pedido(d: dict, pc_que_pide: str | None, pc_propio: str) -> tuple[i
         return 401, {"error": "pedido sin firma de una PC emparejada"}
     origen = permitido(d.get("origen"))
     if origen is None:
-        return 403, {"error": "origen fuera de copy_roots de esta PC"}
+        return 403, {"error": "origen fuera de copy_roots y launch_roots de esta PC"}
     if d.get("ultimo") is True:
         if not os.path.isdir(origen):
             return 400, {"error": "con ultimo, origen tiene que ser una carpeta"}

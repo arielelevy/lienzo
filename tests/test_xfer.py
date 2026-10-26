@@ -1516,3 +1516,18 @@ def test_leer_un_origen_que_falta_no_crea_su_carpeta(canal):
     with pytest.raises(FileNotFoundError):
         xfer.Trabajo._leer(_SinFreno(), str(falta), 0, 10)
     assert not falta.parent.exists()
+
+
+def test_launch_roots_cuentan_como_raices_de_copia_salvo_que_se_apague(tmp_path, monkeypatch):
+    repo, copia, afuera = tmp_path / "repo", tmp_path / "copia", tmp_path / "afuera"
+    for d in (repo, copia, afuera):
+        d.mkdir()
+    cfg = {"copy_roots": [str(copia)], "launch_roots": [str(repo), str(copia)]}
+    monkeypatch.setattr(st, "load_config", lambda: cfg)
+    assert xfer.permitido(str(repo / "PENDIENTES.md")) == str(repo / "PENDIENTES.md")
+    assert xfer.permitido(str(copia / "a.txt")) == str(copia / "a.txt")
+    assert xfer.permitido(str(afuera / "a.txt")) is None
+    assert len(xfer.roots()) == 2  # la repetida entre las dos listas cuenta una vez
+    cfg["copy_incluye_launch_roots"] = False
+    assert xfer.permitido(str(repo / "PENDIENTES.md")) is None
+    assert xfer.permitido(str(copia / "a.txt")) == str(copia / "a.txt")
