@@ -11,6 +11,12 @@ de principios de proceso aceptados: cada entrada enlaza a su creencia y revisió
 su estado actual antes de aplicarla; una objeción posterior la excluye de la proyección.
 Si el archivo falta o el motor informa error, no inventar principios ni dar propuestas por aceptadas.
 
+**Proceso de cambios: FTD reemplaza a SDD** (decisión de Ariel, 2026-10-26).
+Antes de implementar o repartir una feature, leer `references/ftd.md`: ficha única
+cuando el alcance o la coordinación la necesitan; cambios puntuales con verificación
+directa. Mantener la documentación proporcional y las reglas del proyecto. No derivar
+a SDD ni cerrar tareas automáticamente.
+
 El lienzo es el tablero de las sesiones de Claude Code y Codex que corren en terminales de
 Windows. Server local en `127.0.0.1:7321`, se levanta con `lienzo-server.cmd`. Una tarjeta por
 sesión, con su conversación, una caja para contestarle, y aprobación de permisos sin ir a la

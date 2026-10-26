@@ -115,9 +115,10 @@ contempla).
   impida (el cuerpo admite hasta 8 MB). Un archivo en el repo solo para lo que el agente de esa PC
   produce él mismo en su carpeta (p. ej. el `tasks.md` que escribió ahí): los demás lo leen sin pull.
   Un agente lento (coda) puede tardar en leer el adjunto: eso es el modelo, no la entrega.
-- Proceso flexible (decisión del 2026-10-16): acordar arquitectura, plan y tareas según el alcance.
+- FTD proporcional (decisión del 2026-10-26, reemplaza a SDD): seguir `ftd.md` en esta carpeta;
+  acordar arquitectura, contratos y tareas según el alcance, en una ficha por feature cuando haga falta.
   Repartir con contratos e insumos disponibles, cada frente en su carpeta cuando corresponda.
-  No exigir SDD, un `tasks.md` ni commits por etapa como condiciones universales; conservar calidad
+  No exigir una ficha para cada cambio puntual, un `tasks.md` ni commits por etapa como condiciones universales; conservar calidad
   y evidencia de revisión y pruebas.
 
 Los dos lienzos tienen que correr el mismo código. Con `lienzo-server.cmd` el server se

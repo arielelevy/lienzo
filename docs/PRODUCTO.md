@@ -11,10 +11,17 @@ su propia capacidad de mejorarlos: sus herramientas, memoria, coordinación, arq
 
 ## Proceso flexible, calidad no negociable
 
-No se adopta SDD como metodología obligatoria del producto. Cada trabajo necesita la arquitectura,
-el plan, las tareas o las funcionalidades que correspondan a su alcance y riesgo.
+FTD (Fast-Track Development) reemplaza a SDD por decisión de Ariel del 2026-10-26.
+Se mantiene la documentación proporcional: una feature o un trabajo con decisiones,
+dependencias o varios frentes necesita una ficha con objetivo, alcance, criterios de
+aceptación, tareas, evidencia y próximo paso. Un cambio puntual, claro y de bajo impacto
+se ejecuta y verifica directamente, dejando evidencia en el registro existente.
+Cada trabajo conserva la arquitectura, los contratos y las tareas que correspondan
+a su alcance y riesgo, dentro de las reglas duraderas del proyecto (su constitución).
+El detalle operativo vive en [el flujo FTD](../skills/lienzo/references/ftd.md).
 Un bug pequeño, una funcionalidad nueva, un refactor, una investigación y una integración no siguen
 necesariamente el mismo recorrido. Tampoco se prescribe una secuencia universal de olas.
+Si el trabajo crece, se amplía la misma ficha FTD; SDD deja de ser una alternativa.
 
 La flexibilidad no elimina la verificación. En código propio se conservan las pruebas agénticas,
 la revisión y la auditoría exigidas por las instrucciones del usuario y del proyecto.
