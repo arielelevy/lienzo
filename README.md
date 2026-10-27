@@ -1,8 +1,8 @@
 # Lienzo
 
-Versión **0.6.17**: una auditoría determinista cada 5 min avisa a la coordinadora de frentes quietos, entregas sin leer, envíos no tomados y bloqueos olvidados; los envíos a una sesión salen de a uno, un botón Esc destraba diálogos y el skill lienzo queda visible en Claude Code y Kiro.
+Versión **0.6.18**: ningún informe se pierde en silencio (un borrado rechazado avisa que la regla quedó apagada y la auditoría avisa el informe que no llegó); la memoria distingue lo integrado de lo que vive en una rama; un encargo enlaza su ficha; `xfer` copia de raíz a raíz entre PCs; y Lienzo trabaja con FDD.
 Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.17.md).
+[Novedades, validación y límites](docs/releases/0.6.18.md).
 
 Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
 (Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada

@@ -6,6 +6,23 @@ docs/PRODUCTO.md las decisiones de producto.
 
 Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
+### Release 0.6.18 (2026-10-27)
+
+Notas en [docs/releases/0.6.18.md](docs/releases/0.6.18.md). Suite completa en ar-it33940: 3898 en verde, 27
+omitidas y 8 fallas, ninguna nueva (seis también en 0.6.17, dos inestables que pasan aisladas).
+
+- [ ] **Guardar un nodo de memoria tarda 70-94 ms** (`test_conocimiento_prolog_commit::test_hook_encola_sin_exportar_en_hilo_de_escritura`,
+  límite 50 ms). Mide `crear_nodo` hasta su retorno: escritura, commit y aviso al worker de Prolog. Frena la
+  cola de captura, no a los agentes. Medir primero dónde se va el tiempo y después recortar.
+- [ ] **`briefing` y `preguntar` con 200 nodos y 400 vínculos tardan 500-660 ms** contra 200
+  (`test_veredictos::test_rendimiento_briefing_y_preguntar_con_200_nodos_y_400_vinculos`). Ya en 0.6.17.
+- [ ] **`test_prolog_servicio::test_deadline_cubre_write_con_hijo_que_no_lee`**: el `stdin.write` bloquea fuera
+  del plazo de 0,15 s en ar-it33940. Ya en 0.6.17.
+- [ ] **Tres pruebas de xfer quedan en «copiando» en ar-it33940** (`test_copia_arbol_y_la_segunda_vez_no_manda_nada`,
+  `test_solo_viaja_el_bloque_que_cambio`, `test_mismo_tamano_y_fecha_no_alcanzan_para_saltear`), también en
+  0.6.17; una reproducción tardó 1216 s sin respetar el tope de 150 s. Acá pasan. Y dos (`test_espejo_lista_antes_y_borra_solo_con_confirmacion`,
+  `test_sin_espejo_nunca_borra`) fallan sólo dentro de la suite completa. Investigar qué deja la copia sin terminar.
+
 ### Propuesta FTD, constitución y OKF (2026-10-26)
 
 Decisión de Ariel del 2026-10-26: FTD reemplaza a SDD y, el mismo día, FDD (skill `fdd`) reemplaza a
