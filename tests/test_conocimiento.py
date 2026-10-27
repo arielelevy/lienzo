@@ -162,6 +162,67 @@ def test_vinculos_tipados_motivo_y_ciclos(proy):
 # --- rondas, encargos, entregas -------------------------------------------------------------
 
 
+@pytest.mark.parametrize("ficha", [None, ".temp/coordinacion/2026-10-26/fdd-x.md"])
+def test_api_encargo_conserva_ficha_al_leer(proy, ficha):
+    ronda = k.abrir_ronda("teorema", "Ficha", autor="c")
+    cuerpo = {
+        "ronda": ronda["id"],
+        "letra": "B",
+        "texto": "Enlazar ficha",
+        "contexto_desarrollo": {"tipo_trabajo": "feature"},
+    }
+    if ficha is not None:
+        cuerpo["ficha"] = ficha
+    code, creado = api.dispatch("POST", ["teorema", "encargos"], cuerpo, {})
+    assert code == 200
+    code, leido = api.dispatch("GET", ["teorema", "nodos", creado["id"]], None, {})
+    assert code == 200
+    for nodo in (creado, leido):
+        if ficha is None:
+            assert "ficha" not in nodo["datos"]
+        else:
+            assert nodo["datos"]["ficha"] == ficha
+
+
+@pytest.mark.parametrize(
+    "ficha",
+    [
+        "/tmp/fdd.md",
+        "C:/repo/.temp/coordinacion/fdd.md",
+        "C:fdd.md",
+        "//pc/repo/fdd.md",
+        r"C:\repo\fdd.md",
+        r".temp\coordinacion\..\fdd.md",
+        ".temp/coordinacion/../fdd.md",
+        ".temp/coordinacion/x/../../fdd.md",
+        "docs/fdd.md",
+        ".temp/coordinacion-otra/fdd.md",
+        ".temp/coordinacion/",
+        "",
+        123,
+        [],
+        ".temp/coordinacion/x\x00.md",
+    ],
+)
+def test_api_encargo_rechaza_ficha_invalida_sin_guardar(proy, ficha):
+    ronda = k.abrir_ronda("teorema", "Ficha invalida", autor="c")
+    code, error = api.dispatch(
+        "POST",
+        ["teorema", "encargos"],
+        {
+            "ronda": ronda["id"],
+            "letra": "B",
+            "texto": "Enlazar",
+            "contexto_desarrollo": {"tipo_trabajo": "feature"},
+            "ficha": ficha,
+        },
+        {},
+    )
+    assert code == 400
+    assert "ficha" in error["error"] and ".temp/coordinacion/" in error["error"]
+    assert k.nodos("teorema", tipo="encargo")["total"] == 0
+
+
 def test_ronda_encargo_envio_entrega_y_cierre(proy):
     r = k.abrir_ronda("teorema", "ronda 3: halving", autor="coordinadora:1", coordinadora="sid-coord")
     assert r["estado"] == "abierta"

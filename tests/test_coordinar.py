@@ -7,6 +7,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "lien
 import coordinar as c
 
 
+def test_encargo_envia_ficha_opcional_y_preserva_omision(monkeypatch):
+    calls = []
+    monkeypatch.setattr(c, "_conocimiento", lambda *args: calls.append(args) or {})
+    ficha = ".temp/coordinacion/2026-10-26/fdd-x.md"
+    c.encargo("lienzo", "r", "B", "Enlazar", tipo_trabajo="feature", ficha=ficha)
+    assert calls[-1][2]["ficha"] == ficha
+    c.encargo("lienzo", "r", "A", "Antes", tipo_trabajo="feature")
+    assert "ficha" not in calls[-1][2]
+
+
 def test_encargo_carries_explicit_learning_context(monkeypatch):
     calls = []
     monkeypatch.setattr(c, "_conocimiento", lambda *args: calls.append(args) or {"estado": "pendiente"})

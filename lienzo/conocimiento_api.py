@@ -304,6 +304,7 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             origen=d.get("origen"),
             contexto_desarrollo=contexto,
             controles_declarados=d.get("controles_declarados"),
+            ficha=d.get("ficha"),
         )
         # el encargo ya quedó: si leer lo aplicable falla por lo que sea, se informa sin perder su id
         # (un 500 haría reintentar con la misma letra y el reintento es 409)

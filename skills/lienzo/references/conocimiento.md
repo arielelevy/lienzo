@@ -55,7 +55,7 @@ la tarjeta; al leer el informe del frente, se entrega entero:
 
 ```python
 r = c.abrir_ronda("teorema", "ronda 4: halving racional")
-e = c.encargo("teorema", r["id"], "A", texto_del_encargo, archivos=["codigo/sustituciones.py"], tipo_trabajo="refactor")
+e = c.encargo("teorema", r["id"], "A", texto_del_encargo, archivos=["codigo/sustituciones.py"], tipo_trabajo="refactor", ficha=".temp/coordinacion/2026-10-26/fdd-x.md")
 texto = c.preparar_encargo("teorema", texto_del_encargo, encargo=e)  # suma los aprendizajes aplicables
 s = c.lanzar_y_titular(None, "D:/Apps/Teorema", "Teorema - encargo A - ...", agent="codex")
 c.encargo_enviado(
@@ -70,6 +70,12 @@ c.conocimiento("teorema", "halving OR mitad", saltos=1)  # BM25 + vecinos por el
 
 ### Aprendizaje: tipo de trabajo, aprendizajes aplicables, uso y controles (2026-10-19)
 
+- **`ficha` es opcional** en `c.encargo` y en `POST /conocimiento/<p>/encargos`.
+  Enlaza la ficha FDD con una ruta relativa al repo, dentro de `.temp/coordinacion/`,
+  usando `/` y sin segmentos `..`. Rutas absolutas, fuera de esa carpeta o inválidas
+  reciben 400. Se conserva en `e["datos"]["ficha"]` y al leer el nodo por
+  `GET /conocimiento/<p>/nodos/<id>`. Sin `ficha` no se agrega el campo.
+  Sólo se guarda el enlace; no se lee ni se valida el contenido del archivo.
 - **`tipo_trabajo` es obligatorio** en `c.encargo` y en `POST /conocimiento/<p>/encargos`
   (bugfix, feature, refactor, investigacion, documentacion, arquitectura o `sin_clasificar`). Sin él: 400.
 - La respuesta trae `aprendizajes`: creencias validadas por una persona que aplican a ese contexto

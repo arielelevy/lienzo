@@ -1763,6 +1763,7 @@ def crear_encargo(
     origen: dict | None = None,
     contexto_desarrollo: dict | None = None,
     controles_declarados: list[str] | None = None,
+    ficha: str | None = None,
 ) -> dict:
     """El pedido a un frente, con su cuerpo guardado en rondas/<ronda>/encargo-<letra>.md. La letra
     identifica el encargo dentro de la ronda (A, B, C...): dos encargos con la misma letra en la misma
@@ -1771,6 +1772,14 @@ def crear_encargo(
         raise Rechazo("letra invalida")
     letra = letra.upper()  # encargo-A.md y encargo-a.md son el mismo archivo en Windows
     texto = _texto(texto, "texto", 200_000)
+    if ficha is not None and (
+        not isinstance(ficha, str)
+        or not ficha.startswith(".temp/coordinacion/")
+        or any(parte in ("", ".", "..") for parte in ficha.split("/"))
+        or any(c in ficha for c in ("\\", ":"))
+        or any(ord(c) < 32 for c in ficha)
+    ):
+        raise Rechazo("ficha debe ser una ruta relativa dentro de .temp/coordinacion/, con / y sin ..")
     archivos = [str(x) for x in (archivos or []) if isinstance(x, str)]
     import patrones_desarrollo
 
@@ -1786,7 +1795,13 @@ def crear_encargo(
             pid,
             "encargo",
             (texto.splitlines()[0].lstrip("# ").strip() or letra)[:200],
-            {"letra": letra, "archivos": archivos, "ruta": ruta, **etiquetas},
+            {
+                "letra": letra,
+                "archivos": archivos,
+                "ruta": ruta,
+                **etiquetas,
+                **({"ficha": ficha} if ficha is not None else {}),
+            },
             autor=autor,
             origen=origen,
             ronda=ronda,

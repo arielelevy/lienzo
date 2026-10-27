@@ -31,6 +31,11 @@ cerraron tareas por esta decisión.
 - [ ] **Ficha FDD enlazada al encargo.** `coordinar.encargo(...)` registra el encargo en la memoria pero
   no sabe de la ficha `fdd-<nombre>.md`; sumarle la ruta de la ficha para que la sucesora la encuentre
   desde la tarjeta. Sale de la evaluación RSC/OKF del 2026-10-26.
+  Implementado el 2026-10-26 por el frente B en ar-it33940 (Codex) e integrado por la coordinadora:
+  `c.encargo(..., ficha=".temp/coordinacion/<fecha>/fdd-x.md")` la guarda en `datos.ficha` y la
+  devuelve al leer el nodo; las rutas fuera de `.temp/coordinacion/` dan 400. 98 pruebas de conocimiento,
+  coordinación y memoria en verde. Ficha: `.temp/coordinacion/2026-10-26/fdd-enlazar-ficha-al-encargo.md`.
+  Falta mostrarla en la tarjeta del tablero. Sin cerrar: lo cierra Ariel.
 - [ ] **Exportación OKF de prueba.** No hay ninguna exportación a OKF (Markdown con frontmatter YAML,
   `index.md`, `log.md`). Piloto: exportar las creencias vigentes de un proyecto, con versión explícita,
   y comprobar que un lector independiente (Obsidian o un script) las interpreta. Sin migrar el

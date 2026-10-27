@@ -1123,7 +1123,16 @@ def abrir_ronda(pid, objetivo):
 
 
 def encargo(
-    pid, ronda, letra, texto, archivos=None, *, tipo_trabajo=None, contexto_desarrollo=None, controles_declarados=None
+    pid,
+    ronda,
+    letra,
+    texto,
+    archivos=None,
+    *,
+    tipo_trabajo=None,
+    contexto_desarrollo=None,
+    controles_declarados=None,
+    ficha=None,
 ):
     """Registra el encargo (el texto entero queda en rondas/<ronda>/encargo-<letra>.md) y devuelve su
     nodo. Después de lanzar o mandar, `encargo_enviado(pid, e["id"], s)` lo vincula a la tarjeta.
@@ -1131,6 +1140,7 @@ def encargo(
     arquitectura o, si no se sabe, sin_clasificar (va en `tipo_trabajo` o dentro de
     `contexto_desarrollo`, que además admite tecnología/área/fase y agente/modelo/versiones).
     `controles_declarados` lista pruebas, claude_review_local o auditoria_skill: no acredita ejecución.
+    `ficha` enlaza una ruta relativa de ficha FDD dentro de `.temp/coordinacion/`.
     La respuesta trae `aprendizajes` (creencias validadas que aplican a ese contexto) y
     `aprendizajes_texto`, para pegar en el mensaje al frente; `preparar_encargo(..., encargo=e)` lo hace."""
     contexto = dict(contexto_desarrollo or {})
@@ -1148,6 +1158,7 @@ def encargo(
             "archivos": archivos or [],
             "autor": f"coordinadora:{YO}",
             "contexto_desarrollo": contexto,
+            **({"ficha": ficha} if ficha is not None else {}),
             **({"controles_declarados": controles_declarados} if controles_declarados is not None else {}),
         },
     )
