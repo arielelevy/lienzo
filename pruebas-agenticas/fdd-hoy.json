@@ -8,20 +8,120 @@
     "PENDIENTES (c) 2026-10-26: la auditoría avisa informe_no_entregado cuando un frente cerró con ESTADO: y su regla hacia la coordinadora está apagada."
   ],
   "precondiciones": [
-    {"nombre": "Lienzo real sirve la interfaz", "url": "http://127.0.0.1:7321/", "debeContener": "Lienzo"}
+    {
+      "nombre": "Lienzo real sirve la interfaz",
+      "url": "http://127.0.0.1:7321/",
+      "debeContener": "Lienzo"
+    }
   ],
   "casos": [
     {
       "id": "e2e-lienzo-real",
-      "comando": ["py", "pruebas-agenticas/fdd_hoy_e2e.py"],
+      "comando": [
+        "py",
+        "pruebas-agenticas/fdd_hoy_e2e.py"
+      ],
       "timeoutMs": 120000,
-      "cubre": ["lienzo/rules.py", "lienzo/server.py", "lienzo/entregas_informes.py", "lienzo/auditoria.py", "lienzo/xfer.py"]
+      "cubre": [
+        "lienzo/rules.py",
+        "lienzo/server.py",
+        "lienzo/entregas_informes.py",
+        "lienzo/auditoria.py",
+        "lienzo/xfer.py"
+      ]
     },
     {
       "id": "focales",
-      "comando": ["py", "-m", "pytest", "tests/test_auditoria.py", "tests/test_auditoria_envio.py", "tests/test_coordinar.py", "tests/test_backlog_root_integration.py", "tests/test_xfer.py::test_launch_roots_cuentan_como_raices_de_copia_salvo_que_se_apague", "-q", "-p", "no:cacheprovider"],
+      "comando": [
+        "py",
+        "-m",
+        "pytest",
+        "tests/test_auditoria.py",
+        "tests/test_auditoria_envio.py",
+        "tests/test_coordinar.py",
+        "tests/test_backlog_root_integration.py",
+        "tests/test_xfer.py::test_launch_roots_cuentan_como_raices_de_copia_salvo_que_se_apague",
+        "-q",
+        "-p",
+        "no:cacheprovider"
+      ],
       "timeoutMs": 180000,
-      "cubre": ["lienzo/auditoria.py", "lienzo/rules.py", "lienzo/server.py", "lienzo/entregas_informes.py", "lienzo/xfer.py", "skills/lienzo/coordinar.py"]
+      "cubre": [
+        "lienzo/auditoria.py",
+        "lienzo/rules.py",
+        "lienzo/server.py",
+        "lienzo/entregas_informes.py",
+        "lienzo/xfer.py",
+        "skills/lienzo/coordinar.py"
+      ]
     }
-  ]
+  ],
+  "mutaciones": [
+    {
+      "id": "auditoria-ignora-entrega",
+      "requisito": "PENDIENTES (c): informe_no_entregado sólo si el informe no llegó",
+      "archivo": "lienzo/auditoria.py",
+      "buscar": "entregado = any(t and desde and t >= desde for t in entregas)",
+      "reemplazar": "entregado = False",
+      "casos": [
+        "focales"
+      ]
+    },
+    {
+      "id": "auditoria-ignora-bloqueo",
+      "requisito": "Un bloqueo declarado sigue su camino aunque la regla esté apagada",
+      "archivo": "lienzo/auditoria.py",
+      "buscar": "and not _BLOQUEADO.search(cola)",
+      "reemplazar": "and True",
+      "casos": [
+        "focales"
+      ]
+    },
+    {
+      "id": "retirada-sin-desactivada",
+      "requisito": "Opción A: el 409 dice desactivada",
+      "archivo": "lienzo/rules.py",
+      "buscar": "\"desactivada\": True,",
+      "reemplazar": "\"desactivada\": False,",
+      "casos": [
+        "focales",
+        "e2e-lienzo-real"
+      ]
+    },
+    {
+      "id": "retirada-pisa-motivo",
+      "requisito": "Una regla ya apagada conserva su motivo",
+      "archivo": "lienzo/rules.py",
+      "buscar": "if rule.get(\"enabled\"):  # si ya estaba apagada",
+      "reemplazar": "if True:  # si ya estaba apagada",
+      "casos": [
+        "focales",
+        "e2e-lienzo-real"
+      ]
+    },
+    {
+      "id": "xfer-sin-launch-roots",
+      "requisito": "launch_roots cuenta como raíz de copia",
+      "archivo": "lienzo/xfer.py",
+      "buscar": "lista += lanzar",
+      "reemplazar": "lista += []",
+      "casos": [
+        "focales",
+        "e2e-lienzo-real"
+      ]
+    },
+    {
+      "id": "control-docstring-auditoria",
+      "requisito": "control: cambio inofensivo que tiene que sobrevivir",
+      "archivo": "lienzo/auditoria.py",
+      "buscar": "Sin efectos.\"\"\"",
+      "reemplazar": "Sin efectos (control).\"\"\"",
+      "casos": [
+        "focales"
+      ]
+    }
+  ],
+  "compuerta": {
+    "mutacionMinima": 0.8
+  }
 }
