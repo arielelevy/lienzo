@@ -16,6 +16,167 @@ import conocimiento_api as api
 from conocimiento import Rechazo
 
 
+@pytest.fixture
+def repo_codigo(tmp_path):
+    import subproc
+
+    k._CACHE_CODIGO.clear()  # cada prueba usa otra carpeta para el mismo proyecto «version»
+    repo = tmp_path / "codigo"
+    repo.mkdir()
+
+    def git(*args):
+        rc, out, err = subproc.correr(
+            ["git", "-c", "user.name=Prueba", "-c", "user.email=prueba@example.invalid", *args],
+            cwd=str(repo),
+            timeout=5,
+            sin_prompts=True,
+        )
+        assert rc == 0, err
+        return out.strip()
+
+    git("init", "-b", "main")
+    git("commit", "--allow-empty", "-m", "base")
+    k.registrar_proyecto("version", carpetas=[{"pc": k.identity.pc_id(), "cwd": str(repo)}])
+    return repo, git
+
+
+def test_evidencia_guarda_version_y_suciedad_sin_reescribir_idempotente(repo_codigo):
+    repo, git = repo_codigo
+    e = k.recibir_evidencia("version", "prueba.txt", b"resultado", clase="prueba", autor="c")
+    assert e["datos"]["codigo"] == {"head": git("rev-parse", "HEAD"), "rama": "main", "sucio": False}
+    (repo / "nuevo.txt").write_text("cambio")
+    otra = k.recibir_evidencia("version", "otra.txt", b"otra", clase="prueba", autor="c")
+    assert otra["datos"]["codigo"]["sucio"] is True
+    repetida = k.recibir_evidencia("version", "prueba.txt", b"resultado", clase="prueba", autor="c")
+    assert repetida["datos"]["codigo"] == e["datos"]["codigo"]
+
+
+@pytest.mark.parametrize("con_encargo", [False, True])
+def test_informe_capturado_guarda_version(repo_codigo, con_encargo):
+    _, git = repo_codigo
+    if con_encargo:
+        ronda = k.abrir_ronda("version", "prueba", autor="c")
+        e = k.crear_encargo("version", ronda["id"], "B", "prueba", autor="c")
+        k.encargo_enviado("version", e["id"], {"session_id": "s-version"})
+    inf = k.informe_capturado("version", "s-version", "informe", ronda=None, origen={})
+    assert inf["datos"]["codigo"]["head"] == git("rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize("fallo", [1, 124, 127])
+def test_version_git_falla_sin_impedir_evidencia(repo_codigo, monkeypatch, fallo):
+    import subproc
+
+    llamadas = []
+
+    def falla(argv, **kw):
+        llamadas.append(kw)
+        return fallo, "", "fallo o timeout"
+
+    monkeypatch.setattr(subproc, "correr", falla)
+    e = k.recibir_evidencia("version", "prueba.txt", b"resultado", clase="prueba", autor="c")
+    assert "codigo" not in e["datos"]
+    assert llamadas and all(0 < kw["timeout"] <= 5 for kw in llamadas)
+    inf = k.informe_capturado("version", "s-fallo", "informe sin git", ronda=None, origen={})
+    assert "codigo" not in inf["datos"]
+
+
+def test_version_sin_repo_y_carpeta_de_otra_pc(tmp_path, monkeypatch):
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    k.registrar_proyecto("sinrepo", carpetas=[{"pc": k.identity.pc_id(), "cwd": str(tmp_path)}])
+    e = k.recibir_evidencia("sinrepo", "x", b"x", clase="prueba", autor="c")
+    assert "codigo" not in e["datos"]
+    k.registrar_proyecto("remoto", carpetas=[{"pc": "otra-pc", "cwd": str(tmp_path)}])
+    e = k.recibir_evidencia("remoto", "x", b"x", clase="prueba", autor="c")
+    assert "codigo" not in e["datos"]
+
+
+def test_version_lectura_clasifica_ancestro_rama_y_desconocido(repo_codigo):
+    _, git = repo_codigo
+    base = k.recibir_evidencia("version", "base", b"base", clase="prueba", autor="c")
+    assert k.nodo("version", base["id"])["datos"]["codigo"]["estado"] == "integrado"
+    git("switch", "-c", "feature")
+    git("commit", "--allow-empty", "-m", "en rama")
+    e = k.recibir_evidencia("version", "rama", b"rama", clase="prueba", autor="c")
+    assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "en_rama"
+    assert k.nodos("version", tipo="evidencia")["nodos"][-1]["datos"]["codigo"]["estado"] == "en_rama"
+    git("branch", "-f", "main", "HEAD")
+    assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "en_rama"  # caché de 30 s
+    k._CACHE_CODIGO.clear()  # vencida la caché, el merge se ve
+    assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "integrado"
+    # La clasificación es de lectura: el JSON persistido y replicado no lleva estado.
+    with k._abrir("version") as con:
+        assert "estado" not in k._nodo(con, "version", e["id"])["datos"]["codigo"]
+    git("branch", "-D", "main")
+    k._CACHE_CODIGO.clear()
+    assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "desconocido"
+
+
+def test_version_lectura_git_falla_es_desconocido(repo_codigo, monkeypatch):
+    import subproc
+
+    e = k.recibir_evidencia("version", "base", b"base", clase="prueba", autor="c")
+    monkeypatch.setattr(subproc, "correr", lambda *a, **kw: (124, "", "timeout"))
+    assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "desconocido"
+
+
+def test_version_captura_conserva_codigo_en_origen(repo_codigo, monkeypatch):
+    repo, git = repo_codigo
+    monkeypatch.setattr(k.memory_policy, "excluida", lambda cwd: False)
+    cap = k.capturar(
+        "version",
+        "respuesta",
+        "informe",
+        {
+            "session_id": "s-version",
+            "pc": k.identity.pc_id(),
+            "cwd": str(repo),
+        },
+        origen={"turno": "1"},
+    )
+    assert cap["origen"]["codigo"] == {"head": git("rev-parse", "HEAD"), "rama": "main", "sucio": False}
+    assert k.capturas("version")["capturas"][0]["origen"] == cap["origen"]
+
+
+def test_version_replica_transporta_datos_sin_estado(repo_codigo, tmp_path, monkeypatch):
+    from test_replica import Red
+
+    repo, git = repo_codigo
+    head = git("rev-parse", "HEAD")
+    red = Red(tmp_path / "red", monkeypatch)
+    with red.en("pcA"):
+        k.registrar_proyecto("version", remotes=["github.com/test/version"], carpetas=[{"pc": "pcA", "cwd": str(repo)}])
+        e = k.recibir_evidencia("version", "x", b"resultado", clase="prueba", autor="c")
+        assert e["datos"]["codigo"]["head"] == head
+    red.sync("pcB", "pcA")
+    with red.en("pcB"):
+        with k._abrir("version") as con:
+            assert k._nodo(con, "version", e["id"])["datos"] == e["datos"]
+        assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "desconocido"
+
+
+def test_version_head_separado_y_principal_master(repo_codigo):
+    _, git = repo_codigo
+    git("branch", "-m", "master")
+    git("switch", "--detach", "HEAD")
+    e = k.recibir_evidencia("version", "x", b"detached", clase="prueba", autor="c")
+    assert e["datos"]["codigo"]["rama"] == "(detached)"
+    assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "integrado"
+
+
+def test_version_prefiere_principal_de_origin_y_no_inventa_commit(repo_codigo):
+    _, git = repo_codigo
+    git("branch", "trunk")
+    git("update-ref", "refs/remotes/origin/trunk", "HEAD")
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+    git("switch", "-c", "feature")
+    git("commit", "--allow-empty", "-m", "nuevo")
+    git("branch", "-f", "main", "HEAD")
+    e = k.recibir_evidencia("version", "x", b"nuevo", clase="prueba", autor="c")
+    assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "en_rama"
+    k.actualizar_datos("version", e["id"], {"codigo": {"head": "f" * 40}}, por="c", motivo="simular ausente")
+    assert k.nodo("version", e["id"])["datos"]["codigo"]["estado"] == "desconocido"
+
+
 def test_api_integrada_recuperacion_aprendizaje_y_cierre_atomico(proy, monkeypatch):
     code, tema = api.dispatch("POST", ["teorema", "temas"], {"texto": "memoria", "por": "coordinadora:c"}, {})
     assert code == 200
@@ -801,3 +962,22 @@ def test_bloque_con_tipo_o_relacion_no_hasheables_es_error_de_validacion(proy):
         ("nodo h1", "tipo no declarable: ['"),
         ("vinculos[0]", "relacion no declarable"),
     }
+
+
+def test_version_usa_la_carpeta_de_la_sesion_si_es_de_esta_pc(tmp_path, monkeypatch):
+    otra = tmp_path / "worktree"
+    otra.mkdir()
+    monkeypatch.setattr(k, "proyecto", lambda pid: {"carpetas": []})
+    assert k._carpeta_codigo("p", str(otra), None) == str(otra)
+    assert k._carpeta_codigo("p", str(otra), "otra-pc") is None  # de otra PC no se lee el repo local
+
+
+def test_version_sin_plazo_queda_desconocido_y_no_se_cachea(repo_codigo, monkeypatch):
+    k.recibir_evidencia("version", "x", b"plazo", clase="prueba", autor="c")
+    monkeypatch.setattr(k, "ESTADO_CODIGO_PLAZO_S", 0.0)
+    k._CACHE_CODIGO.clear()
+    nodos = k.nodos("version", tipo="evidencia")["nodos"]
+    assert nodos[-1]["datos"]["codigo"]["estado"] == "desconocido"
+    assert not any(c[0] == "estado" for c in k._CACHE_CODIGO)
+    monkeypatch.setattr(k, "ESTADO_CODIGO_PLAZO_S", 5.0)
+    assert k.nodos("version", tipo="evidencia")["nodos"][-1]["datos"]["codigo"]["estado"] == "integrado"

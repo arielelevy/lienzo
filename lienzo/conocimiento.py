@@ -25,11 +25,13 @@ import os
 import re
 import sqlite3
 import threading
+import time
 import uuid
 
 import identity
 import memory_policy
 import state
+import subproc
 import transcripts
 from atomico import atomic_write
 
@@ -538,6 +540,133 @@ def proyecto(pid: str) -> dict:
 
 def _carpeta(pid: str) -> str:
     return os.path.join(raiz(), pid)
+
+
+# Las ramas que cuentan como «principal», en orden de preferencia después de origin/HEAD.
+RAMAS_PRINCIPALES = ("refs/heads/main", "refs/heads/master", "refs/remotes/origin/main", "refs/remotes/origin/master")
+# Caché de lectura (carpeta del proyecto, rama principal y estado de cada commit): un listado de cien nodos
+# con versión corría doscientos git. Un merge o un pull cambian el estado a lo sumo ESTADO_CODIGO_TTL_S tarde.
+ESTADO_CODIGO_TTL_S = 30.0
+# Plazo de git para clasificar todo un listado, no cada nodo: lo que no entra queda `desconocido`.
+ESTADO_CODIGO_PLAZO_S = 5.0
+_CACHE_CODIGO: dict[tuple, tuple[float, object]] = {}
+
+
+def _cacheado(clave: tuple, calcular):
+    guardado = _CACHE_CODIGO.get(clave)
+    if guardado and time.monotonic() - guardado[0] < ESTADO_CODIGO_TTL_S:
+        return guardado[1]
+    valor = calcular()
+    if len(_CACHE_CODIGO) > 1024:
+        _CACHE_CODIGO.clear()
+    _CACHE_CODIGO[clave] = (time.monotonic(), valor)
+    return valor
+
+
+def _carpeta_codigo(pid: str, cwd: str | None = None, pc: str | None = None) -> str | None:
+    """La carpeta donde trabajó la sesión si es de esta PC (un worktree, un segundo clon); si no, la única
+    carpeta del proyecto en esta PC. Con varias y sin la de la sesión no se adivina: no hay versión."""
+    local = identity.pc_id()
+    if cwd and pc in (None, "", local) and os.path.isdir(cwd):
+        return cwd
+    carpetas = [c["cwd"] for c in proyecto(pid).get("carpetas", []) if c.get("pc") in ("", local)]
+    return carpetas[0] if len(carpetas) == 1 else None
+
+
+def _codigo_actual(pid: str, cwd: str | None = None, pc: str | None = None) -> dict:
+    """HEAD, rama y si el árbol tiene cambios. Mejor esfuerzo; una sola consulta git, con plazo de 5 s."""
+    try:
+        carpeta = _carpeta_codigo(pid, cwd, pc)
+        if not carpeta:
+            return {}
+        rc, salida, _ = subproc.correr(
+            ["git", "status", "--porcelain=v2", "--branch", "--untracked-files=normal"],
+            cwd=carpeta,
+            timeout=5,
+            sin_prompts=True,
+            env={"GIT_OPTIONAL_LOCKS": "0"},
+        )
+        if rc:
+            return {}
+        cabecera = dict(line[2:].split(" ", 1) for line in salida.splitlines() if line.startswith("# "))
+        head = cabecera.get("branch.oid", "")
+        if not re.fullmatch(r"[0-9a-f]{40}", head):
+            return {}
+        return {
+            "codigo": {
+                "head": head,
+                "rama": cabecera.get("branch.head", "(detached)"),
+                "sucio": any(line and not line.startswith("# ") for line in salida.splitlines()),
+            }
+        }
+    except OSError, ValueError, Rechazo:
+        return {}
+
+
+def _rama_principal(cwd: str, plazo: float) -> str | None:
+    rc, salida, _ = subproc.correr(
+        ["git", "for-each-ref", "--format=%(refname) %(symref)", "refs/remotes/origin/HEAD", *RAMAS_PRINCIPALES],
+        cwd=cwd,
+        timeout=plazo,
+        sin_prompts=True,
+    )
+    if rc:
+        return None
+    refs = dict(line.split(" ", 1) for line in salida.splitlines() if " " in line)
+    return refs.get("refs/remotes/origin/HEAD") or next((r for r in RAMAS_PRINCIPALES if r in refs), None)
+
+
+def _estado_codigo(cwd: str | None, head, hasta: float) -> str | None:
+    """`integrado`, `en_rama` o `desconocido` para un HEAD guardado, contra la rama principal local.
+    None si se agotó el plazo del listado: eso no se cachea."""
+    if not cwd or not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
+        return "desconocido"
+    if time.monotonic() >= hasta:
+        return None
+    try:
+        principal = _cacheado(("principal", cwd), lambda: _rama_principal(cwd, max(0.1, hasta - time.monotonic())))
+        restante = hasta - time.monotonic()
+        if not principal:
+            return "desconocido"
+        if restante <= 0:
+            return None
+        rc, _, _ = subproc.correr(
+            ["git", "merge-base", "--is-ancestor", head, principal], cwd=cwd, timeout=restante, sin_prompts=True
+        )
+        return {0: "integrado", 1: "en_rama"}.get(rc, "desconocido")
+    except OSError, ValueError, Rechazo:
+        return "desconocido"
+
+
+def _con_estado_codigo(pid: str, nodos: list[dict]) -> list[dict]:
+    """Proyección de lectura de un listado: nunca persiste la clasificación ni altera lo replicado. La
+    carpeta se resuelve una vez por proyecto y git tiene ESTADO_CODIGO_PLAZO_S para todo el listado."""
+    if not any(isinstance(n.get("datos", {}).get("codigo"), dict) for n in nodos):
+        return nodos
+    try:
+        cwd = _cacheado(("carpeta", pid), lambda: _carpeta_codigo(pid))
+    except OSError, ValueError, Rechazo:
+        cwd = None
+    hasta = time.monotonic() + ESTADO_CODIGO_PLAZO_S
+    out = []
+    for n in nodos:
+        codigo = n.get("datos", {}).get("codigo")
+        if not isinstance(codigo, dict):
+            out.append(n)
+            continue
+        head = codigo.get("head") if isinstance(codigo.get("head"), str) else ""
+        clave = ("estado", cwd or "", head)
+        guardado = _CACHE_CODIGO.get(clave)
+        if guardado and time.monotonic() - guardado[0] < ESTADO_CODIGO_TTL_S:
+            estado = guardado[1]
+        else:
+            estado = _estado_codigo(cwd, head, hasta)
+            if estado is None:
+                estado = "desconocido"  # sin plazo: no se cachea, la próxima lectura lo intenta
+            else:
+                _CACHE_CODIGO[clave] = (time.monotonic(), estado)
+        out.append({**n, "datos": {**n["datos"], "codigo": {**codigo, "estado": estado}}})
+    return out
 
 
 def db_path() -> str:
@@ -1909,6 +2038,7 @@ def entregar(
     autor: str,
     origen: dict | None = None,
     revision_siguiente: bool = False,
+    codigo: dict | None = None,
 ) -> dict:
     """La entrega explicita (v5 §5.1): el informe integro con su hash, en rondas/<ronda>/informe-<letra>-r<N>.md,
     un nodo informe `recibido`, responde_a el encargo, y el encargo pasa a entregado. Idempotente por
@@ -1956,7 +2086,13 @@ def entregar(
                 pid,
                 "informe",
                 f"informe {letra} r{revision}",
-                {"ruta": ruta, "hash": sha, "revision": revision, "bytes": len(cuerpo.encode("utf-8"))},
+                {
+                    "ruta": ruta,
+                    "hash": sha,
+                    "revision": revision,
+                    "bytes": len(cuerpo.encode("utf-8")),
+                    **({"codigo": codigo} if codigo else {}),
+                },
                 autor=autor,
                 origen=origen,
                 ronda=e["ronda"],
@@ -2108,15 +2244,25 @@ def informe_capturado(pid: str, sid: str, cuerpo: str, *, ronda: str | None, ori
         ]
     if len(encargos) == 1:
         e = encargos[0]
-        return entregar(pid, e["id"], cuerpo, revision=None, revision_siguiente=True, autor="server", origen=origen)
+        return entregar(
+            pid,
+            e["id"],
+            cuerpo,
+            revision=None,
+            revision_siguiente=True,
+            autor="server",
+            origen=origen,
+            codigo=_codigo_actual(pid).get("codigo"),
+        )
     origen = {**origen, "session_id": sid, "sesion_nodo": s["id"] if s else None}
     ruta = f"capturas/informe-{sha[:16]}.md"
+    codigo = _codigo_actual(pid)
     with _abrir(pid) as con:
         n = crear_nodo(
             pid,
             "informe",
             f"informe capturado {sid[:8]}",
-            {"ruta": ruta, "hash": sha, "bytes": len(cuerpo.encode("utf-8")), "capturado": True},
+            {"ruta": ruta, "hash": sha, "bytes": len(cuerpo.encode("utf-8")), "capturado": True, **codigo},
             autor="server",
             origen=origen,
             ronda=ronda,
@@ -2609,12 +2755,13 @@ def recibir_evidencia(
     clase = _texto(clase, "clase", 40)
     sha = hashlib.sha256(contenido).hexdigest()
     ruta = f"evidencia/{sha[:16]}-{nombre}"
+    codigo = _codigo_actual(pid)
     with _abrir(pid) as con:
         n = crear_nodo(
             pid,
             "evidencia",
             texto or nombre,
-            {"clase": clase, "referencia": ruta, "hash": sha, "bytes": len(contenido), "recibida": True},
+            {"clase": clase, "referencia": ruta, "hash": sha, "bytes": len(contenido), "recibida": True, **codigo},
             autor=autor,
             origen=origen,
             clave_ingesta=f"evidencia:{sha}",
@@ -2818,6 +2965,9 @@ def capturar(
     original = texto.strip()
     guardado, recortado = _recortar(original)
     b = original.encode("utf-8")
+    procedencia = _objeto(origen, "origen")
+    if clase == "respuesta":
+        procedencia = {**procedencia, **_codigo_actual(pid, tarjeta.get("cwd"), tarjeta.get("pc"))}
     with _abrir(pid) as con:
         if clave and con.execute("SELECT 1 FROM captura WHERE clave_ingesta = ?", (clave,)).fetchone():
             return None
@@ -2839,7 +2989,7 @@ def capturar(
             "agente": tarjeta.get("agent"),
             "modelo": tarjeta.get("model"),
             "pc": tarjeta.get("pc"),
-            "origen": _json(_objeto(origen, "origen")),
+            "origen": _json(procedencia),
             "texto": guardado,
             "bytes": len(b),
             "hash": hashlib.sha256(b).hexdigest(),
@@ -2973,7 +3123,7 @@ def nodos(
             f"SELECT * FROM nodo WHERE {' AND '.join(cond)} ORDER BY fecha, id LIMIT ? OFFSET ?",
             [*args, limite, max(0, int(desde))],
         ).fetchall()
-    return {"total": total, "desde": desde, "nodos": [_fila(r) for r in filas]}
+    return {"total": total, "desde": desde, "nodos": _con_estado_codigo(pid, [_fila(r) for r in filas])}
 
 
 def nodo(pid: str, nid: str) -> dict:
@@ -2987,7 +3137,7 @@ def nodo(pid: str, nid: str) -> dict:
                 "SELECT * FROM cambio WHERE nodo_id = ? OR de = ? OR a = ? ORDER BY seq", (nid, nid, nid)
             )
         ]
-    return {**n, "vinculos": {"salen": salen, "entran": entran}, "cambios": cambios}
+    return {**_con_estado_codigo(pid, [n])[0], "vinculos": {"salen": salen, "entran": entran}, "cambios": cambios}
 
 
 def buscar(pid: str, consulta: str, *, tipo: str | None = None, limite: int = LIMITE_BUSQUEDA) -> list[dict]:
@@ -3008,7 +3158,7 @@ def buscar(pid: str, consulta: str, *, tipo: str | None = None, limite: int = LI
             ).fetchall()
         except sqlite3.OperationalError as e:
             raise _rechazo_fts(e) from e
-    return [_fila(r) for r in filas]
+    return _con_estado_codigo(pid, [_fila(r) for r in filas])
 
 
 _RELACIONES_EXPANSION = (
@@ -3068,7 +3218,7 @@ SELECT n.*, MIN(r.salto) AS salto FROM recorrido r JOIN nodo n ON n.id = r.id GR
                     f"SELECT * FROM vinculo WHERE activo = 1 AND de IN ({q}) AND a IN ({q})", [*ids, *ids]
                 )
             ]
-    out = [_fila(r) for r in filas]
+    out = _con_estado_codigo(pid, [_fila(r) for r in filas])
     for n in out:
         n["vinculos"] = [v for v in vinculos if n["id"] in (v["de"], v["a"])]
     return out
