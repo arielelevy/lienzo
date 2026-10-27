@@ -224,3 +224,57 @@ def test_tarjeta_stale_de_pc_caida_no_recibe_avisos_de_coordinadora(monkeypatch,
     monkeypatch.setattr(au, "_post", lambda base, ruta, cuerpo: enviados.append(ruta))
     au.ronda_local("http://fixture", str(tmp_path / "estado.json"), enviar=True)
     assert enviados == ["/sessions/C/send"]
+
+
+def regla(i, de, a, enabled=False, **kw):
+    return {"id": i, "kind": "on_stop", "from": de, "to": a, "repeat": True, "enabled": enabled, **kw}
+
+
+def test_informe_no_entregado_caso_opensyync_regla_apagada():
+    # L cerró con ESTADO: hace 3 min y su regla hacia K quedó apagada por un borrado rechazado
+    s = [ses("K", coord=True, desde=-30), ses("L", desde=-3, last_reply="listo.\nESTADO: L3 entregado")]
+    reglas = [regla("86e3", "L", "K", disabled_reason="borrado rechazado: hay informes pendientes de integrar")]
+    h = au.clasificar(s, [], T0, reglas=reglas)
+    assert [(x["session_id"], x["tipo"]) for x in h] == [("L", "informe_no_entregado")]
+    assert h[0]["coordinadora"] == "K" and "86e3" in h[0]["sugerencia"]
+
+
+def test_informe_no_entregado_no_avisa_si_hay_regla_viva_archivada_o_sin_estado():
+    s = [ses("K", coord=True, desde=-30), ses("L", desde=-3, last_reply="ESTADO: hecho")]
+    viva = [regla("vieja", "L", "K"), regla("nueva", "L", "K", enabled=True)]
+    assert au.clasificar(s, [], T0, reglas=viva) == []
+    assert au.clasificar(s, [], T0, reglas=[regla("a", "L", "K", archived_at="x")]) == []
+    assert au.clasificar(s, [], T0, reglas=[regla("p", "L", "K", parked_since="x")]) == []
+    assert au.clasificar(s, [], T0, reglas=[regla("u", "L", "K", repeat=False)]) == []
+    sin_estado = [ses("K", coord=True, desde=-30), ses("L", desde=-3, last_reply="sigo esperando")]
+    assert au.clasificar(sin_estado, [], T0, reglas=[regla("x", "L", "K")]) == []
+
+
+def test_informe_no_entregado_no_avisa_si_la_regla_entrego_antes_de_apagarse():
+    # la regla entregó el ESTADO (link rule después del último turno) y recién después se apagó (tope, borrado)
+    s = [ses("K", coord=True, desde=-30), ses("L", desde=-5, last_reply="ESTADO: entregado")]
+    reglas = [regla("r", "L", "K", disabled_reason="tope total alcanzado")]
+    hallazgos = au.clasificar(s, [link("e", "L", "K", -4, "rule")], T0, reglas=reglas)
+    assert "L" not in {h["session_id"] for h in hallazgos}  # K sí: recibió la entrega y no se movió
+
+
+def test_informe_no_entregado_respeta_el_marcador_de_la_regla():
+    s = [ses("K", coord=True, desde=-30), ses("L", desde=-3, last_reply="ESTADO: listo")]
+    assert au.clasificar(s, [], T0, reglas=[regla("r", "L", "K", solo_si="LISTO:")]) == []
+    s2 = [ses("K", coord=True, desde=-30), ses("L", desde=-3, last_reply="LISTO: hecho")]
+    assert tipos_r(s2, [regla("r", "L", "K", solo_si="LISTO:")])["L"] == "informe_no_entregado"
+
+
+def test_informe_no_entregado_ve_la_regla_que_quedo_en_una_coordinadora_anterior():
+    s = [ses("M", coord=True, desde=-30), ses("L", desde=-3, last_reply="ESTADO: hecho")]
+    reglas = [regla("vieja", "L", "K-muerta", parked_since="x")]
+    assert tipos_r(s, reglas)["L"] == "informe_no_entregado"
+
+
+def test_un_bloqueo_declarado_sigue_su_camino_aunque_la_regla_este_apagada():
+    s = [ses("K", coord=True, desde=-30), ses("L", desde=-40, last_reply="ESTADO: bloqueado esperando permiso")]
+    assert tipos_r(s, [regla("r", "L", "K")])["L"] == "bloqueo_olvidado"
+
+
+def tipos_r(sesiones, reglas):
+    return {h["session_id"]: h["tipo"] for h in au.clasificar(sesiones, [], T0, reglas=reglas)}

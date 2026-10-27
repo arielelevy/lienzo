@@ -1,0 +1,27 @@
+{
+  "nombre": "fdd-hoy",
+  "raiz": "..",
+  "resultados": "pruebas-agenticas/resultados/fdd-hoy",
+  "reglas": [
+    "Pedido de Ariel 2026-10-26: xfer de raíz a raíz entre PCs sin tocar la config; launch_roots cuenta como raíz de copia salvo copy_incluye_launch_roots false.",
+    "Opción A de Ariel 2026-10-26: un DELETE /rules rechazado por informes sin integrar responde 409 con conservada, desactivada y pendientes; una regla ya apagada conserva su motivo.",
+    "PENDIENTES (c) 2026-10-26: la auditoría avisa informe_no_entregado cuando un frente cerró con ESTADO: y su regla hacia la coordinadora está apagada."
+  ],
+  "precondiciones": [
+    {"nombre": "Lienzo real sirve la interfaz", "url": "http://127.0.0.1:7321/", "debeContener": "Lienzo"}
+  ],
+  "casos": [
+    {
+      "id": "e2e-lienzo-real",
+      "comando": ["py", "pruebas-agenticas/fdd_hoy_e2e.py"],
+      "timeoutMs": 120000,
+      "cubre": ["lienzo/rules.py", "lienzo/server.py", "lienzo/entregas_informes.py", "lienzo/auditoria.py", "lienzo/xfer.py"]
+    },
+    {
+      "id": "focales",
+      "comando": ["py", "-m", "pytest", "tests/test_auditoria.py", "tests/test_auditoria_envio.py", "tests/test_coordinar.py", "tests/test_backlog_root_integration.py", "tests/test_xfer.py::test_launch_roots_cuentan_como_raices_de_copia_salvo_que_se_apague", "-q", "-p", "no:cacheprovider"],
+      "timeoutMs": 180000,
+      "cubre": ["lienzo/auditoria.py", "lienzo/rules.py", "lienzo/server.py", "lienzo/entregas_informes.py", "lienzo/xfer.py", "skills/lienzo/coordinar.py"]
+    }
+  ]
+}

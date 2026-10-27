@@ -43,6 +43,22 @@ decisión antes de implementar.
 FDD trabaja dentro de esas reglas; no exige crear otro archivo de constitución
 ni duplicar instrucciones. Ante una contradicción, resolverla antes del cambio afectado.
 
+Las decisiones de diseño cerradas no se reabren, y el doc manda antes que el código: si el código va a
+contradecir un doc, primero se corrige el doc y se avisa.
+
+## Olas, maqueta y estado (lo que funcionó en `cart`, 2026-10-24)
+
+- **Olas**: una feature grande se construye en fases cortas, cada una con un criterio de aceptación
+  observable y sus pruebas escritas antes que el código; se cierra con la suite en verde, revisión y una
+  nota de estado antes de abrir la siguiente. Las dependencias entre olas van en una tabla.
+- **Maqueta primero** si hay pantallas: HTML estático en `maqueta/`, independiente del código, aprobado
+  por Ariel antes de construir.
+- **`docs/estado.md`** es lo primero que se lee al retomar un proyecto con varias olas; lo mantiene la
+  coordinadora.
+- Entre frentes: contratos fijados antes de repartir, dependencias fingidas en memoria para no quedar
+  quieto, archivos compartidos de la coordinadora (se piden con el diff), recursos aislados por letra,
+  informe con forma fija y `ESTADO:`, y revisión cruzada de dinero, seguridad y datos personales.
+
 ## Una ficha por feature
 
 El nombre es el resultado para el usuario: «acción + resultado + objeto» («avisar cuando una regla
@@ -75,6 +91,11 @@ Registrar también pruebas fallidas, no ejecutadas y límites de la verificació
 ## Próximo paso
 Una acción concreta para continuar.
 ```
+
+La ficha no copia el código: apunta a él. Nada de firmas, clases ni diseño detallado que el agente
+puede leer en el repo; guarda sólo lo que el código no dice (objetivo, lo que queda afuera, decisiones
+con su motivo, evidencia). El cómo lo decide el agente con autonomía, dentro de la constitución y la
+arquitectura.
 
 Actualizar la ficha en hitos útiles, no después de cada herramienta. Una sucesora
 debe distinguir lo propuesto, lo implementado en una rama y lo integrado.

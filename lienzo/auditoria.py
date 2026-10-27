@@ -17,6 +17,9 @@ Tipos de hallazgo:
 - `sin_coordinadora`: frentes vivos de un repo sin coordinadora viva.
 - `bloqueo_olvidado`: un frente cerró con `ESTADO: bloqueado` y sigue así pasado el vencimiento de su
   categoría (permiso 30 min, dependencia 60 min, pausa 4 h).
+- `informe_no_entregado`: un frente cerró un turno con `ESTADO:` y su regla `on_stop` hacia la
+  coordinadora está apagada (un borrado rechazado o un tope), así que el informe no le llegó. Caso de
+  opensyync del 2026-10-25: la regla L→K quedó apagada 75 min y el informe final de L se perdió.
 
 Espera legítima, que no avisa: `corriendo`, cuota agotada (`limit_until` futuro) y un bloqueo declarado
 dentro de su vencimiento (`bloqueado_permiso`, `bloqueado_dependencia`, `bloqueado_pausa`: quedan en el
@@ -59,6 +62,7 @@ AVISAN = (
     "bloqueado_humano",
     "sin_coordinadora",
     "bloqueo_olvidado",
+    "informe_no_entregado",
 )
 _BLOQUEADO = re.compile(r"ESTADO:\s*bloquead[oa]?(.*)", re.IGNORECASE | re.DOTALL)
 _CATEGORIA = (
@@ -89,10 +93,32 @@ def _min(a: dt.datetime, b: dt.datetime | None) -> float:
     return (a - b).total_seconds() / 60 if b else 0.0
 
 
-def clasificar(sesiones: list, links: list, ahora: dt.datetime, cfg: dict = CFG) -> list:
+def _regla_apagada(reglas: list, frente: str, coordinadora: str) -> dict | None:
+    """La regla `on_stop` repetida de `frente` que está apagada y debería llevarle los informes a la
+    coordinadora, si no hay otra viva hacia ella. Cuenta también la que quedó apuntando a una
+    coordinadora anterior (cambió la ★ y la regla no la siguió); no las archivadas, ni las estacionadas
+    que esperan a la sucesora de esta misma coordinadora."""
+    del_frente = [r for r in reglas if r.get("kind") == "on_stop" and r.get("from") == frente]
+    if any(r.get("enabled") and r.get("to") == coordinadora for r in del_frente):
+        return None
+    return next(
+        (
+            r
+            for r in del_frente
+            if r.get("repeat")
+            and not r.get("enabled")
+            and not r.get("archived_at")
+            and not (r.get("parked_since") and r.get("to") == coordinadora)
+        ),
+        None,
+    )
+
+
+def clasificar(sesiones: list, links: list, ahora: dt.datetime, cfg: dict = CFG, reglas: list | None = None) -> list:
     """Un hallazgo por sesión que no está trabajando ni en espera legítima. Sin efectos."""
     vivas = [s for s in sesiones if s.get("alive") and s.get("state") != "muerta" and not s.get("stopped_by")]
     coord = {s.get("repo_key"): s for s in vivas if s.get("coordinator")}
+    reglas = reglas or []
     con_regla = {}  # frente -> última entrega (link `rule`) hacia una coordinadora
     ultimo_a = {}  # sesión -> último envío o regla que recibió
     for ln in sorted(links, key=lambda x: x.get("ts") or ""):
@@ -153,6 +179,31 @@ def clasificar(sesiones: list, links: list, ahora: dt.datetime, cfg: dict = CFG)
                 }
             )
             continue
+        c = coord.get(s.get("repo_key"))
+        apagada = _regla_apagada(reglas, sid, c["session_id"]) if c and not s.get("coordinator") else None
+        cola = (s.get("last_reply") or "")[-400:]
+        # el informe llegó si hubo una entrega (link `rule`) de este frente después de su último turno:
+        # cubre la regla que entregó y recién después se apagó (un borrado, el tope total)
+        entregas = [_t(ln.get("ts")) for ln in con_regla.get(sid, {}).values()]
+        entregado = any(t and desde and t >= desde for t in entregas)
+        if (
+            apagada
+            and not entregado
+            and (apagada.get("solo_si") or "ESTADO:") in cola
+            and not _BLOQUEADO.search(cola)  # un bloqueo declarado sigue su camino (bloqueado_*, bloqueo_olvidado)
+        ):
+            # no espera a idle_min: cada minuto que pasa es un informe que la coordinadora no ve
+            out.append(
+                {
+                    **base,
+                    "tipo": "informe_no_entregado",
+                    "evidencia": f"{apagada['id']}|{s.get('state_since')}",
+                    "coordinadora": c["session_id"],
+                    "sugerencia": f"su regla {apagada['id']} está apagada ({apagada.get('disabled_reason') or 'sin motivo'}): "
+                    "leer su último informe en la tarjeta y reactivar o recablear la regla",
+                }
+            )
+            continue
         if s.get("coordinator") or quieta < cfg["idle_min"]:
             continue
         if m := _BLOQUEADO.search((s.get("last_reply") or "")[-400:]):
@@ -170,7 +221,6 @@ def clasificar(sesiones: list, links: list, ahora: dt.datetime, cfg: dict = CFG)
                 }
             )
             continue
-        c = coord.get(s.get("repo_key"))
         if c is None:
             out.append(
                 {
@@ -252,10 +302,17 @@ def agrupar(avisos: list, sesiones: list) -> dict:
     }
 
 
-def ronda(sesiones: list, links: list, previo: dict, ahora: dt.datetime | None = None, cfg: dict = CFG) -> dict:
+def ronda(
+    sesiones: list,
+    links: list,
+    previo: dict,
+    ahora: dt.datetime | None = None,
+    cfg: dict = CFG,
+    reglas: list | None = None,
+) -> dict:
     ahora = ahora or dt.datetime.now().astimezone()
     t0 = time.perf_counter()
-    hallazgos = clasificar(sesiones, links, ahora, cfg)
+    hallazgos = clasificar(sesiones, links, ahora, cfg, reglas)
     avisar, estado = filtrar(hallazgos, previo, ahora, cfg)
     return {
         "ahora": ahora.isoformat(timespec="seconds"),
@@ -306,7 +363,14 @@ def ronda_local(base: str, ruta_estado: str, enviar: bool) -> dict:
     locales = {s["session_id"] for s in sesiones if not s.get("pc") or s.get("pc") == pc}
     ahora = dt.datetime.now().astimezone()
     t0 = time.perf_counter()
-    hallazgos = [h for h in clasificar(sesiones, _get(base, "/links"), ahora) if h["session_id"] in locales]
+    try:
+        reglas = _get(base, "/rules")
+    except Exception as e:  # sin reglas se pierde sólo informe_no_entregado, no la ronda entera
+        print(f"auditoria: no se pudieron leer las reglas ({type(e).__name__}: {e})", flush=True)
+        reglas = []
+    hallazgos = [
+        h for h in clasificar(sesiones, _get(base, "/links"), ahora, reglas=reglas) if h["session_id"] in locales
+    ]
     previo = _leer_estado(ruta_estado)
     avisar, estado = filtrar(hallazgos, previo, ahora)
     r = {

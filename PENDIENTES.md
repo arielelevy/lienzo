@@ -16,7 +16,8 @@ cerraron tareas por esta decisión.
 - [ ] Evaluar constitución + FTD por feature, memoria con procedencia y versión,
   herramientas reutilizables e intercambio OKF como mejoras de Lienzo. Relevar primero
   las capacidades existentes y definir una feature piloto. Investigación y fuentes en
-  [PROPUESTA-FTD-OKF-RSC.md](PROPUESTA-FTD-OKF-RSC.md). Sin implementación ni cierres automáticos.
+  `PROPUESTA-FTD-OKF-RSC.md` (raíz local de cada PC, fuera de Git a pedido de Ariel). Sin implementación
+  ni cierres automáticos.
 - [x] **FDD para IA: sumar a FTD piezas de Feature-Driven Development y publicarla como skill propia**
   Cerrado por Ariel el 2026-10-26: publicada en https://github.com/arielelevy/fdd (v0.1, MIT); Lienzo la
   sigue desde becc90e; piloto medido (43 % menos tokens de entrada con el mapa, 5/5 en ambas).
@@ -51,6 +52,11 @@ Actualización documental: 2026-10-16. No se cerraron casillas al consolidar las
 - [ ] **Avisar desde la auditoría cuando un informe no se entregó** (punto (c) del anterior): en
   `lienzo/auditoria.py`, cruzar `idle_evitable` y el último turno con `ESTADO:` contra las reglas apagadas
   hacia la coordinadora (`coordinar.reglas_apagadas_hacia_mi()` ya las lista).
+  Implementado el 2026-10-26 como hallazgo `informe_no_entregado`: respeta el `solo_si` de la regla, no
+  avisa si el informe se entregó antes de que la regla se apagara, ve reglas que quedaron en una
+  coordinadora anterior y deja pasar un bloqueo declarado. 29 pruebas de auditoría y E2E contra el lienzo
+  real (`pruebas-agenticas/fdd-hoy.json`) en verde; falta baseline y aprobar las mutaciones propuestas.
+  Sin cerrar: lo cierra Ariel.
 - [ ] **`/exit` con trabajo en segundo plano no se puede cerrar desde el lienzo.** Claude muestra «Background
   work is running… 1. Exit and stop tasks / 2. Move to background / 3. Stay». `GET /screen` lo detecta como
   `dialog` y la tarjeta queda `te_necesita`, pero `POST /sessions/<sid>/responder {opcion:1}` contesta 409 «la
