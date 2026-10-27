@@ -124,8 +124,9 @@ Cada PC tiene su base y se replican entre sí (ver arriba y el anexo C de v5).
 Las evidencias recibidas y los informes capturados guardan `datos.codigo` con
 `head` (40 hex), `rama` (`(detached)` si HEAD está separado) y `sucio` (incluye
 archivos sin seguimiento). Las capturas de respuesta lo conservan en
-`origen.codigo`, su JSON existente. Se consulta la única carpeta del proyecto
-registrada para esta PC; con ninguna o varias no se adivina el repo.
+`origen.codigo`, su JSON existente. Se consulta la carpeta donde trabajó la sesión
+si es de esta PC (un worktree o un segundo clon cuentan); si no, la única carpeta
+del proyecto registrada para esta PC; con ninguna o varias no se adivina el repo.
 Git se ejecuta mediante `subproc.correr`, con cinco segundos de plazo y sin
 prompts. Sin repo, sin commit o ante un fallo, se guarda el artefacto igual, sin
 versión. Un reenvío idempotente conserva la versión original.
@@ -134,8 +135,9 @@ Al consultar un nodo, listar, buscar o expandir nodos se agrega a `datos.codigo`
 un `estado` calculado: `integrado` si el HEAD guardado es ancestro de la rama
 principal, `en_rama` si no lo es, `desconocido` si no puede comprobarse. Se usa
 `origin/HEAD` y, si falta, `main`, `master`, `origin/main` u `origin/master`, en
-ese orden. Son referencias locales: no se hace fetch. El plazo total de Git
-para clasificar cada nodo es de cinco segundos. `integrado` califica al commit;
+ese orden. Son referencias locales: no se hace fetch. Git tiene cinco segundos
+para clasificar todo un listado, no cada nodo: lo que no entra sale `desconocido`
+y se reintenta en la próxima lectura. `integrado` califica al commit;
 si `sucio` es true, los cambios sin commitear no quedan acreditados como integrados.
 El estado no se persiste ni se replica: cada PC lo calcula con su repo local.
 Se guarda en memoria 30 s por carpeta y commit, así un listado no corre git por cada nodo: un merge
