@@ -19,7 +19,9 @@ test("Pi sin extension activa explica como vincular el log", async ({ page }) =>
   await expect(panel.getByRole("status")).toContainText("/reload");
   await expect(panel.getByRole("status")).toContainText("--pi-only");
   await expect(panel).not.toContainText("Esta sesión todavía no recibió pedidos");
-  await expect(panel.locator(".send .quick button")).toHaveCount(0);
+  // sin los botones de texto rápido; Esc queda siempre (0.6.17: «en cualquier estado»)
+  await expect(panel.locator(".send .quick button").filter({ hasNotText: "Esc" })).toHaveCount(0);
+  await expect(panel.locator(".send .quick button", { hasText: "Esc" })).toHaveCount(1);
 });
 
 const pairs: [Session["agent"], Session["agent"]][] = [["pi", "claude"], ["pi", "codex"], ["claude", "pi"], ["codex", "pi"]];
