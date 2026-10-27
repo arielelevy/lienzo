@@ -39,7 +39,11 @@ def _local_info(path):
         info = path.lstat()
     except FileNotFoundError:
         return None
-    if path.is_symlink() or xfer.permitido(str(path)) is None or not path.is_file():
+    if path.is_symlink() or not path.is_file():
+        # en el destino hay una carpeta (u otra cosa) con ese nombre: no es un archivo que se
+        # pueda traer encima, pero no tiene que tirar abajo el preview de las demás descargas
+        return None
+    if xfer.permitido(str(path)) is None:
         raise ValueError(f"El destino no es un archivo permitido: {path.name}")
     return source.fingerprint(info)
 

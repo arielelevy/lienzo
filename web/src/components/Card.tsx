@@ -504,6 +504,12 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         if ((e.target as HTMLElement).closest("button, a, input, textarea, code")) return;
         onSelect();
       }}
+      /* click derecho en cualquier parte de la tarjeta: el mismo menú del ⋯ (y no el del navegador) */
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setMenuOpen(true);
+      }}
       onKeyDown={(e) => {
         const onCard = e.target === e.currentTarget;
         if (onCard && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !window.getSelection()?.toString()) {
