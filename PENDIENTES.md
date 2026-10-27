@@ -11,6 +11,9 @@ Fecha: 2026-10-10. Última actualización: 2026-10-22.
 Notas en [docs/releases/0.6.18.md](docs/releases/0.6.18.md). Suite completa en ar-it33940: 3898 en verde, 27
 omitidas y 8 fallas, ninguna nueva (seis también en 0.6.17, dos inestables que pasan aisladas).
 
+**Condición para 0.6.19 (pedido de Ariel, 2026-10-27):** estas ocho se corrigen antes; la 0.6.19 no sale con la
+suite completa en rojo.
+
 - [ ] **Guardar un nodo de memoria tarda 70-94 ms** (`test_conocimiento_prolog_commit::test_hook_encola_sin_exportar_en_hilo_de_escritura`,
   límite 50 ms). Mide `crear_nodo` hasta su retorno: escritura, commit y aviso al worker de Prolog. Frena la
   cola de captura, no a los agentes. Medir primero dónde se va el tiempo y después recortar.
