@@ -15,9 +15,29 @@ cerraron tareas por esta decisión.
 
 - [ ] Evaluar constitución + FTD por feature, memoria con procedencia y versión,
   herramientas reutilizables e intercambio OKF como mejoras de Lienzo. Relevar primero
-  las capacidades existentes y definir una feature piloto. Investigación y fuentes en
+  las capacidades existentes y definir una feature piloto.
+  **Evaluado el 2026-10-26** contra el código en 9646336, propuesta por propuesta:
+  constitución + ficha por feature, cubierta por FDD (`references/fdd.md`, piloto medido);
+  revisión separada, cubierta (code review obligatorio y el revisor de `consulta`); medición de
+  intervención y retrabajo, en parte (`c.trabajo`, `turn_usage.py` y la medición del piloto FDD).
+  Quedan como mejoras nuevas, abajo: memoria con versión del código, ficha enlazada al encargo,
+  exportación OKF y catálogo de herramientas. Investigación y fuentes en
   `PROPUESTA-FTD-OKF-RSC.md` (raíz local de cada PC, fuera de Git a pedido de Ariel). Sin implementación
   ni cierres automáticos.
+- [ ] **Memoria con la versión del código.** Las evidencias y creencias de `conocimiento.sqlite` no
+  guardan el commit (los «commit» del módulo son de SQLite): una sesión puede tomar como integrado algo
+  de una rama sin integrar. Agregar HEAD y rama a cada evidencia que habla de código, y que la consulta
+  distinga propuesto, en una rama e integrado. Sale de la evaluación RSC/OKF del 2026-10-26.
+- [ ] **Ficha FDD enlazada al encargo.** `coordinar.encargo(...)` registra el encargo en la memoria pero
+  no sabe de la ficha `fdd-<nombre>.md`; sumarle la ruta de la ficha para que la sucesora la encuentre
+  desde la tarjeta. Sale de la evaluación RSC/OKF del 2026-10-26.
+- [ ] **Exportación OKF de prueba.** No hay ninguna exportación a OKF (Markdown con frontmatter YAML,
+  `index.md`, `log.md`). Piloto: exportar las creencias vigentes de un proyecto, con versión explícita,
+  y comprobar que un lector independiente (Obsidian o un script) las interpreta. Sin migrar el
+  almacenamiento. Sale de la evaluación RSC/OKF del 2026-10-26.
+- [ ] **Catálogo de herramientas reutilizables.** Hoy están dispersas (`coordinar.py`, `run_allowlist`,
+  los scripts de `pruebas-agenticas/`); una lista consultable por proyecto evitaría rehacer scripts.
+  Sale de la evaluación RSC/OKF del 2026-10-26.
 - [x] **FDD para IA: sumar a FTD piezas de Feature-Driven Development y publicarla como skill propia**
   Cerrado por Ariel el 2026-10-26: publicada en https://github.com/arielelevy/fdd (v0.1, MIT); Lienzo la
   sigue desde becc90e; piloto medido (43 % menos tokens de entrada con el mapa, 5/5 en ambas).
