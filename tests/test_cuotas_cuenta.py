@@ -145,6 +145,38 @@ def test_claude_reading_sends_token_only_to_anthropic_and_parses(credentials, mo
     assert TOKEN not in json.dumps(value)
 
 
+def test_claude_enterprise_spend_without_weekly_is_visible_but_not_comparable(credentials, monkeypatch):
+    def money(amount):
+        return {"amount_minor": amount, "currency": "USD", "exponent": 2}
+
+    body = {"five_hour": None, "seven_day": None, "spend": {"enabled": True, "used": money(119), "limit": money(20000)}}
+    monkeypatch.setattr(cuotas._OPENER, "open", lambda request, timeout: FakeResponse(json.dumps(body).encode()))
+    claude = cuotas.read_claude()
+    assert claude["ok"] and claude["weekly"] is None
+    assert claude["spend"] == {"used": 1.19, "limit": 200, "currency": "USD"}
+    status = {"claude": claude, "codex": reading(51), "sugerido": "codex"}
+    assert cuotas.sugerir(status)[0] == "codex"
+    assert cuotas.aviso("claude", status) is None
+    body["spend"]["used"]["currency"] = "EUR"
+    assert not cuotas.read_claude()["ok"]
+
+
+def test_dos_cuentas_claude_usan_credenciales_separadas(credentials, tmp_path, monkeypatch):
+    second = tmp_path / "smartbi"
+    monkeypatch.setenv("LIENZO_CLAUDE_SMARTBI_DIR", str(second))
+    assert "sin iniciar sesión" in cuotas.read_claude_smartbi()["error"]
+    second.mkdir()
+    (second / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "otro-token", "subscriptionType": "pro"}}), encoding="utf-8")
+    tokens = []
+    def open_(request, timeout):
+        tokens.append(request.get_header("Authorization"))
+        return FakeResponse(json.dumps({"seven_day": {"utilization": len(tokens), "resets_at": None}}).encode())
+    monkeypatch.setattr(cuotas._OPENER, "open", open_)
+    assert cuotas.read_claude()["weekly"]["used_pct"] == 1
+    assert cuotas.read_claude_smartbi()["weekly"]["used_pct"] == 2
+    assert tokens == ["Bearer " + TOKEN, "Bearer otro-token"]
+
+
 @pytest.mark.parametrize(
     "error",
     [

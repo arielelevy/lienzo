@@ -701,6 +701,36 @@ def test_permiso_de_fondo_contestado_no_vuelve_a_ofrecer_permitir(monkeypatch):
     assert s["state"] == "termino" and s["needs"] is None
 
 
+def test_permiso_del_turno_ya_contestado_no_vuelve_mientras_corre_el_comando(monkeypatch):
+    """Medido el 2026-10-27 (opensyync, c63fe62e): el log de coda sigue mostrando el permiso del turno
+    hasta el proximo evento, mientras corre el comando aprobado. Permitir veia la pantalla sin cartel y
+    lo sacaba de la tarjeta, pero la relectura del log lo volvia a levantar con el mismo coda_at: la
+    tarjeta mostraba «Pide permiso: bash» de nuevo y el auto-aprobar lo «contestaba» cada 20 s."""
+    import sessions as ses
+    import state as st
+
+    monkeypatch.setattr(st, "log", lambda m: None)
+    monkeypatch.setattr(ses, "touch", lambda s: None)
+    monkeypatch.setattr(ses, "send_blocked", lambda s: None)
+    ask = {"tool": "bash", "cause": "command-policy", "sub": False, "at": "t-turno"}
+    act = {"running": True, "tools": 3, "last_tool": "bash", "sub": False, "last_at": "t-turno", "asking": ask}
+    monkeypatch.setattr(hooks_eventos.coda, "activity", lambda pid: act)
+    sid = "a" * 36
+    s = {"session_id": sid, "agent": "coda", "pid": 9, "state": "corriendo", "state_since": "x", "needs": None}
+    s["hooked"] = True
+    monkeypatch.setitem(ses.sessions, sid, s)
+    hooks_eventos.coda_log_activity(s)
+    assert s["state"] == "te_necesita" and s["needs"]["coda_at"] == "t-turno"
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"lines": ["┃ Ask anything..."]})
+    code, out = ses.answer_coda_ask(s, "allow")
+    assert code == 200 and out["ya_no_estaba"] and s["state"] == "corriendo"
+    hooks_eventos.coda_log_activity(s)  # el log todavia lo muestra abierto: no vuelve
+    assert s["state"] == "corriendo" and not s.get("needs")
+    act["asking"] = {**ask, "at": "t-otro"}  # un permiso nuevo si se levanta
+    hooks_eventos.coda_log_activity(s)
+    assert s["state"] == "te_necesita" and s["needs"]["coda_at"] == "t-otro"
+
+
 def test_el_dialogo_de_correr_un_workflow_cuenta_como_permiso_abierto():
     """2026-10-10: «Run a dynamic workflow?» no tiene «Approval Required»; el auto-aprobar lo daba por
     contestado sin teclear y la coda quedaba esperando. Con la opción de correrlo marcada, el Enter lo corre."""

@@ -222,6 +222,8 @@ export interface CuotaAgente {
   read_at: string | null;
   error: string | null;
   credits?: RecursoMensual | null;
+  spend?: { used: number; limit: number | null; currency: "USD" } | null;
+  organization?: string | null;
   messages?: RecursoMensual | null;
   resets_at?: string | null;
 }
@@ -236,6 +238,7 @@ export type AgenteCuota = "claude" | "codex";
 
 export interface CuotasResponse {
   claude: CuotaAgente;
+  claude_smartbi?: CuotaAgente;
   codex: CuotaAgente;
   kiro?: CuotaAgente;
   /** el de menor uso semanal entre los que tienen lectura y 5 h < 90 %; null si ninguno */

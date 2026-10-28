@@ -2733,8 +2733,11 @@ def answer_coda_ask(s: dict, decision: str) -> tuple[int, dict]:
         # se saca de la tarjeta en vez de dejar unos botones que no hacen nada (pedido de Ariel, 2026-10-10)
         with lock:
             if sessions.get(s["session_id"]) is s and (s.get("needs") or {}).get("coda_at") == coda_at:
+                # contestado, sea de fondo o del turno: el log lo sigue mostrando hasta el proximo
+                # evento y coda_log_activity lo volvia a levantar con el mismo coda_at; el auto-aprobar
+                # lo «contestaba» cada 20 s (medido el 2026-10-27, opensyync)
+                s["coda_fondo_hecho"] = coda_at
                 if abierto.get("de_fondo"):
-                    s["coda_fondo_hecho"] = coda_at
                     s["state"], s["state_since"], s["needs"] = "termino", now(), None
                 else:
                     set_state(s, "corriendo")

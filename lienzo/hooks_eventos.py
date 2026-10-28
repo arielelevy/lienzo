@@ -538,7 +538,7 @@ def coda_log_activity(s: dict) -> bool:
         )
     ask = act.get("asking") if act["running"] or _pedido_de_fondo(act) else None
     if ask and ask.get("at") == s.get("coda_fondo_hecho"):
-        ask = None  # el permiso de fondo que la pantalla ya mostro contestado (coda_fondo_en_pantalla)
+        ask = None  # el permiso que la pantalla ya mostro contestado (coda_fondo_en_pantalla, answer_coda_ask)
     needs = s.get("needs") or {}
     if (
         act["running"]

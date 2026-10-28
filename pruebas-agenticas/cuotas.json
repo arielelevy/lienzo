@@ -36,7 +36,7 @@
       "comando": [
         "py",
         "-c",
-        "import json, sys; sys.path.insert(0, 'lienzo'); import cuotas; s = cuotas.estado(refrescar=True); out = json.dumps(s, ensure_ascii=False); print(out); keys = {'ok', 'plan', 'five_hour', 'weekly', 'read_at', 'error'}; assert set(s) == {'claude', 'codex', 'sugerido', 'motivo'}; assert all(set(s[a]) == keys for a in cuotas.AGENTS); assert all(s[a]['ok'] == (s[a]['weekly'] is not None) for a in cuotas.AGENTS); cred = json.loads(cuotas.credentials_path().read_text(encoding='utf-8')); tok = cred['claudeAiOauth']['accessToken']; assert tok not in out, 'token en la salida'; print('token ausente de la salida: ok'); sys.exit(0 if all(s[a]['ok'] for a in cuotas.AGENTS) else 1)"
+        "import json, os, sys; from pathlib import Path; sys.path.insert(0, 'lienzo'); import cuotas; s = cuotas.estado(refrescar=True); out = json.dumps(s, ensure_ascii=False); paths = [cuotas.credentials_path(), Path(os.environ.get('LIENZO_CLAUDE_SMARTBI_DIR') or Path.home() / '.claude-smartbi') / '.credentials.json']; tokens = [json.loads(p.read_text(encoding='utf-8'))['claudeAiOauth']['accessToken'] for p in paths]; assert all(t not in out for t in tokens), 'token en la salida'; print(out); assert all(s[a]['ok'] for a in ('claude', 'claude_smartbi', 'codex')); assert all(s[a]['weekly'] is not None or s[a].get('spend') is not None for a in ('claude', 'claude_smartbi')); assert s['codex']['weekly'] is not None; print('cuentas leídas y tokens ausentes: ok')"
       ],
       "timeoutMs": 60000,
       "cubre": [

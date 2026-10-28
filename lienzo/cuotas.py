@@ -28,7 +28,7 @@ import kiro_quota
 import optimization_research_quota as codex_quota
 
 AGENTS = ("claude", "codex")
-NAMES = {"claude": "Claude", "codex": "Codex", "kiro": "Kiro"}
+NAMES = {"claude": "Claude", "claude_smartbi": "Claude SmartBI", "codex": "Codex", "kiro": "Kiro"}
 CLAUDE_URL = "https://api.anthropic.com/api/oauth/usage"
 CACHE_S, FAIL_CACHE_S = 300, 30
 READ_TIMEOUT = 10  # cada lector corta solo antes de esto
@@ -79,9 +79,40 @@ def _claude_window(body: dict, name: str) -> dict | None:
     return {"used_pct": _pct(window.get("utilization")), "resets_at": resets if isinstance(resets, str) else None}
 
 
-def read_claude(timeout: float = READ_TIMEOUT) -> dict:
+def _claude_spend(body: dict) -> dict | None:
+    spend = body.get("spend")
+    if not isinstance(spend, dict) or spend.get("enabled") is not True:
+        return None
+
+    def money(value):
+        if not isinstance(value, dict) or value.get("currency") != "USD" or value.get("exponent") != 2:
+            return None
+        amount = value.get("amount_minor")
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount) or amount < 0:
+            return None
+        return amount / 100
+
+    used, limit = money(spend.get("used")), money(spend.get("limit"))
+    if used is None:
+        return None
+    return {"used": used, "limit": limit, "currency": "USD"}
+
+
+def _claude_organization(config_dir: Path) -> str | None:
+    config = config_dir.parent / ".claude.json" if config_dir == Path.home() / ".claude" else config_dir / ".claude.json"
     try:
-        data = json.loads(credentials_path().read_text(encoding="utf-8"))
+        data = json.loads(config.read_text(encoding="utf-8"))
+        account = data.get("oauthAccount", {})
+        name = account.get("organizationName") if isinstance(account, dict) else None
+        return name if isinstance(name, str) and name.strip() else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def read_claude(timeout: float = READ_TIMEOUT, *, credentials: Path | None = None) -> dict:
+    path = credentials or credentials_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return _failure("sin credenciales de Claude en esta PC (.credentials.json)")
     except (OSError, ValueError) as error:
@@ -113,19 +144,29 @@ def read_claude(timeout: float = READ_TIMEOUT) -> dict:
         if not isinstance(body, dict):
             raise ValueError("no es objeto")  # noqa: TRY004 - se convierte en fallo legible abajo
         weekly, five = _claude_window(body, "seven_day"), _claude_window(body, "five_hour")
+        spend = _claude_spend(body)
     except ValueError:
         return _failure("respuesta de uso de Claude ilegible")
-    if weekly is None:
+    if weekly is None and spend is None:
         return _failure("Claude no informó el uso semanal")
     plan = oauth.get("subscriptionType")
     return {
         "ok": True,
         "plan": plan if isinstance(plan, str) else None,
+        "organization": _claude_organization(path.parent),
         "five_hour": five,
         "weekly": weekly,
+        "spend": spend,
         "read_at": _now(),
         "error": None,
     }
+
+
+def read_claude_smartbi(timeout: float = READ_TIMEOUT) -> dict:
+    directory = Path(os.environ.get("LIENZO_CLAUDE_SMARTBI_DIR") or Path.home() / ".claude-smartbi")
+    if not (directory / ".credentials.json").is_file():
+        return _failure("SmartBI sin iniciar sesión en Claude Code; configurar CLAUDE_CONFIG_DIR para esa cuenta")
+    return read_claude(timeout, credentials=directory / ".credentials.json")
 
 
 def read_codex(timeout: float = READ_TIMEOUT) -> dict:
@@ -158,7 +199,7 @@ def read_kiro(timeout: float = READ_TIMEOUT) -> dict:
     return {**_failure(""), **usage, "ok": True, "error": None}
 
 
-READERS = {"claude": read_claude, "codex": read_codex, "kiro": read_kiro}  # las pruebas los reemplazan
+READERS = {"claude": read_claude, "claude_smartbi": read_claude_smartbi, "codex": read_codex, "kiro": read_kiro}  # las pruebas los reemplazan
 _cache: dict[str, tuple[float, dict]] = {}
 _inflight: dict[str, threading.Event] = {}
 _lock = threading.Lock()
@@ -223,6 +264,8 @@ def _free(reading: dict) -> float:
 def _not_eligible(reading: dict) -> str | None:
     if not reading["ok"]:
         return reading["error"]
+    if reading["weekly"] is None:
+        return "sin cuota semanal comparable"
     five = reading["five_hour"]
     if five is not None and five["used_pct"] >= FIVE_HOURS_MAX:
         return f"{five['used_pct']:g} % usado en 5 h"
@@ -267,7 +310,7 @@ def aviso(agent: str, status: dict) -> str | None:
     if five is not None and five["used_pct"] >= FIVE_HOURS_MAX:
         parts.append(f"{NAMES[agent]} {five['used_pct']:g} % en 5 h")
     other = next(a for a in AGENTS if a != agent)
-    if status["sugerido"] == other and status[other]["weekly"]["used_pct"] < reading["weekly"]["used_pct"]:
+    if reading["weekly"] is not None and status["sugerido"] == other and status[other]["weekly"]["used_pct"] < reading["weekly"]["used_pct"]:
         parts.append(f"{NAMES[agent]} {reading['weekly']['used_pct']:g} % semanal; {NAMES[other]} tiene más margen")
     return "; ".join(parts) or None
 

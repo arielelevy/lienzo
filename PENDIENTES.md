@@ -1514,3 +1514,32 @@ La lista única de pendientes está en PENDIENTES.md.
 
 Canal cifrado de secretos: ya implementado; ver «Hecho», Plan NUC punto 1 y
 `lienzo/secretos.py`. La propuesta anterior estaba duplicada y desactualizada.
+
+### Turnos: cupos, modo exclusivo y liberación por inactividad (OpenSyync K, 2026-10-27)
+
+Medido en la ronda R7: la coordinadora tuvo que pasar el turno `motores` a mano dos veces.
+La dueña lo retenía sin ningún proceso pesado vivo, mientras otra esperaba en la cola.
+Ariel pidió que sea automático.
+
+- **Cupos por recurso.** Política `cupos: N`, por ejemplo 2 para `motores` si hay memoria
+  libre. Varios dueños a la vez, cada uno con su vencimiento.
+- **Modo exclusivo.** `exclusivo: true` al pedir el turno, para mediciones de tiempo. Espera a
+  que no haya otros dueños y bloquea nuevos otorgamientos mientras dura.
+- **Liberación por inactividad.** El dueño declara sus PIDs, o el server mira los hijos del
+  proceso de la sesión. Si en X minutos no hay un proceso pesado vivo y hay cola, el turno pasa
+  al siguiente y se le avisa al dueño anterior, que vuelve a la cola si lo pide.
+- **Aviso al otorgar.** Al siguiente de la cola se le avisa sin despertar a la coordinadora.
+
+### Registrar apagados y suspensiones de la PC (OpenSyync K, 2026-10-27)
+
+La PC se apagó o suspendió de 00:42 a 09:25. Dos Codex quedaron en «Working» con 0
+actividad: uno retomó solo al volver y el otro necesitó un Escape. La coordinadora lo
+interpretó como un cuelgue del modelo, porque nada distinguía los dos casos.
+
+- Detectar la reanudación: un salto entre el reloj monotónico y el de pared, o los eventos
+  de Windows Kernel-Power 42/107 y 1074/6006.
+- Guardar el intervalo `pausa_pc {desde, hasta}` y mostrarlo en el tablero.
+- Descontar ese intervalo en la auditoría (`idle_evitable`, «working» largo) y en los
+  vencimientos de turnos.
+- Al reanudar, revisar cada sesión que estaba `corriendo`. Si su transcript no avanza en N
+  minutos, avisar a la coordinadora que necesita un Escape y un reenvío.

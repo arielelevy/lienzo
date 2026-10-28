@@ -21,6 +21,44 @@ const lectura = (o: Partial<CuotasResponse> = {}, readAt = MEDIDO): CuotasRespon
 
 const json = (data: unknown, status = 200) => ({ status, contentType: "application/json", body: JSON.stringify(data) });
 
+test("Claude Enterprise muestra créditos sin cuota semanal y permite actualizar", async ({ page }) => {
+  const claude = { ok: true, plan: "enterprise", five_hour: null, weekly: null, spend: { used: 1.19, limit: 200, currency: "USD" as const }, read_at: MEDIDO, error: null };
+  const pedidos = await servirCuotas(page, lectura({ claude }), lectura({ claude: { ...claude, spend: { ...claude.spend, used: 2 } } }, REMEDIDO));
+  await abrirTablero(page);
+  const boton = page.getByRole("button", { name: /^Claude Code:/ });
+  await expect(boton).toContainText("Créditos: USD 1.19 usados de USD 200.00");
+  await expect(boton.locator(".cuota-uso")).toHaveCount(2);
+  const [usado, limite] = await boton.locator(".cuota-uso").all();
+  expect((await usado.boundingBox())!.y).toBeLessThan((await limite.boundingBox())!.y);
+  await expect(boton).not.toContainText("sin lectura");
+  await expect(boton).not.toHaveAttribute("title", /Semana:|5 h:/);
+  await boton.click();
+  await expect(boton).toContainText("USD 2.00 usados");
+  expect(pedidos).toEqual(["/cuotas", "/cuotas?refrescar=1"]);
+});
+
+test("muestra cuotas de Globant y SmartBI por separado", async ({ page }) => {
+  const claude = { ...lectura().claude, organization: "Globant" };
+  const claude_smartbi = { ...lectura().claude, weekly: { used_pct: 23, resets_at: null }, spend: { used: 0, limit: 0, currency: "USD" as const } };
+  await servirCuotas(page, lectura({ claude, claude_smartbi }));
+  await abrirTablero(page);
+  const botones = page.getByRole("button", { name: /^Claude Code:/ });
+  await expect(botones).toHaveCount(2);
+  await expect(botones.first()).toContainText("82 % usado semanal");
+  const smartbi = botones.nth(1);
+  await expect(smartbi).toContainText("23 % usado semanal");
+  await expect(smartbi).not.toContainText("Créditos");
+  await expect(smartbi).not.toHaveAttribute("title", /Créditos/);
+  await expect(smartbi).not.toHaveAccessibleName(/Créditos/);
+});
+
+test("avisa si SmartBI todavía no inició sesión", async ({ page }) => {
+  const claude_smartbi = { ok: false, plan: null, five_hour: null, weekly: null, read_at: MEDIDO, error: "SmartBI sin iniciar sesión en Claude Code; configurar CLAUDE_CONFIG_DIR para esa cuenta" };
+  await servirCuotas(page, lectura({ claude_smartbi }));
+  await abrirTablero(page);
+  await expect(page.getByRole("button", { name: /^Claude Code: sin iniciar sesión/ })).toBeVisible();
+});
+
 /** Antes de abrir el tablero: su `**\/*` cae con fallback a esta ruta. Devuelve las URLs pedidas. */
 async function servirCuotas(page: Page, primera: CuotasResponse, remedida?: CuotasResponse) {
   const pedidos: string[] = [];
@@ -46,7 +84,11 @@ test("lectura ok: Claude y Codex lado a lado abajo a la derecha, con su medició
   const grupo = page.getByRole("group", { name: "Cuotas de Claude, Codex y Kiro" });
   const claude = grupo.getByRole("button", { name: /^Claude Code:/ });
   const codex = grupo.getByRole("button", { name: /^Codex:/ });
-  await expect(claude).toContainText("82 % usado semanal · 11 % usado 5 h");
+  const lineas = claude.locator(".cuota-uso");
+  await expect(lineas).toHaveCount(2);
+  await expect(lineas.nth(0)).toHaveText("82 % usado semanal");
+  await expect(lineas.nth(1)).toHaveText("11 % usado 5 h");
+  expect((await lineas.nth(0).boundingBox())!.y).toBeLessThan((await lineas.nth(1).boundingBox())!.y);
   await expect(claude).toContainText(hora(MEDIDO));
   await expect(codex).toContainText("51 % usado semanal");
   await expect(codex).not.toContainText("5 h");
