@@ -5,6 +5,7 @@ import { avance, rolDe, useConsultas } from "../consultas";
 import { continueAt, useCardActions } from "../hooks/useCardActions";
 import { copyText, useLocalToast, type ToastFn } from "../hooks/useLocalToast";
 import { hhmm } from "../nl";
+import { lanzadoPor } from "../lanzado-por";
 import { canWrite, displayRepo, displayTitle, hasConsole, needsPiReload, foldPrompt, foldSentence, isFree, linkSentences, plainText, ruleSentence, shortName, titleIsPrompt, stalledReason } from "../names";
 import { CardNeeds } from "./CardNeeds";
 import { CoordinatorProposal } from "./CoordinatorProposal";
@@ -968,6 +969,7 @@ export function Card({ session: s, pending: p, rules = [], links = [], sessions 
         {s.external && !APP_DESKTOP[s.external.kind] && (
           <span className="warn external" title={s.external.kind === "batch" ? "claude -p (headless): no tiene consola; se ve, no se le escribe" : `ejecución de ${s.external.kind}${s.external.run_id ? ` (corrida ${s.external.run_id})` : ""}: se controla desde su orquestador; no se le escribe ni se la cierra desde acá`}>
             {s.external.kind === "batch" ? "headless" : s.external.kind} · solo lectura
+            {lanzadoPor(s, sessions, displayTitle)}
           </span>
         )}
         {s.no_console && !s.orphan && !s.external && <span className="warn" title={s.backend === "tmux" ? "corre suelto, fuera de tmux: se ve, no se le escribe (para escribirle, en tmux)" : "panel de Claude Code de VS Code o app de escritorio: se ve, no se le escribe"}>sin consola</span>}

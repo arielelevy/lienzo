@@ -486,6 +486,16 @@ def claude_transcript(pid: int, proc_start: int | None) -> tuple[str, str] | Non
     return (sid, path) if os.path.isfile(path) else None
 
 
+def claude_cuenta(pid: int, proc_start: int | None) -> str | None:
+    """«SmartBI» si el registro del proceso está en la carpeta de esa cuenta, «personal» si está en la
+    otra, None si no hay registro único."""
+    match = _claude_registro_config(pid, proc_start)
+    if match is None:
+        return None
+    smartbi = os.environ.get("LIENZO_CLAUDE_SMARTBI_DIR") or os.path.join(HOME, ".claude-smartbi")
+    return "SmartBI" if os.path.normcase(match[0]) == os.path.normcase(os.path.abspath(smartbi)) else "personal"
+
+
 def claude_registro(pid: int, proc_start: int | None) -> dict | None:
     """Lo que Claude Code anota de la sesion del proceso `pid`, o None. Exige `proc_start` (la creacion
     del proceso como FILETIME) igual al `procStart` anotado: el archivo de un proceso muerto puede quedar

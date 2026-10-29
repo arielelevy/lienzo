@@ -53,7 +53,32 @@ def test_external_origin_sube_por_los_padres(monkeypatch):
     arbol[11] = (1, r"C:\b\pwsh.exe")
     assert procs.external_origin(10) is None  # una terminal personal
     monkeypatch.setattr(procs.procinfo, "command_line", lambda pid: '"C:\\b\\claude.exe" -p "hola"')
-    assert procs.external_origin(10) == {"kind": "batch", "via": "comando"}
+    assert procs.external_origin(10) == {"kind": "batch", "via": "comando", "launcher": None}
+
+
+def test_claude_p_sin_transcripcion_dice_quien_lo_lanzo(monkeypatch):
+    """Medido 2026-10-29: graphify (uv, python -m) lanzado desde la sesión SmartBI corre `claude -p
+    --no-session-persistence`; la tarjeta dice la herramienta y el agente de arriba."""
+    arbol = {
+        18640: (8508, r"C:\b\claude.exe"),
+        8508: (3024, r"C:\uv\python.exe"),
+        3024: (2356, r"C:\uv\python.exe"),
+        2356: (22556, r"C:\u\.local\bin\graphify.exe"),
+        22556: (16148, r"C:\Git\bash.exe"),
+        16148: (1, r"C:\u\.local\bin\claude.exe"),
+    }
+    lineas = {18640: "claude -p --no-session-persistence", 8508: "python.exe -m graphify extract D:/x", 16148: "claude"}
+    monkeypatch.setattr(procs, "proc_info", lambda pid: arbol.get(pid, (None, None)))
+    monkeypatch.setattr(procs.procinfo, "command_line", lambda pid: lineas.get(pid, ""))
+    monkeypatch.setattr(procs, "creation_filetime", lambda pid: 5)
+    monkeypatch.setattr(
+        procs.agentes, "claude_cuenta", lambda pid, start: "SmartBI" if (pid, start) == (16148, 5) else None
+    )
+    assert procs.launcher_of(18640) == {"tool": "graphify", "pid": 16148, "agent": "claude", "cuenta": "SmartBI"}
+    fila = {"pid": 18640, "parent": "python.exe", "exe": r"C:\b\claude.exe", "cmd": lineas[18640]}
+    assert procs.external_of_row(fila)["launcher"]["tool"] == "graphify"
+    del arbol[22556]  # sin agente arriba: queda la herramienta sola
+    assert procs.launcher_of(18640) == {"tool": "graphify", "pid": None, "agent": None, "cuenta": None}
 
 
 def test_claim_pid_marca_externa_y_sin_consola(monkeypatch):

@@ -311,6 +311,12 @@ function ChromeWindow({peer, standby = false, onDesktop, toolbarSlot}: {peer: Pe
   }, []);
   // cambiar de ventana no abre otro canal ni otro worker: se le pide la nueva al mismo
   useEffect(() => { openWindow(socket.current); }, [window, openWindow]);
+  // el aviso de entrada es pasajero: se va solo a los 40 s
+  useEffect(() => {
+    if (!inputError) return;
+    const timer = setTimeout(() => setInputError(''), 40000);
+    return () => clearTimeout(timer);
+  }, [inputError]);
   useEffect(() => {
     if (!peer.alive || error) return;
     let cancelled = false;
@@ -328,10 +334,12 @@ function ChromeWindow({peer, standby = false, onDesktop, toolbarSlot}: {peer: Pe
     const blockInputs = (error: Error) => {
       blocked = true; setInputBlocked(true);
       rejectInputs(error);
+      // se reconecta solo: el canal nuevo arranca sin lo pendiente, así que nada se reenvía
       const ws = socket.current;
-      if (ws?.readyState === WebSocket.OPEN) {
+      if (ws && ws.readyState <= WebSocket.OPEN) {
         try { ws.send(JSON.stringify({t:'release'})); }
-        catch { ws.close(); } // el cierre también libera sólo las teclas/botones propios del worker
+        catch { /* el cierre también libera sólo las teclas/botones propios del worker */ }
+        ws.close();
       }
     };
     let frames = 0, bytes = 0, since = performance.now();
@@ -532,7 +540,7 @@ function ChromeWindow({peer, standby = false, onDesktop, toolbarSlot}: {peer: Pe
             setInputError(''); socket.current.send(JSON.stringify({t: 'copy'}));
           }} />
       : <div className="remote-empty">Cargando ventana de Chrome…</div>}
-    {inputError && <div className="remote-input-warning" role="alert">{inputError}{inputBlocked && <button onClick={()=>socket.current?.close()}>Reconectar entrada sin reenviar</button>}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
+    {inputError && <div className="remote-input-warning" role="alert">{inputError}<button aria-label="Cerrar aviso de entrada" onClick={()=>setInputError('')}>×</button></div>}
     {notice && <div className="remote-capture-notice" role="status">{notice}</div>}
     {/* una copia hecha allá (menú contextual, botón de la página) se anuncia sin su contenido y se
         trae sólo con este clic. El texto llega después por el canal: igual que con Ctrl+C, un

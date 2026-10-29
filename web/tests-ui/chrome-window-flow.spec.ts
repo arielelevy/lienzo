@@ -45,7 +45,7 @@ test('ventana limita hover sin ACK, conserva el último y no pierde clics', asyn
   expect(ids.every((id,index)=>index===0||id>ids[index-1])).toBeTruthy();
 });
 
-for (const failure of ['timeout', 'rejected'] as const) test(`ventana bloquea ${failure}, libera y no reenvía tras ACK tardío`, async ({page}) => {
+for (const failure of ['timeout', 'rejected'] as const) test(`ventana bloquea ${failure}, libera, se reconecta sola y no reenvía`, async ({page}) => {
   await page.clock.install();
   const {screen,commands,reply}=await nativeFlow(page);
   await screen.focus();
@@ -57,13 +57,25 @@ for (const failure of ['timeout', 'rejected'] as const) test(`ventana bloquea ${
   if(failure==='timeout') await page.clock.runFor(10100);
   else reply(JSON.stringify({t:'error',input:true,n:original[0].n,message:'Cambió la ventana activa'}));
   await expect(screen).toHaveAttribute('aria-disabled','true');
-  await expect(page.getByRole('button',{name:'Reconectar entrada sin reenviar'})).toBeVisible();
+  const warning=page.locator('.remote-input-warning');
+  await expect(warning).toBeVisible();
+  await expect(page.getByRole('button',{name:'Reconectar entrada sin reenviar'})).toHaveCount(0);
   await expect.poll(()=>commands.filter(d=>d.t==='release').length).toBeGreaterThan(released);
+  const opens=commands.filter(d=>d.t==='open').length;
+  await page.clock.runFor(1100);
+  await expect.poll(()=>commands.filter(d=>d.t==='open').length).toBeGreaterThan(opens);
+  await expect(screen).not.toHaveAttribute('aria-disabled','true');
+  await expect(warning).toBeVisible();
+  await page.clock.runFor(40000);
+  await expect(warning).toHaveCount(0);
   for(const command of original) reply(JSON.stringify({t:'input',n:command.n}));
+  await screen.focus();
   await page.keyboard.press('b');
   await page.clock.runFor(100);
-  expect(commands.filter(d=>d.t==='input')).toEqual(original);
-  await expect(screen).toHaveAttribute('aria-disabled','true');
+  await expect.poll(()=>commands.filter(d=>d.t==='input').length).toBeGreaterThan(original.length);
+  const after=commands.filter(d=>d.t==='input');
+  expect(after.slice(0,original.length)).toEqual(original);
+  expect(after.slice(original.length).some(c=>JSON.stringify(c.events)===JSON.stringify(original[0].events))).toBe(false);
 });
 
 test('ventana libera tecla retenida al blur y antes de cambiar destino', async ({page}) => {

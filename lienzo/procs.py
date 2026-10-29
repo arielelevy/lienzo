@@ -149,6 +149,43 @@ def _claude_cmd_batch(exe: str | None, cmdline: str | None) -> bool:
     return procinfo.claude_batch(procinfo.command_args(cmdline)[1:])
 
 
+INTERPRETERS = {"python.exe", "pythonw.exe", "node.exe", "bun.exe", "uv.exe", "uvx.exe"}
+LAUNCHER_HOPS = 12  # claude -p <- python <- python <- graphify <- bash x3 <- claude: con margen
+
+
+def _tool_name(exe: str | None, cmdline: str | None) -> str | None:
+    """El nombre de la herramienta de un ancestro: `graphify` para graphify.exe o para `python -m graphify`;
+    None para una shell o un intérprete sin módulo reconocible."""
+    name = os.path.basename(exe or "").lower()
+    if name in SHELLS:
+        return None
+    if name in INTERPRETERS:
+        args = procinfo.command_args(cmdline or "")
+        if "-m" in args[1:-1]:
+            return args[args.index("-m", 1) + 1]
+        return None
+    return name.removesuffix(".exe") or None
+
+
+def launcher_of(pid: int | None) -> dict | None:
+    """Quién lanzó un `claude -p`, para mostrarlo cuando no deja transcripción: la herramienta (el primer
+    ancestro que no es shell ni intérprete pelado) y el agente más cercano, con su cuenta de Claude."""
+    if not pid:
+        return None
+    tool, hop = None, int(pid)
+    for _ in range(LAUNCHER_HOPS):
+        parent, _exe = proc_info(hop)
+        if not parent or parent == hop:
+            break
+        exe, cmd = proc_info(parent)[1], procinfo.command_line(parent)
+        if agent := agent_of(exe or "", cmd):
+            cuenta = agentes.claude_cuenta(parent, creation_filetime(parent)) if agent == "claude" else None
+            return {"tool": tool, "pid": parent, "agent": agent, "cuenta": cuenta}
+        tool = tool or _tool_name(exe, cmd)
+        hop = parent
+    return {"tool": tool, "pid": None, "agent": None, "cuenta": None} if tool else None
+
+
 def external_origin(pid: int | None) -> dict | None:
     """Si el agente `pid` es una ejecucion externa, de que tipo: `{"kind": <tipo>, "runner_pid": N,
     "via": "proceso"}` si un ancestro es un lanzador de EXTERNAL_RUNNERS, `{"kind": "batch", "via":
@@ -173,7 +210,7 @@ def external_origin(pid: int | None) -> dict | None:
             return {"kind": tipo, "runner_pid": parent, "via": "proceso"}
         hop = parent
     if _claude_cmd_batch(exe0, procinfo.command_line(int(pid))):
-        return {"kind": "batch", "via": "comando"}
+        return {"kind": "batch", "via": "comando", "launcher": launcher_of(int(pid))}
     return None
 
 
@@ -194,7 +231,7 @@ def external_of_row(p: dict) -> dict | None:
         if tipo := procinfo.external_runner(p.get(k)):
             return {"kind": tipo, "runner_pid": None, "via": "proceso"}
     if _claude_cmd_batch(p.get("exe"), p.get("cmd")):
-        return {"kind": "batch", "via": "comando"}
+        return {"kind": "batch", "via": "comando", "launcher": launcher_of(p.get("pid"))}
     return None
 
 

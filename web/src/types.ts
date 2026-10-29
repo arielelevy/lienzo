@@ -462,6 +462,8 @@ export interface ExternalRun {
   /** Claude Desktop: el nombre con que figura en ListAgents (registro de Claude Code) */
   canal?: string | null;
   runner_pid?: number | null;
+  /** claude -p: la herramienta que lo lanzó y el agente más cercano en su árbol de procesos */
+  launcher?: { tool: string | null; pid: number | null; agent: string | null; cuenta: string | null } | null;
   run_key?: string;
   run_id?: string;
   capability?: string;
