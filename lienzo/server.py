@@ -50,6 +50,7 @@ import console_titles
 import consulta
 import cuenta_github
 import cuotas
+import cuotas_federadas
 import downloads
 import federation
 import file_viewer
@@ -2119,7 +2120,9 @@ class Handler(JsonHandler):
                 return self._json(200, agent_improvements.status())
             if parts == ["cuotas"]:
                 # uso de Claude y Codex (lo de /usage y /status) y la sugerencia; ?refrescar=1 fuerza leer
-                return self._json(200, cuotas.estado(refrescar=self.query.get("refrescar") == ["1"]))
+                refresh = self.query.get("refrescar") == ["1"]
+                local = cuotas.estado(refrescar=refresh)
+                return self._json(200, cuotas_federadas.estado(local, mirror.MIRROR.peers_status(), mirror.MIRROR.forward, refresh))
             if parts == ["agent-improvements", "scheduler"]:
                 try:
                     return self._json(200, optimization_scheduler.get().status())
@@ -2962,6 +2965,9 @@ class PeerHandler(JsonHandler):
             return self._json(200, _local_state())
         if method == "GET" and rest == ["health"]:
             return self._json(200, health.snapshot())
+        if method == "GET" and rest == ["cuotas"]:
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            return self._json(200, cuotas.estado(refrescar=query.get("refrescar") == ["1"]))
         if method == "POST" and rest == ["run"]:
             code, res = remote_run.run(self._body_json(raw), pc_id)
             return self._json(code, res)

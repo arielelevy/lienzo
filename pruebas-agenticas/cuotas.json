@@ -15,6 +15,7 @@
         "-m",
         "pytest",
         "tests/test_cuotas_cuenta.py",
+        "tests/test_cuotas_federadas.py",
         "tests/test_cuotas.py",
         "tests/test_ola2_server.py",
         "tests/test_tools.py",

@@ -224,6 +224,8 @@ export interface CuotaAgente {
   credits?: RecursoMensual | null;
   spend?: { used: number; limit: number | null; currency: "USD" } | null;
   organization?: string | null;
+  source_pc?: string;
+  source_name?: string;
   messages?: RecursoMensual | null;
   resets_at?: string | null;
 }

@@ -89,6 +89,7 @@ export function Cuotas() {
         {a === "kiro" && <>{c.messages && <span className="cuota-uso">{mensual("Mensajes por mes", c.messages)}</span>}<span className="cuota-medido">Renueva {c.resets_at ?? "no informado"}</span></>}
         <span className="cuota-medido">{midiendo ? "midiendo…" : fallo ? "no se pudo medir" : medido ?? "sin medición"}</span>
         {anterior && <span className="cuota-medido" role="status">Última lectura · actualización fallida</span>}
+        {c.source_name && <span className="cuota-medido">Desde {c.source_name}</span>}
       </button>;
     })}
   </div>;

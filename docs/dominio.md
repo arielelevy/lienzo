@@ -44,6 +44,8 @@ dónde vive. La arquitectura está en DISENO.es.md; las decisiones de producto, 
   `lienzo/pairing.py`, `lienzo/beacon.py`, `lienzo/health.py`; `~/.lienzo/peers.json`.
 - **Espejo**: las sesiones, reglas y links de cada peer, en memoria; reenvía a la PC dueña.
   `lienzo/mirror.py`.
+- **Cuota de cuenta**: lectura local en `lienzo/cuotas.py`; `cuotas_federadas.py` consulta `/peer/cuotas`
+  firmado cuando otra PC puede aportar una lectura. La lectura local válida prevalece y las cuentas no se suman.
 - **Trabajo de copia (xfer)**: copia por bloques verificados entre PCs, dentro de `copy_roots` o
   `launch_roots`. `lienzo/xfer.py`.
 - **Secreto**: un token cifrado de un solo uso entre PCs. `lienzo/secretos.py`.

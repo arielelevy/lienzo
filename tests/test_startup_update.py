@@ -29,7 +29,7 @@ def run_results(monkeypatch, results):
 def test_current_checkout_does_not_build(monkeypatch):
     calls = run_results(monkeypatch, [(0, "old"), (0, ""), (0, "")])
     assert updater.update() == 0
-    assert calls[1][0] == ["git", "pull", "--ff-only"]
+    assert calls[1][0] == ["git", "pull", "--ff-only", "--no-rebase"]
     assert len(calls) == 3
 
 

@@ -231,11 +231,13 @@ test("refresca solo cada 5 min, no antes", async ({ page }) => {
 
 test("Kiro muestra créditos mensuales, mensajes desconocidos y renovación; refresca sin inventar cuota semanal", async ({ page }, testInfo) => {
   const kiro = { ok: true, plan: "KIRO PRO", five_hour: null, weekly: null,
+    source_pc: "otra", source_name: "Notebook",
     credits: { used: 130.37, limit: 1000, available: 869.63 }, messages: null,
     resets_at: "2026-11-01", read_at: MEDIDO, error: null };
   const pedidos = await servirCuotas(page, lectura({ kiro }), lectura({ kiro: { ...kiro, read_at: REMEDIDO } }));
   await abrirTablero(page);
   const boton = page.getByRole("button", { name: /^Kiro/ });
+  await expect(boton).toContainText("Desde Notebook");
   await expect(boton).toContainText("130.37 usados · 869.63 disponibles de 1000");
   // sin rótulos en la tarjeta: «Créditos por mes» sólo en el aria-label y sin línea de mensajes no informados
   await expect(boton).not.toContainText("Créditos por mes");

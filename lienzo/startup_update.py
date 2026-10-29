@@ -19,8 +19,9 @@ def update() -> int:
             text=True,
             check=True,
         ).stdout.strip()
+        # --no-rebase: con pull.rebase=true, git se niega a tirar con el árbol sucio aunque no haya nada que bajar.
         result = subprocess.run(
-            ["git", "pull", "--ff-only"],
+            ["git", "pull", "--ff-only", "--no-rebase"],
             cwd=ROOT,
             stdin=subprocess.DEVNULL,
             capture_output=True,

@@ -375,7 +375,7 @@ def test_get_cuotas_route_is_wired():
     source = Path(server.__file__).read_text(encoding="utf-8")
     assert (
         'if parts == ["cuotas"]:' in source
-        and 'cuotas.estado(refrescar=self.query.get("refrescar") == ["1"])' in source
+        and 'cuotas_federadas.estado(local, mirror.MIRROR.peers_status(), mirror.MIRROR.forward, refresh)' in source
     )
 
 
