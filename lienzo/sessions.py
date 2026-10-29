@@ -44,6 +44,7 @@ import transcripts
 # (monkeypatch.setattr(ses, "guess_transcript", ...)).
 from agentes import (  # noqa: F401
     BIRTH_MARGIN_S,
+    claude_transcript,
     codex_desktop_threads,
     guess_claude,
     guess_codex,
@@ -1722,7 +1723,11 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
     if perfil(s["agent"]).identity_key is not None and not pi_session and not pi_guess:
         return
     cwd = s.get("cwd") or backend.cwd_of(s)
-    sid, tpath = (
+    exacta_claude = (
+        claude_transcript(s["pid"], procs.creation_filetime(s["pid"]))
+        if s["agent"] == "claude" and s.get("backend") != "tmux" else None
+    )
+    sid, tpath = exacta_claude or (
         pi_session
         if perfil(s["agent"]).identity_key is not None and pi_session
         else guess_transcript(s["agent"], cwd, s.get("started"), transcript_home(s))
@@ -1816,6 +1821,8 @@ def adopt_process(p: dict) -> None:
         sid, tpath = p.get("pi_session") or (None, None)
     else:
         exacta = p.get("pi_session") or p.get("coda_session") or p.get("kiro_session")
+        if p["agent"] == "claude" and p.get("backend") != "tmux":
+            exacta = claude_transcript(p["pid"], procs.creation_filetime(p["pid"]))
         sid, tpath = exacta or guess_transcript(p["agent"], cwd, p.get("created"), transcript_home(p))
         adivinada = not exacta  # por carpeta y fecha: puede ser la de otra sesion
     with lock:

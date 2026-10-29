@@ -25,6 +25,7 @@ import urllib.request
 from pathlib import Path
 
 import kiro_quota
+import launch
 import optimization_research_quota as codex_quota
 
 AGENTS = ("claude", "codex")
@@ -170,7 +171,7 @@ def read_claude_smartbi(timeout: float = READ_TIMEOUT) -> dict:
 
 
 def read_codex(timeout: float = READ_TIMEOUT) -> dict:
-    reading = codex_quota.read_codex(timeout=timeout)
+    reading = codex_quota.read_codex(timeout=timeout, exe=launch._exe_path("codex.exe"))
     if not reading.get("ok"):
         return _failure(f"cuota de Codex: {reading.get('error')}")
     five = None
@@ -188,7 +189,7 @@ def read_codex(timeout: float = READ_TIMEOUT) -> dict:
 
 def read_kiro(timeout: float = READ_TIMEOUT) -> dict:
     try:
-        usage = kiro_quota.read_usage(timeout)
+        usage = kiro_quota.read_usage(timeout, exe=launch._exe_path("kiro-cli.exe"))
     except (OSError, ValueError, KeyError, TypeError, queue.Empty) as error:
         return {
             **_failure(f"uso de Kiro no disponible: {type(error).__name__}"),
@@ -206,6 +207,15 @@ _lock = threading.Lock()
 _generation = 0  # olvidar() la sube: una lectura de antes no escribe en la caché nueva
 
 
+def _conservar(value: dict, previous: dict | None) -> dict:
+    """El fallo sigue siendo fallo; conserva los datos y la fecha de la última medición."""
+    if not value["ok"] and previous is not None and any(
+        previous.get(key) is not None for key in ("weekly", "spend", "credits", "messages")
+    ):
+        return {**previous, "ok": False, "error": value["error"]}
+    return value
+
+
 def _run(agent: str, done: threading.Event, generation: int) -> None:
     try:
         value = READERS[agent]()
@@ -213,6 +223,8 @@ def _run(agent: str, done: threading.Event, generation: int) -> None:
         value = _failure(f"lectura de {NAMES[agent]} fallida: {type(error).__name__}")
     with _lock:
         if generation == _generation:
+            previous = _cache.get(agent)
+            value = _conservar(value, previous[1] if previous else None)
             _cache[agent] = (time.monotonic(), value)
             if _inflight.get(agent) is done:
                 del _inflight[agent]
@@ -252,8 +264,10 @@ def leer_todas(refrescar: bool = False, espera: float = READ_TIMEOUT + 5, *, age
         else:
             value.wait(max(0.0, deadline - time.monotonic()))
             with _lock:
-                hit = _cache.get(agent) if value.is_set() else None
-            result[agent] = hit[1] if hit else _failure(f"la lectura de {NAMES[agent]} no volvió en {espera:g} s")
+                hit = _cache.get(agent)
+            result[agent] = hit[1] if hit and value.is_set() else _conservar(
+                _failure(f"la lectura de {NAMES[agent]} no volvió en {espera:g} s"), hit[1] if hit else None
+            )
     return result
 
 

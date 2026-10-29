@@ -266,6 +266,15 @@ export function leerCuotas(forzar = false): Promise<CuotasResponse> {
     if (!d || !esCuota(d.claude) || !esCuota(d.codex)) throw new Error("respuesta de /cuotas con otra forma");
     // una lectura pedida antes que la que ya está (un click mientras esta volvía) no la pisa
     if (cuotasCache && cuotasCache.t > inicio) return cuotasCache.data;
+    // Conserva también lecturas federadas cuando la PC de origen deja de responder.
+    for (const agent of ["claude", "claude_smartbi", "codex", "kiro"] as const) {
+      const anterior = cuotasCache?.data[agent];
+      const actual = d[agent];
+      if (anterior && actual && !actual.ok && !actual.weekly && !actual.spend && !actual.credits && !actual.messages &&
+          (anterior.weekly || anterior.spend || anterior.credits || anterior.messages)) {
+        d[agent] = { ...anterior, ok: false, error: actual.error };
+      }
+    }
     cuotasCache = { t: inicio, data: d };
     return d;
   }).finally(() => { if (cuotasEnCurso === pedido) cuotasEnCurso = null; });

@@ -13,6 +13,9 @@ dónde vive. La arquitectura está en DISENO.es.md; las decisiones de producto, 
   `lienzo/hook.py` y se aplica a la tarjeta en `lienzo/hooks_eventos.py`.
 - **Transcripción / turno**: la conversación leída por la cola; el último turno da `last_reply`.
   `lienzo/transcripts.py`.
+  Claude identifica las cuentas de `CLAUDE_CONFIG_DIR` y `LIENZO_CLAUDE_SMARTBI_DIR` por su registro
+  `sessions/<pid>.json`, verificando `procStart`; el barrido usa el `sessionId` exacto para leer
+  la conversación de esa cuenta (`agentes.py`, `sessions.py`).
 - **Envío**: texto tecleado (o encolado, en Codex) a una sesión. `lienzo/send.py`, `lienzo/codex_queue.py`;
   la entrada HTTP es `POST /sessions/<sid>/send`.
 - **Lanzamiento / restauración / sucesión**: abrir una sesión nueva (`lienzo/launch.py`), relanzarla tras un

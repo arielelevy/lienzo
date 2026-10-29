@@ -86,12 +86,12 @@ def test_codex_reading_shape(monkeypatch):
     monkeypatch.setattr(
         cuotas.codex_quota,
         "read_codex",
-        lambda timeout: {"ok": True, **codex_quota._parse(rate(window(10080, 51), None))},
+        lambda timeout, exe=None: {"ok": True, **codex_quota._parse(rate(window(10080, 51), None))},
     )
     value = cuotas.read_codex()
     assert value["ok"] and value["five_hour"] is None and value["weekly"]["used_pct"] == 51
     assert value["weekly"]["resets_at"].startswith("2026-") and value["plan"] == "prolite"
-    monkeypatch.setattr(cuotas.codex_quota, "read_codex", lambda timeout: {"ok": False, "error": "codex no encontrado"})
+    monkeypatch.setattr(cuotas.codex_quota, "read_codex", lambda timeout, exe=None: {"ok": False, "error": "codex no encontrado"})
     assert cuotas.read_codex() == {**cuotas.read_codex(), "ok": False, "five_hour": None, "weekly": None}
 
 
@@ -230,6 +230,29 @@ def test_failures_are_cached_briefly(readers, monkeypatch):
     monkeypatch.setattr(cuotas.time, "monotonic", lambda: clock)
     cuotas.estado()
     assert readers["calls"] == {"claude": 2, "codex": 1}
+
+
+def test_failure_preserves_last_measurement_without_recommending_it(readers):
+    previous = cuotas.estado()["codex"]
+    readers["values"]["codex"] = failed("sin respuesta nueva")
+    for _ in range(2):
+        status = cuotas.estado(refrescar=True)
+        assert status["codex"] == {**previous, "ok": False, "error": "sin respuesta nueva"}
+        assert status["sugerido"] == "claude"
+    readers["values"]["codex"] = reading(23)
+    assert cuotas.estado(refrescar=True)["codex"] == reading(23)
+
+
+def test_timeout_preserves_last_measurement(readers):
+    previous = cuotas.estado()["codex"]
+    release = threading.Event()
+    readers["values"]["codex"] = lambda: (release.wait(5), reading(25))[1]
+    try:
+        value = cuotas.estado(refrescar=True, espera=0.05)["codex"]
+        assert not value["ok"] and "no volvió" in value["error"]
+        assert value["weekly"] == previous["weekly"] and value["read_at"] == previous["read_at"]
+    finally:
+        release.set()
 
 
 def test_slow_reader_does_not_hold_the_other(readers):

@@ -360,6 +360,64 @@ def test_claude_registro_solo_del_mismo_proceso_y_sin_el_pipe(tmp_path, monkeypa
     assert agentes.claude_registro(3568, 134367221876782859) is None
 
 
+def _cuenta_smartbi(tmp_path, monkeypatch):
+    base = tmp_path / "smartbi"
+    monkeypatch.setenv("LIENZO_CLAUDE_SMARTBI_DIR", str(base))
+    reg = _registro(tmp_path, monkeypatch, entrypoint="cli", cwd=r"D:\Apps")
+    source = tmp_path / "claude" / "sessions" / "3568.json"
+    target = base / "sessions" / source.name
+    target.parent.mkdir(parents=True)
+    target.write_bytes(source.read_bytes())
+    source.unlink()
+    path = base / "projects" / state.claude_slug(reg["cwd"]) / (reg["sessionId"] + ".jsonl")
+    path.parent.mkdir(parents=True)
+    path.write_text("", encoding="utf-8")
+    return reg, path
+
+
+def test_smartbi_identity_is_exact_and_rejects_recycled_or_ambiguous_pid(tmp_path, monkeypatch):
+    reg, path = _cuenta_smartbi(tmp_path, monkeypatch)
+    start = int(reg["procStart"])
+    assert agentes.claude_transcript(3568, start) == (reg["sessionId"], str(path))
+    assert agentes.claude_registro(3568, start)["entrypoint"] == "cli"
+    assert agentes.claude_transcript(3568, start + 1) is None
+    assert agentes.claude_transcript(3568, None) is None
+    assert agentes.claude_transcript(4000, start) is None
+    # Un registro coincidente en otra cuenta es ambiguo: no elegir por orden.
+    _registro(tmp_path, monkeypatch, entrypoint="cli", cwd=r"D:\Apps")
+    assert agentes.claude_transcript(3568, start) is None
+    assert agentes.claude_registro(3568, start) is None
+
+
+def test_smartbi_missing_transcript_or_invalid_session_id_is_not_adopted(tmp_path, monkeypatch):
+    reg, path = _cuenta_smartbi(tmp_path, monkeypatch)
+    path.unlink()
+    assert agentes.claude_transcript(3568, int(reg["procStart"])) is None
+    reg["sessionId"] = "../otra"
+    (path.parents[2] / "sessions" / "3568.json").write_text(json.dumps(reg), encoding="utf-8")
+    assert agentes.claude_transcript(3568, int(reg["procStart"])) is None
+
+
+@pytest.mark.parametrize("provisoria", [False, True])
+def test_smartbi_process_adopts_its_conversation_without_guessing(tmp_path, monkeypatch, provisoria):
+    reg, path = _cuenta_smartbi(tmp_path, monkeypatch)
+    monkeypatch.setattr(procs, "creation_filetime", lambda pid: int(reg["procStart"]))
+    monkeypatch.setattr(sessions, "guess_transcript", lambda *a: pytest.fail("no debe adivinar una identidad exacta"))
+    monkeypatch.setattr(sessions, "refresh_from_transcript", lambda s: False)
+    process = {"pid": 3568, "agent": "claude", "backend": "win32", "exe": CLI_CLAUDE, "cwd": reg["cwd"]}
+    if provisoria:
+        card = sessions.new_session("pid-3568", "claude", "sweep")
+        card.update(pid=3568, backend="win32", cwd=reg["cwd"])
+        state.sessions[card["session_id"]] = card
+        sessions.attach_transcript(card)
+        assert "pid-3568" not in state.sessions
+    else:
+        sessions.adopt_process(process)
+    card = state.sessions[reg["sessionId"]]
+    assert card["pid"] == 3568 and card["transcript_path"] == str(path)
+    assert not card["no_console"]
+
+
 def test_external_origin_prefiere_el_registro_y_trae_el_canal(tmp_path, monkeypatch):
     _registro(tmp_path, monkeypatch)
     monkeypatch.setattr(procs, "creation_filetime", lambda pid: 134367221876782859)

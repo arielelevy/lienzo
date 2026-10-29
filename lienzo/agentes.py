@@ -450,20 +450,50 @@ def guess_codex(cwd: str, t0: float, home: str = HOME) -> tuple[str | None, str 
 CLAUDE_REGISTRO_CAMPOS = ("sessionId", "entrypoint", "name", "kind", "status", "version", "peerProtocol")
 
 
+def _claude_registro_config(pid: int, proc_start: int | None) -> tuple[str, dict] | None:
+    """Registro único del proceso entre las cuentas configuradas; nunca lee pipes ni claves."""
+    if not pid or proc_start is None:
+        return None
+    bases = {
+        os.path.normcase(os.path.abspath(base)): os.path.abspath(base)
+        for base in (
+            os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude"),
+            os.environ.get("LIENZO_CLAUDE_SMARTBI_DIR") or os.path.join(HOME, ".claude-smartbi"),
+        )
+    }
+    matches = []
+    for base in bases.values():
+        try:
+            with open(os.path.join(base, "sessions", f"{int(pid)}.json"), encoding="utf-8") as f:
+                reg = json.load(f)
+        except OSError, ValueError:
+            continue
+        if isinstance(reg, dict) and reg.get("pid") == int(pid) and str(reg.get("procStart")) == str(proc_start):
+            matches.append((base, reg))
+    return matches[0] if len(matches) == 1 else None
+
+
+def claude_transcript(pid: int, proc_start: int | None) -> tuple[str, str] | None:
+    """Transcripción exacta de la cuenta del proceso, sin adivinar por fecha o carpeta."""
+    match = _claude_registro_config(pid, proc_start)
+    if match is None:
+        return None
+    base, reg = match
+    sid, cwd = reg.get("sessionId"), reg.get("cwd")
+    if not isinstance(sid, str) or not re.fullmatch(UUID_PATTERN, sid) or not isinstance(cwd, str) or not cwd:
+        return None
+    path = os.path.join(base, "projects", claude_slug(cwd), sid + ".jsonl")
+    return (sid, path) if os.path.isfile(path) else None
+
+
 def claude_registro(pid: int, proc_start: int | None) -> dict | None:
     """Lo que Claude Code anota de la sesion del proceso `pid`, o None. Exige `proc_start` (la creacion
     del proceso como FILETIME) igual al `procStart` anotado: el archivo de un proceso muerto puede quedar
     y su pid reciclarse. Respeta CLAUDE_CONFIG_DIR, como Claude Code."""
-    if not pid or proc_start is None:
+    match = _claude_registro_config(pid, proc_start)
+    if match is None:
         return None
-    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(HOME, ".claude")
-    try:
-        with open(os.path.join(base, "sessions", f"{int(pid)}.json"), encoding="utf-8") as f:
-            reg = json.load(f)
-    except OSError, ValueError:
-        return None
-    if not isinstance(reg, dict) or reg.get("pid") != int(pid) or str(reg.get("procStart")) != str(proc_start):
-        return None
+    _, reg = match
     return {k: reg[k] for k in CLAUDE_REGISTRO_CAMPOS if k in reg}
 
 

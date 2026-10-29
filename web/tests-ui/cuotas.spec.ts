@@ -116,6 +116,23 @@ test("lectura ok: Claude y Codex lado a lado abajo a la derecha, con su medició
   expect(pedidos).toEqual(["/cuotas", "/cuotas?refrescar=1"]);
 });
 
+test("conserva la última lectura y su fecha si falla la actualización", async ({ page }) => {
+  const fallida = { ok: false, plan: null, five_hour: null, weekly: null, read_at: REMEDIDO, error: "sin respuesta" };
+  await servirCuotas(page, lectura(), lectura({ codex: fallida, sugerido: "claude" }));
+  await abrirTablero(page);
+  const codex = page.getByRole("button", { name: /^Codex:/ });
+  await expect(codex).toContainText("51 % usado semanal");
+  await codex.click();
+  await expect(codex).toContainText("Última lectura · actualización fallida");
+  await expect(codex).toContainText("51 % usado semanal");
+  await expect(codex).toContainText(hora(MEDIDO));
+  await expect(codex).not.toContainText(hora(REMEDIDO));
+  await expect(codex).not.toContainText("conviene");
+  await expect(codex).toHaveAttribute("title", /No se pudo leer: sin respuesta/);
+  await codex.click();
+  await expect(codex).toContainText("51 % usado semanal");
+});
+
 test("una lectura fallida lo dice, sin números", async ({ page }) => {
   const fallida = { ok: false, plan: null, five_hour: null, weekly: null, read_at: MEDIDO, error: "el token de Claude venció" };
   await servirCuotas(page, lectura({ claude: fallida, motivo: "Claude sin lectura; Codex 49 % libre en la semana" }));

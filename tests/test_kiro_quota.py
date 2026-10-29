@@ -53,7 +53,7 @@ def test_kiro_is_cached_for_five_minutes_without_changing_auto_launch(monkeypatc
             "plan": "KIRO PRO",
         }
 
-    monkeypatch.setattr(kiro_quota, "read_usage", lambda timeout: read())
+    monkeypatch.setattr(kiro_quota, "read_usage", lambda timeout, exe=None: read())
     monkeypatch.setitem(cuotas.READERS, "kiro", cuotas.read_kiro)
     first = cuotas.estado()
     assert first["kiro"]["credits"]["available"] == 869.63
@@ -66,7 +66,7 @@ def test_kiro_is_cached_for_five_minutes_without_changing_auto_launch(monkeypatc
 
 
 def test_timeout_is_unknown_not_zero(monkeypatch):
-    def fail(timeout):
+    def fail(timeout, exe=None):
         raise TimeoutError("secreto que no debe salir")
 
     monkeypatch.setattr(kiro_quota, "read_usage", fail)

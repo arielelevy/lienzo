@@ -68,25 +68,27 @@ export function Cuotas() {
     {AGENTES.map(a => {
       if (a === "claude_smartbi" && !data.claude_smartbi) return null;
       const c = data[a] ?? SIN_KIRO;
+      const anterior = !c.ok && !!(c.weekly || c.spend || c.credits || c.messages);
       const esClaude = a === "claude" || a === "claude_smartbi";
       const sugerido = data.sugerido === a;
       const alta = !!c.ok && ((c.weekly?.used_pct ?? 0) >= 90 || (c.five_hour?.used_pct ?? 0) >= 90);
       const medido = fecha(c.read_at);
-      const uso = !c.ok ? (a === "claude_smartbi" && c.error?.startsWith("SmartBI sin iniciar sesión") ? "sin iniciar sesión" : "sin lectura") : a === "kiro" ? (c.credits ? cantidades(c.credits) : "créditos no informados") : c.weekly ? `${pct(c.weekly.used_pct)} usado semanal${c.five_hour ? ` · ${pct(c.five_hour.used_pct)} usado 5 h` : ""}` : esClaude && c.spend ? gasto(c.spend) : "sin dato semanal";
+      const uso = !c.ok && !anterior ? (a === "claude_smartbi" && c.error?.startsWith("SmartBI sin iniciar sesión") ? "sin iniciar sesión" : "sin lectura") : a === "kiro" ? (c.credits ? cantidades(c.credits) : "créditos no informados") : c.weekly ? `${pct(c.weekly.used_pct)} usado semanal${c.five_hour ? ` · ${pct(c.five_hour.used_pct)} usado 5 h` : ""}` : esClaude && c.spend ? gasto(c.spend) : "sin dato semanal";
       return <button key={a} type="button" className={`cuota ${a}${sugerido ? " sugerido" : ""}${c.ok ? "" : " fallida"}${alta ? " alta" : ""}`}
         disabled={midiendo} title={detalle(a, c, data) + (fallo ? `\nÚltimo intento falló: ${fallo}` : "")}
-        aria-label={`${etiquetaAgente(a)}: ${a === "kiro" ? mensual("Créditos por mes", c.credits) : uso}${c.ok && !c.five_hour && a !== "kiro" && c.weekly ? `, ${SIN_5H}` : ""}${a === "kiro" ? `; ${mensual("Mensajes por mes", c.messages)}; renueva ${c.resets_at ?? "no informado"}` : ""}${sugerido ? ", conviene ahora" : ""}. ${medido ? `Medido ${medido}` : "Sin medición"}. Medir de nuevo`}
+        aria-label={`${etiquetaAgente(a)}: ${a === "kiro" ? mensual("Créditos por mes", c.credits) : uso}${c.ok && !c.five_hour && a !== "kiro" && c.weekly ? `, ${SIN_5H}` : ""}${a === "kiro" ? `; ${mensual("Mensajes por mes", c.messages)}; renueva ${c.resets_at ?? "no informado"}` : ""}${anterior ? ", última lectura; actualización fallida" : ""}${sugerido ? ", conviene ahora" : ""}. ${medido ? `Medido ${medido}` : "Sin medición"}. Medir de nuevo`}
         onClick={medir}>
         <span className="cuota-fila"><span className="cuota-nombre">{etiquetaAgente(a)}</span>{sugerido && <span className="cuota-sugerido">conviene</span>}</span>
-        {c.ok && esClaude && !c.weekly && c.spend ? <>
+        {(c.ok || anterior) && esClaude && !c.weekly && c.spend ? <>
           <span className="cuota-uso">Créditos: USD {c.spend.used.toFixed(2)} usados </span>
           <span className="cuota-uso">{c.spend.limit === null ? "límite no informado" : `de USD ${c.spend.limit.toFixed(2)}`}</span>
-        </> : c.ok && c.weekly && c.five_hour ? <>
+        </> : (c.ok || anterior) && c.weekly && c.five_hour ? <>
           <span className="cuota-uso">{pct(c.weekly.used_pct)} usado semanal</span>
           <span className="cuota-uso">{pct(c.five_hour.used_pct)} usado 5 h</span>
         </> : <span className="cuota-uso">{uso}</span>}
         {a === "kiro" && <>{c.messages && <span className="cuota-uso">{mensual("Mensajes por mes", c.messages)}</span>}<span className="cuota-medido">Renueva {c.resets_at ?? "no informado"}</span></>}
         <span className="cuota-medido">{midiendo ? "midiendo…" : fallo ? "no se pudo medir" : medido ?? "sin medición"}</span>
+        {anterior && <span className="cuota-medido" role="status">Última lectura · actualización fallida</span>}
       </button>;
     })}
   </div>;

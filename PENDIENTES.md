@@ -1543,3 +1543,7 @@ interpretó como un cuelgue del modelo, porque nada distinguía los dos casos.
   vencimientos de turnos.
 - Al reanudar, revisar cada sesión que estaba `corriendo`. Si su transcript no avanza en N
   minutos, avisar a la coordinadora que necesita un Escape y un reenvío.
+
+### Revisar el plazo del E2E de tarjetas ajenas (2026-10-28)
+
+- [ ] `pruebas-agenticas/tarjetas_ajenas_e2e.py:106`: espera hasta 120 s la eliminación de la tarjeta, pero `lienzo/state.py:58` fija `DEAD_KEEP_S = 120` y `lienzo/sessions.py:2261` elimina con `edad > DEAD_KEEP_S`. El log muestra la regla estacionada correctamente y la herencia posterior correcta, pero `tarjeta del frente borrada: False (120 s)` hace fallar el caso. Revisar el contrato y el margen del caso, sin regenerar baseline para ocultarlo. Reproducir con el runner sobre `pruebas-agenticas/tarjetas-ajenas-N.json`; evidencia en `resultados/tarjetas-ajenas-N/salidas/tarjetas-ajenas-e2e.log`. Detectado al corregir la lectura de las conversaciones de Claude SmartBI.
