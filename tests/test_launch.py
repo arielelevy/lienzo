@@ -357,3 +357,111 @@ def test_chrome_fuera_de_claude_en_windows_se_rechaza_sin_lanzar(aislado, monkey
     res = launch.launch(str(aislado / "repos" / "p"), "t", agent, distro=distro, chrome=True)
     assert res == {"ok": False, "error": "chrome requiere una sesión Claude en Windows nativo"}
     assert FakePopen.calls == []
+
+
+# --- claude_config_dirs: la cuenta de Claude según la carpeta (pedido de Ariel, 2026-10-29) -----
+
+
+def con_cuentas(monkeypatch, roots, rules) -> None:
+    config = {"launch_roots": [str(r) for r in roots], "claude_config_dirs": rules}
+    monkeypatch.setattr(st, "load_config", lambda: config)
+
+
+def test_claude_bajo_la_raiz_nace_con_el_perfil_de_la_regla(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_cuentas(monkeypatch, [root], [{"root": str(root / "apps"), "dir": "~/.claude-smartbi"}])
+    res = launch.launch(str(root / "apps" / "opensyync"), "t", "claude")
+    perfil = os.path.join(st.HOME, ".claude-smartbi")
+    assert res["ok"] is True and res["claude_config_dir"] == perfil
+    cuerpo = _cuerpo_del_cmd(res)
+    assert f'set "CLAUDE_CONFIG_DIR={perfil}"\r\n"' in cuerpo
+    assert cuerpo.index("cd /d") < cuerpo.index('set "CLAUDE_CONFIG_DIR') < cuerpo.index('.exe"')
+
+
+def test_fuera_de_la_raiz_y_otros_agentes_no_cambian_de_perfil(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_cuentas(monkeypatch, [root], [{"root": str(root / "apps"), "dir": "~/.claude-smartbi"}])
+    for cwd, agent in ((root / "otro", "claude"), (root / "apps" / "x", "codex")):
+        res = launch.launch(str(cwd), "t", agent)
+        assert res["ok"] is True and "claude_config_dir" not in res
+        assert "CLAUDE_CONFIG_DIR" not in _cuerpo_del_cmd(res)
+
+
+def test_gana_la_raiz_mas_larga(aislado, monkeypatch):
+    root = aislado / "repos"
+    rules = [
+        {"root": str(root / "apps" / "cliente"), "dir": str(aislado / "perfil-cliente")},
+        {"root": str(root / "apps"), "dir": str(aislado / "perfil-apps")},
+    ]
+    con_cuentas(monkeypatch, [root], rules)
+    assert launch.launch(str(root / "apps" / "cliente" / "p"), "t", "claude")["claude_config_dir"] == str(
+        aislado / "perfil-cliente"
+    )
+    assert launch.launch(str(root / "apps" / "p"), "t", "claude")["claude_config_dir"] == str(aislado / "perfil-apps")
+
+
+@pytest.mark.parametrize(
+    ("dir_", "error"),
+    [
+        (None, "claude_config_dirs: la regla no tiene dir"),
+        ("C:/perfil%USERNAME%", "claude_config_dirs: dir con caracteres inseguros para cmd"),
+        ('C:/a" & calc', "claude_config_dirs: dir con caracteres inseguros para cmd"),
+        ("relativo/perfil", None),
+    ],
+)
+def test_regla_que_aplica_y_esta_mal_no_lanza_con_otra_cuenta(aislado, monkeypatch, dir_, error):
+    root = aislado / "repos"
+    con_cuentas(monkeypatch, [root], [{"root": str(root), "dir": dir_}])
+    res = launch.launch(str(root / "p"), "t", "claude")
+    assert res["ok"] is False
+    assert res["error"] == error if error else res["error"].startswith("claude_config_dirs: no existe")
+    assert FakePopen.calls == []
+
+
+def test_perfil_inexistente_no_lanza(aislado, monkeypatch):
+    root = aislado / "repos"
+    con_cuentas(monkeypatch, [root], [{"root": str(root), "dir": str(aislado / "no-esta")}])
+    monkeypatch.setattr(launch, "_existe", lambda p: "no-esta" not in p)
+    res = launch.launch(str(root / "p"), "t", "claude")
+    assert res["ok"] is False and res["error"].startswith("claude_config_dirs: no existe")
+    assert FakePopen.calls == []
+
+
+@pytest.mark.parametrize(
+    ("opciones", "error"),
+    [
+        ({"distro": "Ubuntu"}, "claude_config_dirs aplica sólo a Claude fuera de WSL"),
+        ({"claude_pipe": True}, "claude_pipe todavía no soporta claude_config_dirs"),
+    ],
+)
+def test_wsl_y_claude_pipe_con_regla_se_rechazan(aislado, monkeypatch, opciones, error):
+    root = aislado / "repos"
+    con_cuentas(monkeypatch, [root], [{"root": str(root), "dir": "~/.claude-smartbi"}])
+    assert launch.launch(str(root / "p"), "t", "claude", **opciones) == {"ok": False, "error": error}
+    assert FakePopen.calls == []
+
+
+def test_retomar_una_sesion_del_perfil_de_siempre_no_la_pierde(aislado, monkeypatch):
+    root = aislado / "repos"
+    sid = "0a1de326-0f51-41f4-8ca7-4807e11950f3"
+    con_cuentas(monkeypatch, [root], [{"root": str(root), "dir": "~/.claude-smartbi"}])
+    default = aislado / "home" / ".claude"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(default))
+    (default / "projects" / "D--repos-p").mkdir(parents=True)
+    (default / "projects" / "D--repos-p" / f"{sid}.jsonl").write_text("")
+    res = launch.launch(str(root / "p"), "t", "claude", resume=sid)
+    assert res["ok"] is True and res["resumed"] is True and "claude_config_dir" not in res
+    assert "CLAUDE_CONFIG_DIR" not in _cuerpo_del_cmd(res)
+    assert "perfil de Claude donde está guardada" in res["aviso"]
+    smartbi = aislado / "home" / ".claude-smartbi" / "projects" / "D--repos-p"
+    smartbi.mkdir(parents=True)
+    (smartbi / f"{sid}.jsonl").write_text("")
+    res = launch.launch(str(root / "p"), "t", "claude", resume=sid)
+    assert res["claude_config_dir"] == os.path.join(st.HOME, ".claude-smartbi")
+
+
+def test_tmux_pasa_el_perfil_por_env(aislado, monkeypatch):
+    res = launch._launch_tmux("/home/a/apps/p", "t", "/usr/bin/claude", [], config_dir="/home/a/.claude-smartbi")
+    argv = FakePopen.calls[-1]
+    assert res["ok"] is True
+    assert argv[argv.index("env") :][-2:] == ["CLAUDE_CONFIG_DIR=/home/a/.claude-smartbi", "/usr/bin/claude"]

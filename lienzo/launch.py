@@ -184,6 +184,48 @@ def _cwd_allowed(cwd: str, roots: list[str]) -> bool:
     return False
 
 
+def _claude_config_dir(cwd: str) -> tuple[str | None, str | None]:
+    """`claude_config_dirs` de config.json: `[{"root": "D:/Apps", "dir": "~/.claude-smartbi"}]`.
+    Gana la raiz mas larga que contiene a `cwd` y Claude nace con CLAUDE_CONFIG_DIR=dir (pedido de
+    Ariel, 2026-10-29: todo Claude bajo D:/Apps con la cuenta SmartBI). Sin regla: (None, None), el
+    perfil de siempre. Una regla que aplica pero esta mal devuelve el error: nunca se lanza con
+    otra cuenta en silencio."""
+    rules = state.load_config().get("claude_config_dirs")
+    if not isinstance(rules, list):
+        return None, None
+    best = None
+    for rule in rules:
+        if not isinstance(rule, dict) or not isinstance(rule.get("root"), str) or not rule["root"].strip():
+            continue
+        root = os.path.normcase(os.path.normpath(rule["root"]))
+        if _cwd_allowed(cwd, [root]) and (best is None or len(root) > len(best[0])):
+            best = (root, rule.get("dir"))
+    if best is None:
+        return None, None
+    directory = best[1]
+    if not isinstance(directory, str) or not directory.strip():
+        return None, "claude_config_dirs: la regla no tiene dir"
+    if directory == "~" or directory.startswith(("~/", "~\\")):
+        directory = os.path.join(state.HOME, directory[2:])
+    directory = os.path.normpath(directory)
+    if any(c in directory for c in '"%!&|<>^\r\n'):
+        return None, "claude_config_dirs: dir con caracteres inseguros para cmd"
+    try:
+        directory.encode("cp1252")
+    except UnicodeError:
+        return None, "claude_config_dirs: dir no representable en la consola cp1252"
+    if not os.path.isabs(directory) or not _existe(directory):
+        return None, f"claude_config_dirs: no existe {directory}"
+    return directory, None
+
+
+def _sesion_en(perfil: str, session_id: str) -> bool:
+    """La conversacion `session_id` (ya validada por _resume_args) esta guardada en ese perfil."""
+    import glob
+
+    return bool(glob.glob(os.path.join(glob.escape(perfil), "projects", "*", f"{session_id}.jsonl")))
+
+
 def _exe_path(exe_name: str) -> str | None:
     """Por ruta absoluta, porque el PATH no se hereda entero por explorer.exe: primero donde lo deja
     el instalador de Claude Code (~/.local/bin), despues el PATH de este server."""
@@ -304,6 +346,17 @@ def launch(
         }
     if not _cwd_allowed(cwd, _allowed_roots()):
         return dict(FUERA_DE_RAICES)
+    config_dir = None
+    if agent == "claude":
+        config_dir, config_error = _claude_config_dir(cwd)
+        if config_error:
+            return {"ok": False, "error": config_error}
+        if config_dir and distro:
+            # adentro de WSL corre el Claude de Linux con su propio home: la ruta de Windows no le sirve
+            return {"ok": False, "error": "claude_config_dirs aplica sólo a Claude fuera de WSL"}
+        if config_dir and claude_pipe:
+            # el adaptador busca el registro de sesiones en el perfil del server, no en el de la regla
+            return {"ok": False, "error": "claude_pipe todavía no soporta claude_config_dirs"}
     if not WINDOWS or distro:
         exe_name = exe_name.removesuffix(".exe")
     if distro and WINDOWS:
@@ -323,6 +376,13 @@ def launch(
         if exe_path is None:
             return {"ok": False, "error": f"no encuentro {exe_name} después de comprobar actualizaciones"}
     resume_args = _resume_args(agent, resume)
+    cuenta_aviso = None
+    if config_dir and resume_args and not _sesion_en(config_dir, resume):
+        # retomar busca la conversacion en el perfil: una de antes de la regla sigue en el de siempre
+        default = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(state.HOME, ".claude")
+        if _sesion_en(default, resume):
+            config_dir = None
+            cuenta_aviso = "retomada con el perfil de Claude donde está guardada, no con el de claude_config_dirs"
     model_args = _model_args(agent, model)
     nombre_args = _nombre_args(agent, title)
     extra = [*AGENTES[agent].iniciar, *resume_args, *model_args, *nombre_args, *(["--chrome"] if chrome else [])]
@@ -363,9 +423,9 @@ def launch(
     else:
         try:
             res = (
-                _launch_cmd(cwd, title, exe_path, extra, agent=agent)
+                _launch_cmd(cwd, title, exe_path, extra, agent=agent, config_dir=config_dir)
                 if WINDOWS
-                else _launch_tmux(cwd, title, exe_path, extra)
+                else _launch_tmux(cwd, title, exe_path, extra, config_dir=config_dir)
             )
         except Exception:
             if pipe_sid:
@@ -379,6 +439,8 @@ def launch(
             claude_pipe_runtime.close(pipe_sid)
     if distro and res.get("ok"):
         res["distro"] = distro
+    if config_dir and res.get("ok"):
+        res["claude_config_dir"] = config_dir
     if nombre_args and res.get("ok"):
         res["native_name"] = nombre_corto(title)
     if resume is not None:
@@ -389,8 +451,12 @@ def launch(
         # medido el 2026-10-02: coda escribe el --model en su config.json, asi que las codas que se
         # lancen despues sin modelo corren este (PENDIENTES, «--model en coda»)
         res["aviso"] = "coda guarda --model como modelo por defecto de esta PC: las proximas codas sin modelo usan este"
-    if update_error or improvement_warnings:
-        res["aviso"] = "; ".join(filter(None, [res.get("aviso"), update_error, *improvement_warnings]))
+    if update_error or improvement_warnings or (cuenta_aviso and res.get("ok")):
+        res["aviso"] = "; ".join(
+            filter(
+                None, [res.get("aviso"), update_error, *improvement_warnings, cuenta_aviso if res.get("ok") else None]
+            )
+        )
     return res
 
 
@@ -457,9 +523,12 @@ def _cmd_arg(value: str) -> str:
     return f'"{value}"' if any(c.isspace() for c in value) else value
 
 
-def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str], agent: str | None = None) -> dict:
+def _launch_cmd(
+    cwd: str, title: str, exe_path: str, extra: list[str], agent: str | None = None, config_dir: str | None = None
+) -> dict:
     """Windows: un .cmd en `<LIENZO_HOME>/launch/` que explorer.exe abre en una consola nueva. Con
-    `agent`, el titulo pedido queda al lado para la tarjeta (titulo_lanzado)."""
+    `agent`, el titulo pedido queda al lado para la tarjeta (titulo_lanzado). Con `config_dir`
+    (ya validado por _claude_config_dir), Claude nace con ese CLAUDE_CONFIG_DIR."""
     launch_dir = os.path.join(state.LIENZO, "launch")
     os.makedirs(launch_dir, exist_ok=True)
     token = secrets.token_hex(6)
@@ -473,7 +542,8 @@ def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str], agent: st
         "chcp 1252 >nul\r\n"
         f"title {title}\r\n"
         f'cd /d "{cwd}"\r\n'
-        f'"{exe_path}"{"".join(" " + _cmd_arg(a) for a in extra)}\r\n'
+        + (f'set "CLAUDE_CONFIG_DIR={config_dir}"\r\n' if config_dir else "")
+        + f'"{exe_path}"{"".join(" " + _cmd_arg(a) for a in extra)}\r\n'
     )
     with open(cmd_path, "w", encoding="cp1252", errors="replace", newline="") as f:
         f.write(cuerpo)
@@ -482,7 +552,12 @@ def _launch_cmd(cwd: str, title: str, exe_path: str, extra: list[str], agent: st
 
 
 def _launch_tmux(
-    cwd: str, title: str, exe_path: str, extra: list[str] | None = None, distro: str | None = None
+    cwd: str,
+    title: str,
+    exe_path: str,
+    extra: list[str] | None = None,
+    distro: str | None = None,
+    config_dir: str | None = None,
 ) -> dict:
     """Mac/Linux/WSL: una sesion de tmux nueva y suelta (-d) con el agente adentro, en `cwd`, con el
     titulo como nombre de ventana. Va como lista de argumentos, sin shell: ni el titulo ni el cwd se
@@ -493,7 +568,7 @@ def _launch_tmux(
     unset = [a for v in _CLAUDE_ENV for a in ("-u", v)]
     title = _sanitize_title(project_title({"repo": state.repo_of(cwd), "title": title}))
     argv = ["tmux", "new-session", "-d", "-s", nombre, "-n", title, "-c", cwd]
-    argv += ["env", *unset, exe_path, *(extra or [])]
+    argv += ["env", *unset, *([f"CLAUDE_CONFIG_DIR={config_dir}"] if config_dir else []), exe_path, *(extra or [])]
     if distro:
         argv = ["wsl.exe", "-d", distro, *argv]
     try:
