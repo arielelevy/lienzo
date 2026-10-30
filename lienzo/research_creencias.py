@@ -37,7 +37,14 @@ AUTOR = "server:investigador-creencias"
 PROCESO = "lienzo"  # el proyecto donde viven las mejoras del proceso de trabajar con Lienzo
 ALCANCES = ("proyecto", "proceso_lienzo")
 KINDS = ("memoria", "evidencia", "review", "coordinacion", "pruebas")
-TOPE = {"memoria": 40, "evidencia": 4, "review": 6, "coordinacion": 8, "pruebas": 6}
+TOPE = {"memoria": 40, "evidencia": 6, "review": 15, "coordinacion": 15, "pruebas": 6}
+# Vueltas por 24 h, aparte del tope del investigador: había mucho trabajo sin leer (opensyync: 145 reviews,
+# 67 registros de coordinación) y con 6 vueltas compartidas tardaba semanas (Ariel, 2026-10-30).
+TOPE_DIA = 24
+MAX_CREENCIAS = 8
+# Vigentes sin cláusula que cada vuelta intenta formalizar: sin regla_logica la deducción del motor no tiene
+# qué encadenar (prolog_ciclo.vuelta) y no produce nada (Ariel, 2026-10-30).
+FORMALIZAR = 6
 # un cambio de la memoria cuenta si crea un nodo o le cambia el estado; datos, vínculos y la escritura propia
 # se absorben (quedan leídos sin vuelta del modelo): no traen texto nuevo que leer
 ACCIONES_MEMORIA = ("nodo", "estado")
@@ -93,11 +100,22 @@ SCHEMA = _obj(
                 }
             ),
             0,
-            4,
+            MAX_CREENCIAS,
         ),
         "limitaciones": _list(_STR, 1, 8),
     }
 )
+SCHEMA["properties"]["formalizaciones"] = _list(
+    _obj(
+        {
+            "creencia": {"type": "string", "minLength": 1, "maxLength": 64},
+            "regla_logica": {"type": "string", "minLength": 1, "maxLength": 4000},
+        }
+    ),
+    0,
+    FORMALIZAR,
+)
+SCHEMA["required"] = list(SCHEMA["properties"])
 # Campos que pueden no venir: el modo estricto de Codex exige que `required` nombre todas las propiedades, así
 # que van obligatorios pero aceptan null. Una respuesta sin ellos (clientes anteriores) se completa con null
 # antes de validar, y los null se quitan después: la ausencia de formalización conserva la propuesta.
@@ -307,6 +325,7 @@ def estado(pid: str) -> dict:
     cur = cursor(pid)
     with k._abrir(pid) as con:
         (memoria, absorb), evidencia = _classify(con, pid, cur), _pending_evidence(con, pid, cur)
+        formalizar = len(_por_formalizar(con, pid))
     refresh = {}
     pending = {kind: _pending_files(pid, cur, kind, refresh) for kind in ("review", "coordinacion")}
     if absorb or refresh:
@@ -329,6 +348,7 @@ def estado(pid: str) -> dict:
             "review": len(pending["review"]),
             "coordinacion": len(pending["coordinacion"]),
             "pruebas": len(_pending_runs(pid, cur)),
+            "formalizar": formalizar,
         },
     }
 
@@ -430,6 +450,38 @@ def _existing(con, pid: str) -> list[dict]:
     return out
 
 
+def _por_formalizar(con, pid: str) -> list[dict]:
+    """Vigentes sin cláusula y sin una formalización ya intentada para su revisión actual (propuesta o no
+    lograda): una que la IA no pudo expresar no vuelve a cada vuelta hasta que cambie su significado."""
+    import prolog_programa
+
+    out = []
+    for r in con.execute(
+        "SELECT * FROM nodo WHERE proyecto=? AND tipo='decision' AND estado='vigente' "
+        "AND json_extract(datos,'$.clase')='creencia_operativa' AND json_extract(datos,'$.regla_logica') IS NULL "
+        "ORDER BY fecha DESC, id DESC LIMIT 200",
+        (pid,),
+    ):
+        node = k._fila(r)
+        intento = node["datos"].get("formalizacion_propuesta") or {}
+        if intento.get("revision_base") == prolog_programa.revision(node):
+            continue
+        out.append(node)
+        if len(out) >= FORMALIZAR:
+            break
+    return out
+
+
+def predicados_medidos() -> list[str]:
+    """Lo que `prolog_hechos.medir` observa del trabajo actual (sujeto C): una regla que sólo usa esto puede
+    dispararse en la deducción; con otros predicados queda escrita pero sin hechos que la activen."""
+    import prolog_programa
+
+    medidos = {"proyecto", "memoria_libre_gb", "frentes_activos"}
+    medidos |= {key for key in creencias.CONTEXTO if prolog_programa.VOCABULARIO.get(key) == ("texto", "texto")}
+    return [f"{p}/{len(prolog_programa.VOCABULARIO[p])}" for p in sorted(medidos)]
+
+
 def gather(pid: str) -> tuple[dict, dict, dict]:
     """(paquete, lectura, pendientes). La lectura es lo que el cursor sumará si la vuelta se registra."""
     cur, counts = cursor(pid), {}
@@ -438,6 +490,7 @@ def gather(pid: str) -> tuple[dict, dict, dict]:
         ev_all = _pending_evidence(con, pid, cur)
         previous = _previous_rounds(con, pid)
         existing = _existing(con, pid) + (_existing(con, PROCESO) if pid != PROCESO and _known(PROCESO) else [])
+        formalizar = _por_formalizar(con, pid)
     folder = Path(k._carpeta(pid))
     evidencia = [
         {
@@ -473,6 +526,7 @@ def gather(pid: str) -> tuple[dict, dict, dict]:
         "archivos": archivos,
         "pruebas": {r["key"]: r["corrida"] for r in runs_chosen},
         "capturas_hasta": work.get("hasta"),
+        "formalizar": [n["id"] for n in formalizar],
         "refs": {
             "memoria": [m["ref"] for m in memoria],
             "evidencia": [e["ref"] for e in evidencia],
@@ -506,6 +560,16 @@ def gather(pid: str) -> tuple[dict, dict, dict]:
         },
         "fuentes": {"memoria": memoria, "evidencia": evidencia, "review": docs["review"]}
         | {"coordinacion": docs["coordinacion"], "pruebas": pruebas},
+        "por_formalizar": [
+            {
+                "id": n["id"],
+                "dimension": n["datos"].get("dimension"),
+                "texto": research.redact(n["texto"][:400], counts),
+                "accion": research.redact(str(n["datos"].get("accion", ""))[:400], counts),
+            }
+            for n in formalizar
+        ],
+        "predicados_medidos": predicados_medidos(),
         "pendiente_tras_esta_vuelta": left,
         "redactions": counts,
         "limits": "sólo lectura; sin instalar, editar, ejecutar pruebas ni llamar servicios",
@@ -591,6 +655,13 @@ def prompt(data: dict, base: str = "", tools: bool = True) -> str:
         "El motor la pone a prueba: sus condiciones son los metadatos que comparten todos los ejemplos, y "
         "cualquier creencia refutada que las cumpla es un contraejemplo que impide validarla tal cual; si "
         "conocés una excepción, nombrala en excepciones.\n"
+        "`por_formalizar` trae creencias vigentes sin cláusula. Para cada una que puedas expresar, devolvé en "
+        "`formalizaciones` {creencia: su id, regla_logica: la cláusula}; si no se puede, no la incluyas. En el "
+        "cuerpo preferí `predicados_medidos` (Lienzo los observa del trabajo actual, con sujeto C): una regla con "
+        "otros predicados queda escrita pero no se dispara. La cabeza es recomendar(C, accion, motivo) o "
+        "impedir(C, accion, motivo) con átomos en minúscula; un paso intermedio puede tener como cabeza otro "
+        "predicado del vocabulario (p. ej. presion_ram(C)) para que otra regla lo use: así se encadenan y el "
+        "motor deduce conclusiones nuevas.\n"
     )
     return (
         (
@@ -605,7 +676,7 @@ def prompt(data: dict, base: str = "", tools: bool = True) -> str:
         "CASO trae lo NUEVO del proyecto desde la última vuelta (`fuentes`), lo que concluyeron las vueltas "
         "anteriores (`vueltas_previas`, partí de ahí) y las creencias que ya existen (`creencias_existentes`: no "
         "las repitas; si una nueva fuente la refuerza o la contradice, decilo en conclusiones).\n"
-        "Proponé a lo sumo 4 creencias operativas: `texto` es lo observado, `accion` lo que conviene hacer la "
+        f"Proponé a lo sumo {MAX_CREENCIAS} creencias operativas: `texto` es lo observado, `accion` lo que conviene hacer la "
         "próxima vez, `dimension` una de `dimensiones`, `contexto` pares clave/valor con claves de "
         "`contexto_claves` sólo si la creencia exige ese contexto. `alcance`: `proceso_lienzo` si es una mejora "
         "de cómo se trabaja con Lienzo (vale para todos los proyectos); `proyecto` si es propia de este proyecto "
@@ -657,6 +728,9 @@ def validate(result, data: dict, root) -> dict:
     errors = []
     # Una cláusula mal formada no debe descartar el resto del contenido de esa creencia.
     checked = result
+    if isinstance(result, dict):
+        result = {"formalizaciones": [], **result}  # una respuesta anterior a la formalización
+        checked = result
     if isinstance(result, dict) and isinstance(result.get("creencias"), list):
         result = {
             **result,
@@ -697,7 +771,28 @@ def validate(result, data: dict, root) -> dict:
             dropped.append({"texto": item["texto"][:200], "motivo": "clave de contexto repetida"})
         else:
             kept.append(item)
-    return {**result, "creencias": kept, "descartadas_validacion": dropped}
+    import prolog_programa
+
+    objetivo = {x["id"] for x in data.get("por_formalizar", [])}
+    formal_kept, formal_dropped = [], []
+    for f in result["formalizaciones"]:
+        formal = {"version": 1, "vocabulario": 1, "clausula": f["regla_logica"]}
+        if f["creencia"] not in objetivo or f["creencia"] in {x["creencia"] for x in formal_kept}:
+            formal_dropped.append({"creencia": f["creencia"][:64], "motivo": "no estaba en por_formalizar"})
+            continue
+        try:
+            prolog_programa.validar(formal)
+        except ValueError as exc:
+            formal_dropped.append({"creencia": f["creencia"], "motivo": f"cláusula inválida: {exc}"[:300]})
+            continue
+        formal_kept.append({"creencia": f["creencia"], "regla_logica": formal})
+    return {
+        **result,
+        "creencias": kept,
+        "descartadas_validacion": dropped,
+        "formalizaciones": formal_kept,
+        "formalizaciones_descartadas": formal_dropped,
+    }
 
 
 # ---------------------------------------------------------------- registro y contraste
@@ -845,6 +940,7 @@ def record(pid: str, case: dict, result: dict, meta: dict, lectura: dict) -> dic
         por=AUTOR,
         motivo="resultado de la vuelta",
     )
+    formalizadas = _registrar_formalizaciones(pid, case, result, lectura, evidence["id"])
     import prolog_ciclo
     import prolog_hechos
 
@@ -874,7 +970,64 @@ def record(pid: str, case: dict, result: dict, meta: dict, lectura: dict) -> dic
         "contraste": summary,
         "descartadas": dropped,
         "reevaluacion": temporal,
+        "formalizaciones": formalizadas,
     }
+
+
+def _registrar_formalizaciones(pid, case, result, lectura, evidencia) -> list[str]:
+    """Cada vigente del paquete queda con su intento para la revisión actual. La cláusula no se le pone a la
+    vigente (es un significado nuevo): entra como creencia propuesta igual a ella más `regla_logica` y
+    `formaliza`, y la revisa quien revisa propuestas (la tanda delegada a IA o una persona). Validarla
+    reemplaza a la original (creencias._veredicto). Devuelve las propuestas creadas."""
+    import prolog_programa
+
+    hechas = {f["creencia"]: f for f in result.get("formalizaciones", [])}
+    motivos = {f["creencia"]: f["motivo"] for f in result.get("formalizaciones_descartadas", [])}
+    out = []
+    with k._abrir(pid) as con:
+        for nid in lectura.get("formalizar", []):
+            node = k._nodo(con, pid, nid)
+            if node["estado"] != "vigente" or node["datos"].get("regla_logica") is not None:
+                continue  # cambió durante la vuelta: se intenta en la próxima
+            intento = {
+                "revision_base": prolog_programa.revision(node),
+                "fecha": k.ahora(),
+                "caso": case["case_key"],
+                "evidencia": evidencia,
+            }
+            if nid in hechas:
+                datos = node["datos"]
+                propuesta = creencias.proponer(
+                    pid,
+                    {
+                        "dimension": datos["dimension"],
+                        "texto": node["texto"],
+                        "accion": datos.get("accion") or node["texto"],
+                        "contexto": datos.get("contexto", {}),
+                        "fuentes": [*[f for f in datos.get("fuentes", []) if f != evidencia][:29], evidencia],
+                        "excepciones": datos.get("excepciones", ""),
+                        "alcance": datos.get("alcance", "proyecto"),
+                        "regla_logica": hechas[nid]["regla_logica"],
+                    },
+                    autor=AUTOR,
+                    con=con,
+                )
+                k.actualizar_datos(
+                    pid,
+                    propuesta["id"],
+                    {"formaliza": nid, "tipo_propuesta": "formalizacion"},
+                    por=AUTOR,
+                    motivo="formalización de una vigente",
+                    con=con,
+                )
+                intento.update(estado="propuesta", propuesta=propuesta["id"])
+                out.append(propuesta["id"])
+            else:
+                intento.update(estado="sin_formalizar", motivo=motivos.get(nid, "la vuelta no la pudo expresar"))
+            k.actualizar_datos(
+                pid, nid, {"formalizacion_propuesta": intento}, por=AUTOR, motivo="formalización propuesta", con=con
+            )
+    return out
 
 
 def proposals(saved: dict) -> list[str]:

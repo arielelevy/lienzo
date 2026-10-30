@@ -261,6 +261,13 @@ def _veredicto(con, pid, nid, por, result, evidence_id, motive, until):
         fields["pendiente"] = None  # un veredicto cierra lo que estaba pendiente
     k.actualizar_datos(pid, nid, fields, por=por, motivo=motive, con=con)
     k.cambiar_estado(pid, nid, "vigente" if result == "validada" else "revertida", por=por, motivo=motive, con=con)
+    original = node["datos"].get("formaliza")
+    if result == "validada" and isinstance(original, str):
+        # una formalización validada (investigador, 2026-10-30) reemplaza a la vigente sin cláusula que formaliza
+        previa = k._nodo(con, pid, original)
+        if previa["estado"] == "vigente" and previa["datos"].get("regla_logica") is None:
+            k.vincular(pid, nid, "reemplaza", original, autor=por, motivo=motive, con=con)
+            reemplazar(con, pid, original, nid, por, motive)
     return k._nodo(con, pid, nid)
 
 

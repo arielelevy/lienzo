@@ -400,3 +400,16 @@ def test_principio_sin_condiciones_no_se_pone_a_prueba():
     ciclo().generalizar("aa-ciclo")
     gen = next(n for n in c.listar("aa-ciclo") if n["id"] == principle["id"])["datos"]["generalizacion"]
     assert gen["estado"] in ("sin_condiciones", "sin_contraejemplos") and gen["contraejemplos"] == []
+
+
+@MOTOR_REAL
+def test_dos_reglas_formalizadas_se_encadenan_y_el_motor_deduce_una_conclusion_nueva():
+    """Lo que faltaba (2026-10-30): con cláusulas encadenables la vuelta deduce y deja una derivada propuesta."""
+    belief(clausula="presion_ram(C) :- frentes_activos(C, N), N > 2.")
+    belief(clausula="impedir(C, lanzar_frente, ram) :- presion_ram(C).")
+    hechos = [{"pred": "frentes_activos", "args": ["trabajo:aa-ciclo", 4]}]
+    out = ciclo().vuelta("aa-ciclo", hechos=hechos)
+    assert len(out["derivadas"]) == 1
+    derivada = next(n for n in c.listar("aa-ciclo") if n["id"] == out["derivadas"][0])
+    assert derivada["estado"] == "propuesta" and derivada["datos"]["tipo_propuesta"] == "derivada"
+    assert len(derivada["datos"]["derivacion"]["premisas"]) == 2

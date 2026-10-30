@@ -139,7 +139,7 @@ class Scheduler:
             if not isinstance(data["project"], str):
                 raise ValueError("proyecto inválido")
             conocimiento.proyecto(data["project"])
-            decision = self._research_evaluate(data["project"])
+            decision = self._research_evaluate(data["project"], familia="creencias")
             if not decision["enabled"]:
                 raise ValueError("investigador bloqueado: " + "; ".join(decision["reasons"]))
             if not self.queue.enqueue_research(data["project"], creencias_research.case(data["project"])):
@@ -293,7 +293,14 @@ class Scheduler:
             j.get("kind") == "research" and j["state"] in ACTIVE for j in self.queue.view()["jobs"]
         ):
             return
-        for project in conocimiento.proyectos():
+
+        def atraso(project):
+            seen = self.creencias_view.get(project["id"])
+            return (
+                -1 if seen is None else -sum(len(v) if isinstance(v, list) else v for v in seen["pendientes"].values())
+            )
+
+        for project in sorted(conocimiento.proyectos(), key=atraso):
             pid = project["id"]
             if time.monotonic() - self.creencias_visto.get(pid, -1e9) < CREENCIAS_CADA_S:
                 continue
@@ -303,7 +310,7 @@ class Scheduler:
                 self.creencias_view[pid] = {**view, "calculado_en": time.time()}
                 if not any(view["pendientes"].values()):
                     continue
-                decision = self._research_evaluate(pid)
+                decision = self._research_evaluate(pid, familia="creencias")
                 if not decision["enabled"]:
                     # la política (cuota, tope diario) bloquea a todos: no se relee la cuota proyecto por proyecto
                     self.creencias_visto = {p["id"]: time.monotonic() for p in conocimiento.proyectos()}
@@ -320,7 +327,7 @@ class Scheduler:
         view = self.queue.view()
         if not view["enabled"] or any(j.get("kind") == "research" and j["state"] in ACTIVE for j in view["jobs"]):
             return
-        if self.queue.research_runs_since(time.time() - 86400, resumen=True) >= resumidor.TOPE_DIA:
+        if self.queue.research_runs_since(time.time() - 86400, familia="resumen") >= resumidor.TOPE_DIA:
             return
         for project in conocimiento.proyectos():
             pid = project["id"]
@@ -331,7 +338,7 @@ class Scheduler:
                 pendientes = resumidor.estado(pid)["pendientes"]
                 if not pendientes:
                     continue
-                decision = self._research_evaluate(pid, resumen=True)
+                decision = self._research_evaluate(pid, familia="resumen")
                 if not decision["enabled"]:
                     self.resumen_visto = {p["id"]: time.monotonic() for p in conocimiento.proyectos()}
                     self.reason = "resumidor bloqueado: " + "; ".join(decision["reasons"])
@@ -452,15 +459,24 @@ class Scheduler:
         """El adaptador pedido para el trabajo, o el que elige la regla (Codex con cuota, si no Claude)."""
         return self.research_named(named, project) if named else self.research_adapter(project)
 
-    def _research_evaluate(self, project, named=None, *, resumen=False):
+    def _research_evaluate(self, project, named=None, *, familia=None):
+        """Política del investigador. Una familia con tope propio (resumen, creencias) no gasta el tope
+        diario del investigador: la política mira cuota y autorización, y su tope se mira acá."""
         since = time.time() - 86400  # tope diario en 24 h móviles
         adapter = self._adapter(project, named)
         _, decision = research.evaluate(
             project,
             adapter,
-            runs_today=0 if resumen else self.queue.research_runs_since(since),
-            adapter_runs_today=0 if resumen else self.queue.research_runs_since(since, adapter.name),
+            runs_today=0 if familia else self.queue.research_runs_since(since),
+            adapter_runs_today=0 if familia else self.queue.research_runs_since(since, adapter.name),
         )
+        tope = TOPES.get(familia)
+        if tope is not None and self.queue.research_runs_since(since, familia=familia) >= tope:
+            decision = {
+                **decision,
+                "enabled": False,
+                "reasons": [*decision.get("reasons", []), f"tope diario de {familia} alcanzado ({tope} vueltas)"],
+            }
         self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
         return decision
 
@@ -491,18 +507,19 @@ class Scheduler:
                 return
         since = time.time() - 86400
         chosen = self._adapter(project, job.get("adapter"))
-        resumen = _is_resumen(job)
-        if resumen and self.queue.research_runs_since(since, resumen=True) >= resumidor.TOPE_DIA:
-            reason = f"resumidor: tope diario alcanzado ({resumidor.TOPE_DIA} vueltas)"
+        familia = _familia(job)
+        tope = TOPES.get(familia)
+        if tope is not None and self.queue.research_runs_since(since, familia=familia) >= tope:
+            reason = f"{familia}: tope diario alcanzado ({tope} vueltas)"
             self.reason = reason
             self.queue.change(jid, state="paused", reason=reason, not_before=time.time() + RESEARCH_BACKOFF_S)
             return
-        # el resumidor no gasta el tope del investigador: la política mira sólo cuota y autorización
+        # resumen y creencias no gastan el tope del investigador: la política mira sólo cuota y autorización
         adapter, decision = research.evaluate(
             project,
             chosen,
-            runs_today=0 if resumen else self.queue.research_runs_since(since),
-            adapter_runs_today=0 if resumen else self.queue.research_runs_since(since, chosen.name),
+            runs_today=0 if familia else self.queue.research_runs_since(since),
+            adapter_runs_today=0 if familia else self.queue.research_runs_since(since, chosen.name),
         )
         self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
         with self.queue.lock:
@@ -697,11 +714,18 @@ def _is_resumen(job) -> bool:
     return job.get("kind") == "research" and (job.get("case") or {}).get("kind") == "resumen"
 
 
+def _familia(job) -> str | None:
+    """La familia con tope diario propio de un trabajo de investigación, o None (tope del investigador)."""
+    kind = (job.get("case") or {}).get("kind") if job.get("kind") == "research" else None
+    return kind if kind in TOPES else None
+
+
 def _es_fondo(job) -> bool:
     """Lo que corre en segundo plano aunque haya agentes trabajando: creencias y el resumidor del nivel 3."""
     return _is_creencias(job) or _is_resumen(job)
 
 
+TOPES = {"resumen": resumidor.TOPE_DIA, "creencias": creencias_research.TOPE_DIA}
 TRABAJO_CADA_S = 3600
 CREENCIAS_CADA_S = 1800
 RESEARCH_EVERY_S = 1800

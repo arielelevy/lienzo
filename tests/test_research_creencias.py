@@ -437,7 +437,7 @@ def test_daily_cap_and_dedup_still_apply(monkeypatch):
     with pytest.raises(ValueError):
         scheduler.command({"action": "enqueue_creencias", "project": PROJECT})  # una activa por proyecto
     k.registrar_proyecto("otro-sin-activa")
-    monkeypatch.setattr(scheduler.queue, "research_runs_since", lambda since, adapter=None: 6)
+    monkeypatch.setattr(scheduler.queue, "research_runs_since", lambda since, adapter=None, familia=None: rc.TOPE_DIA)
     with pytest.raises(ValueError, match="tope diario"):
         scheduler.command({"action": "enqueue_creencias", "project": "otro-sin-activa"})
 
@@ -653,3 +653,85 @@ def test_opcionales_null_o_ausentes_se_aceptan_y_se_quitan(monkeypatch):
         [kept] = out["creencias"]
         assert "principio" not in kept and "ejemplos" not in kept
         assert kept["formalizacion"]["estado"] == "datos_insuficientes"
+
+
+_HASTA = "2999-01-01T00:00:00+00:00"
+
+
+def _vigente(texto="Medir antes de lanzar", accion="Medir RAM"):
+    ev = k.crear_nodo(PROJECT, "evidencia", "ev", {}, autor="persona:Ariel")
+    n = rc.creencias.proponer(
+        PROJECT, {"dimension": "memoria", "texto": texto, "accion": accion, "fuentes": [ev["id"]]}, autor="server:t"
+    )
+    rc.creencias.resolver(
+        PROJECT,
+        n["id"],
+        {
+            "por": "persona:Ariel",
+            "motivo": "ok",
+            "resultado": "validada",
+            "evidencia": ev["id"],
+            "vigente_hasta": _HASTA,
+        },
+    )
+    return n["id"], ev["id"]
+
+
+def test_vigentes_sin_clausula_disparan_una_vuelta_y_van_al_paquete():
+    nid, _ = _vigente()
+    assert rc.estado(PROJECT)["pendientes"]["formalizar"] == 1
+    data, lectura, _ = rc.gather(PROJECT)
+    assert [x["id"] for x in data["por_formalizar"]] == [nid] and lectura["formalizar"] == [nid]
+    assert "frentes_activos/2" in data["predicados_medidos"]
+
+
+def test_formalizacion_validada_entra_como_propuesta_y_al_validarla_reemplaza(monkeypatch):
+    nid, ev = _vigente()
+    data = {"case_id": "c1", "por_formalizar": [{"id": nid}], "fuentes": {}, "vueltas_previas": []}
+    monkeypatch.setattr(rc, "allowed_refs", lambda d: set())
+    respuesta = {
+        "case_id": "c1",
+        "leido": "l",
+        "conclusiones": ["c"],
+        "limitaciones": ["x"],
+        "creencias": [],
+        "formalizaciones": [
+            {"creencia": nid, "regla_logica": "recomendar(C, medir_ram, memoria) :- frentes_activos(C, N), N > 2."},
+            {"creencia": "otra", "regla_logica": "recomendar(C, a, b) :- pruebas(C)."},
+            {"creencia": nid, "regla_logica": "no es prolog"},
+        ],
+    }
+    out = rc.validate(respuesta, data, None)
+    assert [f["creencia"] for f in out["formalizaciones"]] == [nid]
+    assert len(out["formalizaciones_descartadas"]) == 2
+    assert (
+        rc.validate({k_: v for k_, v in respuesta.items() if k_ != "formalizaciones"}, data, None)["formalizaciones"]
+        == []
+    )  # respuesta anterior a la formalización
+    evid = k.crear_nodo(PROJECT, "evidencia", "vuelta", {}, autor="server:t")["id"]
+    [prop] = rc._registrar_formalizaciones(PROJECT, {"case_key": "c1"}, out, {"formalizar": [nid]}, evid)
+    nodo = k.nodo(PROJECT, prop)
+    assert nodo["estado"] == "propuesta" and nodo["datos"]["formaliza"] == nid
+    assert nodo["datos"]["regla_logica"]["clausula"].startswith("recomendar(C, medir_ram")
+    assert rc.estado(PROJECT)["pendientes"]["formalizar"] == 0  # ya intentada para esta revisión
+    rc.creencias.resolver(
+        PROJECT,
+        prop,
+        {
+            "por": "persona:Ariel (delegado a IA: codex)",
+            "motivo": "fiel",
+            "resultado": "validada",
+            "evidencia": ev,
+            "vigente_hasta": _HASTA,
+        },
+    )
+    assert k.nodo(PROJECT, nid)["estado"] == "reemplazada"
+    assert k.nodo(PROJECT, prop)["estado"] == "vigente"
+
+
+def test_vigente_que_no_se_pudo_formalizar_no_vuelve_cada_vuelta():
+    nid, _ = _vigente()
+    evid = k.crear_nodo(PROJECT, "evidencia", "vuelta", {}, autor="server:t")["id"]
+    assert rc._registrar_formalizaciones(PROJECT, {"case_key": "c1"}, {}, {"formalizar": [nid]}, evid) == []
+    assert k.nodo(PROJECT, nid)["datos"]["formalizacion_propuesta"]["estado"] == "sin_formalizar"
+    assert rc.estado(PROJECT)["pendientes"]["formalizar"] == 0

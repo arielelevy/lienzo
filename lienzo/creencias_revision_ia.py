@@ -553,7 +553,10 @@ def consultar(nodes, sources, agent, *, runner=None, candidatos=None):
         "Fusionar requiere destino canónico del mismo proyecto provisto en candidatos; si está en la tanda aceptalo, "
         "sin fusionar en cadena. Sólo duplicados con igual regla, condiciones y alcance: conservá observaciones distintas. "
         "Completá metadatos tecnologia,area,fase,tipo_trabajo,agente,modelo sólo desde evidencia; "
-        "si no consta usá 'no consta en evidencia'. Nunca inventes.\n"
+        "si no consta usá 'no consta en evidencia'. Nunca inventes. "
+        "Una propuesta con tipo_propuesta=formalizacion repite una creencia vigente (formaliza) y le agrega "
+        "regla_logica, una cláusula Prolog: aceptala si la cláusula dice lo mismo que su texto y su acción; si no "
+        "es fiel, rechazala (corregir no conserva la cláusula).\n"
         + json.dumps(
             _redactar_ia({"propuestas": nodes, "evidencia": sources, "candidatos": candidatos or []}),
             ensure_ascii=False,
@@ -587,6 +590,7 @@ def consultar(nodes, sources, agent, *, runner=None, candidatos=None):
                 "--sandbox",
                 "read-only",
                 "--ephemeral",
+                "--skip-git-repo-check",  # corre en una carpeta temporal, sin git
                 "--color",
                 "never",
                 "-c",

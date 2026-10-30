@@ -146,16 +146,17 @@ def test_dia_enorme_se_muestrea():
     assert sum(e["clase"] == "pedido" for e in quedan) == 10
 
 
-def test_runs_del_resumidor_no_gastan_el_tope_del_investigador():
+def test_resumen_y_creencias_no_gastan_el_tope_del_investigador():
     q = optimization_queue.Queue()
     now = 1000.0
     q.jobs = [
         {"kind": "research", "case": {"kind": "resumen"}, "runs": [now, now], "run_adapters": ["claude", "claude"]},
         {"kind": "research", "case": {"kind": "creencias"}, "runs": [now], "run_adapters": ["claude"]},
     ]
-    assert q.research_runs_since(0) == 1
-    assert q.research_runs_since(0, "claude") == 1
-    assert q.research_runs_since(0, resumen=True) == 2
+    assert q.research_runs_since(0) == 0  # las dos familias tienen tope propio
+    assert q.research_runs_since(0, "claude") == 0
+    assert q.research_runs_since(0, familia="resumen") == 2
+    assert q.research_runs_since(0, familia="creencias") == 1
 
 
 # ------------------------------------------------------------------ de punta a punta con el scheduler
@@ -227,7 +228,9 @@ def test_scheduler_respeta_el_tope_propio(capturas, monkeypatch):
     monkeypatch.setattr(
         scheduler.queue,
         "research_runs_since",
-        lambda since, adapter=None, resumen=False: rz.TOPE_DIA if resumen else real(since, adapter),
+        lambda since, adapter=None, familia=None: (
+            rz.TOPE_DIA if familia == "resumen" else real(since, adapter, familia=familia)
+        ),
     )
     for _ in range(4):
         scheduler.tick(_busy())

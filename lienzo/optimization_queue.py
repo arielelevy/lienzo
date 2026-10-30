@@ -12,6 +12,8 @@ import state
 from atomico import atomic_write
 
 STATES = ("queued", "running", "paused", "review", "observed", "failed", "cancelled")
+# vueltas en segundo plano con tope diario propio, aparte del del investigador (Ariel, 2026-10-29 y 30)
+FAMILIAS_PROPIAS = ("resumen", "creencias")
 ACTIVE = ("queued", "running", "paused")
 MAX_RESEARCH_ATTEMPTS = 10
 REQUESTABLE_ADAPTERS = ("codex", "claude", "azure-openai")  # lo que una persona puede pedir por trabajo
@@ -179,16 +181,18 @@ class Queue:
                 return
             self.jobs.remove(old)
 
-    def research_runs_since(self, since: float, adapter: str | None = None, *, resumen: bool = False) -> int:
+    def research_runs_since(self, since: float, adapter: str | None = None, *, familia: str | None = None) -> int:
         """Inicios desde `since`; con `adapter`, sólo los de ese adaptador (cada uno tiene su tope diario).
-        Un inicio sin adaptador registrado (anterior al registro) cuenta para todos. El resumidor del nivel 3
-        tiene tope propio: `resumen` cuenta sólo sus vueltas y, sin él, quedan afuera."""
+        Un inicio sin adaptador registrado (anterior al registro) cuenta para todos. El resumidor y las
+        creencias tienen tope propio (FAMILIAS_PROPIAS): `familia` cuenta sólo sus vueltas y, sin ella,
+        quedan afuera."""
         with self.lock:
             count = 0
             for job in self.jobs:
                 if job.get("kind") != "research":
                     continue
-                if ((job.get("case") or {}).get("kind") == "resumen") != resumen:
+                kind = (job.get("case") or {}).get("kind")
+                if (kind if kind in FAMILIAS_PROPIAS else None) != familia:
                     continue
                 names = job.get("run_adapters") or []
                 for i, moment in enumerate(job["runs"]):
