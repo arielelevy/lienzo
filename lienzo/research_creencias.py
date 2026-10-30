@@ -587,7 +587,10 @@ def prompt(data: dict, base: str = "", tools: bool = True) -> str:
         "Predicados permitidos (aridad): "
         + ",".join(f"{p}/{len(a)}" for p, a in sorted(prolog_programa.VOCABULARIO.items()))
         + ". Preferí pocos principios generales (principio=true, ejemplos=ids existentes) que agrupen "
-        "los casos puntuales conservando excepciones; es generalización inductiva pendiente de veredicto.\n"
+        "los casos puntuales conservando excepciones; es generalización inductiva pendiente de veredicto. "
+        "El motor la pone a prueba: sus condiciones son los metadatos que comparten todos los ejemplos, y "
+        "cualquier creencia refutada que las cumpla es un contraejemplo que impide validarla tal cual; si "
+        "conocés una excepción, nombrala en excepciones.\n"
     )
     return (
         (

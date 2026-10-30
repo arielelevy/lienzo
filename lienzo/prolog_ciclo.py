@@ -10,6 +10,7 @@ import aprendizaje
 import conocimiento as k
 import creencias as c
 import prolog_contraste as pc
+import prolog_hechos
 import prolog_learning as learning
 import prolog_programa as programa
 import prolog_servicio as servicio
@@ -125,8 +126,6 @@ def _posterior(node, belief):
 
 
 def _facts(nodes, links, habilitadas=None):
-    import prolog_hechos
-
     facts, byid = [], {n["id"]: n for n in nodes}
     for belief in _beliefs(nodes):
         facts.extend(prolog_hechos.desde_creencia(belief))
@@ -470,8 +469,91 @@ def politica_recursos():
     }
 
 
+def _meta(node):
+    """(clave, valor) de los metadatos automáticos de un caso; los mismos que `prolog_hechos.desde_creencia`."""
+    return {(f["pred"], f["args"][1]) for f in prolog_hechos.desde_creencia(node)}
+
+
+def _caido(node):
+    return node["estado"] == "revertida" or node["datos"].get("resultado") == "refutada"
+
+
+NO = {"not": True}
+X, P_, D_, K_, V_ = "?X", "?P", "?D", "?K", "?V"
+REGLAS_GENERALIZACION = [
+    R(
+        "generalizacion_caso",
+        L("apoyo_inductivo", P_, E),
+        L("principio_candidato", P_),
+        L("ejemplo_de", P_, E),
+        L("dimension_caso", P_, D_),
+        L("dimension_caso", E, D_),
+    ),
+    # Las condiciones del principio son los metadatos que comparten todos sus ejemplos. Un caso que no
+    # cumple alguna queda fuera; uno que cumple todas y tiene la misma dimensión está cubierto.
+    R(
+        "falta_condicion",
+        L("falta_condicion", P_, X),
+        L("condicion", P_, K_, V_),
+        L("caso", X),
+        L("meta", X, K_, V_, **NO),
+    ),
+    R(
+        "cubre",
+        L("cubre", P_, X),
+        L("principio_candidato", P_),
+        L("dimension_de", P_, D_),
+        L("caso", X),
+        L("dimension_de", X, D_),
+        L("falta_condicion", P_, X, **NO),
+        {"cmp": "!=", "args": [X, P_]},
+    ),
+    # Contraejemplo: el principio lo cubre pero una persona lo refutó o se revirtió.
+    R("contraejemplo", L("contraejemplo", P_, X), L("cubre", P_, X), L("caso_caido", X)),
+    # Lo que explica sin que la IA lo haya citado: casos sanos cubiertos fuera de sus ejemplos.
+    R(
+        "explica",
+        L("explica", P_, X),
+        L("cubre", P_, X),
+        L("caso_caido", X, **NO),
+        L("ejemplo_de", P_, X, **NO),
+    ),
+]
+
+
+def _casos_y_negables(beliefs, candidates, byid):
+    """Hechos de casos y condiciones, y el modelo Python de lo que se niega: el motor deduce y Python
+    comprueba cada negación de la prueba contra lo mismo que se envió."""
+    facts, negables = [], {"meta": set(), "caso_caido": set(), "ejemplo_de": set(), "falta_condicion": set()}
+    metas = {b["id"]: _meta(b) for b in beliefs}
+    for b in beliefs:
+        facts.append(L("caso", b["id"]))
+        facts.append(L("dimension_de", b["id"], b["datos"]["dimension"]))
+        for key, val in sorted(metas[b["id"]]):
+            facts.append(L("meta", b["id"], key, val))
+            negables["meta"].add((b["id"], key, val))
+        if _caido(b):
+            facts.append(L("caso_caido", b["id"]))
+            negables["caso_caido"].add((b["id"],))
+    condiciones = {}
+    for p in candidates:
+        ejemplos = [byid[e] for e in sorted(set(p["datos"]["ejemplos"])) if e in byid]
+        shared = set.intersection(*(metas[e["id"]] for e in ejemplos)) if ejemplos else set()
+        condiciones[p["id"]] = sorted(shared)
+        for key, val in condiciones[p["id"]]:
+            facts.append(L("condicion", p["id"], key, val))
+        for e in ejemplos:
+            negables["ejemplo_de"].add((p["id"], e["id"]))
+        for b in beliefs:
+            if not set(condiciones[p["id"]]) <= metas[b["id"]]:
+                negables["falta_condicion"].add((p["id"], b["id"]))
+    return facts, negables, condiciones
+
+
 def generalizar(pid, *, cancelar=lambda: False):
-    """La IA propone el principio; Prolog agrupa sus casos, sin probar una ley universal."""
+    """La IA propone el principio; Prolog agrupa sus casos y lo pone a prueba contra los demás: qué casos
+    cubre, cuáles explica sin que se los hayan citado y cuáles lo contradicen. No prueba una ley universal:
+    un principio con contraejemplos no se puede validar tal cual (creencias._veredicto)."""
     _cancelar(cancelar)
     nodes, _ = _foto(pid)
     beliefs = _beliefs(nodes)
@@ -494,22 +576,22 @@ def generalizar(pid, *, cancelar=lambda: False):
         for example in sorted(set(b["datos"]["ejemplos"])):
             if example in byid and example != b["id"]:
                 facts.append(L("ejemplo_de", b["id"], example))
-    rules = [
-        R(
-            "generalizacion_caso",
-            L("apoyo_inductivo", "?P", "?E"),
-            L("principio_candidato", "?P"),
-            L("ejemplo_de", "?P", "?E"),
-            L("dimension_caso", "?P", "?D"),
-            L("dimension_caso", "?E", "?D"),
-        )
-    ]
+    casos, negables, condiciones = _casos_y_negables(beliefs, candidates, byid)
+    facts.extend(casos)
     result = _resolver(
-        [{**f, "source": "casos"} for f in facts], rules, [L("apoyo_inductivo", "?P", "?E")], cancelar=cancelar
+        [{**f, "source": "casos"} for f in facts],
+        REGLAS_GENERALIZACION,
+        [L("apoyo_inductivo", P_, E), *(L(pred, P_, X) for pred in ("cubre", "contraejemplo", "explica"))],
+        cancelar=cancelar,
+        negables=negables,
     )
     found = {}
     for row in result["answers"][0]["results"]:
         found.setdefault(row["bindings"]["P"], []).append(row)
+    prueba = {}  # (consulta, principio) -> [(caso, prueba)]
+    for ans in result["answers"][1:]:
+        for row in ans["results"]:
+            prueba.setdefault((ans["pred"], row["bindings"]["P"]), []).append((row["bindings"]["X"], row["proof"]))
     saved = []
     with k._abrir(pid) as con:
         con.execute("BEGIN IMMEDIATE")
@@ -521,6 +603,11 @@ def generalizar(pid, *, cancelar=lambda: False):
             if any(k._nodo(con, pid, nid) != byid[nid] for nid in [b["id"], *expected]):
                 raise k.Rechazo("Cambió un caso durante la generalización; no se publicó", 409)
             _cancelar(cancelar)
+            contra = sorted(prueba.get(("contraejemplo", b["id"]), []), key=lambda x: x[0])
+            if not condiciones[b["id"]]:
+                estado = "sin_condiciones"  # los ejemplos sólo comparten la dimensión: no se puede poner a prueba
+            else:
+                estado = "con_contraejemplos" if contra else "sin_contraejemplos"
             k.actualizar_datos(
                 pid,
                 b["id"],
@@ -529,7 +616,13 @@ def generalizar(pid, *, cancelar=lambda: False):
                         "tipo": "inductiva",
                         "ejemplos": sorted(expected),
                         "pruebas": [r["proof"] for r in rows],
-                        "confianza": "agrupación de casos; no prueba universal",
+                        "condiciones": [list(c) for c in condiciones[b["id"]]],
+                        "cubre": sorted(x for x, _ in prueba.get(("cubre", b["id"]), [])),
+                        "explica": sorted(x for x, _ in prueba.get(("explica", b["id"]), [])),
+                        "contraejemplos": [{"caso": x, "prueba": p} for x, p in contra],
+                        "estado": estado,
+                        "revision": revision(b),
+                        "confianza": "agrupación de casos puesta a prueba; no prueba universal",
                         "requiere_veredicto": True,
                         "program_hash": result["program_hash"],
                     }

@@ -235,6 +235,13 @@ def _veredicto(con, pid, nid, por, result, evidence_id, motive, until):
         raise k.Rechazo("el veredicto requiere un nodo evidencia")
     if result == "validada" and node["estado"] not in ("propuesta", "vigente"):
         raise k.Rechazo("una creencia refutada requiere una propuesta nueva", 409)
+    import prolog_programa
+
+    gen = node["datos"].get("generalizacion") or {}
+    if result == "validada" and gen.get("contraejemplos") and gen.get("revision") == prolog_programa.revision(node):
+        # el motor encontró casos que el principio cubre y que una persona refutó: tal cual es falso
+        casos = ", ".join(c["caso"] for c in gen["contraejemplos"][:5])
+        raise k.Rechazo(f"el principio tiene contraejemplos ({casos}): corregilo con la excepción o refutalo", 409)
     if result == "validada":
         k.vincular(pid, nid, "apoya", evidence["id"], autor=por, motivo=motive, con=con)
     fields = {
@@ -244,8 +251,6 @@ def _veredicto(con, pid, nid, por, result, evidence_id, motive, until):
         "veredicto_por": por,
         "veredicto_fecha": k.ahora(),
     }
-    import prolog_programa
-
     fields["revision_veredicto"] = prolog_programa.revision(node)
     if evidence["datos"].get("clase") == "ia_delegada":
         fields.update(ia_delegada=True, confianza="veredicto IA delegada")

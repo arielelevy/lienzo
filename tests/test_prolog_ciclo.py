@@ -334,3 +334,69 @@ def test_politica_conservadora_no_se_atribuye_a_una_deduccion():
     assert policy["pendiente_medicion"] == [2, 3]
     assert policy["requiere_veredicto"] is False  # aprobada expresamente con el diseño AA
     assert "2" in policy["regla_logica"]["clausula"]
+
+
+def _con_meta(nid, **meta):
+    k.actualizar_datos("aa-ciclo", nid, {"metadatos": {key: [val] for key, val in meta.items()}}, por="server:AA")
+
+
+@MOTOR_REAL
+def test_generalizacion_busca_contraejemplos_y_frena_el_veredicto():
+    b1, _ = belief()
+    b2, _ = belief()
+    caido, ev = belief()
+    sano, _ = belief()
+    otro, _ = belief()
+    _con_meta(b1, tecnologia="python", area="pruebas")
+    _con_meta(b2, tecnologia="python", area="pruebas", fase="cierre")
+    _con_meta(caido, tecnologia="python", area="pruebas")
+    _con_meta(sano, tecnologia="python", area="pruebas")
+    _con_meta(otro, tecnologia="node", area="pruebas")
+    c.resolver(
+        "aa-ciclo",
+        caido,
+        {"por": "persona:Ariel", "motivo": "falló", "resultado": "refutada", "evidencia": ev},
+    )
+    principle = c.proponer(
+        "aa-ciclo",
+        {
+            "dimension": "memoria",
+            "texto": "En Python, medir antes de probar",
+            "accion": "Medir RAM",
+            "fuentes": [b1, b2],
+        },
+        autor="server:AA",
+    )
+    k.actualizar_datos("aa-ciclo", principle["id"], {"principio": True, "ejemplos": [b1, b2]}, por="server:AA")
+    assert ciclo().generalizar("aa-ciclo")["principios"] == [principle["id"]]
+    gen = next(n for n in c.listar("aa-ciclo") if n["id"] == principle["id"])["datos"]["generalizacion"]
+    assert gen["condiciones"] == [["area", "pruebas"], ["tecnologia", "python"]]
+    assert set(gen["cubre"]) == {b1, b2, caido, sano}  # `otro` es de node: no lo cubre
+    assert [x["caso"] for x in gen["contraejemplos"]] == [caido] and gen["contraejemplos"][0]["prueba"]
+    assert gen["explica"] == [sano]
+    assert gen["estado"] == "con_contraejemplos"
+    with pytest.raises(k.Rechazo, match="contraejemplos"):
+        c.resolver(
+            "aa-ciclo",
+            principle["id"],
+            {"por": "persona:Ariel", "motivo": "ok", "resultado": "validada", "evidencia": ev},
+        )
+    # refutarlo sigue permitido
+    c.resolver(
+        "aa-ciclo", principle["id"], {"por": "persona:Ariel", "motivo": "no", "resultado": "refutada", "evidencia": ev}
+    )
+
+
+@MOTOR_REAL
+def test_principio_sin_condiciones_no_se_pone_a_prueba():
+    b1, _ = belief()
+    b2, _ = belief()
+    principle = c.proponer(
+        "aa-ciclo",
+        {"dimension": "memoria", "texto": "Medir", "accion": "Medir RAM", "fuentes": [b1, b2]},
+        autor="server:AA",
+    )
+    k.actualizar_datos("aa-ciclo", principle["id"], {"principio": True, "ejemplos": [b1, b2]}, por="server:AA")
+    ciclo().generalizar("aa-ciclo")
+    gen = next(n for n in c.listar("aa-ciclo") if n["id"] == principle["id"])["datos"]["generalizacion"]
+    assert gen["estado"] in ("sin_condiciones", "sin_contraejemplos") and gen["contraejemplos"] == []
