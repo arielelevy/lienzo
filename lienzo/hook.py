@@ -340,7 +340,7 @@ def main() -> int:
         # sólo controles: corre antes de cada Bash, así que no deja evento ni busca el proceso del agente
         decision = control_previo(data)
         if decision:
-            print(json.dumps(decision, ensure_ascii=False))
+            print(json.dumps(decision))  # ASCII: en Windows el stdout de un pipe no es UTF-8
         return 0
     sid = str(data.get("session_id") or "nosid")
     pid, exe, chain = find_agent_pid()
@@ -389,7 +389,7 @@ def main() -> int:
     if agent == "claude" and event == "SessionStart":
         inicio = contexto_inicio(data)
         if inicio:
-            print(json.dumps(inicio, ensure_ascii=False))
+            print(json.dumps(inicio))  # ASCII: en Windows el stdout de un pipe no es UTF-8
     return 0
 
 
