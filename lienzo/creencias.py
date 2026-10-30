@@ -118,6 +118,12 @@ def proponer(pid, data, *, autor, con=None):
         except ValueError as exc:
             raise k.Rechazo(f"regla_logica inválida: {exc}") from None
         payload["regla_logica"] = data["regla_logica"]
+    if data.get("control") is not None:
+        import contexto_sesion  # importa este módulo: diferido
+
+        if data["control"] not in contexto_sesion.CONTROLES:
+            raise k.Rechazo(f"control desconocido: {data['control']}")
+        payload["control"] = data["control"]
     if data.get("clave") is not None:
         # una medición que se repite (esperas, difusiones: una por noche) suma su observación a la creencia
         # abierta de la misma clave en vez de crear otra (2026-10-25: 10 copias de 2 observaciones)

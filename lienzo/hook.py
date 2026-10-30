@@ -272,6 +272,63 @@ def answer_permission(agent: str, data: dict, cfg: dict, sid: str) -> None:
         pass
 
 
+def _contexto_sesion() -> dict:
+    """El archivo que escribe contexto_sesion.py, o {}. Sin server: si no está o no se lee, no se inyecta ni
+    se controla nada."""
+    try:
+        with open(os.path.join(LIENZO, "contexto-sesion.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except OSError, ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _proyecto(data: dict, cwd) -> str | None:
+    # misma regla que contexto_sesion.proyecto_de: la carpeta registrada más específica que contiene a cwd
+    actual = (cwd or "").replace("\\", "/").rstrip("/").lower()
+    mejor = None
+    for carpeta, pid in (data.get("carpetas") or {}).items():
+        if (actual == carpeta or actual.startswith(carpeta + "/")) and (mejor is None or len(carpeta) > len(mejor[0])):
+            mejor = (carpeta, pid)
+    return mejor[1] if mejor else None
+
+
+def control_previo(data: dict) -> dict | None:
+    """PreToolUse de Claude: el primer control activo que el comando dispara, como decisión de denegar."""
+    ctx = _contexto_sesion()
+    controles = ctx.get("controles") or []
+    if not controles:
+        return None
+    pid = _proyecto(ctx, data.get("cwd"))
+    command = str((data.get("tool_input") or {}).get("command") or "")
+    for c in controles:
+        if c.get("herramienta") != data.get("tool_name") or c.get("proyecto") not in (None, pid):
+            continue
+        try:
+            if re.search(c["patron"], command, re.IGNORECASE) and not re.search(c["excepto"], command, re.IGNORECASE):
+                motivo = f"{c['mensaje']} (control de Lienzo por la creencia {str(c.get('creencia'))[:8]})"
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": motivo,
+                    }
+                }
+        except re.error, KeyError, TypeError:
+            continue
+    return None
+
+
+def contexto_inicio(data: dict) -> dict | None:
+    """SessionStart de Claude: las creencias del proyecto de la carpeta como contexto adicional."""
+    ctx = _contexto_sesion()
+    pid = _proyecto(ctx, data.get("cwd"))
+    texto = (ctx.get("textos") or {}).get(pid) if pid else None
+    if not texto:
+        return None
+    return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": texto}}
+
+
 def main() -> int:
     agent = sys.argv[1] if len(sys.argv) > 1 else "unknown"
     os.makedirs(EVENTS, exist_ok=True)
@@ -279,6 +336,12 @@ def main() -> int:
     if data is None:
         return 0
     event = data.get("hook_event_name") or "unknown"
+    if agent == "claude" and event == "PreToolUse":
+        # sólo controles: corre antes de cada Bash, así que no deja evento ni busca el proceso del agente
+        decision = control_previo(data)
+        if decision:
+            print(json.dumps(decision, ensure_ascii=False))
+        return 0
     sid = str(data.get("session_id") or "nosid")
     pid, exe, chain = find_agent_pid()
     cfg = load_config()
@@ -323,6 +386,10 @@ def main() -> int:
         )
     if event == "PermissionRequest":
         answer_permission(agent, data, cfg, sid)
+    if agent == "claude" and event == "SessionStart":
+        inicio = contexto_inicio(data)
+        if inicio:
+            print(json.dumps(inicio, ensure_ascii=False))
     return 0
 
 

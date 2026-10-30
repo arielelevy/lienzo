@@ -49,6 +49,7 @@ import conocimiento
 import conocimiento_api
 import console_titles
 import consulta
+import contexto_sesion
 import cuenta_github
 import cuotas
 import cuotas_federadas
@@ -2123,7 +2124,9 @@ class Handler(JsonHandler):
                 # uso de Claude y Codex (lo de /usage y /status) y la sugerencia; ?refrescar=1 fuerza leer
                 refresh = self.query.get("refrescar") == ["1"]
                 local = cuotas.estado(refrescar=refresh)
-                return self._json(200, cuotas_federadas.estado(local, mirror.MIRROR.peers_status(), mirror.MIRROR.forward, refresh))
+                return self._json(
+                    200, cuotas_federadas.estado(local, mirror.MIRROR.peers_status(), mirror.MIRROR.forward, refresh)
+                )
             if parts == ["agent-improvements", "scheduler"]:
                 try:
                     return self._json(200, optimization_scheduler.get().status())
@@ -3708,6 +3711,8 @@ def main() -> int:
     threading.Thread(target=registro_niveles.bucle, name="registro", daemon=True).start()
     # nivel 3 para el bot de ChatGPT, sólo en la PC con bot-externo.json; lo saca Tailscale Funnel
     bot_externo.arrancar(log)
+    # las creencias llegan a cada sesión: contexto en SessionStart de Claude y controles en PreToolUse
+    threading.Thread(target=contexto_sesion.bucle, name="contexto-sesion", daemon=True).start()
     threading.Thread(target=vigia_loop, name="vigia", daemon=True).start()
     threading.Thread(target=consulta_loop, name="consulta", daemon=True).start()
     plugins.cargar()  # lienzo/extensiones/*.py, si los hay en esta PC (Git los ignora)

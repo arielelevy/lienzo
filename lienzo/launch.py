@@ -23,6 +23,7 @@ import uuid
 
 import agent_improvements
 import claude_pipe_runtime
+import contexto_sesion
 import harness_updates
 import state
 import titulo_lanzado
@@ -389,6 +390,12 @@ def launch(
     improvement_warnings = []
     try:
         instructions, improvement_warnings = agent_improvements.launch_instructions(agent, distro, modo)
+        if agent != "claude":
+            # Claude las recibe por su hook de SessionStart (también las sesiones abiertas a mano); el
+            # resto de los agentes que lanza Lienzo, con las instrucciones (contexto_sesion.py)
+            aprendizajes = contexto_sesion.texto_para(cwd)
+            if aprendizajes:
+                instructions = "\n\n".join(filter(None, [instructions, aprendizajes]))
         if instructions:
             extra += _improvement_args(agent, instructions, cwd, distro=distro)
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:

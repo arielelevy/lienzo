@@ -244,6 +244,13 @@ número que se espera; lo que no es tuyo, nombrando de quién es. Y cierra pidie
 qué quedó archivo por archivo con su prueba, qué se midió, qué se dejó afuera y por qué, y qué se vio
 fuera de la carpeta propia.
 
+Antes de repartir, leé lo que ya se aprendió: `GET /conocimiento/<p>/checklist?<contexto>` (con
+`tipo_trabajo`, `tecnologia`, `area`… del trabajo de la ronda) da las creencias vigentes que aplican.
+Las que cambian cómo se hace el trabajo van en el encargo común, no sólo las 3 que `c.encargo` pega
+solo. Las sesiones de Claude las reciben al arrancar (hook SessionStart) y algunas se hacen cumplir
+solas (hook PreToolUse): si un comando del frente vuelve con «control de Lienzo», es una creencia
+vigente, no un error del entorno.
+
 Lo que más mejora el resultado: escribir el criterio antes que el código —"el reporte de tasa se
 escribe antes que el parser"—, y pedir que cada número diga en qué condición se tomó. Con doce
 sesiones en la máquina, la misma consulta puede medir 0,81 ms o 7,25 ms.
@@ -410,6 +417,10 @@ carpeta, las pruebas de esa carpeta, `git status` para ver si tocó algo ajeno, 
 que dejó la máquina limpia, comprobarlo (`pgrep`, bases de prueba borradas). Después anotarlo en un
 archivo de coordinación de la ronda, con lo medido y lo decidido, que es lo que hace que la ronda
 siguiente no empiece de cero.
+
+Por cada creencia que se le mostró al frente (`aprendizajes_mostrados` del encargo), marcá si sirvió:
+`c.uso_aprendizaje(pid, creencia, "sirvio"|"no_aplico"|"ya_sabido", encargo=e["id"])`. Sin esa marca
+el sistema no distingue las que ayudan de las que sobran: dos «no aplicó» de más la mandan a revisar.
 
 Y al cerrar la ronda: `ruff format` una sola vez sobre todo, las dependencias que los frentes
 instalaron declaradas en el `pyproject.toml`, las correcciones que encontraron llevadas a los

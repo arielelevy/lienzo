@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 
 import conocimiento as k
+import contexto_sesion
 import creencias
 import optimizacion_trabajo as trabajo
 import optimization_research as research
@@ -119,13 +120,15 @@ SCHEMA["required"] = list(SCHEMA["properties"])
 # Campos que pueden no venir: el modo estricto de Codex exige que `required` nombre todas las propiedades, así
 # que van obligatorios pero aceptan null. Una respuesta sin ellos (clientes anteriores) se completa con null
 # antes de validar, y los null se quitan después: la ausencia de formalización conserva la propuesta.
-OPCIONALES = ("regla_logica", "principio", "ejemplos")
+OPCIONALES = ("regla_logica", "principio", "ejemplos", "control")
 _CREENCIA_SCHEMA = SCHEMA["properties"]["creencias"]["items"]
 _CREENCIA_SCHEMA["properties"].update(
     {
         "regla_logica": {"type": ["string", "null"], "maxLength": 4000},
         "principio": {"type": ["boolean", "null"]},
         "ejemplos": {**_list({"type": "string", "minLength": 1, "maxLength": 64}, 0, 30), "type": ["array", "null"]},
+        # un chequeo del catálogo de contexto_sesion.CONTROLES que hace cumplir la creencia (hook PreToolUse)
+        "control": {"type": ["string", "null"], "enum": [*sorted(contexto_sesion.CONTROLES), None]},
     }
 )
 _CREENCIA_SCHEMA["required"] = list(_CREENCIA_SCHEMA["properties"])
@@ -570,6 +573,7 @@ def gather(pid: str) -> tuple[dict, dict, dict]:
             for n in formalizar
         ],
         "predicados_medidos": predicados_medidos(),
+        "controles_disponibles": {key: c["descripcion"] for key, c in contexto_sesion.CONTROLES.items()},
         "pendiente_tras_esta_vuelta": left,
         "redactions": counts,
         "limits": "sólo lectura; sin instalar, editar, ejecutar pruebas ni llamar servicios",
@@ -661,7 +665,9 @@ def prompt(data: dict, base: str = "", tools: bool = True) -> str:
         "otros predicados queda escrita pero no se dispara. La cabeza es recomendar(C, accion, motivo) o "
         "impedir(C, accion, motivo) con átomos en minúscula; un paso intermedio puede tener como cabeza otro "
         "predicado del vocabulario (p. ej. presion_ram(C)) para que otra regla lo use: así se encadenan y el "
-        "motor deduce conclusiones nuevas.\n"
+        "motor deduce conclusiones nuevas. Campo control: si la creencia se puede hacer cumplir con un "
+        "chequeo de `controles_disponibles`, su id; si no, null. Un control frena el comando del agente, así "
+        "que usalo sólo cuando la creencia lo dice sin ambigüedad.\n"
     )
     return (
         (
@@ -906,7 +912,7 @@ def record(pid: str, case: dict, result: dict, meta: dict, lectura: dict) -> dic
             "fuentes": sources,
             "excepciones": item["excepciones"],
         }
-        for field in ("regla_logica", "principio", "ejemplos", "formalizacion"):
+        for field in ("regla_logica", "principio", "ejemplos", "formalizacion", "control"):
             if field in item:
                 data[field] = item[field]
         if item["alcance"] == "proceso_lienzo":
@@ -1008,6 +1014,7 @@ def _registrar_formalizaciones(pid, case, result, lectura, evidencia) -> list[st
                         "excepciones": datos.get("excepciones", ""),
                         "alcance": datos.get("alcance", "proyecto"),
                         "regla_logica": hechas[nid]["regla_logica"],
+                        "control": datos.get("control"),
                     },
                     autor=AUTOR,
                     con=con,

@@ -30,7 +30,10 @@ PY = sys.executable.replace("\\", "/")
 LIENZO_HOME = os.environ.get("LIENZO_HOME")
 
 CLAUDE_EVENTS = {
-    "SessionStart": (True, 5),
+    # sincronico: su salida inyecta las creencias del proyecto como contexto (lienzo/contexto_sesion.py)
+    "SessionStart": (False, 5),
+    # sincronico y sólo para Bash: los controles de Lienzo deciden antes de correr el comando
+    "PreToolUse": (False, 5, "Bash"),
     "UserPromptSubmit": (True, 5),
     "Stop": (True, 5),
     "Notification": (True, 5),
@@ -82,7 +85,7 @@ def is_ours(group: dict) -> bool:
     )
 
 
-def entry(agent: str, asyn: bool, timeout: int) -> dict:
+def entry(agent: str, asyn: bool, timeout: int, matcher: str | None = None) -> dict:
     if agent == "coda":
         # forma exec: CODA lanza el interprete con estos argumentos, sin shell de por medio (el
         # default de la forma shell es `sh -c`, que en Windows no esta garantizado)
@@ -94,7 +97,26 @@ def entry(agent: str, asyn: bool, timeout: int) -> dict:
         e = {"type": "command", "command": cmd(agent), "timeout": timeout}
     if asyn:
         e["async"] = True
-    return {"hooks": [e]}
+    return {"hooks": [e], **({"matcher": matcher} if matcher else {})}
+
+
+def claude_settings() -> list:
+    """El settings.json del perfil de siempre y el de cada perfil de `claude_config_dirs` (config.json del
+    lienzo): una sesión de una carpeta con otra cuenta usa su propio perfil y sin esto no tenía los hooks."""
+    lienzo = LIENZO_HOME or os.path.join(HOME, ".lienzo")
+    try:
+        with open(os.path.join(lienzo, "config.json"), encoding="utf-8") as f:
+            rules = json.load(f).get("claude_config_dirs") or []
+    except OSError, ValueError, AttributeError:
+        rules = []
+    dirs = [os.path.join(HOME, ".claude")]
+    for rule in rules if isinstance(rules, list) else []:
+        d = rule.get("dir") if isinstance(rule, dict) else None
+        if isinstance(d, str) and d.strip():
+            d = os.path.normpath(os.path.expanduser(d.strip()))
+            if os.path.isdir(d) and all(os.path.normcase(d) != os.path.normcase(x) for x in dirs):
+                dirs.append(d)
+    return [os.path.join(d, "settings.json") for d in dirs]
 
 
 def merge_hooks(path: str, agent: str, events: dict, uninstall: bool, backup=False, prune=False, dry_run=False) -> None:
@@ -116,10 +138,10 @@ def merge_hooks(path: str, agent: str, events: dict, uninstall: bool, backup=Fal
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     hooks = data.setdefault("hooks", {})
-    for ev, (asyn, to) in events.items():
+    for ev, (asyn, to, *matcher) in events.items():
         groups = [g for g in hooks.get(ev, []) if not is_ours(g)]
         if not uninstall:
-            groups.append(entry(agent, asyn, to))
+            groups.append(entry(agent, asyn, to, *matcher))
         if groups:
             hooks[ev] = groups
         else:
@@ -343,8 +365,8 @@ if __name__ == "__main__":
     print("python para el hook:", PY)
     ensure_state(dry_run=dry)
     if args.only in (None, "claude"):
-        settings = os.path.join(HOME, ".claude", "settings.json")
-        merge_hooks(settings, "claude", CLAUDE_EVENTS, un, backup=True, prune=True, dry_run=dry)
+        for settings in claude_settings():
+            merge_hooks(settings, "claude", CLAUDE_EVENTS, un, backup=True, prune=True, dry_run=dry)
     if args.only in (None, "codex"):
         merge_hooks(os.path.join(HOME, ".codex", "hooks.json"), "codex", CODEX_EVENTS, un, dry_run=dry)
     if args.only in (None, "pi"):
