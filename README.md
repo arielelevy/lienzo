@@ -1,24 +1,136 @@
 # Lienzo
 
-Versión **0.6.18**: ningún informe se pierde en silencio (un borrado rechazado avisa que la regla quedó apagada y la auditoría avisa el informe que no llegó); la memoria distingue lo integrado de lo que vive en una rama; un encargo enlaza su ficha; `xfer` copia de raíz a raíz entre PCs; y Lienzo trabaja con FDD.
-Conserva Chrome sin emulación, memoria, Prolog e historial parcial de Antigravity.
-[Novedades, validación y límites](docs/releases/0.6.18.md).
+Lienzo es una fábrica de software con agentes. Una coordinadora reparte trabajo entre sesiones
+de Claude Code, Codex, coda y otros agentes, recibe sus informes y verifica lo producido. Las
+sesiones pueden correr en una PC o repartirse entre hasta 4 PCs emparejadas de la misma LAN.
+El tablero permite intervenir; el método organiza cómo se construye, se revisa y se aprende.
 
-Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
-(Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
-6 horas mientras el tablero sigue abierto. Antes de iniciar o retomar una sesión, comprueba ese
-harness si venció el intervalo y espera el resultado (hasta 120 segundos). Un error queda en el
-log y como aviso del lanzamiento; la sesión puede abrirse igual y la comprobación se reintenta
-tras 15 minutos. Las instalaciones de WSL se comprueban al lanzar en esa distro y luego también
-periódicamente. Las sesiones que ya están abiertas siguen usando el proceso con el que arrancaron.
+**Versión 0.6.18.** [Novedades, validación y límites](docs/releases/0.6.18.md).
 
-Lienzo muestra las sesiones de Claude Code, Codex CLI, Pi CLI, CODA y Kiro V3 que corren en terminales.
-Cada sesión tiene su tarjeta. Desde ahí podés leer la conversación, mandar mensajes y aprobar
-permisos. También pegar capturas con Ctrl+V, conectar sesiones entre sí, lanzar una CLI nueva y
-manejar el Chrome de otra PC. Hasta 4 PCs de la misma LAN comparten el tablero.
+[Instalación](#instalación) · [Coordinación](#la-coordinación-como-metodología) ·
+[Meta-harness](#el-meta-harness) · [Aprendizaje](#ia-prolog-y-aprendizaje-continuo) ·
+[Referencia operativa](#referencia-operativa) · [Limitaciones](#limitaciones-conocidas)
+
+## Una fábrica de software
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/fabrica-dark.svg">
+  <img alt="Mesa de reparto: una coordinadora y tres frentes ilustrativos, cada agente dentro del marco del meta-harness; fichas de encargos e informes sobre los carriles y cajones para las rondas" src="docs/img/infografias/fabrica-light.svg">
+</picture>
+
+La mesa representa el trabajo compartido. El puesto iluminado es la coordinadora; los demás,
+frentes con un resultado y archivos a cargo. Las fichas ámbar son encargos y las verdes son
+informes que vuelven. Los cajones conservan las rondas. Cada instrumento está rodeado por un
+marco: el meta-harness que lo lanza, observa y conecta. La cantidad de puestos es ilustrativa.
+
+Desde una tarjeta podés leer la conversación, mandar mensajes, adjuntar capturas y responder
+permisos. También podés lanzar sesiones, conectar sus informes, copiar archivos y manejar el
+Chrome de otra PC. Cada PC sigue siendo dueña de sus procesos, sus permisos y sus recursos.
 
 Corre en `127.0.0.1:7321`. Lee el historial de cada agente y escribe en su terminal.
 Las terminales y las transcripciones siguen a cargo de los agentes.
+
+## La coordinación como metodología
+
+Una ronda parte de un objetivo y lo divide en encargos verificables. La coordinadora sostiene
+el contexto común y cada frente trabaja sobre su parte. El método se puede seguir desde los
+propios agentes con el [skill de Lienzo](skills/lienzo/SKILL.md).
+
+1. **Preparar.** Leer el estado del proyecto y los aprendizajes aplicables. Definir el resultado,
+   el alcance y la evidencia que permitiría aceptarlo. Lienzo trabaja con
+   [FDD](skills/lienzo/references/fdd.md), con documentación proporcional al trabajo.
+2. **Repartir.** Escribir un encargo por frente: carpeta, insumos, archivos propios, restricciones
+   y criterio de verificación. Los frentes de un mismo árbol no se pisan ni commitean por su cuenta.
+3. **Coordinar.** Conectar cada frente con la coordinadora y el informe de vuelta. Las rondas
+   largas usan avisos con acuse y turnos para recursos pesados. Los frentes no se contestan
+   entre sí indefinidamente: la coordinadora decide el próximo paso.
+4. **Verificar.** Leer el informe y contrastarlo contra el árbol: cambios reales, pruebas,
+   revisión y pendientes. Que una sesión termine o diga «listo» no acredita el resultado.
+5. **Dar veredicto.** Registrar qué se sostiene, qué se devuelve y qué sigue abierto, con evidencia
+   y motivo. Integrar o cerrar requiere la decisión que corresponda; recibir un informe no la sustituye.
+
+Rondas, encargos, informes y veredictos quedan vinculados en la memoria del proyecto. Así, la
+ronda siguiente puede recuperar tanto una decisión como las razones y pruebas que la sostienen.
+
+## El meta-harness
+
+El harness de cada agente administra su conversación, herramientas y ejecución. Lienzo envuelve
+esos harness con una capa común de coordinación. Claude Code, Codex y coda conservan su identidad
+y sus capacidades; la cobertura depende de la integración de cada uno.
+
+| Capa de Lienzo | Qué aporta al trabajo |
+|---|---|
+| Lanzamiento y continuidad | Elegir agente y PC, titular, retomar sesiones y conservar conexiones cuando hay una sucesora identificada. |
+| Hooks y permisos | Observar estados, llevar pedidos al tablero y devolver decisiones al agente. |
+| Cuotas y recursos | Consultar margen de uso, memoria y disponibilidad antes de abrir más frentes o investigar en segundo plano. |
+| Mejoras de agentes | Aplicar las integraciones habilitadas al lanzar y mostrar su disponibilidad, costo y límites. |
+| Contexto y controles | Llevar aprendizajes vigentes a las sesiones y frenar patrones concretos de comandos cuando hay un control activo. |
+
+Al arrancar el servidor, Lienzo comprueba y aplica las actualizaciones de los harness instalados
+(Claude Code, Codex, Pi, CODA y Kiro), usando sus comandos propios. Repite la comprobación cada
+6 horas. Antes de iniciar o retomar una sesión, comprueba ese harness si venció el intervalo y
+espera hasta 120 segundos. Un error queda en el log y como aviso del lanzamiento; la sesión puede
+abrirse igual y la comprobación se reintenta tras 15 minutos. Las instalaciones de WSL se comprueban
+al lanzar en esa distro y luego periódicamente. Las sesiones abiertas conservan su proceso original.
+
+El detalle de [mejoras](#mejoras-de-agentes), [automatizaciones](#las-automatizaciones) e
+[integraciones con límites](#antigravity-cli-windows) queda en la referencia operativa.
+
+## IA, Prolog y aprendizaje continuo
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/aprendizaje-continuo-dark.svg">
+  <img alt="Fichero escalonado con crudo, proceso, resultados y creencias; una prensa Prolog contrasta, busca contraejemplos y deduce; un carril devuelve lo revisado al contexto de sesión, checklist y controles" src="docs/img/infografias/aprendizaje-continuo-light.svg">
+</picture>
+
+Las bandejas separan lo registrado de lo interpretado. La prensa representa el motor lógico;
+el carril frontal, la vuelta de los aprendizajes al trabajo. La escalera **1 → 2 → 3 → creencias**
+describe niveles de lectura: no obliga a convertir cada captura por todos los escalones.
+
+| Nivel | Qué conserva y quién lo usa |
+|---|---|
+| **1 · Crudo** | Pedidos, respuestas y eventos capturados, con su procedencia. Permite volver a la fuente mientras se conserve; las transcripciones originales siguen en cada agente. |
+| **2 · Cómo se hizo** | Actividad, tiempos, esperas y quién hizo qué. El investigador usa vistas acotadas y redactadas del proceso; no supone un registro exhaustivo de cada herramienta. |
+| **3 · Qué se hizo** | Resultados, temas, decisiones, hallazgos y preguntas. Sirve para recuperar contexto y para consumidores externos, sin exponerles el crudo. |
+| **4 · Creencias propuestas** | El investigador con IA propone cómo mejorar el trabajo, con fuentes, alcance, excepciones y límites. Una propuesta todavía no es una regla vigente. |
+
+El [resumidor](lienzo/resumidor.py) trabaja en segundo plano sobre días cerrados de pedidos y
+respuestas. Produce informes `resumen_nivel3`, conserva un cursor y declara los recortes de su
+muestra. La depuración del crudo espera también ese cursor. El
+[investigador de creencias](lienzo/research_creencias.py) lee novedades de memoria, evidencias,
+reviews, coordinación y pruebas; distingue mejoras propias del proyecto de mejoras del proceso
+de trabajar con Lienzo. También puede proponer formalizaciones de creencias existentes.
+
+**La IA propone; Prolog hace explícitas las consecuencias de hechos y reglas formalizadas.**
+El [ciclo lógico](lienzo/prolog_ciclo.py) tiene tres trabajos:
+
+- **Contraste:** detectar apoyos caídos, contradicciones y premisas que dejaron de sostenerse.
+- **Contraejemplos:** poner a prueba una generalización contra casos y condiciones registrados.
+  No encontrar uno en esa muestra no demuestra una ley universal.
+- **Deducción:** encadenar reglas formalizadas habilitadas para obtener conclusiones nuevas,
+  conservando la prueba y sus premisas. Una creencia escrita sólo en prosa no alcanza para ese encadenamiento.
+
+El motor separado requiere SWI-Prolog y `motor-logico`. Lienzo verifica sus pruebas y contrasta
+con cálculos Python independientes donde corresponde. Un fallo o falta de contraste se informa;
+no se presenta como respaldo. Las creencias y derivaciones requieren veredicto humano con
+evidencia para adquirir vigencia. Si cae una premisa, la conclusión queda sujeta a revisión.
+
+Lo aprendido vuelve por tres caminos:
+
+- **Contexto de sesión.** [contexto_sesion.py](lienzo/contexto_sesion.py) proyecta principios de
+  proceso y creencias vigentes del proyecto. Claude los recibe por `SessionStart`; los otros
+  agentes que lanza Lienzo, por las instrucciones del lanzamiento.
+- **Checklist del encargo.** La coordinadora consulta creencias aplicables y las incorpora al
+  reparto. El checklist distingue lo sostenido, lo cuestionado y lo que no tiene contraste del motor.
+- **Controles de comandos.** En Claude, `PreToolUse` de Bash aplica controles del catálogo
+  activados por una creencia vigente. Hoy incluye frenar pruebas enviadas por pipe a comandos
+  como `tail` o `tee` sin `pipefail`, porque podrían ocultar el código de salida de una falla.
+
+El uso posterior también deja evidencia: si una creencia sirvió, no aplicó o ya era conocida.
+Ese retorno permite revisar el aprendizaje. El [bot externo](lienzo/bot_externo.py) expone sólo
+lecturas de nivel 3, con clave y selección de proyectos; usa un servidor separado del que controla
+sesiones. El diseño y sus límites están en [Producto](docs/PRODUCTO.md),
+[Aprendizaje](docs/APRENDIZAJE.md) y el [contrato de memoria](docs/propuesta-memoria/v5.md).
 
 [Arquitectura, diseño y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/) ·
 [Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](PENDIENTES.md#historial-mejoras) ·
@@ -27,6 +139,12 @@ Las terminales y las transcripciones siguen a cargo de los agentes.
 ![Tablero](docs/img/tablero.png)
 
 ## Cómo funciona
+
+Cada sesión tiene una tarjeta con conversación, estado y acciones. Los agentes compatibles
+incluyen Claude Code, Codex CLI, Pi CLI, CODA y Kiro V3; Antigravity tiene una integración parcial.
+
+<details>
+<summary>Canales del tablero, permisos y continuidad de las sesiones</summary>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/central-dark.svg">
@@ -72,6 +190,8 @@ una copycat. El historial de mensajes conserva sus extremos originales. Si una P
 o el traslado crearía un bucle de informes, aparece un error de traspaso; el texto ya enviado no
 se reenvía. «Duplicar» conserva a la original trabajando y agrega el informe de vuelta.
 
+</details>
+
 ## Requisitos
 
 - Windows 10/11 (probado de punta a punta). Mac, Linux y WSL van por tmux, ver [Mac, Linux y WSL](#mac-linux-y-wsl).
@@ -104,6 +224,9 @@ con lo viejo. Si cambió algo de `web/`, antes `npm run build`: `web/dist` no vi
 `"auto_reload": true` en `config.json` lo reinicia solo con cada `.py` (apagado: cortaba el trabajo
 de los agentes).
 
+<details>
+<summary>Instalación y límites en Mac, Linux y WSL</summary>
+
 ### Mac, Linux y WSL
 
 Lo atado a Win32 son dos piezas: escribir en la consola de otro proceso y leer su buffer. Fuera de
@@ -123,6 +246,20 @@ emparejar, una IP de origen de beacon detrás de NAT se sondea antes de mover el
 WSL en red NAT los beacons llegan desde la puerta del NAT), y en Linux la CPU se lee de
 `/proc/stat`. Un Mac sigue sin probar. Lienzo no usa `TIOCSTI` (apagado en los kernels modernos
 por seguridad).
+
+</details>
+
+## Referencia operativa
+
+El detalle queda desplegable para que la primera lectura se concentre en el método. No se pierde
+la referencia de comandos, las mediciones históricas ni sus límites.
+
+[Tablero y mejoras](#uso) · [Delegar](#delegar-trabajo-a-varias-sesiones) ·
+[Celular](#acceso-desde-el-celular) · [Varias PCs](#varias-pcs) ·
+[Investigación](#lienzo-en-la-investigación-científica) · [API](#api)
+
+<details>
+<summary>Uso del tablero, mejoras, automatizaciones, Chrome, memoria y plugins</summary>
 
 ## Uso
 
@@ -410,139 +547,7 @@ En el menú ⋯, apagadas por defecto:
 
 ### Chrome remoto
 
-**Desde 0.6.11:** la ventana completa manda menos datos (en LAN simulada, 26 cuadros por segundo y 11 MB cada
-30 s contra 16–19 y 44–53 MB); si la PC de Chrome se bloquea, el visor pasa solo a «Vista por pestañas» en la
-pestaña activa y vuelve al desbloquear, salvo que el modo se haya elegido a mano; y las pestañas se agrupan por
-perfil de Chrome (lo lee del AppUserModelID de cada ventana de Windows).
-
-**Traer descargas:** clic derecho sobre la tarjeta de una PC en la tira superior del tablero →
-**Traer descargas…**. Muestra los 30 archivos terminados más recientes de su carpeta Descargas,
-con fecha, tamaño y si el mismo nombre ya existe en esta PC. Elegí los archivos y tocá
-**Traer seleccionados**. Los repetidos requieren elegir **Sobrescribir y traer** o
-**Saltear existentes** antes de iniciar. Si cambia un archivo local durante la copia, se conserva
-y se informa el conflicto. El destino es la carpeta Descargas de la PC donde abriste el tablero.
-
-Ambas PCs deben tener esta versión. La carpeta se detecta mediante la ubicación de Descargas del
-usuario de Windows, sin adivinar su nombre. Si falta el permiso en `copy_roots`, el botón
-**Habilitar carpeta Descargas** autoriza únicamente esa carpeta en ambas PCs y conserva el resto
-de la configuración. La lista y el contenido viajan por el canal cifrado de pares. No hace falta
-que Chrome siga abierto para traer archivos ya descargados. Los temporales se omiten; cada bloque
-se verifica y se publica el archivo al finalizar. La transferencia continúa al cerrar el diálogo,
-pero no se reanuda automáticamente después de reiniciar Lienzo.
-
-El enlace **Chrome remoto** del encabezado abre `/chrome` en una pestaña nueva del navegador.
-Elegí una PC. **Chrome real · ventana completa** muestra su ventana de Chrome dentro de esa
-pestaña: sus pestañas, barra de direcciones, menús y avisos. Los controles de Lienzo quedan en
-el menú **⋮**, para dejar espacio al navegador; también podés usar pantalla completa.
-Las páginas, el teclado y el mouse se ejecutan en la PC elegida. La PC debe estar encendida y con
-Lienzo abierto; perder la conexión no abre un Chrome sustituto en otra máquina.
-
-![El Chrome de otra PC, con sus perfiles y sesiones, dentro de una pestaña del navegador local](docs/img/chrome-remoto.png)
-
-En Windows, la vista de ventana completa recuerda el perfil elegido para cada PC. Al entrar,
-conecta con una ventana existente; si no hay ninguna, abre automáticamente el perfil recordado
-o el primero disponible. **Abrir perfil** permite elegir otro, por ejemplo el del trabajo. Este modo
-controla la sesión gráfica de esa PC y no requiere habilitar la depuración remota de Chrome.
-Cerrar la vista deja Chrome abierto.
-
-Los menús y popups propios de Chrome se incluyen dentro del área de la ventana compartida;
-los que sobresalen de ese borde quedan recortados. El cursor remoto transmite las formas
-habituales, como mano sobre enlaces y cursor de texto. En pantalla táctil, tocar hace clic y
-arrastrar desplaza la página. El mouse y el teclado físicos también permiten controlar la ventana.
-La imagen y las entradas usan un canal persistente; los movimientos se agrupan para enviar la
-posición más reciente y las actualizaciones de imagen omiten regiones que no cambiaron.
-
-```mermaid
-flowchart LR
-    V["Pestaña local · canvas y entradas"] <-->|"WebSocket / TCP · :7321"| L["Lienzo local"]
-    L <-->|"WebSocket / TCP · :7322 · mensajes cifrados y autenticados"| R["Lienzo en la PC remota"]
-    R <-->|"Pipes del proceso"| W["Worker de ventana · Windows"]
-    W -->|"Entrada Win32 · mouse y teclado"| C["Chrome real · perfil elegido"]
-    C -->|"Copia de pantalla o PrintWindow · ventana y popups propios"| W
-```
-
-**Transporte y latencia.** La vista de ventana completa usa WebSocket (RFC 6455) sobre **TCP**;
-no usa UDP ni RDP. La conexión se abre con un Upgrade HTTP y permanece abierta: no hace un
-pedido HTTP por cada movimiento o cuadro. Entre PCs, cada mensaje va cifrado y autenticado
-con un contador por sentido. UDP se usa para descubrir PCs en la LAN, no para transmitir Chrome.
-
-Si la ventana está visible y sin tapar, el worker copia lo ya compuesto en pantalla; si no, usa
-`PrintWindow` (que en cada cuadro hacía parpadear la ventana real). Compara capturas y envía PNG
-binario de la región modificada, o un cuadro completo cuando corresponde. Si no cambia la imagen,
-no la reenvía. El visor confirma los cuadros dibujados
-y hay como máximo **dos sin confirmar**, para acotar la cola. Los movimientos consecutivos
-conservan la posición más reciente y se despachan con `requestAnimationFrame`; clics y teclas
-no esperan la siguiente captura. La entrada despierta la captura en reposo y una vista oculta
-pausa las imágenes. Imagen y entrada comparten el transporte TCP: la congestión todavía puede
-agregar demora. No hay una medición publicada de latencia de extremo a extremo ni una garantía
-de equivalencia con RDP.
-
-**Portapapeles en la ventana completa.** Pegar en el visor manda el texto local (hasta 16.000
-caracteres) al portapapeles de la PC remota y le teclea Ctrl+V a Chrome; sólo se pega texto. Una
-copia hecha allá se avisa sin mostrar su contenido y recién viaja al tocar «Copiar acá», y sólo si
-esa ventana de Chrome estaba al frente; si cambió la ventana activa, no se lee el portapapeles.
-
-**Vista por pestañas** ofrece otra forma de navegar, con pestañas, dirección/búsqueda,
-atrás, adelante y recarga propios de Lienzo. Usa la depuración remota de Chrome. Las dos PCs
-necesitan esta versión de Lienzo; la que ejecuta Chrome necesita **Chrome instalado y
-Node.js 24 o posterior**. Para usar sus perfiles existentes (el personal, el del trabajo), elegí uno
-y tocá **Abrir perfil en esa PC**. En el Chrome de destino, versión 144 o posterior, abrí
-`chrome://inspect/#remote-debugging` y tildá «Allow remote debugging»: se hace frente a esa PC.
-Tocá **Conectar Chrome abierto** en Lienzo y aceptá el aviso
-de Chrome en el destino. Chrome decide qué perfil comparte; con varios abiertos usa su perfil
-predeterminado. Abrir un perfil desde Lienzo no garantiza que Chrome comparta ese perfil.
-**Desconectar** deja Chrome y sus pestañas abiertos. No se copian cookies ni se modifican sus
-preferencias para habilitar la conexión. La autorización inicial requiere interacción en el
-Chrome de destino; no se promete que este modo funcione sin monitor o sesión gráfica activa.
-
-Con ambas PCs actualizadas, esta vista usa un canal WebSocket persistente y la misma conexión
-CDP ya autorizada. Chrome empuja los cuadros con `Page.startScreencast` a la resolución real del
-dispositivo (JPEG 90): 25 cuadros por segundo contra 9,5 del sondeo anterior, y la primera imagen de
-una pestaña nueva en 24 ms contra 948. Mientras la página se desplaza los cuadros salen a 1x y
-calidad 80, y la nitidez vuelve a los 300 ms de quedar quieta: en un scroll denso, de 20 a 25,5
-cuadros por segundo y de 11 a 4,9 MB/s. Una pestaña oculta o minimizada pasa a capturas espaciadas,
-con un aviso.
-
-La captura y la entrada se procesan por separado. El movimiento del mouse no espera la confirmación
-de Chrome: gana el último (con la ventana tapada cada move tardaba 5 s y terminaba en 504; ahora,
-10 a 28 ms). Clic, tecla y rueda siguen confirmados y nunca se reenvían, tampoco tras un error o una
-desconexión. Una pestaña admite un visor a la vez; una reconexión rápida de la interfaz espera a que
-el visor anterior la suelte. Al cambiar de pestaña o tamaño se descartan cuadros de la selección
-anterior. Una pestaña restaurada que Chrome no había cargado contesta 409 enseguida, en vez de un
-504 a los 8 s.
-
-Mientras un visor mira una pestaña, la pestaña toma el tamaño CSS del visor con su densidad de
-píxeles real, así la vista no tiene franjas negras. Vuelve a su tamaño cuando el visor cambia de
-pestaña, cierra, no llega a abrir o pierde el socket. Sólo el dueño del stream ajusta la pestaña
-(en 0.5.5, dos visores ajustando por turnos hacían parpadear la ventana real), la interfaz manda un
-tamaño por gesto después de 300 ms y repetir un tamaño no manda nada. Medido en un Chrome aislado:
-605 px de franjas arriba y abajo con un visor de 700×1000 y 477 px a los costados con uno de
-1400×520; ahora 0. El ajuste cambia la página también en la ventana real de la otra PC.
-
-Con la PC bloqueada anda sobre el Chrome real si Chrome arrancó con
-`--disable-features=CalculateNativeWinOcclusion`. Medido el 2026-10-21: ~14,5 cuadros por segundo
-bloqueada contra 21–23 desbloqueada; sin la bandera, 0,3. Chrome 155 ya no la ofrece en
-`chrome://flags`: va en los accesos directos de Chrome. Un perfil abierto desde Lienzo con
-**Abrir perfil en esa PC** ya la lleva.
-
-La alternativa **Usar un perfil separado de Lienzo → Abrir Chrome** usa un perfil persistente en
-`~/.lienzo/chrome-remoto`, en modo headless, sin monitor. **Cerrar Chrome** cierra sólo ese proceso.
-Volver al tablero o cerrar la pestaña local conserva el navegador remoto. Se admite abrir hasta
-doce pestañas desde Lienzo. El acceso se realiza desde el
-tablero local de una PC emparejada, no desde el túnel público del celular.
-
-El canal de peers autentica los pedidos y cifra el contenido y las entradas del navegador. El
-puerto de control de Chrome queda en loopback, sin abrir otro puerto en la LAN. No acepta comandos
-CDP arbitrarios ni navegación directa a `file:` o `javascript:` en la vista por pestañas. En esa vista,
-Ctrl+C copia texto seleccionado y
-Ctrl+V pega texto; los diálogos JavaScript se contestan dentro de la vista. Transmite imagen, no
-audio. Las descargas se deshabilitan sólo en el perfil separado;
-en Chrome habitual se conserva su configuración y los archivos quedan en la PC remota. Carga de archivos, ventanas
-del sistema y extensiones no están integradas en la vista por pestañas.
-
-Prueba aislada propuesta: `py tests/browser_smoke.py` (Chrome real, perfil temporal y web local,
-sin cuentas ni sitios externos). UI con fixtures: `chrome.spec.ts`. Su ejecución y las limitaciones
-de la corrida se registran con `pruebas-agenticas`; no se fijan baselines automáticamente.
+[Modos, descargas, configuración, transporte y mediciones de Chrome remoto](docs/chrome-remoto.md).
 
 ### Memoria por proyecto
 
@@ -675,6 +680,11 @@ plugin, todo anda igual.
 
 <br clear="right">
 
+</details>
+
+<details>
+<summary>Operar la coordinación: delegación, rondas largas y reparto entre PCs</summary>
+
 ## Delegar trabajo a varias sesiones
 
 <picture>
@@ -732,6 +742,11 @@ por PC y la rama `ronda-<fecha>`. No lanza ni toca nada: el plan se le muestra a
 avisa sin subir nada si hay cambios sin commitear, si lo commiteado toca archivos de otra PC
 (`fuera`) o si el rebase da conflicto (`conflicto`, con el rebase abortado y el commit local
 intacto).
+
+</details>
+
+<details>
+<summary>Acceso desde el celular y varias PCs: red, restauración, secretos y copias</summary>
 
 ## Acceso desde el celular
 
@@ -932,45 +947,7 @@ secreto 10 minutos en memoria para leerlo una sola vez con `coordinar.leer_secre
 
 ### Copiar archivos entre PCs
 
-`POST /xfer {pc, origen, destino}` (o `coordinar.copiar`) copia un archivo o una carpeta de esta PC a
-la carpeta `destino` de otra, por el mismo listener de peers: sin SMB, sin puerto nuevo, sin otra
-credencial. Un `robocopy /Z /MT` hecho en casa:
-
-- Por bloques y retomable. Bloques de 8 MiB, cada uno su propio pedido firmado. El que recibe
-  escribe a `<archivo>.parte` y anota cada bloque verificado en `<archivo>.parte.diario`; el que manda
-  guarda su avance en `~/.lienzo/xfer/trabajos/`. Un corte o un reinicio de cualquiera de las dos
-  puntas retoma desde ahí.
-- Paralelo. 6 bloques en vuelo (`hilos`); los archivos de menos de 1 MiB viajan en paquetes de
-  hasta 256.
-- Verificado. sha256 por bloque al llegar (1,5 GB/s con SHA-NI, contra 0,56 de blake2b). Al
-  cerrar se relee el `.parte` entero contra la lista del que manda y recién ahí se renombra. Un bloque
-  distinto se rechaza y se vuelve a mandar; un archivo que cambia en el origen mientras viaja se
-  vuelve a pasar.
-- Sólo lo que cambió, comparando hashes por bloque (tamaño y fecha no alcanzan).
-- Nunca borra en el destino, salvo `espejo: true`, que primero lista lo que borraría y espera
-  `POST /xfer/<id>/confirmar`. El espejo borra por el handle fijado de la carpeta padre y rechaza
-  enlaces: una junction puesta entre validar y borrar no lo hace borrar fuera del destino.
-- No mata la máquina. Topes `mbps` y `disco_mbps`, prioridad baja de CPU y disco, y se frena si
-  cualquiera de las dos PCs baja de 1,5 GB libres (sigue sola cuando se libera).
-- Rutas permitidas. Origen y destino tienen que caer en `copy_roots` o en `launch_roots` del
-  `config.json` de su PC (vacías es ninguna). Las de `launch_roots` cuentan porque una PC emparejada
-  ya puede lanzar un agente ahí, así que un repo se copia de raíz a raíz sin tocar la config;
-  `"copy_incluye_launch_roots": false` lo apaga. Las de WSL, como `\\wsl.localhost\<distro>\...`.
-
-Lo medido entre dos PCs el 2026-10-04:
-
-- Corte provocado: con el lienzo del que recibe reiniciado al 40 % de un archivo de 2 GB, la
-  copia retomó sola a los 12 s, desde el diario.
-- WSL por 9p: lee un archivo grande a 149 MB/s (más que una LAN gigabit) pero sólo ~600
-  archivos/s chicos con 16 hilos. Sirve para un volcado de pocos archivos grandes.
-- La caché de WSL se come la memoria. Lo que pasa por 9p queda en la caché de la VM de WSL, que
-  Windows cuenta como memoria de `vmmemWSL`: copiando 2 GB, la PC que recibía bajó de 2,6 a 0,5 GB
-  libres y la copia se frenó sola. El canal ahora le pide a WSL que suelte la caché de cada archivo
-  cada 256 MB y al cerrarlo (`dd iflag=nocache count=0`, 2 GB en 2 s). Lo que cachean otros
-  procesos de WSL (una base de datos, por ejemplo) sigue ocupando: para eso, `autoMemoryReclaim` en
-  `.wslconfig`.
-- Velocidad sostenida: sin medir todavía. Con las dos PCs cargadas de agentes la memoria libre
-  no pasó de la reserva el tiempo suficiente.
+[Copias entre PCs: uso, límites, reanudación y mediciones](docs/copias-entre-pcs.md).
 
 ### Seguridad, en criollo
 
@@ -997,6 +974,11 @@ sólo en perfil Privado, firma con ventana y nonce en cada pedido, `launch_roots
 peers revocables, tope de 4. Un pedido sin firma recibe 401 sin que se lea el cuerpo, y el motivo de
 cada 401 queda en el log y en `rechazos.jsonl`. **Con auto-aprobar prendido, una PC emparejada puede ejecutar comandos en
 las otras.**
+
+</details>
+
+<details>
+<summary>Consultas entre investigadores</summary>
 
 ## Lienzo en la investigación científica
 
@@ -1042,6 +1024,11 @@ c.consulta_estado(cid)
 Los investigadores tienen que estar quietos al abrir (si no, 409); el revisor no, porque muchas veces
 es la misma sesión que abre la consulta. `vuelta1={sid: respuesta}` sigue una vuelta 1 hecha a mano. El
 diseño está en [`docs/CONSULTAS.md`](docs/CONSULTAS.md).
+
+</details>
+
+<details>
+<summary>Referencia de API, desarrollo, pruebas y archivos de estado</summary>
 
 ## API
 
@@ -1201,34 +1188,9 @@ plugin sigue sin certificar: falta baseline aprobado y no se ejecutaron las muta
 
 ## Qué es cada archivo de estado
 
-```
-~/.lienzo/
-  events/ pending/ answers/   hooks y permisos en curso
-  adjuntos/                   archivos y textos largos enviados a las sesiones
-  sessions/                   una tarjeta por sesión
-  links.json, rules.json      envíos hechos y conexiones
-  config.json                 auto_*, launch_roots, copy_roots, git_check, auto_reload,
-                              mem_aviso_gb, max_sesiones_por_repo
-  auth.json                   clave TOTP del acceso remoto
-  peer.json, peers.json       identidad de esta PC y PCs emparejadas (con la clave del par)
-  launch/                     un .cmd y un .json (título y agente) por sesión lanzada desde el
-                              tablero; se borran a los 7 días
-  restaurar.json              sesiones para relanzar tras un reinicio
-  sucesion.json               muertas con reglas estacionadas y quién sucedió a quién
-  rondas.json                 avisos coordinados, turnos y sus políticas
-  conocimiento.sqlite         la memoria de todos los proyectos (una base por instancia, replicada entre PCs)
-  proyectos/<proyecto>/       cuerpos de encargos e informes y evidencia de cada proyecto
-  xfer/                       copias entre PCs (trabajos/) y hashes de lo recibido (hashes.db)
-  chrome-remoto/              perfil separado de Chrome para la vista por pestañas
-  rechazos.jsonl              pedidos rechazados (401, 403, Host no válido), sin cuerpos ni
-                              credenciales; rota a 1 MB en rechazos.jsonl.1
-  remote_run.jsonl            cada pedido a /peer/run, sin argv ni salida; rota igual
-  research-ledger.sqlite      reservas y cargos de Azure del investigador
-  private/azure-openai.dpapi  la key de Azure OpenAI, cifrada con DPAPI
-  *.corrupto-<fecha>          un JSON que no se pudo leer, apartado en vez de pisarlo; los JSON
-                              de estado se escriben por la escritura atómica de atomico.py
-  lienzo.log                  una línea por hecho; lo de más de 30 días se depura una vez por día
-```
+[Mapa de archivos de estado de Lienzo](docs/archivos-de-estado.md).
+
+</details>
 
 ## Si el server no contesta
 
@@ -1290,47 +1252,7 @@ no implican que se hayan reproducido nuevamente en esta revisión.
 
 ## Antigravity CLI (Windows)
 
-Se puede elegir **Antigravity** en «Lanzar CLI». Lienzo detecta `agy.exe` y busca la instalación
-oficial en `%LOCALAPPDATA%/agy/bin`, aunque la terminal todavía tenga un PATH anterior.
-La API de lanzamiento acepta `agent: "antigravity"` y `model`; `resume` usa `--conversation`
-cuando se proporciona un identificador válido. Los comandos de mantenimiento y el modo `--print`
-no se muestran como tarjetas interactivas.
-
-Esta integración permite pantalla y envío de texto a la terminal. Chat puede consultar historial
-visible parcial de SQLite bajo demanda, si la propiedad nativa del archivo de presencia y la
-fecha de creación del proceso identifican una sola conversación. No ofrece coordinadora, reglas `on_stop`,
-cuotas ni restauración automática de esas tarjetas. El estado de actividad no se confirma por
-transcripción. Los permisos se contestan en la terminal; con ☠ Auto-aprobar TODO prendido, el
-lienzo contesta crear o editar archivos, correr comandos y el acceso puntual fuera del workspace
-(ver [Las automatizaciones](#las-automatizaciones)).
-El inicio de sesión se hace en Antigravity; WSL no está soportado por esta integración.
-La tarjeta muestra «actividad sin confirmar»: el estado operativo de la API lleva
-`state_source: "unverified"` y no certifica que esté trabajando o que haya terminado.
-`screen_observation` declara fuente, hora y disponibilidad de la lectura; el modelo del pie
-Gemini verificado en agy 1.4.3 es una etiqueta visible, no un ID canónico. No se extraen respuestas
-de la pantalla. Una lectura fallida o un pie no reconocido deja el modelo sin observar.
-La hora pertenece a la última muestra publicada: sondeos idénticos no actualizan esa hora ni
-persisten la tarjeta, emiten SSE o generan otra captura de memoria.
-Los IDs de `--conversation` se validan como UUID, formato observado en la caché local de agy.
-`resumed: true` sólo indica que se agregó ese argumento al comando; no confirma que agy haya
-recuperado la conversación. La reanudación real no se verificó en esta tanda.
-La API rechaza crear o reactivar reglas `on_stop` desde un agente de terminal sin lector de turnos,
-también si el origen es remoto o su agente no puede verificarse. Las reglas `at` siguen disponibles.
-
-El lector inicial usa `mode=ro`, `query_only` y snapshots compatibles con WAL; vuelve a verificar
-identidad al terminar y descarta toda la lectura ante ambigüedad, rotación o formato no soportado.
-También exige el SHA-256 del ejecutable observado en esta tanda: una actualización desconocida
-cierra el lector hasta revisar su compatibilidad. La API informa `codec_contract` y `executable_sha256`.
-Decodifica únicamente campos conocidos de `gemini_coder.Step` observados en agy 1.4.3, sin nueva
-dependencia protobuf. Omite razonamiento, firmas, argumentos y resultados de herramientas;
-aplica el filtro habitual de secretos a los textos visibles. Ese filtro reconoce patrones conocidos,
-no garantiza detectar secretos arbitrarios escritos como texto libre. Máximos por consulta:
-512 pasos, 1 MiB por BLOB, 4 MiB de BLOB acumulado y 250 ms de lectura SQLite más espera por bloqueo.
-La ventana truncada se declara en `meta.truncated`; un cursor fuera de ella se rechaza explícitamente.
-El panel consulta al abrir o cambiar de vista; no es seguimiento continuo del historial.
-El historial no adopta IDs ni modifica estado o respuestas persistidas. Todos sus turnos llevan
-`history_only: true`, `ended: false` y «fin sin confirmar». Aún falta validar la máquina de estados
-con transiciones reales; `terminalOnly` y el bloqueo de `on_stop` se conservan.
+[Integración de Antigravity: uso, historial y límites](docs/antigravity-cli.md).
 
 ## Licencia
 
