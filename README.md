@@ -38,7 +38,7 @@ propios agentes con el [skill de Lienzo](skills/lienzo/SKILL.md).
 
 1. **Preparar.** Leer el estado del proyecto y los aprendizajes aplicables. Definir el resultado,
    el alcance y la evidencia que permitiría aceptarlo. Lienzo trabaja con
-   [FDD](skills/lienzo/references/fdd.md), con documentación proporcional al trabajo.
+   [FDD](https://github.com/arielelevy/fdd), con documentación proporcional al trabajo.
 2. **Repartir.** Escribir un encargo por frente: carpeta, insumos, archivos propios, restricciones
    y criterio de verificación. Los frentes de un mismo árbol no se pisan ni commitean por su cuenta.
 3. **Coordinar.** Conectar cada frente con la coordinadora y el informe de vuelta. Las rondas
