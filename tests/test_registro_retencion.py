@@ -10,6 +10,7 @@ import conocimiento as k
 import pytest
 import registro_niveles as registro
 import research_creencias
+import resumidor
 from state import log as escribir_log
 
 AHORA = dt.datetime(2026, 10, 22, 12, 0, tzinfo=dt.UTC)
@@ -46,6 +47,7 @@ def _filas():
 def test_capturas_viejas_se_borran_y_las_recientes_quedan(home, monkeypatch):
     # T4: la edad sola no habilita borrar. Este caso prueba capturas ya leídas.
     monkeypatch.setattr(research_creencias, "resguardo_capturas", lambda: {"app": AHORA.isoformat()})
+    monkeypatch.setattr(resumidor, "resguardo_capturas", lambda: {"app": AHORA.isoformat()})
     _captura(monkeypatch, "vieja uno", "2026-09-01T10:00:00.000Z")
     _captura(monkeypatch, "vieja dos", "2026-09-22T11:59:59.999Z")
     _captura(monkeypatch, "limite", "2026-09-22T12:00:00.000Z")
@@ -62,10 +64,25 @@ def test_capturas_viejas_se_borran_y_las_recientes_quedan(home, monkeypatch):
     assert registro.depurar_crudo(ahora=AHORA)["capturas"]["filas"] == 0
 
 
+def test_lo_que_el_resumidor_no_leyo_no_se_borra(home, monkeypatch):
+    """La marca es la menor de los dos cursores; sin cursor del resumidor no se depura el proyecto."""
+    monkeypatch.setattr(research_creencias, "resguardo_capturas", lambda: {"app": AHORA.isoformat()})
+    monkeypatch.setattr(resumidor, "resguardo_capturas", lambda: {"app": "2026-09-01T12:00:00.000Z"})
+    _captura(monkeypatch, "resumida", "2026-08-30T10:00:00.000Z")
+    _captura(monkeypatch, "sin resumir", "2026-09-10T10:00:00.000Z")
+    _captura(monkeypatch, "reciente", "2026-10-21T10:00:00.000Z")
+    registro.depurar_crudo(ahora=AHORA)
+    assert _filas() == ["sin resumir", "reciente"]
+    monkeypatch.setattr(resumidor, "resguardo_capturas", dict)
+    _captura(monkeypatch, "otra vieja", "2026-08-01T10:00:00.000Z")
+    assert registro.depurar_crudo(ahora=AHORA)["capturas"]["filas"] == 0
+
+
 def test_la_ultima_captura_nunca_se_borra_para_no_reusar_su_rowid(home, monkeypatch):
     """Sin AUTOINCREMENT, borrar el rowid más alto lo reusaría y el cursor de réplica de otra PC
     saltearía las capturas nuevas."""
     monkeypatch.setattr(research_creencias, "resguardo_capturas", lambda: {"app": AHORA.isoformat()})
+    monkeypatch.setattr(resumidor, "resguardo_capturas", lambda: {"app": AHORA.isoformat()})
     _captura(monkeypatch, "vieja uno", "2026-08-01T10:00:00.000Z")
     _captura(monkeypatch, "vieja dos", "2026-08-02T10:00:00.000Z")
     with sqlite3.connect(k.db_path()) as con:

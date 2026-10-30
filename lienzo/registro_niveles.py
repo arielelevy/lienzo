@@ -83,6 +83,171 @@ def externo(proyecto: str) -> dict:
     return {"nivel": 3, "proyecto": proyecto, "actividad": [dict(row) for row in rows]}
 
 
+# Qué del nivel 3 sale con texto: tipo -> estados vivos. Lo revertido, reemplazado, rechazado o ya
+# contestado no es «qué hay hoy». Encargos, informes y evidencia quedan fuera: son prosa interna. La
+# excepción son los informes del resumidor (`resumidor.CLASE`): son el nivel 3 escrito para afuera.
+NIVEL3_ESTADOS = {
+    "decision": ("vigente", "propuesta"),
+    "hallazgo": ("propuesto", "confirmado"),
+    "pregunta": ("abierta",),
+}
+RESUMEN = "resumen_nivel3"  # resumidor.CLASE, sin importarlo: el resumidor importa el investigador
+NIVEL3_LIMITE = 30
+NIVEL3_TEXTO = 300
+_RUTA = re.compile(r"(?:\b[A-Za-z]:[\\/]|~[\\/]|(?<![\w.:/])/(?=[\w.-]+/))[^\s\"'<>|`]*")
+_ID = re.compile(r"\b[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}\b")
+
+
+def _limpio(texto: str | None) -> str:
+    """Texto apto para afuera: secretos tapados, sin rutas ni IDs (de sesión o de nodo), recortado."""
+    import captura  # captura importa este paquete de memoria; diferido como el investigador
+
+    out, _ = captura.tapar(texto or "")
+    out = _ID.sub("[id]", _RUTA.sub("[ruta]", out))
+    out = " ".join(out.split())
+    return out if len(out) <= NIVEL3_TEXTO else out[: NIVEL3_TEXTO - 1] + "…"
+
+
+def _filtro_vivos(alias: str = "n") -> str:
+    # constantes del modulo, no entrada del cliente
+    return (
+        "("
+        + " OR ".join(
+            f"({alias}.tipo = '{t}' AND {alias}.estado IN ({','.join(repr(e) for e in es)}))"
+            for t, es in NIVEL3_ESTADOS.items()
+        )
+        + f" OR {alias}.tipo = 'tema'"
+        + f" OR ({alias}.tipo = 'informe' AND json_extract({alias}.datos, '$.clase') = '{RESUMEN}'))"
+    )
+
+
+def _temas_de(con: sqlite3.Connection, ids: list[str]) -> dict[str, list[str]]:
+    if not ids:
+        return {}
+    q = ",".join("?" * len(ids))
+    out: dict[str, list[str]] = {}
+    for r in con.execute(
+        f"SELECT v.de, t.texto FROM vinculo v JOIN nodo t ON t.id = v.a "
+        f"WHERE v.activo = 1 AND v.relacion IN ('sobre','aplica_a') AND t.tipo = 'tema' AND v.de IN ({q}) "
+        "ORDER BY t.texto",
+        ids,
+    ):
+        out.setdefault(r["de"], []).append(_limpio(r["texto"]))
+    return out
+
+
+def _items(con: sqlite3.Connection, filas) -> list[dict]:
+    filas = list(filas)
+    temas = _temas_de(con, [r["id"] for r in filas])
+    return [_resumen(r, temas) if r["tipo"] == "informe" else _item(r, temas) for r in filas]
+
+
+def _item(r, temas: dict) -> dict:
+    return {
+        "tipo": r["tipo"],
+        "texto": _limpio(r["texto"]),
+        "estado": r["estado"],
+        "fecha": (r["estado_fecha"] or r["fecha"])[:10],
+        "temas": temas.get(r["id"], []),
+    }
+
+
+def _resumen(r, temas: dict) -> dict:
+    """Un día resumido: qué se hizo en viñetas y en qué quedó. `revisado` dice si Ariel ya lo miró."""
+    datos = json.loads(r["datos"] or "{}")
+    return {
+        "tipo": "resumen",
+        "dia": datos.get("dia") or r["fecha"][:10],
+        "que_se_hizo": [_limpio(x) for x in datos.get("que_se_hizo") or []][:8],
+        "en_que_quedo": _limpio(datos.get("en_que_quedo")),
+        "temas": temas.get(r["id"], []),
+        "revisado": r["estado"] == "revisado",
+    }
+
+
+def externo_detalle(proyecto: str, *, limite: int = NIVEL3_LIMITE) -> dict:
+    """Nivel 3 con contenido: qué se hizo por día (resumidor), temas del proyecto y lo vivo de decisiones,
+    hallazgos y preguntas, lo más reciente primero. Mismo contrato que `externo`: sin prosa interna, IDs de sesión ni rutas."""
+    limite = max(1, min(int(limite), NIVEL3_LIMITE))
+    base = externo(proyecto)
+    with k._abrir(proyecto) as con:
+        temas = [
+            {"tema": _limpio(r["texto"]), "nodos": r["n"]}
+            for r in con.execute(
+                "SELECT t.texto, COUNT(v.de) AS n FROM nodo t LEFT JOIN vinculo v ON v.a = t.id AND v.activo = 1 "
+                "AND v.relacion IN ('sobre','aplica_a') WHERE t.proyecto = ? AND t.tipo = 'tema' "
+                "GROUP BY t.id ORDER BY n DESC, t.texto LIMIT ?",
+                (proyecto, limite),
+            )
+        ]
+        resumenes = _items(
+            con,
+            con.execute(
+                "SELECT * FROM nodo WHERE proyecto = ? AND tipo = 'informe' AND json_extract(datos, '$.clase') = ? "
+                "ORDER BY json_extract(datos, '$.dia') DESC, id LIMIT ?",
+                (proyecto, RESUMEN, limite),
+            ),
+        )
+        listas = {}
+        for tipo, estados in NIVEL3_ESTADOS.items():
+            q = ",".join("?" * len(estados))
+            listas[tipo] = _items(
+                con,
+                con.execute(
+                    f"SELECT * FROM nodo WHERE proyecto = ? AND tipo = ? AND estado IN ({q}) "
+                    "ORDER BY COALESCE(estado_fecha, fecha) DESC, id LIMIT ?",
+                    (proyecto, tipo, *estados, limite),
+                ),
+            )
+    return {
+        **base,
+        "que_se_hizo": resumenes,
+        "temas": temas,
+        "decisiones": listas["decision"],
+        "hallazgos": listas["hallazgo"],
+        "preguntas": listas["pregunta"],
+    }
+
+
+def externo_buscar(proyecto: str, consulta: str, *, limite: int = 20) -> dict:
+    """Búsqueda BM25 (la de la memoria, v5 §7.1) restringida a lo que `externo_detalle` deja salir."""
+    consulta = k._texto(consulta, "q", 500)
+    limite = max(1, min(int(limite), NIVEL3_LIMITE))
+    with k._abrir(proyecto) as con:
+        try:
+            filas = con.execute(
+                "SELECT n.* FROM nodo_fts JOIN nodo n ON n.rowid = nodo_fts.rowid "
+                f"WHERE nodo_fts MATCH ? AND n.proyecto = ? AND {_filtro_vivos()} "
+                "ORDER BY bm25(nodo_fts, 3.0, 1.0), n.id LIMIT ?",
+                (consulta, proyecto, limite),
+            ).fetchall()
+        except sqlite3.OperationalError as e:
+            raise k._rechazo_fts(e) from e
+        return {"nivel": 3, "proyecto": proyecto, "consulta": consulta, "resultados": _items(con, filas)}
+
+
+def externo_indice() -> dict:
+    """Los proyectos con algo vivo en el nivel 3: id, nombre y cuántos de cada tipo. Sin carpetas ni remotes."""
+    filtro = _filtro_vivos()
+    with k._Conexion(k.db_path()) as con:
+        cuentas: dict[str, dict] = {}
+        for r in con.execute(
+            f"SELECT n.proyecto, n.tipo, COUNT(*) AS c, MAX(COALESCE(n.estado_fecha, n.fecha)) AS f "
+            f"FROM nodo n WHERE {filtro} GROUP BY n.proyecto, n.tipo"
+        ):
+            p = cuentas.setdefault(r["proyecto"], {"cantidades": {}, "ultima_fecha": ""})
+            p["cantidades"]["resumen" if r["tipo"] == "informe" else r["tipo"]] = r["c"]
+            p["ultima_fecha"] = max(p["ultima_fecha"], (r["f"] or "")[:10])
+    nombres = {p["id"]: p.get("nombre") for p in k.proyectos()}
+    proyectos = [
+        {"proyecto": pid, "nombre": _limpio(nombres.get(pid) or pid), **datos}
+        for pid, datos in cuentas.items()
+        if pid in nombres
+    ]
+    proyectos.sort(key=lambda p: (p["ultima_fecha"], p["proyecto"]), reverse=True)
+    return {"nivel": 3, "proyectos": proyectos}
+
+
 def depurar_crudo(dias: int = RETENCION_DIAS, *, ahora: dt.datetime | None = None) -> dict:
     """Nivel 1: borra lo crudo anterior al corte (ahora menos `dias`) y devuelve qué se fue y cuánto pesa."""
     if not 1 <= dias <= 3650:
@@ -112,18 +277,25 @@ def _depurar_capturas(corte: dt.datetime) -> dict:
     depura su copia; borrar no es un cambio y no viaja. El archivo no se achica (sin VACUUM): las
     páginas liberadas las reusan las capturas siguientes."""
     import research_creencias  # el investigador usa el nivel 2: evitar el ciclo al importar
+    import resumidor
 
     path = k.db_path()
     out = {"filas": 0, "bytes": 0, "quedan": 0, "archivo": 0}
     if not os.path.isfile(path):
         return out  # sin base todavía no hay crudo: no se crea por depurar
     limite = corte.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    # Lo leído por los dos: el investigador (nivel 4) y el resumidor (nivel 3). Un proyecto al que le
+    # falta el cursor de alguno no está en las marcas y no se depura.
+    leidas = [research_creencias.resguardo_capturas(), resumidor.resguardo_capturas()]
     marcas = {}
-    for proyecto, hasta in research_creencias.resguardo_capturas().items():
-        fecha = dt.datetime.fromisoformat(hasta)
-        if fecha.tzinfo is None:
-            raise ValueError(f"cursor de capturas sin zona: {proyecto}")
-        marcas[proyecto] = fecha.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    for proyecto in set(leidas[0]).intersection(*leidas[1:]):
+        fechas = []
+        for hasta in (cursor[proyecto] for cursor in leidas):
+            fecha = dt.datetime.fromisoformat(hasta)
+            if fecha.tzinfo is None:
+                raise ValueError(f"cursor de capturas sin zona: {proyecto}")
+            fechas.append(fecha)
+        marcas[proyecto] = min(fechas).astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     marcas_json = json.dumps(marcas)
     viejas = (
         "SELECT rowid, bytes FROM captura WHERE fecha < ? AND rowid < (SELECT MAX(rowid) FROM captura) "

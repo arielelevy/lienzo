@@ -208,6 +208,8 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
             raise Rechazo(f"replica: {e}", 503) from e
     if partes == ["aprendizaje-resumen"] and metodo == "GET":
         return 200, creencias.resumen()
+    if partes == ["registro-externo"] and metodo == "GET":
+        return 200, registro_niveles.externo_indice()
     if partes == ["resolver"] and metodo == "GET":
         return 200, {"proyecto": k.resolver_proyecto(_q(query, "repo_key"), _q(query, "cwd"), _q(query, "pc"))}
     if not partes:
@@ -218,7 +220,12 @@ def _dispatch(metodo: str, partes: list[str], d: dict, query: dict) -> tuple[int
     if not resto and metodo == "GET":
         return 200, k.resumen(pid)
     if resto == ["registro-externo"] and metodo == "GET":
+        if _q(query, "detalle") in ("1", "true", "si", "sí"):
+            return 200, registro_niveles.externo_detalle(pid, limite=_entero(_q(query, "limite"), "limite", 30))
         return 200, registro_niveles.externo(pid)
+    if resto == ["registro-externo", "buscar"] and metodo == "GET":
+        limite = _entero(_q(query, "limite"), "limite", 20)
+        return 200, registro_niveles.externo_buscar(pid, _q(query, "q", ""), limite=limite)
     if len(resto) == 3 and resto[0] == "encargos" and resto[2] == "controles" and metodo == "GET":
         return 200, patrones_evidencia.controles(pid, resto[1])
     if resto == ["creencias"]:

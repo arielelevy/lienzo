@@ -696,6 +696,15 @@ Detalle: [notas 0.2.0](docs/releases/0.2.0.md) y `code-review-2026-10-17.md`.
   Estado (2026-10-17): nivel 2 del investigador desde capturas hecho (por sesión y hasta 60 eventos
   recientes, redactados; el crudo no viaja). Faltan las llamadas a herramientas por paso, el nivel 3
   para sistemas externos y la depuración del crudo.
+  Estado (2026-10-29): nivel 3 con contenido. `GET /conocimiento/registro-externo` (índice de proyectos),
+  `GET /conocimiento/<p>/registro-externo?detalle=1` (temas, decisiones vigentes y propuestas, hallazgos
+  y preguntas abiertas) y `.../registro-externo/buscar?q=` (BM25 sólo sobre eso). Sin IDs, rutas ni
+  secretos; tests/test_registro_externo.py.
+  Bot de ChatGPT: `lienzo/bot_externo.py`, sólo GET con clave Bearer en 127.0.0.1:7330, arranca con el server
+  si existe `~/.lienzo/bot-externo.json` y sale por Tailscale Funnel (https://ariel.taild86fe5.ts.net).
+  Resumidor (`lienzo/resumidor.py`): en segundo plano, cada día cerrado de pedidos y respuestas pasa a un
+  `informe` `resumen_nivel3` con temas; tope propio de 12 vueltas/día (decisión de Ariel, 2026-10-29) y la
+  depuración del crudo espera también a su cursor. Falta revisar los primeros resúmenes reales.
 - [x] Llevar la instrucción de RTK de la base agéntica (`lienzo/tools/rtk.py`) a todo lo que lee un agente
   Cerrado 2026-10-22 (encargo I): la instrucción ya cubre `rtk read`, `rg`, `find`, `git` y `recall`; lo prueba `test_rtk_base_comun`.
   (`rtk read`, `rtk rg`, `rtk find`, `rtk git`, `rtk recall`), no sólo a las salidas largas. La base la

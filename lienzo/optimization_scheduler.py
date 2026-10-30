@@ -20,6 +20,7 @@ import optimization_research as research
 import optimization_research_policy as research_policy
 import patrones_desarrollo
 import research_creencias as creencias_research
+import resumidor
 import state
 from optimization_queue import ACTIVE, Queue
 
@@ -42,6 +43,7 @@ class Scheduler:
         self.research_visto = {}  # proyecto -> monotonic de la última selección automática
         self.creencias_visto = {}  # proyecto -> monotonic de la última mirada a su cursor de creencias
         self.creencias_view = {}  # proyecto -> cursor y pendientes de la última mirada; un GET no recorre fuentes
+        self.resumen_visto = {}  # proyecto -> monotonic de la última mirada a su cursor del resumidor
         self.fondo_samples = 0  # muestras seguidas con recursos de sobra mientras hay agentes: no son ratos quietos
 
     def status(self):
@@ -233,6 +235,7 @@ class Scheduler:
                 return
             self._discover()
             self._creencias_discover()
+            self._resumen_discover()
             return
         self.reason = "analizando memoria local; sin gasto"
         self._guarded_step(job)
@@ -255,7 +258,7 @@ class Scheduler:
         """Agentes trabajando o usuario activo: sólo el investigador de creencias, si sobran recursos, de a
         uno y con prioridad baja (pedido de Ariel, 2026-10-22). Lo demás espera un rato quieto."""
         for job in self.queue.view()["jobs"]:
-            if job["state"] == "running" and not _is_creencias(job):
+            if job["state"] == "running" and not _es_fondo(job):
                 self.queue.change(job["id"], state="paused")
         self.good_samples = 0  # un rato con agentes no cuenta para arrancar lo que pide quietud
         tight = activity.fondo_reason(signals)
@@ -271,13 +274,14 @@ class Scheduler:
             (
                 j
                 for j in self.queue.view()["jobs"]
-                if _is_creencias(j) and j["state"] in ACTIVE and j.get("not_before", 0) <= now
+                if _es_fondo(j) and j["state"] in ACTIVE and j.get("not_before", 0) <= now
             ),
             None,
         )
         if job is None:
             self.reason = f"{busy}; investigador de creencias sin vuelta pendiente"
             self._creencias_discover()
+            self._resumen_discover()
             return
         self.reason = "investigador de creencias en segundo plano (prioridad baja)"
         self._guarded_step(job)
@@ -308,6 +312,33 @@ class Scheduler:
                     self.reason = f"vuelta de creencias encolada en {pid}"
             except Exception as error:
                 self.reason = f"cursor de creencias bloqueado en {pid}: {type(error).__name__}"
+            return
+
+    def _resumen_discover(self):
+        """Como `_creencias_discover`, para el resumidor del nivel 3: días cerrados sin resumir, de a una vuelta
+        por vez y dentro de su tope diario propio (TOPE_DIA)."""
+        view = self.queue.view()
+        if not view["enabled"] or any(j.get("kind") == "research" and j["state"] in ACTIVE for j in view["jobs"]):
+            return
+        if self.queue.research_runs_since(time.time() - 86400, resumen=True) >= resumidor.TOPE_DIA:
+            return
+        for project in conocimiento.proyectos():
+            pid = project["id"]
+            if time.monotonic() - self.resumen_visto.get(pid, -1e9) < CREENCIAS_CADA_S:
+                continue
+            self.resumen_visto[pid] = time.monotonic()
+            try:
+                pendientes = resumidor.estado(pid)["pendientes"]
+                if not pendientes:
+                    continue
+                decision = self._research_evaluate(pid, resumen=True)
+                if not decision["enabled"]:
+                    self.resumen_visto = {p["id"]: time.monotonic() for p in conocimiento.proyectos()}
+                    self.reason = "resumidor bloqueado: " + "; ".join(decision["reasons"])
+                elif self.queue.enqueue_research(pid, resumidor.case(pid, pendientes), automatic=True):
+                    self.reason = f"resumen de nivel 3 encolado en {pid} ({len(pendientes)} día(s) pendientes)"
+            except Exception as error:
+                self.reason = f"cursor del resumidor bloqueado en {pid}: {type(error).__name__}"
             return
 
     def _pilot_tick(self):
@@ -408,7 +439,7 @@ class Scheduler:
             self._cancelled(job)
 
     def _cancelled(self, job):
-        reason = activity.fondo_stop() if _is_creencias(job) else activity.cancellation_reason(self.last_ui)
+        reason = activity.fondo_stop() if _es_fondo(job) else activity.cancellation_reason(self.last_ui)
         if not self.queue.view()["enabled"]:
             reason = "pausado por el usuario"
         if reason:
@@ -421,14 +452,14 @@ class Scheduler:
         """El adaptador pedido para el trabajo, o el que elige la regla (Codex con cuota, si no Claude)."""
         return self.research_named(named, project) if named else self.research_adapter(project)
 
-    def _research_evaluate(self, project, named=None):
+    def _research_evaluate(self, project, named=None, *, resumen=False):
         since = time.time() - 86400  # tope diario en 24 h móviles
         adapter = self._adapter(project, named)
         _, decision = research.evaluate(
             project,
             adapter,
-            runs_today=self.queue.research_runs_since(since),
-            adapter_runs_today=self.queue.research_runs_since(since, adapter.name),
+            runs_today=0 if resumen else self.queue.research_runs_since(since),
+            adapter_runs_today=0 if resumen else self.queue.research_runs_since(since, adapter.name),
         )
         self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
         return decision
@@ -439,7 +470,7 @@ class Scheduler:
             return RESEARCH_CANCELLED
         if not self.queue.view()["enabled"]:
             return RESEARCH_PAUSED
-        if _is_creencias(job):
+        if _es_fondo(job):
             return activity.fondo_stop()
         reason = activity.cancellation_reason(self.last_ui)
         if reason:
@@ -460,11 +491,18 @@ class Scheduler:
                 return
         since = time.time() - 86400
         chosen = self._adapter(project, job.get("adapter"))
+        resumen = _is_resumen(job)
+        if resumen and self.queue.research_runs_since(since, resumen=True) >= resumidor.TOPE_DIA:
+            reason = f"resumidor: tope diario alcanzado ({resumidor.TOPE_DIA} vueltas)"
+            self.reason = reason
+            self.queue.change(jid, state="paused", reason=reason, not_before=time.time() + RESEARCH_BACKOFF_S)
+            return
+        # el resumidor no gasta el tope del investigador: la política mira sólo cuota y autorización
         adapter, decision = research.evaluate(
             project,
             chosen,
-            runs_today=self.queue.research_runs_since(since),
-            adapter_runs_today=self.queue.research_runs_since(since, chosen.name),
+            runs_today=0 if resumen else self.queue.research_runs_since(since),
+            adapter_runs_today=0 if resumen else self.queue.research_runs_since(since, chosen.name),
         )
         self.research_view = {**decision, "project": project, "evaluated_at": time.time()}
         with self.queue.lock:
@@ -504,16 +542,18 @@ class Scheduler:
             current = next(j for j in self.queue.view()["jobs"] if j["id"] == jid)
             if current.get("cancel_requested"):
                 outcome = {**outcome, "status": "stopped", "reason": RESEARCH_CANCELLED}
-            elif outcome["status"] == "ok" and _is_creencias(job):
+            elif outcome["status"] == "ok" and _es_fondo(job):
                 # Punto irreversible: record escribe en varias bases antes de consultar Prolog.
                 # Cancelar desde ahora se rechaza; las lecturas de cola siguen libres durante WSL.
                 self.publishing.add(jid)
-        if outcome["status"] == "ok" and _is_creencias(job):
+        if outcome["status"] == "ok" and _es_fondo(job):
             # fuera del lock de la cola: el contraste puede despertar WSL y el estado no debe trabarse
+            args = (project, job["case"], outcome["result"], outcome["meta"], outcome["lectura"])
             try:
-                saved = creencias_research.record(
-                    project, job["case"], outcome["result"], outcome["meta"], outcome["lectura"]
-                )
+                if _is_resumen(job):
+                    saved = resumidor.record(*args)
+                else:
+                    saved = creencias_research.record(*args)
                 outcome = {**outcome, "saved": saved}
             except Exception as error:
                 why = f"registro de la vuelta falló: {type(error).__name__}: {error}"[:300]
@@ -531,7 +571,19 @@ class Scheduler:
         """Se registra bajo el lock de cola: cancelar y publicar el resultado tienen un orden único."""
         jid, project = job["id"], job["project"]
         meta, why = outcome.get("meta"), outcome.get("reason")
-        if outcome["status"] == "ok" and _is_creencias(job):
+        if outcome["status"] == "ok" and _is_resumen(job):
+            saved = outcome["saved"]
+            self.queue.change(
+                jid,
+                state="observed",
+                pid=None,
+                evidence=saved["evidence"],
+                results=resumidor.proposals(saved),
+                last_run=meta,
+                reason=f"resumen de nivel 3 registrado: {len(saved['informes'])} día(s), pendiente de revisión",
+            )
+            self.reason = f"resumen de nivel 3 registrado en {project}"
+        elif outcome["status"] == "ok" and _is_creencias(job):
             saved = outcome["saved"]
             self.queue.change(
                 jid,
@@ -639,6 +691,15 @@ class Scheduler:
 
 def _is_creencias(job) -> bool:
     return job.get("kind") == "research" and (job.get("case") or {}).get("kind") == "creencias"
+
+
+def _is_resumen(job) -> bool:
+    return job.get("kind") == "research" and (job.get("case") or {}).get("kind") == "resumen"
+
+
+def _es_fondo(job) -> bool:
+    """Lo que corre en segundo plano aunque haya agentes trabajando: creencias y el resumidor del nivel 3."""
+    return _is_creencias(job) or _is_resumen(job)
 
 
 TRABAJO_CADA_S = 3600

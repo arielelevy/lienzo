@@ -1156,9 +1156,14 @@ def _schema_text(work: Path) -> str:
 
 
 def _spec(case: dict):
-    """Paquete, prompt, esquema y validación del caso: los de creencias (encargo S) o los del investigador."""
+    """Paquete, prompt, esquema y validación del caso: los de creencias (encargo S), los del resumidor del
+    nivel 3 o los del investigador."""
     if case.get("kind") == "creencias":
         import research_creencias as own
+
+        return own.packet, own.prompt, own.SCHEMA, own.validate, own.PROMPT_VERSION
+    if case.get("kind") == "resumen":
+        import resumidor as own
 
         return own.packet, own.prompt, own.SCHEMA, own.validate, own.PROMPT_VERSION
     return packet, prompt, SCHEMA, validate, PROMPT_VERSION
@@ -1285,6 +1290,6 @@ def investigate(job: dict, adapter, decision: dict, *, should_stop, on_start=Non
     counts = {}
     result = redact_deep(result, counts)  # la CLI pudo leer un secreto fuera del paquete
     meta["redactions_result"] = counts
-    if "lectura" in data:  # creencias: lo que el cursor suma si la vuelta se registra
+    if "lectura" in data:  # creencias y resumidor: lo que el cursor suma si la vuelta se registra
         return {"status": "ok", "result": result, "meta": meta, "lectura": data["lectura"]}
     return {"status": "ok", "result": result, "meta": meta}

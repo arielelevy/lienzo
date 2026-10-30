@@ -41,6 +41,7 @@ import autoaprobar
 import backend
 import beacon
 import bitacora
+import bot_externo
 import browser_api
 import browser_stream
 import captura
@@ -3705,6 +3706,8 @@ def main() -> int:
     threading.Thread(target=replica.bucle, args=(mirror.MIRROR,), name="replica", daemon=True).start()
     # nivel 1 del registro: el crudo se depura a los 30 dias (decision 5 de Ariel, 2026-10-22)
     threading.Thread(target=registro_niveles.bucle, name="registro", daemon=True).start()
+    # nivel 3 para el bot de ChatGPT, sólo en la PC con bot-externo.json; lo saca Tailscale Funnel
+    bot_externo.arrancar(log)
     threading.Thread(target=vigia_loop, name="vigia", daemon=True).start()
     threading.Thread(target=consulta_loop, name="consulta", daemon=True).start()
     plugins.cargar()  # lienzo/extensiones/*.py, si los hay en esta PC (Git los ignora)

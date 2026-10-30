@@ -179,13 +179,16 @@ class Queue:
                 return
             self.jobs.remove(old)
 
-    def research_runs_since(self, since: float, adapter: str | None = None) -> int:
+    def research_runs_since(self, since: float, adapter: str | None = None, *, resumen: bool = False) -> int:
         """Inicios desde `since`; con `adapter`, sólo los de ese adaptador (cada uno tiene su tope diario).
-        Un inicio sin adaptador registrado (anterior al registro) cuenta para todos."""
+        Un inicio sin adaptador registrado (anterior al registro) cuenta para todos. El resumidor del nivel 3
+        tiene tope propio: `resumen` cuenta sólo sus vueltas y, sin él, quedan afuera."""
         with self.lock:
             count = 0
             for job in self.jobs:
                 if job.get("kind") != "research":
+                    continue
+                if ((job.get("case") or {}).get("kind") == "resumen") != resumen:
                     continue
                 names = job.get("run_adapters") or []
                 for i, moment in enumerate(job["runs"]):
