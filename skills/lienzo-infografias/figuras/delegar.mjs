@@ -1,5 +1,5 @@
 // Fig 3 del lienzo: delegar trabajo como un correo neumático.
-import { acento, fillet, floorSvg, k, tubePieces, tubeSvg, write } from "../kit.mjs";
+import { acento, fillet, k, tubePieces, tubeSvg, write } from "../kit.mjs";
 
 const WIDTH = 640;
 const HEIGHT = 440;
@@ -53,6 +53,7 @@ function station() {
   const cap = k.insetPlan(STATION, -2);
   out.push(S(k.slabOf(cap, STATION_H, 4, P, 4, 0.8), { tone: "mid" }));
   const top = STATION_H + 4;
+  out.push(k.faceTextSvg(k.sideMatrix([-109, 8], 16, P, "left"), "Coordina", { size: 5, tone: "hi", anchor: "middle" }));
   // Bocas de los tubos.
   for (const port of [...PORTS].sort((a, b) => depth([a.x, RUN_Y, 0]) - depth([b.x, RUN_Y, 0]))) {
     out.push(S(k.cylinder(port.x, RUN_Y, 5, top, 3, P, 24), { tone: "mid" }));
@@ -104,6 +105,7 @@ function desk({ x: cx, state }) {
   // Teclado.
   const kb = { x: cx - 2, y: 12, w: 22, d: 8, r: 1 };
   out.push(S(k.slabOf(kb, DESK_TOP, 1.6, P, 2, 0.3), { tone: "mid" }));
+  out.push(k.faceTextSvg(k.topMatrix([cx + 6, 25], DESK_TOP, P, "x"), "Frente", { size: 4, tone: "hi", anchor: "middle" }));
   return out.join("");
 }
 
@@ -143,7 +145,7 @@ const items = [
   { key: depth([STATION.x + STATION.w / 2, STATION.y + STATION.d / 2, 0]), svg: station() },
   ...DESKS.map((d) => ({ key: depth([d.x, 8, 0]), svg: desk(d) })),
 ].sort((a, b) => a.key - b.key);
-const body = [floorSvg(FLOOR, P), ...items.map((item) => item.svg), ...tubes().sort((a, b) => a.key - b.key).map((item) => item.svg), valve()];
+const body = [`<path class="iso-halo" d="${k.haloOf(FLOOR, 0, 7, P)}"/>`, ...items.map((item) => item.svg), ...tubes().sort((a, b) => a.key - b.key).map((item) => item.svg), valve()];
 
 const label =
   "Delegar trabajo en Lienzo dibujado como un correo neumático. La estación de la sesión coordinadora despacha cápsulas por tres tubos a tres escritorios con su terminal. " +

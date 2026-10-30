@@ -1,6 +1,6 @@
 // Medición del piloto de FDD (2026-10-26): retomar una feature con y sin el mapa del dominio.
 // Datos de .temp/coordinacion/2026-10-26/ftd-fdd-ia.md: dos sesiones Codex nuevas, mismas 5 preguntas.
-import { acento, floorSvg, k, write } from "../kit.mjs";
+import { acento, k, write } from "../kit.mjs";
 
 const WIDTH = 640;
 const HEIGHT = 460;
@@ -93,7 +93,7 @@ function mapa() {
 
 // De atrás hacia adelante: la pila «sin mapa» queda más lejos, así que va antes que «con mapa».
 const [con, sin] = PILAS;
-const body = [floorSvg(FLOOR, P), pila(sin), pila(con), comandos(sin), aciertos(sin), comandos(con), aciertos(con), mapa()];
+const body = [`<path class="iso-halo" d="${k.haloOf(FLOOR, 0, 7, P)}"/>`, pila(sin), pila(con), comandos(sin), aciertos(sin), comandos(con), aciertos(con), mapa()];
 
 const label =
   "Medición del piloto de FDD. Dos pilas de hojas muestran los tokens de entrada que leyó una sesión nueva para retomar la misma feature: " +

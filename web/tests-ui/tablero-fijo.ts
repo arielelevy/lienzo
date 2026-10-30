@@ -341,6 +341,21 @@ Y con esto cierra el pedido.`,
 
 const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
+/** Última barrera de las capturas públicas. Instalar ANTES de los fixtures: sólo deja llegar
+ * al servidor el documento y sus assets; ningún endpoint desconocido puede filtrar datos reales. */
+export async function aislarCapturas(page: Page) {
+  await page.routeWebSocket("**/*", ws => ws.close());
+  await page.route("**/*", async route => {
+    const req = route.request(), url = new URL(req.url());
+    const estatico = url.origin === new URL(BASE).origin && req.method() === "GET"
+      && ((["/", "/chrome"].includes(url.pathname) && req.resourceType() === "document")
+        || (url.pathname.startsWith("/assets/") && ["script", "stylesheet", "image", "font"].includes(req.resourceType()))
+        || (url.pathname === "/favicon.ico" && req.resourceType() === "image"));
+    if (estatico) return route.continue();
+    return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "sin fixture de captura" }) });
+  });
+}
+
 /** Ninguna prueba escribe. El server del 7321 es el de verdad, con sesiones de verdad detrás: un
  *  POST perdido le escribe en la terminal a alguien. Todo lo que no sea GET se corta acá. */
 export async function bloquearEscrituras(page: Page) {

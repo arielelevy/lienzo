@@ -6,6 +6,12 @@ docs/PRODUCTO.md las decisiones de producto.
 
 Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
+- [ ] **2026-10-30 · Buscador del encabezado móvil recortado.** A 390 px, el placeholder
+  `buscar /` de `web/src/components/Header.tsx:92` se ve como `bus…`, con Chrome remoto y
+  Authenticator visibles. Reproducir con `CAPTURAS=1`, caso `capturas.spec.ts` → `celular`;
+  evidencia en `docs/img/celular.png`. Visto al renovar las capturas públicas; revisar el ancho
+  del buscador y la distribución del encabezado sin esconder controles. Pendiente de cambio de UI.
+
 ### Release 0.6.18 (2026-10-27)
 
 Notas en [docs/releases/0.6.18.md](docs/releases/0.6.18.md). Suite completa en ar-it33940: 3898 en verde, 27

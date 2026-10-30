@@ -1,5 +1,5 @@
 // Fig 6 del lienzo: Consultar Jev como una franqueadora de correo con colador.
-import { acento, floorSvg, k, write } from "../kit.mjs";
+import { acento, k, write } from "../kit.mjs";
 
 const WIDTH = 640;
 const HEIGHT = 440;
@@ -137,7 +137,7 @@ export function build() {
     width: WIDTH,
     height: HEIGHT,
     label,
-    body: [floorSvg(FLOOR, P), ...items.map((item) => item.svg)],
+    body: [`<path class="iso-halo" d="${k.haloOf(FLOOR, 0, 7, P)}"/>`, ...items.map((item) => item.svg)],
     card: {
       fig: "Fig 6",
       title: "Consultar Jev",

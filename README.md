@@ -15,13 +15,14 @@ El tablero permite intervenir; el método organiza cómo se construye, se revisa
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/fabrica-dark.svg">
-  <img alt="Mesa de reparto: una coordinadora y tres frentes ilustrativos, cada agente dentro del marco del meta-harness; fichas de encargos e informes sobre los carriles y cajones para las rondas" src="docs/img/infografias/fabrica-light.svg">
+  <img alt="Línea de montaje: torre coordinadora con cajones de rondas, pórtico meta-harness y tres útiles distintos sobre una cinta con encargos ámbar e informes verdes" src="docs/img/infografias/fabrica-light.svg">
 </picture>
 
-La mesa representa el trabajo compartido. El puesto iluminado es la coordinadora; los demás,
-frentes con un resultado y archivos a cargo. Las fichas ámbar son encargos y las verdes son
-informes que vuelven. Los cajones conservan las rondas. Cada instrumento está rodeado por un
-marco: el meta-harness que lo lanza, observa y conecta. La cantidad de puestos es ilustrativa.
+La cinta representa el trabajo que circula. La torre es la coordinadora y sus cajones conservan
+las rondas. Los útiles distintos representan frentes con un resultado y archivos a cargo;
+las fichas ámbar son encargos y las verdes, informes que vuelven. El pórtico es el meta-harness
+que lanza, observa y conecta los agentes. Los tres útiles son ilustrativos: no representan
+pasos obligatorios ni un máximo de sesiones.
 
 Desde una tarjeta podés leer la conversación, mandar mensajes, adjuntar capturas y responder
 permisos. También podés lanzar sesiones, conectar sus informes, copiar archivos y manejar el
@@ -80,12 +81,17 @@ El detalle de [mejoras](#mejoras-de-agentes), [automatizaciones](#las-automatiza
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/aprendizaje-continuo-dark.svg">
-  <img alt="Fichero escalonado con crudo, proceso, resultados y creencias; una prensa Prolog contrasta, busca contraejemplos y deduce; un carril devuelve lo revisado al contexto de sesión, checklist y controles" src="docs/img/infografias/aprendizaje-continuo-light.svg">
+  <img alt="Prensa vertical de filtros: crudo, cómo, qué y creencias; cabezal Prolog, llave humana de veredicto y hojas de contexto, checklist y controles para la siguiente ronda" src="docs/img/infografias/aprendizaje-continuo-light.svg">
 </picture>
 
-Las bandejas separan lo registrado de lo interpretado. La prensa representa el motor lógico;
-el carril frontal, la vuelta de los aprendizajes al trabajo. La escalera **1 → 2 → 3 → creencias**
-describe niveles de lectura: no obliga a convertir cada captura por todos los escalones.
+Los filtros separan lo registrado de lo interpretado. El cabezal Prolog representa el contraste
+lógico; la llave aparte, el veredicto humano. Las hojas retiradas vuelven al contexto, checklist
+y controles de la ronda siguiente. Las capas **1 → 2 → 3 → creencias** describen niveles de
+lectura: no obligan a convertir cada captura por todos ellos.
+
+![Memoria → Aprendizaje: creencias propuestas, vigentes y refutadas, con acciones de veredicto; datos inventados de una huerta](docs/img/aprendizaje.png)
+
+![Briefing de un proyecto de ejemplo: decisiones vigentes, preguntas abiertas e informes con su respaldo](docs/img/memoria-proyecto.png)
 
 | Nivel | Qué conserva y quién lo usa |
 |---|---|
@@ -136,7 +142,7 @@ sesiones. El diseño y sus límites están en [Producto](docs/PRODUCTO.md),
 [Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](PENDIENTES.md#historial-mejoras) ·
 [Documentación y decisiones de producto](docs/README.md)
 
-![Tablero](docs/img/tablero.png)
+![Tablero con sesiones inventadas, dos PCs, conexiones, una pregunta y un permiso pendiente](docs/img/tablero.png)
 
 ## Cómo funciona
 
@@ -924,7 +930,7 @@ error de Windows para los procesos que lanza: con la memoria al límite, `git-re
 este chequeo fallaba con 0xc0000142 y dejaba un cartel modal en el escritorio. Ese código queda
 ahora en el log, con la URL.
 
-![tira de PCs](docs/img/tira-pcs.png)
+![Dos PCs de ejemplo: memoria libre, CPU, temperatura, latencia y aviso de autenticación Git vencida](docs/img/tira-pcs.png)
 
 Con varias cuentas de GitHub en `gh`, cada repo elige la suya (`cuenta_github.py`, 2026-10-08): el
 helper de `gh` sólo sirve la cuenta activa, y cambiarla es global a la PC. Antes de probar el

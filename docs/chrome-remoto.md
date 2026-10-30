@@ -29,7 +29,7 @@ el menú **⋮**, para dejar espacio al navegador; también podés usar pantalla
 Las páginas, el teclado y el mouse se ejecutan en la PC elegida. La PC debe estar encendida y con
 Lienzo abierto; perder la conexión no abre un Chrome sustituto en otra máquina.
 
-![El Chrome de otra PC, con sus perfiles y sesiones, dentro de una pestaña del navegador local](../docs/img/chrome-remoto.png)
+![Chrome remoto con una ventana y una página de huerta inventadas: fixture del visor, sin conectar a otra PC](img/chrome-remoto.png)
 
 En Windows, la vista de ventana completa recuerda el perfil elegido para cada PC. Al entrar,
 conecta con una ventana existente; si no hay ninguna, abre automáticamente el perfil recordado

@@ -1,129 +1,40 @@
-// Los pasos de FDD (skill fdd, 2026-10-26): una ficha avanza por cuatro hitos sobre la constitución,
-// con el mapa del dominio al lado. El último hito, integrado, lo marca una persona: lleva cerradura.
+// Selector mecánico de cuatro posiciones: una ficha y un último paso con llave.
+// 55 piezas sólidas. Las marcas indican hitos, no porcentaje de avance.
 import { acento, k, write } from "../kit.mjs";
-
-const WIDTH = 680;
-const HEIGHT = 440;
-
-// Mundo: x a lo largo del recorrido, y hacia el frente, z arriba.
-const BASE = { x: -150, y: -60, w: 300, d: 130, r: 6 };
-const BASE_H = 14; // la constitución: todo apoya sobre ella
-const HITOS = ["diseñado", "implementado", "verificado", "integrado"];
-const PASO = 62;
-const X0 = -112;
-const EST = { y: -6, w: 40, d: 40 };
-const EST_H = 10;
-const ACTUAL = 2; // la ficha está en «verificado»: falta que una persona la integre
-
-const P = k.fitProjection(
-  [...k.boxCorners(BASE, 0, BASE_H), [X0, EST.y, BASE_H + EST_H + 50], [X0 + 3 * PASO + EST.w, EST.y + EST.d, BASE_H + EST_H + 30]],
-  WIDTH,
-  HEIGHT,
-  { pad: 26, azimuth: 50, elevation: 30 },
-);
-
-const at = (p) => k.iso(p, P);
-const S = (paths, style) => k.solidSvg(paths, style);
-const L = (d, style) => k.lineSvg(d, style);
-const D = (points, style) => k.dotsSvg(points, style);
-const Z = BASE_H;
-
-function constitucion() {
-  const out = [];
-  out.push(`<path class="iso-halo" d="${k.haloOf(BASE, 0, BASE_H, P)}"/>`);
-  out.push(S(k.slabOf(BASE, 0, BASE_H, P, 8, 0.8), { tone: "mid" }));
-  out.push(L(k.planOutline(k.insetPlan(BASE, 5), Z, P), { tone: "faint" }));
-  out.push(D(k.corners(BASE, 9).map(([x, y]) => at([x, y, Z])), { size: 0.5 }));
-  out.push(k.faceTextSvg(k.sideMatrix([BASE.x + 14, BASE.y + BASE.d], BASE_H - 4, P, "left"), "constitución: AGENTS.md, decisiones, contratos", { size: 5, tone: "mid" }));
-  return out.join("");
-}
-
-// El riel que une las estaciones, por donde avanza la ficha.
-function riel() {
-  const y = EST.y + EST.d / 2;
-  return L(k.segment([X0 + EST.w / 2, y, Z + 1], [X0 + 3 * PASO + EST.w / 2, y, Z + 1], P), { tone: "lo", dashed: true });
-}
-
-function estacion(i) {
-  const out = [];
-  const x = X0 + i * PASO;
-  const plan = { x, y: EST.y, w: EST.w, d: EST.d, r: 2 };
-  out.push(S(k.slabOf(plan, Z, EST_H, P, 3, 0.6), { tone: "mid" }));
-  out.push(k.faceTextSvg(k.sideMatrix([x + EST.w / 2, EST.y + EST.d], Z + EST_H - 3.5, P, "left"), HITOS[i], { size: 4.6, tone: "hi", anchor: "middle" }));
-  const top = Z + EST_H;
-  if (i < 3) {
-    // Lámpara: verde si el hito ya pasó con evidencia, apagada si falta.
-    const hecho = i <= ACTUAL;
-    out.push(S(k.cylinder(x + EST.w - 7, EST.y + 7, 2.4, top, 3, P, 16), { tone: hecho ? "hi" : "lo", className: hecho ? acento.verde : undefined }));
-  } else {
-    // Integrado: cerradura roja con su llave al lado. Lo marca una persona, nunca el agente.
-    const lock = { x: x + EST.w / 2 - 6, y: EST.y + EST.d / 2 - 4, w: 12, d: 8, r: 1.4 };
-    out.push(S(k.slabOf(lock, top, 9, P, 2, 0.4), { tone: "hi", className: acento.rojo }));
-    out.push(S(k.cylinder(lock.x + 6, lock.y + 4, 3.4, top + 9, 3, P, 16), { tone: "mid" }));
-    out.push(S(k.slabOf({ x: x + 5, y: EST.y + EST.d - 10, w: 12, d: 3, r: 0.8 }, top, 1.6, P, 2), { tone: "hi", className: acento.ambar }));
+const width=680,height=470;
+const bounds={x:-135,y:-155,w:270,d:290,r:8};
+const P=k.fitProjection(k.boxCorners(bounds,0,65),width,height,{pad:32,azimuth:42,elevation:46});
+const box=(x,y,w,d,z,h,style={})=>k.solidSvg(k.slabOf({x,y,w,d,r:1},z,h,P,4,.5),{tone:"mid",...style});
+const disc=(x,y,r,z,h,style={})=>k.solidSvg(k.cylinder(x,y,r,z,h,P,80),{tone:"mid",...style});
+const text=(x,y,z,t,size=5)=>k.faceTextSvg(k.topMatrix([x,y],z,P,"x"),t,{size,tone:"hi",anchor:"middle"});
+export function build(){
+  const body=['<path class="iso-halo" d="'+k.haloOf(bounds,0,8,P)+'"/>'];
+  body.push(disc(0,0,112,0,12,{tone:"lo"}),disc(0,0,107,12,7),disc(0,0,98,19,2,{tone:"hi"}));
+  // Dientes sobre la corona: las posiciones son discretas.
+  for(let i=0;i<24;i++){
+    const a=i*Math.PI/12,x=103*Math.cos(a),y=103*Math.sin(a);
+    body.push(disc(x,y,2.2,19,3));
   }
-  return out.join("");
-}
-
-// La ficha: una tarjeta parada con renglones (objetivo, alcance, criterios, evidencia, próximo paso).
-function ficha() {
-  const out = [];
-  const x = X0 + ACTUAL * PASO + EST.w / 2 - 13;
-  const y = EST.y + EST.d / 2 - 1;
-  const z = Z + EST_H;
-  const h = 34;
-  out.push(S(k.slabOf({ x, y, w: 26, d: 2, r: 0.4 }, z, h, P, 1), { tone: "hi" }));
-  for (let r = 0; r < 5; r++) {
-    const zz = z + h - 7 - r * 5.6;
-    out.push(L(k.segment([x + 4, y + 2, zz], [x + (r % 2 ? 16 : 22), y + 2, zz], P), { tone: "faint", free: true }));
+  body.push(box(-31,-12,62,24,21,2,{tone:"lo"}),text(0,3,23,"Constitución",5.5));
+  const positions=[[-62,-46,"1 Diseñado"],[20,-46,"2 Implementado"],[-62,37,"3 Verificado"],[20,37,"4 Integrado"]];
+  for(const [i,[x,y,t]] of positions.entries()){
+    body.push(box(x,y,45,25,21,2,{tone:"hi"}),text(x+22.5,y+17,23,t,4.1));
+    body.push(disc(x+23,y-5,4,21,3,{className:i===3?acento.rojo:acento.verde}));
+    for(const dx of [3,42]) body.push(disc(x+dx,y+3,1,23,1));
   }
-  out.push(S(k.slabOf({ x: x + 18, y: y + 2, w: 5, d: 0.6, r: 0.2 }, z + h - 6, 3, P, 1), { tone: "hi", className: acento.verde }));
-  return out.join("");
-}
-
-// El mapa del dominio, al costado del inicio: lo que se lee antes de abrir una ficha.
-function mapa() {
-  const out = [];
-  const hoja = { x: X0 - 6, y: BASE.y + 8, w: 70, d: 30, r: 0.8 };
-  const z = Z + 1.2;
-  out.push(S(k.slabOf(hoja, Z, 1.2, P, 1), { tone: "hi", crease: "none" }));
-  const nodos = [
-    [hoja.x + 10, hoja.y + 8],
-    [hoja.x + 30, hoja.y + 18],
-    [hoja.x + 54, hoja.y + 9],
-    [hoja.x + 18, hoja.y + 16],
-  ];
-  for (const [a, b] of [[0, 1], [1, 2], [1, 3]]) out.push(L(k.segment([...nodos[a], z], [...nodos[b], z], P), { tone: "lo", free: true }));
-  for (const [x, y] of nodos) out.push(S(k.slabOf({ x: x - 3, y: y - 2, w: 6, d: 4, r: 0.6 }, z, 1.6, P, 1), { tone: "mid" }));
-  out.push(k.faceTextSvg(k.topMatrix([hoja.x + 4, hoja.y + hoja.d - 3], z, P), "mapa del dominio", { size: 4.4, tone: "mid" }));
-  return out.join("");
-}
-
-// El mapa queda detrás de las estaciones: va antes que ellas.
-const body = [constitucion(), mapa(), riel(), ...[0, 1, 2, 3].map(estacion), ficha()];
-
-const label =
-  "Los pasos de FDD para agentes. Sobre una base que es la constitución del proyecto (AGENTS.md, decisiones y contratos), " +
-  "una ficha por feature avanza por cuatro estaciones: diseñado, implementado, verificado e integrado. Las tres primeras tienen una " +
-  "lámpara que se prende verde sólo con evidencia observada. La última tiene una cerradura roja con su llave al lado: integrado lo " +
-  "marca una persona, nunca el agente. Detrás del inicio, la hoja del mapa del dominio, que se lee antes de abrir la ficha.";
-
-export function build() {
-  return write("fdd-pasos", {
-    width: WIDTH,
-    height: HEIGHT,
-    label,
-    body,
-    card: {
-      fig: "FDD",
-      title: "Una ficha, cuatro hitos",
-      hint: "Todo apoya en la constitución",
-      readout: "diseñado → implementado → verificado → integrado",
-      keys: [
-        { mark: "green", label: "Hito con evidencia observada" },
-        { mark: "red", label: "Integrado: lo marca una persona" },
-      ],
-      caption: "Un cambio puntual y claro no abre ficha: se hace y se verifica directo.",
-    },
-  });
+  // Portaficha en la posición verificada.
+  body.push(box(-100,22,32,7,21,4),box(-98,24,28,1,25,34,{tone:"hi"}));
+  body.push(k.faceTextSvg(k.sideMatrix([-84,25],47,P,"left"),"Ficha",{size:5,tone:"hi",anchor:"middle"}));
+  for(const z of [32,37,42]) body.push(k.lineSvg(k.segment([-95,25,z],[-73,25,z],P),{tone:"lo",free:true}));
+  // Cerradura de integración; la llave queda afuera, en manos de la persona.
+  body.push(disc(43,74,8,21,4,{className:acento.rojo}),box(40,73,6,2,25,1,{tone:"lo"}));
+  body.push(box(88,72,25,4,0,3,{className:acento.ambar}),disc(114,74,6,0,3,{className:acento.ambar}));
+  // Mapa apoyado al costado: no forma parte de la secuencia de hitos.
+  body.push(box(-54,-151,108,28,0,1,{tone:"hi"}),text(0,-132,1,"Mapa del dominio",5.5));
+  for(const x of [-36,-12,12,36]) body.push(box(x-3,-147,6,4,1,1));
+  return write("fdd-pasos",{width,height,body,
+    label:"Selector circular con cuatro posiciones: diseñado, implementado, verificado e integrado. Una ficha está en verificado. La corona es la constitución, el mapa del dominio está al costado y la última posición requiere una llave humana.",
+    card:{fig:"FDD",title:"Una ficha, cuatro hitos",hint:"La corona sostiene las cuatro posiciones",readout:"Integrar requiere una persona",
+      keys:[{mark:"green",label:"Posiciones con evidencia observada"},{mark:"red",label:"Cerradura: integración humana"},{mark:"flat",label:"Corona: constitución; hoja: mapa del dominio"}],
+      caption:"La ficha conserva objetivo, alcance, criterios, evidencia y próximo paso. Cada posición exige su evidencia; no representa un porcentaje. Un cambio puntual y claro se hace y se verifica directo, sin abrir ficha."}});
 }

@@ -1,71 +1,43 @@
-// Figure: mesa de reparto. Las fichas viajan por dos carriles: encargo e informe.
-// Piezas: base y patas (5), carriles con bordes y topes (10), estaciones (52), fichas (6): 73.
-// Una estación coordina; las otras tres son frentes ilustrativos, no un límite.
+// Cinta de montaje abierta, sin plataforma común. 69 piezas sólidas.
+// Los tres útiles son frentes ilustrativos, no etapas obligatorias.
 import { k, acento, write } from "../kit.mjs";
-
 const width = 760, height = 450;
-const base = { x: -170, y: -75, w: 340, d: 150, r: 5 };
-const P = k.fitProjection(k.boxCorners(base, -12, 82), width, height,
-  { pad: 35, azimuth: 55, elevation: 36 });
-const slab = (p, z, h, style = {}) => k.solidSvg(k.slabOf(p, z, h, P, 4, 0.6), { tone: "mid", ...style });
-const plan = (x, y, w, d, r = 1) => ({ x, y, w, d, r });
-
-function placa(x, y, z, w, texto) {
-  return k.lineSvg(k.planOutline(plan(x, y, w, 10), z, P), { tone: "lo" }) +
-    k.faceTextSvg(k.topMatrix([x + w / 2, y + 7], z, P, "x"), texto,
-      { size: 4.8, tone: "hi", anchor: "middle" });
-}
-
-function ficha(x, y, z, color) {
-  const p = plan(x, y, 18, 12);
-  return slab(p, z, 1.2, { tone: "hi" }) +
-    slab(plan(x, y, 3, 12), z + 1.2, 0.5, { className: color }) +
-    [3, 6, 9].map(dy => k.lineSvg(k.segment([x + 5, y + dy, z + 1.2],
-      [x + 15, y + dy, z + 1.2], P), { tone: "lo", free: true })).join("");
-}
-
-function estacion(x, coordina) {
-  const y = -58, out = [];
-  // Bancada y marco exterior: el meta-harness rodea el instrumento del agente.
-  out.push(slab(plan(x, y, 64, 62, 3), 0, 5, { tone: "lo" }));
-  out.push(slab(plan(x + 3, y + 3, 58, 5), 5, 65));
-  for (const dx of [3, 56]) out.push(slab(plan(x + dx, y + 8, 5, 45), 5, 65));
-  out.push(slab(plan(x + 3, y + 8, 58, 45), 70, 5));
-  out.push(slab(plan(x + 14, y + 15, 36, 25, 2), 5, 36, { tone: "hi" }));
-  out.push(slab(plan(x + 18, y + 40, 28, 1), 17, 20, { tone: "lo" }));
-  out.push(slab(plan(x + 20, y + 41, 24, 0.6), 20, 14, { tone: "hi", lit: coordina }));
-  // Pupitre, dos teclas, luz de estado y cajón de la ronda.
-  out.push(slab(plan(x + 14, y + 42, 36, 12), 5, 8));
-  for (const dx of [19, 32]) out.push(slab(plan(x + dx, y + 45, 9, 6), 13, 2, { tone: "hi" }));
-  out.push(slab(plan(x + 45, y + 54, 5, 4), 5, 2, { className: coordina ? acento.ambar : acento.verde }));
-  out.push(slab(plan(x + 18, y + 58, 28, 3), 1, 8, { tone: "hi" }));
-  if (coordina) out.push(k.faceTextSvg(k.sideMatrix([x + 32, y + 61], 3, P, "left"),
-    "Rondas", { size: 4, tone: "hi", anchor: "middle" }));
-  out.push(k.dotsSvg(k.corners(plan(x + 3, y + 8, 58, 45), 3).map(([a, b]) => k.iso([a, b, 75], P)), { size: 0.55 }));
-  out.push(placa(x + 8, y + 14, 75, 48, coordina ? "Coordinadora" : "Frente"));
-  if (coordina) out.push(placa(x + 8, y + 31, 75, 48, "Meta-harness"));
-  return out.join("");
-}
-
+const bounds = { x: -185, y: -54, w: 365, d: 112, r: 4 };
+const P = k.fitProjection(k.boxCorners(bounds, 0, 105), width, height, { pad: 32, azimuth: 62, elevation: 28 });
+const box = (x,y,w,d,z,h,style={}) => k.solidSvg(k.slabOf({x,y,w,d,r:1},z,h,P,4,.5), {tone:"mid",...style});
+const text = (x,y,z,t,size=5) => k.faceTextSvg(k.topMatrix([x,y],z,P,"x"),t,{size,tone:"hi",anchor:"middle"});
+function plaque(x,y,z,w,t) { return box(x,y,w,12,z,1,{tone:"hi"}) + text(x+w/2,y+8,z+1,t); }
 export function build() {
-  const body = [`<path class="iso-halo" d="${k.haloOf(base, -12, 12, P)}"/>`];
-  for (const [x, y] of k.corners(base, 12)) body.push(slab(plan(x - 4, y - 4, 8, 8), -12, 8, { tone: "lo" }));
-  body.push(slab(base, -4, 4));
-  // Dos carriles de correo sobre la mesa. Cada uno tiene sus bordes y topes.
-  for (const y of [18, 49]) {
-    body.push(slab(plan(-150, y, 300, 22), 0, 3, { tone: "lo" }));
-    for (const dy of [0, 20]) body.push(slab(plan(-150, y + dy, 300, 2), 3, 3));
-    for (const x of [-150, 147]) body.push(slab(plan(x, y + 2, 3, 18), 3, 3));
+  const body = ['<path class="iso-halo" d="'+k.haloOf(bounds,0,9,P)+'"/>'];
+  for (const x of [-105,105]) for (const y of [-24,26]) {
+    body.push(box(x-5,y-5,10,10,0,3,{tone:"lo"}),box(x-2,y-2,4,4,3,31));
   }
-  const xs = [-153, -73, 7, 87].sort((a, b) => k.depthOf([a, -30, 0], P) - k.depthOf([b, -30, 0], P));
-  for (const x of xs) body.push(estacion(x, x === -153));
-  body.push(ficha(-125, 23, 3, acento.ambar), ficha(35, 23, 3, acento.ambar), ficha(-45, 54, 3, acento.verde));
-  body.push(placa(-85, 24, 3, 55, "Encargos"), placa(55, 55, 3, 55, "Informes"));
-  return write("fabrica", { width, height, body,
-    label: "Mesa de una fábrica de software: la coordinadora y tres frentes ilustrativos trabajan en estaciones rodeadas por el meta-harness. Dos carriles llevan encargos e informes; el cajón conserva la ronda.",
-    card: { fig: "Fig 9", title: "La fábrica de software", hint: "Encargos de ida · informes de vuelta", readout: "La coordinadora verifica el árbol",
-      keys: [{ mark: "lit", label: "Puesto iluminado: coordinadora y veredictos" },
-        { mark: "raised", label: "Marcos: meta-harness; instrumentos interiores: agentes" },
-        { mark: "flat", label: "Fichas ámbar: encargos; verdes: informes; cajones: rondas" }],
-      caption: "La coordinadora reparte frentes, recibe informes y verifica el software antes de decidir la ronda siguiente. El marco de cada estación representa lanzamiento, hooks, permisos y controles. Las estaciones son ilustrativas: no representan un máximo de sesiones." } });
+  for (const y of [-27,27]) body.push(box(-125,y,290,4,30,8,{tone:"lo"}));
+  body.push(box(-128,-23,296,50,33,4,{tone:"lo"}));
+  for (let i=0;i<19;i++) body.push(box(-124+i*15,-22,13,48,37,2,{tone:"hi"}));
+  // Torre coordinadora y cajones de rondas, fuera de la cinta.
+  body.push(box(-183,-20,43,52,0,6,{tone:"lo"}),box(-177,-14,31,36,6,80));
+  body.push(box(-175,22,27,1,49,28,{tone:"lo"}),box(-172,23,21,1,53,20,{tone:"hi",lit:true}));
+  for (const z of [12,22,32]) body.push(box(-174,22,25,2,z,7,{tone:"hi"}),box(-166,24,9,2,z+2,2));
+  body.push(plaque(-181,-17,86,39,"Coordina"),plaque(-181,34,0,39,"Rondas"));
+  for (const x of [-112,134]) body.push(box(x,-47,7,7,0,96));
+  body.push(box(-112,-47,253,9,96,7));
+  body.push(plaque(-48,-46,103,92,"Meta-harness"));
+  // Útiles distintos: pinza, sello, lector.
+  for (const [i,x] of [-80,10,100].entries()) {
+    body.push(box(x-3,-42,6,19,72,24),box(x-12,-23,24,7,72,7));
+    if(i===0) for(const dx of [-12,8]) body.push(box(x+dx,-16,4,18,52,23));
+    if(i===1) body.push(box(x-4,-16,8,15,55,20),box(x-17,-19,34,24,51,4,{tone:"hi"}));
+    if(i===2) body.push(box(x-14,-16,28,10,61,10),box(x-11,-6,22,1,63,5,{className:acento.verde}));
+    body.push(plaque(x-18,-36,79,36,"Frente"));
+  }
+  for(const [x,color] of [[-100,acento.ambar],[-10,acento.ambar],[120,acento.verde]]) {
+    body.push(box(x,-8,28,22,39,3,{tone:"hi"}),box(x+2,-6,4,18,42,1,{className:color}));
+  }
+  body.push(plaque(-116,34,0,62,"Encargos"),plaque(91,34,0,62,"Informes"));
+  return write("fabrica", {width,height,body,
+    label:"Línea de montaje sobre patas: torre coordinadora y archivo de rondas; pórtico meta-harness con tres útiles de agentes sobre una cinta con encargos ámbar e informes verdes.",
+    card:{fig:"Fig 9",title:"La fábrica de software",hint:"Una cinta, distintos instrumentos",readout:"La coordinadora verifica el árbol",
+      keys:[{mark:"lit",label:"Torre: coordinación; cajones: rondas"},{mark:"raised",label:"Pórtico: meta-harness; útiles: frentes"},{mark:"flat",label:"Ámbar: encargos; verde: informes"}],
+      caption:"La cinta representa el trabajo que circula. Los útiles son frentes ilustrativos, no pasos obligatorios ni un máximo de sesiones. El pórtico reúne lanzamiento, hooks, permisos y controles. Recibir el informe no sustituye verificar el árbol."}});
 }

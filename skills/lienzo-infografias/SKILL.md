@@ -60,7 +60,9 @@ Estas mandan sobre lo que diga `anatomy`:
 | `memoria` | Memoria por proyecto como fichero: un cajón por carpeta, fichas que entran solas con sello de observado y la bandeja de lo vigente con llave |
 | `scheduler` | El scheduler de mejoras como máquina con enclavamiento: arranca sólo con 180 s libres, dos muestras aptas y nadie ocupado; deja hipótesis propuestas |
 | `jev` | Consultar Jev como franqueadora con colador: sólo pasa la muestra visible, llave de una consulta autorizada, franqueo estimado y libro de cuentas |
-| `fdd-pasos` | Para el repo `arielelevy/fdd`: una ficha por cuatro estaciones de hitos sobre la constitución, el último con cerradura; el mapa del dominio detrás |
+| `fdd-pasos` | Selector circular de cuatro posiciones sobre la corona de la constitución: ficha en verificado, integración con llave humana y mapa del dominio aparte |
 | `fdd-medicion` | Para el repo `arielelevy/fdd`: el piloto del 2026-10-26 como dos pilas de hojas (tokens leídos con y sin mapa), comandos y aciertos |
+| `fabrica` | Cinta de montaje sobre patas, torre coordinadora, archivo de rondas y útiles distintos bajo el pórtico meta-harness |
+| `aprendizaje-continuo` | Prensa vertical de filtros, cabezal Prolog, llave humana y hojas que vuelven al contexto, checklist y controles |
 
 Las dos `fdd-*` se escriben en el repo de FDD: `LIENZO_INFOGRAFIAS_IMG=<fdd>/docs/img node build.mjs fdd-pasos fdd-medicion`.
