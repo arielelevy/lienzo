@@ -69,8 +69,10 @@ def texto(pid: str) -> str | None:
         return None
     partes = [
         "## Aprendizajes de Lienzo",
-        "Creencias validadas de la memoria de Lienzo. Aplicalas cuando correspondan al trabajo; si una no "
-        "aplica, seguí tu criterio y decilo al cerrar.",
+        (
+            "Creencias validadas de la memoria de Lienzo. Aplicalas cuando correspondan al trabajo; si una no "
+            "aplica, seguí tu criterio y decilo al cerrar."
+        ),
     ]
     if proceso:
         partes += ["### Cómo se trabaja con Lienzo", *map(_linea, proceso[:POR_BLOQUE])]
