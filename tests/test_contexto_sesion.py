@@ -119,3 +119,13 @@ def test_instalador_registra_en_cada_perfil_con_matcher(tmp_path, monkeypatch):
     assert hooks["PreToolUse"][0]["matcher"] == "Bash" and "async" not in hooks["PreToolUse"][0]["hooks"][0]
     assert "async" not in hooks["SessionStart"][0]["hooks"][0]
     assert "async" in hooks["Stop"][0]["hooks"][0]
+
+
+def test_en_una_linea_pasa_el_filtro_de_cmd():
+    import launch
+
+    texto = '## T\n- Correr pytest | tail con "pipefail" & 100% <ok> ^ !\n- otra ' + "x" * 9000
+    linea = cs.en_una_linea(texto, 5000)
+    assert len(linea) <= 5000 and "\n" not in linea
+    launch._cmd_arg(linea)  # no levanta
+    assert cs.en_una_linea(texto, 100) is None

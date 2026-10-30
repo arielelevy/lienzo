@@ -148,6 +148,19 @@ def proyecto_de(data: dict, cwd: str | None) -> str | None:
     return mejor[1] if mejor else None
 
 
+_NO_CMD = str.maketrans({c: " " for c in '&|<>^%!"\r'} | {"\n": " · "})
+
+
+def en_una_linea(texto: str, maximo: int) -> str | None:
+    """El texto para una línea de comandos de cmd (launch._cmd_arg): sin saltos ni & | < > ^ % ! " y recortado
+    a `maximo` caracteres, en cp1252. None si no queda lugar."""
+    if maximo < 200:
+        return None
+    linea = " ".join(texto.translate(_NO_CMD).split())
+    linea = linea.encode("cp1252", "replace").decode("cp1252")
+    return linea if len(linea) <= maximo else linea[: maximo - 1] + "…"
+
+
 def texto_para(cwd: str | None) -> str | None:
     """Para launch.py: el texto de la carpeta, leído del último archivo escrito."""
     try:

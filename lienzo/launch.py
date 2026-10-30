@@ -390,14 +390,25 @@ def launch(
     improvement_warnings = []
     try:
         instructions, improvement_warnings = agent_improvements.launch_instructions(agent, distro, modo)
+        aprendizajes = None
         if agent != "claude":
             # Claude las recibe por su hook de SessionStart (también las sesiones abiertas a mano); el
-            # resto de los agentes que lanza Lienzo, con las instrucciones (contexto_sesion.py)
+            # resto de los agentes que lanza Lienzo, con las instrucciones (contexto_sesion.py). Van por la
+            # línea de comandos: en una línea, sin lo que cmd no acepta y dentro del tope
             aprendizajes = contexto_sesion.texto_para(cwd)
-            if aprendizajes:
-                instructions = "\n\n".join(filter(None, [instructions, aprendizajes]))
-        if instructions:
-            extra += _improvement_args(agent, instructions, cwd, distro=distro)
+            if aprendizajes and WINDOWS and not distro:
+                aprendizajes = contexto_sesion.en_una_linea(aprendizajes, 5500 - len(instructions or ""))
+        try:
+            con = " ".join(filter(None, [instructions, aprendizajes]))
+            if con:
+                extra += _improvement_args(agent, con, cwd, distro=distro)
+        except ValueError as error:
+            if not aprendizajes:
+                raise
+            # las creencias no entran: se lanza con las instrucciones de siempre, nunca sin ninguna
+            improvement_warnings.append(f"aprendizajes no aplicados: {error}")
+            if instructions:
+                extra += _improvement_args(agent, instructions, cwd, distro=distro)
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         improvement_warnings.append(f"mejoras no aplicadas: {error}")
     if agent == "codex":
