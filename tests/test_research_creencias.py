@@ -612,3 +612,44 @@ def test_existing_beliefs_and_proposals_are_context_not_sources():
     assert belief_node in {c["id"] for c in data["creencias_existentes"]}
     rc.save_lectura(PROJECT, data["lectura"])
     assert rc.estado(PROJECT)["pendientes"]["memoria"] == 0
+
+
+def _objetos(schema):
+    if isinstance(schema, dict):
+        if schema.get("type") == "object":
+            yield schema
+        for value in schema.values():
+            yield from _objetos(value)
+    elif isinstance(schema, list):
+        for value in schema:
+            yield from _objetos(value)
+
+
+def test_esquemas_cumplen_el_modo_estricto_de_codex():
+    """Codex rechaza con 400 un objeto cuyo `required` no nombra todas sus propiedades (pasó con regla_logica)."""
+    import resumidor
+
+    for schema in (rc.SCHEMA, resumidor.SCHEMA, research.SCHEMA):
+        for obj in _objetos(schema):
+            assert obj.get("additionalProperties") is False
+            assert sorted(obj["required"]) == sorted(obj["properties"])
+
+
+def test_opcionales_null_o_ausentes_se_aceptan_y_se_quitan(monkeypatch):
+    data = {"case_id": "c1", "refs": {}}
+    base = {
+        "alcance": "proyecto",
+        "dimension": min(rc.creencias.DIMENSIONES),
+        "texto": "t",
+        "accion": "a",
+        "contexto": [],
+        "excepciones": "",
+        "fuentes": ["r1"],
+    }
+    respuesta = {"case_id": "c1", "leido": "l", "conclusiones": ["c"], "limitaciones": ["x"]}
+    monkeypatch.setattr(rc, "allowed_refs", lambda d: {"r1"})
+    for item in (base, {**base, "regla_logica": None, "principio": None, "ejemplos": None}):
+        out = rc.validate({**respuesta, "creencias": [item]}, data, None)
+        [kept] = out["creencias"]
+        assert "principio" not in kept and "ejemplos" not in kept
+        assert kept["formalizacion"]["estado"] == "datos_insuficientes"

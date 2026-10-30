@@ -726,6 +726,7 @@ class CodexAdapter:
             "--sandbox",
             "read-only",
             "--ephemeral",
+            "--skip-git-repo-check",  # proyectos sin git (carpetas sueltas): el sandbox sigue de sólo lectura
             "--color",
             "never",
             "--json",

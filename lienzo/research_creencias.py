@@ -98,15 +98,19 @@ SCHEMA = _obj(
         "limitaciones": _list(_STR, 1, 8),
     }
 )
-# Campos opcionales: clientes anteriores y ausencia de formalización conservan la propuesta.
+# Campos que pueden no venir: el modo estricto de Codex exige que `required` nombre todas las propiedades, así
+# que van obligatorios pero aceptan null. Una respuesta sin ellos (clientes anteriores) se completa con null
+# antes de validar, y los null se quitan después: la ausencia de formalización conserva la propuesta.
+OPCIONALES = ("regla_logica", "principio", "ejemplos")
 _CREENCIA_SCHEMA = SCHEMA["properties"]["creencias"]["items"]
 _CREENCIA_SCHEMA["properties"].update(
     {
-        "regla_logica": {"type": "string", "maxLength": 4000},
-        "principio": {"type": "boolean"},
-        "ejemplos": _list({"type": "string", "minLength": 1, "maxLength": 64}, 0, 30),
+        "regla_logica": {"type": ["string", "null"], "maxLength": 4000},
+        "principio": {"type": ["boolean", "null"]},
+        "ejemplos": {**_list({"type": "string", "minLength": 1, "maxLength": 64}, 0, 30), "type": ["array", "null"]},
     }
 )
+_CREENCIA_SCHEMA["required"] = list(_CREENCIA_SCHEMA["properties"])
 
 
 # ---------------------------------------------------------------- cursor
@@ -577,8 +581,9 @@ def prompt(data: dict, base: str = "", tools: bool = True) -> str:
     import prolog_programa
 
     logical = (
-        "Campo opcional regla_logica: una cláusula Prolog de datos (cabeza :- cuerpo.), sin goals, "
-        "directivas ni funciones; variables ligadas y comparaciones numéricas. Si no podés formalizar, omitila. "
+        "Campo regla_logica: una cláusula Prolog de datos (cabeza :- cuerpo.), sin goals, "
+        "directivas ni funciones; variables ligadas y comparaciones numéricas. Si no podés formalizar, null; "
+        "principio y ejemplos también son null cuando no aplican. "
         "Predicados permitidos (aridad): "
         + ",".join(f"{p}/{len(a)}" for p, a in sorted(prolog_programa.VOCABULARIO.items()))
         + ". Preferí pocos principios generales (principio=true, ejemplos=ids existentes) que agrupen "
@@ -611,6 +616,10 @@ def prompt(data: dict, base: str = "", tools: bool = True) -> str:
 
 def _check(value, schema: dict, where: str, errors: list) -> None:
     kind = schema.get("type")
+    if isinstance(kind, list):  # tipo con null: null vale, otro valor se mira con el tipo no nulo
+        if value is None and "null" in kind:
+            return
+        kind = next(t for t in kind if t != "null")
     if kind == "object":
         if not isinstance(value, dict):
             errors.append(f"{where}: no es objeto")
@@ -646,12 +655,15 @@ def validate(result, data: dict, root) -> dict:
     # Una cláusula mal formada no debe descartar el resto del contenido de esa creencia.
     checked = result
     if isinstance(result, dict) and isinstance(result.get("creencias"), list):
-        checked = {
+        result = {
             **result,
             "creencias": [
-                {k: v for k, v in x.items() if k != "regla_logica"} if isinstance(x, dict) else x
-                for x in result["creencias"]
+                {**dict.fromkeys(OPCIONALES), **x} if isinstance(x, dict) else x for x in result["creencias"]
             ],
+        }
+        checked = {
+            **result,
+            "creencias": [{**x, "regla_logica": None} if isinstance(x, dict) else x for x in result["creencias"]],
         }
     _check(checked, SCHEMA, "respuesta", errors)
     if errors:
@@ -660,7 +672,7 @@ def validate(result, data: dict, root) -> dict:
         raise ValueError("case_id no corresponde al caso")
     allowed, kept, dropped = allowed_refs(data), [], []
     for item in result["creencias"]:
-        item = dict(item)
+        item = {key: value for key, value in item.items() if not (key in OPCIONALES and value is None)}
         import prolog_programa
 
         raw_clause = item.pop("regla_logica", None)
