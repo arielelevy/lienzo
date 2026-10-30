@@ -81,17 +81,13 @@ El detalle de [mejoras](#mejoras-de-agentes), [automatizaciones](#las-automatiza
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/infografias/aprendizaje-continuo-dark.svg">
-  <img alt="Prensa vertical de filtros: crudo, cómo, qué y creencias; cabezal Prolog, llave humana de veredicto y hojas de contexto, checklist y controles para la siguiente ronda" src="docs/img/infografias/aprendizaje-continuo-light.svg">
+  <img align="right" width="50%" alt="Prensa vertical de filtros: crudo, cómo, qué y creencias; cabezal Prolog, llave humana de veredicto y hojas de contexto, checklist y controles para la siguiente ronda" src="docs/img/infografias/aprendizaje-continuo-light.svg">
 </picture>
 
 Los filtros separan lo registrado de lo interpretado. El cabezal Prolog representa el contraste
 lógico; la llave aparte, el veredicto humano. Las hojas retiradas vuelven al contexto, checklist
 y controles de la ronda siguiente. Las capas **1 → 2 → 3 → creencias** describen niveles de
 lectura: no obligan a convertir cada captura por todos ellos.
-
-![Memoria → Aprendizaje: creencias propuestas, vigentes y refutadas, con acciones de veredicto; datos inventados de una huerta](docs/img/aprendizaje.png)
-
-![Briefing de un proyecto de ejemplo: decisiones vigentes, preguntas abiertas e informes con su respaldo](docs/img/memoria-proyecto.png)
 
 | Nivel | Qué conserva y quién lo usa |
 |---|---|
@@ -137,6 +133,12 @@ Ese retorno permite revisar el aprendizaje. El [bot externo](lienzo/bot_externo.
 lecturas de nivel 3, con clave y selección de proyectos; usa un servidor separado del que controla
 sesiones. El diseño y sus límites están en [Producto](docs/PRODUCTO.md),
 [Aprendizaje](docs/APRENDIZAJE.md) y el [contrato de memoria](docs/propuesta-memoria/v5.md).
+
+<br clear="all">
+
+![Memoria → Aprendizaje: creencias propuestas, vigentes y refutadas, con acciones de veredicto; datos inventados de una huerta](docs/img/aprendizaje.png)
+
+![Briefing de un proyecto de ejemplo: decisiones vigentes, preguntas abiertas e informes con su respaldo](docs/img/memoria-proyecto.png)
 
 [Arquitectura, diseño y recorridos de los pedidos](https://arquitectura-lienzo.ariel-e-levy.chatgpt.site/) ·
 [Pendientes y evidencia](PENDIENTES.md) · [Historial de mejoras](PENDIENTES.md#historial-mejoras) ·
