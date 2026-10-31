@@ -52,3 +52,19 @@ def test_corrupt_preferences_are_visible(isolated):
     (isolated / "agent-improvements.json").write_text("{broken")
     with pytest.raises(ValueError):
         improvements.preferences()
+
+
+@pytest.mark.parametrize("con_rg", [True, False])
+def test_rtk_dice_si_falta_rg(isolated, monkeypatch, con_rg):
+    # openSeec, 2026-10-30: «rtk rg» fallaba con «Binary 'rg' not found on PATH» y los frentes caían a la
+    # herramienta nativa sin aviso
+    binary = isolated / "bin" / ("rtk.exe" if rtk.os.name == "nt" else "rtk")
+    binary.parent.mkdir()
+    binary.write_bytes(b"fixture")
+    monkeypatch.setattr(rtk.shutil, "which", lambda name: "C:/rg.exe" if con_rg and name == "rg" else None)
+    improvements.configure({"rtk": True})
+    text, _ = improvements.launch_instructions("claude", None)
+    if con_rg:
+        assert "rtk rg," in text and "no esta instalado" not in text
+    else:
+        assert "rtk grep (rg no esta instalado en esta PC" in text and "rtk rg," not in text

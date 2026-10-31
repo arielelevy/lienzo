@@ -391,7 +391,11 @@ def pedir_turno(recurso: str, d: dict) -> tuple[int, dict]:
     tope = politica(recurso)["ttl_max_min"]
     ttl = d.get("ttl_min", min(TURNO_TTL_MIN, tope))
     if isinstance(ttl, bool) or not isinstance(ttl, int) or not 1 <= ttl <= tope:
-        return 400, {"error": f"ttl_min debe ser un entero entre 1 y {tope}"}
+        return 400, {
+            "error": f"ttl_min debe ser un entero entre 1 y {tope} (el máximo de la política de «{recurso}»; "
+            f"la coordinadora lo cambia con PUT /turnos/{recurso}/politica o coordinar.politica_turno)",
+            "ttl_max_min": tope,
+        }
     pedido = {"session_id": sid, "ttl_min": ttl, "motivo": short(motivo, 200) if motivo else None, "pedido": now()}
     siguiente = None
     with _cambio():
@@ -453,7 +457,9 @@ def liberar_turno(recurso: str, sid: str, por: str = "api") -> tuple[int, dict]:
     sid = _vigente(sid)
     with _cambio():
         t = _datos["turnos"].get(recurso)
+        saliente = None
         if t and t["dueno"] and _vigente(t["dueno"]["session_id"]) == sid:
+            saliente = dict(t["dueno"])
             t["dueno"] = None
         elif t and any(_vigente(x["session_id"]) == sid for x in t["cola"]):
             t["cola"] = [x for x in t["cola"] if _vigente(x["session_id"]) != sid]
@@ -462,7 +468,18 @@ def liberar_turno(recurso: str, sid: str, por: str = "api") -> tuple[int, dict]:
         siguiente = _siguiente(recurso)
         _guardar()  # liberar y pasar son un único cambio durable
         result = copy.deepcopy({"recurso": recurso, **t})
-    state.log(f"turno {recurso}: {sid[:8]} lo suelta ({por})")
+    ajeno = por not in ("api", sid) and _vigente(por) != sid
+    state.log(f"turno {recurso}: {sid[:8]} lo suelta ({_nombre(por) if ajeno else por})")
+    if saliente and ajeno:
+        # lo solto otra sesion (una coordinadora): el dueño se entera, si no sigue usando el recurso sin turno
+        # en paralelo con el siguiente (openSeec, 2026-10-30: «motores» paso de G a I a las 23:24 sin aviso)
+        hora = dt.datetime.fromisoformat(saliente["vence"]).strftime("%H:%M")
+        a_quien = f"; pasó a {_nombre(siguiente['session_id'])}" if siguiente else ""
+        _avisar(
+            sid,
+            f"[lienzo] {_nombre(por)} soltó tu turno de «{recurso}» (vencía a las {hora}){a_quien}. "
+            "Dejá de usar el recurso; si lo seguís necesitando, pedilo de nuevo.",
+        )
     if siguiente:
         _avisar_turno(recurso, siguiente)
     _publicar()

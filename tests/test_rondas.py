@@ -168,6 +168,26 @@ def test_turno_validaciones(entorno):
     assert rondas.pedir_turno("pago", {"session_id": A})[1]["otorgado"]  # el default se ajusta al tope
 
 
+def test_si_otra_sesion_suelta_el_turno_el_duenio_se_entera(entorno):
+    # openSeec, 2026-10-30: «motores» pasó de G a I a las 23:24 (vencía 23:59) por un DELETE con el id de G, y
+    # G siguió corriendo motores sin saberlo
+    rondas.pedir_turno("motores", {"session_id": A})
+    rondas.pedir_turno("motores", {"session_id": B})
+    assert rondas.liberar_turno("motores", A, por=COORD)[0] == 200
+    aviso = para(entorno, A)
+    assert len(aviso) == 1 and "coordinadora soltó tu turno de «motores»" in aviso[0] and "encargo B" in aviso[0]
+    # el dueño que lo suelta solo no recibe nada
+    rondas.liberar_turno("motores", B, por=B)
+    rondas.liberar_turno("motores", B)
+    assert para(entorno, B) == [t for t in para(entorno, B) if "te toca" in t]
+
+
+def test_ttl_de_mas_dice_el_maximo_y_donde_se_cambia(entorno):
+    rondas.fijar_politica("motores", {"ttl_max_min": 40})
+    code, r = rondas.pedir_turno("motores", {"session_id": A, "ttl_min": 60})
+    assert code == 400 and r["ttl_max_min"] == 40 and "entre 1 y 40" in r["error"] and "politica" in r["error"]
+
+
 # --- memoria -------------------------------------------------------------------------------------
 
 

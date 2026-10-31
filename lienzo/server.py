@@ -2756,8 +2756,10 @@ class Handler(JsonHandler):
                     restore.forget(sid)
                 return self._json(200, {"ok": True})
             if len(parts) == 2 and parts[0] == "turnos":
-                sid = (self.query.get("session_id") or [None])[0] or self._json_body().get("session_id")
-                return self._json(*rondas.liberar_turno(parts[1], sid))
+                body = self._json_body()
+                sid = (self.query.get("session_id") or [None])[0] or body.get("session_id")
+                por = (self.query.get("por") or [None])[0] or body.get("por")
+                return self._json(*rondas.liberar_turno(parts[1], sid, por if isinstance(por, str) and por else "api"))
             if len(parts) == 2 and parts[0] == "peers":
                 return self._delete_peer(parts[1])
             if len(parts) == 2 and parts[0] == "xfer":

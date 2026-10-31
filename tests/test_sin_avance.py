@@ -73,6 +73,23 @@ def test_la_tarjeta_pasa_a_te_necesita_con_la_pregunta_y_vuelve_al_cerrarse(coda
     assert coda["needs"]["kind"] == "question"
 
 
+def test_coda_que_espera_al_modelo_despues_de_ask_user_no_te_necesita(coda, monkeypatch):
+    # openSeec, 2026-10-30: contestada la pregunta de ask_user, la coda procesaba la respuesta del modelo
+    # («Waiting for model…») y figuraba «te_necesita» hasta su próxima herramienta
+    ses.set_needs(coda, {"kind": "question", "tool": "ask_user", "detail": "", "where": "terminal", "via": "tool"})
+    coda["state_since"] = "2026-01-01T00:00:00.000-03:00"
+    monkeypatch.setattr(ses, "_pantalla_mirada", {})
+    assert ses.coda_mirar_pantalla(coda)
+    # con la pregunta todavía en pantalla no se toca
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": PANTALLA_D})
+    ses.coda_dialogo_en_pantalla(coda)
+    assert coda["state"] == "te_necesita"
+    esperando = ["  ⠋ Waiting for model… (esc to interrupt)", "┃ Ask anything..."]
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": esperando})
+    ses.coda_dialogo_en_pantalla(coda)
+    assert coda["state"] == "corriendo" and not coda["needs"]
+
+
 def _hace(minutos):
     return (dt.datetime.now().astimezone() - dt.timedelta(minutes=minutos)).isoformat(timespec="milliseconds")
 

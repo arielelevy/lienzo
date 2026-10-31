@@ -32,12 +32,22 @@ def ruta(distro: str | None = None) -> str | None:
     return str(own) if own.is_file() else shutil.which("rtk")
 
 
+def hay_rg(distro: str | None = None) -> bool:
+    """`rtk rg` corre el `rg` del sistema: sin él falla («Binary 'rg' not found on PATH»)."""
+    if distro:
+        code, _, _ = subproc.correr(["wsl.exe", "-d", distro, "--exec", "bash", "-lc", "command -v rg"], timeout=15)
+        return not code
+    return shutil.which("rg") is not None
+
+
 def _instruccion(agent: str, distro: str | None) -> tuple[str | None, str | None]:
     path = ruta(distro)
     if not path:
         return None, "RTK no esta instalado en el entorno elegido; se lanza sin compresion"
+    # sin rg en la PC, rtk rg falla y el agente caia a la herramienta nativa sin decirlo (openSeec, 2026-10-30)
+    busqueda = "rtk rg" if hay_rg(distro) else "rtk grep (rg no esta instalado en esta PC: rtk rg falla)"
     return (
-        f"RTK disponible en {path}. Invocalo por esa ruta absoluta; no asumas que esta en PATH. Usa RTK explicitamente para lecturas y busquedas con rtk read, rtk rg, rtk find, rtk git y rtk recall, cuando sean compatibles. Tambien para salidas largas de comandos "
+        f"RTK disponible en {path}. Invocalo por esa ruta absoluta; no asumas que esta en PATH. Usa RTK explicitamente para lecturas y busquedas con rtk read, {busqueda}, rtk find, rtk git y rtk recall, cuando sean compatibles. Tambien para salidas largas de comandos "
         "compatibles, por ejemplo rtk git status o rtk git diff. Conserva los codigos de salida. "
         "Ante un error recupera la salida original o ejecuta el comando diagnostico sin compresion. "
         "No filtres pruebas que requieren logs completos ni cambies hooks o permisos. "
@@ -47,7 +57,8 @@ def _instruccion(agent: str, distro: str | None) -> tuple[str | None, str | None
 
 def _estado(distro: str | None) -> dict:
     path = ruta(distro)
-    return {"disponible": bool(path), "detalle": path or "no instalado"}
+    detalle = (path + ("" if hay_rg(distro) else "; sin rg: rtk rg falla, usar rtk grep")) if path else "no instalado"
+    return {"disponible": bool(path), "detalle": detalle}
 
 
 TOOL = Tool(

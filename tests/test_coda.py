@@ -782,3 +782,26 @@ def test_error_de_red_reintenta_como_los_demas_con_tope(tmp_path, monkeypatch):
     log.write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")
     hooks_eventos.coda_log_activity(s)
     assert s["last_error"] is None and s["coda_reintentos_red"] == 0 and not s["retryable"]
+
+
+def test_llamada_invalida_del_modelo_tambien_se_reintenta(tmp_path, monkeypatch):
+    """openSeec P, 2026-10-31: GLM-5.3-Flash mandó dos veces un grep sin `pattern`; coda abortó el turno
+    («recovery escalated — aborting turn») con la caja vacía y un «Re-emito la búsqueda…» que nadie retomó."""
+    from lienzo import server  # noqa: F401, I001
+    import sessions as ses
+
+    (tmp_path / "logs").mkdir()
+    error = "Invalid arguments for tool 'grep': missing required 'pattern' (expected string)"
+    lineas = [
+        {"pid": 4242, "clientName": "cli", "msg": "prompt started"},
+        {"pid": 4242, "clientName": "cli", "msg": "session error event", "error": error, "time": "t1"},
+        {"pid": 4242, "clientName": "cli", "msg": "prompt complete"},
+    ]
+    (tmp_path / "logs" / "coda.log").write_text("\n".join(json.dumps(d) for d in lineas) + "\n", encoding="utf-8")
+    monkeypatch.setenv("CODA_HOME", str(tmp_path))
+    reintentos = []
+    monkeypatch.setattr(ses, "on_api_error", lambda s, sig: reintentos.append(sig))
+    s = ses.new_session(SID, "coda", "hook")
+    s.update(pid=4242, state="termino")
+    hooks_eventos.coda_log_activity(s)
+    assert s["retryable"] and len(reintentos) == 1

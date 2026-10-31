@@ -165,6 +165,9 @@ RETRY_PATTERNS = (
     "econnrefused",
     "etimedout",
     "could not connect",
+    # el modelo mando una herramienta con argumentos invalidos y coda aborto el turno (openSeec P, 2026-10-31:
+    # «Invalid arguments for tool 'grep': missing required 'pattern'»): otra vuelta suele salir bien
+    "invalid arguments for tool",
 )
 # aunque digan "API Error", estos no se arreglan reintentando: hay que esperar o pagar
 NO_RETRY_PATTERNS = ("credit balance", "usage limit", "session limit", "rate limit", "hit your")

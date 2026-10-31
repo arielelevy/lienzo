@@ -20,7 +20,10 @@ def created_at(handle) -> float | None:
 
 def close(card: dict, confirm: str) -> tuple[int, dict]:
     if confirm != card["session_id"]:
-        return 400, {"error": "falta confirmar el cierre de esta sesion"}
+        return 400, {
+            "error": f'falta confirmar el cierre de esta sesion: mandá {{"confirm": "{card["session_id"]}"}} '
+            "(o coordinar.cerrar_sesion)"
+        }
     if backend.is_tmux(card):
         return 409, {"error": "el cierre forzado por proceso requiere el backend Windows"}
     pid = card.get("pid")
