@@ -13,11 +13,13 @@ ambigüedad de títulos repetidos: la que trabaja es la que no está detenida. E
 apenas se mueve un encargo de una tarjeta a otra.
 """
 
+import datetime
 import hashlib
 import json
 import os
 import posixpath
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -79,11 +81,22 @@ def activa(s):
     return bool(s.get("alive")) and not s.get("stopped_by")
 
 
+def _corto_medio(texto, maximo=24):
+    """El proyecto como lo corta el server en el título (`work_titles.corto_medio`, MAX_PROYECTO = 24)."""
+    if len(texto) <= maximo:
+        return texto
+    cabeza = (maximo - 1) // 2
+    return texto[:cabeza] + "…" + texto[-(maximo - 1 - cabeza) :]
+
+
 def frentes(proyecto, todas=False, pc=None):
     """{letra: tarjeta} buscando por NOMBRE, con el título `<proyecto> - encargo <letra> - <qué>`.
 
     Acepta la PC en el título (`<proyecto> - encargo A @notebook - <qué>`) y la marca ` · copycat`
     que el tablero agrega al pegar. La coordinadora (`<proyecto> - coordinadora - …`) no entra.
+    También el título que deja el server (`work_titles.project_title`): `<proyecto> | encargo A - <qué>`,
+    con el proyecto en minúscula y, si es largo, cortado al medio con «…» (openSeec, 2026-10-30). La
+    letra puede llevar delante la versión de la ronda (`encargo 0.20-F`): la clave es `0.20-F`.
 
     Si dos tarjetas comparten letra —un copiar y pegar en curso— gana la que no está detenida. Si
     las dos están vivas y ninguna detenida (la casilla Duplicar del tablero), gana la copycat, que
@@ -92,9 +105,13 @@ def frentes(proyecto, todas=False, pc=None):
     Con varias PCs emparejadas, `GET /sessions` ya trae las de todas mezcladas; `pc` (el `pc_id` de
     `GET /peers`) filtra a una sola. Sin `pc`, se ven las de cualquier PC, como siempre.
     """
+    nombres = "|".join(re.escape(n) for n in {proyecto, _corto_medio(proyecto)})
+    # sólo el proyecto sin distinguir mayúsculas: la letra del encargo sigue siendo mayúscula, con la
+    # versión de la ronda delante si la lleva (`encargo 0.20-F`, openSeec 2026-10-30)
+    patron = re.compile(rf"(?i:{nombres})\s+[-|]\s+encargo ((?:[0-9][\w.]*-)?[A-Z]+)(?: @\S+)?(?=\s|$)")
     out = {}
     for s in sesiones():
-        m = re.match(rf"{re.escape(proyecto)} - encargo ([A-Z]+)(?: @\S+)? - ", str(s.get("title") or ""))
+        m = patron.match(str(s.get("title") or ""))
         if not m or (not todas and not activa(s)):
             continue
         if pc and s.get("pc") != pc:
@@ -153,7 +170,7 @@ def _sucesora(code, res):
     return res.get("sucesora") if code == 404 and isinstance(res, dict) else None
 
 
-def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, reintentos=2):
+def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, reintentos=2, confirmar=False):
     """Como `enviar`, pero no da por hecho que llegó: devuelve {"ok", "code", "motivo", "sid"}.
 
     Un 200 sólo dice que el server aceptó el pedido. Acá además se verifica que la tarjeta lo tomó
@@ -170,6 +187,13 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
       que rechaza la conexión: se espera y se reintenta, hasta `reintentos` veces. Un timeout o un
       503 sin esa marca (corte a mitad) pudo haberse tecleado del otro lado: NO se reintenta.
     - Detenida (`stopped_by`) o muerta: no se manda, se dice por qué.
+
+    Con `confirmar`, además se mira que el texto haya entrado al agente (`entro`): el server pone
+    `last_prompt` y `corriendo` al teclear, así que eso no prueba nada en una consola que todavía no
+    arrancó (un coda recién lanzado quedó 30 min en su portada vacía, ronda 0.18.0 de openSeec). Si
+    en `espera` s no aparece ni en el transcript ni en la pantalla, se reenvía UNA vez. Si está en
+    pantalla pero no en el transcript (tecleado, quizá sin Enter) no se reenvía: lo duplicaría. La
+    respuesta suma `entrada` ("transcript", "pantalla" o None) y `reenviado`.
     """
     permitidos = "\n\t\r"  # salto de línea, tab y retorno
     raros = sorted({hex(ord(ch)) for ch in texto if ord(ch) < 32 and ch not in permitidos})
@@ -198,38 +222,11 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
                 "motivo": "comando con barra a una tarjeta corriendo: quedaría encolado y se pierde",
                 "sid": sid,
             }
+        previos = _prompts(sid) if confirmar else None
         code, res = pedir("POST", f"/sessions/{sid}/send", _cuerpo_envio(sid, texto, enlazar), timeout=80)
         if code == 200:
-            if isinstance(res, dict) and "estado" in res:
-                delivered = res["estado"] == "entregado"
-                return {
-                    "ok": delivered,
-                    "code": code,
-                    "sid": sid,
-                    "estado": res["estado"],
-                    "envio_id": res.get("envio_id"),
-                    "motivo": (
-                        "entrega confirmada por el transporte"
-                        if delivered
-                        else (res.get("motivo") or "entrega no confirmada; no se reintenta")
-                    ),
-                }
-            fin = time.time() + espera
-            while time.time() < fin:
-                time.sleep(1)
-                n = reubicar(s, sesiones())
-                # «corriendo» solo prueba algo si antes no corria: a una sesion ocupada (o pegada en
-                # corriendo despues de un /compact) se le mira que cambie el pedido
-                tomo = (n.get("last_prompt"), n.get("prompt_id")) != antes if n else False
-                if n and (tomo or (not ya_corria and n.get("state") == "corriendo")):
-                    return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": n["session_id"]}
-            motivo = (
-                f"ya estaba corriendo: el server lo aceptó pero en {espera} s no cambió su prompt, así que no hay "
-                "prueba de que lo tomó (mirar su pantalla o transcript antes de reenviar)"
-                if ya_corria
-                else f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)"
-            )
-            return {"ok": False, "code": 200, "motivo": motivo, "sid": sid}
+            r = _tomado(s, sid, res, antes, ya_corria, espera)
+            return _confirmar_entrada(r, s, texto, previos, enlazar, espera) if confirmar else r
         if (nueva := _sucesora(code, res)) and nueva != sid and saltos < 3:
             saltos += 1
             s = next((x for x in sesiones() if x["session_id"] == nueva), {**s, "session_id": nueva})
@@ -255,6 +252,119 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
             motivo += " — pudo haberse tecleado igual: mirar la tarjeta antes de reenviar"
         return {"ok": False, "code": code, "motivo": motivo, "sid": sid}
     return {"ok": False, "code": 0, "motivo": "sin respuesta", "sid": s["session_id"]}
+
+
+def _tomado(s, sid, res, antes, ya_corria, espera):
+    """Lo que dice la tarjeta después de un 200: el recibo del transporte, si lo hay, o que cambie su
+    pedido o pase a `corriendo` en `espera` s."""
+    if isinstance(res, dict) and "estado" in res:
+        delivered = res["estado"] == "entregado"
+        return {
+            "ok": delivered,
+            "code": 200,
+            "sid": sid,
+            "estado": res["estado"],
+            "envio_id": res.get("envio_id"),
+            "motivo": (
+                "entrega confirmada por el transporte"
+                if delivered
+                else (res.get("motivo") or "entrega no confirmada; no se reintenta")
+            ),
+        }
+    fin = time.time() + espera
+    while time.time() < fin:
+        time.sleep(1)
+        n = reubicar(s, sesiones())
+        # «corriendo» solo prueba algo si antes no corria: a una sesion ocupada (o pegada en
+        # corriendo despues de un /compact) se le mira que cambie el pedido
+        tomo = (n.get("last_prompt"), n.get("prompt_id")) != antes if n else False
+        if n and (tomo or (not ya_corria and n.get("state") == "corriendo")):
+            return {"ok": True, "code": 200, "motivo": "la tarjeta lo tomó", "sid": n["session_id"]}
+    motivo = (
+        f"ya estaba corriendo: el server lo aceptó pero en {espera} s no cambió su prompt, así que no hay "
+        "prueba de que lo tomó (mirar su pantalla o transcript antes de reenviar)"
+        if ya_corria
+        else f"el server lo aceptó pero la tarjeta no reaccionó en {espera} s (¿consola ocupada o en un diálogo?)"
+    )
+    return {"ok": False, "code": 200, "motivo": motivo, "sid": sid}
+
+
+# un texto largo o de varias líneas no se teclea: viaja como «Leé el archivo adjunto y respondé: Adjunto: …»
+# (sessions.compose_send, LONG_TEXT = 500 en state.py). Ahí se busca el aviso, no el texto
+_ADJUNTO = "archivo adjunto"
+_LARGO = 500
+
+
+def _plano(texto):
+    return " ".join(str(texto or "").split()).casefold()
+
+
+def _huella(texto):
+    if len(texto) > _LARGO or "\n" in texto.strip():
+        return _ADJUNTO
+    return _plano(texto)[:60]
+
+
+def _prompts(sid, n=5):
+    """Los pedidos de los últimos `n` turnos del transcript (vista `digest`, local o de otra PC), planos."""
+    code, res = pedir("GET", f"/sessions/{sid}/digest?n={n}")
+    turnos = res.get("turns") if code == 200 and isinstance(res, dict) else None
+    return [_plano(t.get("prompt")) for t in turnos or [] if isinstance(t, dict)]
+
+
+def entro(s, texto, previos=()):
+    """Dónde se ve que `texto` entró al agente: "transcript" si hay un pedido con su huella que no
+    estaba en `previos` (los de `_prompts` antes de mandar), "pantalla" si la huella está en la consola
+    (tecleado, quizá sin Enter), None si no aparece en ninguno de los dos."""
+    huella, sid = _huella(texto), s["session_id"]
+    if sum(huella in p for p in _prompts(sid)) > sum(huella in p for p in previos or ()):
+        return "transcript"
+    code, res = pedir("GET", f"/sessions/{sid}/screen")
+    lineas = res.get("lines") if code == 200 and isinstance(res, dict) else None
+    return "pantalla" if lineas and huella in _plano(" ".join(lineas)) else None
+
+
+def _confirmar_entrada(r, s, texto, previos, enlazar, espera):
+    """`enviar_seguro(confirmar=True)` después de un 200: espera a verlo entrar y reenvía una sola vez si
+    no aparece en ningún lado."""
+    s = {**s, "session_id": r.get("sid") or s["session_id"]}
+    reenviado = False
+    for vuelta in range(2):
+        fin = time.time() + espera
+        while True:
+            s = reubicar(s, sesiones()) or s
+            if donde := entro(s, texto, previos):
+                motivo = (
+                    "el pedido está en el transcript"
+                    if donde == "transcript"
+                    else "se ve en la consola pero todavía no en el transcript: no se reenvía (mirar si falta Enter)"
+                )
+                return {
+                    **r,
+                    "ok": True,
+                    "sid": s["session_id"],
+                    "entrada": donde,
+                    "reenviado": reenviado,
+                    "motivo": motivo,
+                }
+            if time.time() >= fin:
+                break
+            time.sleep(2)
+        if vuelta == 0:
+            reenviado = True
+            code, _ = pedir(
+                "POST", f"/sessions/{s['session_id']}/send", _cuerpo_envio(s["session_id"], texto, enlazar), timeout=80
+            )
+            if code != 200:
+                break
+    return {
+        **r,
+        "ok": False,
+        "sid": s["session_id"],
+        "entrada": None,
+        "reenviado": reenviado,
+        "motivo": f"el texto no aparece en el transcript ni en la pantalla (reenviado: {'sí' if reenviado else 'no'})",
+    }
 
 
 def reubicar(s, todas):
@@ -385,7 +495,18 @@ def _capacidad_ram(pc, n, gb_por_sesion, reserva_gb):
 
 
 def lanzar_y_titular(
-    pc, cwd, titulo, agent="claude", espera=60, model=None, cablear_al_lanzar=True, proyecto=None, encargo=None
+    pc,
+    cwd,
+    titulo,
+    agent="claude",
+    espera=60,
+    model=None,
+    cablear_al_lanzar=True,
+    proyecto=None,
+    encargo=None,
+    texto=None,
+    espera_encargo=20,
+    solo_si="ESTADO:",
 ):
     """Lanza y devuelve LA tarjeta nueva (ya titulada), no solo el 200 de `lanzar`. Distingue la
     nueva de las que ya había en esa carpeta comparando ids antes y después. None si no apareció.
@@ -397,6 +518,14 @@ def lanzar_y_titular(
 
     Con `proyecto` y `encargo` (el id que devolvió `encargo(...)`), la tarjeta queda vinculada al
     encargo apenas aparece (`encargo_enviado`): v5 §7.2 pide que el lanzamiento admita la ronda.
+
+    La regla lleva `solo_si` ("ESTADO:" por defecto): sólo avisan los turnos que cierran con esa línea,
+    y los intermedios no llegan como entregas (openSeec, 2026-10-30). Con `solo_si=None` avisan todos.
+
+    Con `texto`, le manda el encargo a la tarjeta nueva con `enviar_seguro(confirmar=True)`: mira en el
+    transcript o la pantalla que entró y, si no aparece en `espera_encargo` s, lo reenvía una vez (un coda
+    que recibe el envío antes de terminar de arrancar lo pierde). El resultado queda en
+    `tarjeta["encargo_envio"]`; si no es `ok`, también se imprime.
 
     `agent="auto"`: el server elige entre Claude y Codex el de más margen semanal (`cuotas()`); sin
     elegible contesta 409 y no lanza. El aviso de cuota de un lanzamiento manual se imprime, no frena."""
@@ -438,12 +567,17 @@ def lanzar_y_titular(
             nueva = nuevas[0]
             titular(nueva, titulo)
             if cablear_al_lanzar and YO:
-                regla_informe(nueva, INFORME)
+                regla_informe(nueva, INFORME, solo_si=solo_si)
             if proyecto and encargo:
                 try:
                     encargo_enviado(proyecto, encargo, nueva)
                 except RuntimeError as e:  # la tarjeta ya existe: se informa, no se pierde
                     print(f"lanzar_y_titular: no se vinculo el encargo: {e}", file=sys.stderr)
+            if texto:
+                envio = enviar_seguro(nueva, texto, espera=espera_encargo, confirmar=True)
+                nueva["encargo_envio"] = envio
+                if not envio.get("ok"):
+                    print(f"lanzar_y_titular: el encargo no entró: {envio.get('motivo')}", file=sys.stderr)
             return nueva
     print(
         f"lanzar_y_titular: se lanzo pero la tarjeta no aparecio en {espera} s (queda abierta, sin titulo ni regla)",
@@ -1058,6 +1192,146 @@ def sincronizar_ronda(cwd, plan, pc, remoto="origin"):
 # como se mandaron, los informes tal como se entregaron (con hash y revisión) y lo que el server
 # observa de las sesiones que trabajan un encargo. Etapa 1: inventario estructural; el bloque
 # `conocimiento` del informe y los veredictos de la coordinadora vienen en las etapas 2 y 3.
+
+
+# carpetas que no son del repo: dependencias, cachés y el propio git
+_SIN_CITAS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".ruff_cache", "dist", "build"}
+_DIA = re.compile(r"\d{4}-\d{2}-\d{2}")
+_CITA = re.compile(r"\.temp[\\/]+coordinacion[\\/]+(\d{4}-\d{2}-\d{2})")
+
+
+def _citas_coordinacion(repo, base):
+    """[(día que cita o None, día citado, "archivo:línea")] de todo texto del repo que nombra una ruta
+    de `.temp/coordinacion/<día>`. Los binarios y los archivos de más de 2 MB no se leen."""
+    citas = []
+    for raiz, dirs, archivos in os.walk(repo):
+        dirs[:] = [d for d in dirs if d not in _SIN_CITAS]
+        for nombre in archivos:
+            ruta = os.path.join(raiz, nombre)
+            try:
+                if os.path.getsize(ruta) > 2 * 2**20:
+                    continue
+                with open(ruta, "rb") as f:
+                    crudo = f.read()
+            except OSError:
+                continue
+            if b"\0" in crudo or b"coordinacion" not in crudo:
+                continue
+            rel = os.path.relpath(ruta, repo).replace(os.sep, "/")
+            dentro = os.path.relpath(ruta, base).replace(os.sep, "/").split("/")
+            origen = dentro[0] if not dentro[0].startswith("..") and _DIA.fullmatch(dentro[0]) else None
+            for n, linea in enumerate(crudo.decode("utf-8", errors="replace").splitlines(), 1):
+                for dia in _CITA.findall(linea):
+                    citas.append((origen, dia, f"{rel}:{n}"))
+    return citas
+
+
+def _citas_memoria(proyecto):
+    """[(None, día citado, "memoria <p>: <tipo> <id>")] de los nodos de la memoria del proyecto que nombran
+    una ruta de `.temp/coordinacion/<día>` (la `ficha` de un encargo, una evidencia, un informe). Página por
+    página; si el lienzo no contesta, levanta RuntimeError."""
+    citas, desde = [], 0
+    while True:
+        r = _conocimiento("GET", f"/{proyecto}/nodos?limite=100&desde={desde}")
+        nodos = r.get("nodos") or []
+        for n in nodos:
+            # en el JSON una contrabarra sale doble: el patrón admite varias seguidas
+            for dia in set(_CITA.findall(json.dumps(n, ensure_ascii=False))):
+                citas.append((None, dia, f"memoria {proyecto}: {n.get('tipo')} {n.get('id')}"))
+        desde += len(nodos)
+        if not nodos or desde >= (r.get("total") or 0):
+            return citas, desde
+
+
+def limpiar_coordinacion(repo, dias=14, borrar=False, confirmar=(), hoy=None, proyecto=None):
+    """Limpia los días de `<repo>/.temp/coordinacion/<AAAA-MM-DD>/` con más de `dias` días, sin
+    borrar evidencia citada. Caso real (openSeec, 2026-10): se borraron días viejos y con ellos el arnés
+    y la evidencia de una prueba que citaba un contrato.
+
+    Antes de borrar busca en todo el repo (contratos, docs, fichas, informes de los días que quedan)
+    rutas que apunten a cada día viejo. Un día citado queda en `protegidos` con dónde lo citan
+    ("archivo:línea") y sólo se borra si se lo nombra en `confirmar`. Lo que cita un día que se va a
+    borrar no protege a nadie. Sin `borrar` sólo informa: mirar `protegidos` antes de confirmar.
+    Devuelve {borrables, protegidos: {día: [citas]}, borrados}. Lo que no es un día no se toca.
+
+    También protege lo que cita la memoria del proyecto (la `ficha` de un encargo, evidencias, informes):
+    `proyecto` es su id; sin él se busca el de la carpeta sin crearlo (`GET /conocimiento/carpeta`). Si
+    la memoria no contesta no se borra nada, y `memoria` dice por qué."""
+    base = os.path.join(repo, ".temp", "coordinacion")
+    hoy = hoy or datetime.datetime.now().astimezone().date()
+    viejos = set()
+    if os.path.isdir(base):
+        for d in os.listdir(base):
+            try:
+                fecha = datetime.date.fromisoformat(d) if _DIA.fullmatch(d) else None
+            except ValueError:
+                fecha = None
+            if fecha and os.path.isdir(os.path.join(base, d)) and (hoy - fecha).days > dias:
+                viejos.add(d)
+    citas = _citas_coordinacion(repo, base) if viejos else []
+    memoria = None
+    if viejos:
+        try:
+            if proyecto is None:
+                ruta = urllib.parse.quote(os.path.abspath(repo).replace(os.sep, "/"))
+                proyecto = _conocimiento("GET", f"/carpeta?cwd={ruta}").get("proyecto")
+            if proyecto:
+                de_memoria, leidos = _citas_memoria(proyecto)
+                citas += de_memoria
+                memoria = f"consultada: {leidos} nodos"
+            else:
+                memoria = "la carpeta no tiene proyecto en la memoria"
+        except RuntimeError as e:
+            memoria = f"sin consultar, no se borra nada: {e}"
+            borrar = False
+    se_van, protegidos = set(viejos), {}
+    while True:  # un día protegido queda, y entonces lo que él cita también protege
+        nuevos = {}
+        for origen, dia, donde in citas:
+            if dia in se_van and origen not in se_van:
+                nuevos.setdefault(dia, set()).add(donde)
+        if not nuevos:
+            break
+        protegidos.update(nuevos)
+        se_van -= set(nuevos)
+    protegidos = {d: sorted(v) for d, v in sorted(protegidos.items())}
+    borrables = sorted(se_van)
+    borrados = []
+    if borrar:
+        for d in sorted(set(borrables) | (set(confirmar) & set(protegidos))):
+            shutil.rmtree(os.path.join(base, d))
+            borrados.append(d)
+    out = {"borrables": borrables, "protegidos": protegidos, "borrados": borrados}
+    return {**out, "memoria": memoria} if memoria else out
+
+
+def fichas_en_conflicto(repo):
+    """{archivo: [fichas]} con los archivos que nombran dos o más fichas abiertas de
+    `<repo>/.temp/coordinacion/`, para resolverlo antes de repartir (references/fdd.md, «Varios frentes»).
+
+    Una ficha es un `.md` con `Hito:` y una sección `## Archivos y dueños` (también un encargo, que es la
+    ficha del frente); cuenta abierta mientras su hito no sea `integrado`. De la sección se toman las
+    rutas entre comillas invertidas."""
+    base = os.path.join(repo, ".temp", "coordinacion")
+    duenos = {}
+    for raiz, _, archivos in os.walk(base):
+        for nombre in archivos:
+            if not nombre.endswith(".md"):
+                continue
+            ruta = os.path.join(raiz, nombre)
+            try:
+                with open(ruta, encoding="utf-8", errors="replace") as f:
+                    texto = f.read()
+            except OSError:
+                continue
+            hito = re.search(r"^Hito:\s*(.+)$", texto, re.MULTILINE)
+            seccion = re.search(r"^## Archivos y dueños\s*$(.*?)(?=^## |\Z)", texto, re.MULTILINE | re.DOTALL)
+            if not hito or not seccion or hito.group(1).strip() == "integrado":
+                continue
+            rel = os.path.relpath(ruta, repo).replace(os.sep, "/")
+            for archivo in set(re.findall(r"`([^`\s]+)`", seccion.group(1))):
+                duenos.setdefault(archivo.replace(chr(92), "/"), set()).add(rel)
+    return {a: sorted(f) for a, f in sorted(duenos.items()) if len(f) > 1}
 
 
 def _conocimiento(metodo, ruta, cuerpo=None):
