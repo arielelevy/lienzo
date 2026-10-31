@@ -244,6 +244,16 @@ function lineasDeConsulta(consultas: Record<string, ConsultaResumen>, rects: Map
   return out;
 }
 
+
+/** La línea blanca del canal nativo termina donde empiezan las puntas de flecha (13 px cada una): el
+ *  largo del camino se mide en el navegador y se recortan los dos extremos (pedido de Ariel, 2026-10-31). */
+const PUNTA = 13;
+function sinPuntas(el: SVGPathElement | null) {
+  if (!el) return;
+  const largo = el.getTotalLength();
+  el.style.strokeDasharray = largo > 2 * PUNTA ? `0 ${PUNTA} ${largo - 2 * PUNTA} ${PUNTA}` : "0 1";
+}
+
 export function Arrows({ links, rules, sessions, boardRef, version, hover, onDelete, onDeleteRule, toast }: Props) {
   const [segs, setSegs] = useState<Seg[]>([]);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -721,7 +731,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
               markerEnd="url(#arrowhead)"
               markerStart={s.kind === "native" ? "url(#arrowtail)" : undefined}
             />
-            {s.kind === "native" && <path d={s.d} className="line native-edge" />}
+            {s.kind === "native" && <path key={s.d} d={s.d} className="line native-edge" ref={sinPuntas} />}
             <g
               onClick={() => {
                 setSel(s.ids[0]); // seleccionar: no borra nada ni abre nada
