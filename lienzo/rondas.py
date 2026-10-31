@@ -344,7 +344,11 @@ def fijar_politica(recurso: str, d: dict) -> tuple[int, dict]:
         return 400, {"error": "mem_min_gb debe ser un numero entre 0 y 256"}
     with _cambio():
         _datos["politicas"][recurso] = {"ttl_max_min": ttl, "mem_min_gb": float(mem), "por": d.get("por"), "ts": now()}
+        # una politica mas baja puede destrabar la cola: se pasa ya, sin esperar al bucle (openSeec, 2026-10-30)
+        siguiente = _siguiente(recurso)
         _guardar()
+    if siguiente:
+        _avisar_turno(recurso, siguiente)
     _publicar()
     return 200, politica(recurso)
 
@@ -389,8 +393,13 @@ def pedir_turno(recurso: str, d: dict) -> tuple[int, dict]:
     if isinstance(ttl, bool) or not isinstance(ttl, int) or not 1 <= ttl <= tope:
         return 400, {"error": f"ttl_min debe ser un entero entre 1 y {tope}"}
     pedido = {"session_id": sid, "ttl_min": ttl, "motivo": short(motivo, 200) if motivo else None, "pedido": now()}
+    siguiente = None
     with _cambio():
         t = _turno(recurso)
+        # sin dueno y con memoria, el primero de la cola no espera al bucle: si no, quedaba en cola hasta
+        # que alguien lo re-pidiera (openSeec, 2026-10-30)
+        if siguiente := _siguiente(recurso):
+            _guardar()
         dueno = t["dueno"]
         if dueno and _vigente(dueno["session_id"]) == sid:
             dueno["vence"] = _iso(_ahora() + dt.timedelta(minutes=ttl))
@@ -420,6 +429,8 @@ def pedir_turno(recurso: str, d: dict) -> tuple[int, dict]:
                     },
                 )
     state.log(f"turno {recurso}: {sid[:8]} {'lo tiene' if out[0] == 200 else 'en cola'}")
+    if siguiente and siguiente["session_id"] != sid:
+        _avisar_turno(recurso, siguiente)
     _publicar()
     return out
 

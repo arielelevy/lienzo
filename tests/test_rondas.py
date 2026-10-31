@@ -135,6 +135,29 @@ def test_la_guardia_de_memoria_espera_sin_otorgar(entorno, monkeypatch):
     assert rondas._datos["turnos"]["motores"]["dueno"]["session_id"] == A
 
 
+def test_bajar_la_politica_pasa_el_turno_en_el_acto(entorno, monkeypatch):
+    # openSeec, 2026-10-30: con mem_min_gb más bajo el primero de la cola seguía esperando hasta re-pedirlo
+    monkeypatch.setattr(rondas, "_memoria_libre", lambda: 2.0)
+    rondas.fijar_politica("motores", {"mem_min_gb": 3})
+    assert rondas.pedir_turno("motores", {"session_id": A})[0] == 202
+    assert rondas.fijar_politica("motores", {"mem_min_gb": 1})[0] == 200
+    assert rondas._datos["turnos"]["motores"]["dueno"]["session_id"] == A
+    assert "te toca el turno de «motores»" in para(entorno, A)[0]
+
+
+def test_pedir_con_la_cola_libre_y_memoria_suficiente_otorga_al_primero(entorno, monkeypatch):
+    libre = [2.0]
+    monkeypatch.setattr(rondas, "_memoria_libre", lambda: libre[0])
+    rondas.fijar_politica("motores", {"mem_min_gb": 3})
+    rondas.pedir_turno("motores", {"session_id": A})
+    libre[0] = 4.0  # la memoria volvió, y el bucle todavía no pasó
+    code, t = rondas.pedir_turno("motores", {"session_id": B})
+    assert rondas._datos["turnos"]["motores"]["dueno"]["session_id"] == A  # el orden de la cola se respeta
+    assert code == 202 and t["posicion"] == 1 and "te toca" in para(entorno, A)[0]
+    code, t = rondas.pedir_turno("motores", {"session_id": A})  # re-pedirlo ya lo renueva
+    assert code == 200 and t["renovado"] is True
+
+
 def test_turno_validaciones(entorno):
     assert rondas.pedir_turno("Navegador!", {"session_id": A})[0] == 400
     assert rondas.pedir_turno("suite", {})[0] == 400

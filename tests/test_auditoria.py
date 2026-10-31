@@ -71,6 +71,21 @@ def test_bloqueo_declarado_es_espera_legitima_y_no_se_avisa():
     assert all(x["session_id"] != "A" for x in avisar)
 
 
+def test_esperar_en_la_cola_de_un_turno_es_espera_legitima():
+    # openSeec, 2026-10-30: un frente en la cola de un turno salía como idle_evitable
+    s = [ses("C", coord=True, desde=-30), ses("A", desde=-20), ses("B", desde=-20)]
+    turnos = {"motores": {"dueno": {"session_id": "B"}, "cola": [{"session_id": "A", "pedido": iso(-20)}]}}
+    h = au.clasificar(s, [], T0, turnos=turnos)
+    porsid = {x["session_id"]: x for x in h}
+    assert porsid["A"]["tipo"] == "espera_turno" and porsid["A"]["recurso"] == "motores"
+    assert porsid["B"]["tipo"] == "idle_evitable"  # el dueño quieto sí se avisa
+    avisar, _ = au.filtrar(h, {}, T0)
+    assert [x["session_id"] for x in avisar] == ["B"]
+    assert {x["session_id"]: x["tipo"] for x in au.ronda(s, [], {}, T0, turnos=turnos)["hallazgos"]}[
+        "A"
+    ] == "espera_turno"
+
+
 def test_te_necesita_avisa_despues_del_umbral():
     s = [ses("C", coord=True), ses("A", "te_necesita", desde=-6), ses("B", "te_necesita", desde=-2)]
     t = tipos(s, [])

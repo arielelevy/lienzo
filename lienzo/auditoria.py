@@ -23,7 +23,8 @@ Tipos de hallazgo:
 
 Espera legítima, que no avisa: `corriendo`, cuota agotada (`limit_until` futuro) y un bloqueo declarado
 dentro de su vencimiento (`bloqueado_permiso`, `bloqueado_dependencia`, `bloqueado_pausa`: quedan en el
-informe pero no en el aviso).
+informe pero no en el aviso). También `espera_turno`: el frente está en la cola de un turno (`GET /turnos`)
+y le llega un mensaje cuando le toca (openSeec, 2026-10-30: salía como `idle_evitable`).
 
 Cuándo se avisa un frente quieto: a partir de `idle_min` (8 min). Con una ronda cada 5 min, el primer aviso
 llega entre los 8 y los 13 min de quietud; el caso de los 4 CLIs quietos 14 min queda siempre cubierto.
@@ -114,11 +115,23 @@ def _regla_apagada(reglas: list, frente: str, coordinadora: str) -> dict | None:
     )
 
 
-def clasificar(sesiones: list, links: list, ahora: dt.datetime, cfg: dict = CFG, reglas: list | None = None) -> list:
+def clasificar(
+    sesiones: list,
+    links: list,
+    ahora: dt.datetime,
+    cfg: dict = CFG,
+    reglas: list | None = None,
+    turnos: dict | None = None,
+) -> list:
     """Un hallazgo por sesión que no está trabajando ni en espera legítima. Sin efectos."""
     vivas = [s for s in sesiones if s.get("alive") and s.get("state") != "muerta" and not s.get("stopped_by")]
     coord = {s.get("repo_key"): s for s in vivas if s.get("coordinator")}
     reglas = reglas or []
+    en_cola = {}  # sesión -> recurso cuyo turno espera
+    for recurso, t in (turnos or {}).items():
+        for x in (t or {}).get("cola") or []:
+            if isinstance(x, dict) and x.get("session_id"):
+                en_cola.setdefault(x["session_id"], recurso)
     con_regla = {}  # frente -> última entrega (link `rule`) hacia una coordinadora
     ultimo_a = {}  # sesión -> último envío o regla que recibió
     for ln in sorted(links, key=lambda x: x.get("ts") or ""):
@@ -221,6 +234,17 @@ def clasificar(sesiones: list, links: list, ahora: dt.datetime, cfg: dict = CFG,
                 }
             )
             continue
+        if sid in en_cola:
+            out.append(
+                {
+                    **base,
+                    "tipo": "espera_turno",
+                    "recurso": en_cola[sid],
+                    "evidencia": s.get("state_since"),
+                    "sugerencia": f"espera el turno de «{en_cola[sid]}»: le llega un mensaje cuando le toca",
+                }
+            )
+            continue
         if c is None:
             out.append(
                 {
@@ -309,10 +333,11 @@ def ronda(
     ahora: dt.datetime | None = None,
     cfg: dict = CFG,
     reglas: list | None = None,
+    turnos: dict | None = None,
 ) -> dict:
     ahora = ahora or dt.datetime.now().astimezone()
     t0 = time.perf_counter()
-    hallazgos = clasificar(sesiones, links, ahora, cfg, reglas)
+    hallazgos = clasificar(sesiones, links, ahora, cfg, reglas, turnos)
     avisar, estado = filtrar(hallazgos, previo, ahora, cfg)
     return {
         "ahora": ahora.isoformat(timespec="seconds"),
@@ -368,8 +393,15 @@ def ronda_local(base: str, ruta_estado: str, enviar: bool) -> dict:
     except Exception as e:  # sin reglas se pierde sólo informe_no_entregado, no la ronda entera
         print(f"auditoria: no se pudieron leer las reglas ({type(e).__name__}: {e})", flush=True)
         reglas = []
+    try:
+        turnos = (_get(base, "/turnos") or {}).get("turnos") or {}
+    except Exception as e:  # sin turnos, quien espera en una cola puede salir como idle_evitable
+        print(f"auditoria: no se pudieron leer los turnos ({type(e).__name__}: {e})", flush=True)
+        turnos = {}
     hallazgos = [
-        h for h in clasificar(sesiones, _get(base, "/links"), ahora, reglas=reglas) if h["session_id"] in locales
+        h
+        for h in clasificar(sesiones, _get(base, "/links"), ahora, reglas=reglas, turnos=turnos)
+        if h["session_id"] in locales
     ]
     previo = _leer_estado(ruta_estado)
     avisar, estado = filtrar(hallazgos, previo, ahora)
