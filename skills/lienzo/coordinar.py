@@ -240,11 +240,19 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
         # solo se reintenta lo que no salio: un 503 con `no_llego` o el lienzo local rechazando la
         # conexion. Un timeout (0) o un 503 sin la marca (corte a mitad) pudo haberse tecleado del
         # otro lado y reintentarlo lo duplicaria
-        no_salio = (code == 503 and isinstance(res, dict) and res.get("no_llego")) or (
-            code == 0 and "refused" in str(res).lower()
+        no_salio = (
+            (code == 503 and isinstance(res, dict) and res.get("no_llego"))
+            or (code == 0 and "refused" in str(res).lower())
+            # la consola estaba cambiando su nombre nativo: no se tecleó nada (openSeec 0.21, dos encargos
+            # rebotaron al lanzar). El texto cubre al server anterior, que no traía `no_enviado`
+            or (
+                code == 409
+                and isinstance(res, dict)
+                and (res.get("no_enviado") or "nombre nativo" in str(res.get("error")))
+            )
         )
         if no_salio and intento < reintentos:
-            time.sleep(3 * (intento + 1))
+            time.sleep((10 if code == 409 else 3) * (intento + 1))  # el renombre nativo tarda hasta ~15 s
             intento += 1
             continue
         motivo = str(res.get("error") if isinstance(res, dict) and res.get("error") else res)[:200]
@@ -327,12 +335,25 @@ def entro(s, texto, previos=()):
 def _confirmar_entrada(r, s, texto, previos, enlazar, espera):
     """`enviar_seguro(confirmar=True)` después de un 200: espera a verlo entrar y reenvía una sola vez si
     no aparece en ningún lado."""
+    de_pid = s["session_id"].startswith("pid-")  # el id al que se mandó, antes de reubicarla
     s = {**s, "session_id": r.get("sid") or s["session_id"]}
     reenviado = False
     for vuelta in range(2):
         fin = time.time() + espera
         while True:
             s = reubicar(s, sesiones()) or s
+            if de_pid and not s["session_id"].startswith("pid-"):
+                # la tarjeta pasó de pid-N a su id real: llegó el primer hook del agente, que sólo dispara
+                # con el pedido adentro. En coda es la única prueba: su pantalla y su transcript tienen otro
+                # formato y daban falso negativo (openSeec P y Q, 2026-10-30)
+                return {
+                    **r,
+                    "ok": True,
+                    "sid": s["session_id"],
+                    "entrada": "hook",
+                    "reenviado": reenviado,
+                    "motivo": "la tarjeta pasó de pid-N a su id real: el agente tomó el pedido",
+                }
             if donde := entro(s, texto, previos):
                 motivo = (
                     "el pedido está en el transcript"
@@ -370,18 +391,20 @@ def _confirmar_entrada(r, s, texto, previos, enlazar, espera):
 def reubicar(s, todas):
     """La tarjeta `s` tal como está ahora. Una sesión sin hooks (barrido, coda) nace con id
     `pid-NNNN` y, al engancharse los hooks, pasa a tener su UUID real: el id viejo desaparece pero
-    es el mismo proceso. Se busca por id y, si no está, por (pc, pid, cwd)."""
+    es el mismo proceso. Se busca por id y, si no está, por (pc, pid, cwd), con la carpeta sin distinguir
+    barras ni mayúsculas (la barra invertida de Windows y la normal son la misma)."""
     por_id = next((x for x in todas if x["session_id"] == s["session_id"]), None)
     if por_id:
         return por_id
+
+    def carpeta(x):
+        return (x.get("cwd") or "").replace("\\", "/").rstrip("/").casefold()
+
     return next(
         (
             x
             for x in todas
-            if s.get("pid")
-            and x.get("pid") == s.get("pid")
-            and x.get("pc") == s.get("pc")
-            and x.get("cwd") == s.get("cwd")
+            if s.get("pid") and x.get("pid") == s.get("pid") and x.get("pc") == s.get("pc") and carpeta(x) == carpeta(s)
         ),
         None,
     )
@@ -735,6 +758,13 @@ def ack(aviso_id, session_id, nota=None):
     return pedir("POST", f"/avisos/{aviso_id}/ack", {"session_id": session_id, "nota": nota})
 
 
+def cerrar_sesion(s):
+    """Cierra a la fuerza la CLI de la tarjeta `s` (o su session_id): POST /sessions/<id>/kill con la
+    confirmación que pide el server (`confirm` = el mismo session_id)."""
+    sid = s["session_id"] if isinstance(s, dict) else s
+    return pedir("POST", f"/sessions/{sid}/kill", {"confirm": sid})
+
+
 def pedir_turno(recurso, session_id, ttl_min=None, motivo=None):
     """Turno de un recurso pesado (navegador, suite, motores, pago). 200: es tuyo hasta `vence`;
     202: en cola (`posicion`), y el lienzo te escribe cuando te toca. Pedirlo siendo dueño lo renueva.
@@ -746,8 +776,10 @@ def pedir_turno(recurso, session_id, ttl_min=None, motivo=None):
 
 
 def liberar_turno(recurso, session_id):
-    """Suelta el turno (o sale de la cola); el siguiente lo recibe solo."""
-    return pedir("DELETE", f"/turnos/{recurso}?session_id={urllib.parse.quote(session_id)}")
+    """Suelta el turno (o sale de la cola); el siguiente lo recibe solo. Si quien lo suelta (`YO`) no es
+    el dueño, el lienzo le avisa al dueño que dejó de tenerlo."""
+    por = f"&por={urllib.parse.quote(YO)}" if YO and YO != session_id else ""
+    return pedir("DELETE", f"/turnos/{recurso}?session_id={urllib.parse.quote(session_id)}{por}")
 
 
 def politica_turno(recurso, ttl_max_min=None, mem_min_gb=None):

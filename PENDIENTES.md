@@ -6,6 +6,15 @@ docs/PRODUCTO.md las decisiones de producto.
 
 Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
+- [ ] **2026-10-30 · Mejoras de uso desde openSeec, segunda tanda (encargo G).** *Implementado, sin integrar; requiere
+  reiniciar el server.* Remitente de los mensajes nativos (registro de Claude; uno solo por mensaje); el `/rename`
+  repetido que bloqueaba con 409 los informes hacia la coordinadora (causa de la fricción 24: 18 informes trabados,
+  que no se rescatan por decisión de Ariel); informe duplicado con otro pedido; `entrega_sin_leer` con respuesta
+  nativa o acuse; confirmación por el paso de `pid-N` al UUID; aviso al dueño de un turno soltado por otra sesión y
+  tope de `ttl_min`; coda que espera al modelo no figura «te_necesita»; aviso de `rg` ausente en la instrucción de
+  RTK; coda cortada por una herramienta inválida, reintentable y como `turno_cortado`; `c.cerrar_sesion`; reintento
+  del 409 de nombre nativo en `enviar_seguro`; `responder` para un permiso vencido con diálogo en pantalla. Fichas
+  `fdd-*.md` del encargo G en `.temp/coordinacion/2026-10-30/`.
 - [ ] **2026-10-30 · FDD no aparece al arrancar una sesión.** *Implementado, sin integrar (encargo F, 2026-10-30): creencia propuesta `e3f51fc7ec064c0aa14ed8ad00d3385c` en `lienzo` (alcance proceso_lienzo; falta el veredicto de Ariel para que llegue al SessionStart y a `c.encargo`), y SKILL.md y `references/fdd.md` lo dicen.* El skill dice que el proceso es FDD (leer
   `references/fdd.md` y `docs/dominio.md` antes de repartir), pero en una coordinadora de openSeec que leyó `SKILL.md`
   a mano para lanzar frentes se pasó por alto: las creencias que inyecta el hook SessionStart no lo recuerdan y el

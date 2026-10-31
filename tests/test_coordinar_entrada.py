@@ -111,3 +111,42 @@ def test_lanzar_y_titular_con_texto_manda_el_encargo_y_lo_confirma(monkeypatch):
     r = c.lanzar_y_titular("pcB", r"D:\apps\x", "t", "coda", espera=5, texto="leé tu encargo")
     assert r["session_id"] == "pid-9" and r["encargo_envio"] == {"ok": True}
     assert llamadas[0][:2] == ("pid-9", "leé tu encargo") and llamadas[0][2]["confirmar"] is True
+
+
+def _server_pid_a_uuid(monkeypatch, cwd_nuevo):
+    """Coda lanzada a mano (openSeec P y Q, 2026-10-30): nace `pid-100`; tras el envío su primer hook la pasa
+    a su UUID. Su pantalla y su transcript no muestran el texto con el formato que se busca."""
+    enviados = []
+
+    def pedir(m, r, cuerpo=None, timeout=20):
+        if m == "POST":
+            enviados.append(r)
+            return (404, {"error": "no existe"}) if "/pid-" in r and enviados[:-1] else (200, {"ok": True})
+        if r.endswith("/screen"):
+            return 200, {"lines": ["coda v3"]}
+        if "/digest" in r:
+            return 200, {"turns": []}
+        raise AssertionError(r)
+
+    monkeypatch.setattr(c, "pedir", pedir)
+    monkeypatch.setattr(
+        c,
+        "sesiones",
+        lambda: [_tarjeta("uuid-1", cwd=cwd_nuevo, state="corriendo")] if enviados else [_tarjeta("pid-100")],
+    )
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    return enviados
+
+
+def test_confirmar_toma_el_paso_de_pid_a_uuid_como_entrada(monkeypatch):
+    enviados = _server_pid_a_uuid(monkeypatch, r"D:\apps\x")
+    r = c.enviar_seguro(_tarjeta("pid-100"), "leé el encargo P", enlazar=False, espera=2, confirmar=True)
+    assert (r["ok"], r["entrada"], r["sid"], r["reenviado"]) == (True, "hook", "uuid-1", False)
+    assert enviados == ["/sessions/pid-100/send"]
+
+
+def test_reubicar_no_distingue_barras_ni_mayusculas_en_la_carpeta(monkeypatch):
+    enviados = _server_pid_a_uuid(monkeypatch, "d:/Apps/x/")
+    r = c.enviar_seguro(_tarjeta("pid-100"), "leé el encargo Q", enlazar=False, espera=2, confirmar=True)
+    assert (r["ok"], r["sid"]) == (True, "uuid-1")
+    assert enviados == ["/sessions/pid-100/send"]
