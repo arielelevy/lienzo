@@ -100,13 +100,15 @@ def _claude_spend(body: dict) -> dict | None:
 
 
 def _claude_organization(config_dir: Path) -> str | None:
-    config = config_dir.parent / ".claude.json" if config_dir == Path.home() / ".claude" else config_dir / ".claude.json"
+    config = (
+        config_dir.parent / ".claude.json" if config_dir == Path.home() / ".claude" else config_dir / ".claude.json"
+    )
     try:
         data = json.loads(config.read_text(encoding="utf-8"))
         account = data.get("oauthAccount", {})
         name = account.get("organizationName") if isinstance(account, dict) else None
         return name if isinstance(name, str) and name.strip() else None
-    except (OSError, ValueError, AttributeError):
+    except OSError, ValueError, AttributeError:
         return None
 
 
@@ -200,7 +202,12 @@ def read_kiro(timeout: float = READ_TIMEOUT) -> dict:
     return {**_failure(""), **usage, "ok": True, "error": None}
 
 
-READERS = {"claude": read_claude, "claude_smartbi": read_claude_smartbi, "codex": read_codex, "kiro": read_kiro}  # las pruebas los reemplazan
+READERS = {
+    "claude": read_claude,
+    "claude_smartbi": read_claude_smartbi,
+    "codex": read_codex,
+    "kiro": read_kiro,
+}  # las pruebas los reemplazan
 _cache: dict[str, tuple[float, dict]] = {}
 _inflight: dict[str, threading.Event] = {}
 _lock = threading.Lock()
@@ -209,8 +216,10 @@ _generation = 0  # olvidar() la sube: una lectura de antes no escribe en la cach
 
 def _conservar(value: dict, previous: dict | None) -> dict:
     """El fallo sigue siendo fallo; conserva los datos y la fecha de la última medición."""
-    if not value["ok"] and previous is not None and any(
-        previous.get(key) is not None for key in ("weekly", "spend", "credits", "messages")
+    if (
+        not value["ok"]
+        and previous is not None
+        and any(previous.get(key) is not None for key in ("weekly", "spend", "credits", "messages"))
     ):
         return {**previous, "ok": False, "error": value["error"]}
     return value
@@ -265,8 +274,12 @@ def leer_todas(refrescar: bool = False, espera: float = READ_TIMEOUT + 5, *, age
             value.wait(max(0.0, deadline - time.monotonic()))
             with _lock:
                 hit = _cache.get(agent)
-            result[agent] = hit[1] if hit and value.is_set() else _conservar(
-                _failure(f"la lectura de {NAMES[agent]} no volvió en {espera:g} s"), hit[1] if hit else None
+            result[agent] = (
+                hit[1]
+                if hit and value.is_set()
+                else _conservar(
+                    _failure(f"la lectura de {NAMES[agent]} no volvió en {espera:g} s"), hit[1] if hit else None
+                )
             )
     return result
 
@@ -324,7 +337,11 @@ def aviso(agent: str, status: dict) -> str | None:
     if five is not None and five["used_pct"] >= FIVE_HOURS_MAX:
         parts.append(f"{NAMES[agent]} {five['used_pct']:g} % en 5 h")
     other = next(a for a in AGENTS if a != agent)
-    if reading["weekly"] is not None and status["sugerido"] == other and status[other]["weekly"]["used_pct"] < reading["weekly"]["used_pct"]:
+    if (
+        reading["weekly"] is not None
+        and status["sugerido"] == other
+        and status[other]["weekly"]["used_pct"] < reading["weekly"]["used_pct"]
+    ):
         parts.append(f"{NAMES[agent]} {reading['weekly']['used_pct']:g} % semanal; {NAMES[other]} tiene más margen")
     return "; ".join(parts) or None
 

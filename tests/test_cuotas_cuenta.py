@@ -91,7 +91,9 @@ def test_codex_reading_shape(monkeypatch):
     value = cuotas.read_codex()
     assert value["ok"] and value["five_hour"] is None and value["weekly"]["used_pct"] == 51
     assert value["weekly"]["resets_at"].startswith("2026-") and value["plan"] == "prolite"
-    monkeypatch.setattr(cuotas.codex_quota, "read_codex", lambda timeout, exe=None: {"ok": False, "error": "codex no encontrado"})
+    monkeypatch.setattr(
+        cuotas.codex_quota, "read_codex", lambda timeout, exe=None: {"ok": False, "error": "codex no encontrado"}
+    )
     assert cuotas.read_codex() == {**cuotas.read_codex(), "ok": False, "five_hour": None, "weekly": None}
 
 
@@ -166,11 +168,15 @@ def test_dos_cuentas_claude_usan_credenciales_separadas(credentials, tmp_path, m
     monkeypatch.setenv("LIENZO_CLAUDE_SMARTBI_DIR", str(second))
     assert "sin iniciar sesión" in cuotas.read_claude_smartbi()["error"]
     second.mkdir()
-    (second / ".credentials.json").write_text(json.dumps({"claudeAiOauth": {"accessToken": "otro-token", "subscriptionType": "pro"}}), encoding="utf-8")
+    (second / ".credentials.json").write_text(
+        json.dumps({"claudeAiOauth": {"accessToken": "otro-token", "subscriptionType": "pro"}}), encoding="utf-8"
+    )
     tokens = []
+
     def open_(request, timeout):
         tokens.append(request.get_header("Authorization"))
         return FakeResponse(json.dumps({"seven_day": {"utilization": len(tokens), "resets_at": None}}).encode())
+
     monkeypatch.setattr(cuotas._OPENER, "open", open_)
     assert cuotas.read_claude()["weekly"]["used_pct"] == 1
     assert cuotas.read_claude_smartbi()["weekly"]["used_pct"] == 2
@@ -375,7 +381,7 @@ def test_get_cuotas_route_is_wired():
     source = Path(server.__file__).read_text(encoding="utf-8")
     assert (
         'if parts == ["cuotas"]:' in source
-        and 'cuotas_federadas.estado(local, mirror.MIRROR.peers_status(), mirror.MIRROR.forward, refresh)' in source
+        and "cuotas_federadas.estado(local, mirror.MIRROR.peers_status(), mirror.MIRROR.forward, refresh)" in source
     )
 
 

@@ -27,5 +27,5 @@ def read_file(raw: str, roots: list[str]) -> tuple[int, dict]:
             return 415, {"error": "El visor admite archivos de texto"}
         text = data.decode("utf-8-sig")
         return 200, {"path": os.fspath(path), "text": text, "markdown": path.suffix.lower() in (".md", ".markdown")}
-    except (OSError, ValueError, UnicodeError):
+    except OSError, ValueError, UnicodeError:
         return 404, {"error": "No se pudo leer el archivo como texto UTF-8"}

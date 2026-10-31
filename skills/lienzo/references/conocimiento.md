@@ -55,7 +55,15 @@ la tarjeta; al leer el informe del frente, se entrega entero:
 
 ```python
 r = c.abrir_ronda("teorema", "ronda 4: halving racional")
-e = c.encargo("teorema", r["id"], "A", texto_del_encargo, archivos=["codigo/sustituciones.py"], tipo_trabajo="refactor", ficha=".temp/coordinacion/2026-10-26/fdd-x.md")
+e = c.encargo(
+    "teorema",
+    r["id"],
+    "A",
+    texto_del_encargo,
+    archivos=["codigo/sustituciones.py"],
+    tipo_trabajo="refactor",
+    ficha=".temp/coordinacion/2026-10-26/fdd-x.md",
+)
 texto = c.preparar_encargo("teorema", texto_del_encargo, encargo=e)  # suma los aprendizajes aplicables
 s = c.lanzar_y_titular(None, "D:/Apps/Teorema", "Teorema - encargo A - ...", agent="codex")
 c.encargo_enviado(

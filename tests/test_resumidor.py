@@ -23,12 +23,14 @@ json.dump(json.load(open(work + "/fake.json", encoding="utf-8")), open(work + "/
 
 
 def _fecha(dias_atras: int, hora: int = 12) -> str:
-    local = dt.datetime.combine(dt.date.today() - dt.timedelta(days=dias_atras), dt.time(hora)).astimezone()
+    local = dt.datetime.combine(
+        dt.datetime.now().astimezone().date() - dt.timedelta(days=dias_atras), dt.time(hora)
+    ).astimezone()
     return local.astimezone(dt.UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _dia(dias_atras: int) -> str:
-    return (dt.date.today() - dt.timedelta(days=dias_atras)).isoformat()
+    return (dt.datetime.now().astimezone().date() - dt.timedelta(days=dias_atras)).isoformat()
 
 
 def _captura(monkeypatch, clase, texto, fecha, tarjeta=TARJETA):

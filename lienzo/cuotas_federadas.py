@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 
+
 def estado(local, peers, forward, refrescar=False):
     """Conserva la lectura local válida; busca una remota si falta. Nunca suma cuentas."""
     vivos = [p for p in peers if p.get("alive") and not p.get("local")]
@@ -25,6 +26,10 @@ def estado(local, peers, forward, refrescar=False):
         for peer, data in remotas:
             reading = data.get(agent)
             if isinstance(reading, dict) and reading.get("ok") is True:
-                result[agent] = {**reading, "source_pc": peer["pc_id"], "source_name": peer.get("name") or peer["pc_id"]}
+                result[agent] = {
+                    **reading,
+                    "source_pc": peer["pc_id"],
+                    "source_name": peer.get("name") or peer["pc_id"],
+                }
                 break
     return {**result, "remote_errors": errores}
