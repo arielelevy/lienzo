@@ -293,3 +293,26 @@ def test_un_bloqueo_declarado_sigue_su_camino_aunque_la_regla_este_apagada():
 
 def tipos_r(sesiones, reglas):
     return {h["session_id"]: h["tipo"] for h in au.clasificar(sesiones, [], T0, reglas=reglas)}
+
+
+def test_informe_leido_por_mensaje_nativo_o_acuse_no_es_entrega_sin_leer():
+    # openSeec, 2026-10-30: la coordinadora leyó el informe (le llegó como adjunto por la regla) y le contestó
+    # por SendMessage, o acusó recibo; la auditoría igual decía «entrega_sin_leer»
+    s = [ses("C", coord=True, desde=-30), ses("A", desde=-20), ses("B", desde=-20)]
+    links = [
+        link("rA", "A", "C", -25, "rule"),
+        link("nA", "C", "A", -24, "native"),
+        link("rB", "B", "C", -25, "rule"),
+    ]
+    reglas = [{"from": "B", "to": "C", "informes": [{"id": "i", "recibido_at": iso(-23)}]}]
+    t = {h["session_id"]: h["tipo"] for h in au.clasificar(s, links, T0, reglas=reglas)}
+    assert t["A"] == "idle_evitable" and t["B"] == "idle_evitable"
+    # sin respuesta ni acuse, sigue avisando
+    assert tipos(s, links[:1] + links[2:])["B"] == "entrega_sin_leer"
+
+
+def test_turno_cortado_por_error_no_es_ocioso():
+    # openSeec P, 2026-10-31: un grep sin `pattern` del modelo cortó la coda sin ESTADO: y figuraba idle_evitable
+    s = [ses("C", coord=True, desde=-30), ses("P", desde=-20, last_error="coda: error de red o del servicio (x)")]
+    h = {x["session_id"]: x for x in au.clasificar(s, [], T0)}
+    assert h["P"]["tipo"] == "turno_cortado" and "Continuar" in h["P"]["sugerencia"]

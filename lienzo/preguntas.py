@@ -167,7 +167,19 @@ def obtener(s, *, explicito=False):
     n = s.get("needs") or {}
     if s.get("state") != "te_necesita":
         return None
-    if n.get("kind") != "question" and not (n.get("kind") == "dialog" and (explicito or s.get("auto_aprobar_omitido"))):
+    # un permiso sin pedido vivo (el hook vencio: PermissionTimeout) con un dialogo con opciones en pantalla es
+    # una pregunta que solo se contesta por la terminal (openSeec 0.21-B, 2026-10-31: responder daba 409)
+    vencido = (
+        explicito
+        and n.get("kind") == "permission"
+        and not s.get("pending_id")
+        and (s.get("dialog") or {}).get("options")
+    )
+    if (
+        n.get("kind") != "question"
+        and not vencido
+        and not (n.get("kind") == "dialog" and (explicito or s.get("auto_aprobar_omitido")))
+    ):
         return None
     if s.get("pending_id") and p is None:
         return None

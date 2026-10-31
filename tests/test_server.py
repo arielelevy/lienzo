@@ -1867,6 +1867,61 @@ def test_mensaje_nativo_encolado_deja_la_flecha_una_sola_vez(aislado, monkeypatc
     ]
 
 
+def _remitente_sin_nombre_del_lienzo(monkeypatch, nombre="openseec-coordinadora"):
+    """La coordinadora de openSeec (2026-10-30): no la lanzó el lienzo (sin `native_name`) y su nombre en
+    el canal lo puso el usuario con /rename; está en el registro de Claude Code de su proceso."""
+    origen, copia, typed = _traspaso(monkeypatch)
+    origen["title"] = "openseec | coordinadora"
+    import agentes
+
+    monkeypatch.setattr(ses.procs, "creation_filetime", lambda pid: 7)
+    monkeypatch.setattr(
+        agentes, "claude_registro", lambda pid, start: {"name": nombre} if (pid, start) == (PID, 7) else None
+    )
+    return origen, copia, typed
+
+
+def test_mensaje_nativo_identifica_al_remitente_por_el_registro_de_claude(aislado, monkeypatch):
+    _remitente_sin_nombre_del_lienzo(monkeypatch)
+    raw = (
+        'Another Claude session sent a message:\n<cross-session-message from="uds:x" '
+        'from-name="openseec-coordinadora">prioridad al punto 1</cross-session-message>'
+    )
+    ses.link_peer_message(st.sessions[SID], raw)
+    ultimo = st.links.snapshot()[-1]
+    assert (ultimo["from"], ultimo["to"], ultimo.get("from_name")) == (OLD, SID, None)
+
+
+def test_mensaje_nativo_identifica_al_remitente_por_su_titulo_si_es_unico(aislado, monkeypatch):
+    _remitente_sin_nombre_del_lienzo(monkeypatch, nombre=None)
+    ses.link_queued_peers(
+        st.sessions[SID], {"peer_queued": [{"id": "q9", "from": "openseec-coordinadora", "text": "x"}]}
+    )
+    assert st.links.snapshot()[-1]["from"] == OLD
+
+
+def test_mensaje_nativo_por_hook_y_por_transcripcion_queda_una_vez(aislado, monkeypatch):
+    # Claude Code 2.1.314 dispara UserPromptSubmit al drenar el mensaje encolado, que también queda en la
+    # transcripción como queued_command: los dos caminos lo registraban (links 269d423952dd y 7a1c7edbd1bb)
+    _remitente_sin_nombre_del_lienzo(monkeypatch)
+    copia = st.sessions[SID]
+    raw = '<cross-session-message from="uds:x" from-name="openseec-coordinadora">hola</cross-session-message>'
+    antes = len(st.links.snapshot())
+    ses.link_queued_peers(copia, {"peer_queued": [{"id": "q1", "from": "openseec-coordinadora", "text": "hola"}]})
+    ses.link_peer_message(copia, raw)
+    ses.link_peer_message(copia, raw)
+    assert len(st.links.snapshot()) == antes + 1
+
+
+def test_nombre_nativo_que_ya_esta_en_el_registro_no_teclea(aislado, monkeypatch):
+    # la coordinadora recibió unos 25 «/rename openseec-coordinadora» el 2026-10-30, ya llamándose así
+    origen, _, typed = _remitente_sin_nombre_del_lienzo(monkeypatch)
+    origen["state"] = "termino"
+    code, out = ses.nombrar_nativo(origen, "openseec-coordinadora", 0)
+    assert code == 200 and origen["native_name"] == "openseec-coordinadora"
+    assert typed == []
+
+
 def test_recarga_detecta_cambios_y_no_relanza_sobre_codigo_roto(tmp_path):
     import server as srv
 

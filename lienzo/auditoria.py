@@ -17,6 +17,7 @@ Tipos de hallazgo:
 - `sin_coordinadora`: frentes vivos de un repo sin coordinadora viva.
 - `bloqueo_olvidado`: un frente cerró con `ESTADO: bloqueado` y sigue así pasado el vencimiento de su
   categoría (permiso 30 min, dependencia 60 min, pausa 4 h).
+- `turno_cortado`: el frente quedó en `termino` con el turno cortado por un error (`last_error`), sin informe.
 - `informe_no_entregado`: un frente cerró un turno con `ESTADO:` y su regla `on_stop` hacia la
   coordinadora está apagada (un borrado rechazado o un tope), así que el informe no le llegó. Caso de
   opensyync del 2026-10-25: la regla L→K quedó apagada 75 min y el informe final de L se perdió.
@@ -64,6 +65,7 @@ AVISAN = (
     "sin_coordinadora",
     "bloqueo_olvidado",
     "informe_no_entregado",
+    "turno_cortado",
 )
 _BLOQUEADO = re.compile(r"ESTADO:\s*bloquead[oa]?(.*)", re.IGNORECASE | re.DOTALL)
 _CATEGORIA = (
@@ -115,6 +117,21 @@ def _regla_apagada(reglas: list, frente: str, coordinadora: str) -> dict | None:
     )
 
 
+def _acusado(reglas: list, frente: str, coord: str, desde: dt.datetime | None) -> bool:
+    """La coordinadora acusó recibo (o integró) un informe de la regla frente -> coordinadora después de
+    la entrega `desde`: lo leyó aunque no le haya mandado nada (el informe le llega como adjunto)."""
+    if desde is None:
+        return False
+    for r in reglas:
+        if r.get("from") != frente or r.get("to") != coord:
+            continue
+        for i in r.get("informes") or ():
+            marcas = [_t(i.get(k)) for k in ("recibido_at", "integrado_at")]
+            if any(m is not None and m >= desde for m in marcas):
+                return True
+    return False
+
+
 def clasificar(
     sesiones: list,
     links: list,
@@ -134,9 +151,13 @@ def clasificar(
                 en_cola.setdefault(x["session_id"], recurso)
     con_regla = {}  # frente -> última entrega (link `rule`) hacia una coordinadora
     ultimo_a = {}  # sesión -> último envío o regla que recibió
+    respuesta_a = {}  # sesión -> último envío, regla o mensaje nativo que recibió
     for ln in sorted(links, key=lambda x: x.get("ts") or ""):
         if ln.get("kind") in ("send", "rule") and ln.get("to"):
             ultimo_a[ln["to"]] = ln
+        # un SendMessage de la coordinadora (`native`) también es responderle (openSeec, 2026-10-30)
+        if ln.get("kind") in ("send", "rule", "native") and ln.get("to"):
+            respuesta_a[ln["to"]] = ln
         if ln.get("kind") == "rule" and ln.get("from"):
             con_regla.setdefault(ln["from"], {})[ln.get("to")] = ln
     out = []
@@ -219,6 +240,20 @@ def clasificar(
             continue
         if s.get("coordinator") or quieta < cfg["idle_min"]:
             continue
+        if s.get("last_error") and estado == "termino":
+            # el turno terminó por un error (del modelo o del servicio), no con su informe: no es un frente
+            # ocioso sino caído (openSeec P, 2026-10-31: un grep sin `pattern` cortó la coda sin ESTADO:)
+            out.append(
+                {
+                    **base,
+                    "tipo": "turno_cortado",
+                    "evidencia": s.get("state_since"),
+                    "error": str(s["last_error"])[:200],
+                    "coordinadora": c["session_id"] if c else None,
+                    "sugerencia": "el turno se cortó con error: mandarle «Continuar» (o Reintentar en la tarjeta)",
+                }
+            )
+            continue
         if m := _BLOQUEADO.search((s.get("last_reply") or "")[-400:]):
             cat = categoria_bloqueo(m.group(1))
             vencido = quieta >= cfg["vence_min"][cat]
@@ -257,9 +292,11 @@ def clasificar(
             continue
         entrega = con_regla.get(sid, {}).get(c["session_id"])
         t_ent = _t(entrega.get("ts")) if entrega else None
+        respuesta = respuesta_a.get(sid) or {}
+        t_resp = _t(respuesta.get("ts"))
         respondio = (
-            t_rec is not None and t_ent is not None and t_rec > t_ent and recibido.get("from") == c["session_id"]
-        )
+            t_resp is not None and t_ent is not None and t_resp > t_ent and respuesta.get("from") == c["session_id"]
+        ) or _acusado(reglas, sid, c["session_id"], t_ent)
         if t_ent and not respondio and c.get("state") != "corriendo":
             out.append(
                 {

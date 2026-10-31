@@ -269,3 +269,30 @@ def test_hook_varias_preguntas_conserva_answers(monkeypatch):
     assert preguntas.obtener(src)["question"] == "¿Lugar?"
     assert preguntas.responder(src, {"texto": "ABAJO"})[0] == 200
     assert calls == [{"answers": {"¿Color?": "VERDE", "¿Lugar?": "ABAJO"}}]
+
+
+def test_permiso_vencido_con_dialogo_en_pantalla_se_contesta_por_la_terminal(monkeypatch):
+    # openSeec 0.21-B, 2026-10-31: AskUserQuestion con PermissionTimeout; el Notification posterior dejó
+    # needs.kind «permission» sin pending_id, el diálogo seguía en pantalla y responder daba 409
+    import preguntas
+
+    dialogo = {"question": "¿Primera?", "options": [{"n": 1, "text": "Sí"}, {"n": 2, "text": "No"}], "selected": 1}
+    src = {
+        "session_id": "F",
+        "agent": "claude",
+        "pid": 999,
+        "state": "te_necesita",
+        "pending_id": None,
+        "needs": {"kind": "permission", "detail": "Claude needs your permission", "where": "terminal"},
+        "dialog": dialogo,
+    }
+    tecleado = []
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": ["¿Primera?", "> 1. Sí", "  2. No"]})
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    monkeypatch.setattr(ses, "run_send", lambda s, texto, **k: (tecleado.append(k.get("key")), (200, {"ok": True}))[1])
+    assert preguntas.responder(src, {"opcion": 1})[0] == 200
+    assert tecleado == ["enter"]  # la marcada: sólo Enter, con la pantalla revalidada
+    # sin diálogo leído, un permiso sigue sin contestarse por acá
+    otro = {**src, "dialog": None, "pregunta_respondida": None}
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": ["nada"]})
+    assert preguntas.responder(otro, {"opcion": 1})[0] == 409

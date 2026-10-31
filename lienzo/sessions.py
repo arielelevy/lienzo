@@ -20,6 +20,7 @@ import time
 import traceback
 from copy import deepcopy
 
+import agentes
 import backend
 import captura
 import claude_pipe_runtime
@@ -393,14 +394,52 @@ def link_peer_message(s: dict, raw: str) -> None:
         _link_native(s, *pm)
 
 
+NATIVO_DOBLE_S = 120  # el mismo mensaje por el hook y por la transcripcion (llega a los 20 ms)
+
+
+def _origen_nativo(s: dict, nombre: str) -> str | None:
+    """La tarjeta que mando un mensaje nativo con `from-name` = `nombre`: primero la que el lienzo
+    nombro (`native_name`); despues la sesion local de Claude cuyo registro (`<config>/sessions/<pid>.json`)
+    lleva ese nombre, que es como queda una sesion que no lanzo el lienzo o se renombro con /rename
+    (coordinadora de openSeec, 2026-10-30: «from» quedaba None); y por ultimo, si es una sola, la tarjeta
+    cuyo titulo da ese nombre corto. Se llama con el lock tomado."""
+    if not nombre:
+        return None
+    locales = [o for o in sessions.values() if o is not s]
+    candidatas = locales + (mirror.MIRROR.sessions() if mirror else [])
+    src = next((o["session_id"] for o in candidatas if o.get("native_name") == nombre), None)
+    if src:
+        return src
+    for o in locales:
+        if o.get("agent") == "claude" and o.get("pid") and o.get("alive", True):
+            reg = agentes.claude_registro(o["pid"], procs.creation_filetime(o["pid"])) or {}
+            if reg.get("name") == nombre:
+                return o["session_id"]
+    import launch
+
+    por_titulo = [o["session_id"] for o in candidatas if launch.nombre_corto(o.get("title") or "") == nombre]
+    return por_titulo[0] if len(por_titulo) == 1 else None
+
+
 def _link_native(s: dict, nombre: str, texto: str, native_id: str | None = None) -> None:
     """Registra un mensaje nativo hacia `s`. Entre Claudes el canal es el nativo con registro en el lienzo
     (decision de Ariel, 2026-10-30): todo mensaje queda en el historial; si el origen no es una tarjeta
-    conocida queda sin flecha (`from` None) y con `from_name`. Con `native_id` no se registra dos veces."""
-    if native_id and any(l.get("native_id") == native_id for l in links.snapshot()):
+    conocida queda sin flecha (`from` None) y con `from_name`. Con `native_id` no se registra dos veces,
+    y tampoco cuando el mismo texto ya llego a `s` hace menos de NATIVO_DOBLE_S: Claude Code 2.1.314
+    dispara UserPromptSubmit al drenar un mensaje encolado, que tambien queda en la transcripcion."""
+    previos = links.snapshot()
+    if native_id and any(l.get("native_id") == native_id for l in previos):
         return
-    candidatas = [o for o in sessions.values() if o is not s] + (mirror.MIRROR.sessions() if mirror else [])
-    src = next((o["session_id"] for o in candidatas if nombre and o.get("native_name") == nombre), None)
+    src = _origen_nativo(s, nombre)
+    corto, limite = short(texto, 160), dt.datetime.now().astimezone() - dt.timedelta(seconds=NATIVO_DOBLE_S)
+    for l in reversed(previos[-200:]):
+        mismo = (l.get("from"), l.get("from_name")) == (src, None if src else nombre)
+        if mismo and l.get("kind") == "native" and l.get("to") == s["session_id"] and l.get("text") == corto:
+            try:
+                if dt.datetime.fromisoformat(l["ts"]) >= limite:
+                    return
+            except KeyError, TypeError, ValueError:
+                pass
     extra = {"native_id": native_id} if native_id else {}
     add_link(src, s["session_id"], texto, "native", extra={**extra, **({} if src else {"from_name": nombre})})
 
@@ -2095,7 +2134,8 @@ def coda_mirar_pantalla(s: dict) -> bool:
     """(Con el lock.) ¿Toca mirar la pantalla de esta coda en busca de un cartel de permiso? Sí si
     figura corriendo, sin nada pedido, quieta hace CODA_PANTALLA_QUIETA_S y no se miro hace poco."""
     n = s.get("needs") or {}
-    pregunta = n.get("via") == "screen" and n.get("kind") == "question"  # se mira si sigue abierta
+    # se mira si sigue abierta: la de pantalla, y la de ask_user (via tool), que si no espera al próximo PreToolUse
+    pregunta = n.get("via") in ("screen", "tool") and n.get("kind") == "question"
     if s.get("agent") != "coda" or not s.get("pid"):
         return False
     if not pregunta and (s.get("state") != "corriendo" or n):
@@ -2181,6 +2221,9 @@ def coda_dialogo_en_pantalla(s: dict) -> bool:
     return True
 
 
+CODA_ESPERA_MODELO = "Waiting for model"  # el spinner de coda mientras el modelo contesta
+
+
 def coda_pregunta_en_pantalla(s: dict, lineas: list[str], leida: bool) -> bool:
     """(Sin el lock.) Un diálogo de coda que no es un permiso (pantalla_coda.pregunta_visible): la
     tarjeta pasa a te_necesita con la pregunta, que decide el humano (el auto-aprobar no la toca). Cuando
@@ -2192,6 +2235,14 @@ def coda_pregunta_en_pantalla(s: dict, lineas: list[str], leida: bool) -> bool:
         if sessions.get(s["session_id"]) is not s:
             return False
         n = s.get("needs") or {}
+        if n.get("via") == "tool" and n.get("kind") == "question":
+            if leida and pregunta is None and any(CODA_ESPERA_MODELO in ln for ln in lineas):
+                # la pregunta de ask_user ya se contestó y el modelo está procesando: no te necesita (openSeec,
+                # 2026-10-30: una coda con «Waiting for model…» figuraba «te_necesita» hasta su próxima herramienta)
+                set_state(s, "corriendo")
+                touch(s)
+                state.log(f"{s['session_id'][:8]}: coda procesando la respuesta del modelo; vuelve a corriendo")
+            return False
         if n.get("via") == "screen" and n.get("kind") == "question":
             if leida and pregunta is None:
                 set_state(s, "corriendo")  # se contestó en la terminal
@@ -2884,6 +2935,14 @@ def _menu_remote_control_abierto(s: dict) -> bool:
     return "Disconnect this session" in texto and "Esc to continue" in texto
 
 
+def _nombre_registrado(s: dict) -> str | None:
+    """El nombre con el que la sesion figura en el canal nativo, segun el registro de Claude Code del
+    proceso (`<config>/sessions/<pid>.json`), o None si no hay registro unico."""
+    pid = s.get("pid")
+    reg = agentes.claude_registro(pid, procs.creation_filetime(pid)) if pid else None
+    return (reg or {}).get("name")
+
+
 def nombrar_nativo(s: dict, nombre: str, esperar_dialogo: float = 10.0) -> tuple[int, dict]:
     """Serializa pedidos manuales y automáticos sobre la misma consola."""
     with lock:
@@ -2920,6 +2979,14 @@ def _nombrar_nativo(s: dict, nombre: str, esperar_dialogo: float) -> tuple[int, 
         }
     if frenado := send_blocked(s) or dialogo_abierto(s):
         return frenado
+    if _nombre_registrado(s) == nombre:
+        # ya se llama asi en el canal (lo puso el usuario con /rename, o un intento anterior que se difirio
+        # despues de teclearlo): no se teclea nada. Antes se reintentaba en cada pausa y la coordinadora de
+        # openSeec recibio unos 25 «/rename» el 2026-10-30, y cada uno frenaba los informes que le llegaban
+        with lock:
+            s["native_name"] = nombre
+            touch(s)
+        return 200, {"ok": True, "native_name": nombre, "ya_estaba": True}
     if _menu_remote_control_abierto(s):  # quedo de una vez anterior: teclear encima lo eligiria
         run_send(s, "", enter=False, key="escape")
         time.sleep(1)
@@ -3003,7 +3070,13 @@ def _send_to_session_local(s: dict, text: str, attachments: list[str]) -> tuple[
     sid = s["session_id"]
     with lock:
         if s.get("native_sync_busy"):
-            return 409, {"ok": False, "error": "se está actualizando el nombre nativo; reintentá cuando termine"}
+            # no se tecleo nada: quien reintenta (un informe de una regla) puede volver a mandarlo
+            return 409, {
+                "ok": False,
+                "code": "native_sync_busy",
+                "no_enviado": True,
+                "error": "se está actualizando el nombre nativo; reintentá cuando termine",
+            }
     if s.get("agent") in ("codex", "pi") and text.strip().lower() in ("/exit", "/quit"):
         return 400, {
             "ok": False,

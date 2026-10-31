@@ -254,6 +254,11 @@ def filtrada(r: dict, completa: str | None, h: str, espera: bool = True) -> str 
     marca = r.get("solo_si")
     if marca and completa is not None and marca not in completa:
         return f"salteado: la respuesta no trae «{marca}» (turno intermedio)"
+    # el mismo informe a otro pedido (un «no respondas» de la coordinadora cierra un turno con la misma
+    # respuesta): la huella cambia por el pedido, pero el informe ya llego (openSeec F, 2026-10-30 22:38)
+    entregados = [x for x in r.get("informes") or () if x.get("estado") != "pendiente"]
+    if marca and completa and r.get("dedupe", True) and any(x.get("respuesta") == completa for x in entregados):
+        return "salteado: ese informe ya se entregó (mismo texto, otro pedido)"
     if r.get("dedupe", True) and h:
         if r.get("last_hash") == h:
             return "salteado: misma respuesta que la ya entregada"
@@ -699,6 +704,12 @@ def fire_rule(rule: dict, agrupados: int = 0) -> None:
     with lock:
         if informe is not None:
             informes.resultado(informe, code, res, now())
+            if res.get("no_enviado"):
+                # el destino lo rechazo sin teclear nada (estaba cambiando su nombre nativo): no es un envio
+                # incierto, recuperar_informes lo vuelve a mandar. Antes quedaba con un intento y no salia
+                # mas (18 informes de openSeec el 2026-10-30, entre ellos los ESTADO: de P y Q)
+                informe["intentos"] = 0
+                informe.pop("intento_at", None)
         rule["fired"] = rule.get("fired", 0) + 1
         rule["last_fired"] = now()
         rule["last_result"] = "ok" if code == 200 else str(res.get("error"))
