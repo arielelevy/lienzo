@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ago, rulesApi, sendNotice, sessionsApi, type RuleEdit } from "../api";
 import { everySeconds, hhmm, nextAt, splitEvery, type EveryUnit } from "../nl";
 import { canWrite, periodLabel, shortName, whenLabel } from "../names";
-import { GLYPH_HIT, computeSegs, laneHeight, type Band, type Rect, type Seg } from "../arrows-geometry";
+import { GLYPH_HIT, borde, computeSegs, laneHeight, type Band, type Rect, type Seg } from "../arrows-geometry";
 import { ABIERTA, rolDe, useConsultas } from "../consultas";
 import type { ConsultaResumen, Link, Rule, Session } from "../types";
 
@@ -707,6 +707,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
         const mine = hover !== null && (s.from === hover || s.to === hover);
         const many = s.ids.length > 1;
         const on = sel !== null && s.ids[0] === sel;
+        const filo = s.kind === "native" ? borde(s.d, 3.5) : null; // al borde de la franja de 7 px
         return (
           <g
             key={s.ids[0]}
@@ -714,6 +715,7 @@ export function Arrows({ links, rules, sessions, boardRef, version, hover, onDel
             style={sel !== null ? { opacity: on ? 1 : 0.12 } : s.disabled ? { opacity: 0.4 } : undefined}
           >
             {s.kind === "native" && <path d={s.d} className="line native-outer" />}
+            {filo && <path d={filo} className="line native-edge" />}
             <path
               d={s.d}
               className={`line ${s.kind}`}

@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 // @ts-ignore TS5097: extension .ts en el import, necesaria para que Node lo resuelva
-import { GLYPH_HIT, LANE_CLEAR, LANE_H, LANE_MAX, TRACK_GAP, allowed, buildItems, channelX, clearance, colOf, computeSegs, cubic, cubicAt, cubicHits, cut, ejectGlyph, freeAt, freeLanes, groupColumns, inside, laneHeight, layoutEnds, periodLabel, runAllowed, segHits, sideArc, slotAt, topRoute, tracks, type Band, type Formatters, type Lane, type Pt, type Rect, type Seg } from "./arrows-geometry.ts";
+import { GLYPH_HIT, LANE_CLEAR, borde, LANE_H, LANE_MAX, TRACK_GAP, allowed, buildItems, channelX, clearance, colOf, computeSegs, cubic, cubicAt, cubicHits, cut, ejectGlyph, freeAt, freeLanes, groupColumns, inside, laneHeight, layoutEnds, periodLabel, runAllowed, segHits, sideArc, slotAt, topRoute, tracks, type Band, type Formatters, type Lane, type Pt, type Rect, type Seg } from "./arrows-geometry.ts";
 import type { Link, Rule } from "./types";
 
 let failed = 0;
@@ -793,6 +793,18 @@ test("el area sensible del glifo: se recorta contra la tarjeta, con un piso, y n
     assert.ok(s.hit! <= Math.max(8, libre) + 1e-9, `hit ${s.hit} se pasa de lo libre (${libre.toFixed(1)}) y del piso`);
     assert.ok(s.hit! >= Math.min(8, libre) - 1e-9, `hit ${s.hit} por debajo del piso con ${libre.toFixed(1)} libres`);
   }
+});
+
+test("borde corre el camino a un solo lado: a la izquierda de su sentido, también en las esquinas", () => {
+  // derecha y después abajo: el filo va por arriba y por la derecha, con la esquina redondeada como el camino
+  assert.equal(borde("M 0 0 L 100 0 L 100 50", 3.5), "M 0 -3.5 L 95.5 -3.5 Q 103.5 -3.5, 103.5 4.5 L 103.5 50");
+  // el sentido contrario queda del otro lado
+  assert.equal(borde("M 100 0 L 0 0", 2), "M 100 2 L 0 2");
+  // una esquina redondeada (Q) se toma por su control y se vuelve a redondear
+  const r = borde("M 0 0 L 90 0 Q 100 0, 100 10 L 100 50", 3.5)!;
+  assert.ok(r.startsWith("M 0 -3.5") && r.includes("Q 103.5 -3.5") && r.endsWith("L 103.5 50"), r);
+  // un bucle con curva C no tiene filo
+  assert.equal(borde("M 0 0 C 10 0, 10 10, 0 10", 3.5), null);
 });
 
 if (failed) {
