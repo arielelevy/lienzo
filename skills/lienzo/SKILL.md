@@ -34,14 +34,20 @@ Cuando el usuario pide "lanzá N sub CLI" pide terminales reales, que son las qu
 Los subagentes de la herramienta Agent no aparecen en el tablero: sirven para una consulta acotada,
 no para repartir trabajo.
 
-**Para hablarle a otra sesión, primero el lienzo, también entre PCs.** Encargo con
-`POST /sessions/<sid>/send` (con `from` y `link_to`, para que quede la flecha) y la vuelta con una
-regla `on_stop` cuyo `text` lleve `{respuesta}`. `SendMessage` por el canal nativo no deja rastro en
-el tablero: el usuario lo pidió explícito el 2026-10-09 («usá lienzo, armá la conexión»).
-Si el lienzo no puede escribirle a la tarjeta, el canal nativo de Claude (`ListAgents`/`SendMessage`)
-es el respaldo (pedido de Ariel, 2026-10-22). Buscá el nombre nativo actualizado del título y avisá
-por qué usaste el respaldo. Un
-encargo a otra PC dice qué no tocar (git pull, reiniciar el server, configs de seguridad) y que lo
+**Para hablarle a otra sesión** (decisión de Ariel, 2026-10-30, reemplaza la del 2026-10-09):
+
+- **Entre dos sesiones de Claude, el canal nativo** (`ListAgents`/`SendMessage`): llega dentro del
+  turno en curso. El lienzo lo registra solo como flecha `native` en el tablero y en `GET /links`, sea un
+  pedido nuevo (hook UserPromptSubmit) o un mensaje que llegó con el turno corriendo (`queued_command`
+  de la transcripción). Si el remitente no es una tarjeta conocida queda en el historial sin flecha,
+  con `from_name`. Al nombre nativo se llega por el título (ver «El canal nativo», más abajo).
+- **Por la API del lienzo**: los encargos largos (`.md` + mensaje corto), la vuelta de los informes
+  (regla `on_stop` cuyo `text` lleve `{respuesta}`), los turnos de recursos, los avisos con ACK y todo
+  agente que no es Claude (Codex, coda, Pi). Encargo con `POST /sessions/<sid>/send`, con `from` y
+  `link_to` para que quede la flecha.
+- Si el lienzo no puede escribirle a una tarjeta que no es de Claude, no hay respaldo nativo: avisar.
+
+Un encargo a otra PC dice qué no tocar (git pull, reiniciar el server, configs de seguridad) y que lo
 que pida permiso se lo informe al usuario en vez de forzarlo.
 
 ## Varias PCs
@@ -87,7 +93,11 @@ síntoma engaña.
 
 **Lo normal es lanzar por el lienzo**: `coordinar.lanzar_y_titular(pc, cwd, titulo, agent)` (o
 `POST /sessions/launch`). El server escribe el `.cmd`, elige el ejecutable correcto de cada agente
-(`launch.py::_exe_path`) y cablea la regla de vuelta. La carpeta tiene que estar en `launch_roots` del
+(`launch.py::_exe_path`) y cablea la regla de vuelta, con `solo_si="ESTADO:"` por defecto: los turnos
+intermedios no llegan como entregas. Con `texto=` le manda el encargo y confirma en el transcript o
+la pantalla que entró, y si no aparece lo reenvía una vez (`tarjeta["encargo_envio"]`): un 200 del
+`send` no prueba nada en una consola que todavía no arrancó (un coda quedó 30 min en su portada).
+Para un envío suelto, `c.enviar_seguro(s, texto, confirmar=True)` hace lo mismo. La carpeta tiene que estar en `launch_roots` del
 `~/.lienzo/config.json` **de la PC donde se lanza** (se relee en cada lanzamiento, sin reiniciar). Si no
 está, el lanzamiento contesta 400 `cwd fuera de launch_roots`: agregala ahí, o lanzá a mano como sigue.
 
@@ -110,7 +120,9 @@ primero, porque el tablero junta sesiones de varios repos; después `encargo A`,
 el estado. La coordinadora lleva `<proyecto> - coordinadora - <descripción>`. Se pone con
 `PUT /sessions/<sid>/title` apenas aparece la tarjeta, y el mismo texto va en el `title` del
 `.cmd`. Si a una sesión viva se le da un encargo nuevo, se renombra con la descripción nueva y
-conserva la letra. Con más de una PC en el tablero, el título suma la PC:
+conserva la letra. El server lo muestra como `<proyecto> | encargo A - …` (proyecto en minúscula y,
+si es largo, cortado al medio con «…»); `coordinar.frentes()` reconoce las dos formas. Con más de una
+PC en el tablero, el título suma la PC:
 `<proyecto> - encargo A @notebook - <descripción>`, para no confundir dos encargos A de PCs
 distintas de un vistazo. Mejor todavía: no repetir letra entre PCs. Si se repite,
 `coordinar.frentes()` no adivina cuál es: devuelve las dos como `A@<pc_id>` y no hay clave `A`
@@ -162,22 +174,22 @@ cuenta de claude.ai (verificado el 2026-10-05: `chesstudia-I`, en otra PC, recib
   En cada PC conviene `"remoteControlAtStartup": true` en `~/.claude/settings.json`, para que
   también las sesiones abiertas a mano queden publicadas; eso lo prende el usuario.
 
-La coordinadora usa el lienzo como canal principal, también entre dos sesiones de Claude. Medido el
-2026-09-26 con seis sesiones de un mismo repo:
+Entre dos sesiones de Claude el canal es el nativo, con registro en el lienzo (decisión de Ariel,
+2026-10-30). Lo que hay que saber:
 
-- Los nombres nativos no decían qué frente era cada uno. `ListAgents` devolvió `app-77`,
-  `app-48`, `app-37`, `app-3e`, sin título. Desde el 2026-10-05 el lienzo las nombra (ver arriba),
-  y una sesión abierta a mano recibe el nombre al ponerle título en el lienzo y quedar quieta. El lienzo direcciona por
-  `session_id` con el título a la vista.
-- Hablarle a una sesión ocupada no necesita el canal nativo. Un `POST /sessions/<sid>/send` a una
-  sesión que está trabajando le llega igual en el turno en curso, como mensaje intercalado (salvo un
-  comando con barra, ver trampas). Es lo mismo que daría `SendMessage`.
-- El lienzo deja rastro y el nativo no: la flecha con `from` y `link_to`, el historial en
-  `GET /links` y las reglas `on_stop` que traen los informes solos.
+- Los nombres nativos tienen que decir qué frente es cada uno. Sin nombre, `ListAgents` devuelve
+  `app-77`, `app-48`… sin título (medido el 2026-09-26). El lienzo las nombra al lanzarlas y al
+  titularlas (ver arriba); el registro reconoce el remitente por ese `native_name`.
+- El rastro lo deja el lienzo solo: cada mensaje nativo queda en `GET /links` con `kind: native` (y
+  `native_id`, para no contarlo dos veces). Un mensaje de un remitente sin tarjeta queda con
+  `from: null` y `from_name`. El registro de los que llegan con el turno corriendo lo hace el server
+  al releer la transcripción: hasta que Ariel reinicie el server con ese cambio, sólo quedan los que
+  llegan como pedido nuevo.
+- Los informes siguen viajando por la regla `on_stop` con `{respuesta}`, y los encargos largos por
+  archivo: el canal nativo es para el ida y vuelta corto.
 
-El canal nativo es el respaldo cuando el lienzo no puede escribirle a una tarjeta (también si el
-server cayó), o para una sesión que no está en el tablero. Entre frentes no se abre ninguno de los dos: todo pasa por la coordinadora, que es lo que
-evita los bucles.
+Entre frentes no se abre ninguno de los dos: todo pasa por la coordinadora, que es lo que evita los
+bucles.
 
 ## Consulta entre investigadores
 
@@ -234,7 +246,9 @@ Un encargo común con las reglas del entorno, y un encargo por frente en archivo
 que se manda es corto y apunta a los dos archivos: los encargos largos por la caja se cortan.
 
 Los archivos de la ronda (encargos, planes, informes, scripts de coordinación) van en
-`<repo>/.temp/coordinacion/<AAAA-MM-DD>/`, que Git ignora. Nunca en la carpeta de un agente
+`<repo>/.temp/coordinacion/<AAAA-MM-DD>/`, que Git ignora. Para limpiar días viejos,
+`c.limpiar_coordinacion(repo, dias)`: sin `borrar=True` sólo informa, y un día que citan contratos,
+fichas, informes o docs queda en `protegidos` y se borra sólo nombrándolo en `confirmar`. Nunca en la carpeta de un agente
 (`.coda`, `.claude`, `.codex`): coda es un agente real con su propia carpeta, y Lienzo no depende de
 qué agente corre cada frente (pedido de Ariel, 2026-10-17).
 
@@ -243,6 +257,13 @@ y las secciones exactas; qué hacer, numerado, con el orden cuando importa; qué
 número que se espera; lo que no es tuyo, nombrando de quién es. Y cierra pidiendo un informe con
 qué quedó archivo por archivo con su prueba, qué se midió, qué se dejó afuera y por qué, y qué se vio
 fuera de la carpeta propia.
+
+Antes de repartir una feature: ficha FDD (`references/fdd.md`; el encargo del frente es su ficha),
+`docs/dominio.md`, archivos con dueño y efectos compartidos asignados.
+
+Un archivo que el server o las sesiones cargan en vivo (`coordinar.py`, `hook.py`) nunca queda roto
+en disco: se edita una copia, se verifica con `ast.parse` y las pruebas, y se reemplaza de una sola vez
+(medido el 2026-10-30: un frente encontró `coordinar.py` con error de sintaxis a mitad de una edición).
 
 Antes de repartir, leé lo que ya se aprendió: `GET /conocimiento/<p>/checklist?<contexto>` (con
 `tipo_trabajo`, `tecnologia`, `area`… del trabajo de la ronda) da las creencias vigentes que aplican.

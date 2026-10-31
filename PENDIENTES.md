@@ -6,6 +6,24 @@ docs/PRODUCTO.md las decisiones de producto.
 
 Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
+- [ ] **2026-10-30 · FDD no aparece al arrancar una sesión.** *Implementado, sin integrar (encargo F, 2026-10-30): creencia propuesta `e3f51fc7ec064c0aa14ed8ad00d3385c` en `lienzo` (alcance proceso_lienzo; falta el veredicto de Ariel para que llegue al SessionStart y a `c.encargo`), y SKILL.md y `references/fdd.md` lo dicen.* El skill dice que el proceso es FDD (leer
+  `references/fdd.md` y `docs/dominio.md` antes de repartir), pero en una coordinadora de openSeec que leyó `SKILL.md`
+  a mano para lanzar frentes se pasó por alto: las creencias que inyecta el hook SessionStart no lo recuerdan y el
+  `AGENTS.md` del proyecto no lo menciona. Propuesta: una creencia vigente «antes de repartir una feature: ficha FDD,
+  dominio y dueños» y que `c.encargo` la pegue. Origen: ronda 0.19.0 de openSeec.
+- [ ] **2026-10-30 · Verificar que el encargo llegó después de lanzar.** *Implementado, sin integrar (encargo F): `enviar_seguro(confirmar=True)` y `lanzar_y_titular(texto=…)`; ficha `.temp/coordinacion/2026-10-30/fdd-confirmar-que-el-encargo-entro.md`.* Un coda lanzado a mano recibió el `send`
+  (200) antes de terminar de arrancar y se quedó 30 min en su portada con la entrada vacía hasta el aviso de «sin
+  avance». Propuesta: `lanzar_y_titular` (o un `c.enviar_seguro`) confirma en el transcript o la pantalla que el texto
+  del encargo entró, y si no lo reenvía una vez. Origen: ronda de cierre 0.18.0 de openSeec.
+- [ ] **2026-10-30 · Evidencia citada antes de limpiar `.temp/coordinacion/`.** *Implementado, sin integrar (encargo F): `c.limpiar_coordinacion(repo, dias)`; ficha `.temp/coordinacion/2026-10-30/fdd-limpiar-coordinacion-sin-borrar-evidencia.md`.* La coordinadora de openSeec borró días
+  viejos de `.temp/coordinacion/` y con ellos el arnés y la evidencia de una prueba de localidad citada por un contrato.
+  Propuesta: una ayuda `c.limpiar_coordinacion(dias)` que antes busque esas rutas citadas en el repo (contratos,
+  fichas, informes) y se niegue a borrarlas sin confirmación.
+- [ ] **2026-10-30 · `POST /sessions/launch` con `agent: coda` no encuentra `coda.exe`.** *Implementado, sin integrar (encargo F): `_exe_path` busca `~/.coda/bin`; necesita reiniciar el server.* Contesta 400
+  `no encuentro coda.exe en esta PC` aunque existe `~/.coda/bin/coda.exe` (donde lo deja el instalador).
+  `lienzo/launch.py:230` `_exe_path` busca `~/.local/bin` y el PATH del server, no `~/.coda/bin`. Reproducir:
+  `coordinar.lanzar_y_titular(None, "D:/Globant/source-analisis", "x", agent="coda")`. Salió de la ronda
+  de compilación de source-analisis (Globant); se lanzó a mano con `explorer.exe` + `.cmd`.
 - [ ] **2026-10-30 · Buscador del encabezado móvil recortado.** A 390 px, el placeholder
   `buscar /` de `web/src/components/Header.tsx:92` se ve como `bus…`, con Chrome remoto y
   Authenticator visibles. Reproducir con `CAPTURAS=1`, caso `capturas.spec.ts` → `celular`;
