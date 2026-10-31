@@ -6,6 +6,12 @@ docs/PRODUCTO.md las decisiones de producto.
 
 Fecha: 2026-10-10. Última actualización: 2026-10-22.
 
+- [ ] **2026-10-31 · Un turno rechazado no corta la corrida (openSeec 0.21-D).** La receta del encargo común
+  (`print(c.pedir_turno(...))`) imprime `otorgado: False` con código 200 y sigue: en una cadena `... && motor` el
+  frente 0.21-D corrió motores reales sin turno mientras 0.21-B medía (~2 min), y después llamó `liberar_turno` sobre
+  un turno ajeno (sólo lo sacó de la cola). Propuesta: `c.exigir_turno(recurso, sid, motivo)` que sale con código
+  distinto de cero (o lanza) si no se otorga, y que la receta del encargo use ésa; `liberar_turno` sin ser dueño ni
+  estar en cola, no-op con aviso.
 - [ ] **2026-10-30 · Mejoras de uso desde openSeec, segunda tanda (encargo G).** *Implementado, sin integrar; requiere
   reiniciar el server.* Remitente de los mensajes nativos (registro de Claude; uno solo por mensaje); el `/rename`
   repetido que bloqueaba con 409 los informes hacia la coordinadora (causa de la fricción 24: 18 informes trabados,
@@ -1556,6 +1562,67 @@ La lista única de pendientes está en PENDIENTES.md.
 
 Canal cifrado de secretos: ya implementado; ver «Hecho», Plan NUC punto 1 y
 `lienzo/secretos.py`. La propuesta anterior estaba duplicada y desactualizada.
+
+### Fricciones de uso de openSeec 0.18–0.21 que siguen abiertas (coordinadora openSeec, 2026-10-31)
+
+Fuente y evidencia: `D:/Apps/openseec/.temp/coordinacion/2026-10-30/mejoras-metodologia.md` (número entre paréntesis).
+Lo que lienzo-F y lienzo-G ya cerraron (hasta `6c6fc09`) no se repite acá.
+
+- [ ] **Avisos de difusión sin despertar (38).** Un aviso «fuentes congeladas, sin acuse» a tres frentes produjo tres
+  turnos que cerraron con `ESTADO:` y llegaron como informes. Falta `sin_aviso` en `enviar_seguro` y que la regla
+  `on_stop` no entregue un turno que sólo acusa (sin trabajo ni archivos tocados).
+- [ ] **`esperar_turno` que bloquee hasta el 200 (39).** `pedir_turno` devuelve 202 (en cola) sin excepción y un `&&`
+  posterior corre igual: J y D (openSeec 0.20/0.21) corrieron motores sin turno, D unos 2 minutos mientras B medía.
+- [ ] **Espera declarada por la coordinadora (41).** La auditoría marca `entrega_sin_leer` e `idle_evitable` a frentes
+  que esperan a propósito la suite global; sólo acepta espera legítima si el frente cerró con «ESTADO: bloqueado -
+  dependencia». Que la coordinadora pueda marcar «en espera por X hasta Y» desde su lado.
+- [ ] **Hunks con los finales de línea del destino (37).** Un diff en LF aplicado con `git apply` sobre `openseec.py`
+  (CRLF) dejó 9 líneas mezcladas. Al pedir o aplicar hunks, normalizar a los finales del archivo destino; también
+  `Path.write_text` convierte LF→CRLF en Windows (lo reportaron J y A).
+- [ ] **Dueños comparables entre fichas (9).** Dos fichas nombraron el mismo `src/openseec.py` porque los archivos
+  estaban en prosa. Un chequeo que cruce las listas «Archivos y dueños» de las fichas antes de lanzar.
+- [ ] **No cerrar un frente con rojas cruzadas (18).** Cerrar un frente con pruebas rojas atribuidas a otro frente
+  activo dejó cruces huérfanos: avisar al cerrar si hay rojas sin dueño asignado.
+- [ ] **Copias de trabajo sin enlaces a carpetas vivas (30).** Una copia para hunks enlazaba `tools/` al repo real y un
+  hunk escribió un archivo vivo. Guía o helper de copia que nunca enlace carpetas que se modifican.
+- [ ] **Tope de `ttl_min` en el error (26).** `pedir_turno` rechaza un `ttl_min` mayor que 40 sin nombrar el máximo
+  de la política. Verificar si quedó cubierto por `5112474`.
+- [ ] **Responder un permiso vencido con diálogo en pantalla (34).** Arreglado en disco por lienzo-G antes del reinicio
+  de 00:22; falta verlo en uso real (respuesta por terminal a un AskUserQuestion vencido con varias pestañas).
+
+Verificación y trabajo del 2026-10-31 (esta tanda; ninguna casilla cerrada):
+
+| Fricción | Evidencia y estado en el árbol |
+|---|---|
+| 9 | Ya cubierta antes de `6c6fc09`: `fichas_en_conflicto` y `tests/test_coordinar_fichas.py`. El chequeo se invoca antes de repartir; no se ejecuta automáticamente al lanzar. |
+| 26 | Ya cubierta por `5112474`: error con `ttl_max_min`, máximo y ruta para cambiar la política; regresión en `tests/test_rondas.py`. |
+| 39 | Agregados `esperar_turno` y `exigir_turno`: sólo retornan con 200 y otorgado true; timeout/error/interrupción retiran el pedido y lanzan. HTTP real aislado ejercitó cola, traspaso y timeout. |
+| 38 | `enviar_seguro(..., sin_aviso=True)` conserva el silencio en envíos y reenvíos; reusa la guarda existente de on_stop. No se agregó una heurística para inferir ausencia de trabajo por ausencia de archivos; esa parte sigue pendiente. |
+| 41 | `declarar_espera(s, motivo, hasta)` y PUT `/sessions/<sid>/espera`, con coordinadora viva del mismo repo, cancelación, vencimiento e invalidación por nuevo pedido/estado. Reversión si falla el guardado. Requiere activar código de servidor, sin reiniciar en esta tanda. |
+| 18 | Guía de cierre exige caso rojo, evidencia, dueño vivo y siguiente paso antes de cerrar. Falta control automático: `cerrar_sesion` no recibe resultados de pruebas. |
+| 30 | Guía de copias físicas sin symlinks, junctions ni hardlinks hacia archivos vivos; revisar también enlaces de la fuente. No se agregó helper de copia. |
+| 37 | Guía de hunks exige leer/contar los finales de línea actuales y preservarlos al escribir bytes. No normaliza automáticamente hunks ni archivos ajenos. |
+| 34 | Variante 0.22-F reproducida: Notification cambia question a permission con pending vivo, o queda un pending_id residual/vencido. `preguntas.py` reconoce el hook vivo y permite terminal sólo con diálogo revalidado al vencer. Pruebas de cuatro preguntas, cuatro pestañas con iguales opciones, guardas y HTTP aislado. Falta validación sobre una terminal real tras activación. |
+
+**0.22-G, recomendadas sin decisión de la coordinadora:** el transcript vivo registra AskUserQuestion a
+`2026-10-31T10:05:28.307Z` y tool_result con las cuatro recomendadas a `2026-10-31T10:05:57.508Z`
+(29,201 s). No alcanza para atribuirlo al vencimiento del hook ni a Lienzo. No apareció una respuesta
+de pregunta para G en el log de Lienzo de esa ventana. Sigue pendiente identificar quién produjo ese
+tool_result. Las regresiones comprueban que responder no elige una recomendada sin diálogo ni contesta
+un hook vencido. Evidencia: `pruebas-agenticas/resultados/openseec-20261031/preguntas-g-observadas.json`.
+
+Fichas de la tanda: `.temp/coordinacion/2026-10-31/fdd-*.md`. Logs, propuestas y roles en
+`pruebas-agenticas/resultados/openseec-20261031/`. Sin reinicio, instalación, publicación ni cierre de tareas.
+
+Pruebas: 208 regresiones del delta en verde y última corrección de derivación revalidada con 30 pruebas
+de preguntas. Ruff check/format y git diff --check en 0. La corrida general `backend-pytest` del plugin
+salió por **timeout (900156 ms)** con marcas de fallas antes del corte, sin resumen final que permita
+nombrarlas o atribuirlas. Alcanzó las pruebas de xfer según sus temporales; eso no demuestra la causa
+del plazo. Arrancó antes de las correcciones de revisión y no certifica el árbol final. Log completo
+en `pruebas-agenticas/resultados/openseec-20261031/salidas/backend-pytest.log`; conservar el primer
+intento. La compuerta salió 1: `No hay baseline.json: fijarlo a mano con ejecutar.mjs --fijar`.
+No se fijó baseline ni se aceptaron propuestas para esconder ese resultado. Pendiente diagnosticar
+las rojas de la corrida amplia con identificación de casos; no adjudicarlas a otro frente por cercanía.
 
 ### Turnos: cupos, modo exclusivo y liberación por inactividad (OpenSyync K, 2026-10-27)
 

@@ -36,6 +36,8 @@ dónde vive. La arquitectura está en DISENO.es.md; las decisiones de producto, 
 - **Ronda larga**: aviso a N frentes con `ACK`, turno de un recurso pesado, memoria. `lienzo/rondas.py`.
 - **Consulta entre investigadores**: vueltas entre 2-3 agentes y un revisor. `lienzo/consulta.py`.
 - **Auditoría de sesiones**: ronda cada 5 min que marca ociosas evitables. `lienzo/auditoria.py`.
+  La coordinadora del repo declara `espera_declarada` en la tarjeta con motivo y vencimiento
+  (`PUT /sessions/<sid>/espera`); un nuevo pedido o estado la invalida y al vencer avisa.
 - **Cliente de coordinación**: lo que usa una coordinadora desde Python (`frentes`, `cablear`, `enviar`,
   `informe`). `skills/lienzo/coordinar.py`.
 

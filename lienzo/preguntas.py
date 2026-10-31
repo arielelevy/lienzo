@@ -157,6 +157,13 @@ def validar(d):
     return None
 
 
+def _hook_vivo(p):
+    if not p:
+        return False
+    vence = ses.parse_ts(p.get("expires_at"))
+    return vence is None or vence.timestamp() > time()
+
+
 def obtener(s, *, explicito=False):
     with state.lock:
         s = dict(s)
@@ -167,23 +174,21 @@ def obtener(s, *, explicito=False):
     n = s.get("needs") or {}
     if s.get("state") != "te_necesita":
         return None
-    # un permiso sin pedido vivo (el hook vencio: PermissionTimeout) con un dialogo con opciones en pantalla es
-    # una pregunta que solo se contesta por la terminal (openSeec 0.21-B, 2026-10-31: responder daba 409)
-    vencido = (
-        explicito
-        and n.get("kind") == "permission"
-        and not s.get("pending_id")
-        and (s.get("dialog") or {}).get("options")
-    )
+    # El Notification puede cambiar question por permission, y el barrido puede conservar el id
+    # del hook después de vencer. La pregunta viva manda; vencida sólo se contesta en pantalla.
+    if not _hook_vivo(p):
+        p = None
+    qs = questions_of(p) if p else []
+    vencido = explicito and n.get("kind") in ("permission", "question") and p is None
     if (
         n.get("kind") != "question"
+        and not qs
         and not vencido
         and not (n.get("kind") == "dialog" and (explicito or s.get("auto_aprobar_omitido")))
     ):
         return None
-    if s.get("pending_id") and p is None:
+    if s.get("pending_id") and p is None and not vencido:
         return None
-    qs = questions_of(p) if p else []
     if qs:
         parcial = s.get("respuestas_hook") or {}
         answers = parcial.get("answers", {}) if parcial.get("request_id") == p["request_id"] else {}
@@ -217,7 +222,7 @@ def es_trabajo(s, d):
         return False
     if ses.autoaprobar_opcion(d, s.get("agent")) is not None:
         return False
-    if (s.get("needs") or {}).get("kind") == "question":
+    if (s.get("needs") or {}).get("kind") == "question" or d.get("questions"):
         return True
     # Una omisión no prueba que sea trabajo. Sólo consultas inequívocas; lo ambiguo queda humano.
     return bool(re.match(r"[¿]?(cómo seguimos|qué hacemos|cuál opción|how should we|which option|what should we)", q))
@@ -229,6 +234,7 @@ def clave(s, d):
         s["session_id"],
         n.get("coda_at") or n.get("since") or s.get("dialog_at"),
         " ".join(str(d.get("question", "")).split()),
+        " ".join(str(d.get("detail", "")).split()),
         [{"n": o.get("n"), "text": " ".join(str(o.get("text", "")).split())} for o in d.get("options", [])],
     ]
 
@@ -426,12 +432,20 @@ def _hook(s, d, texto):
 
 
 def _terminal(s, d, opcion, texto):
+    with state.lock:
+        p = deepcopy(ses.pending.get(s.get("pending_id")))
+    if s.get("pending_id") and not _hook_vivo(p):
+        # Sólo para esta respuesta con diálogo revalidado. No habilita envíos generales ni
+        # toca el pendiente compartido: puede estar vencido aunque todavía figure en la tarjeta.
+        s = {**s, "pending_id": None}
     if bloqueo := ses.send_blocked(s):
         return bloqueo
     actual, motivo = ses._dialogo_en_pantalla(s, d)
     if not actual:
         return 409, {"error": motivo}
-    if " ".join((actual.get("question") or "").split()) != " ".join((d.get("question") or "").split()):
+    if any(
+        " ".join((actual.get(k) or "").split()) != " ".join((d.get(k) or "").split()) for k in ("question", "detail")
+    ):
         return 409, {"error": "la pregunta cambió"}
     if texto is not None:
         return _texto_coda(s, d, texto)

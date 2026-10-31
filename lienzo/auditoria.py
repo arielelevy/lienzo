@@ -96,6 +96,61 @@ def _min(a: dt.datetime, b: dt.datetime | None) -> float:
     return (a - b).total_seconds() / 60 if b else 0.0
 
 
+def validar_espera(d: dict) -> tuple[int, dict] | None:
+    if not isinstance(d.get("from"), str) or not d["from"].strip():
+        return 400, {"error": "falta from: coordinadora del repo"}
+    if d.get("motivo") is None:
+        return None  # cancelar
+    motivo, hasta = d["motivo"], d.get("hasta")
+    if not isinstance(motivo, str) or not motivo.strip() or len(motivo) > 500:
+        return 400, {"error": "motivo debe tener entre 1 y 500 caracteres"}
+    try:
+        fecha = dt.datetime.fromisoformat(hasta) if isinstance(hasta, str) else None
+    except ValueError:
+        fecha = None
+    if fecha is None or fecha.tzinfo is None or fecha <= dt.datetime.now(dt.UTC):
+        return 400, {"error": "hasta debe ser una fecha ISO futura con zona horaria"}
+    return None
+
+
+def declarar_espera(s: dict, d: dict, todas: list) -> tuple[int, dict]:
+    """Con el lock de sesiones tomado por el llamador; sólo la ★ viva del mismo repo."""
+    if rechazo := validar_espera(d):
+        return rechazo
+    coordinadora = next((x for x in todas if x.get("session_id") == d["from"]), None)
+    if not (
+        coordinadora
+        and coordinadora.get("coordinator")
+        and coordinadora.get("alive")
+        and coordinadora.get("state") != "muerta"
+        and not coordinadora.get("stopped_by")
+        and s.get("repo_key")
+        and coordinadora.get("repo_key") == s["repo_key"]
+    ):
+        return 403, {"error": "sólo la coordinadora viva del mismo repo puede declarar la espera"}
+    if d.get("motivo") is None:
+        s.pop("espera_declarada", None)
+    else:
+        s["espera_declarada"] = {
+            "por": d["from"],
+            "motivo": d["motivo"].strip(),
+            "hasta": d["hasta"],
+            "prompt_id": s.get("prompt_id"),
+            "last_prompt": s.get("last_prompt"),
+            "state_since": s.get("state_since"),
+        }
+    return 200, {"ok": True, "espera_declarada": s.get("espera_declarada")}
+
+
+def _espera_vigente(s: dict, coordinadora: dict | None) -> dict | None:
+    espera = s.get("espera_declarada")
+    if not isinstance(espera, dict) or not coordinadora or espera.get("por") != coordinadora["session_id"]:
+        return None
+    if any(espera.get(k) != s.get(k) for k in ("prompt_id", "last_prompt", "state_since")):
+        return None
+    return espera if _t(espera.get("hasta")) else None
+
+
 def _regla_apagada(reglas: list, frente: str, coordinadora: str) -> dict | None:
     """La regla `on_stop` repetida de `frente` que está apagada y debería llevarle los informes a la
     coordinadora, si no hay otra viva hacia ella. Cuenta también la que quedó apuntando a una
@@ -251,6 +306,20 @@ def clasificar(
                     "error": str(s["last_error"])[:200],
                     "coordinadora": c["session_id"] if c else None,
                     "sugerencia": "el turno se cortó con error: mandarle «Continuar» (o Reintentar en la tarjeta)",
+                }
+            )
+            continue
+        if espera := _espera_vigente(s, c):
+            vencida = _t(espera["hasta"]) <= ahora
+            out.append(
+                {
+                    **base,
+                    "tipo": "bloqueo_olvidado" if vencida else "espera_declarada",
+                    "coordinadora": c["session_id"],
+                    "motivo": espera["motivo"],
+                    "hasta": espera["hasta"],
+                    "evidencia": f"{espera['por']}|{espera['hasta']}|{espera['motivo']}",
+                    "sugerencia": "revisar la espera declarada por la coordinadora" if vencida else espera["motivo"],
                 }
             )
             continue

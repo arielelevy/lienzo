@@ -42,6 +42,40 @@ No reemplaza las reglas de aprobación, baselines y gates de cada repo, ni los r
   No despertar modelos para confirmar mensajes ni repetir consultas de estado
   cuando hay callbacks fiables. Acusar y verificar las entregas que lo requieran.
 
+## Controles antes de repartir, aplicar y cerrar (openSeec, 2026-10-31)
+
+- Antes de lanzar: `c.fichas_en_conflicto(repo)` cruza «Archivos y dueños» de las fichas
+  abiertas. Resolver cada solape antes de enviar los encargos. Usar rutas en backticks,
+  relativas al repo, una por entrada; no esconder archivos con dueño en prosa.
+- Antes de usar un recurso: `c.esperar_turno("motores", sid, motivo="medición")` bloquea
+  hasta tenerlo y lanza al fallar o vencer. `c.exigir_turno` falla de inmediato si está ocupado.
+  Imprimir `c.pedir_turno` no corta una cadena `&&`: un 202 todavía está en cola.
+  Soltar el recurso con `finally: c.liberar_turno(...)` después del trabajo.
+- Para difusiones sin informes: `c.enviar_seguro(s, texto, sin_aviso=True)` con `c.YO`
+  configurado. El silencio sigue al pedido, también al reenviarlo para confirmar entrada.
+  No pedir `ESTADO:` ni un acuse para un aviso que no requiere respuesta. No deducir
+  «sin trabajo» de «sin archivos»: una revisión sin ediciones puede ser un informe útil.
+- Antes de cerrar un frente: revisar las pruebas rojas citadas en su informe y en los de
+  los frentes que dependen de él. Cada roja cruzada queda registrada con caso, evidencia,
+  dueño vivo y siguiente paso. Si falta dueño, avisar y mantener el frente abierto.
+  `cerrar_sesion` no conoce los resultados de pruebas: este control es de la coordinadora.
+- Las copias para hunks o mutaciones son copias físicas. Nunca junctions, symlinks ni
+  hardlinks hacia carpetas o archivos vivos que puedan modificarse. Revisar también los
+  enlaces que ya trae el árbol fuente; copiar uno que contiene enlaces puede conservar
+  referencias al original. No usar `mklink`, `junction` ni `git worktree` como sustituto
+  de aislamiento de todos los archivos que el ensayo escribe.
+- Antes de pedir o aplicar hunks: leer los bytes actuales del destino y contar CRLF/LF.
+  El hunk debe conservar los finales del destino; revisar el diff y volver a contar
+  después de aplicarlo. Si el archivo ya mezcla finales, informar la mezcla antes de
+  normalizar todo. Para un archivo uniforme, generar el contenido con `\n` internamente,
+  convertir una sola vez al final original y escribir bytes con `Path.write_bytes`.
+  `Path.write_text` con traducción de saltos de Windows puede introducir CRLF adicionales.
+  No normalizar archivos ajenos al hunk ni reemplazar un staging completo sobre el repo vivo.
+- Si un frente espera la suite global: la coordinadora puede usar
+  `c.declarar_espera(s, "suite global", "2026-10-31T12:00:00-03:00")` con un vencimiento
+  futuro. `c.declarar_espera(s)` cancela. Un pedido nuevo, un cambio de estado o de
+  coordinadora invalida la espera; permisos y errores siguen avisando.
+
 ## Lo que el lienzo ya hace por estas reglas
 
 - **Esperas clasificadas y sesiones olvidadas**: la auditoría cada 5 min (`lienzo/auditoria.py`) separa trabajo

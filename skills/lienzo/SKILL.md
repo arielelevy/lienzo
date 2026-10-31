@@ -367,10 +367,12 @@ c.cablear(solo_si="ESTADO:")  # sólo avisan los turnos que cierran con ESTADO:
 a = c.aviso("Subí el contrato a v3: …", [fa, fb, fc])[1]  # 1 aviso a YO cuando confirmen todos
 c.aviso_estado(a["id"])  # quién confirmó, con su nota
 c.pedir_turno("navegador", sid, ttl_min=30, motivo="agénticas")  # 200 tuyo · 202 en cola
+c.esperar_turno("navegador", sid, ttl_min=30, motivo="agénticas")  # sólo retorna con turno; error/timeout lanza
 c.liberar_turno("navegador", sid)  # el siguiente lo recibe solo
 c.politica_turno("motores", ttl_max_min=60, mem_min_gb=3)  # lo decide la coordinadora
 c.memoria()  # {bajo, mem_free_gb, cerrar: [la quieta más vieja primero]}
 c.enviar(s, "entrega recibida", sin_aviso=True)  # el acuse no vuelve como aviso
+c.enviar_seguro(s, "fuentes congeladas; sin acuse", sin_aviso=True)  # también conserva el silencio al reenviar
 c.trabajo("miapp")  # dónde se va el tiempo de la ronda (72 h)
 ```
 

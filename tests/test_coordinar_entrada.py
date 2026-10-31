@@ -150,3 +150,29 @@ def test_reubicar_no_distingue_barras_ni_mayusculas_en_la_carpeta(monkeypatch):
     r = c.enviar_seguro(_tarjeta("pid-100"), "leé el encargo Q", enlazar=False, espera=2, confirmar=True)
     assert (r["ok"], r["sid"]) == (True, "uuid-1")
     assert enviados == ["/sessions/pid-100/send"]
+
+
+def test_sin_aviso_se_conserva_al_reenviar_confirmacion(monkeypatch):
+    enviados = _server(monkeypatch, entra_en=2)
+    original = c.pedir
+    cuerpos = []
+
+    def pedir(m, r, cuerpo=None, timeout=20):
+        if m == "POST":
+            cuerpos.append(cuerpo)
+        return original(m, r, cuerpo, timeout=timeout)
+
+    monkeypatch.setattr(c, "YO", "coord")
+    monkeypatch.setattr(c, "pedir", pedir)
+    res = c.enviar_seguro(_tarjeta("u1"), "leé el encargo F", enlazar=False, espera=2, confirmar=True, sin_aviso=True)
+    assert res["ok"] and len(enviados) == 2
+    assert all(x["sin_aviso"] == "coord" for x in cuerpos)
+
+
+def test_seguro_sin_aviso_exige_yo(monkeypatch):
+    import pytest
+
+    _server(monkeypatch)
+    monkeypatch.setattr(c, "YO", "")
+    with pytest.raises(ValueError, match="sin_aviso necesita c.YO"):
+        c.enviar_seguro(_tarjeta("u1"), "sin acuse", sin_aviso=True)

@@ -296,3 +296,203 @@ def test_permiso_vencido_con_dialogo_en_pantalla_se_contesta_por_la_terminal(mon
     otro = {**src, "dialog": None, "pregunta_respondida": None}
     monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": ["nada"]})
     assert preguntas.responder(otro, {"opcion": 1})[0] == 409
+
+
+def test_notification_permission_no_bloquea_cuatro_preguntas_hook(monkeypatch):
+    import preguntas
+
+    src = {
+        "session_id": "F",
+        "state": "te_necesita",
+        "pending_id": "hook-F",
+        "needs": {"kind": "permission", "where": "terminal"},
+    }
+    qs = [
+        {"question": nombre, "options": [{"label": "Sí"}, {"label": "No"}]}
+        for nombre in ("Motor", "K8s", "Helm", "Ausencias")
+    ]
+    p = {"request_id": "hook-F", "tool_name": "AskUserQuestion", "tool_input": {"questions": qs}}
+    monkeypatch.setattr(ses, "pending", {"hook-F": p})
+    monkeypatch.setattr(ses, "touch", lambda s: None)
+    calls = []
+    monkeypatch.setattr(ses, "answer_pending", lambda *a, **k: (calls.append(k), (200, {}))[1])
+    monkeypatch.setattr(ses, "run_send", lambda *a, **k: pytest.fail("hook vivo: no teclear"))
+    assert preguntas.obtener(src)["question"] == "Motor"  # también se puede derivar a la coordinadora
+    for nombre in ("Motor", "K8s", "Helm", "Ausencias"):
+        assert preguntas.obtener(src, explicito=True)["question"] == nombre
+        assert preguntas.responder(src, {"opcion": 2})[0] == 200
+    assert calls == [{"answers": {q["question"]: "No" for q in qs}}]
+
+
+@pytest.mark.parametrize("residual", [None, "ausente", "vencido"])
+def test_pending_residual_no_encierra_responder_entre_dos_409(monkeypatch, residual):
+    import preguntas
+
+    dialogo = {"question": "Motor", "options": [{"n": 1, "text": "Sí"}, {"n": 2, "text": "No"}], "selected": 1}
+    src = {
+        "session_id": "F",
+        "agent": "claude",
+        "pid": 999,
+        "state": "te_necesita",
+        "pending_id": residual,
+        "needs": {"kind": "permission", "where": "terminal"},
+        "dialog": dialogo,
+    }
+    p = {
+        "request_id": "vencido",
+        "tool_name": "AskUserQuestion",
+        "expires_at": "2026-01-01T00:00:00Z",
+        "tool_input": {"questions": [{"question": "Motor", "options": [{"label": "Sí"}, {"label": "No"}]}]},
+    }
+    monkeypatch.setattr(ses, "pending", {"vencido": p})
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": ["Motor", "> 1. Sí", "  2. No"]})
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    monkeypatch.setattr(ses, "answer_pending", lambda *a, **k: pytest.fail("no contestar al hook vencido"))
+    tecleado = []
+    monkeypatch.setattr(ses, "run_send", lambda s, t, **k: (tecleado.append(k.get("key")), (200, {}))[1])
+    assert preguntas.responder(src, {"opcion": 1})[0] == 200
+    assert tecleado == ["enter"]
+
+
+def test_pregunta_vencida_sin_dialogo_no_elige_recomendada(monkeypatch):
+    import preguntas
+
+    src = {
+        "session_id": "G",
+        "agent": "claude",
+        "pid": 999,
+        "state": "te_necesita",
+        "pending_id": "vencido",
+        "needs": {"kind": "permission", "where": "terminal"},
+    }
+    p = {
+        "request_id": "vencido",
+        "tool_name": "AskUserQuestion",
+        "expires_at": "2026-01-01T00:00:00Z",
+        "tool_input": {"questions": [{"question": "Motor", "options": [{"label": "Sí (Recommended)"}]}]},
+    }
+    monkeypatch.setattr(ses, "pending", {"vencido": p})
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": ["Working..."]})
+    monkeypatch.setattr(ses, "run_send", lambda *a, **k: pytest.fail("no elegir una recomendada sin diálogo"))
+    monkeypatch.setattr(ses, "answer_pending", lambda *a, **k: pytest.fail("hook vencido"))
+    assert preguntas.responder(src, {"opcion": 1})[0] == 409
+
+
+def test_cuatro_pestanas_vencidas_con_igual_encabezado_no_son_un_duplicado(monkeypatch):
+    import preguntas
+
+    src = {
+        "session_id": "F",
+        "agent": "claude",
+        "pid": 999,
+        "state": "te_necesita",
+        "pending_id": "ausente",
+        "needs": {"kind": "permission", "where": "terminal"},
+    }
+    monkeypatch.setattr(ses, "pending", {})
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    tecleado = []
+    monkeypatch.setattr(ses, "run_send", lambda s, t, **k: (tecleado.append(k.get("key")), (200, {}))[1])
+    for nombre in ("Motor", "K8s", "Helm", "Ausencias"):
+        lineas = ["Motor K8s Helm Ausencias", nombre, "> 1. Sí", "  2. No"]
+        src["dialog"] = ses.screen.dialog(lineas)
+        monkeypatch.setattr(ses, "read_screen", lambda s, lines=lineas: {"ok": True, "lines": lines})
+        assert preguntas.responder(src, {"opcion": 1})[0] == 200
+    assert tecleado == ["enter"] * 4
+
+
+def test_cambio_de_pestana_con_iguales_opciones_no_teclea(monkeypatch):
+    import preguntas
+
+    anterior = ses.screen.dialog(["Motor K8s Helm Ausencias", "Motor", "> 1. Sí", "  2. No"])
+    src = {
+        "session_id": "F",
+        "agent": "claude",
+        "pid": 999,
+        "state": "te_necesita",
+        "pending_id": "ausente",
+        "needs": {"kind": "permission"},
+        "dialog": anterior,
+    }
+    monkeypatch.setattr(ses, "pending", {})
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    monkeypatch.setattr(
+        ses, "read_screen", lambda s: {"ok": True, "lines": ["Motor K8s Helm Ausencias", "K8s", "> 1. Sí", "  2. No"]}
+    )
+    monkeypatch.setattr(ses, "run_send", lambda *a, **k: pytest.fail("no responder otra pestaña"))
+    assert preguntas.responder(src, {"opcion": 1})[0] == 409
+
+
+@pytest.mark.parametrize("barrera", [{"stopped_by": "otro"}, {"pid": None}])
+def test_pendiente_residual_no_salta_guardas_de_terminal(monkeypatch, barrera):
+    import preguntas
+
+    src = {
+        "session_id": "F",
+        "agent": "claude",
+        "pid": 999,
+        "state": "te_necesita",
+        "pending_id": "ausente",
+        "needs": {"kind": "permission"},
+        "dialog": {"question": "Motor", "options": [{"n": 1, "text": "Sí"}, {"n": 2, "text": "No"}], "selected": 1},
+        **barrera,
+    }
+    monkeypatch.setattr(ses, "pending", {})
+    monkeypatch.setattr(ses, "run_send", lambda *a, **k: pytest.fail("guarda omitida"))
+    assert preguntas.responder(src, {"opcion": 1})[0] == 409
+
+
+def test_responder_http_sale_del_bucle_409_con_pending_vencido(monkeypatch):
+    import sys
+    import threading
+    from pathlib import Path
+
+    import server
+    import state
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "lienzo"))
+    import coordinar as c
+
+    src = ses.new_session("F", "claude", "hook")
+    lineas = ["Motor K8s Helm Ausencias", "Motor", "> 1. Sí", "  2. No"]
+    src.update(
+        alive=True,
+        pid=999,
+        state="te_necesita",
+        pending_id="vencido",
+        needs={"kind": "permission", "where": "terminal"},
+        dialog=ses.screen.dialog(lineas),
+    )
+    registro = {"F": src}
+    monkeypatch.setattr(server, "sessions", registro)
+    monkeypatch.setattr(ses, "sessions", registro)
+    monkeypatch.setattr(
+        ses,
+        "pending",
+        {
+            "vencido": {
+                "request_id": "vencido",
+                "expires_at": "2026-01-01T00:00:00Z",
+                "tool_name": "AskUserQuestion",
+                "tool_input": {"questions": [{"question": "Motor", "options": [{"label": "Sí"}]}]},
+            }
+        },
+    )
+    monkeypatch.setattr(ses, "read_screen", lambda s: {"ok": True, "lines": lineas})
+    monkeypatch.setattr(ses.backend, "agent_alive", lambda s: True)
+    tecleado = []
+    monkeypatch.setattr(ses, "run_send", lambda s, t, **k: (tecleado.append(k.get("key")), (200, {}))[1])
+    Path(state.SESSIONS).mkdir(parents=True, exist_ok=True)
+    instance = server.QuietServer(("127.0.0.1", 0), server.Handler)
+    hilo = threading.Thread(target=instance.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    hilo.start()
+    monkeypatch.setattr(c, "BASE", f"http://127.0.0.1:{instance.server_port}")
+    monkeypatch.setattr(c, "YO", "")
+    try:
+        assert c.responder("F", opcion=1)[0] == 200
+        assert tecleado == ["enter"]
+        assert src["respuesta_coordinadora"]["texto"] == "Sí"
+    finally:
+        instance.shutdown()
+        instance.server_close()
+        hilo.join(2)

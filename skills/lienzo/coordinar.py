@@ -16,6 +16,7 @@ apenas se mueve un encargo de una tarjeta a otra.
 import datetime
 import hashlib
 import json
+import math
 import os
 import posixpath
 import re
@@ -170,7 +171,9 @@ def _sucesora(code, res):
     return res.get("sucesora") if code == 404 and isinstance(res, dict) else None
 
 
-def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, reintentos=2, confirmar=False):
+def enviar_seguro(
+    s, texto, proyecto=None, letra=None, enlazar=True, espera=8, reintentos=2, confirmar=False, sin_aviso=False
+):
     """Como `enviar`, pero no da por hecho que llegó: devuelve {"ok", "code", "motivo", "sid"}.
 
     Un 200 sólo dice que el server aceptó el pedido. Acá además se verifica que la tarjeta lo tomó
@@ -223,10 +226,10 @@ def enviar_seguro(s, texto, proyecto=None, letra=None, enlazar=True, espera=8, r
                 "sid": sid,
             }
         previos = _prompts(sid) if confirmar else None
-        code, res = pedir("POST", f"/sessions/{sid}/send", _cuerpo_envio(sid, texto, enlazar), timeout=80)
+        code, res = pedir("POST", f"/sessions/{sid}/send", _cuerpo_envio(sid, texto, enlazar, sin_aviso), timeout=80)
         if code == 200:
             r = _tomado(s, sid, res, antes, ya_corria, espera)
-            return _confirmar_entrada(r, s, texto, previos, enlazar, espera) if confirmar else r
+            return _confirmar_entrada(r, s, texto, previos, enlazar, espera, sin_aviso) if confirmar else r
         if (nueva := _sucesora(code, res)) and nueva != sid and saltos < 3:
             saltos += 1
             s = next((x for x in sesiones() if x["session_id"] == nueva), {**s, "session_id": nueva})
@@ -332,7 +335,7 @@ def entro(s, texto, previos=()):
     return "pantalla" if lineas and huella in _plano(" ".join(lineas)) else None
 
 
-def _confirmar_entrada(r, s, texto, previos, enlazar, espera):
+def _confirmar_entrada(r, s, texto, previos, enlazar, espera, sin_aviso=False):
     """`enviar_seguro(confirmar=True)` después de un 200: espera a verlo entrar y reenvía una sola vez si
     no aparece en ningún lado."""
     de_pid = s["session_id"].startswith("pid-")  # el id al que se mandó, antes de reubicarla
@@ -374,7 +377,10 @@ def _confirmar_entrada(r, s, texto, previos, enlazar, espera):
         if vuelta == 0:
             reenviado = True
             code, _ = pedir(
-                "POST", f"/sessions/{s['session_id']}/send", _cuerpo_envio(s["session_id"], texto, enlazar), timeout=80
+                "POST",
+                f"/sessions/{s['session_id']}/send",
+                _cuerpo_envio(s["session_id"], texto, enlazar, sin_aviso),
+                timeout=80,
             )
             if code != 200:
                 break
@@ -780,6 +786,49 @@ def liberar_turno(recurso, session_id):
     el dueño, el lienzo le avisa al dueño que dejó de tenerlo."""
     por = f"&por={urllib.parse.quote(YO)}" if YO and YO != session_id else ""
     return pedir("DELETE", f"/turnos/{recurso}?session_id={urllib.parse.quote(session_id)}{por}")
+
+
+def exigir_turno(recurso, session_id, ttl_min=None, motivo=None):
+    """Sólo retorna (200, respuesta) con otorgado true; en cola o error lanza y retira el pedido."""
+    return esperar_turno(recurso, session_id, ttl_min, motivo, timeout=1, esperar=False)
+
+
+def esperar_turno(recurso, session_id, ttl_min=None, motivo=None, timeout=3600, cada=5, *, esperar=True):
+    """Bloquea hasta un 200 con otorgado true. Error, interrupción o timeout cortan la corrida.
+
+    Al abandonar retira el pedido (o suelta el turno que pudo otorgarse durante la espera).
+    `cada` debe estar entre 0 y 60 s, sin incluir cero. No renueva después de retornar.
+    """
+    for nombre, valor in (("timeout", timeout), ("cada", cada)):
+        if isinstance(valor, bool) or not isinstance(valor, (int, float)) or not math.isfinite(valor) or valor <= 0:
+            raise ValueError(f"{nombre} debe ser un número finito mayor que cero")
+    if cada > 60:
+        raise ValueError("cada no puede superar 60 segundos")
+    fin = time.monotonic() + timeout
+    try:
+        while True:
+            code, res = pedir_turno(recurso, session_id, ttl_min, motivo)
+            if code == 200 and isinstance(res, dict) and res.get("otorgado") is True:
+                return code, res
+            if not esperar or code not in (200, 202):
+                raise RuntimeError(f"turno {recurso} no otorgado: {code} {res}")
+            restante = fin - time.monotonic()
+            if restante <= 0:
+                raise TimeoutError(f"turno {recurso} no otorgado en {timeout} s")
+            time.sleep(min(cada, restante))
+    except BaseException:
+        code, res = liberar_turno(recurso, session_id)
+        if code not in (200, 404):
+            print(f"no se pudo retirar el pedido de turno {recurso}: {code} {res}", file=sys.stderr)
+        raise
+
+
+def declarar_espera(s, motivo=None, hasta=None):
+    """La coordinadora YO declara una espera hasta una fecha ISO con zona; motivo=None la cancela."""
+    if not YO:
+        raise ValueError("declarar_espera necesita c.YO")
+    sid = s["session_id"] if isinstance(s, dict) else s
+    return pedir("PUT", f"/sessions/{sid}/espera", {"from": YO, "motivo": motivo, "hasta": hasta})
 
 
 def politica_turno(recurso, ttl_max_min=None, mem_min_gb=None):

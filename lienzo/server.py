@@ -1161,6 +1161,25 @@ def validar_coordinator(d: dict) -> tuple[int, dict] | None:
     return validar_on(d)
 
 
+def accion_espera(s: dict, d: dict) -> tuple[int, dict]:
+    remotas = mirror.MIRROR.sessions()
+    with lock:
+        anterior = s.get("espera_declarada")
+        code, res = auditoria.declarar_espera(s, d, list(sessions.values()) + remotas)
+        if code != 200:
+            return code, res
+        try:
+            if not touch(s):
+                return 404, no_session()
+        except OSError:
+            if anterior is None:
+                s.pop("espera_declarada", None)
+            else:
+                s["espera_declarada"] = anterior
+            raise
+    return code, res
+
+
 def validar_send(d: dict) -> tuple[int, dict] | None:
     text, attachments = d.get("text", ""), d.get("attachments") or []
     if (
@@ -1543,6 +1562,7 @@ class AccionSesion:
 
 
 ACCIONES_SESION: dict[tuple[str, str], AccionSesion] = {
+    ("PUT", "espera"): AccionSesion(auditoria.validar_espera, accion_espera),
     ("POST", "responder"): AccionSesion(preguntas.validar, preguntas.responder),
     ("POST", "claude-pipe"): AccionSesion(validar_claude_pipe, accion_claude_pipe),
     ("PUT", "copycat"): AccionSesion(validar_copycat, accion_copycat),
