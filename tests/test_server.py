@@ -1805,14 +1805,66 @@ def test_escape_va_en_cualquier_estado(aislado, monkeypatch):
 def test_mensaje_nativo_directo_dibuja_la_flecha(aislado, monkeypatch):
     origen, copia, _ = _traspaso(monkeypatch)
     origen["native_name"] = "lienzo-A"
-    raw = ('Another Claude session sent a message:\n<cross-session-message from="uds:x" from-name="lienzo-A">'
-           "hola</cross-session-message>\n\nThis came from another Claude session")
+    raw = (
+        'Another Claude session sent a message:\n<cross-session-message from="uds:x" from-name="lienzo-A">'
+        "hola</cross-session-message>\n\nThis came from another Claude session"
+    )
     antes = len(st.links.snapshot())
     ses.link_peer_message(copia, raw)
     nuevos = st.links.snapshot()[antes:]
     assert [(l["from"], l["to"], l["kind"], l["text"]) for l in nuevos] == [(OLD, SID, "native", "hola")]
-    ses.link_peer_message(copia, raw.replace("lienzo-A", "nadie"))  # origen desconocido: sin flecha
-    assert len(st.links.snapshot()) == antes + 1
+    # origen desconocido: queda igual en el historial, sin flecha (from None) y con el nombre nativo
+    # (decisión de Ariel, 2026-10-30: el canal nativo entre Claudes, con registro en el lienzo)
+    ses.link_peer_message(copia, raw.replace("lienzo-A", "nadie"))
+    ultimo = st.links.snapshot()[-1]
+    assert len(st.links.snapshot()) == antes + 2
+    assert (ultimo["from"], ultimo["to"], ultimo["kind"], ultimo["from_name"]) == (None, SID, "native", "nadie")
+
+
+def _mensaje_encolado(uuid, nombre, texto):
+    """Un SendMessage que llega con el turno en curso: Claude Code lo guarda como `queued_command`, sin
+    UserPromptSubmit (opensyync, 2026-10-30), así que el hook no lo ve."""
+    prompt = f'<cross-session-message from="uds:x" from-name="{nombre}" from-mode="prompting">\n{texto}</cross-session-message>'
+    return {
+        "type": "attachment",
+        "uuid": uuid,
+        "timestamp": "2026-10-30T12:03:14Z",
+        "isSidechain": False,
+        "attachment": {"type": "queued_command", "prompt": prompt},
+    }
+
+
+def test_transcripcion_guarda_los_mensajes_nativos_encolados_en_el_turno(tmp_path):
+    lineas = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "promptId": "p1",
+            "timestamp": "2026-10-30T12:00:00Z",
+            "message": {"role": "user", "content": "trabajá"},
+        },
+        _mensaje_encolado("q1", "lienzo-A", "coordinemos graph-states.js"),
+        {**_mensaje_encolado("q2", "lienzo-A", "de un subagente"), "isSidechain": True},
+    ]
+    f = tmp_path / "t.jsonl"
+    f.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lineas) + "\n", encoding="utf-8")
+    turnos = ses.transcripts.parse_claude(str(f))["turns"]
+    assert turnos[-1]["peer_queued"] == [
+        {"id": "q1", "from": "lienzo-A", "text": "coordinemos graph-states.js", "ts": "2026-10-30T12:03:14Z"}
+    ]
+
+
+def test_mensaje_nativo_encolado_deja_la_flecha_una_sola_vez(aislado, monkeypatch):
+    origen, copia, _ = _traspaso(monkeypatch)
+    origen["native_name"] = "lienzo-A"
+    turno = {"id": "p1", "peer_queued": [{"id": "q1", "from": "lienzo-A", "text": "hola", "ts": None}]}
+    antes = len(st.links.snapshot())
+    ses.link_queued_peers(copia, turno)
+    ses.link_queued_peers(copia, turno)  # cada refresco vuelve a leer el mismo turno
+    nuevos = st.links.snapshot()[antes:]
+    assert [(l["from"], l["to"], l["kind"], l["text"], l["native_id"]) for l in nuevos] == [
+        (OLD, SID, "native", "hola", "q1")
+    ]
 
 
 def test_recarga_detecta_cambios_y_no_relanza_sobre_codigo_roto(tmp_path):

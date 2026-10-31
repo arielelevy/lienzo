@@ -362,6 +362,18 @@ def parse_claude(path: str, max_bytes: int = TAIL_BYTES) -> dict:
                 cur["ts_end"] = ts or cur["ts_end"]
             continue
 
+        if t == "attachment":
+            # un SendMessage que llega con el turno en curso queda como queued_command, sin
+            # UserPromptSubmit: el hook no lo ve y sólo así queda registrado (opensyync, 2026-10-30)
+            att = d.get("attachment") or {}
+            prompt = att.get("prompt") if att.get("type") == "queued_command" else None
+            peer = peer_message(prompt) if isinstance(prompt, str) and not d.get("isSidechain") else None
+            if peer:
+                ensure_turn(ts).setdefault("peer_queued", []).append(
+                    {"id": d.get("uuid"), "from": peer[0], "text": _short(peer[1], 2000), "ts": ts}
+                )
+            continue
+
         if t not in ("user", "assistant"):
             continue
 

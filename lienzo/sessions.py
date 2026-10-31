@@ -389,13 +389,27 @@ def link_peer_message(s: dict, raw: str) -> None:
     canal nativo, aca o en otra PC. Antes solo habia flecha si el lienzo mediaba (link_to). Se llama
     con el lock tomado."""
     pm = transcripts.peer_message(raw or "")
-    if not pm:
+    if pm:
+        _link_native(s, *pm)
+
+
+def _link_native(s: dict, nombre: str, texto: str, native_id: str | None = None) -> None:
+    """Registra un mensaje nativo hacia `s`. Entre Claudes el canal es el nativo con registro en el lienzo
+    (decision de Ariel, 2026-10-30): todo mensaje queda en el historial; si el origen no es una tarjeta
+    conocida queda sin flecha (`from` None) y con `from_name`. Con `native_id` no se registra dos veces."""
+    if native_id and any(l.get("native_id") == native_id for l in links.snapshot()):
         return
-    nombre, texto = pm
     candidatas = [o for o in sessions.values() if o is not s] + (mirror.MIRROR.sessions() if mirror else [])
     src = next((o["session_id"] for o in candidatas if nombre and o.get("native_name") == nombre), None)
-    if src:
-        add_link(src, s["session_id"], texto, "native")
+    extra = {"native_id": native_id} if native_id else {}
+    add_link(src, s["session_id"], texto, "native", extra={**extra, **({} if src else {"from_name": nombre})})
+
+
+def link_queued_peers(s: dict, t: dict) -> None:
+    """Los SendMessage que llegaron con el turno `t` en curso (`peer_queued`, de la transcripcion): sin
+    UserPromptSubmit, el hook no los ve. Cada refresco relee el turno: `native_id` evita repetirlos."""
+    for m in t.get("peer_queued") or ():
+        _link_native(s, m.get("from") or "", m.get("text") or "", m.get("id") or None)
 
 
 def prompt_origin(s: dict, raw: str) -> str:
@@ -417,7 +431,13 @@ def save_session(s: dict) -> None:
 
 
 def add_link(
-    src: str | None, dst: str, text: str, kind: str = "send", rule_id: str | None = None, consulta: str | None = None
+    src: str | None,
+    dst: str,
+    text: str,
+    kind: str = "send",
+    rule_id: str | None = None,
+    consulta: str | None = None,
+    extra: dict | None = None,
 ) -> None:
     """kind: send (inyeccion manual entre sesiones) | native (canal Claude<->Claude por SendMessage) |
     rule (nacido de una regla 'cuando termine' / 'a las HH:MM'; trae rule_id) | user (lo que el
@@ -436,6 +456,7 @@ def add_link(
         link["rule_id"] = rule_id
     if consulta:
         link["consulta"] = consulta
+    link.update(extra or {})
     links.add(link)
 
 
@@ -1497,6 +1518,8 @@ def apply_transcript(s: dict, r: dict, force_state: bool = False) -> bool:
         apply_repo(s, s["cwd"])
     if ts:
         apply_turn(s, ts[-1], force_state)
+    for t in ts[-3:]:  # un mensaje encolado en un turno que cerró entre dos refrescos también cuenta
+        link_queued_peers(s, t)
     choose_title(s, r["title"])
     if path := s.get("transcript_path"):
         s["model"] = model_of(s["agent"], path) or s.get("model")
@@ -1725,7 +1748,8 @@ def attach_transcript(s: dict, pi_session: tuple[str, str] | None = None, *, pi_
     cwd = s.get("cwd") or backend.cwd_of(s)
     exacta_claude = (
         claude_transcript(s["pid"], procs.creation_filetime(s["pid"]))
-        if s["agent"] == "claude" and s.get("backend") != "tmux" else None
+        if s["agent"] == "claude" and s.get("backend") != "tmux"
+        else None
     )
     sid, tpath = exacta_claude or (
         pi_session
