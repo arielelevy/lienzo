@@ -589,10 +589,19 @@ def test_arrancar_no_duplica_hilo_vivo_ni_resetea_su_estado(canal, monkeypatch):
 
 
 def test_sin_espejo_nunca_borra(canal):
-    _arbol(canal["origen"])
-    _escribir(os.path.join(canal["destino"], "sobra.txt"), b"sobra")
+    # Este caso verifica conservación, no rendimiento de la copia masiva (cubierto arriba).
+    # Con 302 archivos rozaba el plazo de 60 s y fallaba antes de verificar los sobrantes.
+    datos = {"a.txt": b"origen", "sub/b.txt": b"otro archivo"}
+    sobrantes = {"sobra.txt": b"sobra", "sub/sobra.bin": b"conservar tambien"}
+    for rel, contenido in datos.items():
+        _escribir(os.path.join(canal["origen"], *rel.split("/")), contenido)
+    for rel, contenido in sobrantes.items():
+        _escribir(os.path.join(canal["destino"], *rel.split("/")), contenido)
     assert _correr(canal).estado == "terminado"
-    assert os.path.exists(os.path.join(canal["destino"], "sobra.txt"))
+    _igual(canal, datos)
+    for rel, contenido in sobrantes.items():
+        with open(os.path.join(canal["destino"], *rel.split("/")), "rb") as f:
+            assert f.read() == contenido
 
 
 def test_hash_del_archivo_es_el_de_la_lista_de_bloques():

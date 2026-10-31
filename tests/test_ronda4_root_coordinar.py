@@ -20,8 +20,10 @@ def test_lanzar_no_titula_ni_cablea_una_tarjeta_previa_que_adquiere_uuid(monkeyp
     monkeypatch.setattr(client.time, "sleep", lambda seconds: None)
     calls = []
     monkeypatch.setattr(client, "titular", lambda card, title: calls.append(("title", card["session_id"])))
-    monkeypatch.setattr(client, "regla_informe", lambda card, text: calls.append(("rule", card["session_id"])))
+    monkeypatch.setattr(
+        client, "regla_informe", lambda card, text, *, solo_si: calls.append(("rule", card["session_id"], solo_si))
+    )
     monkeypatch.setattr(client, "YO", "coordinadora")
     result = client.lanzar_y_titular("pc", "D:/Apps/lienzo", "encargo B", "codex", espera=2)
     assert result == new
-    assert calls == [("title", "pid-20"), ("rule", "pid-20")]
+    assert calls == [("title", "pid-20"), ("rule", "pid-20", "ESTADO:")]

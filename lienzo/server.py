@@ -109,13 +109,12 @@ from sessions import (
     answer_coda_ask,
     answer_dialog,
     answer_pending,
-    autorizar_denegado,
     clean_attachments,
     coda_viva,
     coda_vivo_en_turno,
     consume_events,
     cuotas_de_sesiones,
-    deshacer_autorizacion,
+    deshacer_resolucion_denegado,
     drop_session,
     escape_session,
     external_blocked,
@@ -128,6 +127,7 @@ from sessions import (
     read_screen,
     remotes_de_sesiones,
     repos_de_remote,
+    resolver_denegado,
     save_attachment,
     scan_pending,
     screen_loop,
@@ -1370,7 +1370,11 @@ def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     tablero (envio_del_tablero): la PC duena solo teclea."""
     # «Autorizar y que reintente»: corre en la PC duena (el cuerpo viaja entero), que es la que relee la
     # transcripcion. Se anota ANTES de teclear: el hook del pedido puede llegar antes de que el envio vuelva
-    antes = autorizar_denegado(s) if d.get("autoriza_denegado") is True else None
+    autoriza = d.get("autoriza_denegado") is True
+    deniega = d.get("deniega_denegado") is True
+    if autoriza and deniega:
+        return 400, {"error": "no se puede autorizar y denegar el mismo aviso"}
+    antes = resolver_denegado(s) if autoriza or deniega else None
     # un acuse («entrega recibida»): el turno que dispara no vuelve como aviso a quien lo mando
     # (cada acuse le cuesta un turno al frente, y ese turno le costaba otro a la coordinadora)
     pedido = d.get("sin_aviso")
@@ -1386,17 +1390,26 @@ def accion_send(s: dict, d: dict) -> tuple[int, dict]:
     if silenciar:
         with lock:
             s["sin_aviso"] = {"a": quien, "desde": time.time(), "texto": rl.normal_acuse(d.get("text", ""))}
-    with captura.origen(
-        de=d.get("from") if isinstance(d.get("from"), str) else None,
-        kind="native" if d.get("native") else ("send" if d.get("from") else "user"),
-        link_to=d.get("link_to") if isinstance(d.get("link_to"), str) else None,
-    ):
-        code, res = send_to_session(s, d.get("text", ""), d.get("attachments") or [])
-    if code != 200 and antes is not None:
-        deshacer_autorizacion(s, antes)
-    if code != 200 and silenciar:
-        with lock:
-            s["sin_aviso"] = previo
+
+    def deshacer_envio():
+        if silenciar:
+            with lock:
+                s["sin_aviso"] = previo
+        if antes is not None:
+            deshacer_resolucion_denegado(s, antes)
+
+    try:
+        with captura.origen(
+            de=d.get("from") if isinstance(d.get("from"), str) else None,
+            kind="native" if d.get("native") else ("send" if d.get("from") else "user"),
+            link_to=d.get("link_to") if isinstance(d.get("link_to"), str) else None,
+        ):
+            code, res = send_to_session(s, d.get("text", ""), d.get("attachments") or [])
+    except Exception:
+        deshacer_envio()
+        raise
+    if code != 200:
+        deshacer_envio()
     return code, res
 
 

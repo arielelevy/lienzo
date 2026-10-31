@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { abrirTablero, BASE, bloquearEscrituras, instalarTablero, sesiones } from "./tablero-fijo";
+import { abrirTablero, BASE, bloquearEscrituras, esperarQuietud, instalarTablero, sesiones } from "./tablero-fijo";
 
 /** Auto-aprobar TODO (peligroso) y los permisos denegados: lo que tiene que verse sí o sí. */
 
@@ -38,6 +38,56 @@ test("un permiso denegado por una regla se ve en la tarjeta con su comando", asy
   const bloque = page.locator(".card .needs.denied").first();
   await expect(bloque).toContainText("Denegado: Bash");
   await expect(bloque).toContainText("git push --force");
+  await expect(bloque.getByRole("button", { name: "Denegar", exact: true })).toBeVisible();
+});
+
+test("Denegar mantiene el rechazo y no autoriza ni pide reintentar, incluso si es grave", async ({ page }) => {
+  const lista = sesiones();
+  lista[0] = { ...lista[0], last_denied: { tool: "Bash", detalle: "taskkill /IM python.exe", motivo: "Interfere With Workloads", fuente: "transcript", grave: true, visto: "2026-10-31T11:00:00-03:00" } };
+  await abrirTablero(page, lista);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await esperarQuietud(page);
+  let cuerpo: Record<string, unknown> | undefined;
+  await page.route(`**/sessions/${lista[0].session_id}/send`, async route => {
+    cuerpo = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"chars":10}' });
+  });
+  const card = page.locator(`.card[data-sid="${lista[0].session_id}"]`);
+  const bloque = card.locator(".needs.denied");
+  const caja = await card.boundingBox();
+  for (const button of await bloque.getByRole("button").all()) {
+    const boton = await button.boundingBox();
+    expect(boton!.x + boton!.width).toBeLessThanOrEqual(caja!.x + caja!.width);
+  }
+  await page.screenshot({ path: "node_modules/.playwright-artifacts/denegar-celular.png", fullPage: true });
+  await bloque.getByRole("button", { name: "Denegar", exact: true }).click();
+  await expect.poll(() => cuerpo).toBeTruthy();
+  expect(cuerpo).toMatchObject({ deniega_denegado: true, attachments: [] });
+  expect(cuerpo).not.toHaveProperty("autoriza_denegado");
+  expect(String(cuerpo!.text)).toContain("No lo ejecutes ni lo reintentes");
+  expect(String(cuerpo!.text)).toContain("taskkill /IM python.exe");
+});
+
+test("resolver una denegación deshabilita ambas decisiones hasta que responda el envío", async ({ page }) => {
+  const lista = sesiones();
+  lista[0] = { ...lista[0], last_denied: { tool: "Bash", detalle: "python prueba.py", motivo: "auto mode", fuente: "transcript" } };
+  await abrirTablero(page, lista);
+  let terminar!: () => void;
+  const espera = new Promise<void>(resolve => { terminar = resolve; });
+  let enviado = false;
+  await page.route(`**/sessions/${lista[0].session_id}/send`, async route => {
+    enviado = true;
+    await espera;
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"chars":10}' });
+  });
+  const bloque = page.locator(`.card[data-sid="${lista[0].session_id}"] .needs.denied`);
+  try {
+    await bloque.getByRole("button", { name: "Denegar", exact: true }).click();
+    await expect.poll(() => enviado).toBe(true);
+    await expect(bloque.getByRole("button", { name: "Denegar", exact: true })).toBeDisabled();
+    await expect(bloque.getByRole("button", { name: "Autorizar y que reintente", exact: true })).toBeDisabled();
+  } finally { terminar(); }
+  await expect(bloque.getByRole("button", { name: "Denegar", exact: true })).toBeEnabled();
 });
 
 test("«Autorizar y que reintente» le avisa a la PC dueña que lo autorizó, para que deje de mostrarlo", async ({ page }) => {

@@ -1,6 +1,6 @@
 """Caso tarjetas-ajenas-e2e (encargo N, 2026-10-22): un server real en 7357 con LIENZO_HOME limpio en
 %TEMP%, alimentado por archivos de evento como los que deja el hook. Un frente con su regla on_stop hacia
-la coordinadora termina (SessionEnd) y su tarjeta se borra a los 60 s; una sesion nueva abierta despues en
+la coordinadora termina (SessionEnd) y su tarjeta se borra tras la retención de 120 s; una sesion nueva abierta despues en
 la misma carpeta NO hereda la regla; renombrada en el lienzo con el titulo del frente, si. Nunca toca el
 7321, ~/.lienzo ni las transcripciones reales. Sale 0 si todo se cumple, 1 si no, 2 si el server no arranca."""
 
@@ -103,7 +103,9 @@ def main() -> int:
 
         evento("SessionEnd", K, reason="other")
         t0 = time.monotonic()
-        ok = esperar(lambda: K not in tarjetas(), 120)
+        # DEAD_KEEP_S = 120 y liveness borra con edad > DEAD_KEEP_S cada 2 s.
+        # El margen cubre consumo del evento y planificación sin cambiar la retención real.
+        ok = esperar(lambda: K not in tarjetas(), 180)
         print(f"tarjeta del frente borrada: {ok} ({time.monotonic() - t0:.0f} s)")
         r = regla_del_frente()
         print("estacionada:", r.get("parked_from"), r.get("enabled"))

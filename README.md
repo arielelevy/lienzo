@@ -5,7 +5,7 @@ de Claude Code, Codex, coda y otros agentes, recibe sus informes y verifica lo p
 sesiones pueden correr en una PC o repartirse entre hasta 4 PCs emparejadas de la misma LAN.
 El tablero permite intervenir; el método organiza cómo se construye, se revisa y se aprende.
 
-**Versión 0.6.18.** [Novedades, validación y límites](docs/releases/0.6.18.md).
+**Versión 0.6.19.** [Novedades, validación y límites](docs/releases/0.6.19.md).
 
 [Instalación](#instalación) · [Coordinación](#la-coordinación-como-metodología) ·
 [Meta-harness](#el-meta-harness) · [Aprendizaje](#ia-prolog-y-aprendizaje-continuo) ·

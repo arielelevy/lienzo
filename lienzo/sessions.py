@@ -1365,20 +1365,20 @@ def _par_denegado(x: dict) -> list:
     return [x.get("tool"), x.get("detalle") or ""]
 
 
-def autorizar_denegado(s: dict) -> dict | None:
-    """El humano autorizo desde el tablero lo que se le denego («Autorizar y que reintente»): la
-    tarjeta lo anota y deja de mostrarlo. Sin esto, el aviso volvia en cada relectura del mismo turno,
+def resolver_denegado(s: dict) -> dict | None:
+    """El humano resolvió desde el tablero lo que se le denegó («Autorizar y que reintente»): la
+    tarjeta acusa tanto autorizar como mantener la denegación, sin cambiar políticas. Sin esto, el aviso volvia en cada relectura del mismo turno,
     porque el mensaje de autorizacion entra en medio del turno y no hay pedido nuevo que lo limpie
     (medido el 2026-10-09 en ar-it33940). Vale hasta el proximo pedido (hook_prompt_submit), salvo el
     del propio mensaje de autorizacion: se llama ANTES de teclearlo y deja `autorizando`, porque su
     UserPromptSubmit puede llegar antes o despues que este llamado y en los dos casos borraba lo
     autorizado, y la relectura volvia a poner el aviso (medido el 2026-10-10 en chesstudia C).
-    Devuelve lo que habia, para `deshacer_autorizacion` si el envio no entra; None si no habia aviso."""
+    Devuelve lo que habia, para `deshacer_resolucion_denegado` si el envio no entra; None si no habia aviso."""
     with lock:
         d = s.get("last_denied")
         if not d:
             return None
-        antes = {"last_denied": d, "denied_ok": s.get("denied_ok")}
+        antes = {"last_denied": d, "denied_ok": s.get("denied_ok"), "autorizando": s.get("autorizando")}
         ok = [list(p) for p in s.get("denied_ok") or []]
         for x in d.get("todas") or [d]:
             if _par_denegado(x) not in ok:
@@ -1386,11 +1386,15 @@ def autorizar_denegado(s: dict) -> dict | None:
         s["denied_ok"] = ok[-32:]
         s["last_denied"] = None
         s["autorizando"] = True
-        touch(s)
+        try:
+            touch(s)
+        except OSError:
+            s.update(antes)
+            raise
         return antes
 
 
-def deshacer_autorizacion(s: dict, antes: dict) -> None:
+def deshacer_resolucion_denegado(s: dict, antes: dict) -> None:
     """El mensaje de autorizacion no entro: el aviso vuelve como estaba."""
     with lock:
         s.update(antes)
@@ -1401,7 +1405,7 @@ def deshacer_autorizacion(s: dict, antes: dict) -> None:
 def set_denied(s: dict, d: dict) -> None:
     ok = s.get("denied_ok") or []
     if ok:
-        # lo ya autorizado no se vuelve a mostrar; lo nuevo del mismo turno, si
+        # lo ya resuelto no se vuelve a mostrar; este cache no concede permisos
         todas = [x for x in d.get("todas") or [d] if _par_denegado(x) not in ok]
         if not todas:
             return

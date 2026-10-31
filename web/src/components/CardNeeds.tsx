@@ -15,7 +15,7 @@ interface Props {
   /** la tarjeta muestra los botones rapidos: una ociosa no repite aca el aviso, va en esa fila */
   quick: boolean;
   writable: boolean;
-  actions: Pick<CardActions, "busy" | "codaDecide" | "pickDialog" | "autorizarDenegado">;
+  actions: Pick<CardActions, "busy" | "codaDecide" | "pickDialog" | "decidirDenegado">;
   onDecide: (requestId: string, decision: "allow" | "deny") => Promise<void>;
   onAnswer: (requestId: string, answers: Record<string, string>) => Promise<void>;
 }
@@ -24,7 +24,7 @@ interface Props {
  *  se contesta en la terminal (CODA), lo que una regla le denego y el dialogo de la TUI. Va antes
  *  que la respuesta: Permitir/Denegar es lo primero visible. */
 export function CardNeeds({ session: s, now, pending: p, quick, writable, actions, onDecide, onAnswer }: Props) {
-  const { busy, codaDecide, pickDialog, autorizarDenegado } = actions;
+  const { busy, codaDecide, pickDialog, decidirDenegado } = actions;
   // autorizar una denegacion que borra o pisa algo pide un segundo click, atado a ESA denegacion
   // (`visto`): si llega otra, el primer click no vale para la nueva
   const [confirmadaEn, setConfirmadaEn] = useState<string | null>(null);
@@ -84,12 +84,22 @@ export function CardNeeds({ session: s, now, pending: p, quick, writable, action
           {writable && (
             <div className="btns">
               <button
+                className="deny"
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmadaEn(null);
+                  decidirDenegado("deny");
+                }}
+              >Denegar</button>
+              <button
                 className={s.last_denied.grave ? "deny" : "allow"}
+                disabled={busy}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (s.last_denied?.grave && !confirmarGrave) return setConfirmadaEn(s.last_denied.visto ?? null);
                   setConfirmadaEn(null);
-                  autorizarDenegado();
+                  decidirDenegado("allow");
                 }}
               >
                 {s.last_denied.grave

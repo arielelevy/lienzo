@@ -1,9 +1,11 @@
 """«Autorizar y que reintente»: lo autorizado desde el tablero no vuelve a aparecer al releer el mismo
-turno (sessions.autorizar_denegado y el filtro de set_denied), lo nuevo del turno sí, y un pedido
+turno (sessions.resolver_denegado y el filtro de set_denied), lo nuevo del turno sí, y un pedido
 nuevo lo olvida. Medido el 2026-10-09 en ar-it33940: el aviso volvía en cada relectura."""
 
 import os
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,7 +33,7 @@ def test_lo_autorizado_no_vuelve_en_el_mismo_turno_y_lo_nuevo_si(aislado):  # no
     s = tarjeta()
     ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
     assert s["last_denied"]["detalle"] == "node cdp.mjs click"
-    ses.autorizar_denegado(s)
+    ses.resolver_denegado(s)
     assert s["last_denied"] is None
     # la relectura del mismo turno trae la misma denegacion: no vuelve
     ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
@@ -72,7 +74,7 @@ def test_denegacion_de_coda_conserva_su_comando_y_no_vuelve_tras_autorizarla(ais
     s["last_cmd"] = "curl.exe -sL https://y"  # coda siguio con otro comando, aprobado
     hooks_eventos.coda_log_activity(s)
     assert s["last_denied"]["detalle"] == "irm https://x | iex" and s["last_denied"]["visto"] == visto
-    ses.autorizar_denegado(s)
+    ses.resolver_denegado(s)
     s["last_cmd"] = "grep kiro"
     hooks_eventos.coda_log_activity(s)
     assert s["last_denied"] is None
@@ -133,3 +135,85 @@ def test_si_el_envio_de_la_autorizacion_falla_el_aviso_vuelve_como_estaba(aislad
     monkeypatch.setattr(server, "send_to_session", lambda t, texto, att: (409, {"error": "ocupada"}))
     server.accion_send(s, {"text": "autorizo", "attachments": [], "autoriza_denegado": True})
     assert s["last_denied"] == antes and not s["denied_ok"] and not s["autorizando"]
+
+
+def test_denegar_acusa_sin_reintentar_y_solo_oculta_lo_ya_resuelto(aislado, monkeypatch):  # noqa: F811
+    s = tarjeta()
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+    enviados = []
+    monkeypatch.setattr(server, "send_to_session", lambda t, texto, att: (enviados.append(texto), (200, {}))[1])
+    texto = "No autorizo el comando; no lo reintentes."
+    code, _ = server.accion_send(s, {"text": texto, "deniega_denegado": True})
+    assert code == 200 and enviados == [texto] and s["last_denied"] is None
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+    assert s["last_denied"] is None
+    ses.set_denied(s, {**DRIVE, "n": 2, "todas": [CLIC, DRIVE]})
+    assert s["last_denied"]["detalle"] == DRIVE["detalle"]
+
+
+def test_denegar_fallido_restaura_el_aviso(aislado, monkeypatch):  # noqa: F811
+    s = tarjeta()
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+    antes = dict(s["last_denied"])
+    monkeypatch.setattr(server, "send_to_session", lambda t, texto, att: (409, {"error": "ocupada"}))
+    code, _ = server.accion_send(s, {"text": "no autorizo", "deniega_denegado": True})
+    assert code == 409 and s["last_denied"] == antes and not s["denied_ok"] and not s["autorizando"]
+
+
+def test_no_se_puede_autorizar_y_denegar_a_la_vez(aislado, monkeypatch):  # noqa: F811
+    s = tarjeta()
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+    antes = dict(s["last_denied"])
+    enviados = []
+    monkeypatch.setattr(server, "send_to_session", lambda *args: enviados.append(args))
+    code, res = server.accion_send(s, {"text": "x", "deniega_denegado": True, "autoriza_denegado": True})
+    assert code == 400 and "autorizar y denegar" in res["error"]
+    assert enviados == [] and s["last_denied"] == antes
+
+
+def test_el_hook_del_mensaje_de_denegacion_conserva_el_acuse(aislado, monkeypatch):  # noqa: F811
+    s = tarjeta()
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+
+    def enviar(tarjeta_, texto, att):
+        ses.mark_sent(tarjeta_, texto)
+        hooks_eventos.hook_prompt_submit(tarjeta_, {"prompt": texto, "prompt_id": "deny1"})
+        return 200, {}
+
+    monkeypatch.setattr(server, "send_to_session", enviar)
+    code, _ = server.accion_send(s, {"text": "no autorizo", "deniega_denegado": True})
+    assert code == 200
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+    assert s["last_denied"] is None
+
+
+def test_si_falla_guardar_el_acuse_conserva_el_aviso(aislado, monkeypatch):  # noqa: F811
+    s = tarjeta()
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+    antes = {clave: s.get(clave) for clave in ("last_denied", "denied_ok", "autorizando")}
+
+    def falla_guardado(_s):
+        raise OSError("disco no disponible")
+
+    monkeypatch.setattr(ses, "touch", falla_guardado)
+    with pytest.raises(OSError, match="disco no disponible"):
+        ses.resolver_denegado(s)
+    assert {clave: s.get(clave) for clave in antes} == antes
+
+
+@pytest.mark.parametrize("flag", ["autoriza_denegado", "deniega_denegado"])
+def test_excepcion_de_envio_restaura_aviso_y_silencio(aislado, monkeypatch, flag):  # noqa: F811
+    s = tarjeta()
+    s["state"] = "termino"
+    s["autorizando"] = False
+    s["sin_aviso"] = {"a": "anterior", "desde": 1, "texto": "acuse anterior"}
+    ses.set_denied(s, {**CLIC, "n": 1, "todas": [CLIC]})
+    antes = {clave: s.get(clave) for clave in ("last_denied", "denied_ok", "autorizando", "sin_aviso")}
+
+    def falla_envio(*args):
+        raise OSError("fallo de transporte")
+
+    monkeypatch.setattr(server, "send_to_session", falla_envio)
+    with pytest.raises(OSError, match="fallo de transporte"):
+        server.accion_send(s, {"text": "decision", flag: True, "sin_aviso": "nuevo"})
+    assert {clave: s.get(clave) for clave in antes} == antes

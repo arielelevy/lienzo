@@ -259,8 +259,8 @@ test("Chrome remoto con página inventada", async ({ page, context }) => {
     .grid{display:flex;gap:22px;margin-top:42px}.card{background:white;border:1px solid #cadace;border-radius:14px;padding:28px;flex:1}
     strong{display:block;font-size:28px;margin:20px 0}.pill{background:#e1efe7;padding:8px 12px;border-radius:8px;font-size:16px}
     footer{margin-top:45px;font-size:16px;color:#537266}
-    </style><div class="tabs">Huerta · demostración　 ×　　 Manual de sensores　 ×　　 +</div>
-    <div class="url">←　→　↻　　 huerta.example.test / sectores</div><main><small>PROYECTO DE EJEMPLO</small>
+    </style><div class="tabs">Huerta · demostración\u3000 ×\u3000\u3000 Manual de sensores\u3000 ×\u3000\u3000 +</div>
+    <div class="url">←\u3000→\u3000↻\u3000\u3000 huerta.example.test / sectores</div><main><small>PROYECTO DE EJEMPLO</small>
     <h1>Riego por sectores</h1><p>Escenario inventado para mostrar Chrome remoto en Lienzo.</p><div class="grid">
     <div class="card">Sector norte<strong>Lectura recibida</strong><span class="pill">Riego programado</span></div>
     <div class="card">Sector sur<strong>Sin señal</strong><span class="pill">Esperando revisión</span></div>

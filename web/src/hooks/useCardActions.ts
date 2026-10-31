@@ -50,7 +50,7 @@ export function useCardActions(s: Session, toast: ToastFn) {
       return decision === "allow" ? "Permitido en su terminal" : "Denegado en su terminal";
     }, failMsg("contestar"));
 
-  const quickSend = async (text: string, extra: { autoriza_denegado?: boolean } = {}) => {
+  const quickSend = async (text: string, extra: { autoriza_denegado?: boolean; deniega_denegado?: boolean } = {}) => {
     setBusy(true);
     try {
       const r = await sessionsApi.send(s.session_id, { text, attachments: [], ...extra });
@@ -60,15 +60,19 @@ export function useCardActions(s: Session, toast: ToastFn) {
     finally { setBusy(false); }
   };
 
-  /** le avisa al agente que el humano autoriza lo que se le denego, para que lo reintente */
-  const autorizarDenegado = () => {
+  /** resuelve el aviso y le comunica al agente la decisión explícita del humano */
+  const decidirDenegado = (decision: Decision) => {
     const d = s.last_denied;
     if (!d) return;
     // todas las del turno, una por una: con una sola, «lo que se te denego» autorizaba tambien lo que
     // la tarjeta no mostraba (un rm -r detras de una suma inofensiva, 2026-10-04)
     const lista = d.todas && d.todas.length > 1 ? d.todas : [d];
     const que = lista.map((x, i) => `${lista.length > 1 ? `(${i + 1}) ` : ""}${x.detalle ? `${x.tool} ${x.detalle}` : x.tool}`).join("; ");
-    void quickSend(`El humano autoriza lo que se te denegó: ${que}. Reintentá sólo eso; si la regla te lo vuelve a frenar, avisame y no insistas.`, { autoriza_denegado: true });
+    if (decision === "allow") {
+      void quickSend(`El humano autoriza lo que se te denegó: ${que}. Reintentá sólo eso; si la regla te lo vuelve a frenar, avisame y no insistas.`, { autoriza_denegado: true });
+    } else {
+      void quickSend(`El humano mantiene la denegación de: ${que}. No lo ejecutes ni lo reintentes. Seguí con una alternativa segura o con el trabajo que no dependa de esa acción.`, { deniega_denegado: true });
+    }
   };
 
   // estrella de coordinadora: a lo sumo una por repo; recibe los avisos "cuando termine" del
@@ -122,7 +126,7 @@ export function useCardActions(s: Session, toast: ToastFn) {
     pickDialog,
     codaDecide,
     quickSend,
-    autorizarDenegado,
+    decidirDenegado,
     toggleCoordinator,
     toggleStopped,
     kill,

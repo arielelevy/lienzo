@@ -1656,3 +1656,25 @@ interpretó como un cuelgue del modelo, porque nada distinguía los dos casos.
 ### Revisar el plazo del E2E de tarjetas ajenas (2026-10-28)
 
 - [ ] `pruebas-agenticas/tarjetas_ajenas_e2e.py:106`: espera hasta 120 s la eliminación de la tarjeta, pero `lienzo/state.py:58` fija `DEAD_KEEP_S = 120` y `lienzo/sessions.py:2261` elimina con `edad > DEAD_KEEP_S`. El log muestra la regla estacionada correctamente y la herencia posterior correcta, pero `tarjeta del frente borrada: False (120 s)` hace fallar el caso. Revisar el contrato y el margen del caso, sin regenerar baseline para ocultarlo. Reproducir con el runner sobre `pruebas-agenticas/tarjetas-ajenas-N.json`; evidencia en `resultados/tarjetas-ajenas-N/salidas/tarjetas-ajenas-e2e.log`. Detectado al corregir la lectura de las conversaciones de Claude SmartBI.
+  Ajustado en el árbol el 2026-10-31: espera 180 s, sin cambiar la retención ni las condiciones.
+  Corrida parcial `2026-10-31T13-38-22.178Z-30512`: caso código 0, tarjeta borrada a los 121 s,
+  estacionamiento y ambas condiciones de herencia correctos (127110 ms en total).
+  Runner y compuerta código 1 por baseline ausente; sin fijarlo ni ejecutar mutaciones.
+  Primer fallo conservado en `pruebas-agenticas/resultados/tarjetas-ajenas-N/salidas/plazo-primer-fallo-20261029.log`.
+  Revisión: `review/2026-10-31/code-review-plazo-tarjetas-ajenas.md`.
+
+- [ ] **2026-10-31 · Verificación de 0.6.19 en ar-it33940.** Se ejecutaron las ocho regresiones
+  sobre 399 fuentes verificadas, con Python 3.14.7. Resultado: seis aprobadas y dos fallidas.
+  `tests/test_conocimiento_prolog_commit.py:96`: 53,47 ms frente a 50 ms.
+  `tests/test_veredictos.py:915`: briefing 332,8 ms y preguntar 302,3 ms frente a 200 ms.
+  El deadline de Prolog y los cinco casos de transferencia pasaron. Los primeros tres intentos
+  quedaron bloqueados por infraestructura; se conservaron antes de ejecutar con escalación.
+  Ariel pidió publicar y reiniciar después de recibir estos resultados (2026-10-31):
+  excepción explícita para este release; las dos fallas siguen pendientes. Evidencia de la sesión remota:
+  `D:/Apps/lienzo/.temp/release-0.6.19-verificacion-f9c58334/resultados/ocho.log`.
+
+- [ ] **2026-10-31 · Denegar desde la tarjeta.** Implementado en el árbol, pendiente de entrega
+  y reinicio. Denegar conserva el rechazo; un error al guardar o enviar restaura el aviso.
+  Regresiones del último delta: 120 passed en copia aislada. Frontend global: 355 passed,
+  16 skipped; focal: 8 passed. Revisión: `review/2026-10-31/code-review-denegar.md`.
+  No se tomó ninguna decisión sobre el aviso de openSeec que desapareció.

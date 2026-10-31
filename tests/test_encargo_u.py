@@ -25,6 +25,10 @@ def test_retencion_respeta_cursor_por_proyecto(tmp_path, monkeypatch):
     cursor = tmp_path / "research" / "creencias-cursor.json"
     cursor.parent.mkdir()
     cursor.write_text(json.dumps({"leido": {"capturas_hasta": "2026-09-10T09:00:00-03:00"}}), encoding="utf-8")
+    # Desde el nivel 3, la retención exige que investigador y resumidor hayan leído las capturas.
+    (tmp_path / "resumidor-cursor.json").write_text(
+        json.dumps({"leido": {"hasta": "2026-09-10T12:00:00.000Z"}}), encoding="utf-8"
+    )
     monkeypatch.setattr(k.state, "LIENZO", str(tmp_path))
     _crudo(
         monkeypatch,
@@ -56,6 +60,9 @@ def test_cursor_invalido_no_borra_crudo(tmp_path, monkeypatch, hasta):
     cursor = tmp_path / "research" / "creencias-cursor.json"
     cursor.parent.mkdir()
     cursor.write_text(json.dumps({"app": {"capturas_hasta": hasta}}), encoding="utf-8")
+    (tmp_path / "resumidor-cursor.json").write_text(
+        json.dumps({"app": {"hasta": "2026-09-10T12:00:00.000Z"}}), encoding="utf-8"
+    )
     monkeypatch.setattr(k.state, "LIENZO", str(tmp_path))
     _crudo(monkeypatch, [("app", "2026-08-01T00:00:00.000Z", 10)] * 2)
     result = registro_niveles._parte(registro_niveles._depurar_capturas, dt.datetime(2026, 9, 22, tzinfo=dt.UTC))
