@@ -247,6 +247,9 @@ def _exe_path(exe_name: str) -> str | None:
             os.environ.get("ProgramFiles", r"C:\Program Files"),
         ):
             candidatos.append(os.path.join(base, "Kiro-Cli", exe_name))
+    if exe_name in ("coda.exe", "coda"):
+        # el instalador de coda lo deja aca y no en el PATH del server (source-analisis, 2026-10-30)
+        candidatos.append(os.path.join(state.HOME, ".coda", "bin", exe_name))
     if exe_name == "pi.exe":
         # el instalador oficial de pi.dev en Windows no trae .exe: la entrada es un .cmd
         candidatos.append(os.path.join(state.HOME, ".pi", "agent", "bin", "pi.cmd"))

@@ -465,3 +465,16 @@ def test_tmux_pasa_el_perfil_por_env(aislado, monkeypatch):
     argv = FakePopen.calls[-1]
     assert res["ok"] is True
     assert argv[argv.index("env") :][-2:] == ["CLAUDE_CONFIG_DIR=/home/a/.claude-smartbi", "/usr/bin/claude"]
+
+
+@pytest.mark.parametrize("exe", ["coda.exe", "coda"])
+def test_exe_path_encuentra_coda_en_su_carpeta_del_instalador(tmp_path, monkeypatch, exe):
+    """El instalador de coda lo deja en ~/.coda/bin y no lo pone en el PATH del server: el launch
+    contestaba 400 «no encuentro coda.exe en esta PC» (ronda de source-analisis, 2026-10-30)."""
+    monkeypatch.setattr(st, "HOME", str(tmp_path))
+    monkeypatch.setattr(launch.shutil, "which", lambda name: None)
+    assert launch._exe_path(exe) is None
+    coda = tmp_path / ".coda" / "bin" / exe
+    coda.parent.mkdir(parents=True)
+    coda.write_text("")
+    assert launch._exe_path(exe) == str(coda)
