@@ -529,42 +529,6 @@ function roundedPath(pts: Pt[], radio: (p: Pt, c: Pt, n: Pt) => number = medioTr
   return `${d} L ${pts[pts.length - 1][0]} ${pts[pts.length - 1][1]}`;
 }
 
-/** El mismo camino corrido `k` px a la izquierda de su sentido (origen -> destino): el filo de un solo
- *  lado que distingue al canal nativo (pedido de Ariel, 2026-10-31). Lee los caminos de `roundedPath`
- *  (M, L y Q, cuya Q tiene la esquina como control); otro camino (una C) da null y queda sin filo. */
-export function borde(d: string, k: number): string | null {
-  const nums = (t: string) => t.trim().split(/[\s,]+/).filter(Boolean).map(Number);
-  // las esquinas del camino sin redondear: todos sus puntos (en una Q, el control es la esquina) menos
-  // los que quedan en recta entre sus vecinos, que son donde arranca o termina una curva
-  const todos: Pt[] = [];
-  for (const [, cmd, args] of d.matchAll(/([MLQC])([^MLQC]*)/g)) {
-    const v = nums(args);
-    if (cmd === "C" || v.length < 2 || v.length % 2 || v.some((x) => !Number.isFinite(x))) return null;
-    for (let i = 0; i < v.length; i += 2) todos.push([v[i], v[i + 1]]);
-  }
-  const pts: Pt[] = [];
-  for (const p of todos) {
-    const a = pts[pts.length - 2];
-    const b = pts[pts.length - 1];
-    if (b && b[0] === p[0] && b[1] === p[1]) continue;
-    if (a && Math.abs((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) < 1e-6) pts.pop();
-    pts.push(p);
-  }
-  if (pts.length < 2) return null;
-  const normal = (p: Pt, q: Pt): Pt => {
-    const largo = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
-    return [((q[1] - p[1]) / largo) * k, (-(q[0] - p[0]) / largo) * k];
-  };
-  const ns = pts.slice(1).map((q, i) => normal(pts[i], q));
-  const corridos = pts.map((p, i): Pt => {
-    const n1 = ns[Math.max(0, i - 1)];
-    const n2 = ns[Math.min(ns.length - 1, i)];
-    const f = 1 + (n1[0] * n2[0] + n1[1] * n2[1]) / (k * k); // inglete: n1 + n2 en una esquina recta, n1 en un tramo seguido
-    return [p[0] + (n1[0] + n2[0]) / f, p[1] + (n1[1] + n2[1]) / f];
-  });
-  return roundedPath(corridos);
-}
-
 /** un carril: la y por donde corre la flecha, la franja libre que lo aloja y su alto */
 export interface Lane {
   y: number;

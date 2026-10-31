@@ -529,7 +529,7 @@ body:has(.panel-open) { overflow: hidden; }
 /* canal nativo Claude<->Claude: doble linea gruesa con punta en los dos extremos */
 .arrows .line.native-outer { stroke: var(--acc); stroke-width: 7; opacity: .35; }
 .arrows .line.native { stroke-width: 2.5; opacity: 1; }
-/* filo blanco de medio pixel en el borde de un solo lado de la franja (pedido de Ariel, 2026-10-31) */
+/* filo blanco de medio pixel en el centro de la linea, encima del azul (pedido de Ariel, 2026-10-31) */
 .arrows .line.native-edge { stroke: #fff; stroke-width: 0.5; opacity: 1; }
 .panel .ph button.on { border-color: var(--acc); color: var(--acc); }
 
